@@ -2346,6 +2346,11 @@ export default function CreditFactoryConsole({
 
     return sum + Math.max(0, Number(installment?.saldoPendiente || 0));
   }, 0);
+  const selectedOverdueTotal = selectedInstallmentsData.reduce(
+    (sum, item) =>
+      sum + (item.estaEnMora ? Math.max(0, Number(item.saldoPendiente || 0)) : 0),
+    0
+  );
   const updateSelectedInstallments = (numero: number, checked: boolean) => {
     const orderedNumbers = payableInstallments.map((item) => item.numero);
     const nextNumbers = checked
@@ -8329,26 +8334,61 @@ export default function CreditFactoryConsole({
 
           {paymentsView && (
           <div className="rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] p-6 shadow-[0_18px_50px_rgba(15,23,42,0.07)]">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <div className="inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
-                  Abonos
-                </div>
-                <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">
-                  Recibir pago de cuotas
-                </h2>
-              </div>
+            {selectedCredit ? (
+              <div className="rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Cliente
+                    </p>
+                    <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-950">
+                      {selectedCredit.clienteNombre}
+                    </h2>
+                    <p className="mt-1 text-sm font-semibold text-slate-700">
+                      CC. {selectedCredit.clienteDocumento || selectedCredit.clienteTelefono || "Sin identificacion"}
+                    </p>
+                  </div>
 
-              {paymentsView && selectedCredit && (
-                <button
-                  type="button"
-                  onClick={() => setShowPaymentResults((current) => !current)}
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  {showPaymentResults ? "Ocultar resultados" : "Cambiar cliente"}
-                </button>
-              )}
-            </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex rounded-full bg-[#ff7a30] px-4 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
+                      {paymentOverview?.estadoPago === "MORA"
+                        ? "Mora"
+                        : paymentOverview?.estadoPago === "PAGADO"
+                          ? "Pagado"
+                          : "Al dia"}
+                    </span>
+                    {(paymentOverview?.overdueCount || 0) > 0 ? (
+                      <span className="inline-flex rounded-full bg-[#171717] px-4 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
+                        {paymentOverview?.overdueCount || 0} en mora
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setShowPaymentResults((current) => !current)}
+                      className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      {showPaymentResults ? "Ocultar resultados" : "Cambiar cliente"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 md:grid-cols-2">
+                  <button
+                    type="button"
+                    className="rounded-[16px] bg-[#0f5654] px-5 py-3.5 text-center text-base font-black text-white shadow-[0_10px_24px_rgba(15,86,84,0.16)]"
+                  >
+                    Pagar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => focusHistory()}
+                    className="rounded-[16px] border border-[#0f5654] bg-white px-5 py-3.5 text-center text-base font-black text-[#0f5654] transition hover:bg-[#f4fbfb]"
+                  >
+                    Historial y certificados
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             {!selectedCredit ? (
               <div className="mt-6 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm leading-6 text-slate-500">
@@ -8426,6 +8466,7 @@ export default function CreditFactoryConsole({
                 </div>
                 )}
 
+                {false && (
                 <div className="mt-6 rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div>
@@ -8460,10 +8501,11 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
                 </div>
+                )}
 
-                <div className="mt-6 rounded-[24px] border border-[#e6dece] bg-[#fcfaf6] p-5">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    Registrar nuevo abono
+                <div className="mt-6 rounded-[24px] border border-[#d9e6ea] bg-white p-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
+                    Pagar
                   </p>
 
                   <div className="mt-4 grid gap-4 md:grid-cols-[1.1fr_0.7fr]">
@@ -8520,13 +8562,10 @@ export default function CreditFactoryConsole({
 
                     <div className="rounded-[22px] border border-slate-200 bg-white px-4 py-4 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
                       <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                        Cuotas seleccionadas
-                      </p>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">
-                        El valor recibido debe coincidir exactamente con la seleccion para registrar el abono sin diferencias.
+                        Registrar pago
                       </p>
 
-                      <div className="mt-4">
+                      <div className="mt-3">
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Valor recibido
                         </label>
@@ -8574,9 +8613,9 @@ export default function CreditFactoryConsole({
                       type="button"
                       onClick={() => void registerPayment()}
                       disabled={registeringPayment || loadingPayments}
-                      className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
+                      className="rounded-[16px] bg-[#6b7280] px-6 py-3.5 text-base font-black text-white transition hover:bg-[#4b5563] disabled:opacity-70"
                     >
-                      {registeringPayment ? "Registrando..." : "Registrar abono"}
+                      {registeringPayment ? "Registrando..." : "Pagar"}
                     </button>
 
                     <button
@@ -8602,7 +8641,7 @@ export default function CreditFactoryConsole({
                         Plan de pagos
                       </p>
                       <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">
-                        Cuotas pendientes y realizadas
+                        2. Selecciona las cuotas que se van a pagar
                       </h3>
                     </div>
                     <button
