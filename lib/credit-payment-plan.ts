@@ -34,16 +34,9 @@ function normalizeDate(value: Date | string | null | undefined, fallback = new D
   return date;
 }
 
-function addMonths(date: Date, months: number) {
+function addDays(date: Date, days: number) {
   const next = new Date(date);
-  const originalDay = next.getDate();
-
-  next.setMonth(next.getMonth() + months);
-
-  if (next.getDate() < originalDay) {
-    next.setDate(0);
-  }
-
+  next.setDate(next.getDate() + days);
   return next;
 }
 
@@ -80,7 +73,7 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
       const paid = roundMoney(Math.min(programmed, remainingPaid));
       remainingPaid = roundMoney(Math.max(0, remainingPaid - paid));
       const pending = roundMoney(Math.max(0, programmed - paid));
-      const dueDate = addMonths(firstDueDate, index);
+      const dueDate = addDays(firstDueDate, index * 15);
       dueDate.setHours(23, 59, 59, 999);
       const isPaid = pending <= 0;
       const isOverdue = !isPaid && dueDate.getTime() < today.getTime();

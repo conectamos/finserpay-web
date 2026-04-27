@@ -24,6 +24,11 @@ En Railway debes crear estas variables:
 - `SESSION_SECRET`
 - `EQUALITY_HBM_ACCESS_TOKEN`
 - `EQUALITY_HBM_BASE_URL`
+- `WOMPI_PUBLIC_KEY`
+- `WOMPI_INTEGRITY_SECRET`
+- `WOMPI_EVENTS_SECRET`
+- `WOMPI_LEGACY_WEBHOOK_URL`
+- `NEXT_PUBLIC_APP_URL`
 
 ### Ejemplo de `SESSION_SECRET`
 
@@ -60,6 +65,27 @@ Si todavia no lo tienes en GitHub:
    - `SESSION_SECRET`
    - `EQUALITY_HBM_ACCESS_TOKEN`
    - `EQUALITY_HBM_BASE_URL`
+   - `WOMPI_PUBLIC_KEY`
+   - `WOMPI_INTEGRITY_SECRET`
+   - `WOMPI_EVENTS_SECRET`
+   - `WOMPI_LEGACY_WEBHOOK_URL`
+   - `NEXT_PUBLIC_APP_URL`
+
+Para Wompi, `NEXT_PUBLIC_APP_URL` debe ser el dominio publico de Railway o tu dominio propio, por ejemplo `https://finserpay-web.up.railway.app`.
+
+Si esta app debe convivir con la plataforma anterior, configura tambien:
+
+```bash
+WOMPI_LEGACY_WEBHOOK_URL=https://kaiowa.app/APIS/API_PASARELA_ABONOS_CREDITO/services/transactions/registrar_response_wompi
+```
+
+En el panel de Wompi configura una sola URL de eventos apuntando al router:
+
+```bash
+https://TU-DOMINIO/api/wompi/webhook-router
+```
+
+Ese router procesa en Finserpay las referencias nuevas que empiezan por `FP-` y reenvia a la plataforma anterior las demas transacciones. La llave privada de Wompi no se usa en el checkout publico ni debe guardarse en el repositorio. `WOMPI_INTEGRITY_SECRET` es la llave/secreto de integridad del checkout y `WOMPI_EVENTS_SECRET` es el secreto de eventos/webhook; son valores distintos en el panel de Wompi.
 
 ## Paso 5. Comandos de build y arranque
 
@@ -79,7 +105,7 @@ npm run start:standalone
 
 ## Paso 6. Crear tablas en produccion
 
-Antes de usar la app por primera vez, en Railway abre una terminal del servicio de la app y ejecuta:
+Antes de usar la app por primera vez, y despues de cambios que agreguen tablas como pagos Wompi, en Railway abre una terminal del servicio de la app y ejecuta:
 
 ```bash
 npm run db:push

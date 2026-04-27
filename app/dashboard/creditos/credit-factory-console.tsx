@@ -1614,7 +1614,7 @@ export default function CreditFactoryConsole({
   const [paymentValue, setPaymentValue] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("EFECTIVO");
   const [paymentObservation, setPaymentObservation] = useState("");
-  const [selectedInstallmentNumber, setSelectedInstallmentNumber] = useState("");
+  const [selectedInstallmentNumbers, setSelectedInstallmentNumbers] = useState<string[]>([]);
   const [payments, setPayments] = useState<CreditPaymentItem[]>([]);
   const [paymentSummary, setPaymentSummary] = useState<CreditPaymentsResponse["credito"] | null>(null);
   const [deliveryValidation, setDeliveryValidation] =
@@ -2332,6 +2332,43 @@ export default function CreditFactoryConsole({
           ultimoAbonoAt: selectedCredit.ultimoAbonoAt,
         }
       : null);
+  const payableInstallments = (paymentOverview?.plan || []).filter(
+    (item) => item.saldoPendiente > 0
+  );
+  const selectedInstallmentSet = new Set(selectedInstallmentNumbers);
+  const selectedInstallmentTotal = selectedInstallmentNumbers.reduce((sum, numero) => {
+    const installment = payableInstallments.find(
+      (item) => String(item.numero) === String(numero)
+    );
+
+    return sum + Math.max(0, Number(installment?.saldoPendiente || 0));
+  }, 0);
+  const updateSelectedInstallments = (numero: number, checked: boolean) => {
+    const orderedNumbers = payableInstallments.map((item) => item.numero);
+    const nextNumbers = checked
+      ? orderedNumbers.filter((item) => item <= numero)
+      : orderedNumbers.filter(
+          (item) => item < numero && selectedInstallmentSet.has(String(item))
+        );
+
+    setSelectedInstallmentNumbers(nextNumbers.map(String));
+  };
+
+  useEffect(() => {
+    if (!selectedInstallmentNumbers.length) {
+      setPaymentValue("");
+      setPaymentObservation("");
+      return;
+    }
+
+    setPaymentValue(String(Math.round(selectedInstallmentTotal)));
+    setPaymentObservation(
+      selectedInstallmentNumbers.length === 1
+        ? `Cuota ${selectedInstallmentNumbers[0]}`
+        : `Cuotas ${selectedInstallmentNumbers.join(", ")}`
+    );
+  }, [selectedInstallmentNumbers, selectedInstallmentTotal]);
+
   const evidenceAuditTime = (value: string | null | undefined) =>
     value ? new Date(value).toLocaleString("es-CO") : "Pendiente";
   const documentDateLabel = documentRenderDate || "Pendiente";
@@ -2979,15 +3016,15 @@ export default function CreditFactoryConsole({
       setPaymentSummary(result.data.credito);
       const nextInstallment = result.data.credito.nextInstallment;
       if (nextInstallment?.saldoPendiente && nextInstallment.saldoPendiente > 0) {
-        setSelectedInstallmentNumber(String(nextInstallment.numero));
+        setSelectedInstallmentNumbers([String(nextInstallment.numero)]);
         setPaymentValue(String(Math.round(nextInstallment.saldoPendiente)));
       } else {
-        setSelectedInstallmentNumber("");
+        setSelectedInstallmentNumbers([]);
       }
     } catch (error) {
       setPayments([]);
       setPaymentSummary(null);
-      setSelectedInstallmentNumber("");
+      setSelectedInstallmentNumbers([]);
       setNotice({
         text:
           error instanceof Error
@@ -3926,7 +3963,7 @@ export default function CreditFactoryConsole({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            cuotaNumero: selectedInstallmentNumber || null,
+            cuotaNumeros: selectedInstallmentNumbers,
             valor: paymentValue,
             metodoPago: paymentMethod,
             observacion: paymentObservation,
@@ -3940,7 +3977,7 @@ export default function CreditFactoryConsole({
 
       setPaymentValue("");
       setPaymentObservation("");
-      setSelectedInstallmentNumber("");
+      setSelectedInstallmentNumbers([]);
       await loadPayments(selectedCredit.id);
       await loadCredits(true, activeSearch);
 
@@ -8390,36 +8427,18 @@ export default function CreditFactoryConsole({
                   </p>
 
                   <div className="mt-4 grid gap-4 md:grid-cols-[0.9fr_0.7fr]">
-                    <div>
-                      <label className="mb-2 block text-sm font-semibold text-slate-700">
-                        Cuota a pagar
-                      </label>
-                      <select
-                        value={selectedInstallmentNumber}
-                        onChange={(event) => {
-                          const nextValue = event.target.value;
-                          setSelectedInstallmentNumber(nextValue);
-                          const installment = paymentOverview?.plan?.find(
-                            (item) => String(item.numero) === nextValue
-                          );
-
-                          if (installment) {
-                            setPaymentValue(String(Math.round(installment.saldoPendiente)));
-                            setPaymentObservation(`Cuota ${installment.numero}`);
-                          }
-                        }}
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                      >
-                        <option value="">Pago libre</option>
-                        {(paymentOverview?.plan || [])
-                          .filter((item) => item.saldoPendiente > 0)
-                          .map((item) => (
-                            <option key={item.numero} value={item.numero}>
-                              Cuota {item.numero} - vence {dateTime(item.fechaVencimiento)} - saldo{" "}
-                              {currency(item.saldoPendiente)}
-                            </option>
-                          ))}
-                      </select>
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                        Cuotas seleccionadas
+                      </p>
+                      <p className="mt-2 text-lg font-black text-slate-950">
+                        {selectedInstallmentNumbers.length
+                          ? selectedInstallmentNumbers.join(", ")
+                          : "Ninguna"}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Total: {currency(selectedInstallmentTotal)}
+                      </p>
                     </div>
 
                     <div>
@@ -8480,7 +8499,7 @@ export default function CreditFactoryConsole({
                         setPaymentValue("");
                         setPaymentObservation("");
                         setPaymentMethod("EFECTIVO");
-                        setSelectedInstallmentNumber("");
+                        setSelectedInstallmentNumbers([]);
                       }}
                       disabled={registeringPayment}
                       className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
@@ -8525,10 +8544,24 @@ export default function CreditFactoryConsole({
                         {(paymentOverview?.plan || []).map((item) => (
                           <tr key={item.numero}>
                             <td className="px-3 py-3 font-bold text-slate-950">
-                              {item.numero}
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedInstallmentSet.has(String(item.numero))}
+                                  disabled={item.saldoPendiente <= 0 || registeringPayment}
+                                  onChange={(event) =>
+                                    updateSelectedInstallments(
+                                      item.numero,
+                                      event.target.checked
+                                    )
+                                  }
+                                  className="h-4 w-4 rounded border-slate-300 text-[#145a5a] focus:ring-[#145a5a]"
+                                />
+                                <span>{item.numero}</span>
+                              </label>
                             </td>
                             <td className="px-3 py-3 text-slate-600">
-                              {dateTime(item.fechaVencimiento)}
+                              {dateOnly(item.fechaVencimiento)}
                             </td>
                             <td className="px-3 py-3 text-slate-600">
                               {currency(item.valorProgramado)}
@@ -8550,7 +8583,7 @@ export default function CreditFactoryConsole({
                                       : "border-amber-200 bg-amber-50 text-amber-700",
                                 ].join(" ")}
                               >
-                                {item.estado}
+                                {item.estaEnMora ? "MORA" : item.estado}
                               </span>
                             </td>
                           </tr>

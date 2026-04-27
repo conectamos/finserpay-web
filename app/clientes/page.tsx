@@ -41,6 +41,14 @@ type ClientCreditsResponse = {
   error?: string;
 };
 
+type WompiCheckoutResponse = {
+  ok?: boolean;
+  amount?: number;
+  checkoutUrl?: string;
+  error?: string;
+  reference?: string;
+};
+
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
@@ -69,8 +77,8 @@ function getPayableInstallments(credit: ClientCredit) {
   return credit.cuotas.filter((item) => item.saldoPendiente > 0);
 }
 
-async function requestJson<T>(url: string) {
-  const response = await fetch(url, { cache: "no-store" });
+async function requestJson<T>(url: string, init?: RequestInit) {
+  const response = await fetch(url, { cache: "no-store", ...init });
   const data = (await response.json().catch(() => ({}))) as T;
   return { ok: response.ok, data };
 }
@@ -78,9 +86,10 @@ async function requestJson<T>(url: string) {
 export default function ClienteConsultaPage() {
   const [documento, setDocumento] = useState("");
   const [items, setItems] = useState<ClientCredit[]>([]);
-  const [selectedInstallments, setSelectedInstallments] = useState<Record<number, number>>(
+  const [selectedInstallments, setSelectedInstallments] = useState<Record<number, number[]>>(
     {}
   );
+  const [payingCreditId, setPayingCreditId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<{ text: string; tone: "red" | "emerald" } | null>(
     null
@@ -100,26 +109,15 @@ export default function ClienteConsultaPage() {
       }
 
       const nextItems = result.data.items || [];
-
-      if (nextItems.length === 1) {
-        const credit = nextItems[0];
-        const params = new URLSearchParams({
-          search: normalized,
-          selected: String(credit.id),
-        });
-        window.location.assign(`/dashboard/abonos?${params.toString()}`);
-        return;
-      }
-
       setItems(nextItems);
       setSelectedInstallments(
         Object.fromEntries(
           nextItems
             .map((credit) => {
               const nextInstallment = getPayableInstallments(credit)[0];
-              return nextInstallment ? [credit.id, nextInstallment.numero] : null;
+              return nextInstallment ? [credit.id, [nextInstallment.numero]] : null;
             })
-            .filter((item): item is [number, number] => Boolean(item))
+            .filter((item): item is [number, number[]] => Boolean(item))
         )
       );
       setNotice({
@@ -136,6 +134,76 @@ export default function ClienteConsultaPage() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const updateSelectedInstallments = (
+    credit: ClientCredit,
+    numero: number,
+    checked: boolean
+  ) => {
+    const payableNumbers = getPayableInstallments(credit).map((item) => item.numero);
+    const currentSet = new Set(selectedInstallments[credit.id] || []);
+    const nextNumbers = checked
+      ? payableNumbers.filter((item) => item <= numero)
+      : payableNumbers.filter((item) => item < numero && currentSet.has(item));
+
+    setSelectedInstallments((current) => ({
+      ...current,
+      [credit.id]: nextNumbers,
+    }));
+  };
+
+  const selectedTotal = (credit: ClientCredit) => {
+    const selected = new Set(selectedInstallments[credit.id] || []);
+
+    return getPayableInstallments(credit)
+      .filter((item) => selected.has(item.numero))
+      .reduce((sum, item) => sum + item.saldoPendiente, 0);
+  };
+
+  const payWithWompi = async (credit: ClientCredit) => {
+    try {
+      const cuotaNumeros = selectedInstallments[credit.id] || [];
+
+      if (!cuotaNumeros.length) {
+        setNotice({
+          text: "Selecciona al menos una cuota para pagar.",
+          tone: "red",
+        });
+        return;
+      }
+
+      setPayingCreditId(credit.id);
+      setNotice(null);
+
+      const result = await requestJson<WompiCheckoutResponse>(
+        "/api/clientes/wompi-checkout",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            creditoId: credit.id,
+            cuotaNumeros,
+            documento: credit.clienteDocumento || documento,
+          }),
+        }
+      );
+
+      if (!result.ok || !result.data.checkoutUrl) {
+        throw new Error(result.data.error || "No se pudo preparar el pago con Wompi");
+      }
+
+      window.location.assign(result.data.checkoutUrl);
+    } catch (error) {
+      setNotice({
+        text: error instanceof Error ? error.message : "No se pudo abrir Wompi",
+        tone: "red",
+      });
+    } finally {
+      setPayingCreditId(null);
     }
   };
 
@@ -186,14 +254,11 @@ export default function ClienteConsultaPage() {
         <div className="space-y-5 px-6 py-6 md:px-8">
           {items.map((credit) => {
             const payableInstallments = getPayableInstallments(credit);
-            const selectedInstallment =
-              payableInstallments.find(
-                (item) => item.numero === selectedInstallments[credit.id]
-              ) ||
-              payableInstallments[0] ||
-              null;
-            const paymentReference = selectedInstallment
-              ? `${credit.folio}-CUOTA-${selectedInstallment.numero}`
+            const selected = new Set(selectedInstallments[credit.id] || []);
+            const totalToPay = selectedTotal(credit);
+            const selectedNumbers = Array.from(selected).sort((a, b) => a - b);
+            const paymentReference = selectedNumbers.length
+              ? `${credit.folio}-CUOTAS-${selectedNumbers.join("-")}`
               : credit.folio;
 
             return (
@@ -247,7 +312,7 @@ export default function ClienteConsultaPage() {
                       Pago en linea
                     </p>
                     <h3 className="mt-2 text-xl font-black text-slate-950">
-                      Elige la cuota que vas a pagar
+                      Elige las cuotas que vas a pagar
                     </h3>
                     <p className="mt-2 text-sm leading-6 text-slate-700">
                       Referencia sugerida:{" "}
@@ -255,43 +320,30 @@ export default function ClienteConsultaPage() {
                     </p>
                   </div>
 
-                  {selectedInstallment ? (
-                    <div className="grid w-full gap-3 lg:w-auto lg:min-w-[460px] lg:grid-cols-[1fr_1fr_auto]">
-                      <select
-                        value={selectedInstallment.numero}
-                        onChange={(event) =>
-                          setSelectedInstallments((current) => ({
-                            ...current,
-                            [credit.id]: Number(event.target.value),
-                          }))
-                        }
-                        className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100"
-                      >
-                        {payableInstallments.map((item) => (
-                          <option key={item.numero} value={item.numero}>
-                            Cuota {item.numero} - {money(item.saldoPendiente)}
-                          </option>
-                        ))}
-                      </select>
-
+                  {payableInstallments.length ? (
+                    <div className="grid w-full gap-3 lg:w-auto lg:min-w-[360px] lg:grid-cols-[1fr_auto]">
                       <div className="rounded-2xl border border-emerald-200 bg-white px-4 py-3">
                         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">
                           Valor a pagar
                         </p>
                         <p className="mt-1 text-lg font-black text-slate-950">
-                          {money(selectedInstallment.saldoPendiente)}
+                          {money(totalToPay)}
+                        </p>
+                        <p className="mt-1 text-xs font-semibold text-slate-500">
+                          {selectedNumbers.length
+                            ? `Cuotas ${selectedNumbers.join(", ")}`
+                            : "Sin cuotas seleccionadas"}
                         </p>
                       </div>
 
-                      <a
-                        href={`/dashboard/abonos?${new URLSearchParams({
-                          search: credit.clienteDocumento || documento,
-                          selected: String(credit.id),
-                        }).toString()}`}
+                      <button
+                        type="button"
+                        onClick={() => void payWithWompi(credit)}
+                        disabled={payingCreditId === credit.id || totalToPay <= 0}
                         className="inline-flex items-center justify-center rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#0f4a4a]"
                       >
-                        Abrir recaudo
-                      </a>
+                        {payingCreditId === credit.id ? "Abriendo..." : "Pagar con Wompi"}
+                      </button>
                     </div>
                   ) : (
                     <div className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-bold text-emerald-800">
@@ -316,12 +368,31 @@ export default function ClienteConsultaPage() {
                   <tbody className="divide-y divide-slate-100">
                     {credit.cuotas.map((item) => (
                       <tr key={item.numero}>
-                        <td className="px-4 py-3 font-bold">{item.numero}</td>
+                        <td className="px-4 py-3 font-bold">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selected.has(item.numero)}
+                              disabled={item.saldoPendiente <= 0 || payingCreditId === credit.id}
+                              onChange={(event) =>
+                                updateSelectedInstallments(
+                                  credit,
+                                  item.numero,
+                                  event.target.checked
+                                )
+                              }
+                              className="h-4 w-4 rounded border-slate-300 text-[#145a5a] focus:ring-[#145a5a]"
+                            />
+                            <span>{item.numero}</span>
+                          </label>
+                        </td>
                         <td className="px-4 py-3">{dateLabel(item.fechaVencimiento)}</td>
                         <td className="px-4 py-3">{money(item.valorProgramado)}</td>
                         <td className="px-4 py-3">{money(item.valorAbonado)}</td>
                         <td className="px-4 py-3 font-bold">{money(item.saldoPendiente)}</td>
-                        <td className="px-4 py-3">{item.estado}</td>
+                        <td className="px-4 py-3">
+                          {item.estaEnMora ? "MORA" : item.estado}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

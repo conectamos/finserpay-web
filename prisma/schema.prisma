@@ -198,6 +198,7 @@ model Credito {
   vendedor           Vendedor? @relation(fields: [vendedorId], references: [id])
   sede               Sede     @relation(fields: [sedeId], references: [id])
   abonos             CreditoAbono[]
+  wompiPaymentIntents WompiPaymentIntent[]
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -229,6 +230,30 @@ model CreditoAbono {
   @@index([usuarioId, createdAt])
   @@index([vendedorId, createdAt])
   @@index([sedeId, createdAt])
+}
+
+model WompiPaymentIntent {
+  id                Int      @id @default(autoincrement())
+  reference         String   @unique
+  creditoId         Int
+  credito           Credito  @relation(fields: [creditoId], references: [id])
+  cuotaNumeros      Json
+  amount            Float
+  amountInCents     Int
+  currency          String   @default("COP")
+  status            String   @default("PENDING")
+  transactionId     String?  @unique
+  paymentMethodType String?
+  customerEmail     String?
+  customerDocument  String?
+  processedAbonoId  Int?
+  payload           Json?
+  processedAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([creditoId, createdAt])
+  @@index([status, createdAt])
 }
 
 model Inventario {

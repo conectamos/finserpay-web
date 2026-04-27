@@ -31,6 +31,7 @@ export const dynamic = "force-dynamic";
 
 type CreditPaymentBody = {
   cuotaNumero?: number | string | null;
+  cuotaNumeros?: Array<number | string> | string | null;
   metodoPago?: string;
   observacion?: string;
   valor?: number | string;
@@ -41,7 +42,49 @@ function parseId(value: string) {
   return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
 }
 
-function serializePayment(item: any) {
+function parseInstallmentNumbers(value: CreditPaymentBody["cuotaNumeros"]) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : String(value ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+  const numbers = rawItems
+    .map((item) => Math.trunc(toNumber(item)))
+    .filter((item) => item > 0);
+
+  return [...new Set(numbers)].sort((a, b) => a - b);
+}
+
+function sameMoney(left: number, right: number) {
+  return Math.round(Number(left || 0) * 100) === Math.round(Number(right || 0) * 100);
+}
+
+type PaymentWithRelations = {
+  createdAt: Date;
+  creditoId: number;
+  fechaAbono: Date;
+  id: number;
+  metodoPago: string;
+  observacion: string | null;
+  sede: {
+    id: number;
+    nombre: string;
+  };
+  usuario: {
+    id: number;
+    nombre: string;
+    usuario: string;
+  };
+  valor: number | string;
+  vendedor?: {
+    documento: string | null;
+    id: number;
+    nombre: string;
+  } | null;
+};
+
+function serializePayment(item: PaymentWithRelations) {
   return {
     id: item.id,
     creditoId: item.creditoId,
@@ -486,29 +529,50 @@ export async function POST(
     let valor = toNumber(body.valor);
     const metodoPago = normalizePaymentMethod(body.metodoPago);
     const observacion = sanitizeText(body.observacion);
+    const cuotaNumeros = parseInstallmentNumbers(body.cuotaNumeros);
     const cuotaNumero = Math.trunc(toNumber(body.cuotaNumero));
+    const selectedNumbers = cuotaNumeros.length
+      ? cuotaNumeros
+      : cuotaNumero > 0
+        ? [cuotaNumero]
+        : [];
     const currentPlan = await loadPaymentPlan(credit);
-    const selectedInstallment =
-      cuotaNumero > 0
-        ? currentPlan?.installments.find((item) => item.numero === cuotaNumero) || null
-        : null;
+    const selectedInstallments = selectedNumbers
+      .map(
+        (numero) =>
+          currentPlan?.installments.find((item) => item.numero === numero) || null
+      )
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+    const selectedTotal = selectedInstallments.reduce(
+      (sum, item) => sum + Math.max(0, Number(item.saldoPendiente || 0)),
+      0
+    );
 
-    if (selectedInstallment) {
-      if (selectedInstallment.saldoPendiente <= 0) {
+    if (selectedNumbers.length && selectedInstallments.length !== selectedNumbers.length) {
+      return NextResponse.json(
+        { error: "Una o mas cuotas seleccionadas no existen en el plan" },
+        { status: 400 }
+      );
+    }
+
+    if (selectedInstallments.length) {
+      const paidInstallment = selectedInstallments.find((item) => item.saldoPendiente <= 0);
+
+      if (paidInstallment) {
         return NextResponse.json(
-          { error: `La cuota ${selectedInstallment.numero} ya esta pagada` },
+          { error: `La cuota ${paidInstallment.numero} ya esta pagada` },
           { status: 400 }
         );
       }
 
       if (valor <= 0) {
-        valor = selectedInstallment.saldoPendiente;
+        valor = selectedTotal;
       }
 
-      if (valor > selectedInstallment.saldoPendiente) {
+      if (!sameMoney(valor, selectedTotal)) {
         return NextResponse.json(
           {
-            error: `El abono supera el saldo pendiente de la cuota ${selectedInstallment.numero}`,
+            error: `El valor recibido debe ser igual al total de las cuotas seleccionadas (${selectedTotal.toLocaleString("es-CO")})`,
           },
           { status: 400 }
         );
@@ -555,7 +619,9 @@ export async function POST(
           metodoPago,
           observacion:
             [
-              selectedInstallment ? `Cuota ${selectedInstallment.numero}` : "",
+              selectedInstallments.length
+                ? `Cuotas ${selectedInstallments.map((item) => item.numero).join(", ")}`
+                : "",
               observacion,
             ]
               .filter(Boolean)

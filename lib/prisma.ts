@@ -13,6 +13,7 @@ const REQUIRED_DELEGATES = [
   "sedeVendedor",
   "credito",
   "creditoAbono",
+  "wompiPaymentIntent",
   "capturaCreditoSession",
   "cajaMovimiento",
 ] as const;
