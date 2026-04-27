@@ -37,9 +37,40 @@ type CreditPaymentBody = {
   valor?: number | string;
 };
 
+const copCurrencyFormatter = new Intl.NumberFormat("es-CO", {
+  style: "currency",
+  currency: "COP",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+});
+
 function parseId(value: string) {
   const numeric = Number(value);
   return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
+function currency(value: number) {
+  return copCurrencyFormatter.format(Math.round(Number(value || 0)));
+}
+
+function parseMoneyValue(value: CreditPaymentBody["valor"]) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return 0;
+    }
+
+    if (/^\d+([.,]\d+)?$/.test(trimmed)) {
+      const normalized = Number(trimmed.replace(",", "."));
+      return Number.isFinite(normalized) ? normalized : 0;
+    }
+
+    const digitsOnly = trimmed.replace(/\D/g, "");
+    return digitsOnly ? Number(digitsOnly) : 0;
+  }
+
+  return toNumber(value);
 }
 
 function parseInstallmentNumbers(value: CreditPaymentBody["cuotaNumeros"]) {
@@ -54,10 +85,6 @@ function parseInstallmentNumbers(value: CreditPaymentBody["cuotaNumeros"]) {
     .filter((item) => item > 0);
 
   return [...new Set(numbers)].sort((a, b) => a - b);
-}
-
-function sameMoney(left: number, right: number) {
-  return Math.round(Number(left || 0) * 100) === Math.round(Number(right || 0) * 100);
 }
 
 type PaymentWithRelations = {
@@ -526,7 +553,7 @@ export async function POST(
     }
 
     const body = (await req.json()) as CreditPaymentBody;
-    let valor = toNumber(body.valor);
+    let valor = parseMoneyValue(body.valor);
     const metodoPago = normalizePaymentMethod(body.metodoPago);
     const observacion = sanitizeText(body.observacion);
     const cuotaNumeros = parseInstallmentNumbers(body.cuotaNumeros);
@@ -557,6 +584,7 @@ export async function POST(
 
     if (selectedInstallments.length) {
       const paidInstallment = selectedInstallments.find((item) => item.saldoPendiente <= 0);
+      const roundedSelectedTotal = Math.round(selectedTotal);
 
       if (paidInstallment) {
         return NextResponse.json(
@@ -566,17 +594,19 @@ export async function POST(
       }
 
       if (valor <= 0) {
-        valor = selectedTotal;
+        valor = roundedSelectedTotal;
       }
 
-      if (!sameMoney(valor, selectedTotal)) {
+      if (Math.round(valor) !== roundedSelectedTotal) {
         return NextResponse.json(
           {
-            error: `El valor recibido debe ser igual al total de las cuotas seleccionadas (${selectedTotal.toLocaleString("es-CO")})`,
+            error: `El valor recibido debe ser igual al total de las cuotas seleccionadas (${currency(roundedSelectedTotal)})`,
           },
           { status: 400 }
         );
       }
+
+      valor = selectedTotal;
     }
 
     if (valor <= 0) {
@@ -602,7 +632,7 @@ export async function POST(
     if (valor > currentSummary.saldoPendiente) {
       return NextResponse.json(
         {
-          error: `El abono supera el saldo pendiente actual (${currentSummary.saldoPendiente.toLocaleString("es-CO")})`,
+          error: `El abono supera el saldo pendiente actual (${currency(currentSummary.saldoPendiente)})`,
         },
         { status: 400 }
       );

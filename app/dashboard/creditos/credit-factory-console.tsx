@@ -8633,9 +8633,12 @@ export default function CreditFactoryConsole({
                           Valor recibido
                         </label>
                         <input
-                          value={paymentValue}
-                          onChange={(event) => setPaymentValue(event.target.value)}
-                          placeholder="Ejemplo: 50000"
+                          value={currencyInputValue(paymentValue)}
+                          onChange={(event) =>
+                            setPaymentValue(String(event.target.value || "").replace(/\D/g, ""))
+                          }
+                          inputMode="numeric"
+                          placeholder="$ 50.000"
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                         />
                       </div>
