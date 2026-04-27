@@ -1533,6 +1533,7 @@ export default function CreditFactoryConsole({
   const [searchTerm, setSearchTerm] = useState(normalizedInitialSearch);
   const [activeSearch, setActiveSearch] = useState(normalizedInitialSearch);
   const [showPaymentResults, setShowPaymentResults] = useState(false);
+  const [paymentsTab, setPaymentsTab] = useState<"pay" | "history">("pay");
   const [showSearchResults, setShowSearchResults] = useState(true);
   const [showLookupDetail, setShowLookupDetail] = useState(false);
   const [documentRenderDate, setDocumentRenderDate] = useState("");
@@ -2541,6 +2542,8 @@ export default function CreditFactoryConsole({
     : lookupMode
       ? true
       : false;
+  const showCompactSearchSection = paymentsView ? showResultsPanel : showSearchSection;
+  const showPaymentsResultsGrid = paymentsView && showResultsPanel && Boolean(selectedCredit);
   const legalDocumentationStepContent = (
     <>
       <div className="rounded-[24px] border border-[#dbe4ea] bg-[#f8fbfd] px-5 py-5">
@@ -2987,10 +2990,12 @@ export default function CreditFactoryConsole({
 
     if (!selectedCredit) {
       setShowPaymentResults(true);
+      setPaymentsTab("pay");
       return;
     }
 
     setShowPaymentResults(false);
+    setPaymentsTab("pay");
   }, [paymentsView, selectedCredit?.id]);
 
   useEffect(() => {
@@ -4132,17 +4137,20 @@ export default function CreditFactoryConsole({
   };
 
   const focusHistory = () => {
-    const target = historySectionRef.current;
+    setPaymentsTab("history");
+    window.setTimeout(() => {
+      const target = historySectionRef.current;
 
-    if (!target) {
-      return;
-    }
+      if (!target) {
+        return;
+      }
 
-    const top = target.getBoundingClientRect().top + window.scrollY - 110;
-    window.scrollTo({
-      top: Math.max(0, top),
-      behavior: "smooth",
-    });
+      const top = target.getBoundingClientRect().top + window.scrollY - 110;
+      window.scrollTo({
+        top: Math.max(0, top),
+        behavior: "smooth",
+      });
+    }, 80);
   };
 
   const searchCredits = async () => {
@@ -4459,70 +4467,86 @@ export default function CreditFactoryConsole({
   return (
     <div className="fp-shell min-h-screen px-4 py-8 text-slate-950">
       <div className="mx-auto max-w-7xl">
-        <section className="fp-hero relative overflow-hidden rounded-[30px] border border-emerald-950/10 px-6 py-8 text-white shadow-[0_30px_90px_rgba(23,32,29,0.20)] sm:px-8">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
-
-          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-            <div className="max-w-3xl">
-              <div className="mb-5">
-                <FinserBrand dark />
+        {paymentsView ? (
+          <section className="rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-4 shadow-sm">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <FinserBrand />
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href="/dashboard"
+                  className="inline-flex min-w-[170px] justify-center rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Volver al dashboard
+                </Link>
               </div>
-              <div className="inline-flex rounded-full border border-white/14 bg-white/8 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-emerald-50">
-                {heroEyebrow}
-              </div>
-              <h1 className="mt-5 text-4xl font-black tracking-tight sm:text-5xl">
-                {heroTitle}
-              </h1>
-              <p className="mt-5 max-w-2xl text-sm leading-7 text-slate-300 sm:text-base">
-                {heroDescription}
-              </p>
+            </div>
+          </section>
+        ) : (
+          <section className="fp-hero relative overflow-hidden rounded-[30px] border border-emerald-950/10 px-6 py-8 text-white shadow-[0_30px_90px_rgba(23,32,29,0.20)] sm:px-8">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
 
-              <div className="mt-5 flex flex-wrap gap-2">
-                <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
-                  Usuario: {initialSession.nombre}
-                </span>
-                {initialSeller && (
-                  <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8ce5e1]">
-                    Vendedor: {initialSeller.nombre}
+            <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl">
+                <div className="mb-5">
+                  <FinserBrand dark />
+                </div>
+                <div className="inline-flex rounded-full border border-white/14 bg-white/8 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-emerald-50">
+                  {heroEyebrow}
+                </div>
+                <h1 className="mt-5 text-4xl font-black tracking-tight sm:text-5xl">
+                  {heroTitle}
+                </h1>
+                <p className="mt-5 max-w-2xl text-sm leading-7 text-slate-300 sm:text-base">
+                  {heroDescription}
+                </p>
+
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
+                    Usuario: {initialSession.nombre}
                   </span>
-                )}
-                <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
-                  Rol: {initialSession.rolNombre}
-                </span>
-                <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
-                  Sede: {initialSession.sedeNombre}
-                </span>
+                  {initialSeller && (
+                    <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8ce5e1]">
+                      Vendedor: {initialSeller.nombre}
+                    </span>
+                  )}
+                  <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
+                    Rol: {initialSession.rolNombre}
+                  </span>
+                  <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
+                    Sede: {initialSession.sedeNombre}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  href="/dashboard"
+                  className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-50"
+                >
+                  Volver al dashboard
+                </Link>
+                <Link
+                  href="/dashboard/integraciones"
+                  className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/16"
+                >
+                  Ver integraciones
+                </Link>
+                <Link
+                  href={
+                    paymentsView
+                      ? "/dashboard/creditos?mode=create-client"
+                      : lookupMode
+                        ? "/dashboard/abonos"
+                        : "/dashboard/abonos"
+                  }
+                  className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/16"
+                >
+                  {paymentsView ? "Ir a crear cliente" : "Ir a abonos"}
+                </Link>
               </div>
             </div>
-
-            <div className="flex flex-wrap gap-3">
-              <Link
-                href="/dashboard"
-                className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-50"
-              >
-                Volver al dashboard
-              </Link>
-              <Link
-                href="/dashboard/integraciones"
-                className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/16"
-              >
-                Ver integraciones
-              </Link>
-              <Link
-                href={
-                  paymentsView
-                    ? "/dashboard/creditos?mode=create-client"
-                    : lookupMode
-                      ? "/dashboard/abonos"
-                      : "/dashboard/abonos"
-                }
-                className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/16"
-              >
-                {paymentsView ? "Ir a crear cliente" : "Ir a abonos"}
-              </Link>
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {notice && (
           <div
@@ -4535,16 +4559,34 @@ export default function CreditFactoryConsole({
           </div>
         )}
 
-        {showSearchSection && (
-        <section className="fp-surface mt-6 rounded-[28px] p-6">
+        {showCompactSearchSection && (
+        <section
+          className={
+            paymentsView
+              ? "mt-6 rounded-[24px] border border-[#d9e6ea] bg-white p-5 shadow-sm"
+              : "fp-surface mt-6 rounded-[28px] p-6"
+          }
+        >
           <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]">
             Buscar cliente
           </div>
-          <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">
-            Encuentra al cliente y su credito
+          <h2
+            className={[
+              "font-black tracking-tight text-slate-950",
+              paymentsView ? "mt-3 text-2xl" : "mt-4 text-3xl",
+            ].join(" ")}
+          >
+            {paymentsView ? "Busca el cliente para recaudar" : "Encuentra al cliente y su credito"}
           </h2>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-            {searchDescription}
+          <p
+            className={[
+              "max-w-3xl text-sm leading-6 text-slate-600",
+              paymentsView ? "mt-2" : "mt-3",
+            ].join(" ")}
+          >
+            {paymentsView
+              ? "Busca por cedula, telefono, nombre, folio o IMEI y selecciona el credito correcto."
+              : searchDescription}
           </p>
 
           <div className="mt-6 flex flex-col gap-3 lg:flex-row">
@@ -4579,19 +4621,27 @@ export default function CreditFactoryConsole({
             </button>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-              Alcance: {canAdmin ? "Global" : `Sede ${initialSession.sedeNombre}`}
-            </span>
-            <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-              Resultados: {credits.length}
-            </span>
-            {activeSearch && (
+          {paymentsView ? (
+            <p className="mt-3 text-xs font-medium text-slate-500">
+              {activeSearch
+                ? `Resultados encontrados: ${credits.length}`
+                : `Ultimos resultados disponibles: ${credits.length}`}
+            </p>
+          ) : (
+            <div className="mt-4 flex flex-wrap gap-2">
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                Filtro: {activeSearch}
+                Alcance: {canAdmin ? "Global" : `Sede ${initialSession.sedeNombre}`}
               </span>
-            )}
-          </div>
+              <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
+                Resultados: {credits.length}
+              </span>
+              {activeSearch && (
+                <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
+                  Filtro: {activeSearch}
+                </span>
+              )}
+            </div>
+          )}
         </section>
         )}
 
@@ -8206,9 +8256,9 @@ export default function CreditFactoryConsole({
         <section
           className={
             paymentsView
-              ? showResultsPanel
-                ? "mt-8 grid gap-6 xl:grid-cols-[0.82fr_1.18fr]"
-                : "mt-8"
+              ? showPaymentsResultsGrid
+                ? "mt-6 grid gap-6 xl:grid-cols-[0.82fr_1.18fr]"
+                : "mt-6"
               : lookupMode && showResultsPanel
                 ? "mt-8"
                 : createClientMode
@@ -8221,10 +8271,10 @@ export default function CreditFactoryConsole({
             <div className="flex items-end justify-between gap-4">
               <div>
                 <div className="inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
-                  Clientes / creditos
+                  {paymentsView ? "Seleccion de cliente" : "Clientes / creditos"}
                 </div>
                 <h2 className="mt-4 text-2xl font-black tracking-tight text-slate-950">
-                  Resultados de busqueda
+                  {paymentsView ? "Selecciona el credito correcto" : "Resultados de busqueda"}
                 </h2>
               </div>
 
@@ -8239,11 +8289,15 @@ export default function CreditFactoryConsole({
             </div>
 
             <p className="mt-3 text-sm leading-6 text-slate-600">
-              {activeSearch
-                ? `Mostrando coincidencias para "${activeSearch}".`
-                : lookupMode
-                  ? "Sin filtro activo. La vista queda vacia hasta que busques un cliente o credito."
-                  : "Sin filtro activo. Se muestran los creditos mas recientes dentro de tu alcance."}
+              {paymentsView
+                ? activeSearch
+                  ? `Mostrando coincidencias para "${activeSearch}".`
+                  : "Selecciona un cliente para abrir la vista de recaudo."
+                : activeSearch
+                  ? `Mostrando coincidencias para "${activeSearch}".`
+                  : lookupMode
+                    ? "Sin filtro activo. La vista queda vacia hasta que busques un cliente o credito."
+                    : "Sin filtro activo. Se muestran los creditos mas recientes dentro de tu alcance."}
             </p>
 
             <div className="mt-5 space-y-3">
@@ -8332,7 +8386,7 @@ export default function CreditFactoryConsole({
           </div>
           )}
 
-          {paymentsView && (
+          {paymentsView && selectedCredit && (
           <div className="rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] p-6 shadow-[0_18px_50px_rgba(15,23,42,0.07)]">
             {selectedCredit ? (
               <div className="rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
@@ -8357,11 +8411,6 @@ export default function CreditFactoryConsole({
                           ? "Pagado"
                           : "Al dia"}
                     </span>
-                    {(paymentOverview?.overdueCount || 0) > 0 ? (
-                      <span className="inline-flex rounded-full bg-[#171717] px-4 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
-                        {paymentOverview?.overdueCount || 0} en mora
-                      </span>
-                    ) : null}
                     <button
                       type="button"
                       onClick={() => setShowPaymentResults((current) => !current)}
@@ -8375,14 +8424,25 @@ export default function CreditFactoryConsole({
                 <div className="mt-5 grid gap-3 md:grid-cols-2">
                   <button
                     type="button"
-                    className="rounded-[16px] bg-[#0f5654] px-5 py-3.5 text-center text-base font-black text-white shadow-[0_10px_24px_rgba(15,86,84,0.16)]"
+                    onClick={() => setPaymentsTab("pay")}
+                    className={[
+                      "rounded-[16px] px-5 py-3.5 text-center text-base font-black transition",
+                      paymentsTab === "pay"
+                        ? "bg-[#0f5654] text-white shadow-[0_10px_24px_rgba(15,86,84,0.16)]"
+                        : "border border-[#0f5654] bg-white text-[#0f5654] hover:bg-[#f4fbfb]",
+                    ].join(" ")}
                   >
                     Pagar
                   </button>
                   <button
                     type="button"
                     onClick={() => focusHistory()}
-                    className="rounded-[16px] border border-[#0f5654] bg-white px-5 py-3.5 text-center text-base font-black text-[#0f5654] transition hover:bg-[#f4fbfb]"
+                    className={[
+                      "rounded-[16px] px-5 py-3.5 text-center text-base font-black transition",
+                      paymentsTab === "history"
+                        ? "bg-[#0f5654] text-white shadow-[0_10px_24px_rgba(15,86,84,0.16)]"
+                        : "border border-[#0f5654] bg-white text-[#0f5654] hover:bg-[#f4fbfb]",
+                    ].join(" ")}
                   >
                     Historial y certificados
                   </button>
@@ -8390,11 +8450,7 @@ export default function CreditFactoryConsole({
               </div>
             ) : null}
 
-            {!selectedCredit ? (
-              <div className="mt-6 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm leading-6 text-slate-500">
-                Busca y selecciona un cliente para registrar abonos, ver saldo pendiente y consultar el historial de pagos.
-              </div>
-            ) : (
+            {!selectedCredit ? null : (
               <>
                 {false && (
                 <div className="mt-6 grid gap-3 md:grid-cols-2">
@@ -8503,6 +8559,8 @@ export default function CreditFactoryConsole({
                 </div>
                 )}
 
+                {paymentsTab === "pay" ? (
+                <>
                 <div className="mt-6 rounded-[24px] border border-[#d9e6ea] bg-white p-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                     Pagar
@@ -8535,6 +8593,11 @@ export default function CreditFactoryConsole({
                           {currency(selectedInstallmentTotal)}
                         </p>
                       </div>
+                      {selectedOverdueTotal > 0 ? (
+                        <p className="mt-3 text-xs font-semibold text-[#ffd5bd]">
+                          Mora dentro de la seleccion: {currency(selectedOverdueTotal)}
+                        </p>
+                      ) : null}
                       <div className="mt-3 flex flex-wrap gap-2">
                         {selectedInstallmentsData.length ? (
                           selectedInstallmentsData.map((item) => (
@@ -8641,7 +8704,7 @@ export default function CreditFactoryConsole({
                         Plan de pagos
                       </p>
                       <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">
-                        2. Selecciona las cuotas que se van a pagar
+                        Selecciona las cuotas que se van a pagar
                       </h3>
                     </div>
                     <button
@@ -8725,64 +8788,121 @@ export default function CreditFactoryConsole({
                     ) : null}
                   </div>
                 </div>
+                </>
+                ) : (
 
-                <div className="mt-6">
-                  <div className="flex items-end justify-between gap-4">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Historial de abonos
-                      </p>
-                      <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">
-                        Pagos registrados
-                      </h3>
+                <div ref={historySectionRef} className="mt-6 grid gap-6 xl:grid-cols-[0.82fr_1.18fr]">
+                  <div className="rounded-[24px] border border-[#d9e6ea] bg-white p-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
+                      Certificados y documentos
+                    </p>
+                    <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                      Documentos del credito
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      Aqui puede consultar el contrato, el plan de pagos y el paz y salvo cuando el credito ya no tenga saldo pendiente.
+                    </p>
+
+                    <div className="mt-5 space-y-3">
+                      <button
+                        type="button"
+                        onClick={() => downloadExpedientePdf()}
+                        className="flex w-full items-center justify-between rounded-[18px] border border-slate-300 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        <span>Contrato y documentos firmados</span>
+                        <span className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                          PDF
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => downloadPlanPagos()}
+                        className="flex w-full items-center justify-between rounded-[18px] border border-slate-300 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        <span>Plan de pagos</span>
+                        <span className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                          PDF
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => downloadPazYSalvo()}
+                        disabled={(paymentOverview?.saldoPendiente ?? selectedCredit.saldoPendiente) > 0}
+                        className="flex w-full items-center justify-between rounded-[18px] border border-slate-300 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <span>Paz y salvo</span>
+                        <span className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                          PDF
+                        </span>
+                      </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => selectedCredit && void loadPayments(selectedCredit.id)}
-                      disabled={!selectedCredit || loadingPayments}
-                      className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
-                    >
-                      {loadingPayments ? "Actualizando..." : "Recargar"}
-                    </button>
+                    <p className="mt-4 text-xs font-medium text-slate-500">
+                      {(paymentOverview?.saldoPendiente ?? selectedCredit.saldoPendiente) > 0
+                        ? "El paz y salvo se habilita cuando el saldo pendiente sea cero."
+                        : "El paz y salvo ya esta disponible para este credito."}
+                    </p>
                   </div>
 
-                  <div className="mt-4 space-y-3">
-                    {!payments.length && !loadingPayments ? (
-                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-                        Aun no hay abonos registrados para este credito.
+                  <div className="rounded-[24px] border border-[#d9e6ea] bg-white p-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
+                    <div className="flex items-end justify-between gap-4">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          Historial de abonos
+                        </p>
+                        <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                          Pagos realizados
+                        </h3>
                       </div>
-                    ) : (
-                      payments.map((payment) => (
-                        <div
-                          key={payment.id}
-                          className="rounded-[22px] border border-[#e6dece] bg-white px-4 py-4 shadow-sm"
-                        >
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                {dateTime(payment.fechaAbono)}
-                              </p>
-                              <p className="mt-2 text-lg font-black text-slate-950">
-                                {currency(payment.valor)}
-                              </p>
-                              <p className="mt-1 text-sm text-slate-500">
-                                Metodo: {paymentMethodLabel(payment.metodoPago)}
-                              </p>
-                              <p className="mt-1 text-sm text-slate-500">
-                                Recibido por {payment.usuario.nombre}
-                              </p>
-                            </div>
 
-                            <div className="max-w-sm rounded-2xl border border-slate-200 bg-[#fcfaf6] px-4 py-3 text-sm text-slate-600">
-                              {payment.observacion || "Sin observacion"}
+                      <button
+                        type="button"
+                        onClick={() => selectedCredit && void loadPayments(selectedCredit.id)}
+                        disabled={!selectedCredit || loadingPayments}
+                        className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                      >
+                        {loadingPayments ? "Actualizando..." : "Recargar"}
+                      </button>
+                    </div>
+
+                    <div className="mt-4 space-y-3">
+                      {!payments.length && !loadingPayments ? (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                          Aun no hay abonos registrados para este credito.
+                        </div>
+                      ) : (
+                        payments.map((payment) => (
+                          <div
+                            key={payment.id}
+                            className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4"
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                  {dateTime(payment.fechaAbono)}
+                                </p>
+                                <p className="mt-2 text-lg font-black text-slate-950">
+                                  {currency(payment.valor)}
+                                </p>
+                                <p className="mt-1 text-sm text-slate-500">
+                                  Metodo: {paymentMethodLabel(payment.metodoPago)}
+                                </p>
+                                <p className="mt-1 text-sm text-slate-500">
+                                  Recibido por {payment.usuario.nombre}
+                                </p>
+                              </div>
+
+                              <div className="max-w-sm rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                                {payment.observacion || "Sin observacion"}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))
-                    )}
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
+                )}
               </>
             )}
           </div>
