@@ -327,12 +327,11 @@ function SellerActionCard({ href, title, description, icon }: SellerAction) {
   return (
     <Link
       href={href}
-      className="group relative overflow-hidden rounded-[28px] border border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#eef1f5_58%,#e0e4ea_100%)] px-6 py-6 text-slate-950 shadow-[0_18px_36px_rgba(15,23,42,0.10)] transition duration-200 hover:-translate-y-1 hover:shadow-[0_24px_42px_rgba(15,23,42,0.14)]"
+      className="group relative overflow-hidden rounded-[24px] border border-emerald-950/10 bg-white px-6 py-6 text-slate-950 shadow-[0_18px_36px_rgba(23,32,29,0.09)] transition duration-200 hover:-translate-y-1 hover:border-emerald-400 hover:shadow-[0_24px_42px_rgba(18,184,134,0.14)]"
     >
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.82),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(24,24,27,0.06),transparent_32%)]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
 
-      <div className="relative flex h-20 w-20 items-center justify-center rounded-[24px] border border-zinc-700 bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] text-white shadow-[0_14px_26px_rgba(15,23,42,0.18)]">
+      <div className="relative flex h-20 w-20 items-center justify-center rounded-[22px] border border-emerald-900/10 bg-[linear-gradient(135deg,#17201d_0%,#12b886_100%)] text-white shadow-[0_14px_26px_rgba(18,184,134,0.20)]">
         <SellerIcon kind={icon} className="h-11 w-11" />
       </div>
 
@@ -508,6 +507,7 @@ export default async function DashboardPage() {
           { href: "/dashboard/reportes", label: "Reportes admin" },
           { href: "/dashboard/usuarios", label: "Vendedores" },
           { href: "/dashboard/sedes", label: "Sedes" },
+          { href: "/dashboard/catalogo-equipos", label: "Catalogo de equipos" },
           { href: "/dashboard/integraciones", label: "Centro de integraciones" },
           { href: "/dashboard/equality", label: "Equality Zero Touch" },
         ]
@@ -566,6 +566,20 @@ export default async function DashboardPage() {
               "Busca al cliente, revisa cartera y recibe cuotas sin mezclarlo con la creacion.",
             icon: "payments" as const,
           },
+          {
+            href: "/dashboard/reportes/creditos",
+            title: "Creditos por fecha",
+            description:
+              "Filtra ventas realizadas por rango de fechas y revisa la tabla de la sede.",
+            icon: "calculator" as const,
+          },
+          {
+            href: "/dashboard/reportes/abonos",
+            title: "Abonos por fecha",
+            description:
+              "Consulta pagos recibidos por fecha para cuadrar caja y seguimiento de cartera.",
+            icon: "payments" as const,
+          },
         ]
       : [
           {
@@ -585,6 +599,8 @@ export default async function DashboardPage() {
       ? [
           { href: "/dashboard#busqueda-rapida", label: "Buscar cliente", icon: "clients" as const },
           { href: "/dashboard/abonos", label: "Abonos", icon: "payments" as const },
+          { href: "/dashboard/reportes/creditos", label: "Creditos por fecha", icon: "calculator" as const },
+          { href: "/dashboard/reportes/abonos", label: "Abonos por fecha", icon: "payments" as const },
         ]
       : [{ href: "/dashboard/creditos", label: "Validar entrega", icon: "search" as const }]),
     {
@@ -597,9 +613,9 @@ export default async function DashboardPage() {
 
   if (!admin) {
     return (
-      <div className="min-h-screen bg-[linear-gradient(180deg,#f2f4f7_0%,#e4e7ec_58%,#dde1e7_100%)] text-slate-950">
+      <div className="fp-shell min-h-screen text-slate-950">
         <div className="min-h-screen lg:grid lg:grid-cols-[292px_minmax(0,1fr)]">
-          <aside className="flex flex-col bg-[linear-gradient(180deg,#050506_0%,#18181b_42%,#2b2b31_100%)] text-white shadow-[18px_0_48px_rgba(15,23,42,0.18)]">
+          <aside className="fp-hero flex flex-col text-white shadow-[18px_0_48px_rgba(23,32,29,0.18)]">
             <div className="px-5 py-5">
               <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.12)_0%,rgba(255,255,255,0.04)_100%)] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.2)]">
                 <DashboardLogoBadge dark />
@@ -640,10 +656,10 @@ export default async function DashboardPage() {
           </aside>
 
           <div className="flex min-h-screen flex-col">
-            <header className="border-b border-zinc-300/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.88)_0%,rgba(241,245,249,0.84)_100%)] px-4 py-5 backdrop-blur sm:px-8">
+            <header className="border-b border-emerald-950/10 bg-white/82 px-4 py-5 backdrop-blur sm:px-8">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-700">
                     Panel comercial
                   </p>
                   <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">
@@ -660,14 +676,14 @@ export default async function DashboardPage() {
                   <span className="rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#edf0f4_100%)] px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-700">
                     {sedeLabel}
                   </span>
-                    <span className="rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#f8fafc_0%,#e5e7eb_100%)] px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-700">
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-800">
                       {sellerSession?.debeCambiarPin
                         ? "Cambiar PIN"
                         : sellerIsSupervisor
                           ? "Supervisor"
                           : "Vendedor"}
                     </span>
-                  <div className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-700 bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] text-white shadow-[0_10px_24px_rgba(15,23,42,0.14)]">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full border border-emerald-900/10 bg-[linear-gradient(135deg,#12b886_0%,#18a7b5_100%)] text-white shadow-[0_10px_24px_rgba(18,184,134,0.22)]">
                     <SellerIcon kind="new-sale" className="h-8 w-8" />
                   </div>
                 </div>
@@ -698,13 +714,12 @@ export default async function DashboardPage() {
 
                 <section
                   id="busqueda-rapida"
-                  className="relative overflow-hidden rounded-[34px] border border-zinc-300 bg-[linear-gradient(135deg,#ffffff_0%,#eef1f5_56%,#e1e5eb_100%)] px-6 py-8 shadow-[0_18px_36px_rgba(15,23,42,0.10)]"
+                  className="fp-surface relative overflow-hidden rounded-[28px] px-6 py-8"
                 >
-                  <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
-                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.82),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(24,24,27,0.06),transparent_34%)]" />
+                  <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
 
                   <div className="relative">
-                    <div className="inline-flex rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#f8fafc_0%,#e5e7eb_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-700">
+                    <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]">
                       Busqueda rapida
                     </div>
 
@@ -928,6 +943,14 @@ export default async function DashboardPage() {
       tone: "teal",
     },
     {
+      href: "/dashboard/catalogo-equipos",
+      title: "Catalogo de equipos",
+      description:
+        "Administra marcas, modelos y precio base para que el asesor solo seleccione y venda.",
+      eyebrow: "Equipos",
+      tone: "amber",
+    },
+    {
       href: "/dashboard/integraciones",
       title: "Centro de integraciones",
       description:
@@ -973,14 +996,13 @@ export default async function DashboardPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(180deg,#f2f4f7_0%,#e4e7ec_58%,#dde1e7_100%)] text-slate-950">
+    <div className="fp-shell min-h-screen text-slate-950">
       <main className="mx-auto max-w-7xl px-4 py-8">
-        <section className="relative overflow-hidden rounded-[36px] border border-zinc-700/40 bg-[linear-gradient(135deg,#050506_0%,#18181b_40%,#3f3f46_78%,#6b7280_100%)] px-6 py-7 text-white shadow-[0_24px_80px_rgba(15,23,42,0.24)] md:px-8">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.16),transparent_28%),radial-gradient(circle_at_top_right,rgba(255,255,255,0.1),transparent_24%),linear-gradient(180deg,rgba(255,255,255,0.04),transparent_35%)]" />
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.9),transparent)]" />
+        <section className="fp-hero relative overflow-hidden rounded-[30px] border border-emerald-950/10 px-6 py-7 text-white shadow-[0_24px_80px_rgba(23,32,29,0.20)] md:px-8">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-3xl">
-              <div className="relative inline-flex rounded-full border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.16)_0%,rgba(255,255,255,0.06)_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/88">
+              <div className="relative inline-flex rounded-full border border-white/14 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-50">
                 Administracion
               </div>
 
@@ -989,7 +1011,7 @@ export default async function DashboardPage() {
               </div>
 
               <h1 className="relative mt-5 text-4xl font-black tracking-tight md:text-5xl">
-                Dashboard admin
+                Centro de control
               </h1>
 
               <p className="relative mt-3 text-sm leading-6 text-zinc-300 md:text-base">
@@ -1015,11 +1037,11 @@ export default async function DashboardPage() {
           ))}
         </section>
 
-        <section className="relative mt-6 overflow-hidden rounded-[30px] bg-[linear-gradient(180deg,#ffffff_0%,#eef1f5_56%,#e3e7ed_100%)] p-6 shadow-[0_14px_34px_rgba(15,23,42,0.08)] ring-1 ring-zinc-300">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
+        <section className="fp-surface relative mt-6 overflow-hidden rounded-[28px] p-6">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#18a7b5,#ff6b4a)]" />
           <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
             <div className="max-w-2xl">
-              <div className="inline-flex rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#f8fafc_0%,#e5e7eb_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-700">
+              <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
                 Sesion actual
               </div>
               <h2 className="mt-4 text-3xl font-black tracking-tight text-zinc-950">
@@ -1057,10 +1079,10 @@ export default async function DashboardPage() {
           </div>
         </section>
 
-        <section className="relative mt-6 overflow-hidden rounded-[30px] bg-[linear-gradient(180deg,#ffffff_0%,#eef1f5_56%,#e3e7ed_100%)] p-6 shadow-[0_14px_34px_rgba(15,23,42,0.08)] ring-1 ring-zinc-300">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
+        <section className="fp-surface relative mt-6 overflow-hidden rounded-[28px] p-6">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
           <div>
-            <div className="inline-flex rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#f8fafc_0%,#e5e7eb_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-700">
+            <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
               Modulos principales
             </div>
             <h2 className="mt-4 text-3xl font-black tracking-tight text-zinc-950">

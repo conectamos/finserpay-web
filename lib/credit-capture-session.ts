@@ -34,7 +34,10 @@ export function detectLocalIpv4Address() {
 
 export function resolveCaptureSessionOrigin(request: Request) {
   const url = new URL(request.url);
-  const host = request.headers.get("host") || url.host;
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const host = forwardedHost || request.headers.get("host") || url.host;
+  const protocol = forwardedProto || url.protocol.replace(":", "");
   const hostname = host.split(":")[0] || url.hostname;
 
   if (hostname === "localhost" || hostname === "127.0.0.1") {
@@ -42,11 +45,11 @@ export function resolveCaptureSessionOrigin(request: Request) {
 
     if (localIp) {
       const port = host.includes(":") ? host.split(":").slice(1).join(":") : url.port;
-      return `${url.protocol}//${localIp}${port ? `:${port}` : ""}`;
+      return `${protocol}://${localIp}${port ? `:${port}` : ""}`;
     }
   }
 
-  return url.origin;
+  return `${protocol}://${host}`;
 }
 
 export function resolveCaptureSessionState(session: {

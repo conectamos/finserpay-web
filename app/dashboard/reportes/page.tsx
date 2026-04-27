@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getSessionUser } from "@/lib/auth";
+import { getSellerSessionUser } from "@/lib/seller-auth";
 import { isAdminRole } from "@/lib/roles";
 
 const reportCards = [
@@ -37,7 +38,10 @@ export default async function ReportesAdminPage() {
     return <div className="p-10">No autenticado</div>;
   }
 
-  if (!isAdminRole(session.rolNombre)) {
+  const admin = isAdminRole(session.rolNombre);
+  const sellerSession = admin ? null : await getSellerSessionUser(session);
+
+  if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
     return (
       <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
         <div className="mx-auto max-w-4xl rounded-[32px] bg-white p-8 shadow-sm ring-1 ring-slate-200">
@@ -45,7 +49,7 @@ export default async function ReportesAdminPage() {
             Acceso restringido
           </div>
           <h1 className="mt-4 text-3xl font-black text-slate-950">
-            Solo el administrador puede ver este centro de reportes
+            Solo supervisor o administrador puede ver este centro de reportes
           </h1>
           <div className="mt-6">
             <Link
@@ -87,7 +91,9 @@ export default async function ReportesAdminPage() {
         </section>
 
         <section className="mt-8 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-          {reportCards.map((card) => (
+          {reportCards
+            .filter((card) => admin || !["/dashboard/sedes", "/dashboard/usuarios"].includes(card.href))
+            .map((card) => (
             <Link
               key={card.href}
               href={card.href}

@@ -35,10 +35,13 @@ import {
   queryEqualityDevices,
   uploadEqualityInventoryDevice,
 } from "@/lib/equality-zero-touch";
+import { findEquipmentCatalogItem } from "@/lib/equipment-catalog";
 import { isAdminRole } from "@/lib/roles";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION = true;
 
 const CONTRACT_TEMPLATE_TITLE =
   "CONTRATO DE FINANCIACION DE EQUIPO MOVIL, AUTORIZACION DE TRATAMIENTO DE DATOS Y USO DE HERRAMIENTAS TECNOLOGICAS";
@@ -136,6 +139,7 @@ type CreditCreateBody = {
   deviceUid?: string;
   equipoMarca?: string;
   equipoModelo?: string;
+  equipoCatalogoId?: number | string;
   fianzaPorcentaje?: number | string;
   fechaPrimerPago?: string;
   imei?: string;
@@ -200,6 +204,15 @@ function serializeCredit(item: any, paymentMap?: Map<number, PaymentAggregate>) 
     totalAbonado: payment.totalAbonado,
     abonosCount: payment.abonosCount,
   });
+  const proximoPago = item.fechaProximoPago ? new Date(item.fechaProximoPago) : null;
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+  const estadoPago =
+    paymentSummary.saldoPendiente <= 0
+      ? "PAGADO"
+      : proximoPago && proximoPago.getTime() < today.getTime()
+        ? "MORA"
+        : "AL_DIA";
 
   return {
     id: item.id,
@@ -273,6 +286,7 @@ function serializeCredit(item: any, paymentMap?: Map<number, PaymentAggregate>) 
     saldoPendiente: paymentSummary.saldoPendiente,
     totalRecaudado: paymentSummary.totalRecaudado,
     porcentajeRecaudado: paymentSummary.porcentajeRecaudado,
+    estadoPago,
     abonosCount: paymentSummary.abonosCount,
     ultimoAbonoAt: payment.ultimoAbonoAt?.toISOString() || null,
     createdAt: item.createdAt.toISOString(),
@@ -359,6 +373,15 @@ async function buildPaymentSummaryMap(creditIds: number[]) {
   return map;
 }
 
+function getCreditPendingBalance(item: any, payment?: PaymentAggregate) {
+  return resolveCreditPaymentSummary({
+    montoCredito: item.montoCredito,
+    cuotaInicial: item.cuotaInicial,
+    totalAbonado: Number(payment?.totalAbonado || 0),
+    abonosCount: Number(payment?.abonosCount || 0),
+  }).saldoPendiente;
+}
+
 async function runBusinessSafe<T>(work: () => Promise<T>) {
   try {
     return await work();
@@ -384,6 +407,7 @@ export async function GET(req: Request) {
     const admin = isAdminRole(user.rolNombre);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
     const search = sanitizeSearch(searchParams.get("search"));
+    const searchDigits = search.replace(/\D/g, "");
 
     if (!admin && !sellerSession) {
       return NextResponse.json(
@@ -402,24 +426,36 @@ export async function GET(req: Request) {
     }
 
     const scopeWhere: Prisma.CreditoWhereInput = admin ? {} : { sedeId: user.sedeId };
+    const searchOr: Prisma.CreditoWhereInput[] = search
+      ? [
+          { clienteNombre: { contains: search, mode: "insensitive" } },
+          { clienteDocumento: { contains: search, mode: "insensitive" } },
+          { clienteTelefono: { contains: search, mode: "insensitive" } },
+          { clienteDireccion: { contains: search, mode: "insensitive" } },
+          { folio: { contains: search, mode: "insensitive" } },
+          { imei: { contains: search, mode: "insensitive" } },
+          { deviceUid: { contains: search, mode: "insensitive" } },
+          { referenciaEquipo: { contains: search, mode: "insensitive" } },
+          { equipoMarca: { contains: search, mode: "insensitive" } },
+          { equipoModelo: { contains: search, mode: "insensitive" } },
+          { vendedor: { nombre: { contains: search, mode: "insensitive" } } },
+        ]
+      : [];
+
+    if (searchDigits.length >= 3 && searchDigits !== search) {
+      searchOr.push(
+        { clienteDocumento: { contains: searchDigits, mode: "insensitive" } },
+        { clienteTelefono: { contains: searchDigits, mode: "insensitive" } },
+        { imei: { contains: searchDigits, mode: "insensitive" } },
+        { deviceUid: { contains: searchDigits, mode: "insensitive" } }
+      );
+    }
     const where: Prisma.CreditoWhereInput = search
       ? {
           AND: [
             scopeWhere,
             {
-              OR: [
-                { clienteNombre: { contains: search, mode: "insensitive" } },
-                { clienteDocumento: { contains: search, mode: "insensitive" } },
-                { clienteTelefono: { contains: search, mode: "insensitive" } },
-                { clienteDireccion: { contains: search, mode: "insensitive" } },
-                { folio: { contains: search, mode: "insensitive" } },
-                { imei: { contains: search, mode: "insensitive" } },
-                { deviceUid: { contains: search, mode: "insensitive" } },
-                { referenciaEquipo: { contains: search, mode: "insensitive" } },
-                { equipoMarca: { contains: search, mode: "insensitive" } },
-                { equipoModelo: { contains: search, mode: "insensitive" } },
-                { vendedor: { nombre: { contains: search, mode: "insensitive" } } },
-              ],
+              OR: searchOr,
             },
           ],
         }
@@ -519,7 +555,17 @@ export async function POST(req: Request) {
       .replace(/\D/g, "")
       .slice(0, 15);
     const valorEquipoTotalInput = toNumber(body.valorEquipoTotal);
-    const cuotaInicial = calculateRequiredInitialPayment(valorEquipoTotalInput);
+    const catalogItem =
+      equipoMarca && equipoModelo
+        ? await findEquipmentCatalogItem({ marca: equipoMarca, modelo: equipoModelo })
+        : null;
+    const precioBaseVentaCatalogo = catalogItem?.activo
+      ? catalogItem.precioBaseVenta
+      : null;
+    const cuotaInicial = calculateRequiredInitialPayment(
+      valorEquipoTotalInput,
+      precioBaseVentaCatalogo
+    );
     const plazoMeses = Math.max(0, Math.trunc(toNumber(body.plazoMeses)));
     const fechaPrimerPago = extendDays(15, null);
     const contratoAceptado = Boolean(body.contratoAceptado);
@@ -755,6 +801,55 @@ export async function POST(req: Request) {
       );
     }
 
+    const soldDevice = await prisma.credito.findFirst({
+      where: {
+        OR: [{ imei }, { deviceUid }],
+      },
+      select: {
+        id: true,
+        folio: true,
+        imei: true,
+        deviceUid: true,
+      },
+    });
+
+    if (soldDevice) {
+      return NextResponse.json(
+        {
+          error: `Este IMEI/deviceUid ya fue vendido en el credito ${soldDevice.folio}. No se puede crear otra venta con el mismo equipo.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const clientCredits = await prisma.credito.findMany({
+      where: { clienteDocumento },
+      select: {
+        id: true,
+        folio: true,
+        montoCredito: true,
+        cuotaInicial: true,
+      },
+    });
+
+    if (clientCredits.length) {
+      const clientPaymentMap = await buildPaymentSummaryMap(
+        clientCredits.map((item) => item.id)
+      );
+      const activeCredit = clientCredits.find(
+        (item) => getCreditPendingBalance(item, clientPaymentMap.get(item.id)) > 0
+      );
+
+      if (activeCredit) {
+        return NextResponse.json(
+          {
+            error: `La cedula ya tiene saldo vigente en el credito ${activeCredit.folio}. Solo puedes crear una nueva venta cuando el saldo este en $0.`,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     if (!equipoMarca || !equipoModelo) {
       return NextResponse.json(
         { error: "Debes ingresar la marca y el modelo del equipo" },
@@ -811,13 +906,6 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!contratoOtpVerificadoAt) {
-      return NextResponse.json(
-        { error: "Debes validar el OTP del cliente antes de continuar" },
-        { status: 400 }
-      );
-    }
-
     if (!contratoVideoAprobacionDataUrl) {
       return NextResponse.json(
         { error: "Debes registrar el video de aprobacion del cliente" },
@@ -860,7 +948,10 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!isEqualityConfigured()) {
+    const allowPendingDeliveryClose =
+      ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION;
+
+    if (!isEqualityConfigured() && !allowPendingDeliveryClose) {
       return NextResponse.json(
         {
           error:
@@ -880,40 +971,44 @@ export async function POST(req: Request) {
       | ReturnType<typeof getEqualityDeviceMeta>
       | null = null;
 
-    try {
-      equalityUpload = await runBusinessSafe(() =>
-        uploadEqualityInventoryDevice(deviceUid)
-      );
-      equalityActivate = await runBusinessSafe(() =>
-        activateEqualityFinancingService(deviceUid)
-      );
-      equalityQuery = await runBusinessSafe(() => queryEqualityDevices(deviceUid));
-      equalitySummary = getPayloadSummary(equalityQuery);
-      equalityMeta = getEqualityDeviceMeta(equalityQuery);
-    } catch (error) {
-      console.error("ERROR VALIDANDO ENTREGABILIDAD EN ZERO TOUCH:", error);
-
-      if (isEqualityApiError(error)) {
-        return NextResponse.json(
-          {
-            error: `Zero Touch no confirmo la entregabilidad: ${error.message}`,
-            remoteStatus: error.status,
-            remotePayload: error.payload,
-          },
-          { status: error.status >= 500 ? 502 : error.status }
+    if (isEqualityConfigured()) {
+      try {
+        equalityUpload = await runBusinessSafe(() =>
+          uploadEqualityInventoryDevice(deviceUid)
         );
-      }
+        equalityActivate = await runBusinessSafe(() =>
+          activateEqualityFinancingService(deviceUid)
+        );
+        equalityQuery = await runBusinessSafe(() => queryEqualityDevices(deviceUid));
+        equalitySummary = getPayloadSummary(equalityQuery);
+        equalityMeta = getEqualityDeviceMeta(equalityQuery);
+      } catch (error) {
+        console.error("ERROR VALIDANDO ENTREGABILIDAD EN ZERO TOUCH:", error);
 
-      return NextResponse.json(
-        {
-          error:
-            "No se pudo validar la entregabilidad del dispositivo antes de crear el credito.",
-        },
-        { status: 502 }
-      );
+        if (!allowPendingDeliveryClose) {
+          if (isEqualityApiError(error)) {
+            return NextResponse.json(
+              {
+                error: `Zero Touch no confirmo la entregabilidad: ${error.message}`,
+                remoteStatus: error.status,
+                remotePayload: error.payload,
+              },
+              { status: error.status >= 500 ? 502 : error.status }
+            );
+          }
+
+          return NextResponse.json(
+            {
+              error:
+                "No se pudo validar la entregabilidad del dispositivo antes de crear el credito.",
+            },
+            { status: 502 }
+          );
+        }
+      }
     }
 
-    if (!equalityMeta?.deliveryStatus?.ready) {
+    if (!equalityMeta?.deliveryStatus?.ready && !allowPendingDeliveryClose) {
       return NextResponse.json(
         {
           error:
@@ -933,6 +1028,10 @@ export async function POST(req: Request) {
         { status: 409 }
       );
     }
+    const pendingDeliveryWarning =
+      allowPendingDeliveryClose && !equalityMeta?.deliveryStatus?.ready
+        ? "Credito creado en modo prueba: la validacion final de entrega quedo pendiente."
+        : undefined;
 
     const contratoSnapshot = {
       template: {
@@ -971,6 +1070,11 @@ export async function POST(req: Request) {
         marca: equipoMarca,
         modelo: equipoModelo,
         imei,
+        catalogoId: catalogItem?.id || null,
+        precioBaseVenta: precioBaseVentaCatalogo,
+        excedentePrecioBase: precioBaseVentaCatalogo
+          ? Math.max(0, valorEquipoTotal - precioBaseVentaCatalogo)
+          : 0,
       },
       financiero: {
         cuotaInicial,
@@ -1006,7 +1110,6 @@ export async function POST(req: Request) {
             "Fotografia",
             "Cedula frente",
             "Cedula respaldo",
-            "OTP",
             "Video de aprobacion",
             "Firma digital",
           ],
@@ -1160,12 +1263,12 @@ export async function POST(req: Request) {
         fechaProximoPago: fechaPrimerPago,
         referenciaPago,
         estado: resolveCreditState({
-          deliverable: equalityMeta.deliveryStatus,
+          deliverable: equalityMeta?.deliveryStatus,
         }),
-        deliverableLabel: equalityMeta.deliveryStatus?.label || null,
-        deliverableReady: Boolean(equalityMeta.deliveryStatus?.ready),
-        equalityState: equalityMeta.deviceState,
-        equalityService: equalityMeta.serviceDetails,
+        deliverableLabel: equalityMeta?.deliveryStatus?.label || null,
+        deliverableReady: Boolean(equalityMeta?.deliveryStatus?.ready),
+        equalityState: equalityMeta?.deviceState || null,
+        equalityService: equalityMeta?.serviceDetails || null,
         equalityPayload: equalityQuery as Prisma.InputJsonValue,
         equalityLastCheckAt: new Date(),
         warrantyUntil: extendDays(15, null),
@@ -1211,8 +1314,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
+      warning: pendingDeliveryWarning,
       item: serializeCredit(created),
-      deliveryStatus: equalityMeta.deliveryStatus,
+      deliveryStatus: equalityMeta?.deliveryStatus || null,
       equality: equalitySummary
         ? {
             upload: equalityUpload,

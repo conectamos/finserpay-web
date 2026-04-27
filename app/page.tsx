@@ -28,61 +28,87 @@ export default function Home() {
       const data = await res.json();
 
       if (!res.ok) {
-        setMensaje(`❌ ${data.error || "Error al conectar con el servidor"}`);
+        setMensaje(data.error || "Error al conectar con el servidor");
         setCargando(false);
         return;
       }
 
-      setMensaje(`✅ Bienvenido ${data.usuario.nombre}`);
+      setMensaje(`Bienvenido ${data.usuario.nombre}`);
 
       setTimeout(() => {
         router.push("/dashboard");
       }, 700);
     } catch {
-      setMensaje("❌ Error al conectar con el servidor");
+      setMensaje("Error al conectar con el servidor");
     } finally {
       setCargando(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff6ea_0%,transparent_28%),linear-gradient(180deg,#f3efe7_0%,#eef3f8_100%)] px-4">
-      <div className="w-full max-w-md rounded-[32px] border border-[#dde3eb] bg-white p-8 shadow-[0_24px_70px_rgba(15,23,42,0.12)]">
-        <div className="mb-8 flex justify-center">
-          <FinserBrand showTagline />
-        </div>
+    <div className="fp-shell flex min-h-screen items-center justify-center px-4 py-8">
+      <div className="grid w-full max-w-5xl overflow-hidden rounded-[30px] border border-emerald-950/10 bg-white shadow-[0_28px_80px_rgba(23,32,29,0.16)] lg:grid-cols-[1.05fr_0.95fr]">
+        <section className="fp-hero relative flex min-h-[520px] flex-col justify-between px-7 py-8 text-white sm:px-9">
+          <div>
+            <FinserBrand dark showTagline />
+            <div className="mt-12 h-px w-full max-w-sm bg-white/14" />
+          </div>
 
-        <p className="mb-6 text-center text-sm font-medium text-slate-500">
-          Ingresa con el usuario y la clave de la sede
-        </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {["Sede segura", "Credito movil"].map((item) => (
+              <div
+                key={item}
+                className="rounded-[22px] border border-white/12 bg-white/8 px-4 py-4 backdrop-blur"
+              >
+                <p className="text-sm font-black">{item}</p>
+              </div>
+            ))}
+          </div>
+        </section>
 
-        <input
-          type="text"
-          placeholder="Usuario de la sede"
-          value={usuario}
-          onChange={(e) => setUsuario(e.target.value)}
-          className="mb-4 w-full rounded-2xl border border-slate-300 bg-white px-5 py-4 text-xl text-slate-900 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-        />
+        <section className="px-7 py-8 sm:px-9">
+          <div className="mb-8">
+            <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]">
+              Acceso sede
+            </div>
+            <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">
+              Ingresa a operar
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Usa el usuario y clave de la sede para abrir el panel comercial.
+            </p>
+          </div>
 
-        <input
-          type="password"
-          placeholder="Clave de la sede"
-          value={clave}
-          onChange={(e) => setClave(e.target.value)}
-          className="mb-5 w-full rounded-2xl border border-slate-300 bg-white px-5 py-4 text-xl text-slate-900 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-        />
+          <input
+            type="text"
+            placeholder="Usuario de la sede"
+            value={usuario}
+            onChange={(e) => setUsuario(e.target.value)}
+            className="mb-4 w-full rounded-[18px] border border-emerald-950/14 bg-[#f8fbf8] px-5 py-4 text-lg text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+          />
 
-        <button
-          onClick={login}
-          disabled={cargando}
-          className="w-full rounded-2xl bg-slate-950 py-4 text-2xl font-semibold text-white transition hover:bg-slate-800 disabled:opacity-70"
-        >
-          {cargando ? "Ingresando..." : "Ingresar"}
-        </button>
+          <input
+            type="password"
+            placeholder="Clave de la sede"
+            value={clave}
+            onChange={(e) => setClave(e.target.value)}
+            className="mb-5 w-full rounded-[18px] border border-emerald-950/14 bg-[#f8fbf8] px-5 py-4 text-lg text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+          />
 
-        {mensaje && (
-          <p className="mt-6 text-center text-lg text-slate-700">{mensaje}</p>
-        )}
+          <button
+            onClick={login}
+            disabled={cargando}
+            className="fp-action w-full rounded-[18px] py-4 text-lg font-black text-white transition hover:scale-[1.01] disabled:opacity-70"
+          >
+            {cargando ? "Ingresando..." : "Ingresar"}
+          </button>
+
+          {mensaje && (
+            <p className="mt-6 rounded-[18px] border border-emerald-950/10 bg-emerald-50 px-4 py-3 text-center text-sm font-semibold text-emerald-900">
+              {mensaje}
+            </p>
+          )}
+        </section>
       </div>
     </div>
   );

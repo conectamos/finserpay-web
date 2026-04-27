@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
+import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import {
   extendDays,
@@ -32,6 +33,13 @@ type CommandBody = {
   fechaProximoPago?: string;
   observacionAdmin?: string;
 };
+
+const SUPERVISOR_COMMANDS: CreditAdminCommand[] = [
+  "consult-device",
+  "payment-reference",
+  "toggle-stolen-lock",
+  "remove-lock",
+];
 
 function parseId(value: string) {
   const numeric = Number(value);
@@ -202,9 +210,12 @@ export async function POST(
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    if (!isAdminRole(user.rolNombre)) {
+    const admin = isAdminRole(user.rolNombre);
+    const sellerSession = admin ? null : await getSellerSessionUser(user);
+
+    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
       return NextResponse.json(
-        { error: "Solo el administrador puede ejecutar estos comandos" },
+        { error: "Solo supervisor o administrador puede ejecutar estos comandos" },
         { status: 403 }
       );
     }
@@ -223,8 +234,15 @@ export async function POST(
 
     const current = await loadCredit(creditId);
 
-    if (!current) {
+    if (!current || (!admin && current.sedeId !== user.sedeId)) {
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
+    }
+
+    if (!admin && !SUPERVISOR_COMMANDS.includes(command)) {
+      return NextResponse.json(
+        { error: "El supervisor solo puede consultar, bloquear o desbloquear el equipo" },
+        { status: 403 }
+      );
     }
 
     let adminMessage = "Comando aplicado";

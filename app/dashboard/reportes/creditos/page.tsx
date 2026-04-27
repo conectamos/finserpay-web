@@ -57,6 +57,8 @@ type CreditReportResponse = {
   summary: {
     totalCreditos: number;
     totalMontoCredito: number;
+    totalInicial?: number;
+    totalSaldoCredito?: number;
     totalAbonado: number;
     totalRecaudado: number;
     totalPendiente: number;
@@ -118,6 +120,7 @@ export default function ReporteCreditosPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [sedeId, setSedeId] = useState("");
+  const isAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
 
   const loadContext = async () => {
     const [sessionRes, sedesRes] = await Promise.all([
@@ -185,13 +188,15 @@ export default function ReporteCreditosPage() {
         <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="inline-flex rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#145a5a]">
-              Reportes admin
+              {isAdmin ? "Reportes admin" : "Reportes de sede"}
             </div>
             <h1 className="mt-4 text-4xl font-black tracking-tight text-slate-950">
               Tabla de creditos
             </h1>
             <p className="mt-2 text-sm text-slate-600">
-              Vista administrativa de todos los creditos creados, el recaudo acumulado y el saldo pendiente por cobrar.
+              {isAdmin
+                ? "Vista administrativa de creditos creados, iniciales recibidas y saldo financiado por venta."
+                : "Vista de los creditos creados en tu sede asignada, con iniciales y saldo financiado."}
             </p>
           </div>
 
@@ -205,23 +210,19 @@ export default function ReporteCreditosPage() {
           </div>
         </div>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
             label="Total creditos"
             value={loading ? "..." : String(summary?.totalCreditos || 0)}
             tone="teal"
           />
           <SummaryCard
-            label="Monto financiado"
-            value={loading ? "..." : formatMoney(summary?.totalMontoCredito || 0)}
+            label="Inicial dada"
+            value={loading ? "..." : formatMoney(summary?.totalInicial || 0)}
           />
           <SummaryCard
-            label="Recaudado"
-            value={loading ? "..." : formatMoney(summary?.totalRecaudado || 0)}
-          />
-          <SummaryCard
-            label="Pendiente por cobrar"
-            value={loading ? "..." : formatMoney(summary?.totalPendiente || 0)}
+            label="Saldo credito"
+            value={loading ? "..." : formatMoney(summary?.totalSaldoCredito || summary?.totalMontoCredito || 0)}
             tone="amber"
           />
           <SummaryCard
@@ -253,18 +254,24 @@ export default function ReporteCreditosPage() {
               className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
             />
 
-            <select
-              value={sedeId}
-              onChange={(event) => setSedeId(event.target.value)}
-              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-            >
-              <option value="">Todas las sedes</option>
-              {sedes.map((sede) => (
-                <option key={sede.id} value={sede.id}>
-                  {sede.nombre}
-                </option>
-              ))}
-            </select>
+            {isAdmin ? (
+              <select
+                value={sedeId}
+                onChange={(event) => setSedeId(event.target.value)}
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="">Todas las sedes</option>
+                {sedes.map((sede) => (
+                  <option key={sede.id} value={sede.id}>
+                    {sede.nombre}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
+                {user?.sedeNombre || sedes[0]?.nombre || "Sede asignada"}
+              </div>
+            )}
 
             <button
               type="button"
@@ -290,9 +297,8 @@ export default function ReporteCreditosPage() {
                   <th className="px-4 py-3 text-left font-semibold">Cliente</th>
                   <th className="px-4 py-3 text-left font-semibold">Sede</th>
                   <th className="px-4 py-3 text-left font-semibold">Vendedor</th>
-                  <th className="px-4 py-3 text-left font-semibold">Monto</th>
-                  <th className="px-4 py-3 text-left font-semibold">Abonado</th>
-                  <th className="px-4 py-3 text-left font-semibold">Pendiente</th>
+                  <th className="px-4 py-3 text-left font-semibold">Inicial dada</th>
+                  <th className="px-4 py-3 text-left font-semibold">Saldo credito</th>
                   <th className="px-4 py-3 text-left font-semibold">Estado</th>
                 </tr>
               </thead>
@@ -307,9 +313,8 @@ export default function ReporteCreditosPage() {
                     </td>
                     <td className="px-4 py-3">{item.sede.nombre}</td>
                     <td className="px-4 py-3">{item.usuario.nombre}</td>
+                    <td className="px-4 py-3">{formatMoney(item.cuotaInicial)}</td>
                     <td className="px-4 py-3">{formatMoney(item.montoCredito)}</td>
-                    <td className="px-4 py-3">{formatMoney(item.totalAbonado)}</td>
-                    <td className="px-4 py-3">{formatMoney(item.saldoPendiente)}</td>
                     <td className="px-4 py-3">
                       <div className="font-semibold text-slate-950">{item.estado}</div>
                       <div className="text-xs text-slate-500">
@@ -320,7 +325,7 @@ export default function ReporteCreditosPage() {
                 ))}
                 {!loading && items.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                       No hay creditos para los filtros seleccionados.
                     </td>
                   </tr>

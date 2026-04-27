@@ -134,11 +134,14 @@ export function calculateFinancedBalance(
 }
 
 export function calculateRequiredInitialPayment(
-  valorTotalEquipo: number | null | undefined
+  valorTotalEquipo: number | null | undefined,
+  precioBaseVenta?: number | null
 ) {
   const total = Math.max(0, Number(valorTotalEquipo || 0));
-  const financedBase = Math.min(total, MAX_DEVICE_FINANCING_BASE);
-  const excedente = Math.max(0, total - MAX_DEVICE_FINANCING_BASE);
+  const catalogBase = Math.max(0, Number(precioBaseVenta || 0));
+  const limit = catalogBase > 0 ? catalogBase : MAX_DEVICE_FINANCING_BASE;
+  const financedBase = Math.min(total, limit);
+  const excedente = Math.max(0, total - limit);
   const initial = financedBase * 0.2 + excedente;
 
   return Math.round(initial * 100) / 100;
@@ -220,17 +223,25 @@ export function sanitizeImageDataUrl(value: unknown) {
     return "";
   }
 
-  return normalized.slice(0, 2_500_000);
+  if (normalized.length > 2_500_000) {
+    return "";
+  }
+
+  return normalized;
 }
 
 export function sanitizeVideoDataUrl(value: unknown) {
   const normalized = String(value ?? "").trim();
 
-  if (!/^data:video\/(webm|mp4|ogg);base64,/i.test(normalized)) {
+  if (!/^data:video\/(webm|mp4|ogg|quicktime|mov|x-m4v);base64,/i.test(normalized)) {
     return "";
   }
 
-  return normalized.slice(0, 10_000_000);
+  if (normalized.length > 10_000_000) {
+    return "";
+  }
+
+  return normalized;
 }
 
 export function resolveCreditPaymentSummary(options: {

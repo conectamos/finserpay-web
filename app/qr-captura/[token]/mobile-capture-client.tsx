@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type ChangeEvent,
-  type FormEvent,
 } from "react";
 import FinserBrand from "@/app/_components/finser-brand";
 
@@ -54,8 +53,6 @@ type ImageCaptureKind = "selfie" | "cedula-frente" | "cedula-respaldo";
 type PreviewKey = ImageCaptureKind | "video-aprobacion";
 
 type LocalPreviewMap = Partial<Record<PreviewKey, string>>;
-
-const MOBILE_IMAGE_ACCEPT = "image/*,.heic,.heif";
 
 function noticeClasses(tone: NoticeTone) {
   switch (tone) {
@@ -196,11 +193,53 @@ async function compressImageFile(file: File, maxSide = 960, quality = 0.82) {
   }
 }
 
-function ensureVideoDataUrl(value: string) {
-  const normalized = String(value || "").trim();
+function inferVideoMimeType(file: File) {
+  const type = String(file.type || "").toLowerCase();
+  const name = String(file.name || "").toLowerCase();
 
-  if (!/^data:video\/(webm|mp4|ogg);base64,/i.test(normalized)) {
-    throw new Error("El video debe guardarse en formato WebM, MP4 u OGG.");
+  if (/^video\/(webm|mp4|ogg|quicktime|x-m4v)$/i.test(type)) {
+    return type;
+  }
+
+  if (/\.webm$/i.test(name)) {
+    return "video/webm";
+  }
+
+  if (/\.mp4$/i.test(name)) {
+    return "video/mp4";
+  }
+
+  if (/\.ogg$/i.test(name)) {
+    return "video/ogg";
+  }
+
+  if (/\.(mov|qt)$/i.test(name)) {
+    return "video/quicktime";
+  }
+
+  if (/\.m4v$/i.test(name)) {
+    return "video/x-m4v";
+  }
+
+  return "";
+}
+
+function ensureVideoDataUrl(value: string, file?: File) {
+  let normalized = String(value || "").trim();
+  const inferredMimeType = file ? inferVideoMimeType(file) : "";
+
+  if (
+    inferredMimeType &&
+    /^data:(application\/octet-stream)?;base64,/i.test(normalized)
+  ) {
+    normalized = normalized.replace(
+      /^data:(application\/octet-stream)?;base64,/i,
+      `data:${inferredMimeType};base64,`
+    );
+  }
+
+  if (!/^data:video\/(webm|mp4|ogg|quicktime|mov|x-m4v);base64,/i.test(normalized)) {
+    throw new Error("El video debe guardarse en formato WebM, MP4, OGG o MOV.");
   }
 
   if (normalized.length > 10_000_000) {
@@ -220,32 +259,31 @@ function CaptureCard({
   token,
   uploadKind,
   cameraCaptureMode,
-  accept,
+  documentCamera = false,
   preview,
   previewAlt,
   meta,
   uploading,
   onCameraChange,
-  onGalleryChange,
-  onCameraInput,
-  onGalleryInput,
+  onOpenDocumentCamera,
 }: {
   title: string;
   description: string;
   token: string;
   uploadKind: PreviewKey;
   cameraCaptureMode: "user" | "environment";
-  accept: string;
+  documentCamera?: boolean;
   preview: string | null;
   previewAlt: string;
   meta?: string;
   uploading: boolean;
   onCameraChange: (event: ChangeEvent<HTMLInputElement>) => void;
-  onGalleryChange: (event: ChangeEvent<HTMLInputElement>) => void;
-  onCameraInput: (event: FormEvent<HTMLInputElement>) => void;
-  onGalleryInput: (event: FormEvent<HTMLInputElement>) => void;
+  onOpenDocumentCamera?: () => void;
 }) {
-  const cameraAccept = accept.startsWith("video") ? "video/*" : "image/*";
+  const videoCapture = uploadKind === "video-aprobacion";
+  const cameraAccept = videoCapture ? "video/*" : "image/*";
+  const actionLabel = videoCapture ? "Tomar video" : "Tomar foto";
+  const inputId = `capture-${uploadKind}`;
 
   return (
     <div className="rounded-[28px] border border-[#d9dfeb] bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
@@ -259,93 +297,45 @@ function CaptureCard({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <div className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Camara
-          </p>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            Abre la camara del celular para esta evidencia.
-          </p>
+      <div className="mt-4 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+          Camara del celular
+        </p>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          {videoCapture
+            ? "Graba el video y espera el mensaje de sincronizacion."
+            : documentCamera
+              ? "Modo OCR: pon solo la cedula dentro del marco horizontal."
+              : "Toma la foto y espera el mensaje de sincronizacion."}
+        </p>
+        <div className="mt-4">
           <input
+            id={inputId}
             name="file"
             type="file"
             accept={cameraAccept}
             capture={cameraCaptureMode}
             disabled={uploading}
             onChange={onCameraChange}
-            onInput={onCameraInput}
-            className="mt-3 block w-full text-sm text-slate-700 file:mr-3 file:rounded-xl file:border-0 file:bg-[#0f172a] file:px-4 file:py-2 file:font-semibold file:text-white"
+            className="sr-only"
           />
-          <form
-            action={`/api/creditos/captura-session/${token}`}
-            method="post"
-            encType="multipart/form-data"
-            className="mt-3"
+          <label
+            htmlFor={inputId}
+            className={[
+              "inline-flex w-full items-center justify-center rounded-[18px] px-5 py-4 text-base font-black text-white shadow-[0_14px_26px_rgba(15,23,42,0.14)] transition",
+              uploading
+                ? "pointer-events-none bg-slate-400"
+                : "bg-[#0f172a] active:scale-[0.99]",
+            ].join(" ")}
           >
-            <input type="hidden" name="kind" value={uploadKind} />
-            <input type="hidden" name="source" value="camera-form" />
-            <input type="hidden" name="redirectTo" value={`/qr-captura/${token}`} />
-            <input
-              name="file"
-              type="file"
-              accept={cameraAccept}
-              capture={cameraCaptureMode}
-              className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-xl file:border file:border-slate-300 file:bg-white file:px-4 file:py-2 file:font-semibold file:text-slate-700"
-            />
-            <button
-              type="submit"
-              className="mt-3 rounded-2xl bg-[#145a5a] px-4 py-3 text-sm font-semibold text-white"
-            >
-              Guardar en plataforma
-            </button>
-          </form>
-        </div>
-
-        <div className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Galeria
-          </p>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            Si la camara no abre, selecciona una imagen o video guardado.
-          </p>
-          <input
-            name="file"
-            type="file"
-            accept={accept}
-            disabled={uploading}
-            onChange={onGalleryChange}
-            onInput={onGalleryInput}
-            className="mt-3 block w-full text-sm text-slate-700 file:mr-3 file:rounded-xl file:border file:border-slate-300 file:bg-white file:px-4 file:py-2 file:font-semibold file:text-slate-700"
-          />
-          <form
-            action={`/api/creditos/captura-session/${token}`}
-            method="post"
-            encType="multipart/form-data"
-            className="mt-3"
-          >
-            <input type="hidden" name="kind" value={uploadKind} />
-            <input type="hidden" name="source" value="gallery-form" />
-            <input type="hidden" name="redirectTo" value={`/qr-captura/${token}`} />
-            <input
-              name="file"
-              type="file"
-              accept={accept}
-              className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-xl file:border file:border-slate-300 file:bg-white file:px-4 file:py-2 file:font-semibold file:text-slate-700"
-            />
-            <button
-              type="submit"
-              className="mt-3 rounded-2xl bg-[#145a5a] px-4 py-3 text-sm font-semibold text-white"
-            >
-              Guardar en plataforma
-            </button>
-          </form>
+            {uploading ? "Subiendo..." : documentCamera ? "Tomar foto OCR" : actionLabel}
+          </label>
         </div>
       </div>
 
       <div className="mt-4 rounded-[22px] border border-dashed border-[#d9dfeb] bg-[#f8fafc] p-3">
         {preview ? (
-          accept.startsWith("video") ? (
+          videoCapture ? (
             <video
               src={preview}
               controls
@@ -372,6 +362,256 @@ function CaptureCard({
   );
 }
 
+function DocumentOcrCamera({
+  slot,
+  onClose,
+  onCapture,
+  onNativeCapture,
+}: {
+  slot: ImageCaptureKind | null;
+  onClose: () => void;
+  onCapture: (dataUrl: string, slot: ImageCaptureKind) => Promise<boolean> | boolean;
+  onNativeCapture: (file: File, slot: ImageCaptureKind) => Promise<boolean> | boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const nativeInputRef = useRef<HTMLInputElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [error, setError] = useState("");
+  const [cameraReady, setCameraReady] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const open = slot === "cedula-frente" || slot === "cedula-respaldo";
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    const startCamera = async () => {
+      if (!open) {
+        return;
+      }
+
+      try {
+        setError("");
+        setCameraReady(false);
+        setCapturing(false);
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+        });
+
+        if (!active) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => null);
+        }
+      } catch {
+        setError("No se pudo abrir la camara. Revisa permisos y vuelve a intentar.");
+      }
+    };
+
+    void startCamera();
+
+    return () => {
+      active = false;
+      stopCamera();
+    };
+  }, [open]);
+
+  if (!open || !slot) {
+    return null;
+  }
+
+  const captureDocument = async () => {
+    const video = videoRef.current;
+
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setError("La camara aun no esta lista.");
+      return;
+    }
+
+    try {
+      setCapturing(true);
+      setError("");
+      const sourceWidth = video.videoWidth;
+      const sourceHeight = video.videoHeight;
+      const targetRatio = 1.586;
+      let cropWidth = sourceWidth * 0.88;
+      let cropHeight = cropWidth / targetRatio;
+
+      if (cropHeight > sourceHeight * 0.72) {
+        cropHeight = sourceHeight * 0.72;
+        cropWidth = cropHeight * targetRatio;
+      }
+
+      const cropX = Math.max(0, (sourceWidth - cropWidth) / 2);
+      const cropY = Math.max(0, (sourceHeight - cropHeight) / 2);
+      const canvas = document.createElement("canvas");
+      canvas.width = 1400;
+      canvas.height = Math.round(canvas.width / targetRatio);
+      const context = canvas.getContext("2d");
+
+      if (!context) {
+        throw new Error("No se pudo preparar la captura.");
+      }
+
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = "high";
+      context.drawImage(
+        video,
+        cropX,
+        cropY,
+        cropWidth,
+        cropHeight,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+
+      if (dataUrl.length > 2_400_000) {
+        throw new Error("La captura quedo muy pesada. Acerca un poco menos la cedula y vuelve a tomarla.");
+      }
+
+      const saved = await onCapture(dataUrl, slot);
+
+      if (saved) {
+        stopCamera();
+        onClose();
+      }
+    } catch (captureError) {
+      setError(
+        captureError instanceof Error
+          ? captureError.message
+          : "No se pudo capturar la cedula."
+      );
+    } finally {
+      setCapturing(false);
+    }
+  };
+
+  const handleNativeCapture = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      setCapturing(true);
+      setError("");
+      const saved = await onNativeCapture(file, slot);
+
+      if (saved) {
+        stopCamera();
+        onClose();
+      }
+    } catch (nativeError) {
+      setError(
+        nativeError instanceof Error
+          ? nativeError.message
+          : "No se pudo guardar la foto directa."
+      );
+    } finally {
+      setCapturing(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950 text-white">
+      <div className="flex min-h-screen flex-col">
+        <div className="flex items-center justify-between px-4 py-4">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-emerald-200">
+              Modo OCR
+            </p>
+            <h2 className="mt-1 text-lg font-black">
+              {slot === "cedula-frente" ? "Cedula frente" : "Cedula respaldo"}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              stopCamera();
+              onClose();
+            }}
+            className="rounded-2xl border border-white/20 px-4 py-2 text-sm font-bold"
+          >
+            Cerrar
+          </button>
+        </div>
+
+        <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-black">
+          <video
+            ref={videoRef}
+            autoPlay
+            muted
+            playsInline
+            onLoadedMetadata={() => setCameraReady(true)}
+            onCanPlay={() => setCameraReady(true)}
+            className="h-full w-full object-cover"
+          />
+          <div className="pointer-events-none absolute left-1/2 top-1/2 aspect-[1.586/1] w-[88vw] max-w-[720px] -translate-x-1/2 -translate-y-1/2 rounded-[18px] border-4 border-emerald-300 shadow-[0_0_0_999px_rgba(2,6,23,0.54)]" />
+          <div className="pointer-events-none absolute bottom-28 left-5 right-5 rounded-2xl bg-black/50 px-4 py-3 text-center text-sm font-semibold leading-5">
+            Ubica solo la cedula dentro del marco. Sin dedos, sin brillo y en horizontal.
+          </div>
+        </div>
+
+        {error ? (
+          <div className="mx-4 mt-4 rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="grid gap-3 px-4 py-5">
+          <input
+            ref={nativeInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={(event) => void handleNativeCapture(event)}
+            className="sr-only"
+          />
+          <button
+            type="button"
+            onClick={() => void captureDocument()}
+            disabled={!cameraReady || capturing}
+            className="rounded-[20px] bg-emerald-400 px-5 py-4 text-base font-black text-slate-950 shadow-[0_18px_36px_rgba(16,185,129,0.26)] disabled:bg-slate-500 disabled:text-white"
+          >
+            {capturing ? "Guardando..." : cameraReady ? "Capturar cedula" : "Preparando camara..."}
+          </button>
+          <button
+            type="button"
+            onClick={() => nativeInputRef.current?.click()}
+            disabled={capturing}
+            className="rounded-[20px] border border-white/20 bg-white/10 px-5 py-4 text-base font-black text-white disabled:opacity-50"
+          >
+            Tomar foto directa
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MobileCaptureClient({
   token,
   initialSession = null,
@@ -385,6 +625,8 @@ export default function MobileCaptureClient({
     null
   );
   const [uploadingKey, setUploadingKey] = useState<string | null>(null);
+  const [documentCameraSlot, setDocumentCameraSlot] =
+    useState<ImageCaptureKind | null>(null);
   const [localPreviews, setLocalPreviews] = useState<LocalPreviewMap>({});
   const [debugEvents, setDebugEvents] = useState<string[]>([]);
   const blobPreviewUrlsRef = useRef<Partial<Record<PreviewKey, string>>>({});
@@ -403,7 +645,8 @@ export default function MobileCaptureClient({
       }
 
       if (!nextValue) {
-        const { [key]: _removed, ...rest } = current;
+        const rest = { ...current };
+        delete rest[key];
         delete blobPreviewUrlsRef.current[key];
         return rest;
       }
@@ -456,8 +699,10 @@ export default function MobileCaptureClient({
   }, [initialSession]);
 
   useEffect(() => {
+    const previewUrls = blobPreviewUrlsRef.current;
+
     return () => {
-      for (const value of Object.values(blobPreviewUrlsRef.current)) {
+      for (const value of Object.values(previewUrls)) {
         if (value?.startsWith("blob:")) {
           URL.revokeObjectURL(value);
         }
@@ -498,6 +743,7 @@ export default function MobileCaptureClient({
         tone: "emerald",
         text: successText,
       });
+      return true;
     } catch (error) {
       pushDebug(`Fallo la subida de ${uploadingState}.`);
       setNotice({
@@ -507,9 +753,53 @@ export default function MobileCaptureClient({
             ? error.message
             : "No se pudo sincronizar la captura.",
       });
+      return false;
     } finally {
       setUploadingKey(null);
     }
+  };
+
+  const saveImageEvidenceDataUrl = async (
+    kind: ImageCaptureKind,
+    dataUrl: string
+  ) => {
+    const capturedAt = new Date().toISOString();
+    replaceLocalPreview(kind, dataUrl);
+    pushDebug(`Imagen procesada para ${kind}.`);
+
+    if (kind === "selfie") {
+      return await savePatch(
+        {
+          selfieDataUrl: dataUrl,
+          selfieCapturedAt: capturedAt,
+          selfieSource: "camera",
+        },
+        "Selfie enviada a la plataforma.",
+        kind
+      );
+    }
+
+    if (kind === "cedula-frente") {
+      return await savePatch(
+        {
+          cedulaFrenteDataUrl: dataUrl,
+          cedulaFrenteCapturedAt: capturedAt,
+          cedulaFrenteSource: "camera",
+        },
+        "Frente de la cedula sincronizado.",
+        kind
+      );
+    }
+
+    return await savePatch(
+      {
+        cedulaRespaldoDataUrl: dataUrl,
+        cedulaRespaldoCapturedAt: capturedAt,
+        cedulaRespaldoSource: "camera",
+      },
+      "Respaldo de la cedula sincronizado.",
+      kind
+    );
   };
 
   const processImageFile = async (
@@ -518,7 +808,7 @@ export default function MobileCaptureClient({
   ) => {
     if (!file) {
       pushDebug(`No se recibio archivo para ${kind}.`);
-      return;
+      return false;
     }
 
     try {
@@ -542,52 +832,15 @@ export default function MobileCaptureClient({
       const compressedDataUrl =
         kind === "selfie"
           ? await compressImageFile(file, 1080, 0.84)
-          : await compressImageFile(file, 2200, 0.94);
-      const capturedAt = new Date().toISOString();
-      replaceLocalPreview(kind, compressedDataUrl);
-      pushDebug(`Imagen procesada para ${kind}.`);
-
-      if (kind === "selfie") {
-        await savePatch(
-          {
-            selfieDataUrl: compressedDataUrl,
-            selfieCapturedAt: capturedAt,
-            selfieSource: "camera",
-          },
-          "Selfie enviada a la plataforma.",
-          kind
-        );
-        return;
-      }
-
-      if (kind === "cedula-frente") {
-        await savePatch(
-          {
-            cedulaFrenteDataUrl: compressedDataUrl,
-            cedulaFrenteCapturedAt: capturedAt,
-            cedulaFrenteSource: "camera",
-          },
-          "Frente de la cedula sincronizado.",
-          kind
-        );
-        return;
-      }
-
-      await savePatch(
-        {
-          cedulaRespaldoDataUrl: compressedDataUrl,
-          cedulaRespaldoCapturedAt: capturedAt,
-          cedulaRespaldoSource: "camera",
-        },
-        "Respaldo de la cedula sincronizado.",
-        kind
-      );
+          : await compressImageFile(file, 1600, 0.86);
+      return await saveImageEvidenceDataUrl(kind, compressedDataUrl);
     } catch (error) {
       pushDebug(`Error procesando ${kind}.`);
       setNotice({
         tone: "red",
         text: error instanceof Error ? error.message : "No se pudo cargar la foto.",
       });
+      return false;
     }
   };
 
@@ -615,7 +868,7 @@ export default function MobileCaptureClient({
       }
 
       const capturedAt = new Date().toISOString();
-      const dataUrl = ensureVideoDataUrl(await readFileAsDataUrl(file));
+      const dataUrl = ensureVideoDataUrl(await readFileAsDataUrl(file), file);
       replaceLocalPreview("video-aprobacion", dataUrl);
       pushDebug("Video procesado.");
       await savePatch(
@@ -646,24 +899,26 @@ export default function MobileCaptureClient({
     await processImageFile(file, kind);
   };
 
-  const handleImageInput = async (
-    event: FormEvent<HTMLInputElement>,
+  const handleDocumentCameraCapture = async (
+    dataUrl: string,
     kind: ImageCaptureKind
   ) => {
-    const file = event.currentTarget.files?.[0];
-    pushDebug(`Evento input recibido para ${kind}.`);
-    await processImageFile(file, kind);
+    try {
+      pushDebug(`Captura OCR recibida para ${kind}.`);
+      return await saveImageEvidenceDataUrl(kind, dataUrl);
+    } catch (error) {
+      pushDebug(`Error procesando captura OCR ${kind}.`);
+      setNotice({
+        tone: "red",
+        text: error instanceof Error ? error.message : "No se pudo cargar la foto.",
+      });
+      return false;
+    }
   };
 
   const handleVideoCapture = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
     event.target.value = "";
-    await processVideoFile(file);
-  };
-
-  const handleVideoInput = async (event: FormEvent<HTMLInputElement>) => {
-    const file = event.currentTarget.files?.[0];
-    pushDebug("Evento input recibido para video.");
     await processVideoFile(file);
   };
 
@@ -699,6 +954,12 @@ export default function MobileCaptureClient({
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#eef2f8_0%,#f7f8fb_100%)] px-4 py-8">
+      <DocumentOcrCamera
+        slot={documentCameraSlot}
+        onClose={() => setDocumentCameraSlot(null)}
+        onCapture={handleDocumentCameraCapture}
+        onNativeCapture={(file, slot) => processImageFile(file, slot)}
+      />
       <div className="mx-auto max-w-5xl space-y-5">
         <section className="rounded-[32px] bg-[linear-gradient(135deg,#0f172a_0%,#1f2937_54%,#2c2f37_100%)] px-6 py-6 text-white shadow-[0_22px_55px_rgba(15,23,42,0.28)]">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -755,7 +1016,7 @@ export default function MobileCaptureClient({
               </p>
             </div>
             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              build qr-v4
+              build qr-v5
             </span>
           </div>
           <div className="mt-4 space-y-2">
@@ -789,7 +1050,6 @@ export default function MobileCaptureClient({
                 title="Selfie del cliente"
                 description="Usa la cámara frontal y procura que la cara quede bien iluminada."
                 cameraCaptureMode="user"
-                accept={MOBILE_IMAGE_ACCEPT}
                 preview={localPreviews.selfie || session?.evidence.selfieDataUrl || null}
                 previewAlt="Selfie del cliente"
                 meta={
@@ -799,9 +1059,6 @@ export default function MobileCaptureClient({
                 }
                 uploading={uploadingKey === "selfie"}
                 onCameraChange={(event) => void handleImageCapture(event, "selfie")}
-                onGalleryChange={(event) => void handleImageCapture(event, "selfie")}
-                onCameraInput={(event) => void handleImageInput(event, "selfie")}
-                onGalleryInput={(event) => void handleImageInput(event, "selfie")}
               />
 
               <CaptureCard
@@ -810,7 +1067,7 @@ export default function MobileCaptureClient({
                 title="Cedula - frente"
                 description="Acerca bien la cédula para que el texto salga nítido."
                 cameraCaptureMode="environment"
-                accept={MOBILE_IMAGE_ACCEPT}
+                documentCamera
                 preview={
                   localPreviews["cedula-frente"] ||
                   session?.evidence.cedulaFrenteDataUrl ||
@@ -824,9 +1081,7 @@ export default function MobileCaptureClient({
                 }
                 uploading={uploadingKey === "cedula-frente"}
                 onCameraChange={(event) => void handleImageCapture(event, "cedula-frente")}
-                onGalleryChange={(event) => void handleImageCapture(event, "cedula-frente")}
-                onCameraInput={(event) => void handleImageInput(event, "cedula-frente")}
-                onGalleryInput={(event) => void handleImageInput(event, "cedula-frente")}
+                onOpenDocumentCamera={() => setDocumentCameraSlot("cedula-frente")}
               />
 
               <CaptureCard
@@ -835,7 +1090,7 @@ export default function MobileCaptureClient({
                 title="Cedula - respaldo"
                 description="Asegúrate de que el código y la fecha se puedan leer."
                 cameraCaptureMode="environment"
-                accept={MOBILE_IMAGE_ACCEPT}
+                documentCamera
                 preview={
                   localPreviews["cedula-respaldo"] ||
                   session?.evidence.cedulaRespaldoDataUrl ||
@@ -851,15 +1106,7 @@ export default function MobileCaptureClient({
                 onCameraChange={(event) =>
                   void handleImageCapture(event, "cedula-respaldo")
                 }
-                onGalleryChange={(event) =>
-                  void handleImageCapture(event, "cedula-respaldo")
-                }
-                onCameraInput={(event) =>
-                  void handleImageInput(event, "cedula-respaldo")
-                }
-                onGalleryInput={(event) =>
-                  void handleImageInput(event, "cedula-respaldo")
-                }
+                onOpenDocumentCamera={() => setDocumentCameraSlot("cedula-respaldo")}
               />
 
               <CaptureCard
@@ -868,7 +1115,6 @@ export default function MobileCaptureClient({
                 title="Video de aprobacion"
                 description='Graba un video de hasta 7 segundos diciendo: "Yo [nombre] apruebo la compra con FINSER PAY".'
                 cameraCaptureMode="user"
-                accept="video/*"
                 preview={
                   localPreviews["video-aprobacion"] ||
                   session?.evidence.videoAprobacionDataUrl ||
@@ -886,9 +1132,6 @@ export default function MobileCaptureClient({
                 }
                 uploading={uploadingKey === "video-aprobacion"}
                 onCameraChange={(event) => void handleVideoCapture(event)}
-                onGalleryChange={(event) => void handleVideoCapture(event)}
-                onCameraInput={(event) => void handleVideoInput(event)}
-                onGalleryInput={(event) => void handleVideoInput(event)}
               />
             </section>
 

@@ -126,6 +126,7 @@ export default function ReporteAbonosPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [sedeId, setSedeId] = useState("");
+  const isAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
 
   const loadContext = async () => {
     const [sessionRes, sedesRes] = await Promise.all([
@@ -195,13 +196,15 @@ export default function ReporteAbonosPage() {
         <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="inline-flex rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#145a5a]">
-              Reportes admin
+              {isAdmin ? "Reportes admin" : "Reportes de sede"}
             </div>
             <h1 className="mt-4 text-4xl font-black tracking-tight text-slate-950">
               Tabla de abonos
             </h1>
             <p className="mt-2 text-sm text-slate-600">
-              Consulta recaudo dia a dia, quien recibio cada pago y cuanto sigue pendiente por cobrar en la cartera.
+              {isAdmin
+                ? "Consulta recaudo dia a dia, quien recibio cada pago y cuanto sigue pendiente por cobrar en la cartera."
+                : "Consulta recaudo dia a dia solo para tu sede asignada."}
             </p>
           </div>
 
@@ -263,18 +266,24 @@ export default function ReporteAbonosPage() {
               className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
             />
 
-            <select
-              value={sedeId}
-              onChange={(event) => setSedeId(event.target.value)}
-              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-            >
-              <option value="">Todas las sedes</option>
-              {sedes.map((sede) => (
-                <option key={sede.id} value={sede.id}>
-                  {sede.nombre}
-                </option>
-              ))}
-            </select>
+            {isAdmin ? (
+              <select
+                value={sedeId}
+                onChange={(event) => setSedeId(event.target.value)}
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="">Todas las sedes</option>
+                {sedes.map((sede) => (
+                  <option key={sede.id} value={sede.id}>
+                    {sede.nombre}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
+                {user?.sedeNombre || sedes[0]?.nombre || "Sede asignada"}
+              </div>
+            )}
 
             <button
               type="button"

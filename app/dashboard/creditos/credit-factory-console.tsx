@@ -123,6 +123,16 @@ type MobileCaptureSessionResponse = {
   session?: MobileCaptureSession;
 };
 
+type WhatsAppOtpResponse = {
+  ok?: boolean;
+  code?: string;
+  details?: string | null;
+  error?: string;
+  messageId?: string | null;
+  mode?: "template" | "text";
+  recipient?: string;
+};
+
 type CreditItem = {
   id: number;
   folio: string;
@@ -187,6 +197,7 @@ type CreditItem = {
   saldoPendiente: number;
   totalRecaudado: number;
   porcentajeRecaudado: number;
+  estadoPago?: "PAGADO" | "AL_DIA" | "MORA";
   abonosCount: number;
   ultimoAbonoAt: string | null;
   createdAt: string;
@@ -207,6 +218,20 @@ type CreditListResponse = {
   scope: string;
   search?: string;
   items: CreditItem[];
+};
+
+type EquipmentCatalogItem = {
+  id: number;
+  marca: string;
+  modelo: string;
+  precioBaseVenta: number;
+  activo: boolean;
+};
+
+type EquipmentCatalogResponse = {
+  ok: boolean;
+  items: EquipmentCatalogItem[];
+  error?: string;
 };
 
 type CreateCreditResponse = {
@@ -246,6 +271,15 @@ type CreditPaymentItem = {
   };
 };
 
+type PaymentPlanInstallment = {
+  numero: number;
+  fechaVencimiento: string;
+  valorProgramado: number;
+  valorAbonado: number;
+  saldoPendiente: number;
+  estado: "PAGADA" | "AL_DIA" | "MORA";
+};
+
 type CreditPaymentsResponse = {
   ok: boolean;
   credito: {
@@ -263,6 +297,10 @@ type CreditPaymentsResponse = {
     saldoPendiente: number;
     totalRecaudado: number;
     porcentajeRecaudado: number;
+    estadoPago?: "PAGADO" | "AL_DIA" | "MORA";
+    nextInstallment?: PaymentPlanInstallment | null;
+    overdueCount?: number;
+    plan?: PaymentPlanInstallment[];
     abonosCount: number;
     ultimoAbonoAt: string | null;
   };
@@ -278,6 +316,10 @@ type RegisterPaymentResponse = {
     saldoPendiente: number;
     totalRecaudado: number;
     porcentajeRecaudado: number;
+    estadoPago?: "PAGADO" | "AL_DIA" | "MORA";
+    nextInstallment?: PaymentPlanInstallment | null;
+    overdueCount?: number;
+    plan?: PaymentPlanInstallment[];
     abonosCount: number;
     ultimoAbonoAt: string | null;
   };
@@ -363,6 +405,15 @@ function currencyInputValue(value: string | number) {
   }
 
   return copCurrencyFormatter.format(Number(normalized));
+}
+
+function equipmentCatalogKey(value: unknown) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
 }
 
 function dateTime(value: string | null) {
@@ -490,11 +541,53 @@ async function readVideoDuration(file: File) {
   });
 }
 
-function ensureVideoDataUrl(value: string) {
-  const normalized = String(value || "").trim();
+function inferVideoMimeType(file: File) {
+  const type = String(file.type || "").toLowerCase();
+  const name = String(file.name || "").toLowerCase();
 
-  if (!/^data:video\/(webm|mp4|ogg);base64,/i.test(normalized)) {
-    throw new Error("El video debe guardarse en formato WebM, MP4 u OGG.");
+  if (/^video\/(webm|mp4|ogg|quicktime|x-m4v)$/i.test(type)) {
+    return type;
+  }
+
+  if (/\.webm$/i.test(name)) {
+    return "video/webm";
+  }
+
+  if (/\.mp4$/i.test(name)) {
+    return "video/mp4";
+  }
+
+  if (/\.ogg$/i.test(name)) {
+    return "video/ogg";
+  }
+
+  if (/\.(mov|qt)$/i.test(name)) {
+    return "video/quicktime";
+  }
+
+  if (/\.m4v$/i.test(name)) {
+    return "video/x-m4v";
+  }
+
+  return "";
+}
+
+function ensureVideoDataUrl(value: string, file?: File) {
+  let normalized = String(value || "").trim();
+  const inferredMimeType = file ? inferVideoMimeType(file) : "";
+
+  if (
+    inferredMimeType &&
+    /^data:(application\/octet-stream)?;base64,/i.test(normalized)
+  ) {
+    normalized = normalized.replace(
+      /^data:(application\/octet-stream)?;base64,/i,
+      `data:${inferredMimeType};base64,`
+    );
+  }
+
+  if (!/^data:video\/(webm|mp4|ogg|quicktime|mov|x-m4v);base64,/i.test(normalized)) {
+    throw new Error("El video debe guardarse en formato WebM, MP4, OGG o MOV.");
   }
 
   if (normalized.length > 10_000_000) {
@@ -502,6 +595,64 @@ function ensureVideoDataUrl(value: string) {
   }
 
   return normalized;
+}
+
+function getVideoMimeTypeFromDataUrl(value: string) {
+  const match = /^data:([^;,]+)[;,]/i.exec(String(value || "").trim());
+  return String(match?.[1] || "").toLowerCase();
+}
+
+function isBrowserPlayableVideoDataUrl(value: string) {
+  const mimeType = getVideoMimeTypeFromDataUrl(value);
+  return /^video\/(webm|mp4|ogg)$/i.test(mimeType);
+}
+
+function getVideoEvidenceFormatLabel(value: string) {
+  const mimeType = getVideoMimeTypeFromDataUrl(value);
+
+  if (mimeType === "video/quicktime" || mimeType === "video/mov") {
+    return "QuickTime/MOV";
+  }
+
+  if (mimeType === "video/x-m4v") {
+    return "M4V";
+  }
+
+  if (mimeType === "video/mp4") {
+    return "MP4";
+  }
+
+  if (mimeType === "video/webm") {
+    return "WEBM";
+  }
+
+  if (mimeType === "video/ogg") {
+    return "OGG";
+  }
+
+  return "video";
+}
+
+function getVideoEvidenceDownloadName(value: string) {
+  const mimeType = getVideoMimeTypeFromDataUrl(value);
+
+  if (mimeType === "video/quicktime" || mimeType === "video/mov") {
+    return "video-aprobacion.mov";
+  }
+
+  if (mimeType === "video/x-m4v") {
+    return "video-aprobacion.m4v";
+  }
+
+  if (mimeType === "video/mp4") {
+    return "video-aprobacion.mp4";
+  }
+
+  if (mimeType === "video/ogg") {
+    return "video-aprobacion.ogg";
+  }
+
+  return "video-aprobacion.webm";
 }
 
 async function compressImageDataUrl(
@@ -1130,7 +1281,7 @@ function VideoEvidenceCard({
           Cargar video
           <input
             type="file"
-            accept="video/webm,video/mp4,video/ogg,video/*"
+            accept="video/webm,video/mp4,video/ogg,video/quicktime,.mov,video/*"
             onChange={onFileChange}
             className="hidden"
           />
@@ -1147,22 +1298,108 @@ function VideoEvidenceCard({
       </div>
 
       <div className="mt-4 rounded-[22px] border border-dashed border-[#d8c9b1] bg-white p-3">
-        {value ? (
-          <video
-            src={value}
-            controls
-            className="h-52 w-full rounded-[16px] bg-slate-950 object-contain"
-          />
-        ) : (
-          <div className="flex h-52 items-center justify-center rounded-[16px] bg-slate-50 text-sm text-slate-500">
-            Aun no hay video registrado.
-          </div>
-        )}
+        <VideoEvidencePreview
+          value={value}
+          emptyLabel="Aun no hay video registrado."
+          heightClassName="h-52"
+          roundedClassName="rounded-[16px]"
+        />
       </div>
 
       {metaLabel ? (
         <p className="mt-3 text-xs font-medium leading-5 text-slate-500">{metaLabel}</p>
       ) : null}
+    </div>
+  );
+}
+
+function VideoEvidencePreview({
+  value,
+  emptyLabel,
+  heightClassName,
+  roundedClassName = "rounded-2xl",
+}: {
+  value: string;
+  emptyLabel: string;
+  heightClassName: string;
+  roundedClassName?: string;
+}) {
+  const [previewFailed, setPreviewFailed] = useState(false);
+
+  useEffect(() => {
+    setPreviewFailed(false);
+  }, [value]);
+
+  if (!value) {
+    return (
+      <div
+        className={[
+          "flex items-center justify-center bg-slate-50 text-sm text-slate-500",
+          heightClassName,
+          roundedClassName,
+        ].join(" ")}
+      >
+        {emptyLabel}
+      </div>
+    );
+  }
+
+  const showPlayer = isBrowserPlayableVideoDataUrl(value) && !previewFailed;
+  const formatLabel = getVideoEvidenceFormatLabel(value);
+  const downloadName = getVideoEvidenceDownloadName(value);
+
+  if (!showPlayer) {
+    return (
+      <div
+        className={[
+          "flex flex-col items-center justify-center gap-3 bg-slate-50 px-5 text-center",
+          heightClassName,
+          roundedClassName,
+        ].join(" ")}
+      >
+        <div>
+          <p className="text-sm font-bold text-slate-900">Video guardado</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            Formato {formatLabel}. Si no se reproduce en este navegador, abre o descarga el archivo.
+          </p>
+        </div>
+        <a
+          href={value}
+          download={downloadName}
+          className="rounded-2xl bg-[#145a5a] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#0f4a4a]"
+        >
+          Abrir / descargar video
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <video
+        src={value}
+        controls
+        preload="metadata"
+        onError={() => setPreviewFailed(true)}
+        onLoadedMetadata={(event) => {
+          const duration = event.currentTarget.duration;
+          if (!Number.isFinite(duration) || duration <= 0) {
+            setPreviewFailed(true);
+          }
+        }}
+        className={[
+          "w-full bg-slate-950 object-contain",
+          heightClassName,
+          roundedClassName,
+        ].join(" ")}
+      />
+      <a
+        href={value}
+        download={downloadName}
+        className="mt-3 inline-flex rounded-2xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
+      >
+        Descargar video
+      </a>
     </div>
   );
 }
@@ -1321,6 +1558,7 @@ export default function CreditFactoryConsole({
     useState("");
   const [equipoMarca, setEquipoMarca] = useState("");
   const [equipoModelo, setEquipoModelo] = useState("");
+  const [equipmentCatalog, setEquipmentCatalog] = useState<EquipmentCatalogItem[]>([]);
   const [imei, setImei] = useState("");
   const [valorEquipoTotal, setValorEquipoTotal] = useState("");
   const [cuotaInicial, setCuotaInicial] = useState("");
@@ -1351,6 +1589,7 @@ export default function CreditFactoryConsole({
   const [otpCodeGenerated, setOtpCodeGenerated] = useState("");
   const [otpCodeTyped, setOtpCodeTyped] = useState("");
   const [otpVerifiedAt, setOtpVerifiedAt] = useState("");
+  const [sendingOtp, setSendingOtp] = useState(false);
   const [pagareAceptado, setPagareAceptado] = useState(false);
   const [cartaAceptada, setCartaAceptada] = useState(false);
   const [autorizacionDatosAceptada, setAutorizacionDatosAceptada] =
@@ -1365,6 +1604,7 @@ export default function CreditFactoryConsole({
   const [paymentValue, setPaymentValue] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("EFECTIVO");
   const [paymentObservation, setPaymentObservation] = useState("");
+  const [selectedInstallmentNumber, setSelectedInstallmentNumber] = useState("");
   const [payments, setPayments] = useState<CreditPaymentItem[]>([]);
   const [paymentSummary, setPaymentSummary] = useState<CreditPaymentsResponse["credito"] | null>(null);
   const [deliveryValidation, setDeliveryValidation] =
@@ -1448,6 +1688,54 @@ export default function CreditFactoryConsole({
         ? "Paz y salvo"
         : selectedCredit?.estado || "Activo";
   const valorTotalEquipoNumero = Math.max(0, Number(valorEquipoTotal || 0));
+  const activeEquipmentCatalog = useMemo(
+    () => equipmentCatalog.filter((item) => item.activo),
+    [equipmentCatalog]
+  );
+  const equipmentBrandOptions = useMemo(() => {
+    const brands = new Map<string, string>();
+
+    for (const item of activeEquipmentCatalog) {
+      const key = equipmentCatalogKey(item.marca);
+      if (key && !brands.has(key)) {
+        brands.set(key, item.marca);
+      }
+    }
+
+    return Array.from(brands.values());
+  }, [activeEquipmentCatalog]);
+  const equipmentModelOptions = useMemo(() => {
+    const selectedBrandKey = equipmentCatalogKey(equipoMarca);
+
+    return activeEquipmentCatalog.filter((item) => {
+      if (!selectedBrandKey) {
+        return false;
+      }
+
+      return equipmentCatalogKey(item.marca) === selectedBrandKey;
+    });
+  }, [activeEquipmentCatalog, equipoMarca]);
+  const selectedEquipmentCatalogItem = useMemo(() => {
+    const selectedBrandKey = equipmentCatalogKey(equipoMarca);
+    const selectedModelKey = equipmentCatalogKey(equipoModelo);
+
+    if (!selectedBrandKey || !selectedModelKey) {
+      return null;
+    }
+
+    return (
+      activeEquipmentCatalog.find(
+        (item) =>
+          equipmentCatalogKey(item.marca) === selectedBrandKey &&
+          equipmentCatalogKey(item.modelo) === selectedModelKey
+      ) || null
+    );
+  }, [activeEquipmentCatalog, equipoMarca, equipoModelo]);
+  const precioBaseVentaCatalogo = selectedEquipmentCatalogItem?.precioBaseVenta || 0;
+  const excedentePrecioBase =
+    precioBaseVentaCatalogo > 0
+      ? Math.max(0, valorTotalEquipoNumero - precioBaseVentaCatalogo)
+      : Math.max(0, valorTotalEquipoNumero - MAX_DEVICE_FINANCING_BASE);
   const cuotaInicialNumero = Math.max(0, Number(cuotaInicial || 0));
   const plazoMesesNumero = Math.max(0, Math.trunc(Number(plazoMeses || 0)));
   const tasaInteresEaNumero = Math.max(0, Number(tasaInteresEa || 0));
@@ -1484,7 +1772,6 @@ export default function CreditFactoryConsole({
   const pagarePreviewNumber = generatePagareNumber(
     `${clienteDocumento || "CLIENTE"}${imei || referenciaEquipo || "PREVIO"}`
   );
-  const cedulaValidationReady = cedulaValidation.status === "valid";
   const pagarePreviewNode = (
     <div className="rounded-[24px] border border-[#0f172a] bg-[#fffdfa] px-5 py-5 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
       <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
@@ -1576,7 +1863,6 @@ export default function CreditFactoryConsole({
             electronicos validos, incluyendo:
           </p>
           <ul className="mt-2 list-disc space-y-1 pl-5">
-            <li>Codigo OTP</li>
             <li>Direccion IP</li>
             <li>Correo electronico</li>
             <li>Evidencia fotografica</li>
@@ -1707,7 +1993,6 @@ export default function CreditFactoryConsole({
             validos:
           </p>
           <ul className="mt-2 list-disc space-y-1 pl-5">
-            <li>OTP</li>
             <li>IP</li>
             <li>Correo</li>
             <li>Evidencia digital</li>
@@ -1853,7 +2138,6 @@ export default function CreditFactoryConsole({
             validos, tales como:
           </p>
           <ul className="mt-2 list-disc space-y-1 pl-5">
-            <li>Codigo OTP</li>
             <li>Direccion IP</li>
             <li>Correo electronico</li>
             <li>Evidencia digital</li>
@@ -1988,10 +2272,9 @@ export default function CreditFactoryConsole({
     Boolean(contratoCedulaFrenteDataUrl) &&
     Boolean(contratoCedulaRespaldoDataUrl) &&
     Boolean(contratoVideoAprobacionDataUrl) &&
-    Boolean(contratoFirmaDataUrl) &&
-    otpReady;
+    Boolean(contratoFirmaDataUrl);
   const contractEvidenceReady = identityEvidenceReady;
-  const stepContratoReady = identityEvidenceReady && cedulaValidationReady;
+  const stepContratoReady = identityEvidenceReady;
   const stepEquipoReady =
     Boolean(equipoMarca.trim()) &&
     Boolean(equipoModelo.trim()) &&
@@ -2005,12 +2288,13 @@ export default function CreditFactoryConsole({
     cartaAceptada &&
     autorizacionDatosAceptada;
   const entregaValidada = Boolean(deliveryValidation?.status?.ready);
+  const deliveryRequirementReady = FLEXIBLE_WIZARD_FOR_TESTING || entregaValidada;
   const ventaLista =
     stepClienteReady &&
     stepEquipoReady &&
     stepContratoReady &&
     stepDocumentosReady &&
-    entregaValidada;
+    deliveryRequirementReady;
   const paymentOverview = paymentSummary ||
     (selectedCredit
       ? {
@@ -2028,6 +2312,10 @@ export default function CreditFactoryConsole({
           saldoPendiente: selectedCredit.saldoPendiente,
           totalRecaudado: selectedCredit.totalRecaudado,
           porcentajeRecaudado: selectedCredit.porcentajeRecaudado,
+          estadoPago: selectedCredit.estadoPago,
+          nextInstallment: null,
+          overdueCount: 0,
+          plan: [],
           abonosCount: selectedCredit.abonosCount,
           ultimoAbonoAt: selectedCredit.ultimoAbonoAt,
         }
@@ -2089,7 +2377,108 @@ export default function CreditFactoryConsole({
     ? "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid para ubicar el caso y recibir el pago de las cuotas desde esta vista separada."
     : lookupMode
       ? "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid. Si hay varias coincidencias, primero eliges una y luego solo se muestra ese cliente."
-    : "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid para ubicar creditos existentes y revisar su estado sin salir de la fabrica.";
+      : "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid para ubicar creditos existentes y revisar su estado sin salir de la fabrica.";
+  const factorySteps = [
+    {
+      id: 1,
+      label: "Cliente",
+      detail: "Datos base",
+      ready: stepClienteReady,
+      action: "Completa identidad, contacto, direccion y dos referencias.",
+    },
+    {
+      id: 2,
+      label: "Equipo",
+      detail: "IMEI y plan",
+      ready: stepEquipoReady,
+      action: "Registra marca, modelo, IMEI y condiciones del credito.",
+    },
+    {
+      id: 3,
+      label: "Identidad",
+      detail: "Evidencias",
+      ready: stepContratoReady,
+      action: "Captura selfie, cedula, video y firma.",
+    },
+    {
+      id: 4,
+      label: "Contratos",
+      detail: "Aceptaciones",
+      ready: stepDocumentosReady,
+      action: "Confirma contrato, pagare, carta y datos personales.",
+    },
+    {
+      id: 5,
+      label: "Entrega",
+      detail: "Zero Touch",
+      ready: entregaValidada,
+      action: "Valida el equipo y cierra solo si queda entregable.",
+    },
+  ];
+  const completedFactorySteps = factorySteps.filter((step) => step.ready).length;
+  const factoryProgress = Math.round((completedFactorySteps / factorySteps.length) * 100);
+  const activeFactoryStep =
+    factorySteps.find((step) => step.id === wizardStep) || factorySteps[0];
+  const nextFactoryStep =
+    factorySteps.find((step) => !step.ready) || factorySteps[factorySteps.length - 1];
+  const factoryStepRequirements: Record<
+    number,
+    Array<{ label: string; ready: boolean }>
+  > = {
+    1: [
+      { label: "Nombre", ready: Boolean(clientePrimerNombre.trim()) },
+      { label: "Apellido", ready: Boolean(clientePrimerApellido.trim()) },
+      { label: "Documento", ready: Boolean(clienteDocumento.trim()) },
+      { label: "Celular", ready: Boolean(clienteTelefono.trim()) },
+      { label: "Correo", ready: Boolean(clienteCorreo.trim()) },
+      { label: "Ubicacion", ready: Boolean(clienteDepartamento.trim() && clienteCiudad.trim()) },
+      { label: "Direccion", ready: Boolean(clienteDireccion.trim()) },
+      {
+        label: "Referencias",
+        ready: Boolean(
+          referenciaFamiliar1Nombre.trim() &&
+            referenciaFamiliar1Parentesco.trim() &&
+            referenciaFamiliar1Telefono.trim() &&
+            referenciaFamiliar2Nombre.trim() &&
+            referenciaFamiliar2Parentesco.trim() &&
+            referenciaFamiliar2Telefono.trim()
+        ),
+      },
+    ],
+    2: [
+      { label: "Marca", ready: Boolean(equipoMarca.trim()) },
+      { label: "Modelo", ready: Boolean(equipoModelo.trim()) },
+      { label: "IMEI", ready: imeiValido },
+      { label: "Precio", ready: Number(valorEquipoTotal || 0) > 0 },
+      { label: "Plazo", ready: plazoMesesNumero > 0 },
+      { label: "Saldo", ready: saldoFinanciado > 0 },
+    ],
+    3: [
+      { label: "Selfie", ready: Boolean(contratoFotoDataUrl) },
+      { label: "Cedula frente", ready: Boolean(contratoCedulaFrenteDataUrl) },
+      { label: "Cedula respaldo", ready: Boolean(contratoCedulaRespaldoDataUrl) },
+      { label: "Video", ready: Boolean(contratoVideoAprobacionDataUrl) },
+      { label: "Firma", ready: Boolean(contratoFirmaDataUrl) },
+    ],
+    4: [
+      { label: "Contrato", ready: contratoAceptado },
+      { label: "Pagare", ready: pagareAceptado },
+      { label: "Carta", ready: cartaAceptada },
+      { label: "Datos", ready: autorizacionDatosAceptada },
+    ],
+    5: [
+      { label: "Cliente", ready: stepClienteReady },
+      { label: "Equipo", ready: stepEquipoReady },
+      { label: "Identidad", ready: stepContratoReady },
+      { label: "Contratos", ready: stepDocumentosReady },
+      { label: "Entrega", ready: entregaValidada },
+    ],
+  };
+  const activeRequirements = factoryStepRequirements[wizardStep] || [];
+  const activeCompletedCount = activeRequirements.filter((item) => item.ready).length;
+  const activeCompletionPercent = activeRequirements.length
+    ? Math.round((activeCompletedCount / activeRequirements.length) * 100)
+    : 0;
   const showResultsPanel = paymentsView
     ? !selectedCredit || showPaymentResults
     : lookupMode
@@ -2354,6 +2743,38 @@ export default function CreditFactoryConsole({
     </>
   );
 
+  const loadEquipmentCatalog = async () => {
+    try {
+      const params = canAdmin ? "?includeInactive=true" : "";
+      const result = await requestJson<EquipmentCatalogResponse>(
+        `/api/creditos/catalogo-equipos${params}`
+      );
+
+      if (!result.ok) {
+        throw new Error(result.data?.error || "No se pudo cargar el catalogo de equipos");
+      }
+
+      setEquipmentCatalog(result.data.items || []);
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo cargar el catalogo de equipos",
+        tone: "red",
+      });
+    }
+  };
+
+  const applyEquipmentCatalogItem = (item: EquipmentCatalogItem) => {
+    setEquipoMarca(item.marca);
+    setEquipoModelo(item.modelo);
+
+    if (!valorEquipoTotal || Number(valorEquipoTotal) <= 0) {
+      setValorEquipoTotal(String(Math.round(item.precioBaseVenta)));
+    }
+  };
+
   const loadCredits = async (preserveSelected = true, searchValue = activeSearch) => {
     try {
       setLoadingList(true);
@@ -2400,7 +2821,12 @@ export default function CreditFactoryConsole({
         result.data.items.some((item) => item.id === selectedId)
       ) {
         nextSelectedId = selectedId;
-      } else if (paymentsView || createClientMode) {
+      } else if (paymentsView) {
+        nextSelectedId =
+          trimmedSearch && result.data.items.length === 1
+            ? result.data.items[0]?.id || null
+            : null;
+      } else if (createClientMode) {
         nextSelectedId = null;
       } else if (lookupMode) {
         nextSelectedId =
@@ -2412,6 +2838,10 @@ export default function CreditFactoryConsole({
       }
 
       setSelectedId(nextSelectedId);
+
+      if (paymentsView) {
+        setShowPaymentResults(nextSelectedId === null);
+      }
 
       if (lookupMode) {
         setShowSearchResults(true);
@@ -2429,6 +2859,10 @@ export default function CreditFactoryConsole({
       setLoadingList(false);
     }
   };
+
+  useEffect(() => {
+    void loadEquipmentCatalog();
+  }, []);
 
   useEffect(() => {
     if (!paymentsView && !lookupMode) {
@@ -2479,8 +2913,15 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    setCuotaInicial(String(calculateRequiredInitialPayment(totalValue)));
-  }, [valorEquipoTotal]);
+    setCuotaInicial(
+      String(
+        calculateRequiredInitialPayment(
+          totalValue,
+          precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined
+        )
+      )
+    );
+  }, [precioBaseVentaCatalogo, valorEquipoTotal]);
 
   useEffect(() => {
     if (!paymentsView) {
@@ -2524,9 +2965,17 @@ export default function CreditFactoryConsole({
 
       setPayments(result.data.items);
       setPaymentSummary(result.data.credito);
+      const nextInstallment = result.data.credito.nextInstallment;
+      if (nextInstallment?.saldoPendiente && nextInstallment.saldoPendiente > 0) {
+        setSelectedInstallmentNumber(String(nextInstallment.numero));
+        setPaymentValue(String(Math.round(nextInstallment.saldoPendiente)));
+      } else {
+        setSelectedInstallmentNumber("");
+      }
     } catch (error) {
       setPayments([]);
       setPaymentSummary(null);
+      setSelectedInstallmentNumber("");
       setNotice({
         text:
           error instanceof Error
@@ -2628,7 +3077,7 @@ export default function CreditFactoryConsole({
         throw new Error("El video debe durar maximo 7 segundos.");
       }
 
-      const dataUrl = ensureVideoDataUrl(await readFileAsDataUrl(file));
+      const dataUrl = ensureVideoDataUrl(await readFileAsDataUrl(file), file);
       setContratoVideoAprobacionDataUrl(dataUrl);
       setContratoVideoAprobacionAudit({
         capturedAt: new Date().toISOString(),
@@ -2969,7 +3418,7 @@ export default function CreditFactoryConsole({
     if (wizardStep === 2 && !stepEquipoReady) {
       setNotice({
         text:
-          "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a la validacion de identidad.",
+          "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a identidad.",
         tone: "amber",
       });
       return;
@@ -2978,7 +3427,7 @@ export default function CreditFactoryConsole({
     if (wizardStep === 3 && !stepContratoReady) {
       setNotice({
         text:
-          "Completa selfie, cedula por ambos lados, video, OTP, firma y validacion de identidad antes de avanzar a los contratos.",
+          "Completa selfie, cedula por ambos lados, video y firma antes de avanzar a los contratos.",
         tone: "amber",
       });
       return;
@@ -3036,7 +3485,7 @@ export default function CreditFactoryConsole({
     if (wizardStep === 2 && !stepEquipoReady) {
       setNotice({
         text:
-          "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a la validacion de identidad.",
+          "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a identidad.",
         tone: "amber",
       });
       return;
@@ -3046,21 +3495,8 @@ export default function CreditFactoryConsole({
       if (!identityEvidenceReady) {
         setNotice({
           text:
-            "Completa selfie, cedula por ambos lados, video de aprobacion, OTP y firma antes de pasar a los contratos.",
+            "Completa selfie, cedula por ambos lados, video de aprobacion y firma antes de pasar a los contratos.",
           tone: "amber",
-        });
-        return;
-      }
-
-      const cedulaOk = cedulaValidationReady
-        ? true
-        : await validateCedulaAgainstForm();
-
-      if (!cedulaOk) {
-        setNotice({
-          text:
-            "La cedula no coincide con la informacion digitada. Corrige los datos o vuelve a capturar el documento.",
-          tone: "red",
         });
         return;
       }
@@ -3087,18 +3523,6 @@ export default function CreditFactoryConsole({
         return;
       }
 
-      const cedulaOk = cedulaValidationReady
-        ? true
-        : await validateCedulaAgainstForm();
-
-      if (!cedulaOk) {
-        setNotice({
-          text:
-            "La cedula no coincide con la informacion digitada. Corrige los datos o vuelve a capturar el documento.",
-          tone: "red",
-        });
-        return;
-      }
     }
 
     if (wizardStep === 4 && !stepDocumentosReady) {
@@ -3113,7 +3537,7 @@ export default function CreditFactoryConsole({
     setWizardStep(targetStep);
   };
 
-  const createWhatsAppOtp = () => {
+  const createWhatsAppOtp = async () => {
     if (!clienteTelefono.trim()) {
       setNotice({
         text: "Ingresa primero el telefono del cliente para generar el OTP.",
@@ -3122,22 +3546,55 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    const generated = String(Math.floor(100000 + Math.random() * 900000));
-    const sanitizedPhone = clienteTelefono.replace(/\D/g, "");
-    const waText = encodeURIComponent(
-      `FINSER PAY\nCodigo de validacion del contrato: ${generated}\nNo compartas este codigo con terceros.`
-    );
-    const waUrl = `https://wa.me/57${sanitizedPhone}?text=${waText}`;
-
-    setOtpCodeGenerated(generated);
-    setOtpCodeTyped("");
-    setOtpVerifiedAt("");
-    window.open(waUrl, "_blank", "noopener,noreferrer");
+    setSendingOtp(true);
     setNotice({
-      text:
-        "Se abrio WhatsApp Web con un OTP manual. Cuando el cliente lo confirme, registralo aqui.",
-      tone: "emerald",
+      text: "Enviando OTP por WhatsApp API...",
+      tone: "slate",
     });
+
+    try {
+      const result = await requestJson<WhatsAppOtpResponse>(
+        "/api/creditos/otp-whatsapp",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            telefono: clienteTelefono,
+            clienteNombre: clienteNombre || clientePrimerNombre,
+          }),
+        }
+      );
+
+      if (!result.ok || !result.data?.code) {
+        throw new Error(
+          [result.data?.error, result.data?.details].filter(Boolean).join(" - ") ||
+            "No se pudo enviar el OTP por WhatsApp"
+        );
+      }
+
+      setOtpCodeGenerated(result.data.code);
+      setOtpCodeTyped("");
+      setOtpVerifiedAt("");
+      setNotice({
+        text:
+          result.data.mode === "template"
+            ? "OTP enviado por WhatsApp API. Pide al cliente el codigo recibido para validarlo aqui."
+            : "OTP enviado por WhatsApp API como mensaje directo. Si Meta lo rechaza, crea una plantilla de autenticacion.",
+        tone: "emerald",
+      });
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo enviar el OTP por WhatsApp",
+        tone: "red",
+      });
+    } finally {
+      setSendingOtp(false);
+    }
   };
 
   const verifyOtp = () => {
@@ -3182,7 +3639,7 @@ export default function CreditFactoryConsole({
     ) {
       setNotice({
         text:
-          "Completa cliente, equipo, validacion de identidad y checklist documental antes de validar la entrega.",
+          "Completa cliente, equipo, identidad y checklist documental antes de validar la entrega.",
         tone: "amber",
       });
       return;
@@ -3361,6 +3818,7 @@ export default function CreditFactoryConsole({
           referenciaEquipo,
           equipoMarca,
           equipoModelo,
+          equipoCatalogoId: selectedEquipmentCatalogItem?.id || null,
           imei: imeiDigits,
           valorEquipoTotal,
           cuotaInicial,
@@ -3390,9 +3848,9 @@ export default function CreditFactoryConsole({
             contratoVideoAprobacionAudit?.source || null,
           contratoVideoAprobacionDurationSeconds:
             contratoVideoAprobacionAudit?.durationSeconds || null,
-          contratoOtpCanal: otpReady ? "WHATSAPP_WEB_MANUAL" : "",
-          contratoOtpDestino: clienteTelefono,
-          contratoOtpVerificadoAt: otpVerifiedAt || null,
+          contratoOtpCanal: "",
+          contratoOtpDestino: "",
+          contratoOtpVerificadoAt: null,
           pagareAceptado,
           cartaAceptada,
           autorizacionDatosAceptada,
@@ -3404,6 +3862,7 @@ export default function CreditFactoryConsole({
       }
 
       upsertCredit(result.data.item);
+      window.open(`/api/creditos/${result.data.item.id}/plan-pagos`, "_blank");
       resetForm();
 
       if (result.data.deliveryStatus?.ready) {
@@ -3455,6 +3914,7 @@ export default function CreditFactoryConsole({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            cuotaNumero: selectedInstallmentNumber || null,
             valor: paymentValue,
             metodoPago: paymentMethod,
             observacion: paymentObservation,
@@ -3468,6 +3928,7 @@ export default function CreditFactoryConsole({
 
       setPaymentValue("");
       setPaymentObservation("");
+      setSelectedInstallmentNumber("");
       await loadPayments(selectedCredit.id);
       await loadCredits(true, activeSearch);
 
@@ -3546,7 +4007,32 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    if (credit.saldoPendiente > 0) {
+      setNotice({
+        text: "El paz y salvo solo se puede emitir cuando el saldo pendiente este en $0.",
+        tone: "amber",
+      });
+      return;
+    }
+
     window.open(`/api/creditos/${credit.id}/paz-y-salvo`, "_blank");
+  };
+
+  const downloadPlanPagos = (creditId?: number | null) => {
+    const credit =
+      typeof creditId === "number"
+        ? credits.find((item) => item.id === creditId) || null
+        : selectedCredit;
+
+    if (!credit) {
+      setNotice({
+        text: "Selecciona un credito antes de descargar el plan de pagos.",
+        tone: "red",
+      });
+      return;
+    }
+
+    window.open(`/api/creditos/${credit.id}/plan-pagos`, "_blank");
   };
 
   const downloadExpedientePdf = (creditId?: number | null) => {
@@ -3628,6 +4114,72 @@ export default function CreditFactoryConsole({
     await loadCredits(false, "");
   };
 
+  const applyClientDataFromCredit = (credit: CreditItem) => {
+    setClientePrimerNombre(credit.clientePrimerNombre || "");
+    setClientePrimerApellido(credit.clientePrimerApellido || "");
+    setClienteTipoDocumento(credit.clienteTipoDocumento || DOCUMENT_TYPE_OPTIONS[0].value);
+    setClienteDireccion(credit.clienteDireccion || "");
+    setClienteNombre(credit.clienteNombre || "");
+    setClienteDocumento(credit.clienteDocumento || "");
+    setClienteFechaNacimiento(dateOnly(credit.clienteFechaNacimiento));
+    setClienteFechaExpedicion(dateOnly(credit.clienteFechaExpedicion));
+    setClienteTelefono(credit.clienteTelefono || "");
+    setClienteCorreo(credit.clienteCorreo || "");
+    setClienteDepartamento(credit.clienteDepartamento || "");
+    setClienteCiudad(credit.clienteCiudad || "");
+    setClienteGenero(credit.clienteGenero || "");
+    setReferenciaFamiliar1Nombre(credit.referenciasFamiliares[0]?.nombre || "");
+    setReferenciaFamiliar1Parentesco(credit.referenciasFamiliares[0]?.parentesco || "");
+    setReferenciaFamiliar1Telefono(credit.referenciasFamiliares[0]?.telefono || "");
+    setReferenciaFamiliar2Nombre(credit.referenciasFamiliares[1]?.nombre || "");
+    setReferenciaFamiliar2Parentesco(credit.referenciasFamiliares[1]?.parentesco || "");
+    setReferenciaFamiliar2Telefono(credit.referenciasFamiliares[1]?.telefono || "");
+    setWizardStep(1);
+  };
+
+  const createNewSaleFromClient = (creditId?: number | null) => {
+    const credit =
+      typeof creditId === "number"
+        ? credits.find((item) => item.id === creditId) || null
+        : selectedCredit;
+
+    if (!credit) {
+      return;
+    }
+
+    window.sessionStorage.setItem("finserpay-client-prefill", JSON.stringify(credit));
+    window.location.assign("/dashboard/creditos?mode=create-client");
+  };
+
+  useEffect(() => {
+    if (!createClientMode) {
+      return;
+    }
+
+    const raw = window.sessionStorage.getItem("finserpay-client-prefill");
+
+    if (!raw) {
+      return;
+    }
+
+    try {
+      const credit = JSON.parse(raw) as CreditItem;
+      applyClientDataFromCredit(credit);
+      setNotice({
+        text:
+          "Datos del cliente cargados desde su registro anterior. Completa equipo, identidad y contratos para la nueva venta.",
+        tone: "emerald",
+      });
+    } catch {
+      setNotice({
+        text: "No se pudieron cargar los datos anteriores del cliente.",
+        tone: "red",
+      });
+    } finally {
+      window.sessionStorage.removeItem("finserpay-client-prefill");
+    }
+  }, [createClientMode]);
+
   const openLookupCredit = (creditId: number) => {
     if (!lookupMode) {
       setSelectedId(creditId);
@@ -3703,7 +4255,6 @@ export default function CreditFactoryConsole({
           <p className="font-black text-slate-950">2. CONDICIONES DEL CREDITO</p>
           <p className="mt-2">El DEUDOR se obliga a pagar:</p>
           <p className="mt-2">Total a pagar: {currency(saldoFinanciado)}</p>
-          <p>Total fianza a pagar: {currency(financialPlan.valorFianza)}</p>
           <p>Numero de cuotas: {plazoMesesNumero || "{{NUM_CUOTAS}}"}</p>
           <p>Valor por cuota: {currency(valorCuota)}</p>
           <p>Fecha primer pago: {fechaPrimerPagoLabel}</p>
@@ -3772,7 +4323,6 @@ export default function CreditFactoryConsole({
           <p className="font-black text-slate-950">8. FIRMA ELECTRONICA</p>
           <p className="mt-2">El DEUDOR acepta que la firma realizada mediante:</p>
           <ul className="mt-2 list-disc space-y-1 pl-5">
-            <li>Codigo OTP</li>
             <li>Registro de IP</li>
             <li>Correo electronico</li>
             <li>Evidencia fotografica</li>
@@ -3850,17 +4400,17 @@ export default function CreditFactoryConsole({
   );
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(180deg,#f7f4ee_0%,#f2f5f9_100%)] px-4 py-8 text-slate-950">
+    <div className="fp-shell min-h-screen px-4 py-8 text-slate-950">
       <div className="mx-auto max-w-7xl">
-        <section className="relative overflow-hidden rounded-[36px] border border-[#2a2d33] bg-[linear-gradient(135deg,#0d0f13_0%,#171a21_55%,#202631_100%)] px-6 py-8 text-white shadow-[0_30px_90px_rgba(15,23,42,0.22)] sm:px-8">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(199,154,87,0.28),transparent_24%),radial-gradient(circle_at_12%_0%,rgba(255,255,255,0.07),transparent_24%)]" />
+        <section className="fp-hero relative overflow-hidden rounded-[30px] border border-emerald-950/10 px-6 py-8 text-white shadow-[0_30px_90px_rgba(23,32,29,0.20)] sm:px-8">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
 
           <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-3xl">
               <div className="mb-5">
                 <FinserBrand dark />
               </div>
-              <div className="inline-flex rounded-full border border-white/12 bg-white/6 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-[#f1d19c]">
+              <div className="inline-flex rounded-full border border-white/14 bg-white/8 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-emerald-50">
                 {heroEyebrow}
               </div>
               <h1 className="mt-5 text-4xl font-black tracking-tight sm:text-5xl">
@@ -3891,13 +4441,13 @@ export default function CreditFactoryConsole({
             <div className="flex flex-wrap gap-3">
               <Link
                 href="/dashboard"
-                className="inline-flex min-w-[170px] justify-center rounded-2xl border border-white/15 bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
+                className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-50"
               >
                 Volver al dashboard
               </Link>
               <Link
                 href="/dashboard/integraciones"
-                className="inline-flex min-w-[170px] justify-center rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/16"
+                className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/16"
               >
                 Ver integraciones
               </Link>
@@ -3909,7 +4459,7 @@ export default function CreditFactoryConsole({
                       ? "/dashboard/abonos"
                       : "/dashboard/abonos"
                 }
-                className="inline-flex min-w-[170px] justify-center rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/16"
+                className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/16"
               >
                 {paymentsView ? "Ir a crear cliente" : "Ir a abonos"}
               </Link>
@@ -3929,8 +4479,8 @@ export default function CreditFactoryConsole({
         )}
 
         {showSearchSection && (
-        <section className="mt-6 rounded-[30px] border border-[#dbe8ea] bg-[linear-gradient(180deg,#f4fcff_0%,#edf7fb_100%)] p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
-          <div className="inline-flex rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#1d5b63]">
+        <section className="fp-surface mt-6 rounded-[28px] p-6">
+          <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]">
             Buscar cliente
           </div>
           <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">
@@ -3950,14 +4500,14 @@ export default function CreditFactoryConsole({
                 }
               }}
               placeholder="Cedula, telefono, nombre, folio o IMEI"
-              className="flex-1 rounded-2xl border border-[#bde1e8] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#1d5b63] focus:ring-2 focus:ring-[#d9eff4]"
+               className="flex-1 rounded-[18px] border border-emerald-950/14 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
             />
 
             <button
               type="button"
               onClick={() => void searchCredits()}
               disabled={loadingList}
-              className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
+              className="fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"
             >
               {loadingList ? "Buscando..." : "Buscar cliente"}
             </button>
@@ -3966,7 +4516,7 @@ export default function CreditFactoryConsole({
               type="button"
               onClick={() => void clearSearch()}
               disabled={loadingList && !activeSearch}
-              className="rounded-2xl border border-[#b7c9cf] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+              className="rounded-[18px] border border-emerald-950/14 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-emerald-50 disabled:opacity-70"
             >
               Limpiar
             </button>
@@ -4001,100 +4551,159 @@ export default function CreditFactoryConsole({
         >
           <div
             className={[
-              "rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] p-6 shadow-[0_18px_50px_rgba(15,23,42,0.07)]",
+              "fp-surface rounded-[28px] p-5 sm:p-6",
               lookupMode ? "hidden" : "",
             ].join(" ")}
           >
-            <div className="inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
-              Nuevo credito
-            </div>
-            <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">
-              Generar credito e inscribir equipo
-            </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-              {canAdmin
-                ? "Desde aqui generas el credito y luego puedes operar comandos administrativos sobre el caso."
-                : "Como vendedor solo generas el credito, se inscribe el equipo y luego el sistema te dice si si se puede entregar."}
-            </p>
+            <div className="fp-flow-header relative overflow-hidden rounded-[28px] border border-[#cfe5e2] p-5 sm:p-6">
+              <div className="relative grid gap-5 xl:grid-cols-[1.1fr_0.9fr] xl:items-end">
+                <div>
+                  <div className="inline-flex rounded-full border border-[#8fd8cf] bg-white/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f5d59]">
+                    Nuevo credito
+                  </div>
+                  <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">
+                    Fabrica guiada para el asesor
+                  </h2>
+                  <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+                    {canAdmin
+                      ? "Genera el credito, revisa evidencias y opera el caso sin perder de vista el estado del cierre."
+                      : "Sigue el recorrido paso a paso: cliente, equipo, identidad, contratos y entrega validada."}
+                  </p>
+                </div>
 
-            <div className="mt-6 grid gap-3 xl:grid-cols-5">
-              {[
-                { id: 1, label: "Cliente", detail: "Datos base", ready: stepClienteReady },
-                {
-                  id: 2,
-                  label: "Equipo",
-                  detail: "IMEI y plan financiero",
-                  ready: stepEquipoReady,
-                },
-                {
-                  id: 3,
-                  label: "Identidad",
-                  detail: "Cedula, selfie, video, OTP y firma",
-                  ready: stepContratoReady,
-                },
-                {
-                  id: 4,
-                  label: "Contratos",
-                  detail: "Checklist y anexos",
-                  ready: stepDocumentosReady,
-                },
-                {
-                  id: 5,
-                  label: "Equipo",
-                  detail: "Validacion Zero Touch",
-                  ready: entregaValidada,
-                },
-              ].map((step) => {
-                const active = step.id === wizardStep;
-
-                return (
-                  <button
-                    key={step.id}
-                    type="button"
-                                  onClick={() => {
-                                    void advanceToStep(step.id);
-                                  }}
-                    className={[
-                      "flex h-full min-h-[154px] flex-col justify-between rounded-[24px] border px-4 py-4 text-left transition",
-                      active
-                        ? "border-slate-950 bg-slate-950 text-white shadow-[0_16px_30px_rgba(15,23,42,0.14)]"
-                        : "border-[#e6dece] bg-white text-slate-900 hover:border-slate-400",
-                    ].join(" ")}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em]">
-                        Paso {step.id}
-                      </span>
-                      <span
-                        className={[
-                          "inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]",
-                          step.ready
-                            ? active
-                              ? "border-white/20 bg-white/10 text-white"
-                              : "border-emerald-200 bg-emerald-50 text-emerald-700"
-                            : active
-                              ? "border-white/20 bg-white/10 text-white"
-                              : "border-amber-200 bg-amber-50 text-amber-700",
-                        ].join(" ")}
-                      >
-                        {step.ready ? "Listo" : "Pendiente"}
-                      </span>
+                <div className="rounded-[24px] border border-white/70 bg-white/78 p-4 shadow-[0_16px_35px_rgba(15,23,42,0.08)]">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                        Avance del caso
+                      </p>
+                      <p className="mt-1 text-2xl font-black tracking-tight text-slate-950">
+                        {factoryProgress}%
+                      </p>
                     </div>
-                    <p className="mt-3 text-xl font-black tracking-tight">{step.label}</p>
-                    <p
+                    <div className="fp-pulse-dot" aria-hidden="true" />
+                  </div>
+                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className="fp-flow-progress h-full rounded-full"
+                      style={{ width: `${factoryProgress}%` }}
+                    />
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">
+                    Siguiente accion: <span className="font-semibold text-slate-950">{nextFactoryStep.action}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 xl:grid-cols-[280px_1fr] xl:items-start">
+              <aside className="fp-step-rail rounded-[26px] border border-[#d8e6e5] bg-white/88 p-3 shadow-[0_18px_44px_rgba(15,23,42,0.07)]">
+                {factorySteps.map((step) => {
+                  const active = step.id === wizardStep;
+
+                  return (
+                    <button
+                      key={step.id}
+                      type="button"
+                      onClick={() => {
+                        void advanceToStep(step.id);
+                      }}
                       className={[
-                        "mt-2 text-sm",
-                        active ? "text-slate-200" : "text-slate-500",
+                        "group mb-2 flex w-full items-center gap-3 rounded-[22px] border px-3 py-3 text-left transition last:mb-0",
+                        active
+                          ? "fp-step-active border-[#145a5a] bg-[#123f3e] text-white"
+                          : "border-transparent bg-transparent text-slate-700 hover:border-[#cde2df] hover:bg-[#f5fbfa]",
                       ].join(" ")}
                     >
-                      {step.detail}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
+                      <span
+                        className={[
+                          "grid h-10 w-10 shrink-0 place-items-center rounded-2xl border text-sm font-black transition",
+                          active
+                            ? "border-white/25 bg-white/12 text-white"
+                            : step.ready
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-white text-slate-500 group-hover:border-[#8fd8cf]",
+                        ].join(" ")}
+                      >
+                        {step.ready ? "OK" : step.id}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-black tracking-tight">
+                          {step.label}
+                        </span>
+                        <span
+                          className={[
+                            "mt-0.5 block text-xs",
+                            active ? "text-white/72" : "text-slate-500",
+                          ].join(" ")}
+                        >
+                          {step.detail}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </aside>
 
-            <div className="mt-6 rounded-[28px] border border-[#dbcdb8] bg-[linear-gradient(180deg,#fffdf8_0%,#f8f3ea_100%)] p-5 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
+              <div>
+                <div className="mb-4 rounded-[26px] border border-[#d8e6e5] bg-white px-4 py-4 shadow-[0_14px_32px_rgba(15,23,42,0.06)]">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">
+                        Paso {activeFactoryStep.id} en curso
+                      </p>
+                      <p className="mt-1 text-xl font-black tracking-tight text-slate-950">
+                        {activeFactoryStep.label}
+                      </p>
+                      <p className="mt-1 text-sm leading-6 text-slate-600">
+                        {activeFactoryStep.action}
+                      </p>
+                    </div>
+                    <span
+                      className={[
+                        "inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
+                        activeFactoryStep.ready
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-amber-200 bg-amber-50 text-amber-700",
+                      ].join(" ")}
+                    >
+                      {activeFactoryStep.ready ? "Listo" : "En progreso"}
+                    </span>
+                  </div>
+                  <div className="mt-4 rounded-[22px] border border-[#e1efec] bg-[#f8fdfb] px-4 py-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-sm font-semibold text-slate-700">
+                        Formulario: {activeCompletedCount}/{activeRequirements.length} listo
+                      </p>
+                      <p className="text-sm font-black text-[#145a5a]">
+                        {activeCompletionPercent}%
+                      </p>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                      <div
+                        className="fp-form-meter h-full rounded-full transition-all duration-300"
+                        style={{ width: `${activeCompletionPercent}%` }}
+                      />
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {activeRequirements.map((item) => (
+                        <span
+                          key={item.label}
+                          className={[
+                            "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]",
+                            item.ready
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-amber-200 bg-amber-50 text-amber-700",
+                          ].join(" ")}
+                        >
+                          {item.ready ? "OK" : "Falta"} {item.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+            <div className="fp-step-stage fp-form-redesign rounded-[28px] border border-[#d6e4e1] bg-[linear-gradient(180deg,#fffef9_0%,#f7f2e9_100%)] p-5 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
               {wizardStep === 1 && (
                 <div>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -4128,7 +4737,7 @@ export default function CreditFactoryConsole({
                           Ingresa los datos del cliente
                         </p>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
-                          Todos los campos son obligatorios para preparar contrato, pagare y validacion de identidad comercial.
+                          Todos los campos son obligatorios para preparar contrato, pagare e identidad comercial.
                         </p>
                       </div>
                       {!canAdmin && initialSeller && (
@@ -4535,93 +5144,6 @@ export default function CreditFactoryConsole({
                           }
                         />
                       </div>
-
-                      <div className="rounded-[24px] border border-[#d9e7ea] bg-white px-5 py-5">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                              Validacion automatica de cedula
-                            </p>
-                            <p className="mt-2 text-sm leading-6 text-slate-600">
-                              Leemos frente y respaldo para comparar numero de documento,
-                              primer nombre, primer apellido y fechas contra la venta.
-                              Si no coincide, no se puede continuar.
-                            </p>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void validateCedulaAgainstForm();
-                            }}
-                            disabled={
-                              cedulaValidation.status === "processing" ||
-                              !contratoCedulaFrenteDataUrl ||
-                              !contratoCedulaRespaldoDataUrl
-                            }
-                            className="rounded-2xl bg-[#0f172a] px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                          >
-                            {cedulaValidation.status === "processing"
-                              ? "Leyendo cedula..."
-                              : "Validar cedula"}
-                          </button>
-                        </div>
-
-                        <div
-                          className={[
-                            "mt-4 rounded-[20px] border px-4 py-4",
-                            cedulaValidation.status === "valid"
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                              : cedulaValidation.status === "invalid"
-                                ? "border-red-200 bg-red-50 text-red-800"
-                                : cedulaValidation.status === "processing"
-                                  ? "border-sky-200 bg-sky-50 text-sky-800"
-                                  : "border-slate-200 bg-slate-50 text-slate-700",
-                          ].join(" ")}
-                        >
-                          <p className="text-sm font-semibold">
-                            {cedulaValidation.status === "valid"
-                              ? "Cedula validada"
-                              : cedulaValidation.status === "invalid"
-                                ? "Cedula no coincide"
-                                : cedulaValidation.status === "processing"
-                                  ? "Procesando documento"
-                                  : "Pendiente por validar"}
-                          </p>
-                          <p className="mt-2 text-sm leading-6">
-                            {cedulaValidation.summary}
-                          </p>
-                          {cedulaValidation.checkedAt && (
-                            <p className="mt-2 text-xs font-medium uppercase tracking-[0.16em]">
-                              Ultima validacion: {evidenceAuditTime(cedulaValidation.checkedAt)}
-                            </p>
-                          )}
-                        </div>
-
-                        {cedulaValidation.checks.length > 0 && (
-                          <div className="mt-4 grid gap-3 md:grid-cols-2">
-                            {cedulaValidation.checks.map((check) => (
-                              <div
-                                key={check.key}
-                                className={[
-                                  "rounded-[18px] border px-4 py-3 text-sm",
-                                  check.matched
-                                    ? "border-emerald-200 bg-emerald-50"
-                                    : "border-red-200 bg-red-50",
-                                ].join(" ")}
-                              >
-                                <p className="font-semibold text-slate-950">{check.label}</p>
-                                <p className="mt-2 text-slate-700">
-                                  Esperado: {check.expected || "-"}
-                                </p>
-                                <p className="mt-1 text-slate-600">
-                                  Detectado: {check.detected || "No detectado"}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
                     </div>
 
                     <div className="space-y-4">
@@ -4672,21 +5194,22 @@ export default function CreditFactoryConsole({
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-4 py-4">
+                      <div className="hidden rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-4 py-4">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                           OTP por WhatsApp
                         </p>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
-                          Abre WhatsApp Web con un codigo manual. La integracion oficial por API la conectamos despues.
+                          Envia un codigo al WhatsApp del cliente usando la API oficial de Meta.
                         </p>
 
                         <div className="mt-4 flex flex-wrap gap-3">
                           <button
                             type="button"
                             onClick={createWhatsAppOtp}
+                            disabled={sendingOtp}
                             className="rounded-2xl bg-[#145a5a] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a]"
                           >
-                            Enviar OTP por WhatsApp
+                            {sendingOtp ? "Enviando..." : "Enviar OTP por WhatsApp"}
                           </button>
 
                           {otpReady && (
@@ -4790,10 +5313,6 @@ export default function CreditFactoryConsole({
                               {currency(financialPlan.saldoBaseFinanciado)}
                             </p>
                             <p>Interes estimado: {currency(financialPlan.valorInteres)}</p>
-                            <p>
-                              FIANCO ({financialPlan.fianzaPorcentaje}% del credito autorizado):{" "}
-                              {currency(financialPlan.valorFianza)}
-                            </p>
                             <p>Valor total a pagar: {currency(saldoFinanciado)}</p>
                             <p>Numero de cuotas: {plazoMesesNumero || "{{cuotas}}"}</p>
                             <p>Valor de cada cuota: {currency(valorCuota)}</p>
@@ -4935,7 +5454,6 @@ export default function CreditFactoryConsole({
                             <p>Nombre: {clienteNombre || "{{nombre}}"}</p>
                             <p>Cedula: {clienteDocumento || "{{cedula}}"}</p>
                           <p>Fecha: {documentDateTimeLabel}</p>
-                            <p>OTP: {otpReady ? "Validado" : "Opcional / pendiente"}</p>
                           </div>
                         </div>
                       </div>
@@ -4959,7 +5477,7 @@ export default function CreditFactoryConsole({
                         Equipo y plan financiero
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Aqui dejas marca, modelo, IMEI, inicial automatica segun base maxima de $800.000, cuotas, tasa legal y Fianco.
+                        Captura el equipo, define la inicial y confirma la cuota que vera el cliente.
                       </p>
                     </div>
                     <div
@@ -4980,24 +5498,70 @@ export default function CreditFactoryConsole({
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Marca
                         </label>
-                        <input
-                          value={equipoMarca}
-                          onChange={(event) => setEquipoMarca(event.target.value)}
-                          placeholder="Infinix, Samsung, Xiaomi..."
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                        />
+                        {equipmentBrandOptions.length ? (
+                          <select
+                            value={equipoMarca}
+                            onChange={(event) => {
+                              setEquipoMarca(event.target.value);
+                              setEquipoModelo("");
+                            }}
+                            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          >
+                            <option value="">Selecciona marca</option>
+                            {equipmentBrandOptions.map((brand) => (
+                              <option key={equipmentCatalogKey(brand)} value={brand}>
+                                {brand}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            value={equipoMarca}
+                            onChange={(event) => setEquipoMarca(event.target.value)}
+                            placeholder="Primero carga el catalogo"
+                            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          />
+                        )}
                       </div>
 
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Modelo
                         </label>
-                        <input
-                          value={equipoModelo}
-                          onChange={(event) => setEquipoModelo(event.target.value)}
-                          placeholder="Modelo comercial"
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                        />
+                        {equipmentBrandOptions.length ? (
+                          <select
+                            value={selectedEquipmentCatalogItem?.id || ""}
+                            onChange={(event) => {
+                              const selected = equipmentModelOptions.find(
+                                (item) => item.id === Number(event.target.value)
+                              );
+
+                              if (selected) {
+                                applyEquipmentCatalogItem(selected);
+                              } else {
+                                setEquipoModelo("");
+                              }
+                            }}
+                            disabled={!equipoMarca}
+                            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50 disabled:text-slate-400"
+                          >
+                            <option value="">
+                              {equipoMarca ? "Selecciona modelo" : "Elige una marca"}
+                            </option>
+                            {equipmentModelOptions.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.modelo} - base {currency(item.precioBaseVenta)}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            value={equipoModelo}
+                            onChange={(event) => setEquipoModelo(event.target.value)}
+                            placeholder="Modelo comercial"
+                            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          />
+                        )}
                       </div>
 
                       <div>
@@ -5042,7 +5606,9 @@ export default function CreditFactoryConsole({
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                         />
                         <p className="mt-2 text-xs font-medium text-slate-500">
-                          Base financiable maxima: {currency(MAX_DEVICE_FINANCING_BASE)}. Si se pasa, el excedente se suma a la inicial.
+                          {precioBaseVentaCatalogo > 0
+                            ? `Base del modelo: ${currency(precioBaseVentaCatalogo)}. Excedente a inicial: ${currency(excedentePrecioBase)}.`
+                            : `Base maxima sin catalogo: ${currency(MAX_DEVICE_FINANCING_BASE)}.`}
                         </p>
                       </div>
 
@@ -5089,17 +5655,17 @@ export default function CreditFactoryConsole({
                     <div className="space-y-4">
                       <div className="rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] p-5">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                          Base de calculo
+                          Resumen para el asesor
                         </p>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
-                          Referencia cargada con {DEFAULT_LEGAL_RATE_REFERENCE}. La lista de modelos autorizados quedara lista para cuando la subas.
+                          Muestra solo los datos necesarios para explicar la venta y avanzar al cierre.
                         </p>
                       </div>
 
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Referencia comercial
+                            Equipo
                           </p>
                           <p className="mt-2 text-lg font-black text-slate-950">
                             {referenciaEquipo || "Pendiente"}
@@ -5107,40 +5673,40 @@ export default function CreditFactoryConsole({
                         </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Credito Autorizado
+                            Valor del equipo
                           </p>
                           <p className="mt-2 text-2xl font-black text-slate-950">
-                            {currency(financialPlan.saldoBaseFinanciado)}
+                            {currency(valorTotalEquipoNumero)}
                           </p>
                         </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Interes estimado
+                            Inicial
                           </p>
                           <p className="mt-2 text-2xl font-black text-slate-950">
-                            {currency(financialPlan.valorInteres)}
+                            {currency(cuotaInicialNumero)}
                           </p>
                         </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Fianco 60%
+                            Plazo
                           </p>
                           <p className="mt-2 text-2xl font-black text-slate-950">
-                            {currency(financialPlan.valorFianza)}
+                            {plazoMesesNumero || 0}
                           </p>
                           <p className="mt-1 text-xs font-medium text-slate-500">
-                            {financialPlan.fianzaPorcentaje}% del Credito Autorizado, adicional al interes.
+                            cuotas
                           </p>
                         </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Valor total a pagar
+                            Total financiado
                           </p>
                           <p className="mt-2 text-2xl font-black text-slate-950">
                             {currency(saldoFinanciado)}
                           </p>
                           <p className="mt-1 text-xs font-medium text-slate-500">
-                            Credito Autorizado + interes + Fianco, distribuido segun el plazo.
+                            Valor final distribuido en las cuotas.
                           </p>
                         </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
@@ -5165,10 +5731,10 @@ export default function CreditFactoryConsole({
                         Paso 3
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        Validacion de identidad
+                        Identidad del cliente
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Aqui validas selfie, cedula por ambos lados, video corto, OTP y firma. Si algo no coincide, no se puede pasar a los contratos.
+                        Aqui capturas selfie, cedula por ambos lados, video corto y firma para continuar con los contratos.
                       </p>
                     </div>
                     <div
@@ -5401,62 +5967,6 @@ export default function CreditFactoryConsole({
                         }}
                         onFileChange={(event) => void captureApprovalVideo(event)}
                       />
-
-                      <div className="rounded-[24px] border border-[#d9e7ea] bg-white px-5 py-5">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                              Validacion automatica de cedula
-                            </p>
-                            <p className="mt-2 text-sm leading-6 text-slate-600">
-                              Leemos frente y respaldo para comparar numero de documento, primer nombre, primer apellido y fechas contra la venta. Si no coincide, no se puede continuar.
-                            </p>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void validateCedulaAgainstForm();
-                            }}
-                            disabled={
-                              cedulaValidation.status === "processing" ||
-                              !contratoCedulaFrenteDataUrl ||
-                              !contratoCedulaRespaldoDataUrl
-                            }
-                            className="rounded-2xl bg-[#0f172a] px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                          >
-                            {cedulaValidation.status === "processing"
-                              ? "Leyendo cedula..."
-                              : "Validar cedula"}
-                          </button>
-                        </div>
-
-                        <div
-                          className={[
-                            "mt-4 rounded-[20px] border px-4 py-4",
-                            cedulaValidation.status === "valid"
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                              : cedulaValidation.status === "invalid"
-                                ? "border-red-200 bg-red-50 text-red-800"
-                                : cedulaValidation.status === "processing"
-                                  ? "border-sky-200 bg-sky-50 text-sky-800"
-                                  : "border-slate-200 bg-slate-50 text-slate-700",
-                          ].join(" ")}
-                        >
-                          <p className="text-sm font-semibold">
-                            {cedulaValidation.status === "valid"
-                              ? "Cedula validada"
-                              : cedulaValidation.status === "invalid"
-                                ? "Cedula no coincide"
-                                : cedulaValidation.status === "processing"
-                                  ? "Procesando documento"
-                                  : "Pendiente por validar"}
-                          </p>
-                          <p className="mt-2 text-sm leading-6">
-                            {cedulaValidation.summary}
-                          </p>
-                        </div>
-                      </div>
                     </div>
 
                     <div className="space-y-4">
@@ -5491,21 +6001,22 @@ export default function CreditFactoryConsole({
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-4 py-4">
+                      <div className="hidden rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-4 py-4">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                           OTP por WhatsApp
                         </p>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
-                          Abre WhatsApp Web con un codigo manual. La integracion oficial por API la conectamos despues.
+                          Envia un codigo al WhatsApp del cliente usando la API oficial de Meta.
                         </p>
 
                         <div className="mt-4 flex flex-wrap gap-3">
                           <button
                             type="button"
                             onClick={createWhatsAppOtp}
+                            disabled={sendingOtp}
                             className="rounded-2xl bg-[#145a5a] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a]"
                           >
-                            Enviar OTP por WhatsApp
+                            {sendingOtp ? "Enviando..." : "Enviar OTP por WhatsApp"}
                           </button>
 
                           {otpReady && (
@@ -5548,9 +6059,7 @@ export default function CreditFactoryConsole({
                                 Boolean(contratoCedulaRespaldoDataUrl),
                             },
                             { label: "Video", ready: Boolean(contratoVideoAprobacionDataUrl) },
-                            { label: "OTP", ready: otpReady },
                             { label: "Firma", ready: Boolean(contratoFirmaDataUrl) },
-                            { label: "OCR cedula", ready: cedulaValidationReady },
                           ].map(({ label, ready }) => (
                             <div
                               key={label}
@@ -5673,19 +6182,12 @@ export default function CreditFactoryConsole({
                           </div>
 
                           <div className="rounded-[18px] border border-slate-200 bg-white p-3 sm:col-span-2">
-                            {contratoVideoAprobacionDataUrl ? (
-                              <video
-                                src={contratoVideoAprobacionDataUrl}
-                                controls
-                                className="h-48 w-full rounded-2xl bg-slate-950 object-contain"
-                              />
-                            ) : (
-                              <div className="flex h-48 items-center justify-center rounded-2xl bg-slate-50 text-sm text-slate-500">
-                                Video pendiente
-                              </div>
-                            )}
+                            <VideoEvidencePreview
+                              value={contratoVideoAprobacionDataUrl}
+                              emptyLabel="Video pendiente"
+                              heightClassName="h-48"
+                            />
                             <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-500">
-                              <span>OTP: {otpReady ? "Validado" : "Pendiente"}</span>
                               <span>
                                 Video:{" "}
                                 {contratoVideoAprobacionAudit?.durationSeconds
@@ -6293,7 +6795,6 @@ export default function CreditFactoryConsole({
                           { label: "Cliente", ready: stepClienteReady },
                           { label: "Equipo", ready: stepEquipoReady },
                           { label: "Contrato", ready: stepContratoReady },
-                          { label: "OTP", ready: otpReady },
                         ].map(({ label, ready }) => (
                           <div
                             key={label}
@@ -6331,12 +6832,12 @@ export default function CreditFactoryConsole({
               )}
             </div>
 
-            <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div className="fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-[24px] border border-[#d8e6e5] bg-white/92 px-4 py-4 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur">
               {wizardStep > 1 && (
                 <button
                   type="button"
                   onClick={() => setWizardStep((current) => Math.max(1, current - 1))}
-                  className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  className="rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa]"
                 >
                   Anterior
                 </button>
@@ -6348,7 +6849,7 @@ export default function CreditFactoryConsole({
                         onClick={() => {
                           void advanceToStep(wizardStep + 1);
                         }}
-                  className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                  className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01]"
                 >
                   Siguiente paso
                 </button>
@@ -6359,7 +6860,7 @@ export default function CreditFactoryConsole({
                   type="button"
                   onClick={() => void createCredit()}
                   disabled={creating || !ventaLista}
-                  className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-70"
+                  className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"
                 >
                   {creating ? "Finalizando credito..." : "Finalizar credito"}
                 </button>
@@ -6369,22 +6870,24 @@ export default function CreditFactoryConsole({
                 type="button"
                 onClick={() => resetForm()}
                 disabled={creating}
-                className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                className="rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa] disabled:opacity-70"
               >
                 Limpiar
               </button>
 
               {FLEXIBLE_WIZARD_FOR_TESTING && (
                 <span className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-700">
-                  Modo pruebas activo: puedes saltar entre pasos aunque falten datos. El cierre final del credito sigue validando el flujo completo.
+                  Modo pruebas activo: puedes saltar entre pasos y finalizar el credito aunque la validacion final de entrega quede pendiente.
                 </span>
               )}
 
-              {wizardStep === 5 && !ventaLista && (
+              {wizardStep === 5 && !ventaLista && !FLEXIBLE_WIZARD_FOR_TESTING && (
                 <span className="text-sm font-medium text-amber-700">
                   Primero valida la entregabilidad del dispositivo para habilitar el cierre.
                 </span>
               )}
+            </div>
+              </div>
             </div>
 
             <div className="hidden">
@@ -6765,10 +7268,6 @@ export default function CreditFactoryConsole({
                         Credito autorizado: {currency(financialPlan.saldoBaseFinanciado)}
                       </p>
                       <p>Interes estimado: {currency(financialPlan.valorInteres)}</p>
-                      <p>
-                        FIANCO ({financialPlan.fianzaPorcentaje}% del credito autorizado):{" "}
-                        {currency(financialPlan.valorFianza)}
-                      </p>
                       <p>Valor total a pagar: {currency(saldoFinanciado)}</p>
                       <p>Numero de cuotas: {plazoMesesNumero || "{{cuotas}}"}</p>
                       <p>Valor de cada cuota: {currency(valorCuota)}</p>
@@ -7232,19 +7731,51 @@ export default function CreditFactoryConsole({
                         )}
                         <button
                           type="button"
+                          onClick={() => openPaymentsForCredit()}
+                          disabled={!selectedCredit}
+                          className="rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
+                        >
+                          Realizar abono
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => createNewSaleFromClient()}
+                          disabled={!selectedCredit}
+                          className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                        >
+                          Nueva venta con este cliente
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => downloadExpedientePdf()}
                           disabled={!selectedCredit}
                           className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
                         >
-                          Descargar expediente PDF
+                          Ver documentos firmados
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadPlanPagos()}
+                          disabled={!selectedCredit}
+                          className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                        >
+                          Plan de pagos
                         </button>
                         <button
                           type="button"
                           onClick={() => downloadPazYSalvo()}
-                          disabled={!selectedCredit}
+                          disabled={!selectedCredit || selectedCredit.saldoPendiente > 0}
                           className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
                         >
-                          Paz y salvo
+                          Emitir paz y salvo
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void runCommand("toggle-stolen-lock")}
+                          disabled={!selectedCredit || runningCommand !== null}
+                          className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                        >
+                          {selectedCredit?.bloqueoRobo ? "Desbloquear dispositivo" : "Bloquear dispositivo"}
                         </button>
                       </div>
                     )}
@@ -7436,14 +7967,21 @@ export default function CreditFactoryConsole({
                           onClick={() => openPaymentsForCredit()}
                           className="rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a]"
                         >
-                          Pagar
+                          Realizar abono
                         </button>
                         <button
                           type="button"
                           onClick={() => downloadExpedientePdf()}
                           className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
-                          Expediente actual
+                          Ver documentos firmados
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadPlanPagos()}
+                          className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                        >
+                          Plan de pagos
                         </button>
                       </div>
                     </div>
@@ -7522,7 +8060,7 @@ export default function CreditFactoryConsole({
                                   : "border border-[#145a5a] bg-[#145a5a] text-white hover:bg-[#0f4a4a]",
                               ].join(" ")}
                             >
-                              Pagar
+                              Realizar abono
                             </button>
                             <button
                               type="button"
@@ -7538,6 +8076,18 @@ export default function CreditFactoryConsole({
                             </button>
                             <button
                               type="button"
+                              onClick={() => createNewSaleFromClient(credit.id)}
+                              className={[
+                                "rounded-2xl border px-4 py-2.5 text-sm font-semibold transition",
+                                credit.id === selectedCredit.id
+                                  ? "border-white/15 bg-white/10 text-white hover:bg-white/16"
+                                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
+                              ].join(" ")}
+                            >
+                              Nueva venta
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => downloadExpedientePdf(credit.id)}
                               className={[
                                 "rounded-2xl border px-4 py-2.5 text-sm font-semibold transition",
@@ -7546,11 +8096,11 @@ export default function CreditFactoryConsole({
                                   : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
                               ].join(" ")}
                             >
-                              Expediente PDF
+                              Ver documentos firmados
                             </button>
                             <button
                               type="button"
-                              onClick={() => downloadPazYSalvo(credit.id)}
+                              onClick={() => downloadPlanPagos(credit.id)}
                               className={[
                                 "rounded-2xl border px-4 py-2.5 text-sm font-semibold transition",
                                 credit.id === selectedCredit.id
@@ -7558,8 +8108,33 @@ export default function CreditFactoryConsole({
                                   : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
                               ].join(" ")}
                             >
-                              Paz y salvo
+                              Plan de pagos
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => downloadPazYSalvo(credit.id)}
+                              disabled={credit.saldoPendiente > 0}
+                              className={[
+                                "rounded-2xl border px-4 py-2.5 text-sm font-semibold transition",
+                                credit.id === selectedCredit.id
+                                  ? "border-white/15 bg-white/10 text-white hover:bg-white/16 disabled:opacity-40"
+                                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50",
+                              ].join(" ")}
+                            >
+                              Emitir paz y salvo
+                            </button>
+                            {credit.id === selectedCredit.id ? (
+                              <button
+                                type="button"
+                                onClick={() => void runCommand("toggle-stolen-lock")}
+                                disabled={runningCommand !== null}
+                                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/16 disabled:opacity-50"
+                              >
+                                {selectedCredit.bloqueoRobo
+                                  ? "Desbloquear dispositivo"
+                                  : "Bloquear dispositivo"}
+                              </button>
+                            ) : null}
                           </div>
                         </div>
                       ))}
@@ -7573,8 +8148,10 @@ export default function CreditFactoryConsole({
 
         <section
           className={
-            paymentsView && showResultsPanel
-              ? "mt-8 grid gap-6 xl:grid-cols-[0.82fr_1.18fr]"
+            paymentsView
+              ? showResultsPanel
+                ? "mt-8 grid gap-6 xl:grid-cols-[0.82fr_1.18fr]"
+                : "mt-8"
               : lookupMode && showResultsPanel
                 ? "mt-8"
                 : createClientMode
@@ -7778,13 +8355,17 @@ export default function CreditFactoryConsole({
 
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Avance del recaudo
+                      Estado de cartera
                     </p>
                     <p className="mt-2 text-lg font-black text-slate-950">
-                      {paymentOverview?.porcentajeRecaudado || 0}%
+                      {paymentOverview?.estadoPago === "MORA"
+                        ? "En mora"
+                        : paymentOverview?.estadoPago === "PAGADO"
+                          ? "Pagado"
+                          : "Al dia"}
                     </p>
                     <p className="mt-1 text-sm text-slate-500">
-                      {paymentOverview?.abonosCount || 0} abonos registrados
+                      {paymentOverview?.overdueCount || 0} cuotas vencidas
                     </p>
                   </div>
                 </div>
@@ -7795,6 +8376,38 @@ export default function CreditFactoryConsole({
                   </p>
 
                   <div className="mt-4 grid gap-4 md:grid-cols-[0.9fr_0.7fr]">
+                    <div>
+                      <label className="mb-2 block text-sm font-semibold text-slate-700">
+                        Cuota a pagar
+                      </label>
+                      <select
+                        value={selectedInstallmentNumber}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          setSelectedInstallmentNumber(nextValue);
+                          const installment = paymentOverview?.plan?.find(
+                            (item) => String(item.numero) === nextValue
+                          );
+
+                          if (installment) {
+                            setPaymentValue(String(Math.round(installment.saldoPendiente)));
+                            setPaymentObservation(`Cuota ${installment.numero}`);
+                          }
+                        }}
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                      >
+                        <option value="">Pago libre</option>
+                        {(paymentOverview?.plan || [])
+                          .filter((item) => item.saldoPendiente > 0)
+                          .map((item) => (
+                            <option key={item.numero} value={item.numero}>
+                              Cuota {item.numero} - vence {dateTime(item.fechaVencimiento)} - saldo{" "}
+                              {currency(item.saldoPendiente)}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
                     <div>
                       <label className="mb-2 block text-sm font-semibold text-slate-700">
                         Valor recibido
@@ -7853,12 +8466,88 @@ export default function CreditFactoryConsole({
                         setPaymentValue("");
                         setPaymentObservation("");
                         setPaymentMethod("EFECTIVO");
+                        setSelectedInstallmentNumber("");
                       }}
                       disabled={registeringPayment}
                       className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
                     >
                       Limpiar formulario
                     </button>
+                  </div>
+                </div>
+
+                <div className="mt-6 rounded-[24px] border border-[#d9e6ea] bg-white p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
+                        Plan de pagos
+                      </p>
+                      <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                        Cuotas pendientes y realizadas
+                      </h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => downloadPlanPagos()}
+                      className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      Descargar plan
+                    </button>
+                  </div>
+
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="min-w-full text-left text-sm">
+                      <thead className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                        <tr>
+                          <th className="px-3 py-3">Cuota</th>
+                          <th className="px-3 py-3">Vence</th>
+                          <th className="px-3 py-3">Valor</th>
+                          <th className="px-3 py-3">Abonado</th>
+                          <th className="px-3 py-3">Saldo</th>
+                          <th className="px-3 py-3">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {(paymentOverview?.plan || []).map((item) => (
+                          <tr key={item.numero}>
+                            <td className="px-3 py-3 font-bold text-slate-950">
+                              {item.numero}
+                            </td>
+                            <td className="px-3 py-3 text-slate-600">
+                              {dateTime(item.fechaVencimiento)}
+                            </td>
+                            <td className="px-3 py-3 text-slate-600">
+                              {currency(item.valorProgramado)}
+                            </td>
+                            <td className="px-3 py-3 text-slate-600">
+                              {currency(item.valorAbonado)}
+                            </td>
+                            <td className="px-3 py-3 font-bold text-slate-950">
+                              {currency(item.saldoPendiente)}
+                            </td>
+                            <td className="px-3 py-3">
+                              <span
+                                className={[
+                                  "inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em]",
+                                  item.estado === "MORA"
+                                    ? "border-red-200 bg-red-50 text-red-700"
+                                    : item.estado === "PAGADA"
+                                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                      : "border-sky-200 bg-sky-50 text-sky-700",
+                                ].join(" ")}
+                              >
+                                {item.estado === "AL_DIA" ? "Al dia" : item.estado}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {!paymentOverview?.plan?.length ? (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                        El plan se cargara al consultar los abonos del credito.
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 

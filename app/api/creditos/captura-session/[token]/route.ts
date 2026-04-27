@@ -17,7 +17,7 @@ type TokenRouteContext = {
 };
 
 async function findSessionByToken(token: string) {
-  return await (prisma as any).capturaCreditoSession.findUnique({
+  return await prisma.capturaCreditoSession.findUnique({
     where: {
       token,
     },
@@ -57,6 +57,14 @@ function uploadedVideoMimeType(file: File) {
 
   if (/^video\/ogg$/i.test(type) || /\.ogg$/i.test(name)) {
     return "video/ogg";
+  }
+
+  if (/^video\/quicktime$/i.test(type) || /\.(mov|qt)$/i.test(name)) {
+    return "video/quicktime";
+  }
+
+  if (/^video\/x-m4v$/i.test(type) || /\.m4v$/i.test(name)) {
+    return "video/x-m4v";
   }
 
   return "";
@@ -121,7 +129,7 @@ async function buildPatchFromMultipart(formData: FormData) {
     const mimeType = uploadedVideoMimeType(file);
 
     if (!mimeType) {
-      throw new Error("El video debe ser MP4, WEBM u OGG.");
+      throw new Error("El video debe ser MP4, WEBM, OGG o MOV.");
     }
 
     const dataUrl = await uploadedFileToDataUrl(file, mimeType);
@@ -153,7 +161,7 @@ export async function GET(request: Request, context: TokenRouteContext) {
   const estado = resolveCaptureSessionState(captureSession);
 
   if (estado !== captureSession.estado) {
-    await (prisma as any).capturaCreditoSession.update({
+    await prisma.capturaCreditoSession.update({
       where: {
         id: captureSession.id,
       },
@@ -186,7 +194,7 @@ export async function POST(request: Request, context: TokenRouteContext) {
   const currentState = resolveCaptureSessionState(captureSession);
 
   if (currentState === "EXPIRADA") {
-    await (prisma as any).capturaCreditoSession.update({
+    await prisma.capturaCreditoSession.update({
       where: {
         id: captureSession.id,
       },
@@ -217,7 +225,7 @@ export async function POST(request: Request, context: TokenRouteContext) {
   };
   const nextState = resolveCaptureSessionState(candidate);
 
-  const updated = await (prisma as any).capturaCreditoSession.update({
+  const updated = await prisma.capturaCreditoSession.update({
     where: {
       id: captureSession.id,
     },

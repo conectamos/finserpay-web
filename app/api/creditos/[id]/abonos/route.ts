@@ -10,12 +10,14 @@ import {
   sanitizeText,
   toNumber,
 } from "@/lib/credit-factory";
+import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { isAdminRole } from "@/lib/roles";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type CreditPaymentBody = {
+  cuotaNumero?: number | string | null;
   metodoPago?: string;
   observacion?: string;
   valor?: number | string;
@@ -65,6 +67,9 @@ async function loadCredit(creditId: number, admin: boolean, sedeId: number) {
       clienteTelefono: true,
       montoCredito: true,
       cuotaInicial: true,
+      valorCuota: true,
+      plazoMeses: true,
+      fechaPrimerPago: true,
       fechaProximoPago: true,
       referenciaPago: true,
       estado: true,
@@ -102,6 +107,34 @@ async function loadPaymentSummary(creditId: number, montoCredito: number, cuotaI
     ...paymentSummary,
     ultimoAbonoAt: current?._max.fechaAbono?.toISOString() || null,
   };
+}
+
+async function loadPaymentPlan(credit: Awaited<ReturnType<typeof loadCredit>>) {
+  if (!credit) {
+    return null;
+  }
+
+  const abonos = await prisma.creditoAbono.findMany({
+    where: { creditoId: credit.id },
+    select: {
+      valor: true,
+      fechaAbono: true,
+    },
+    orderBy: {
+      fechaAbono: "asc",
+    },
+  });
+
+  return buildCreditPaymentPlan({
+    montoCredito: Number(credit.montoCredito || 0),
+    valorCuota: Number(credit.valorCuota || 0),
+    plazoMeses: Number(credit.plazoMeses || 1),
+    fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+    abonos: abonos.map((item) => ({
+      valor: Number(item.valor || 0),
+      fechaAbono: item.fechaAbono,
+    })),
+  });
 }
 
 export async function GET(
@@ -181,13 +214,19 @@ export async function GET(
       Number(credit.montoCredito || 0),
       Number(credit.cuotaInicial || 0)
     );
+    const plan = await loadPaymentPlan(credit);
 
     return NextResponse.json({
       ok: true,
       credito: {
         ...credit,
+        fechaPrimerPago: credit.fechaPrimerPago?.toISOString() || null,
         fechaProximoPago: credit.fechaProximoPago?.toISOString() || null,
         ...summary,
+        estadoPago: plan?.estadoPago || "AL_DIA",
+        nextInstallment: plan?.nextInstallment || null,
+        overdueCount: plan?.overdueCount || 0,
+        plan: plan?.installments || [],
       },
       items: items.map(serializePayment),
     });
@@ -241,9 +280,37 @@ export async function POST(
     }
 
     const body = (await req.json()) as CreditPaymentBody;
-    const valor = toNumber(body.valor);
+    let valor = toNumber(body.valor);
     const metodoPago = normalizePaymentMethod(body.metodoPago);
     const observacion = sanitizeText(body.observacion);
+    const cuotaNumero = Math.trunc(toNumber(body.cuotaNumero));
+    const currentPlan = await loadPaymentPlan(credit);
+    const selectedInstallment =
+      cuotaNumero > 0
+        ? currentPlan?.installments.find((item) => item.numero === cuotaNumero) || null
+        : null;
+
+    if (selectedInstallment) {
+      if (selectedInstallment.saldoPendiente <= 0) {
+        return NextResponse.json(
+          { error: `La cuota ${selectedInstallment.numero} ya esta pagada` },
+          { status: 400 }
+        );
+      }
+
+      if (valor <= 0) {
+        valor = selectedInstallment.saldoPendiente;
+      }
+
+      if (valor > selectedInstallment.saldoPendiente) {
+        return NextResponse.json(
+          {
+            error: `El abono supera el saldo pendiente de la cuota ${selectedInstallment.numero}`,
+          },
+          { status: 400 }
+        );
+      }
+    }
 
     if (valor <= 0) {
       return NextResponse.json(
@@ -283,7 +350,13 @@ export async function POST(
           sedeId: credit.sedeId,
           valor,
           metodoPago,
-          observacion: observacion || null,
+          observacion:
+            [
+              selectedInstallment ? `Cuota ${selectedInstallment.numero}` : "",
+              observacion,
+            ]
+              .filter(Boolean)
+              .join(" - ") || null,
         },
         include: {
           usuario: {
@@ -306,6 +379,36 @@ export async function POST(
               nombre: true,
             },
           },
+        },
+      });
+
+      const txAbonos = await tx.creditoAbono.findMany({
+        where: { creditoId: credit.id },
+        select: {
+          valor: true,
+          fechaAbono: true,
+        },
+        orderBy: {
+          fechaAbono: "asc",
+        },
+      });
+      const txPlan = buildCreditPaymentPlan({
+        montoCredito: Number(credit.montoCredito || 0),
+        valorCuota: Number(credit.valorCuota || 0),
+        plazoMeses: Number(credit.plazoMeses || 1),
+        fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+        abonos: txAbonos.map((item) => ({
+          valor: Number(item.valor || 0),
+          fechaAbono: item.fechaAbono,
+        })),
+      });
+
+      await tx.credito.update({
+        where: { id: credit.id },
+        data: {
+          fechaProximoPago: txPlan.nextInstallment?.fechaVencimiento
+            ? new Date(`${txPlan.nextInstallment.fechaVencimiento}T12:00:00.000Z`)
+            : credit.fechaProximoPago,
         },
       });
 
@@ -333,6 +436,7 @@ export async function POST(
       Number(credit.montoCredito || 0),
       Number(credit.cuotaInicial || 0)
     );
+    const plan = await loadPaymentPlan(credit);
 
     return NextResponse.json({
       ok: true,
@@ -341,7 +445,13 @@ export async function POST(
           ? "Abono registrado. El credito quedo sin saldo pendiente."
           : "Abono registrado correctamente.",
       item: serializePayment(payment),
-      summary,
+      summary: {
+        ...summary,
+        estadoPago: plan?.estadoPago || "AL_DIA",
+        nextInstallment: plan?.nextInstallment || null,
+        overdueCount: plan?.overdueCount || 0,
+        plan: plan?.installments || [],
+      },
     });
   } catch (error) {
     console.error("ERROR REGISTRANDO ABONO DE CREDITO:", error);

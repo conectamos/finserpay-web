@@ -310,6 +310,21 @@ model CatalogoPersonalVenta {
   @@unique([tipo, nombreNormalizado])
 }
 
+model CatalogoEquipoModelo {
+  id                 Int      @id @default(autoincrement())
+  marca              String
+  marcaNormalizada   String
+  modelo             String
+  modeloNormalizado  String
+  precioBaseVenta    Float
+  activo             Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([marcaNormalizada, modeloNormalizado])
+  @@index([activo, marcaNormalizada])
+}
+
 model InventarioPrincipal {
   id              Int              @id @default(autoincrement())
   imei            String           @unique

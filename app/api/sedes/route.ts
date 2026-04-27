@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
+import { isAdminRole } from "@/lib/roles";
 
 export async function GET() {
   try {
@@ -14,6 +15,7 @@ export async function GET() {
     }
 
     const sedes = await prisma.sede.findMany({
+      where: isAdminRole(user.rolNombre) ? {} : { id: user.sedeId },
       select: {
         id: true,
         nombre: true,

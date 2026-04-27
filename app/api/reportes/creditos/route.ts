@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
+import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { resolveCreditPaymentSummary, sanitizeSearch } from "@/lib/credit-factory";
@@ -82,16 +83,19 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    if (!isAdminRole(user.rolNombre)) {
+    const admin = isAdminRole(user.rolNombre);
+    const sellerSession = admin ? null : await getSellerSessionUser(user);
+
+    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
       return NextResponse.json(
-        { error: "Solo el administrador puede ver el reporte de creditos" },
+        { error: "Solo supervisor o administrador puede ver el reporte de creditos" },
         { status: 403 }
       );
     }
 
     const { searchParams } = new URL(req.url);
     const search = sanitizeSearch(searchParams.get("search"));
-    const sedeId = parsePositiveInt(searchParams.get("sedeId"));
+    const sedeId = admin ? parsePositiveInt(searchParams.get("sedeId")) : user.sedeId;
     const from = parseDate(searchParams.get("from"));
     const to = parseDate(searchParams.get("to"), true);
 
@@ -207,6 +211,8 @@ export async function GET(req: Request) {
       (acc, item) => {
         acc.totalCreditos += 1;
         acc.totalMontoCredito += item.montoCredito;
+        acc.totalInicial += item.cuotaInicial;
+        acc.totalSaldoCredito += item.montoCredito;
         acc.totalAbonado += item.totalAbonado;
         acc.totalRecaudado += item.totalRecaudado;
         acc.totalPendiente += item.saldoPendiente;
@@ -224,6 +230,8 @@ export async function GET(req: Request) {
       {
         totalCreditos: 0,
         totalMontoCredito: 0,
+        totalInicial: 0,
+        totalSaldoCredito: 0,
         totalAbonado: 0,
         totalRecaudado: 0,
         totalPendiente: 0,

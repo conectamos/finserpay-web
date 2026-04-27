@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const expiresAt = buildCreditCaptureExpiry();
   const token = generateCreditCaptureToken();
-  const captureSessionDelegate = (prisma as any).capturaCreditoSession;
+  const captureSessionDelegate = prisma.capturaCreditoSession;
 
   await captureSessionDelegate.updateMany({
     where: {

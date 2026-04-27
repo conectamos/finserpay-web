@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
+import { resolveCreditPaymentSummary } from "@/lib/credit-factory";
 import { isAdminRole } from "@/lib/roles";
 
 export const runtime = "nodejs";
@@ -104,6 +105,30 @@ export async function GET(
 
     if (!credito) {
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
+    }
+
+    const grouped = await prisma.creditoAbono.groupBy({
+      by: ["creditoId"],
+      where: { creditoId: credito.id },
+      _count: { _all: true },
+      _sum: { valor: true },
+    });
+    const current = grouped[0];
+    const paymentSummary = resolveCreditPaymentSummary({
+      montoCredito: credito.montoCredito,
+      cuotaInicial: credito.cuotaInicial,
+      totalAbonado: Number(current?._sum.valor || 0),
+      abonosCount: current?._count._all || 0,
+    });
+
+    if (paymentSummary.saldoPendiente > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Solo se puede emitir paz y salvo cuando el saldo pendiente esta en $0",
+        },
+        { status: 400 }
+      );
     }
 
     await prisma.credito.update({

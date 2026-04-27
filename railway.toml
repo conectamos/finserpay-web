@@ -4,7 +4,7 @@ builder = "NIXPACKS"
 [deploy]
 buildCommand = "npm run build"
 preDeployCommand = "npm run db:push"
-startCommand = "node server.js"
+startCommand = "npm run start:standalone"
 healthcheckPath = "/"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
