@@ -7730,7 +7730,7 @@ export default function CreditFactoryConsole({
                       Cliente
                     </p>
                     <p className="mt-2 text-base font-black text-slate-950">
-                      {selectedCredit.clienteNombre}
+                      {selectedCredit?.clienteNombre}
                     </p>
                     <p className="mt-1 text-sm text-slate-500">
                       {selectedCredit.clienteDocumento || "Sin documento"}
@@ -8356,16 +8356,17 @@ export default function CreditFactoryConsole({
               </div>
             ) : (
               <>
+                {false && (
                 <div className="mt-6 grid gap-3 md:grid-cols-2">
                   <div className="rounded-2xl border border-[#e6dece] bg-white px-4 py-4">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                       Cliente
                     </p>
                     <p className="mt-2 text-lg font-black text-slate-950">
-                      {selectedCredit.clienteNombre}
+                      {selectedCredit?.clienteNombre}
                     </p>
                     <p className="mt-1 text-sm text-slate-500">
-                      {selectedCredit.clienteDocumento || selectedCredit.clienteTelefono || "Sin identificacion"}
+                      {selectedCredit?.clienteDocumento || selectedCredit?.clienteTelefono || "Sin identificacion"}
                     </p>
                   </div>
 
@@ -8374,7 +8375,7 @@ export default function CreditFactoryConsole({
                       Referencia de pago
                     </p>
                     <p className="mt-2 text-lg font-black text-slate-950">
-                      {selectedCredit.referenciaPago || "-"}
+                      {selectedCredit?.referenciaPago || "-"}
                     </p>
                   </div>
 
@@ -8421,6 +8422,42 @@ export default function CreditFactoryConsole({
                       {paymentOverview?.pendingCount || 0} pendientes ·{" "}
                       {paymentOverview?.overdueCount || 0} en mora
                     </p>
+                  </div>
+                </div>
+                )}
+
+                <div className="mt-6 rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        Cliente
+                      </p>
+                      <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
+                        {selectedCredit?.clienteNombre}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {selectedCredit?.clienteDocumento || selectedCredit?.clienteTelefono || "Sin identificacion"}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <span className="inline-flex rounded-full bg-[#ff7a30] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
+                        {paymentOverview?.estadoPago === "MORA"
+                          ? "Mora"
+                          : paymentOverview?.estadoPago === "PAGADO"
+                            ? "Pagado"
+                            : "Al dia"}
+                      </span>
+                      <span className="inline-flex rounded-full bg-[#111111] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
+                        {paymentOverview?.overdueCount || 0} en mora
+                      </span>
+                      <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-700">
+                        {paymentOverview?.paidCount || 0} pagadas
+                      </span>
+                      <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-700">
+                        {paymentOverview?.pendingCount || 0} pendientes
+                      </span>
+                    </div>
                   </div>
                 </div>
 

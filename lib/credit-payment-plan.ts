@@ -24,6 +24,11 @@ function roundMoney(value: number) {
   return Math.round(Number(value || 0) * 100) / 100;
 }
 
+function normalizePending(value: number) {
+  const rounded = roundMoney(value);
+  return rounded < 1 ? 0 : rounded;
+}
+
 function normalizeDate(value: Date | string | null | undefined, fallback = new Date()) {
   const date = value instanceof Date ? new Date(value) : new Date(String(value || ""));
 
@@ -72,7 +77,7 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
 
       const paid = roundMoney(Math.min(programmed, remainingPaid));
       remainingPaid = roundMoney(Math.max(0, remainingPaid - paid));
-      const pending = roundMoney(Math.max(0, programmed - paid));
+      const pending = normalizePending(Math.max(0, programmed - paid));
       const dueDate = addDays(firstDueDate, index * 15);
       dueDate.setHours(23, 59, 59, 999);
       const isPaid = pending <= 0;
