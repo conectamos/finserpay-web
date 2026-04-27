@@ -8429,50 +8429,77 @@ export default function CreditFactoryConsole({
                     Registrar nuevo abono
                   </p>
 
-                  <div className="mt-4 grid gap-4 md:grid-cols-[0.9fr_0.7fr]">
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                        Cuotas seleccionadas
-                      </p>
-                      <p className="mt-2 text-lg font-black text-slate-950">
-                        {selectedInstallmentNumbers.length
-                          ? selectedInstallmentNumbers.join(", ")
-                          : "Ninguna"}
-                      </p>
-                      <p className="mt-1 text-sm text-slate-500">
-                        Total: {currency(selectedInstallmentTotal)}
-                      </p>
-                      {selectedInstallmentsData.length ? (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {selectedInstallmentsData.map((item) => (
+                  <div className="mt-4 grid gap-4 md:grid-cols-[1.1fr_0.7fr]">
+                    <div className="rounded-[22px] border border-[#0f5654] bg-[#0f5654] px-5 py-4 text-white shadow-[0_16px_40px_rgba(15,86,84,0.22)]">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#98ece0]">
+                            Cuotas seleccionadas
+                          </p>
+                          <p className="mt-2 text-2xl font-black">
+                            {selectedInstallmentNumbers.length
+                              ? selectedInstallmentNumbers.join(", ")
+                              : "Ninguna"}
+                          </p>
+                        </div>
+                        <div className="rounded-full bg-[#ff7a30] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
+                          {selectedInstallmentsData.some((item) => item.estaEnMora)
+                            ? "Con mora"
+                            : "Al dia"}
+                        </div>
+                      </div>
+                      <div className="mt-4 rounded-[18px] bg-[#111111] px-4 py-3">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8ff0df]">
+                          Total exacto a pagar
+                        </p>
+                        <p className="mt-1 text-2xl font-black">
+                          {currency(selectedInstallmentTotal)}
+                        </p>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {selectedInstallmentsData.length ? (
+                          selectedInstallmentsData.map((item) => (
                             <span
                               key={item.numero}
                               className={[
                                 "inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em]",
                                 item.estaEnMora
-                                  ? "border-red-200 bg-red-50 text-red-700"
+                                  ? "border-[#ffb08a] bg-[#ffefe4] text-[#ff7a30]"
                                   : item.estado === "PAGO"
                                     ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                    : "border-amber-200 bg-amber-50 text-amber-700",
+                                    : "border-white/20 bg-white/10 text-white",
                               ].join(" ")}
                             >
                               Cuota {item.numero}: {item.estaEnMora ? "MORA" : item.estado}
                             </span>
-                          ))}
-                        </div>
-                      ) : null}
+                          ))
+                        ) : (
+                          <span className="text-xs font-semibold text-[#c6e8e3]">
+                            Marca una cuota para ver el detalle del abono.
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    <div>
-                      <label className="mb-2 block text-sm font-semibold text-slate-700">
-                        Valor recibido
-                      </label>
-                      <input
-                        value={paymentValue}
-                        onChange={(event) => setPaymentValue(event.target.value)}
-                        placeholder="Ejemplo: 50000"
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                      />
+                    <div className="rounded-[22px] border border-slate-200 bg-white px-4 py-4 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                        Cuotas seleccionadas
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        El valor recibido debe coincidir exactamente con la seleccion para registrar el abono sin diferencias.
+                      </p>
+
+                      <div className="mt-4">
+                        <label className="mb-2 block text-sm font-semibold text-slate-700">
+                          Valor recibido
+                        </label>
+                        <input
+                          value={paymentValue}
+                          onChange={(event) => setPaymentValue(event.target.value)}
+                          placeholder="Ejemplo: 50000"
+                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        />
+                      </div>
                     </div>
 
                     <div>
@@ -8550,21 +8577,24 @@ export default function CreditFactoryConsole({
                     </button>
                   </div>
 
-                  <div className="mt-4 overflow-x-auto">
+                  <div className="mt-4 overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
                     <table className="min-w-full text-left text-sm">
-                      <thead className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                      <thead className="bg-[#171717] text-[11px] uppercase tracking-[0.16em] text-white">
                         <tr>
-                          <th className="px-3 py-3">Cuota</th>
-                          <th className="px-3 py-3">Vence</th>
-                          <th className="px-3 py-3">Valor</th>
-                          <th className="px-3 py-3">Abonado</th>
-                          <th className="px-3 py-3">Saldo</th>
-                          <th className="px-3 py-3">Estado</th>
+                          <th className="px-3 py-4">Cuota</th>
+                          <th className="px-3 py-4">Fecha</th>
+                          <th className="px-3 py-4">Valor</th>
+                          <th className="px-3 py-4">Abonado</th>
+                          <th className="px-3 py-4">Saldo</th>
+                          <th className="px-3 py-4">Estado</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {(paymentOverview?.plan || []).map((item) => (
-                          <tr key={item.numero}>
+                      <tbody className="divide-y divide-slate-200">
+                        {(paymentOverview?.plan || []).map((item, index) => (
+                          <tr
+                            key={item.numero}
+                            className={index % 2 === 0 ? "bg-[#eef8f9]" : "bg-white"}
+                          >
                             <td className="px-3 py-3 font-bold text-slate-950">
                               <label className="flex items-center gap-2">
                                 <input

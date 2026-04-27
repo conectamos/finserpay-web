@@ -73,6 +73,22 @@ function dateLabel(value: string | null | undefined) {
   return date.toLocaleDateString("es-CO");
 }
 
+function installmentStateLabel(item: ClientInstallment) {
+  return item.estaEnMora ? "MORA" : item.estado;
+}
+
+function installmentStateClasses(item: ClientInstallment) {
+  if (item.estaEnMora) {
+    return "border-[#ffb08a] bg-[#ffefe4] text-[#c85216]";
+  }
+
+  if (item.estado === "PAGO") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  return "border-slate-200 bg-slate-100 text-slate-700";
+}
+
 function getPayableInstallments(credit: ClientCredit) {
   return credit.cuotas.filter((item) => item.saldoPendiente > 0);
 }
@@ -308,13 +324,13 @@ export default function ClienteConsultaPage() {
                 </div>
               </div>
 
-              <div className="mt-5 rounded-[24px] border border-emerald-200 bg-emerald-50 px-4 py-4">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="mt-5 rounded-[24px] border border-[#d7e3e5] bg-white p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="flex-1">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-800">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#1d5b63]">
                       Pago en linea
                     </p>
-                    <h3 className="mt-2 text-xl font-black text-slate-950">
+                    <h3 className="mt-2 text-2xl font-black text-slate-950">
                       Elige las cuotas que vas a pagar
                     </h3>
                     <p className="mt-2 text-sm leading-6 text-slate-700">
@@ -324,74 +340,94 @@ export default function ClienteConsultaPage() {
                   </div>
 
                   {payableInstallments.length ? (
-                    <div className="grid w-full gap-3 lg:w-auto lg:min-w-[360px] lg:grid-cols-[1fr_auto]">
-                      <div className="rounded-2xl border border-emerald-200 bg-white px-4 py-3">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">
-                          Valor a pagar
-                        </p>
-                        <p className="mt-1 text-lg font-black text-slate-950">
-                          {money(totalToPay)}
-                        </p>
-                        <p className="mt-1 text-xs font-semibold text-slate-500">
-                          {selectedNumbers.length
-                            ? `Cuotas ${selectedNumbers.join(", ")}`
-                            : "Sin cuotas seleccionadas"}
-                        </p>
-                        {selectedInstallmentsData.length ? (
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {selectedInstallmentsData.map((item) => (
+                    <div className="w-full lg:max-w-[420px]">
+                      <div className="rounded-[22px] border border-[#0f5654] bg-[#0f5654] px-5 py-4 text-white shadow-[0_16px_40px_rgba(15,86,84,0.22)]">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#98ece0]">
+                              Cuotas seleccionadas
+                            </p>
+                            <p className="mt-2 text-2xl font-black">
+                              {selectedNumbers.length
+                                ? selectedNumbers.join(", ")
+                                : "Ninguna"}
+                            </p>
+                          </div>
+                          <div className="rounded-full bg-[#ff7a30] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
+                            {selectedInstallmentsData.some((item) => item.estaEnMora)
+                              ? "Con mora"
+                              : "Al dia"}
+                          </div>
+                        </div>
+                        <div className="mt-4 rounded-[18px] bg-[#111111] px-4 py-3">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8ff0df]">
+                            Total exacto a pagar
+                          </p>
+                          <p className="mt-1 text-2xl font-black">
+                            {money(totalToPay)}
+                          </p>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {selectedInstallmentsData.length ? (
+                            selectedInstallmentsData.map((item) => (
                               <span
                                 key={item.numero}
                                 className={[
                                   "inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em]",
                                   item.estaEnMora
-                                    ? "border-red-200 bg-red-50 text-red-700"
+                                    ? "border-[#ffb08a] bg-[#ffefe4] text-[#ff7a30]"
                                     : item.estado === "PAGO"
                                       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                      : "border-amber-200 bg-amber-50 text-amber-700",
+                                      : "border-white/20 bg-white/10 text-white",
                                 ].join(" ")}
                               >
-                                Cuota {item.numero}: {item.estaEnMora ? "MORA" : item.estado}
+                                Cuota {item.numero}: {installmentStateLabel(item)}
                               </span>
-                            ))}
-                          </div>
-                        ) : null}
+                            ))
+                          ) : (
+                            <span className="text-xs font-semibold text-[#c6e8e3]">
+                              Marca una cuota para ver el detalle del pago.
+                            </span>
+                          )}
+                        </div>
                       </div>
-
                       <button
                         type="button"
                         onClick={() => void payWithWompi(credit)}
                         disabled={payingCreditId === credit.id || totalToPay <= 0}
-                        className="inline-flex items-center justify-center rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#0f4a4a]"
+                        className="mt-4 inline-flex w-full items-center justify-center rounded-[18px] bg-[#6b7280] px-5 py-3.5 text-sm font-bold text-white transition hover:bg-[#4b5563] disabled:opacity-70"
                       >
                         {payingCreditId === credit.id ? "Abriendo..." : "Pagar con Wompi"}
                       </button>
                     </div>
                   ) : (
-                    <div className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-bold text-emerald-800">
+                    <div className="rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">
                       No tienes cuotas pendientes para pagar.
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+              <div className="mt-5 overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
                 <table className="min-w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                  <thead className="bg-[#171717] text-[11px] uppercase tracking-[0.16em] text-white">
                     <tr>
-                      <th className="px-4 py-3">Cuota</th>
-                      <th className="px-4 py-3">Vence</th>
-                      <th className="px-4 py-3">Valor</th>
-                      <th className="px-4 py-3">Abonado</th>
-                      <th className="px-4 py-3">Saldo</th>
-                      <th className="px-4 py-3">Estado</th>
+                      <th className="px-4 py-4">Cuota</th>
+                      <th className="px-4 py-4">Fecha</th>
+                      <th className="px-4 py-4">Valor</th>
+                      <th className="px-4 py-4">Abonado</th>
+                      <th className="px-4 py-4">Saldo</th>
+                      <th className="px-4 py-4">Estado</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {credit.cuotas.map((item) => (
-                      <tr key={item.numero}>
-                        <td className="px-4 py-3 font-bold">
-                          <label className="flex items-center gap-2">
+                  <tbody className="divide-y divide-slate-200">
+                    {credit.cuotas.map((item, index) => (
+                      <tr
+                        key={item.numero}
+                        className={index % 2 === 0 ? "bg-[#eef8f9]" : "bg-white"}
+                      >
+                        <td className="px-4 py-3.5 font-bold text-slate-950">
+                          <label className="flex items-center gap-3">
                             <input
                               type="checkbox"
                               checked={selected.has(item.numero)}
@@ -403,17 +439,32 @@ export default function ClienteConsultaPage() {
                                   event.target.checked
                                 )
                               }
-                              className="h-4 w-4 rounded border-slate-300 text-[#145a5a] focus:ring-[#145a5a]"
+                              className="h-5 w-5 rounded border-slate-300 text-[#145a5a] focus:ring-[#145a5a]"
                             />
                             <span>{item.numero}</span>
                           </label>
                         </td>
-                        <td className="px-4 py-3">{dateLabel(item.fechaVencimiento)}</td>
-                        <td className="px-4 py-3">{money(item.valorProgramado)}</td>
-                        <td className="px-4 py-3">{money(item.valorAbonado)}</td>
-                        <td className="px-4 py-3 font-bold">{money(item.saldoPendiente)}</td>
-                        <td className="px-4 py-3">
-                          {item.estaEnMora ? "MORA" : item.estado}
+                        <td className="px-4 py-3.5 text-slate-700">
+                          {dateLabel(item.fechaVencimiento)}
+                        </td>
+                        <td className="px-4 py-3.5 text-slate-700">
+                          {money(item.valorProgramado)}
+                        </td>
+                        <td className="px-4 py-3.5 text-slate-700">
+                          {money(item.valorAbonado)}
+                        </td>
+                        <td className="px-4 py-3.5 font-bold text-slate-950">
+                          {money(item.saldoPendiente)}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <span
+                            className={[
+                              "inline-flex rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em]",
+                              installmentStateClasses(item),
+                            ].join(" ")}
+                          >
+                            {installmentStateLabel(item)}
+                          </span>
                         </td>
                       </tr>
                     ))}
