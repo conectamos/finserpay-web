@@ -255,6 +255,9 @@ export default function ClienteConsultaPage() {
           {items.map((credit) => {
             const payableInstallments = getPayableInstallments(credit);
             const selected = new Set(selectedInstallments[credit.id] || []);
+            const selectedInstallmentsData = payableInstallments.filter((item) =>
+              selected.has(item.numero)
+            );
             const totalToPay = selectedTotal(credit);
             const selectedNumbers = Array.from(selected).sort((a, b) => a - b);
             const paymentReference = selectedNumbers.length
@@ -334,6 +337,25 @@ export default function ClienteConsultaPage() {
                             ? `Cuotas ${selectedNumbers.join(", ")}`
                             : "Sin cuotas seleccionadas"}
                         </p>
+                        {selectedInstallmentsData.length ? (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {selectedInstallmentsData.map((item) => (
+                              <span
+                                key={item.numero}
+                                className={[
+                                  "inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em]",
+                                  item.estaEnMora
+                                    ? "border-red-200 bg-red-50 text-red-700"
+                                    : item.estado === "PAGO"
+                                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                      : "border-amber-200 bg-amber-50 text-amber-700",
+                                ].join(" ")}
+                              >
+                                Cuota {item.numero}: {item.estaEnMora ? "MORA" : item.estado}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
 
                       <button

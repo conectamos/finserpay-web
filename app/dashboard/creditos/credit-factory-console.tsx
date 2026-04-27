@@ -2336,6 +2336,9 @@ export default function CreditFactoryConsole({
     (item) => item.saldoPendiente > 0
   );
   const selectedInstallmentSet = new Set(selectedInstallmentNumbers);
+  const selectedInstallmentsData = payableInstallments.filter((item) =>
+    selectedInstallmentSet.has(String(item.numero))
+  );
   const selectedInstallmentTotal = selectedInstallmentNumbers.reduce((sum, numero) => {
     const installment = payableInstallments.find(
       (item) => String(item.numero) === String(numero)
@@ -8439,6 +8442,25 @@ export default function CreditFactoryConsole({
                       <p className="mt-1 text-sm text-slate-500">
                         Total: {currency(selectedInstallmentTotal)}
                       </p>
+                      {selectedInstallmentsData.length ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {selectedInstallmentsData.map((item) => (
+                            <span
+                              key={item.numero}
+                              className={[
+                                "inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em]",
+                                item.estaEnMora
+                                  ? "border-red-200 bg-red-50 text-red-700"
+                                  : item.estado === "PAGO"
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                    : "border-amber-200 bg-amber-50 text-amber-700",
+                              ].join(" ")}
+                            >
+                              Cuota {item.numero}: {item.estaEnMora ? "MORA" : item.estado}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div>
