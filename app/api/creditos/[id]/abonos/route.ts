@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
@@ -6,11 +7,23 @@ import {
   creditCajaConcept,
   creditCajaDescription,
   normalizePaymentMethod,
+  resolveCreditState,
   resolveCreditPaymentSummary,
   sanitizeText,
   toNumber,
 } from "@/lib/credit-factory";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import {
+  getEqualityDeviceMeta,
+  getPayloadSummary,
+} from "@/lib/equality-device-meta";
+import {
+  isEqualityApiError,
+  isEqualityConfigured,
+  lockEqualityDevice,
+  queryEqualityDevices,
+  unlockEqualityDevice,
+} from "@/lib/equality-zero-touch";
 import { isAdminRole } from "@/lib/roles";
 
 export const runtime = "nodejs";
@@ -73,6 +86,18 @@ async function loadCredit(creditId: number, admin: boolean, sedeId: number) {
       fechaProximoPago: true,
       referenciaPago: true,
       estado: true,
+      deviceUid: true,
+      deliverableLabel: true,
+      deliverableReady: true,
+      equalityState: true,
+      equalityService: true,
+      equalityPayload: true,
+      equalityLastCheckAt: true,
+      bloqueoRobo: true,
+      bloqueoRoboAt: true,
+      bloqueoMora: true,
+      bloqueoMoraAt: true,
+      pazYSalvoEmitidoAt: true,
       sedeId: true,
     },
   });
@@ -135,6 +160,168 @@ async function loadPaymentPlan(credit: Awaited<ReturnType<typeof loadCredit>>) {
       fechaAbono: item.fechaAbono,
     })),
   });
+}
+
+type LoadedCredit = NonNullable<Awaited<ReturnType<typeof loadCredit>>>;
+type PaymentPlan = NonNullable<Awaited<ReturnType<typeof loadPaymentPlan>>>;
+
+function safeEqualityPayload(payload: unknown) {
+  return payload && typeof payload === "object"
+    ? (payload as Prisma.InputJsonValue)
+    : undefined;
+}
+
+function serializeAutomationResult(result: {
+  action: string;
+  message: string;
+  remote: unknown;
+}) {
+  return {
+    action: result.action,
+    message: result.message,
+    remote: result.remote
+      ? {
+          ...getPayloadSummary(result.remote),
+          ...getEqualityDeviceMeta(result.remote),
+        }
+      : null,
+  };
+}
+
+async function syncMoraAutomation(credit: LoadedCredit, plan: PaymentPlan) {
+  const isInMora = plan.estadoPago === "MORA";
+
+  if (credit.pazYSalvoEmitidoAt) {
+    return {
+      action: "SKIPPED" as const,
+      credit,
+      message: "Credito con paz y salvo emitido.",
+      remote: null as unknown,
+    };
+  }
+
+  if (isInMora && credit.bloqueoRobo) {
+    return {
+      action: "SKIPPED" as const,
+      credit,
+      message: "El equipo tiene bloqueo manual por robo; no se modifica por mora.",
+      remote: null as unknown,
+    };
+  }
+
+  if (isInMora && credit.bloqueoMora) {
+    return {
+      action: "UNCHANGED" as const,
+      credit,
+      message: "El equipo ya esta bloqueado por mora.",
+      remote: null as unknown,
+    };
+  }
+
+  if (!isInMora && !credit.bloqueoMora) {
+    return {
+      action: "UNCHANGED" as const,
+      credit,
+      message: "El credito no tiene mora activa.",
+      remote: null as unknown,
+    };
+  }
+
+  if (!isEqualityConfigured()) {
+    return {
+      action: "SKIPPED" as const,
+      credit,
+      message: "Equality no esta configurado; no se pudo sincronizar el bloqueo.",
+      remote: null as unknown,
+    };
+  }
+
+  try {
+    const remotePayload = isInMora
+      ? await lockEqualityDevice(credit.deviceUid, {
+          lockMsgTitle: "Pago vencido",
+          lockMsgContent:
+            "Tu equipo FINSER PAY esta bloqueado por una cuota vencida. Realiza el pago para desbloquearlo.",
+        })
+      : credit.bloqueoRobo
+        ? null
+        : await unlockEqualityDevice(credit.deviceUid);
+    const remoteQuery = await queryEqualityDevices(credit.deviceUid).catch(() => null);
+    const payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
+    const deviceMeta = getEqualityDeviceMeta(payloadSource);
+
+    const updated = await prisma.credito.update({
+      where: { id: credit.id },
+      data: {
+        estado: resolveCreditState({
+          bloqueoRobo: credit.bloqueoRobo,
+          bloqueoMora: isInMora,
+          deliverable: deviceMeta.deliveryStatus || null,
+          pazYSalvoEmitidoAt: credit.pazYSalvoEmitidoAt,
+        }),
+        deliverableLabel:
+          deviceMeta.deliveryStatus?.label || credit.deliverableLabel,
+        deliverableReady:
+          typeof deviceMeta.deliveryStatus?.ready === "boolean"
+            ? deviceMeta.deliveryStatus.ready
+            : credit.deliverableReady,
+        equalityState: deviceMeta.deviceState || credit.equalityState,
+        equalityService: deviceMeta.serviceDetails || credit.equalityService,
+        equalityPayload: safeEqualityPayload(payloadSource),
+        equalityLastCheckAt: payloadSource ? new Date() : credit.equalityLastCheckAt,
+        bloqueoMora: isInMora,
+        bloqueoMoraAt: isInMora ? new Date() : null,
+      },
+      select: {
+        id: true,
+        folio: true,
+        clienteNombre: true,
+        clienteDocumento: true,
+        clienteTelefono: true,
+        montoCredito: true,
+        cuotaInicial: true,
+        valorCuota: true,
+        plazoMeses: true,
+        fechaPrimerPago: true,
+        fechaProximoPago: true,
+        referenciaPago: true,
+        estado: true,
+        deviceUid: true,
+        deliverableLabel: true,
+        deliverableReady: true,
+        equalityState: true,
+        equalityService: true,
+        equalityPayload: true,
+        equalityLastCheckAt: true,
+        bloqueoRobo: true,
+        bloqueoRoboAt: true,
+        bloqueoMora: true,
+        bloqueoMoraAt: true,
+        pazYSalvoEmitidoAt: true,
+        sedeId: true,
+      },
+    });
+
+    return {
+      action: isInMora ? ("LOCKED" as const) : ("UNLOCKED" as const),
+      credit: updated,
+      message: isInMora
+        ? "Bloqueo automatico por mora aplicado en Equality."
+        : "Mora pagada: desbloqueo automatico enviado a Equality.",
+      remote: payloadSource,
+    };
+  } catch (error) {
+    console.error("ERROR SINCRONIZANDO BLOQUEO POR MORA:", error);
+
+    return {
+      action: "FAILED" as const,
+      credit,
+      message: isEqualityApiError(error)
+        ? `Equality no confirmo el bloqueo automatico: ${error.message}`
+        : "No se pudo sincronizar el bloqueo automatico con Equality.",
+      remote: isEqualityApiError(error) ? error.payload : null,
+    };
+  }
 }
 
 export async function GET(
@@ -215,19 +402,35 @@ export async function GET(
       Number(credit.cuotaInicial || 0)
     );
     const plan = await loadPaymentPlan(credit);
+    const automation = plan
+      ? await syncMoraAutomation(credit, plan)
+      : {
+          action: "UNCHANGED" as const,
+          credit,
+          message: "Sin plan de pagos para sincronizar.",
+          remote: null,
+        };
+    const syncedCredit = automation.credit;
 
     return NextResponse.json({
       ok: true,
       credito: {
-        ...credit,
-        fechaPrimerPago: credit.fechaPrimerPago?.toISOString() || null,
-        fechaProximoPago: credit.fechaProximoPago?.toISOString() || null,
+        ...syncedCredit,
+        fechaPrimerPago: syncedCredit.fechaPrimerPago?.toISOString() || null,
+        fechaProximoPago: syncedCredit.fechaProximoPago?.toISOString() || null,
+        equalityLastCheckAt: syncedCredit.equalityLastCheckAt?.toISOString() || null,
+        bloqueoRoboAt: syncedCredit.bloqueoRoboAt?.toISOString() || null,
+        bloqueoMoraAt: syncedCredit.bloqueoMoraAt?.toISOString() || null,
+        pazYSalvoEmitidoAt: syncedCredit.pazYSalvoEmitidoAt?.toISOString() || null,
         ...summary,
         estadoPago: plan?.estadoPago || "AL_DIA",
         nextInstallment: plan?.nextInstallment || null,
         overdueCount: plan?.overdueCount || 0,
+        paidCount: plan?.paidCount || 0,
+        pendingCount: plan?.pendingCount || 0,
         plan: plan?.installments || [],
       },
+      automation: serializeAutomationResult(automation),
       items: items.map(serializePayment),
     });
   } catch (error) {
@@ -436,22 +639,37 @@ export async function POST(
       Number(credit.montoCredito || 0),
       Number(credit.cuotaInicial || 0)
     );
-    const plan = await loadPaymentPlan(credit);
+    const updatedCredit = await loadCredit(credit.id, admin, user.sedeId);
+    const plan = await loadPaymentPlan(updatedCredit || credit);
+    const automation =
+      updatedCredit && plan
+        ? await syncMoraAutomation(updatedCredit, plan)
+        : {
+            action: "UNCHANGED" as const,
+            credit: updatedCredit || credit,
+            message: "Sin credito o plan de pagos para sincronizar.",
+            remote: null,
+          };
 
     return NextResponse.json({
       ok: true,
       message:
         summary.saldoPendiente <= 0
           ? "Abono registrado. El credito quedo sin saldo pendiente."
-          : "Abono registrado correctamente.",
+          : automation.action === "UNLOCKED"
+            ? "Abono registrado y mora desbloqueada automaticamente."
+            : "Abono registrado correctamente.",
       item: serializePayment(payment),
       summary: {
         ...summary,
         estadoPago: plan?.estadoPago || "AL_DIA",
         nextInstallment: plan?.nextInstallment || null,
         overdueCount: plan?.overdueCount || 0,
+        paidCount: plan?.paidCount || 0,
+        pendingCount: plan?.pendingCount || 0,
         plan: plan?.installments || [],
       },
+      automation: serializeAutomationResult(automation),
     });
   } catch (error) {
     console.error("ERROR REGISTRANDO ABONO DE CREDITO:", error);

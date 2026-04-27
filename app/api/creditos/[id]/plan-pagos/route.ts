@@ -241,7 +241,7 @@ export async function GET(
       ];
       row.forEach((value, index) => {
         doc
-          .fillColor(item.estado === "MORA" ? "#B91C1C" : "#0F172A")
+          .fillColor(item.estaEnMora ? "#B91C1C" : "#0F172A")
           .font(index === 5 ? fonts.bold : fonts.regular)
           .fontSize(8.5)
           .text(value, x, y + 9, { width: widths[index] - 8 });

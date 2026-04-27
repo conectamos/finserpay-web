@@ -28,6 +28,7 @@ import {
   getEqualityDeviceMeta,
   getPayloadSummary,
 } from "@/lib/equality-device-meta";
+import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import {
   activateEqualityFinancingService,
   isEqualityApiError,
@@ -204,15 +205,13 @@ function serializeCredit(item: any, paymentMap?: Map<number, PaymentAggregate>) 
     totalAbonado: payment.totalAbonado,
     abonosCount: payment.abonosCount,
   });
-  const proximoPago = item.fechaProximoPago ? new Date(item.fechaProximoPago) : null;
-  const today = new Date();
-  today.setHours(23, 59, 59, 999);
-  const estadoPago =
-    paymentSummary.saldoPendiente <= 0
-      ? "PAGADO"
-      : proximoPago && proximoPago.getTime() < today.getTime()
-        ? "MORA"
-        : "AL_DIA";
+  const paymentPlan = buildCreditPaymentPlan({
+    montoCredito: Number(item.montoCredito || 0),
+    valorCuota: Number(item.valorCuota || 0),
+    plazoMeses: Number(item.plazoMeses || 1),
+    fechaPrimerPago: item.fechaPrimerPago || item.fechaProximoPago,
+    abonos: payment.totalAbonado > 0 ? [{ valor: payment.totalAbonado }] : [],
+  });
 
   return {
     id: item.id,
@@ -260,6 +259,8 @@ function serializeCredit(item: any, paymentMap?: Map<number, PaymentAggregate>) 
     warrantyUntil: item.warrantyUntil?.toISOString() || null,
     bloqueoRobo: item.bloqueoRobo,
     bloqueoRoboAt: item.bloqueoRoboAt?.toISOString() || null,
+    bloqueoMora: item.bloqueoMora,
+    bloqueoMoraAt: item.bloqueoMoraAt?.toISOString() || null,
     pazYSalvoEmitidoAt: item.pazYSalvoEmitidoAt?.toISOString() || null,
     observacionAdmin: item.observacionAdmin,
     contratoAceptadoAt: item.contratoAceptadoAt?.toISOString() || null,
@@ -286,7 +287,10 @@ function serializeCredit(item: any, paymentMap?: Map<number, PaymentAggregate>) 
     saldoPendiente: paymentSummary.saldoPendiente,
     totalRecaudado: paymentSummary.totalRecaudado,
     porcentajeRecaudado: paymentSummary.porcentajeRecaudado,
-    estadoPago,
+    estadoPago: paymentPlan.estadoPago,
+    cuotasPagadas: paymentPlan.paidCount,
+    cuotasPendientes: paymentPlan.pendingCount,
+    cuotasEnMora: paymentPlan.overdueCount,
     abonosCount: paymentSummary.abonosCount,
     ultimoAbonoAt: payment.ultimoAbonoAt?.toISOString() || null,
     createdAt: item.createdAt.toISOString(),

@@ -78,6 +78,7 @@ export function generatePaymentReference(folio: string, document: string) {
 
 export function resolveCreditState(options: {
   bloqueoRobo?: boolean;
+  bloqueoMora?: boolean;
   deliverable?: EqualityDeliveryStatus | null;
   pazYSalvoEmitidoAt?: Date | null;
 }) {
@@ -87,6 +88,10 @@ export function resolveCreditState(options: {
 
   if (options.bloqueoRobo) {
     return "ROBO_BLOQUEADO";
+  }
+
+  if (options.bloqueoMora) {
+    return "MORA_BLOQUEADO";
   }
 
   if (options.deliverable?.ready) {

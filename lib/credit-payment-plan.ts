@@ -16,7 +16,8 @@ export type CreditPaymentPlanInstallment = {
   valorProgramado: number;
   valorAbonado: number;
   saldoPendiente: number;
-  estado: "PAGADA" | "AL_DIA" | "MORA";
+  estado: "PAGO" | "PENDIENTE";
+  estaEnMora: boolean;
 };
 
 function roundMoney(value: number) {
@@ -81,6 +82,8 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
       const pending = roundMoney(Math.max(0, programmed - paid));
       const dueDate = addMonths(firstDueDate, index);
       dueDate.setHours(23, 59, 59, 999);
+      const isPaid = pending <= 0;
+      const isOverdue = !isPaid && dueDate.getTime() < today.getTime();
 
       return {
         numero,
@@ -88,12 +91,8 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
         valorProgramado: programmed,
         valorAbonado: paid,
         saldoPendiente: pending,
-        estado:
-          pending <= 0
-            ? "PAGADA"
-            : dueDate.getTime() < today.getTime()
-              ? "MORA"
-              : "AL_DIA",
+        estado: isPaid ? "PAGO" : "PENDIENTE",
+        estaEnMora: isOverdue,
       };
     }
   );
@@ -102,7 +101,9 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
     installments.find((item) => item.saldoPendiente > 0) ||
     installments[installments.length - 1] ||
     null;
-  const overdueCount = installments.filter((item) => item.estado === "MORA").length;
+  const overdueCount = installments.filter((item) => item.estaEnMora).length;
+  const paidCount = installments.filter((item) => item.estado === "PAGO").length;
+  const pendingCount = installments.filter((item) => item.saldoPendiente > 0).length;
   const saldoPendiente = roundMoney(
     installments.reduce((sum, item) => sum + item.saldoPendiente, 0)
   );
@@ -111,6 +112,8 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
     installments,
     nextInstallment,
     overdueCount,
+    paidCount,
+    pendingCount,
     totalPaid,
     saldoPendiente,
     estadoPago:

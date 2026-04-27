@@ -179,6 +179,8 @@ type CreditItem = {
   warrantyUntil: string | null;
   bloqueoRobo: boolean;
   bloqueoRoboAt: string | null;
+  bloqueoMora?: boolean;
+  bloqueoMoraAt?: string | null;
   pazYSalvoEmitidoAt: string | null;
   observacionAdmin: string | null;
   contratoAceptadoAt: string | null;
@@ -198,6 +200,9 @@ type CreditItem = {
   totalRecaudado: number;
   porcentajeRecaudado: number;
   estadoPago?: "PAGADO" | "AL_DIA" | "MORA";
+  cuotasPagadas?: number;
+  cuotasPendientes?: number;
+  cuotasEnMora?: number;
   abonosCount: number;
   ultimoAbonoAt: string | null;
   createdAt: string;
@@ -277,7 +282,8 @@ type PaymentPlanInstallment = {
   valorProgramado: number;
   valorAbonado: number;
   saldoPendiente: number;
-  estado: "PAGADA" | "AL_DIA" | "MORA";
+  estado: "PAGO" | "PENDIENTE";
+  estaEnMora?: boolean;
 };
 
 type CreditPaymentsResponse = {
@@ -300,6 +306,8 @@ type CreditPaymentsResponse = {
     estadoPago?: "PAGADO" | "AL_DIA" | "MORA";
     nextInstallment?: PaymentPlanInstallment | null;
     overdueCount?: number;
+    paidCount?: number;
+    pendingCount?: number;
     plan?: PaymentPlanInstallment[];
     abonosCount: number;
     ultimoAbonoAt: string | null;
@@ -319,6 +327,8 @@ type RegisterPaymentResponse = {
     estadoPago?: "PAGADO" | "AL_DIA" | "MORA";
     nextInstallment?: PaymentPlanInstallment | null;
     overdueCount?: number;
+    paidCount?: number;
+    pendingCount?: number;
     plan?: PaymentPlanInstallment[];
     abonosCount: number;
     ultimoAbonoAt: string | null;
@@ -2314,7 +2324,9 @@ export default function CreditFactoryConsole({
           porcentajeRecaudado: selectedCredit.porcentajeRecaudado,
           estadoPago: selectedCredit.estadoPago,
           nextInstallment: null,
-          overdueCount: 0,
+          overdueCount: selectedCredit.cuotasEnMora || 0,
+          paidCount: selectedCredit.cuotasPagadas || 0,
+          pendingCount: selectedCredit.cuotasPendientes || 0,
           plan: [],
           abonosCount: selectedCredit.abonosCount,
           ultimoAbonoAt: selectedCredit.ultimoAbonoAt,
@@ -8365,7 +8377,9 @@ export default function CreditFactoryConsole({
                           : "Al dia"}
                     </p>
                     <p className="mt-1 text-sm text-slate-500">
-                      {paymentOverview?.overdueCount || 0} cuotas vencidas
+                      {paymentOverview?.paidCount || 0} pagadas ·{" "}
+                      {paymentOverview?.pendingCount || 0} pendientes ·{" "}
+                      {paymentOverview?.overdueCount || 0} en mora
                     </p>
                   </div>
                 </div>
@@ -8529,14 +8543,14 @@ export default function CreditFactoryConsole({
                               <span
                                 className={[
                                   "inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em]",
-                                  item.estado === "MORA"
+                                  item.estaEnMora
                                     ? "border-red-200 bg-red-50 text-red-700"
-                                    : item.estado === "PAGADA"
+                                    : item.estado === "PAGO"
                                       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                      : "border-sky-200 bg-sky-50 text-sky-700",
+                                      : "border-amber-200 bg-amber-50 text-amber-700",
                                 ].join(" ")}
                               >
-                                {item.estado === "AL_DIA" ? "Al dia" : item.estado}
+                                {item.estado}
                               </span>
                             </td>
                           </tr>

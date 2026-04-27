@@ -99,6 +99,8 @@ function serializeCredit(item: any, payment?: PaymentSummary) {
     warrantyUntil: item.warrantyUntil?.toISOString() || null,
     bloqueoRobo: item.bloqueoRobo,
     bloqueoRoboAt: item.bloqueoRoboAt?.toISOString() || null,
+    bloqueoMora: item.bloqueoMora,
+    bloqueoMoraAt: item.bloqueoMoraAt?.toISOString() || null,
     pazYSalvoEmitidoAt: item.pazYSalvoEmitidoAt?.toISOString() || null,
     observacionAdmin: item.observacionAdmin,
     contratoAceptadoAt: item.contratoAceptadoAt?.toISOString() || null,
@@ -360,6 +362,7 @@ export async function POST(
               : command === "remove-lock"
                 ? false
                 : reloaded.bloqueoRobo,
+          bloqueoMora: reloaded.bloqueoMora,
           deliverable: deviceMeta.deliveryStatus || null,
           pazYSalvoEmitidoAt: reloaded.pazYSalvoEmitidoAt,
         }),

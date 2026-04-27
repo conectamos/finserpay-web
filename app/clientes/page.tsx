@@ -9,7 +9,8 @@ type ClientInstallment = {
   valorProgramado: number;
   valorAbonado: number;
   saldoPendiente: number;
-  estado: "PAGADA" | "AL_DIA" | "MORA";
+  estado: "PAGO" | "PENDIENTE";
+  estaEnMora?: boolean;
 };
 
 type ClientCredit = {
@@ -39,8 +40,6 @@ type ClientCreditsResponse = {
   items?: ClientCredit[];
   error?: string;
 };
-
-const WOMPI_PAYMENT_LINK = "https://checkout.wompi.co/l/4banHJ";
 
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -101,6 +100,17 @@ export default function ClienteConsultaPage() {
       }
 
       const nextItems = result.data.items || [];
+
+      if (nextItems.length === 1) {
+        const credit = nextItems[0];
+        const params = new URLSearchParams({
+          search: normalized,
+          selected: String(credit.id),
+        });
+        window.location.assign(`/dashboard/abonos?${params.toString()}`);
+        return;
+      }
+
       setItems(nextItems);
       setSelectedInstallments(
         Object.fromEntries(
@@ -274,12 +284,13 @@ export default function ClienteConsultaPage() {
                       </div>
 
                       <a
-                        href={WOMPI_PAYMENT_LINK}
-                        target="_blank"
-                        rel="noreferrer"
+                        href={`/dashboard/abonos?${new URLSearchParams({
+                          search: credit.clienteDocumento || documento,
+                          selected: String(credit.id),
+                        }).toString()}`}
                         className="inline-flex items-center justify-center rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#0f4a4a]"
                       >
-                        Pagar en Wompi
+                        Abrir recaudo
                       </a>
                     </div>
                   ) : (
@@ -310,7 +321,7 @@ export default function ClienteConsultaPage() {
                         <td className="px-4 py-3">{money(item.valorProgramado)}</td>
                         <td className="px-4 py-3">{money(item.valorAbonado)}</td>
                         <td className="px-4 py-3 font-bold">{money(item.saldoPendiente)}</td>
-                        <td className="px-4 py-3">{item.estado === "AL_DIA" ? "Al dia" : item.estado}</td>
+                        <td className="px-4 py-3">{item.estado}</td>
                       </tr>
                     ))}
                   </tbody>

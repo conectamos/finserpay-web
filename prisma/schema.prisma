@@ -175,6 +175,8 @@ model Credito {
   warrantyUntil      DateTime?
   bloqueoRobo        Boolean  @default(false)
   bloqueoRoboAt      DateTime?
+  bloqueoMora        Boolean  @default(false)
+  bloqueoMoraAt      DateTime?
   pazYSalvoEmitidoAt DateTime?
   observacionAdmin   String?
   contratoAceptadoAt DateTime?
