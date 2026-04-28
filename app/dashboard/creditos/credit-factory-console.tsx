@@ -239,6 +239,18 @@ type EquipmentCatalogResponse = {
   error?: string;
 };
 
+type CreditSettings = {
+  tasaInteresEa: number;
+  fianzaPorcentaje: number;
+  updatedAt: string | null;
+};
+
+type CreditSettingsResponse = {
+  ok?: boolean;
+  settings?: CreditSettings;
+  error?: string;
+};
+
 type CreateCreditResponse = {
   ok: boolean;
   warning?: string;
@@ -394,7 +406,12 @@ const DEPARTMENT_OPTIONS = Object.keys(DEPARTMENT_CITY_OPTIONS).map((value) => (
   label: value.replace(/_/g, " "),
 }));
 
-const FLEXIBLE_WIZARD_FOR_TESTING = true;
+const FLEXIBLE_WIZARD_FOR_TESTING = false;
+const MAX_CREDIT_INSTALLMENTS = 16;
+const CREDIT_INSTALLMENT_OPTIONS = Array.from(
+  { length: MAX_CREDIT_INSTALLMENTS },
+  (_, index) => String(index + 1)
+);
 
 const copCurrencyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -486,6 +503,10 @@ function deliveryClasses(ready: boolean) {
 function stateBadgeClasses(estado: string) {
   const normalized = String(estado || "").toUpperCase();
 
+  if (normalized === "ANULADO") {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+
   if (normalized === "ENTREGABLE") {
     return "border-emerald-200 bg-emerald-50 text-emerald-700";
   }
@@ -503,6 +524,10 @@ function stateBadgeClasses(estado: string) {
   }
 
   return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
+function isCreditAnnulled(estado: string | null | undefined) {
+  return String(estado || "").trim().toUpperCase() === "ANULADO";
 }
 
 async function requestJson<T>(url: string, init?: RequestInit) {
@@ -1570,6 +1595,11 @@ export default function CreditFactoryConsole({
   const [equipoMarca, setEquipoMarca] = useState("");
   const [equipoModelo, setEquipoModelo] = useState("");
   const [equipmentCatalog, setEquipmentCatalog] = useState<EquipmentCatalogItem[]>([]);
+  const [creditSettings, setCreditSettings] = useState<CreditSettings>({
+    tasaInteresEa: DEFAULT_LEGAL_CONSUMER_RATE_EA,
+    fianzaPorcentaje: DEFAULT_FIANCO_SURETY_PERCENTAGE,
+    updatedAt: null,
+  });
   const [imei, setImei] = useState("");
   const [valorEquipoTotal, setValorEquipoTotal] = useState("");
   const [cuotaInicial, setCuotaInicial] = useState("");
@@ -1748,7 +1778,10 @@ export default function CreditFactoryConsole({
       ? Math.max(0, valorTotalEquipoNumero - precioBaseVentaCatalogo)
       : Math.max(0, valorTotalEquipoNumero - MAX_DEVICE_FINANCING_BASE);
   const cuotaInicialNumero = Math.max(0, Number(cuotaInicial || 0));
-  const plazoMesesNumero = Math.max(0, Math.trunc(Number(plazoMeses || 0)));
+  const plazoMesesNumero = Math.min(
+    MAX_CREDIT_INSTALLMENTS,
+    Math.max(0, Math.trunc(Number(plazoMeses || 0)))
+  );
   const tasaInteresEaNumero = Math.max(0, Number(tasaInteresEa || 0));
   const fianzaPorcentajeNumero = Math.max(0, Number(fianzaPorcentaje || 0));
   const saldoBaseFinanciado = calculateFinancedBalance(
@@ -2336,6 +2369,9 @@ export default function CreditFactoryConsole({
   const payableInstallments = (paymentOverview?.plan || []).filter(
     (item) => item.saldoPendiente > 0
   );
+  const paymentBlockedByAnnulment = isCreditAnnulled(
+    paymentOverview?.estado || selectedCredit?.estado
+  );
   const selectedInstallmentSet = new Set(selectedInstallmentNumbers);
   const selectedInstallmentsData = payableInstallments.filter((item) =>
     selectedInstallmentSet.has(String(item.numero))
@@ -2537,6 +2573,7 @@ export default function CreditFactoryConsole({
   const activeCompletionPercent = activeRequirements.length
     ? Math.round((activeCompletedCount / activeRequirements.length) * 100)
     : 0;
+  const activeMissingRequirements = activeRequirements.filter((item) => !item.ready);
   const showResultsPanel = paymentsView
     ? !selectedCredit || showPaymentResults
     : lookupMode
@@ -2826,6 +2863,33 @@ export default function CreditFactoryConsole({
     }
   };
 
+  const loadCreditSettings = async () => {
+    try {
+      const result = await requestJson<CreditSettingsResponse>(
+        "/api/creditos/configuracion"
+      );
+
+      if (!result.ok || !result.data.settings) {
+        throw new Error(
+          result.data?.error || "No se pudo cargar la configuracion del credito"
+        );
+      }
+
+      const nextSettings = result.data.settings;
+      setCreditSettings(nextSettings);
+      setTasaInteresEa(String(nextSettings.tasaInteresEa));
+      setFianzaPorcentaje(String(nextSettings.fianzaPorcentaje));
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo cargar la configuracion del credito",
+        tone: "red",
+      });
+    }
+  };
+
   const applyEquipmentCatalogItem = (item: EquipmentCatalogItem) => {
     setEquipoMarca(item.marca);
     setEquipoModelo(item.modelo);
@@ -2922,6 +2986,7 @@ export default function CreditFactoryConsole({
 
   useEffect(() => {
     void loadEquipmentCatalog();
+    void loadCreditSettings();
   }, []);
 
   useEffect(() => {
@@ -3027,6 +3092,12 @@ export default function CreditFactoryConsole({
 
       setPayments(result.data.items);
       setPaymentSummary(result.data.credito);
+      if (isCreditAnnulled(result.data.credito.estado)) {
+        setSelectedInstallmentNumbers([]);
+        setPaymentValue("");
+        return;
+      }
+
       const nextInstallment = result.data.credito.nextInstallment;
       if (nextInstallment?.saldoPendiente && nextInstallment.saldoPendiente > 0) {
         setSelectedInstallmentNumbers([String(nextInstallment.numero)]);
@@ -3798,8 +3869,8 @@ export default function CreditFactoryConsole({
     setValorEquipoTotal("");
     setCuotaInicial("");
     setPlazoMeses("12");
-    setTasaInteresEa(String(DEFAULT_LEGAL_CONSUMER_RATE_EA));
-    setFianzaPorcentaje(String(DEFAULT_FIANCO_SURETY_PERCENTAGE));
+    setTasaInteresEa(String(creditSettings.tasaInteresEa));
+    setFianzaPorcentaje(String(creditSettings.fianzaPorcentaje));
     setFechaPrimerPago(getDefaultFirstPaymentDate());
     setContratoAceptado(false);
     setContratoFotoDataUrl("");
@@ -3959,6 +4030,14 @@ export default function CreditFactoryConsole({
     if (!selectedCredit) {
       setNotice({
         text: "Selecciona primero un credito para registrar el abono.",
+        tone: "red",
+      });
+      return;
+    }
+
+    if (isCreditAnnulled(selectedCredit.estado) || paymentBlockedByAnnulment) {
+      setNotice({
+        text: "Este credito esta anulado y no permite registrar recaudos.",
         tone: "red",
       });
       return;
@@ -4465,7 +4544,7 @@ export default function CreditFactoryConsole({
   );
 
   return (
-    <div className="fp-shell min-h-screen px-4 py-8 text-slate-950">
+    <div className="fp-shell min-h-screen px-4 py-6 text-slate-950">
       <div className="mx-auto max-w-7xl">
         {paymentsView ? (
           <section className="rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-4 shadow-sm">
@@ -4482,67 +4561,62 @@ export default function CreditFactoryConsole({
             </div>
           </section>
         ) : (
-          <section className="fp-hero relative overflow-hidden rounded-[30px] border border-emerald-950/10 px-6 py-8 text-white shadow-[0_30px_90px_rgba(23,32,29,0.20)] sm:px-8">
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
-
-            <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+          <section className="rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
               <div className="max-w-3xl">
-                <div className="mb-5">
-                  <FinserBrand dark />
-                </div>
-                <div className="inline-flex rounded-full border border-white/14 bg-white/8 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-emerald-50">
+                <FinserBrand />
+                <div className="mt-4 inline-flex rounded-full border border-[#c7dbe0] bg-[#f7fbfa] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#145a5a]">
                   {heroEyebrow}
                 </div>
-                <h1 className="mt-5 text-4xl font-black tracking-tight sm:text-5xl">
+                <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">
                   {heroTitle}
                 </h1>
-                <p className="mt-5 max-w-2xl text-sm leading-7 text-slate-300 sm:text-base">
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
                   {heroDescription}
                 </p>
-
-                <div className="mt-5 flex flex-wrap gap-2">
-                  <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
-                    Usuario: {initialSession.nombre}
-                  </span>
-                  {initialSeller && (
-                    <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8ce5e1]">
-                      Vendedor: {initialSeller.nombre}
-                    </span>
-                  )}
-                  <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
-                    Rol: {initialSession.rolNombre}
-                  </span>
-                  <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
-                    Sede: {initialSession.sedeNombre}
-                  </span>
-                </div>
               </div>
 
-              <div className="flex flex-wrap gap-3">
-                <Link
-                  href="/dashboard"
-                  className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-50"
-                >
-                  Volver al dashboard
-                </Link>
-                <Link
-                  href="/dashboard/integraciones"
-                  className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/16"
-                >
-                  Ver integraciones
-                </Link>
-                <Link
-                  href={
-                    paymentsView
-                      ? "/dashboard/creditos?mode=create-client"
-                      : lookupMode
-                        ? "/dashboard/abonos"
-                        : "/dashboard/abonos"
-                  }
-                  className="inline-flex min-w-[170px] justify-center rounded-[18px] border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/16"
-                >
-                  {paymentsView ? "Ir a crear cliente" : "Ir a abonos"}
-                </Link>
+              <div className="flex flex-col gap-3 lg:items-end">
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    href="/dashboard"
+                    className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Volver al dashboard
+                  </Link>
+                  <Link
+                    href="/dashboard/integraciones"
+                    className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
+                  >
+                    Ver integraciones
+                  </Link>
+                  <Link
+                    href={
+                      paymentsView
+                        ? "/dashboard/creditos?mode=create-client"
+                        : lookupMode
+                          ? "/dashboard/abonos"
+                          : "/dashboard/abonos"
+                    }
+                    className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
+                  >
+                    {paymentsView ? "Ir a crear cliente" : "Ir a abonos"}
+                  </Link>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                    {initialSession.sedeNombre}
+                  </span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                    {initialSession.rolNombre}
+                  </span>
+                  {initialSeller ? (
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                      {initialSeller.nombre}
+                    </span>
+                  ) : null}
+                </div>
               </div>
             </div>
           </section>
@@ -4650,61 +4724,52 @@ export default function CreditFactoryConsole({
             paymentsView
               ? "hidden"
               : createClientMode
-                ? "mt-8"
+                ? "mt-6"
                 : lookupMode
-                  ? "mt-8"
-                  : "mt-8 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]"
+                  ? "mt-6"
+                  : "mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]"
           }
         >
           <div
             className={[
-              "fp-surface rounded-[28px] p-5 sm:p-6",
+              "fp-surface rounded-[24px] p-4 sm:p-5",
               lookupMode ? "hidden" : "",
             ].join(" ")}
           >
-            <div className="fp-flow-header relative overflow-hidden rounded-[28px] border border-[#cfe5e2] p-5 sm:p-6">
-              <div className="relative grid gap-5 xl:grid-cols-[1.1fr_0.9fr] xl:items-end">
+            <div className="fp-flow-header relative overflow-hidden rounded-[24px] border border-[#cfe5e2] bg-white/72 p-4 sm:p-5">
+              <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <div className="inline-flex rounded-full border border-[#8fd8cf] bg-white/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f5d59]">
-                    Nuevo credito
-                  </div>
-                  <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">
-                    Fabrica guiada para el asesor
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">
+                    Flujo de venta
+                  </p>
+                  <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
+                    5 pasos para cerrar el credito
                   </h2>
-                  <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-                    {canAdmin
-                      ? "Genera el credito, revisa evidencias y opera el caso sin perder de vista el estado del cierre."
-                      : "Sigue el recorrido paso a paso: cliente, equipo, identidad, contratos y entrega validada."}
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Paso actual: <span className="font-semibold text-slate-950">{activeFactoryStep.label}</span>.{" "}
+                    Siguiente accion: <span className="font-semibold text-slate-950">{nextFactoryStep.action}</span>
                   </p>
                 </div>
 
-                <div className="rounded-[24px] border border-white/70 bg-white/78 p-4 shadow-[0_16px_35px_rgba(15,23,42,0.08)]">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-                        Avance del caso
-                      </p>
-                      <p className="mt-1 text-2xl font-black tracking-tight text-slate-950">
-                        {factoryProgress}%
-                      </p>
-                    </div>
-                    <div className="fp-pulse-dot" aria-hidden="true" />
+                <div className="min-w-[260px] rounded-[20px] border border-[#d8e6e5] bg-white/88 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-700">Avance general</p>
+                    <p className="text-xl font-black tracking-tight text-slate-950">
+                      {factoryProgress}%
+                    </p>
                   </div>
-                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200">
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
                     <div
                       className="fp-flow-progress h-full rounded-full"
                       style={{ width: `${factoryProgress}%` }}
                     />
                   </div>
-                  <p className="mt-3 text-sm leading-6 text-slate-600">
-                    Siguiente accion: <span className="font-semibold text-slate-950">{nextFactoryStep.action}</span>
-                  </p>
                 </div>
               </div>
             </div>
 
-            <div className="mt-5 grid gap-4 xl:grid-cols-[280px_1fr] xl:items-start">
-              <aside className="fp-step-rail rounded-[26px] border border-[#d8e6e5] bg-white/88 p-3 shadow-[0_18px_44px_rgba(15,23,42,0.07)]">
+            <div className="mt-4 grid gap-4 xl:grid-cols-[220px_1fr] xl:items-start">
+              <aside className="fp-step-rail rounded-[22px] border border-[#d8e6e5] bg-white/88 p-2.5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
                 {factorySteps.map((step) => {
                   const active = step.id === wizardStep;
 
@@ -4753,7 +4818,7 @@ export default function CreditFactoryConsole({
               </aside>
 
               <div>
-                <div className="mb-4 rounded-[26px] border border-[#d8e6e5] bg-white px-4 py-4 shadow-[0_14px_32px_rgba(15,23,42,0.06)]">
+                <div className="mb-4 rounded-[22px] border border-[#d8e6e5] bg-white px-4 py-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">
@@ -4777,7 +4842,7 @@ export default function CreditFactoryConsole({
                       {activeFactoryStep.ready ? "Listo" : "En progreso"}
                     </span>
                   </div>
-                  <div className="mt-4 rounded-[22px] border border-[#e1efec] bg-[#f8fdfb] px-4 py-4">
+                  <div className="mt-4 rounded-[20px] border border-[#e1efec] bg-[#f8fdfb] px-4 py-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <p className="text-sm font-semibold text-slate-700">
                         Formulario: {activeCompletedCount}/{activeRequirements.length} listo
@@ -4793,24 +4858,29 @@ export default function CreditFactoryConsole({
                       />
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {activeRequirements.map((item) => (
+                      {activeMissingRequirements.slice(0, 4).map((item) => (
                         <span
                           key={item.label}
-                          className={[
-                            "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]",
-                            item.ready
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                              : "border-amber-200 bg-amber-50 text-amber-700",
-                          ].join(" ")}
+                          className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-700"
                         >
-                          {item.ready ? "OK" : "Falta"} {item.label}
+                          Falta {item.label}
                         </span>
                       ))}
+                      {activeMissingRequirements.length > 4 && (
+                        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          +{activeMissingRequirements.length - 4} pendientes
+                        </span>
+                      )}
+                      {activeMissingRequirements.length === 0 && (
+                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
+                          Paso completo
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
 
-            <div className="fp-step-stage fp-form-redesign rounded-[28px] border border-[#d6e4e1] bg-[linear-gradient(180deg,#fffef9_0%,#f7f2e9_100%)] p-5 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
+            <div className="fp-step-stage fp-form-redesign rounded-[24px] border border-[#d6e4e1] bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
               {wizardStep === 1 && (
                 <div>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -4837,10 +4907,10 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
 
-                  <div className="mt-6 rounded-[28px] border border-[#cfe4e7] bg-[linear-gradient(180deg,#eefbff_0%,#f7fdff_100%)] p-5">
+                  <div className="mt-5 rounded-[22px] border border-[#dbe8e6] bg-[#f8fbfa] p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                        <p className="text-lg font-black tracking-tight text-slate-950">
+                        <p className="text-base font-black tracking-tight text-slate-950">
                           Ingresa los datos del cliente
                         </p>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
@@ -4848,7 +4918,7 @@ export default function CreditFactoryConsole({
                         </p>
                       </div>
                       {!canAdmin && initialSeller && (
-                        <div className="rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-sm text-slate-600">
+                        <div className="rounded-[18px] border border-[#d6e4e1] bg-white px-4 py-3 text-sm text-slate-600">
                           <p className="font-semibold text-slate-950">Vendedor activo</p>
                           <p className="mt-1">{initialSeller.nombre}</p>
                         </div>
@@ -5735,12 +5805,17 @@ export default function CreditFactoryConsole({
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Numero de cuotas
                         </label>
-                        <input
+                        <select
                           value={plazoMeses}
-                          onChange={(event) => setPlazoMeses(event.target.value.replace(/\D/g, ""))}
-                          placeholder="12"
+                          onChange={(event) => setPlazoMeses(event.target.value)}
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                        />
+                        >
+                          {CREDIT_INSTALLMENT_OPTIONS.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
                       </div>
 
                       <div className="md:col-span-2">
@@ -5760,15 +5835,6 @@ export default function CreditFactoryConsole({
                     </div>
 
                     <div className="space-y-4">
-                      <div className="rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] p-5">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                          Resumen para el asesor
-                        </p>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                          Muestra solo los datos necesarios para explicar la venta y avanzar al cierre.
-                        </p>
-                      </div>
-
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -5796,6 +5862,17 @@ export default function CreditFactoryConsole({
                         </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                            Valor credito
+                          </p>
+                          <p className="mt-2 text-2xl font-black text-slate-950">
+                            {currency(saldoBaseFinanciado)}
+                          </p>
+                          <p className="mt-1 text-xs font-medium text-slate-500">
+                            Valor equipo - inicial.
+                          </p>
+                        </div>
+                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                             Plazo
                           </p>
                           <p className="mt-2 text-2xl font-black text-slate-950">
@@ -5807,16 +5884,16 @@ export default function CreditFactoryConsole({
                         </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Total financiado
+                            Total a pagar
                           </p>
                           <p className="mt-2 text-2xl font-black text-slate-950">
                             {currency(saldoFinanciado)}
                           </p>
                           <p className="mt-1 text-xs font-medium text-slate-500">
-                            Valor final distribuido en las cuotas.
+                            Valor final distribuido en cuotas.
                           </p>
                         </div>
-                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
+                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4 md:col-span-2">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                             Valor por cuota
                           </p>
@@ -6983,8 +7060,8 @@ export default function CreditFactoryConsole({
               </button>
 
               {FLEXIBLE_WIZARD_FOR_TESTING && (
-                <span className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-700">
-                  Modo pruebas activo: puedes saltar entre pasos y finalizar el credito aunque la validacion final de entrega quede pendiente.
+                <span className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2 text-xs font-medium text-sky-700">
+                  Modo pruebas: puedes saltar entre pasos y cerrar sin la validacion final de entrega.
                 </span>
               )}
 
@@ -7130,12 +7207,17 @@ export default function CreditFactoryConsole({
                 <label className="mb-2 block text-sm font-semibold text-slate-700">
                   Numero de cuotas
                 </label>
-                <input
+                <select
                   value={plazoMeses}
                   onChange={(event) => setPlazoMeses(event.target.value)}
-                  placeholder="12"
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                />
+                >
+                  {CREDIT_INSTALLMENT_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -8561,6 +8643,20 @@ export default function CreditFactoryConsole({
 
                 {paymentsTab === "pay" ? (
                 <>
+                {paymentBlockedByAnnulment ? (
+                  <div className="mt-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-5 text-red-800">
+                    <p className="text-[11px] font-black uppercase tracking-[0.18em]">
+                      Recaudo bloqueado
+                    </p>
+                    <h3 className="mt-2 text-2xl font-black text-red-900">
+                      Credito anulado
+                    </h3>
+                    <p className="mt-2 text-sm font-semibold leading-6">
+                      Este credito fue anulado. No se pueden registrar cuotas,
+                      pagos por Wompi ni movimientos nuevos sobre esta venta.
+                    </p>
+                  </div>
+                ) : null}
                 <div className="mt-6 rounded-[24px] border border-[#d9e6ea] bg-white p-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                     Pagar
@@ -8639,6 +8735,7 @@ export default function CreditFactoryConsole({
                           }
                           inputMode="numeric"
                           placeholder="$ 50.000"
+                          disabled={paymentBlockedByAnnulment}
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                         />
                       </div>
@@ -8651,6 +8748,7 @@ export default function CreditFactoryConsole({
                       <select
                         value={paymentMethod}
                         onChange={(event) => setPaymentMethod(event.target.value)}
+                        disabled={paymentBlockedByAnnulment}
                         className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                       >
                         <option value="EFECTIVO">Efectivo</option>
@@ -8670,6 +8768,7 @@ export default function CreditFactoryConsole({
                       value={paymentObservation}
                       onChange={(event) => setPaymentObservation(event.target.value)}
                       placeholder="Detalle opcional del pago"
+                      disabled={paymentBlockedByAnnulment}
                       className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                     />
                   </div>
@@ -8678,10 +8777,14 @@ export default function CreditFactoryConsole({
                     <button
                       type="button"
                       onClick={() => void registerPayment()}
-                      disabled={registeringPayment || loadingPayments}
+                      disabled={registeringPayment || loadingPayments || paymentBlockedByAnnulment}
                       className="rounded-[16px] bg-[#6b7280] px-6 py-3.5 text-base font-black text-white transition hover:bg-[#4b5563] disabled:opacity-70"
                     >
-                      {registeringPayment ? "Registrando..." : "Pagar"}
+                      {paymentBlockedByAnnulment
+                        ? "Credito anulado"
+                        : registeringPayment
+                          ? "Registrando..."
+                          : "Pagar"}
                     </button>
 
                     <button
@@ -8742,7 +8845,11 @@ export default function CreditFactoryConsole({
                                 <input
                                   type="checkbox"
                                   checked={selectedInstallmentSet.has(String(item.numero))}
-                                  disabled={item.saldoPendiente <= 0 || registeringPayment}
+                                  disabled={
+                                    item.saldoPendiente <= 0 ||
+                                    registeringPayment ||
+                                    paymentBlockedByAnnulment
+                                  }
                                   onChange={(event) =>
                                     updateSelectedInstallments(
                                       item.numero,

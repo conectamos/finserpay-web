@@ -17,6 +17,7 @@ import {
 } from "@/lib/equality-zero-touch";
 import prisma from "@/lib/prisma";
 import { validateWompiEventSignature } from "@/lib/wompi";
+import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,6 +54,8 @@ function parseCuotaNumeros(value: unknown) {
 }
 
 async function syncMoraAfterWompiPayment(creditId: number) {
+  await ensureCreditAbonoAuditColumns();
+
   const credit = await prisma.credito.findUnique({
     where: { id: creditId },
     select: {
@@ -73,6 +76,11 @@ async function syncMoraAfterWompiPayment(creditId: number) {
       bloqueoMora: true,
       pazYSalvoEmitidoAt: true,
       abonos: {
+        where: {
+          estado: {
+            not: "ANULADO",
+          },
+        },
         select: {
           valor: true,
           fechaAbono: true,
@@ -143,6 +151,8 @@ async function syncMoraAfterWompiPayment(creditId: number) {
 }
 
 async function processApprovedPayment(transaction: NonNullable<WompiEvent["data"]>["transaction"], payload: WompiEvent) {
+  await ensureCreditAbonoAuditColumns();
+
   if (!transaction?.reference) {
     return;
   }
@@ -206,7 +216,12 @@ async function processApprovedPayment(transaction: NonNullable<WompiEvent["data"
     });
 
     const abonos = await tx.creditoAbono.findMany({
-      where: { creditoId: intent.creditoId },
+      where: {
+        creditoId: intent.creditoId,
+        estado: {
+          not: "ANULADO",
+        },
+      },
       select: {
         valor: true,
         fechaAbono: true,

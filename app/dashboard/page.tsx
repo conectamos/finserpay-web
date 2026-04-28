@@ -1,6 +1,7 @@
 import Link from "next/link";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
+import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { isAdminRole } from "@/lib/roles";
 import LogoutButton from "./_components/logout-button";
@@ -404,6 +405,94 @@ function AdminShortcutCard({
   );
 }
 
+function AdminManagementCard() {
+  const actionClass =
+    "inline-flex min-h-11 items-center justify-center rounded-2xl px-4 py-3 text-center text-sm font-black uppercase tracking-[0.08em] transition";
+
+  return (
+    <section className="group relative overflow-hidden rounded-[28px] border border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#eef0f4_58%,#e1e4e9_100%)] p-5 shadow-[0_14px_32px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_44px_rgba(15,23,42,0.12)]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.8),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(24,24,27,0.06),transparent_34%)]" />
+
+      <div className="relative inline-flex rounded-full border border-zinc-800 bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-100">
+        Admin
+      </div>
+
+      <h3 className="relative mt-4 text-2xl font-black uppercase tracking-tight text-zinc-950">
+        GESTIÓN
+      </h3>
+      <p className="relative mt-3 text-sm leading-6 text-zinc-600">
+        Administra puntos de venta, accesos y perfiles comerciales desde una sola tarjeta.
+      </p>
+
+      <div className="relative mt-5 grid gap-3 sm:grid-cols-2">
+        <Link
+          href="/dashboard/sedes"
+          className={[
+            actionClass,
+            "border border-zinc-950 bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] text-white hover:opacity-95",
+          ].join(" ")}
+        >
+          GESTIONAR SEDE
+        </Link>
+        <Link
+          href="/dashboard/usuarios"
+          className={[
+            actionClass,
+            "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50",
+          ].join(" ")}
+        >
+          GESTIONAR VENDEDOR
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+function AdminAnnulmentsCard() {
+  const actionClass =
+    "inline-flex min-h-11 items-center justify-center rounded-2xl px-4 py-3 text-center text-sm font-black transition";
+
+  return (
+    <section className="group relative overflow-hidden rounded-[28px] border border-rose-200 bg-[linear-gradient(180deg,#fff7f7_0%,#f3f4f6_58%,#e5e7eb_100%)] p-5 shadow-[0_14px_32px_rgba(15,23,42,0.08)]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#ef4444,#f59e0b,#111827)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(239,68,68,0.12),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(17,24,39,0.08),transparent_34%)]" />
+
+      <div className="relative inline-flex rounded-full border border-rose-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700">
+        Control
+      </div>
+
+      <h3 className="relative mt-4 text-2xl font-black uppercase tracking-tight text-zinc-950">
+        Anulaciones
+      </h3>
+      <p className="relative mt-3 text-sm leading-6 text-zinc-600">
+        Accesos rapidos para reversar creditos o recaudos desde sus tablas de auditoria.
+      </p>
+
+      <div className="relative mt-5 grid gap-3 sm:grid-cols-2">
+        <Link
+          href="/dashboard/reportes/creditos"
+          className={[
+            actionClass,
+            "border border-zinc-950 bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] text-white hover:opacity-95",
+          ].join(" ")}
+        >
+          Anular credito
+        </Link>
+        <Link
+          href="/dashboard/reportes/abonos"
+          className={[
+            actionClass,
+            "border border-rose-200 bg-white text-rose-700 hover:bg-rose-50",
+          ].join(" ")}
+        >
+          Anular recaudo
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 export default async function DashboardPage() {
   const session = await getSessionUser();
 
@@ -463,6 +552,10 @@ export default async function DashboardPage() {
     : sellerIsSupervisor
       ? `Bienvenido, ${nombreVisible}. Desde aqui supervisas creditos, recaudo y seguimiento de la sede.`
       : `Bienvenido, ${nombreVisible}. Desde aqui generas creditos, inscribes equipos y validas si se pueden entregar.`;
+  if (admin) {
+    await ensureCreditAbonoAuditColumns();
+  }
+
   const adminStats = admin
     ? await Promise.all([
         prisma.sede.count({
@@ -481,6 +574,9 @@ export default async function DashboardPage() {
             valor: true,
           },
           where: {
+            estado: {
+              not: "ANULADO",
+            },
             fechaAbono: {
               gte: new Date(new Date().setHours(0, 0, 0, 0)),
             },
@@ -508,6 +604,7 @@ export default async function DashboardPage() {
           { href: "/dashboard/usuarios", label: "Vendedores" },
           { href: "/dashboard/sedes", label: "Sedes" },
           { href: "/dashboard/catalogo-equipos", label: "Catalogo de equipos" },
+          { href: "/dashboard/parametros-credito", label: "Parametros de credito" },
           { href: "/dashboard/integraciones", label: "Centro de integraciones" },
           { href: "/dashboard/equality", label: "Equality Zero Touch" },
         ]
@@ -903,22 +1000,6 @@ export default async function DashboardPage() {
 
   const adminShortcuts: AdminShortcut[] = [
     {
-      href: "/dashboard/sedes",
-      title: "Gestion de sedes",
-      description:
-        "Crea sedes, actualiza sus accesos y organiza la operacion principal por punto de venta.",
-      eyebrow: "Accesos",
-      tone: "teal",
-    },
-    {
-      href: "/dashboard/usuarios",
-      title: "Vendedores y PIN",
-      description:
-        "Asigna vendedores a una o varias sedes, reinicia PIN y controla los perfiles comerciales.",
-      eyebrow: "Perfiles",
-      tone: "slate",
-    },
-    {
       href: "/dashboard/reportes/creditos",
       title: "Tabla de creditos",
       description:
@@ -949,6 +1030,14 @@ export default async function DashboardPage() {
         "Administra marcas, modelos y precio base para que el asesor solo seleccione y venda.",
       eyebrow: "Equipos",
       tone: "amber",
+    },
+    {
+      href: "/dashboard/parametros-credito",
+      title: "Parametros de credito",
+      description:
+        "Configura porcentaje de fianza e interes para las nuevas ventas de FINSER PAY.",
+      eyebrow: "Calculo",
+      tone: "sky",
     },
     {
       href: "/dashboard/integraciones",
@@ -1094,6 +1183,8 @@ export default async function DashboardPage() {
           </div>
 
           <div className="mt-6 grid gap-5 xl:grid-cols-3">
+            <AdminAnnulmentsCard />
+            <AdminManagementCard />
             {adminShortcuts.map((shortcut) => (
               <AdminShortcutCard key={shortcut.href} {...shortcut} />
             ))}

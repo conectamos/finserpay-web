@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { sanitizeSearch, sanitizeText, toNumber } from "@/lib/credit-factory";
+import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import prisma from "@/lib/prisma";
 import { buildWompiCheckoutUrl, isWompiConfigured } from "@/lib/wompi";
 
@@ -67,10 +68,15 @@ export async function POST(req: Request) {
       );
     }
 
+    await ensureCreditAbonoAuditColumns();
+
     const credit = await prisma.credito.findFirst({
       where: {
         id: creditoId,
         clienteDocumento: documento,
+        estado: {
+          not: "ANULADO",
+        },
       },
       select: {
         id: true,
@@ -85,6 +91,11 @@ export async function POST(req: Request) {
         fechaPrimerPago: true,
         fechaProximoPago: true,
         abonos: {
+          where: {
+            estado: {
+              not: "ANULADO",
+            },
+          },
           select: {
             valor: true,
             fechaAbono: true,

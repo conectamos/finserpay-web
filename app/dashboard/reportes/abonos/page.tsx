@@ -23,6 +23,9 @@ type PaymentReportItem = {
   valor: number;
   metodoPago: string;
   observacion: string | null;
+  estado: string;
+  anuladoAt: string | null;
+  anulacionMotivo: string | null;
   fechaAbono: string;
   credito: {
     id: number;
@@ -89,6 +92,91 @@ function formatDateTime(value: string | null) {
   }
 }
 
+function excelCell(value: string | number | null | undefined) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function htmlTable(headers: string[], rows: Array<Array<string | number | null | undefined>>) {
+  return `<table><thead><tr>${headers
+    .map((header) => `<th>${excelCell(header)}</th>`)
+    .join("")}</tr></thead><tbody>${rows
+    .map(
+      (row) =>
+        `<tr>${row.map((cell) => `<td>${excelCell(cell)}</td>`).join("")}</tr>`
+    )
+    .join("")}</tbody></table>`;
+}
+
+function exportPaymentsToExcel(items: PaymentReportItem[], byDay: PaymentByDay[]) {
+  const detailHeaders = [
+    "Fecha",
+    "Cliente",
+    "Documento",
+    "Folio",
+    "Sede",
+    "Vendedor",
+    "Metodo",
+    "Valor",
+    "Estado",
+    "Anulado el",
+    "Motivo anulacion",
+    "Observacion",
+  ];
+  const detailRows = items.map((item) => [
+    formatDateTime(item.fechaAbono),
+    item.credito.clienteNombre,
+    item.credito.clienteDocumento || "",
+    item.credito.folio,
+    item.sede.nombre,
+    item.usuario.nombre,
+    item.metodoPago,
+    item.valor,
+    item.estado || "ACTIVO",
+    item.anuladoAt ? formatDateTime(item.anuladoAt) : "",
+    item.anulacionMotivo || "",
+    item.observacion || "",
+  ]);
+  const byDayHeaders = ["Fecha", "Abonos", "Total"];
+  const byDayRows = byDay.map((item) => [
+    formatDate(item.fecha),
+    item.cantidad,
+    item.total,
+  ]);
+  const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      table { border-collapse: collapse; margin-bottom: 24px; }
+      th, td { border: 1px solid #cbd5e1; padding: 8px; }
+      th { background: #111318; color: #ffffff; font-weight: 700; }
+      h2 { font-family: Arial, sans-serif; }
+    </style>
+  </head>
+  <body>
+    <h2>Detalle de abonos</h2>
+    ${htmlTable(detailHeaders, detailRows)}
+    <h2>Recaudo dia a dia</h2>
+    ${htmlTable(byDayHeaders, byDayRows)}
+  </body>
+</html>`;
+  const blob = new Blob([html], {
+    type: "application/vnd.ms-excel;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = `abonos-finserpay-${new Date().toISOString().slice(0, 10)}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function SummaryCard({
   label,
   value,
@@ -120,6 +208,7 @@ export default function ReporteAbonosPage() {
   const [byDay, setByDay] = useState<PaymentByDay[]>([]);
   const [summary, setSummary] = useState<PaymentReportResponse["summary"] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [annullingId, setAnnullingId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
 
   const [search, setSearch] = useState("");
@@ -190,6 +279,57 @@ export default function ReporteAbonosPage() {
     void init();
   }, []);
 
+  const annulPayment = async (item: PaymentReportItem) => {
+    if (!isAdmin || item.estado === "ANULADO" || annullingId) {
+      return;
+    }
+
+    const motivo = window.prompt(
+      `Motivo de anulacion del recaudo ${formatMoney(item.valor)} del folio ${item.credito.folio}:`,
+      "Anulacion administrativa"
+    );
+
+    if (motivo === null) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Vas a anular este recaudo. El valor dejara de contar en saldo, plan de pagos y reportes.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setAnnullingId(item.id);
+      setMessage("");
+
+      const res = await fetch(`/api/creditos/${item.credito.id}/abonos/${item.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          motivo: motivo.trim() || "Anulacion administrativa",
+        }),
+      });
+      const data = (await res.json()) as { error?: string; message?: string };
+
+      if (!res.ok) {
+        setMessage(data.error || "No se pudo anular el recaudo");
+        return;
+      }
+
+      await loadReport();
+      setMessage(data.message || "Recaudo anulado correctamente");
+    } catch {
+      setMessage("Error anulando el recaudo");
+    } finally {
+      setAnnullingId(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
       <div className="mx-auto max-w-7xl">
@@ -244,7 +384,7 @@ export default function ReporteAbonosPage() {
         </section>
 
         <section className="mt-6 rounded-[30px] bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr_0.7fr_180px]">
+          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr_0.7fr_170px_170px]">
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -291,6 +431,15 @@ export default function ReporteAbonosPage() {
               className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
             >
               Aplicar filtros
+            </button>
+
+            <button
+              type="button"
+              onClick={() => exportPaymentsToExcel(items, byDay)}
+              disabled={!items.length || loading}
+              className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-semibold text-[#145a5a] transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Exportar Excel
             </button>
           </div>
 
@@ -346,28 +495,72 @@ export default function ReporteAbonosPage() {
                     <th className="px-4 py-3 text-left font-semibold">Vendedor</th>
                     <th className="px-4 py-3 text-left font-semibold">Metodo</th>
                     <th className="px-4 py-3 text-left font-semibold">Valor</th>
+                    <th className="px-4 py-3 text-left font-semibold">Estado</th>
+                    <th className="px-4 py-3 text-left font-semibold">Accion</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item) => (
-                    <tr key={item.id} className="border-t border-slate-100">
-                      <td className="px-4 py-3">{formatDateTime(item.fechaAbono)}</td>
-                      <td className="px-4 py-3">
-                        <div className="font-semibold text-slate-950">{item.credito.clienteNombre}</div>
-                        <div className="text-xs text-slate-500">
-                          {item.credito.clienteDocumento || "-"}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 font-semibold text-slate-950">{item.credito.folio}</td>
-                      <td className="px-4 py-3">{item.sede.nombre}</td>
-                      <td className="px-4 py-3">{item.usuario.nombre}</td>
-                      <td className="px-4 py-3">{item.metodoPago}</td>
-                      <td className="px-4 py-3">{formatMoney(item.valor)}</td>
-                    </tr>
-                  ))}
+                  {items.map((item) => {
+                    const isAnnulled = item.estado === "ANULADO";
+
+                    return (
+                      <tr
+                        key={item.id}
+                        className={[
+                          "border-t border-slate-100",
+                          isAnnulled ? "bg-rose-50/60 text-slate-500" : "",
+                        ].join(" ")}
+                      >
+                        <td className="px-4 py-3">{formatDateTime(item.fechaAbono)}</td>
+                        <td className="px-4 py-3">
+                          <div className="font-semibold text-slate-950">{item.credito.clienteNombre}</div>
+                          <div className="text-xs text-slate-500">
+                            {item.credito.clienteDocumento || "-"}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 font-semibold text-slate-950">{item.credito.folio}</td>
+                        <td className="px-4 py-3">{item.sede.nombre}</td>
+                        <td className="px-4 py-3">{item.usuario.nombre}</td>
+                        <td className="px-4 py-3">{item.metodoPago}</td>
+                        <td className="px-4 py-3">{formatMoney(item.valor)}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={[
+                              "inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em]",
+                              isAnnulled
+                                ? "border-rose-200 bg-rose-100 text-rose-700"
+                                : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                            ].join(" ")}
+                          >
+                            {isAnnulled ? "Anulado" : "Activo"}
+                          </span>
+                          {isAnnulled && (
+                            <div className="mt-1 max-w-[180px] text-[11px] text-rose-700">
+                              {item.anulacionMotivo || "Sin motivo"} ·{" "}
+                              {formatDateTime(item.anuladoAt)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {isAdmin && !isAnnulled ? (
+                            <button
+                              type="button"
+                              onClick={() => void annulPayment(item)}
+                              disabled={annullingId === item.id}
+                              className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {annullingId === item.id ? "Anulando..." : "Anular"}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-400">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {!loading && items.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                      <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
                         No hay abonos para los filtros seleccionados.
                       </td>
                     </tr>

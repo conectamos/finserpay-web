@@ -7,6 +7,7 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import { resolveCreditPaymentSummary } from "@/lib/credit-factory";
 import { isAdminRole } from "@/lib/roles";
+import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,6 +70,8 @@ export async function GET(
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
+    await ensureCreditAbonoAuditColumns();
+
     const admin = isAdminRole(user.rolNombre);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
 
@@ -109,7 +112,12 @@ export async function GET(
 
     const grouped = await prisma.creditoAbono.groupBy({
       by: ["creditoId"],
-      where: { creditoId: credito.id },
+      where: {
+        creditoId: credito.id,
+        estado: {
+          not: "ANULADO",
+        },
+      },
       _count: { _all: true },
       _sum: { valor: true },
     });

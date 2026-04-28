@@ -5,6 +5,7 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { resolveCreditPaymentSummary, sanitizeSearch } from "@/lib/credit-factory";
+import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 
 type PaymentAggregate = {
   abonosCount: number;
@@ -41,6 +42,7 @@ function parseDate(value: string | null, endOfDay = false) {
 
 async function buildPaymentSummaryMap(creditIds: number[]) {
   const map = new Map<number, PaymentAggregate>();
+  await ensureCreditAbonoAuditColumns();
 
   if (!creditIds.length) {
     return map;
@@ -51,6 +53,9 @@ async function buildPaymentSummaryMap(creditIds: number[]) {
     where: {
       creditoId: {
         in: creditIds,
+      },
+      estado: {
+        not: "ANULADO",
       },
     },
     _count: {
@@ -180,8 +185,15 @@ export async function GET(req: Request) {
         clienteDocumento: item.clienteDocumento,
         clienteTelefono: item.clienteTelefono,
         imei: item.imei,
+        referenciaEquipo:
+          item.referenciaEquipo ||
+          [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" "),
         equipoMarca: item.equipoMarca,
         equipoModelo: item.equipoModelo,
+        creditoAutorizado: Number(
+          item.saldoBaseFinanciado ||
+            Math.max(0, Number(item.valorEquipoTotal || 0) - Number(item.cuotaInicial || 0))
+        ),
         montoCredito: Number(item.montoCredito || 0),
         cuotaInicial: Number(item.cuotaInicial || 0),
         valorCuota: Number(item.valorCuota || 0),
@@ -209,19 +221,24 @@ export async function GET(req: Request) {
 
     const summary = rows.reduce(
       (acc, item) => {
-        acc.totalCreditos += 1;
-        acc.totalMontoCredito += item.montoCredito;
-        acc.totalInicial += item.cuotaInicial;
-        acc.totalSaldoCredito += item.montoCredito;
-        acc.totalAbonado += item.totalAbonado;
-        acc.totalRecaudado += item.totalRecaudado;
-        acc.totalPendiente += item.saldoPendiente;
+        const isAnnulled = item.estado === "ANULADO";
 
-        if (item.saldoPendiente <= 0) {
+        acc.totalCreditos += 1;
+        if (!isAnnulled) {
+          acc.totalMontoCredito += item.creditoAutorizado;
+          acc.totalCreditoAutorizado += item.creditoAutorizado;
+          acc.totalInicial += item.cuotaInicial;
+          acc.totalSaldoCredito += item.creditoAutorizado;
+          acc.totalAbonado += item.totalAbonado;
+          acc.totalRecaudado += item.totalRecaudado;
+          acc.totalPendiente += item.saldoPendiente;
+        }
+
+        if (!isAnnulled && item.saldoPendiente <= 0) {
           acc.creditosPagados += 1;
         }
 
-        if (item.deliverableReady) {
+        if (!isAnnulled && item.deliverableReady) {
           acc.entregables += 1;
         }
 
@@ -230,6 +247,7 @@ export async function GET(req: Request) {
       {
         totalCreditos: 0,
         totalMontoCredito: 0,
+        totalCreditoAutorizado: 0,
         totalInicial: 0,
         totalSaldoCredito: 0,
         totalAbonado: 0,

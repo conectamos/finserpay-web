@@ -10,7 +10,8 @@ export type CreditAdminCommand =
   | "extend-48h"
   | "warranty-15d"
   | "warranty-20d"
-  | "remove-lock";
+  | "remove-lock"
+  | "annul-credit";
 
 export const CREDIT_ABONO_CAJA_MARKER = "ABONO_CREDITO_ID:";
 export const DEFAULT_LEGAL_CONSUMER_RATE_EA = 17.84;

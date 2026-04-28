@@ -23,6 +23,7 @@ import {
   queryEqualityDevices,
   unlockEqualityDevice,
 } from "@/lib/equality-zero-touch";
+import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { isAdminRole } from "@/lib/roles";
 
 export const runtime = "nodejs";
@@ -176,10 +177,15 @@ async function loadCredit(id: number) {
 }
 
 async function loadPaymentSummary(creditId: number) {
+  await ensureCreditAbonoAuditColumns();
+
   const grouped = await prisma.creditoAbono.groupBy({
     by: ["creditoId"],
     where: {
       creditoId: creditId,
+      estado: {
+        not: "ANULADO",
+      },
     },
     _count: {
       _all: true,
@@ -244,6 +250,13 @@ export async function POST(
       return NextResponse.json(
         { error: "El supervisor solo puede consultar, bloquear o desbloquear el equipo" },
         { status: 403 }
+      );
+    }
+
+    if (current.estado === "ANULADO") {
+      return NextResponse.json(
+        { error: "Este credito ya esta anulado" },
+        { status: 400 }
       );
     }
 
@@ -331,6 +344,67 @@ export async function POST(
         remoteQuery = await queryEqualityDevices(current.deviceUid);
         adminMessage = "Candado removido";
         break;
+      case "annul-credit": {
+        if (!admin) {
+          return NextResponse.json(
+            { error: "Solo el administrador puede anular creditos" },
+            { status: 403 }
+          );
+        }
+
+        const reason = observacionAdmin || "Anulado por administrador";
+        const timestamp = new Date().toISOString();
+        const nextObservation = [
+          current.observacionAdmin,
+          `[${timestamp}] ANULACION: ${reason}`,
+        ]
+          .filter(Boolean)
+          .join("\n");
+
+        const updated = await prisma.credito.update({
+          where: { id: current.id },
+          data: {
+            estado: "ANULADO",
+            deliverableReady: false,
+            deliverableLabel: "Anulado",
+            bloqueoMora: false,
+            bloqueoMoraAt: null,
+            bloqueoRobo: false,
+            bloqueoRoboAt: null,
+            observacionAdmin: nextObservation,
+          },
+          include: {
+            usuario: {
+              select: {
+                id: true,
+                nombre: true,
+                usuario: true,
+              },
+            },
+            vendedor: {
+              select: {
+                id: true,
+                nombre: true,
+                documento: true,
+              },
+            },
+            sede: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+          },
+        });
+        const paymentSummary = await loadPaymentSummary(updated.id);
+
+        return NextResponse.json({
+          ok: true,
+          message: "Credito anulado correctamente",
+          item: serializeCredit(updated, paymentSummary),
+          remote: null,
+        });
+      }
       default:
         return NextResponse.json({ error: "Comando no valido" }, { status: 400 });
     }

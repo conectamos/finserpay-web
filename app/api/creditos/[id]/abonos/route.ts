@@ -24,6 +24,7 @@ import {
   queryEqualityDevices,
   unlockEqualityDevice,
 } from "@/lib/equality-zero-touch";
+import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { isAdminRole } from "@/lib/roles";
 
 export const runtime = "nodejs";
@@ -47,6 +48,10 @@ const copCurrencyFormatter = new Intl.NumberFormat("es-CO", {
 function parseId(value: string) {
   const numeric = Number(value);
   return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
+function isAnnulledCreditState(value: string | null | undefined) {
+  return String(value || "").trim().toUpperCase() === "ANULADO";
 }
 
 function currency(value: number) {
@@ -94,6 +99,10 @@ type PaymentWithRelations = {
   id: number;
   metodoPago: string;
   observacion: string | null;
+  estado?: string;
+  anuladoAt?: Date | null;
+  anulacionMotivo?: string | null;
+  anuladoPorUsuarioId?: number | null;
   sede: {
     id: number;
     nombre: string;
@@ -118,6 +127,10 @@ function serializePayment(item: PaymentWithRelations) {
     valor: Number(item.valor || 0),
     metodoPago: item.metodoPago,
     observacion: item.observacion,
+    estado: item.estado || "ACTIVO",
+    anuladoAt: item.anuladoAt?.toISOString() || null,
+    anulacionMotivo: item.anulacionMotivo || null,
+    anuladoPorUsuarioId: item.anuladoPorUsuarioId || null,
     fechaAbono: item.fechaAbono.toISOString(),
     createdAt: item.createdAt.toISOString(),
     usuario: {
@@ -178,6 +191,9 @@ async function loadPaymentSummary(creditId: number, montoCredito: number, cuotaI
     by: ["creditoId"],
     where: {
       creditoId: creditId,
+      estado: {
+        not: "ANULADO",
+      },
     },
     _count: {
       _all: true,
@@ -210,7 +226,12 @@ async function loadPaymentPlan(credit: Awaited<ReturnType<typeof loadCredit>>) {
   }
 
   const abonos = await prisma.creditoAbono.findMany({
-    where: { creditoId: credit.id },
+    where: {
+      creditoId: credit.id,
+      estado: {
+        not: "ANULADO",
+      },
+    },
     select: {
       valor: true,
       fechaAbono: true,
@@ -260,6 +281,15 @@ function serializeAutomationResult(result: {
 
 async function syncMoraAutomation(credit: LoadedCredit, plan: PaymentPlan) {
   const isInMora = plan.estadoPago === "MORA";
+
+  if (isAnnulledCreditState(credit.estado)) {
+    return {
+      action: "SKIPPED" as const,
+      credit,
+      message: "Credito anulado; no se sincroniza mora.",
+      remote: null as unknown,
+    };
+  }
 
   if (credit.pazYSalvoEmitidoAt) {
     return {
@@ -400,6 +430,7 @@ export async function GET(
 ) {
   try {
     const user = await getSessionUser();
+    await ensureCreditAbonoAuditColumns();
 
     if (!user) {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
@@ -518,6 +549,7 @@ export async function POST(
 ) {
   try {
     const user = await getSessionUser();
+    await ensureCreditAbonoAuditColumns();
 
     if (!user) {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
@@ -536,6 +568,13 @@ export async function POST(
 
     if (!credit) {
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
+    }
+
+    if (isAnnulledCreditState(credit.estado)) {
+      return NextResponse.json(
+        { error: "No se pueden registrar abonos sobre un credito anulado" },
+        { status: 400 }
+      );
     }
 
     if (!admin && !sellerSession) {
@@ -682,7 +721,12 @@ export async function POST(
       });
 
       const txAbonos = await tx.creditoAbono.findMany({
-        where: { creditoId: credit.id },
+        where: {
+          creditoId: credit.id,
+          estado: {
+            not: "ANULADO",
+          },
+        },
         select: {
           valor: true,
           fechaAbono: true,

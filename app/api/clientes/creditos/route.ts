@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { sanitizeSearch } from "@/lib/credit-factory";
+import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import prisma from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -18,9 +19,14 @@ export async function GET(req: Request) {
       );
     }
 
+    await ensureCreditAbonoAuditColumns();
+
     const credits = await prisma.credito.findMany({
       where: {
         clienteDocumento: documento,
+        estado: {
+          not: "ANULADO",
+        },
       },
       select: {
         id: true,
@@ -42,6 +48,11 @@ export async function GET(req: Request) {
           },
         },
         abonos: {
+          where: {
+            estado: {
+              not: "ANULADO",
+            },
+          },
           select: {
             id: true,
             valor: true,

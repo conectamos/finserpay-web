@@ -218,6 +218,10 @@ model CreditoAbono {
   valor       Float
   metodoPago  String   @default("EFECTIVO")
   observacion String?
+  estado      String   @default("ACTIVO")
+  anuladoAt   DateTime?
+  anulacionMotivo String?
+  anuladoPorUsuarioId Int?
   fechaAbono  DateTime @default(now())
   credito     Credito  @relation(fields: [creditoId], references: [id])
   usuario     Usuario  @relation(fields: [usuarioId], references: [id])
@@ -230,6 +234,7 @@ model CreditoAbono {
   @@index([usuarioId, createdAt])
   @@index([vendedorId, createdAt])
   @@index([sedeId, createdAt])
+  @@index([estado, creditoId])
 }
 
 model WompiPaymentIntent {
@@ -350,6 +355,15 @@ model CatalogoEquipoModelo {
 
   @@unique([marcaNormalizada, modeloNormalizado])
   @@index([activo, marcaNormalizada])
+}
+
+model CreditoConfiguracion {
+  id                Int      @id @default(autoincrement())
+  nombre            String   @unique
+  tasaInteresEa     Float    @default(17.84)
+  fianzaPorcentaje  Float    @default(60)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 model InventarioPrincipal {

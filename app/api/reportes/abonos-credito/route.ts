@@ -5,6 +5,7 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { resolveCreditPaymentSummary, sanitizeSearch } from "@/lib/credit-factory";
+import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 
 function parsePositiveInt(value: string | null) {
   const numeric = Number(value || 0);
@@ -40,6 +41,8 @@ export async function GET(req: Request) {
     if (!user) {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
+
+    await ensureCreditAbonoAuditColumns();
 
     const admin = isAdminRole(user.rolNombre);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
@@ -85,11 +88,14 @@ export async function GET(req: Request) {
         clienteDocumento: true,
         montoCredito: true,
         cuotaInicial: true,
+        estado: true,
         sedeId: true,
       },
     });
 
     const creditIds = credits.map((item) => item.id);
+    const activeCredits = credits.filter((item) => item.estado !== "ANULADO");
+    const activeCreditIds = activeCredits.map((item) => item.id);
     const creditMap = new Map(credits.map((item) => [item.id, item]));
 
     const abonosWhere: Prisma.CreditoAbonoWhereInput = {
@@ -141,6 +147,7 @@ export async function GET(req: Request) {
             folio: true,
             clienteNombre: true,
             clienteDocumento: true,
+            estado: true,
           },
         },
       },
@@ -155,6 +162,9 @@ export async function GET(req: Request) {
       valor: Number(item.valor || 0),
       metodoPago: item.metodoPago,
       observacion: item.observacion,
+      estado: item.estado || "ACTIVO",
+      anuladoAt: item.anuladoAt?.toISOString() || null,
+      anulacionMotivo: item.anulacionMotivo || null,
       fechaAbono: item.fechaAbono.toISOString(),
       credito: item.credito,
       usuario: item.vendedor
@@ -167,9 +177,12 @@ export async function GET(req: Request) {
       sede: item.sede,
     }));
 
+    const activeAbonosRows = abonosRows.filter(
+      (item) => item.estado !== "ANULADO" && item.credito.estado !== "ANULADO"
+    );
     const dailyMap = new Map<string, { fecha: string; total: number; cantidad: number }>();
 
-    for (const item of abonosRows) {
+    for (const item of activeAbonosRows) {
       const dayKey = item.fechaAbono.slice(0, 10);
       const current = dailyMap.get(dayKey) || {
         fecha: dayKey,
@@ -182,12 +195,15 @@ export async function GET(req: Request) {
       dailyMap.set(dayKey, current);
     }
 
-    const paymentGrouped = creditIds.length
+    const paymentGrouped = activeCreditIds.length
       ? await prisma.creditoAbono.groupBy({
           by: ["creditoId"],
           where: {
             creditoId: {
-              in: creditIds,
+              in: activeCreditIds,
+            },
+            estado: {
+              not: "ANULADO",
             },
           },
           _sum: {
@@ -209,7 +225,7 @@ export async function GET(req: Request) {
       ])
     );
 
-    const pendingSummary = credits.reduce(
+    const pendingSummary = activeCredits.reduce(
       (acc, credit) => {
         const paymentGroup = paymentGroupMap.get(credit.id) || {
           totalAbonado: 0,
@@ -250,8 +266,8 @@ export async function GET(req: Request) {
         to: to?.toISOString() || null,
       },
       summary: {
-        totalAbonos: abonosRows.length,
-        totalRecaudadoPeriodo: abonosRows.reduce((acc, item) => acc + item.valor, 0),
+        totalAbonos: activeAbonosRows.length,
+        totalRecaudadoPeriodo: activeAbonosRows.reduce((acc, item) => acc + item.valor, 0),
         totalPendientePorCobrar: pendingSummary.totalPendiente,
         totalRecaudadoGeneral: pendingSummary.totalRecaudado,
         totalCreditos: pendingSummary.totalCreditos,

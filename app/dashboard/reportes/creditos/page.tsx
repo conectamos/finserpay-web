@@ -25,8 +25,10 @@ type CreditReportItem = {
   clienteDocumento: string | null;
   clienteTelefono: string | null;
   imei: string;
+  referenciaEquipo: string | null;
   equipoMarca: string | null;
   equipoModelo: string | null;
+  creditoAutorizado: number;
   montoCredito: number;
   cuotaInicial: number;
   valorCuota: number;
@@ -57,6 +59,7 @@ type CreditReportResponse = {
   summary: {
     totalCreditos: number;
     totalMontoCredito: number;
+    totalCreditoAutorizado?: number;
     totalInicial?: number;
     totalSaldoCredito?: number;
     totalAbonado: number;
@@ -66,6 +69,12 @@ type CreditReportResponse = {
     entregables: number;
   };
   items: CreditReportItem[];
+};
+
+type CreditCommandResponse = {
+  ok?: boolean;
+  message?: string;
+  error?: string;
 };
 
 function formatMoney(value: number) {
@@ -82,6 +91,58 @@ function formatDate(value: string | null) {
   } catch {
     return value;
   }
+}
+
+function excelCell(value: string | number | null | undefined) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function exportCreditsToExcel(items: CreditReportItem[]) {
+  const headers = [
+    "Fecha",
+    "Folio",
+    "Cliente",
+    "Referencia",
+    "IMEI",
+    "Sede",
+    "Vendedor",
+    "Inicial",
+    "Credito autorizado",
+    "Estado",
+  ];
+  const rows = items.map((item) => [
+    formatDate(item.fechaCredito),
+    item.folio,
+    item.clienteNombre,
+    item.referenciaEquipo || [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" "),
+    item.imei,
+    item.sede.nombre,
+    item.usuario.nombre,
+    item.cuotaInicial,
+    item.creditoAutorizado,
+    item.estado,
+  ]);
+  const table = [headers, ...rows]
+    .map(
+      (row) =>
+        `<tr>${row.map((cell) => `<td>${excelCell(cell)}</td>`).join("")}</tr>`
+    )
+    .join("");
+  const html = `<!doctype html><html><head><meta charset="utf-8" /></head><body><table>${table}</table></body></html>`;
+  const blob = new Blob([html], {
+    type: "application/vnd.ms-excel;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `creditos-finserpay-${new Date().toISOString().slice(0, 10)}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function SummaryCard({
@@ -114,6 +175,7 @@ export default function ReporteCreditosPage() {
   const [items, setItems] = useState<CreditReportItem[]>([]);
   const [summary, setSummary] = useState<CreditReportResponse["summary"] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [annullingId, setAnnullingId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
 
   const [search, setSearch] = useState("");
@@ -173,6 +235,59 @@ export default function ReporteCreditosPage() {
     }
   };
 
+  const annulCredit = async (item: CreditReportItem) => {
+    if (!isAdmin || item.estado === "ANULADO") {
+      return;
+    }
+
+    const reason = window.prompt(
+      `Motivo de anulacion del credito ${item.folio}:`,
+      "Anulacion administrativa"
+    );
+
+    if (reason === null) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Vas a anular el credito ${item.folio}. Esta accion dejara trazabilidad y liberara la cedula/IMEI para una nueva venta.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setAnnullingId(item.id);
+      setMessage("");
+
+      const res = await fetch(`/api/creditos/${item.id}/command`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          command: "annul-credit",
+          observacionAdmin: reason.trim() || "Anulacion administrativa",
+        }),
+      });
+      const data = (await res.json()) as CreditCommandResponse;
+
+      if (!res.ok) {
+        throw new Error(data.error || "No se pudo anular el credito");
+      }
+
+      await loadReport();
+      setMessage(data.message || "Credito anulado correctamente");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "No se pudo anular el credito"
+      );
+    } finally {
+      setAnnullingId(null);
+    }
+  };
+
   useEffect(() => {
     const init = async () => {
       await loadContext();
@@ -195,8 +310,8 @@ export default function ReporteCreditosPage() {
             </h1>
             <p className="mt-2 text-sm text-slate-600">
               {isAdmin
-                ? "Vista administrativa de creditos creados, iniciales recibidas y saldo financiado por venta."
-                : "Vista de los creditos creados en tu sede asignada, con iniciales y saldo financiado."}
+                ? "Vista administrativa de creditos creados, iniciales recibidas y credito autorizado por venta."
+                : "Vista de los creditos creados en tu sede asignada, con iniciales y credito autorizado."}
             </p>
           </div>
 
@@ -221,8 +336,17 @@ export default function ReporteCreditosPage() {
             value={loading ? "..." : formatMoney(summary?.totalInicial || 0)}
           />
           <SummaryCard
-            label="Saldo credito"
-            value={loading ? "..." : formatMoney(summary?.totalSaldoCredito || summary?.totalMontoCredito || 0)}
+            label="Credito autorizado"
+            value={
+              loading
+                ? "..."
+                : formatMoney(
+                    summary?.totalCreditoAutorizado ||
+                      summary?.totalSaldoCredito ||
+                      summary?.totalMontoCredito ||
+                      0
+                  )
+            }
             tone="amber"
           />
           <SummaryCard
@@ -232,7 +356,7 @@ export default function ReporteCreditosPage() {
         </section>
 
         <section className="mt-6 rounded-[30px] bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr_0.7fr_180px]">
+          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr_0.7fr_170px_170px]">
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -280,6 +404,15 @@ export default function ReporteCreditosPage() {
             >
               Aplicar filtros
             </button>
+
+            <button
+              type="button"
+              onClick={() => exportCreditsToExcel(items)}
+              disabled={!items.length || loading}
+              className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-semibold text-[#145a5a] transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Exportar Excel
+            </button>
           </div>
 
           {message && (
@@ -295,10 +428,12 @@ export default function ReporteCreditosPage() {
                   <th className="px-4 py-3 text-left font-semibold">Fecha</th>
                   <th className="px-4 py-3 text-left font-semibold">Folio</th>
                   <th className="px-4 py-3 text-left font-semibold">Cliente</th>
+                  <th className="px-4 py-3 text-left font-semibold">Referencia</th>
+                  <th className="px-4 py-3 text-left font-semibold">IMEI</th>
                   <th className="px-4 py-3 text-left font-semibold">Sede</th>
                   <th className="px-4 py-3 text-left font-semibold">Vendedor</th>
                   <th className="px-4 py-3 text-left font-semibold">Inicial dada</th>
-                  <th className="px-4 py-3 text-left font-semibold">Saldo credito</th>
+                  <th className="px-4 py-3 text-left font-semibold">Credito autorizado</th>
                   <th className="px-4 py-3 text-left font-semibold">Estado</th>
                 </tr>
               </thead>
@@ -311,21 +446,34 @@ export default function ReporteCreditosPage() {
                       <div className="font-semibold text-slate-950">{item.clienteNombre}</div>
                       <div className="text-xs text-slate-500">{item.clienteDocumento || "-"}</div>
                     </td>
+                    <td className="px-4 py-3">
+                      {item.referenciaEquipo ||
+                        [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" ") ||
+                        "-"}
+                    </td>
+                    <td className="px-4 py-3">{item.imei || "-"}</td>
                     <td className="px-4 py-3">{item.sede.nombre}</td>
                     <td className="px-4 py-3">{item.usuario.nombre}</td>
                     <td className="px-4 py-3">{formatMoney(item.cuotaInicial)}</td>
-                    <td className="px-4 py-3">{formatMoney(item.montoCredito)}</td>
+                    <td className="px-4 py-3">{formatMoney(item.creditoAutorizado)}</td>
                     <td className="px-4 py-3">
                       <div className="font-semibold text-slate-950">{item.estado}</div>
-                      <div className="text-xs text-slate-500">
-                        {item.deliverableLabel || (item.deliverableReady ? "Entregable" : "Sin validar")}
-                      </div>
+                      {isAdmin && item.estado !== "ANULADO" && (
+                        <button
+                          type="button"
+                          onClick={() => void annulCredit(item)}
+                          disabled={annullingId === item.id}
+                          className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {annullingId === item.id ? "Anulando..." : "Anular"}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
                 {!loading && items.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                       No hay creditos para los filtros seleccionados.
                     </td>
                   </tr>

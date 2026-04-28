@@ -8,8 +8,6 @@ import {
   calculateFinancedBalance,
   calculateRequiredInitialPayment,
   calculateInstallmentValue,
-  DEFAULT_FIANCO_SURETY_PERCENTAGE,
-  DEFAULT_LEGAL_CONSUMER_RATE_EA,
   extendDays,
   generateCreditFolio,
   generatePagareNumber,
@@ -36,13 +34,16 @@ import {
   queryEqualityDevices,
   uploadEqualityInventoryDevice,
 } from "@/lib/equality-zero-touch";
+import { getCreditSettings } from "@/lib/credit-settings";
+import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { findEquipmentCatalogItem } from "@/lib/equipment-catalog";
 import { isAdminRole } from "@/lib/roles";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION = true;
+const ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION = false;
+const MAX_CREDIT_INSTALLMENTS = 16;
 
 const CONTRACT_TEMPLATE_TITLE =
   "CONTRATO DE FINANCIACION DE EQUIPO MOVIL, AUTORIZACION DE TRATAMIENTO DE DATOS Y USO DE HERRAMIENTAS TECNOLOGICAS";
@@ -343,6 +344,7 @@ function extractRequestIp(req: Request) {
 
 async function buildPaymentSummaryMap(creditIds: number[]) {
   const map = new Map<number, PaymentAggregate>();
+  await ensureCreditAbonoAuditColumns();
 
   if (!creditIds.length) {
     return map;
@@ -353,6 +355,9 @@ async function buildPaymentSummaryMap(creditIds: number[]) {
     where: {
       creditoId: {
         in: creditIds,
+      },
+      estado: {
+        not: "ANULADO",
       },
     },
     _count: {
@@ -570,7 +575,10 @@ export async function POST(req: Request) {
       valorEquipoTotalInput,
       precioBaseVentaCatalogo
     );
-    const plazoMeses = Math.max(0, Math.trunc(toNumber(body.plazoMeses)));
+    const plazoMeses = Math.min(
+      MAX_CREDIT_INSTALLMENTS,
+      Math.max(0, Math.trunc(toNumber(body.plazoMeses)))
+    );
     const fechaPrimerPago = extendDays(15, null);
     const contratoAceptado = Boolean(body.contratoAceptado);
     const contratoFirmaDataUrl = sanitizeImageDataUrl(body.contratoFirmaDataUrl);
@@ -598,23 +606,14 @@ export async function POST(req: Request) {
     const cartaAceptada = Boolean(body.cartaAceptada);
     const autorizacionDatosAceptada = Boolean(body.autorizacionDatosAceptada);
     const montoCreditoInput = toNumber(body.montoCredito);
-    const tasaInteresEaInput = toNumber(body.tasaInteresEa);
-    const hasFianzaPorcentaje =
-      body.fianzaPorcentaje !== undefined &&
-      body.fianzaPorcentaje !== null &&
-      String(body.fianzaPorcentaje).trim() !== "";
-    const fianzaPorcentajeInput = toNumber(body.fianzaPorcentaje);
+    const creditSettings = await getCreditSettings();
     const saldoBaseFinanciado = calculateFinancedBalance(valorEquipoTotalInput, cuotaInicial);
     const financialPlan = calculateCreditCharges({
       saldoBaseFinanciado:
         saldoBaseFinanciado > 0 ? saldoBaseFinanciado : montoCreditoInput,
       cuotas: plazoMeses,
-      tasaInteresEa:
-        tasaInteresEaInput > 0 ? tasaInteresEaInput : DEFAULT_LEGAL_CONSUMER_RATE_EA,
-      fianzaPorcentaje:
-        hasFianzaPorcentaje && fianzaPorcentajeInput >= 0
-          ? fianzaPorcentajeInput
-          : DEFAULT_FIANCO_SURETY_PERCENTAGE,
+      tasaInteresEa: creditSettings.tasaInteresEa,
+      fianzaPorcentaje: creditSettings.fianzaPorcentaje,
     });
     const montoCredito =
       financialPlan.montoCreditoTotal > 0
@@ -807,6 +806,9 @@ export async function POST(req: Request) {
 
     const soldDevice = await prisma.credito.findFirst({
       where: {
+        estado: {
+          not: "ANULADO",
+        },
         OR: [{ imei }, { deviceUid }],
       },
       select: {
@@ -827,7 +829,12 @@ export async function POST(req: Request) {
     }
 
     const clientCredits = await prisma.credito.findMany({
-      where: { clienteDocumento },
+      where: {
+        clienteDocumento,
+        estado: {
+          not: "ANULADO",
+        },
+      },
       select: {
         id: true,
         folio: true,
