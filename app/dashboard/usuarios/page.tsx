@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 type SessionUser = {
@@ -22,6 +23,7 @@ type SedeItem = {
 type SellerItem = {
   id: number;
   nombre: string;
+  tipoPerfil: "VENDEDOR" | "SUPERVISOR";
   documento: string | null;
   telefono: string | null;
   email: string | null;
@@ -37,11 +39,26 @@ type SellerItem = {
   ultimoIngresoAt: string | null;
 };
 
+type AdminItem = {
+  id: number;
+  nombre: string;
+  usuario: string;
+  activo: boolean;
+  rolNombre: string;
+  sede: {
+    id: number;
+    nombre: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+};
+
 type AdminUsersResponse = {
   ok: boolean;
   mensaje?: string;
   sedes: SedeItem[];
   vendedores: SellerItem[];
+  administradores: AdminItem[];
 };
 
 type SellerDraft = {
@@ -53,6 +70,11 @@ type SellerDraft = {
   activo: boolean;
   sedeIds: number[];
 };
+
+type SelectedProfile =
+  | { type: "SUPERVISOR" | "VENDEDOR"; id: number }
+  | { type: "ADMIN"; id: number }
+  | null;
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -147,15 +169,141 @@ function SedeTransferBoard({
   );
 }
 
+function ProfileColumn({
+  title,
+  count,
+  empty,
+  children,
+}: {
+  title: string;
+  count: number;
+  empty: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-lg font-black text-slate-950">{title}</h3>
+        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-600">
+          {count}
+        </span>
+      </div>
+      <div className="mt-4 space-y-3">
+        {count ? (
+          children
+        ) : (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-5 text-sm text-slate-500">
+            {empty}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SellerProfileButton({
+  seller,
+  selected,
+  onClick,
+}: {
+  seller: SellerItem;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "w-full rounded-2xl border px-4 py-4 text-left transition",
+        selected
+          ? "border-slate-950 bg-white shadow-[0_12px_24px_rgba(15,23,42,0.10)]"
+          : "border-slate-200 bg-white hover:border-slate-400",
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-black text-slate-950">{seller.nombre}</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">
+            {seller.documento || "Sin documento"}
+          </p>
+        </div>
+        <span
+          className={[
+            "rounded-full px-2.5 py-1 text-[11px] font-bold",
+            seller.activo
+              ? "bg-emerald-50 text-emerald-700"
+              : "bg-slate-100 text-slate-500",
+          ].join(" ")}
+        >
+          {seller.activo ? "Activo" : "Inactivo"}
+        </span>
+      </div>
+      <p className="mt-3 text-xs leading-5 text-slate-500">
+        {seller.assignedSedes.length
+          ? seller.assignedSedes.map((sede) => sede.nombre).join(", ")
+          : "Sin sedes asignadas"}
+      </p>
+    </button>
+  );
+}
+
+function AdminProfileButton({
+  admin,
+  selected,
+  onClick,
+}: {
+  admin: AdminItem;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "w-full rounded-2xl border px-4 py-4 text-left transition",
+        selected
+          ? "border-slate-950 bg-white shadow-[0_12px_24px_rgba(15,23,42,0.10)]"
+          : "border-slate-200 bg-white hover:border-slate-400",
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-black text-slate-950">{admin.nombre}</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">
+            Usuario: {admin.usuario}
+          </p>
+        </div>
+        <span
+          className={[
+            "rounded-full px-2.5 py-1 text-[11px] font-bold",
+            admin.activo
+              ? "bg-emerald-50 text-emerald-700"
+              : "bg-slate-100 text-slate-500",
+          ].join(" ")}
+        >
+          {admin.activo ? "Activo" : "Inactivo"}
+        </span>
+      </div>
+      <p className="mt-3 text-xs leading-5 text-slate-500">
+        Sede base: {admin.sede.nombre}
+      </p>
+    </button>
+  );
+}
+
 export default function GestionVendedoresPage() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [sedes, setSedes] = useState<SedeItem[]>([]);
   const [vendedores, setVendedores] = useState<SellerItem[]>([]);
+  const [administradores, setAdministradores] = useState<AdminItem[]>([]);
   const [mensaje, setMensaje] = useState("");
   const [cargando, setCargando] = useState(true);
   const [guardandoNuevo, setGuardandoNuevo] = useState(false);
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
   const [filtroSede, setFiltroSede] = useState("");
+  const [selectedProfile, setSelectedProfile] = useState<SelectedProfile>(null);
 
   const [nuevo, setNuevo] = useState<SellerDraft>({
     nombre: "",
@@ -174,9 +322,13 @@ export default function GestionVendedoresPage() {
   const applyData = (data: AdminUsersResponse) => {
     const sellers = Array.isArray(data.vendedores) ? data.vendedores : [];
     const sedeItems = Array.isArray(data.sedes) ? data.sedes : [];
+    const adminItems = Array.isArray(data.administradores)
+      ? data.administradores
+      : [];
 
     setSedes(sedeItems);
     setVendedores(sellers);
+    setAdministradores(adminItems);
     setEdiciones(
       sellers.reduce(
         (acc, item) => {
@@ -236,6 +388,22 @@ export default function GestionVendedoresPage() {
     const sedeId = Number(filtroSede || 0);
     return vendedores.filter((item) => item.assignedSedeIds.includes(sedeId));
   }, [filtroSede, vendedores]);
+  const supervisoresFiltrados = useMemo(
+    () => vendedoresFiltrados.filter((item) => item.tipoPerfil === "SUPERVISOR"),
+    [vendedoresFiltrados]
+  );
+  const vendedoresOperativosFiltrados = useMemo(
+    () => vendedoresFiltrados.filter((item) => item.tipoPerfil === "VENDEDOR"),
+    [vendedoresFiltrados]
+  );
+  const selectedSeller =
+    selectedProfile?.type === "SUPERVISOR" || selectedProfile?.type === "VENDEDOR"
+      ? vendedores.find((item) => item.id === selectedProfile.id) || null
+      : null;
+  const selectedAdmin =
+    selectedProfile?.type === "ADMIN"
+      ? administradores.find((item) => item.id === selectedProfile.id) || null
+      : null;
 
   const toggleNuevoSede = (sedeId: number) => {
     setNuevo((current) => ({
@@ -571,8 +739,11 @@ export default function GestionVendedoresPage() {
                 Perfiles creados
               </div>
               <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                Vendedores registrados
+                Directorio de usuarios
               </h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Selecciona un perfil para abrir su informacion y editarlo cuando aplique.
+              </p>
             </div>
 
             <select
@@ -589,8 +760,126 @@ export default function GestionVendedoresPage() {
             </select>
           </div>
 
+          <div className="mt-6 grid gap-5 xl:grid-cols-3">
+            <ProfileColumn
+              title="Supervisores"
+              count={supervisoresFiltrados.length}
+              empty="No hay supervisores para el filtro seleccionado."
+            >
+              {supervisoresFiltrados.map((seller) => (
+                <SellerProfileButton
+                  key={seller.id}
+                  seller={seller}
+                  selected={
+                    selectedProfile?.type === "SUPERVISOR" &&
+                    selectedProfile.id === seller.id
+                  }
+                  onClick={() =>
+                    setSelectedProfile({ type: "SUPERVISOR", id: seller.id })
+                  }
+                />
+              ))}
+            </ProfileColumn>
+
+            <ProfileColumn
+              title="Vendedores"
+              count={vendedoresOperativosFiltrados.length}
+              empty="No hay vendedores para el filtro seleccionado."
+            >
+              {vendedoresOperativosFiltrados.map((seller) => (
+                <SellerProfileButton
+                  key={seller.id}
+                  seller={seller}
+                  selected={
+                    selectedProfile?.type === "VENDEDOR" &&
+                    selectedProfile.id === seller.id
+                  }
+                  onClick={() =>
+                    setSelectedProfile({ type: "VENDEDOR", id: seller.id })
+                  }
+                />
+              ))}
+            </ProfileColumn>
+
+            <ProfileColumn
+              title="Administradores"
+              count={administradores.length}
+              empty="No hay administradores creados."
+            >
+              {administradores.map((admin) => (
+                <AdminProfileButton
+                  key={admin.id}
+                  admin={admin}
+                  selected={
+                    selectedProfile?.type === "ADMIN" &&
+                    selectedProfile.id === admin.id
+                  }
+                  onClick={() => setSelectedProfile({ type: "ADMIN", id: admin.id })}
+                />
+              ))}
+            </ProfileColumn>
+          </div>
+
+          {!selectedProfile && (
+            <div className="mt-6 rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm text-slate-500">
+              Haz clic en un supervisor, vendedor o administrador para abrir su informacion.
+            </div>
+          )}
+
+          {selectedAdmin && (
+            <section className="mt-6 rounded-[28px] border border-slate-200 bg-slate-50/70 p-5">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <div className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                    Administrador #{selectedAdmin.id}
+                  </div>
+                  <h3 className="mt-3 text-2xl font-black text-slate-950">
+                    {selectedAdmin.nombre}
+                  </h3>
+                  <p className="mt-2 text-sm text-slate-500">
+                    Usuario de acceso: {selectedAdmin.usuario}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                  <p className="font-semibold text-slate-900">
+                    {selectedAdmin.activo ? "Perfil activo" : "Perfil inactivo"}
+                  </p>
+                  <p className="mt-1 text-slate-500">Rol: {selectedAdmin.rolNombre}</p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-4 md:grid-cols-3">
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Sede base
+                  </p>
+                  <p className="mt-2 font-black text-slate-950">
+                    {selectedAdmin.sede.nombre}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Creado
+                  </p>
+                  <p className="mt-2 font-black text-slate-950">
+                    {formatDate(selectedAdmin.createdAt)}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Actualizado
+                  </p>
+                  <p className="mt-2 font-black text-slate-950">
+                    {formatDate(selectedAdmin.updatedAt)}
+                  </p>
+                </div>
+              </div>
+            </section>
+          )}
+
           <div className="mt-6 grid gap-5 xl:grid-cols-2">
-            {vendedoresFiltrados.map((vendedor) => {
+            {(selectedSeller ? [selectedSeller] : []).map((vendedor) => {
               const draft = ediciones[vendedor.id];
 
               if (!draft) {
@@ -605,7 +894,10 @@ export default function GestionVendedoresPage() {
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div>
                       <div className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                        Vendedor #{vendedor.id}
+                        {vendedor.tipoPerfil === "SUPERVISOR"
+                          ? "Supervisor"
+                          : "Vendedor"}{" "}
+                        #{vendedor.id}
                       </div>
                       <h3 className="mt-3 text-2xl font-black text-slate-950">
                         {vendedor.nombre}
@@ -709,7 +1001,7 @@ export default function GestionVendedoresPage() {
 
                   <div className="mt-6">
                     <p className="text-sm font-semibold text-slate-700">
-                      Sedes del vendedor
+                      Sedes del perfil
                     </p>
                     <div className="mt-4">
                       <SedeTransferBoard
@@ -739,9 +1031,9 @@ export default function GestionVendedoresPage() {
               );
             })}
 
-            {!vendedoresFiltrados.length && (
+            {selectedProfile && !selectedSeller && !selectedAdmin && (
               <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm text-slate-500">
-                No hay vendedores para el filtro seleccionado.
+                No se encontro informacion para el perfil seleccionado.
               </div>
             )}
           </div>

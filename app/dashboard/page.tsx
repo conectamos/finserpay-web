@@ -407,7 +407,7 @@ function AdminShortcutCard({
 
 function AdminManagementCard() {
   const actionClass =
-    "inline-flex min-h-11 items-center justify-center rounded-2xl px-4 py-3 text-center text-sm font-black uppercase tracking-[0.08em] transition";
+    "inline-flex min-h-11 items-center justify-center rounded-2xl px-4 py-3 text-center text-sm font-black transition";
 
   return (
     <section className="group relative overflow-hidden rounded-[28px] border border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#eef0f4_58%,#e1e4e9_100%)] p-5 shadow-[0_14px_32px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_44px_rgba(15,23,42,0.12)]">
@@ -433,7 +433,7 @@ function AdminManagementCard() {
             "border border-zinc-950 bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] text-white hover:opacity-95",
           ].join(" ")}
         >
-          Gestionar sede
+          Gestionar sedes
         </Link>
         <Link
           href="/dashboard/usuarios"
@@ -442,7 +442,7 @@ function AdminManagementCard() {
             "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50",
           ].join(" ")}
         >
-          Gestionar vendedor
+          Gestionar usuarios
         </Link>
       </div>
     </section>

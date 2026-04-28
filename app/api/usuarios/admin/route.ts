@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
+import { resolveSellerProfileType } from "@/lib/seller-auth";
 
 function isAdminRole(rolNombre: string) {
   return String(rolNombre || "").trim().toUpperCase() === "ADMIN";
@@ -77,7 +78,7 @@ async function requireAdmin() {
 }
 
 async function loadAdminSellersPayload() {
-  const [sedes, vendedores] = await Promise.all([
+  const [sedes, vendedores, administradores] = await Promise.all([
     prisma.sede.findMany({
       select: {
         id: true,
@@ -118,13 +119,58 @@ async function loadAdminSellersPayload() {
         },
       ],
     }),
+    prisma.usuario.findMany({
+      where: {
+        rol: {
+          nombre: "ADMIN",
+        },
+      },
+      select: {
+        id: true,
+        nombre: true,
+        usuario: true,
+        activo: true,
+        createdAt: true,
+        updatedAt: true,
+        sede: {
+          select: {
+            id: true,
+            nombre: true,
+          },
+        },
+        rol: {
+          select: {
+            nombre: true,
+          },
+        },
+      },
+      orderBy: [
+        {
+          activo: "desc",
+        },
+        {
+          nombre: "asc",
+        },
+      ],
+    }),
   ]);
 
   return {
     sedes,
+    administradores: administradores.map((item) => ({
+      id: item.id,
+      nombre: item.nombre,
+      usuario: item.usuario,
+      activo: item.activo,
+      rolNombre: item.rol.nombre,
+      sede: item.sede,
+      createdAt: item.createdAt.toISOString(),
+      updatedAt: item.updatedAt.toISOString(),
+    })),
     vendedores: vendedores.map((item) => ({
       id: item.id,
       nombre: item.nombre,
+      tipoPerfil: resolveSellerProfileType(item.nombre),
       documento: item.documento,
       telefono: item.telefono,
       email: item.email,
