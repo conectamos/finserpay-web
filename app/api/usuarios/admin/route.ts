@@ -80,6 +80,9 @@ async function requireAdmin() {
 async function loadAdminSellersPayload() {
   const [sedes, vendedores, administradores] = await Promise.all([
     prisma.sede.findMany({
+      where: {
+        activa: true,
+      },
       select: {
         id: true,
         nombre: true,
@@ -90,6 +93,9 @@ async function loadAdminSellersPayload() {
       },
     }),
     prisma.vendedor.findMany({
+      where: {
+        activo: true,
+      },
       include: {
         asignaciones: {
           where: {
@@ -446,6 +452,67 @@ export async function PATCH(req: Request) {
     console.error("ERROR ACTUALIZANDO VENDEDOR:", error);
     return NextResponse.json(
       { error: "No se pudo actualizar el vendedor" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const session = await requireAdmin();
+
+    if (!session.ok) {
+      return session.response;
+    }
+
+    const body = (await req.json()) as Record<string, unknown>;
+    const vendedorId = parseSellerId(body.vendedorId);
+
+    if (!vendedorId) {
+      return NextResponse.json(
+        { error: "Vendedor invalido" },
+        { status: 400 }
+      );
+    }
+
+    const seller = await prisma.vendedor.findUnique({
+      where: { id: vendedorId },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!seller) {
+      return NextResponse.json(
+        { error: "Vendedor no encontrado" },
+        { status: 404 }
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.vendedor.update({
+        where: { id: vendedorId },
+        data: {
+          activo: false,
+          debeCambiarPin: true,
+        },
+      });
+
+      await tx.sedeVendedor.updateMany({
+        where: { vendedorId },
+        data: { activo: false },
+      });
+    });
+
+    return NextResponse.json({
+      ok: true,
+      mensaje: "Vendedor eliminado correctamente",
+      ...(await loadAdminSellersPayload()),
+    });
+  } catch (error) {
+    console.error("ERROR ELIMINANDO VENDEDOR:", error);
+    return NextResponse.json(
+      { error: "No se pudo eliminar el vendedor" },
       { status: 500 }
     );
   }

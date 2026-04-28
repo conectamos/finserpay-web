@@ -202,6 +202,43 @@ export default function GestionSedesPage() {
     }
   };
 
+  const eliminarSede = async (sede: SedeAdminItem) => {
+    const confirmar = window.confirm(
+      `Eliminar la sede "${sede.nombre}"? Se desactivara su acceso y sus asignaciones.`
+    );
+
+    if (!confirmar) {
+      return;
+    }
+
+    try {
+      setProcesandoId(sede.id);
+      setMensaje("");
+
+      const res = await fetch("/api/sedes/admin", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sedeId: sede.id }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setMensaje(data.error || "No se pudo eliminar la sede");
+        return;
+      }
+
+      setMensaje(data.mensaje || "Sede eliminada correctamente");
+      await cargarTodo();
+    } catch {
+      setMensaje("Error eliminando la sede");
+    } finally {
+      setProcesandoId(null);
+    }
+  };
+
   if (cargando) {
     return (
       <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
@@ -457,7 +494,15 @@ export default function GestionSedesPage() {
                     </label>
                   </div>
 
-                  <div className="mt-5 flex justify-end">
+                  <div className="mt-5 flex flex-col justify-end gap-3 sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={() => void eliminarSede(sede)}
+                      disabled={procesandoId === sede.id}
+                      className="rounded-2xl border border-red-200 bg-white px-5 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      Eliminar sede
+                    </button>
                     <button
                       type="button"
                       onClick={() => void guardarSede(sede.id)}

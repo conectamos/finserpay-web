@@ -544,6 +544,47 @@ export default function GestionVendedoresPage() {
     }
   };
 
+  const eliminarVendedor = async (vendedor: SellerItem) => {
+    const confirmar = window.confirm(
+      `Eliminar el perfil "${vendedor.nombre}"? Se desactivara su PIN y sus asignaciones.`
+    );
+
+    if (!confirmar) {
+      return;
+    }
+
+    try {
+      setProcesandoId(vendedor.id);
+      setMensaje("");
+
+      const res = await fetch("/api/usuarios/admin", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ vendedorId: vendedor.id }),
+      });
+
+      const data = (await res.json()) as AdminUsersResponse & {
+        error?: string;
+        mensaje?: string;
+      };
+
+      if (!res.ok) {
+        setMensaje(data.error || "No se pudo eliminar el vendedor");
+        return;
+      }
+
+      applyData(data);
+      setSelectedProfile(null);
+      setMensaje(data.mensaje || "Vendedor eliminado correctamente");
+    } catch {
+      setMensaje("Error eliminando el vendedor");
+    } finally {
+      setProcesandoId(null);
+    }
+  };
+
   if (cargando) {
     return (
       <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
@@ -1012,20 +1053,31 @@ export default function GestionVendedoresPage() {
                     </div>
                   </div>
 
-                  <div className="mt-5 flex items-center justify-between gap-3">
-                    <div className="text-xs text-slate-500">
-                      <p>Creado: {formatDate(vendedor.createdAt)}</p>
-                      <p>Actualizado: {formatDate(vendedor.updatedAt)}</p>
-                    </div>
+                    <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="text-xs text-slate-500">
+                        <p>Creado: {formatDate(vendedor.createdAt)}</p>
+                        <p>Actualizado: {formatDate(vendedor.updatedAt)}</p>
+                      </div>
 
-                    <button
-                      type="button"
-                      onClick={() => void guardarVendedor(vendedor.id)}
-                      disabled={procesandoId === vendedor.id}
-                      className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {procesandoId === vendedor.id ? "Guardando..." : "Guardar cambios"}
-                    </button>
+                      <div className="flex flex-col gap-3 sm:flex-row">
+                        <button
+                          type="button"
+                          onClick={() => void eliminarVendedor(vendedor)}
+                          disabled={procesandoId === vendedor.id}
+                          className="rounded-2xl border border-red-200 bg-white px-5 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          Eliminar vendedor
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => void guardarVendedor(vendedor.id)}
+                          disabled={procesandoId === vendedor.id}
+                          className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {procesandoId === vendedor.id ? "Guardando..." : "Guardar cambios"}
+                        </button>
+                      </div>
                   </div>
                 </section>
               );

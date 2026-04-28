@@ -63,6 +63,9 @@ async function obtenerRolUsuarioId() {
 
 async function obtenerSedesAdmin() {
   const sedes = await prisma.sede.findMany({
+    where: {
+      activa: true,
+    },
     select: {
       id: true,
       nombre: true,
@@ -110,6 +113,80 @@ async function obtenerSedesAdmin() {
         : null,
     };
   });
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const session = await requireAdmin();
+
+    if (!session.ok) {
+      return session.response;
+    }
+
+    const body = (await req.json()) as Record<string, unknown>;
+    const sedeId = Number(body.sedeId || 0);
+
+    if (!Number.isInteger(sedeId) || sedeId <= 0) {
+      return NextResponse.json({ error: "Sede invalida" }, { status: 400 });
+    }
+
+    if (sedeId === session.user.sedeId) {
+      return NextResponse.json(
+        { error: "No puedes eliminar la sede de tu sesion actual" },
+        { status: 400 }
+      );
+    }
+
+    const sede = await prisma.sede.findUnique({
+      where: { id: sedeId },
+      select: { id: true },
+    });
+
+    if (!sede) {
+      return NextResponse.json(
+        { error: "Sede no encontrada" },
+        { status: 404 }
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.sede.update({
+        where: { id: sedeId },
+        data: { activa: false },
+      });
+
+      await tx.usuario.updateMany({
+        where: {
+          sedeId,
+          rol: {
+            nombre: "USUARIO",
+          },
+        },
+        data: {
+          activo: false,
+        },
+      });
+
+      await tx.sedeVendedor.updateMany({
+        where: { sedeId },
+        data: { activo: false },
+      });
+    });
+
+    const sedes = await obtenerSedesAdmin();
+
+    return NextResponse.json({
+      ok: true,
+      mensaje: "Sede eliminada correctamente",
+      sedes,
+    });
+  } catch (error) {
+    console.error("ERROR DELETE ADMIN SEDES:", error);
+    return NextResponse.json(
+      { error: "Error eliminando sede" },
+      { status: 500 }
+    );
+  }
 }
 
 export async function GET() {
