@@ -70,10 +70,13 @@ type AdminUsersResponse = {
   administradores: AdminItem[];
 };
 
+type TipoPerfilFormulario = TipoPerfilVendedor | "ADMINISTRADOR";
+
 type SellerDraft = {
   nombre: string;
-  tipoPerfil: TipoPerfilVendedor;
+  tipoPerfil: TipoPerfilFormulario;
   avatarKey: AvatarPerfilKey;
+  usuario: string;
   documento: string;
   telefono: string;
   email: string;
@@ -109,6 +112,10 @@ function sanitizePin(value: string) {
 
 function sanitizePhone(value: string) {
   return value.replace(/[^\d+]/g, "");
+}
+
+function sanitizeUsername(value: string) {
+  return value.replace(/\s+/g, "").toLowerCase();
 }
 
 function AvatarBadge({
@@ -389,6 +396,7 @@ export default function GestionVendedoresPage() {
     nombre: "",
     tipoPerfil: "VENDEDOR",
     avatarKey: obtenerAvatarDefaultPorTipo("VENDEDOR"),
+    usuario: "",
     documento: "",
     telefono: "",
     email: "",
@@ -418,6 +426,7 @@ export default function GestionVendedoresPage() {
             nombre: item.nombre,
             tipoPerfil: item.tipoPerfil,
             avatarKey: normalizarAvatarPerfil(item.avatarKey, item.tipoPerfil),
+            usuario: "",
             documento: item.documento || "",
             telefono: item.telefono || "",
             email: item.email || "",
@@ -488,6 +497,7 @@ export default function GestionVendedoresPage() {
     selectedProfile?.type === "ADMIN"
       ? administradores.find((item) => item.id === selectedProfile.id) || null
       : null;
+  const nuevoEsAdmin = nuevo.tipoPerfil === "ADMINISTRADOR";
 
   const toggleNuevoSede = (sedeId: number) => {
     setNuevo((current) => ({
@@ -522,11 +532,18 @@ export default function GestionVendedoresPage() {
     }));
   };
 
-  const actualizarNuevoTipo = (tipoPerfil: TipoPerfilVendedor) => {
+  const actualizarNuevoTipo = (tipoPerfil: TipoPerfilFormulario) => {
     setNuevo((current) => ({
       ...current,
       tipoPerfil,
-      avatarKey: obtenerAvatarDefaultPorTipo(tipoPerfil),
+      avatarKey:
+        tipoPerfil === "ADMINISTRADOR"
+          ? obtenerAvatarDefaultPorTipo("ADMINISTRADOR")
+          : obtenerAvatarDefaultPorTipo(tipoPerfil),
+      sedeIds:
+        tipoPerfil === "ADMINISTRADOR"
+          ? current.sedeIds.slice(0, 1)
+          : current.sedeIds,
     }));
   };
 
@@ -572,11 +589,13 @@ export default function GestionVendedoresPage() {
           nombre: nuevo.nombre,
           tipoPerfil: nuevo.tipoPerfil,
           avatarKey: nuevo.avatarKey,
+          usuario: nuevo.usuario,
           documento: nuevo.documento,
           telefono: nuevo.telefono,
           email: nuevo.email,
           pin: nuevo.pin,
           activo: nuevo.activo,
+          sedeId: nuevoEsAdmin ? nuevo.sedeIds[0] || null : undefined,
           sedeIds: nuevo.sedeIds,
         }),
       });
@@ -597,6 +616,7 @@ export default function GestionVendedoresPage() {
         nombre: "",
         tipoPerfil: "VENDEDOR",
         avatarKey: obtenerAvatarDefaultPorTipo("VENDEDOR"),
+        usuario: "",
         documento: "",
         telefono: "",
         email: "",
@@ -779,10 +799,12 @@ export default function GestionVendedoresPage() {
                 Nuevo usuario
               </div>
               <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                Crear perfil con PIN
+                {nuevoEsAdmin ? "Crear administrador" : "Crear perfil con PIN"}
               </h2>
               <p className="mt-2 text-sm text-slate-500">
-                El PIN inicial debe tener entre 4 y 6 digitos. El usuario podra cambiarlo desde su perfil.
+                {nuevoEsAdmin
+                  ? "El administrador entra con usuario y clave al panel principal."
+                  : "El PIN inicial debe tener entre 4 y 6 digitos. El usuario podra cambiarlo desde su perfil."}
               </p>
             </div>
           </div>
@@ -799,31 +821,70 @@ export default function GestionVendedoresPage() {
             </label>
 
             <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-              Documento
-              <input
-                value={nuevo.documento}
-                onChange={(event) =>
-                  actualizarNuevo("documento", sanitizeDocument(event.target.value))
-                }
-                placeholder="Cedula del usuario"
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-            </label>
-
-            <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
               Tipo de perfil
               <select
                 value={nuevo.tipoPerfil}
                 onChange={(event) =>
-                  actualizarNuevoTipo(event.target.value as TipoPerfilVendedor)
+                  actualizarNuevoTipo(event.target.value as TipoPerfilFormulario)
                 }
                 className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               >
                 <option value="VENDEDOR">Vendedor</option>
                 <option value="SUPERVISOR">Supervisor</option>
+                <option value="ADMINISTRADOR">Administrador</option>
               </select>
             </label>
 
+            {nuevoEsAdmin ? (
+              <>
+                <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                  Usuario de acceso
+                  <input
+                    value={nuevo.usuario}
+                    onChange={(event) =>
+                      actualizarNuevo("usuario", sanitizeUsername(event.target.value))
+                    }
+                    placeholder="admin.sede"
+                    className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                  />
+                </label>
+
+                <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                  Sede base
+                  <select
+                    value={nuevo.sedeIds[0] || ""}
+                    onChange={(event) =>
+                      actualizarNuevo(
+                        "sedeIds",
+                        event.target.value ? [Number(event.target.value)] : []
+                      )
+                    }
+                    className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                  >
+                    <option value="">Seleccionar sede</option>
+                    {sedes.map((sede) => (
+                      <option key={sede.id} value={sede.id}>
+                        {sede.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            ) : (
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                Documento
+                <input
+                  value={nuevo.documento}
+                  onChange={(event) =>
+                    actualizarNuevo("documento", sanitizeDocument(event.target.value))
+                  }
+                  placeholder="Cedula del usuario"
+                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+              </label>
+            )}
+
+            {!nuevoEsAdmin && (
             <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
               Telefono
               <input
@@ -835,7 +896,9 @@ export default function GestionVendedoresPage() {
                 className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               />
             </label>
+            )}
 
+            {!nuevoEsAdmin && (
             <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
               Correo
               <input
@@ -846,16 +909,20 @@ export default function GestionVendedoresPage() {
                 className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               />
             </label>
+            )}
 
             <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-              PIN inicial
+              {nuevoEsAdmin ? "Clave inicial" : "PIN inicial"}
               <input
                 type="password"
                 value={nuevo.pin}
                 onChange={(event) =>
-                  actualizarNuevo("pin", sanitizePin(event.target.value))
+                  actualizarNuevo(
+                    "pin",
+                    nuevoEsAdmin ? event.target.value : sanitizePin(event.target.value)
+                  )
                 }
-                placeholder="4 a 6 digitos"
+                placeholder={nuevoEsAdmin ? "Clave de acceso" : "4 a 6 digitos"}
                 className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               />
             </label>
@@ -871,14 +938,17 @@ export default function GestionVendedoresPage() {
             </label>
           </div>
 
+          {!nuevoEsAdmin && (
           <div className="mt-6">
             <AvatarSelector
-              tipoPerfil={nuevo.tipoPerfil}
+              tipoPerfil={nuevo.tipoPerfil as TipoPerfilVendedor}
               avatarKey={nuevo.avatarKey}
               onChange={(avatarKey) => actualizarNuevo("avatarKey", avatarKey)}
             />
           </div>
+          )}
 
+          {!nuevoEsAdmin && (
           <div className="mt-6">
             <p className="text-sm font-semibold text-slate-700">
               Asignacion de sedes
@@ -894,6 +964,7 @@ export default function GestionVendedoresPage() {
               />
             </div>
           </div>
+          )}
 
           <div className="mt-6 flex justify-end">
             <button
@@ -1200,7 +1271,7 @@ export default function GestionVendedoresPage() {
 
                   <div className="mt-6">
                     <AvatarSelector
-                      tipoPerfil={draft.tipoPerfil}
+                      tipoPerfil={draft.tipoPerfil as TipoPerfilVendedor}
                       avatarKey={draft.avatarKey}
                       onChange={(avatarKey) =>
                         actualizarEdicion(vendedor.id, "avatarKey", avatarKey)
