@@ -368,6 +368,33 @@ function AdminStatCard({ label, value, detail }: AdminStat) {
   );
 }
 
+function AdminTotalCard({ href, title, value, detail }: {
+  href: string;
+  title: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group relative overflow-hidden rounded-[28px] border border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#eef0f4_58%,#e1e4e9_100%)] p-5 shadow-[0_14px_32px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_44px_rgba(15,23,42,0.12)]"
+    >
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.8),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(24,24,27,0.06),transparent_34%)]" />
+      <div className="relative inline-flex rounded-full border border-zinc-300 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-600">
+        Total
+      </div>
+      <h3 className="relative mt-4 text-2xl font-black uppercase tracking-tight text-zinc-950">
+        {title}
+      </h3>
+      <p className="relative mt-4 text-4xl font-black tracking-tight text-zinc-950">
+        {value}
+      </p>
+      <p className="relative mt-2 text-sm leading-6 text-zinc-600">{detail}</p>
+    </Link>
+  );
+}
+
 function AdminShortcutCard({
   href,
   title,
@@ -568,27 +595,11 @@ export default async function DashboardPage() {
 
   const adminStats = admin
     ? await Promise.all([
-        prisma.sede.count({
-          where: {
-            activa: true,
-          },
-        }),
-        prisma.vendedor.count({
-          where: {
-            activo: true,
-          },
-        }),
         prisma.credito.count(),
-        prisma.creditoAbono.aggregate({
-          _sum: {
-            valor: true,
-          },
+        prisma.creditoAbono.count({
           where: {
             estado: {
               not: "ANULADO",
-            },
-            fechaAbono: {
-              gte: new Date(new Date().setHours(0, 0, 0, 0)),
             },
           },
         }),
@@ -991,46 +1002,21 @@ export default async function DashboardPage() {
     },
   ];
 
-  const adminOverview: AdminStat[] = adminStats
-    ? [
-        {
-          label: "Sedes activas",
-          value: String(adminStats[0]),
-          detail: "Puntos de venta habilitados para operar.",
-        },
-        {
-          label: "Vendedores",
-          value: String(adminStats[1]),
-          detail: "Perfiles con PIN disponibles en las sedes.",
-        },
-        {
-          label: "Creditos",
-          value: String(adminStats[2]),
-          detail: "Creditos creados en este portal.",
-        },
-        {
-          label: "Recaudo hoy",
-          value: `$ ${Number(adminStats[3]._sum.valor || 0).toLocaleString("es-CO")}`,
-          detail: "Abonos recibidos desde las 00:00 de hoy.",
-        },
-      ]
-    : [];
-
   const adminShortcuts: AdminShortcut[] = [
     {
-      href: "/dashboard/reportes/creditos",
-      title: "Tabla de creditos",
+      href: "/dashboard/catalogo-equipos",
+      title: "Catalogo de equipos",
       description:
-        "Consulta creditos, vendedor asociado, estado comercial y seguimiento general de cartera.",
-      eyebrow: "Reportes",
+        "Administra marcas, modelos y precio base para que el asesor solo seleccione y venda.",
+      eyebrow: "Equipos",
       tone: "amber",
     },
     {
-      href: "/dashboard/reportes/abonos",
-      title: "Tabla de abonos",
+      href: "/dashboard/parametros-credito",
+      title: "Parametros del credito",
       description:
-        "Revisa recaudo dia a dia, pagos recibidos y pendiente por cobrar en todas las sedes.",
-      eyebrow: "Recaudo",
+        "Configura porcentaje de fianza e interes para las nuevas ventas de FINSER PAY.",
+      eyebrow: "Calculo",
       tone: "sky",
     },
     {
@@ -1042,26 +1028,10 @@ export default async function DashboardPage() {
       tone: "teal",
     },
     {
-      href: "/dashboard/catalogo-equipos",
-      title: "Catalogo de equipos",
+      href: "/dashboard/equality",
+      title: "Equality",
       description:
-        "Administra marcas, modelos y precio base para que el asesor solo seleccione y venda.",
-      eyebrow: "Equipos",
-      tone: "amber",
-    },
-    {
-      href: "/dashboard/parametros-credito",
-      title: "Parametros de credito",
-      description:
-        "Configura porcentaje de fianza e interes para las nuevas ventas de FINSER PAY.",
-      eyebrow: "Calculo",
-      tone: "sky",
-    },
-    {
-      href: "/dashboard/integraciones",
-      title: "Centro de integraciones",
-      description:
-        "Monitorea Equality Zero Touch y valida el estado general del hub operativo del proyecto.",
+        "Consulta deviceUid y dispara acciones remotas de Equality Zero Touch.",
       eyebrow: "Zero Touch",
       tone: "slate",
     },
@@ -1138,54 +1108,6 @@ export default async function DashboardPage() {
           </div>
         </section>
 
-        <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {adminOverview.map((item) => (
-            <AdminStatCard key={item.label} {...item} />
-          ))}
-        </section>
-
-        <section className="fp-surface relative mt-6 overflow-hidden rounded-[28px] p-6">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#18a7b5,#ff6b4a)]" />
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-            <div className="max-w-2xl">
-              <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
-                Sesion actual
-              </div>
-              <h2 className="mt-4 text-3xl font-black tracking-tight text-zinc-950">
-                Control central de FINSER PAY
-              </h2>
-              <p className="mt-3 text-sm leading-6 text-zinc-600">
-                Desde aqui gestionas sedes, vendedores, reportes, creditos e integraciones sin depender del panel antiguo.
-              </p>
-            </div>
-
-            <div className="w-full max-w-[520px]">
-              <div className="grid gap-3 sm:grid-cols-2">
-                {sessionItems.map((item) => (
-                  <SessionDetail key={item.label} {...item} />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-6 flex gap-2 overflow-x-auto pb-2">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={[
-                  "whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold transition",
-                  item.href === "/dashboard"
-                    ? "border-zinc-950 bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] text-white"
-                    : "border-zinc-300 bg-[linear-gradient(180deg,#fafafa_0%,#eceff3_100%)] text-zinc-700 hover:bg-white",
-                ].join(" ")}
-              >
-                {item.label}
-              </Link>
-            ))}
-          </div>
-        </section>
-
         <section className="fp-surface relative mt-6 overflow-hidden rounded-[28px] p-6">
           <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
           <div>
@@ -1201,76 +1123,23 @@ export default async function DashboardPage() {
           </div>
 
           <div className="mt-6 grid gap-5 xl:grid-cols-3">
-            <AdminAnnulmentsCard />
             <AdminManagementCard />
+            <AdminAnnulmentsCard />
             {adminShortcuts.map((shortcut) => (
               <AdminShortcutCard key={shortcut.href} {...shortcut} />
             ))}
-          </div>
-        </section>
-
-        <section className="relative mt-6 overflow-hidden rounded-[30px] bg-[linear-gradient(180deg,#ffffff_0%,#eef1f5_56%,#e3e7ed_100%)] p-6 shadow-[0_14px_34px_rgba(15,23,42,0.08)] ring-1 ring-zinc-300">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <Link
-              href="/dashboard/creditos"
-              className="rounded-[24px] border border-zinc-300 bg-[linear-gradient(180deg,#fafafa_0%,#eceef2_54%,#e0e4ea_100%)] px-5 py-5 text-sm font-semibold text-zinc-700 transition hover:bg-white"
-            >
-              <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-                Venta
-              </p>
-              <p className="mt-3 text-xl font-black tracking-tight text-zinc-950">
-                Fabrica de creditos
-              </p>
-              <p className="mt-2 leading-6">
-                Abre el flujo comercial completo.
-              </p>
-            </Link>
-
-            <Link
-              href="/dashboard/abonos"
-              className="rounded-[24px] border border-zinc-300 bg-[linear-gradient(180deg,#fafafa_0%,#eceef2_54%,#e0e4ea_100%)] px-5 py-5 text-sm font-semibold text-zinc-700 transition hover:bg-white"
-            >
-              <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-                Recaudo
-              </p>
-              <p className="mt-3 text-xl font-black tracking-tight text-zinc-950">
-                Abonos y cartera
-              </p>
-              <p className="mt-2 leading-6">
-                Recibe cuotas y revisa el pendiente.
-              </p>
-            </Link>
-
-            <Link
-              href="/dashboard/integraciones"
-              className="rounded-[24px] border border-zinc-300 bg-[linear-gradient(180deg,#fafafa_0%,#eceef2_54%,#e0e4ea_100%)] px-5 py-5 text-sm font-semibold text-zinc-700 transition hover:bg-white"
-            >
-              <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-                Integracion
-              </p>
-              <p className="mt-3 text-xl font-black tracking-tight text-zinc-950">
-                Zero Touch
-              </p>
-              <p className="mt-2 leading-6">
-                Monitorea el estado general de Equality.
-              </p>
-            </Link>
-
-            <Link
-              href="/dashboard/reportes"
-              className="rounded-[24px] border border-zinc-300 bg-[linear-gradient(180deg,#fafafa_0%,#eceef2_54%,#e0e4ea_100%)] px-5 py-5 text-sm font-semibold text-zinc-700 transition hover:bg-white"
-            >
-              <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-                Analitica
-              </p>
-              <p className="mt-3 text-xl font-black tracking-tight text-zinc-950">
-                Reportes
-              </p>
-              <p className="mt-2 leading-6">
-                Consolida creditos, abonos y operacion.
-              </p>
-            </Link>
+            <AdminTotalCard
+              href="/dashboard/reportes/creditos"
+              title="Total creditos"
+              value={String(adminStats?.[0] ?? 0)}
+              detail="Creditos creados en este portal."
+            />
+            <AdminTotalCard
+              href="/dashboard/reportes/abonos"
+              title="Total abonos"
+              value={String(adminStats?.[1] ?? 0)}
+              detail="Abonos activos registrados en cartera."
+            />
           </div>
         </section>
       </main>
