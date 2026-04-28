@@ -4,6 +4,12 @@ import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser, resolveSellerProfileType } from "@/lib/seller-auth";
 import { verifyPassword } from "@/lib/password";
 import {
+  type AvatarPerfilKey,
+  normalizarAvatarPerfil,
+  normalizarTipoPerfilVendedor,
+} from "@/lib/profile-avatars";
+import { ensureVendorProfileVisualColumns } from "@/lib/vendor-profile-schema";
+import {
   SELLER_SESSION_COOKIE_NAME,
   createSellerSessionToken,
   getSessionCookieOptions,
@@ -17,7 +23,13 @@ function serializeSeller(item: {
   email: string | null;
   activo: boolean;
   debeCambiarPin: boolean;
+  tipoPerfil?: string | null;
+  avatarKey?: string | null;
 }) {
+  const tipoPerfil = normalizarTipoPerfilVendedor(
+    item.tipoPerfil || resolveSellerProfileType(item.nombre)
+  );
+
   return {
     id: item.id,
     nombre: item.nombre,
@@ -26,11 +38,14 @@ function serializeSeller(item: {
     email: item.email,
     activo: item.activo,
     debeCambiarPin: item.debeCambiarPin,
-    tipoPerfil: resolveSellerProfileType(item.nombre),
+    tipoPerfil,
+    avatarKey: normalizarAvatarPerfil(item.avatarKey, tipoPerfil) satisfies AvatarPerfilKey,
   };
 }
 
 async function getAssignedSellersForSede(sedeId: number) {
+  await ensureVendorProfileVisualColumns();
+
   const rows = await prisma.sedeVendedor.findMany({
     where: {
       sedeId,
@@ -49,6 +64,8 @@ async function getAssignedSellersForSede(sedeId: number) {
           email: true,
           activo: true,
           debeCambiarPin: true,
+          tipoPerfil: true,
+          avatarKey: true,
         },
       },
     },
@@ -97,6 +114,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
+    await ensureVendorProfileVisualColumns();
+
     const body = (await req.json()) as Record<string, unknown>;
     const vendedorId = Number(body.vendedorId || 0);
     const pin = String(body.pin || "").replace(/\D/g, "").trim();
@@ -134,6 +153,8 @@ export async function POST(req: Request) {
             email: true,
             activo: true,
             debeCambiarPin: true,
+            tipoPerfil: true,
+            avatarKey: true,
             pinHash: true,
             pinTemporalHash: true,
           },

@@ -5,6 +5,12 @@ import {
   SELLER_SESSION_COOKIE_NAME,
   verifySellerSessionToken,
 } from "@/lib/session";
+import {
+  type AvatarPerfilKey,
+  normalizarAvatarPerfil,
+  normalizarTipoPerfilVendedor,
+} from "@/lib/profile-avatars";
+import { ensureVendorProfileVisualColumns } from "@/lib/vendor-profile-schema";
 
 export type SellerSessionUser = {
   id: number;
@@ -12,6 +18,7 @@ export type SellerSessionUser = {
   activo: boolean;
   debeCambiarPin: boolean;
   tipoPerfil: "VENDEDOR" | "SUPERVISOR";
+  avatarKey: AvatarPerfilKey;
   documento: string | null;
   telefono: string | null;
   email: string | null;
@@ -21,7 +28,9 @@ export type SellerSessionUser = {
 
 export function resolveSellerProfileType(value?: string | null) {
   const normalized = String(value || "").trim().toUpperCase();
-  return normalized.includes("SUPERVISOR") ? "SUPERVISOR" : "VENDEDOR";
+  return normalized.includes("SUPERVISOR")
+    ? "SUPERVISOR"
+    : normalizarTipoPerfilVendedor(normalized);
 }
 
 export async function getSellerSessionUser(
@@ -48,6 +57,8 @@ export async function getSellerSessionUser(
     return null;
   }
 
+  await ensureVendorProfileVisualColumns();
+
   const seller = await prisma.vendedor.findFirst({
     where: {
       id: sellerSession.vendedorId,
@@ -64,6 +75,8 @@ export async function getSellerSessionUser(
       nombre: true,
       activo: true,
       debeCambiarPin: true,
+      tipoPerfil: true,
+      avatarKey: true,
       documento: true,
       telefono: true,
       email: true,
@@ -89,12 +102,17 @@ export async function getSellerSessionUser(
     return null;
   }
 
+  const tipoPerfil = normalizarTipoPerfilVendedor(
+    seller.tipoPerfil || resolveSellerProfileType(seller.nombre)
+  );
+
   return {
     id: seller.id,
     nombre: seller.nombre,
     activo: seller.activo,
     debeCambiarPin: seller.debeCambiarPin,
-    tipoPerfil: resolveSellerProfileType(seller.nombre),
+    tipoPerfil,
+    avatarKey: normalizarAvatarPerfil(seller.avatarKey, tipoPerfil),
     documento: seller.documento,
     telefono: seller.telefono,
     email: seller.email,

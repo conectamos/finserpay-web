@@ -3,6 +3,11 @@ import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
 import { resolveSellerProfileType } from "@/lib/seller-auth";
+import {
+  normalizarAvatarPerfil,
+  normalizarTipoPerfilVendedor,
+} from "@/lib/profile-avatars";
+import { ensureVendorProfileVisualColumns } from "@/lib/vendor-profile-schema";
 
 function isAdminRole(rolNombre: string) {
   return String(rolNombre || "").trim().toUpperCase() === "ADMIN";
@@ -78,6 +83,8 @@ async function requireAdmin() {
 }
 
 async function loadAdminSellersPayload() {
+  await ensureVendorProfileVisualColumns();
+
   const [sedes, vendedores, administradores] = await Promise.all([
     prisma.sede.findMany({
       where: {
@@ -176,7 +183,15 @@ async function loadAdminSellersPayload() {
     vendedores: vendedores.map((item) => ({
       id: item.id,
       nombre: item.nombre,
-      tipoPerfil: resolveSellerProfileType(item.nombre),
+      tipoPerfil: normalizarTipoPerfilVendedor(
+        item.tipoPerfil || resolveSellerProfileType(item.nombre)
+      ),
+      avatarKey: normalizarAvatarPerfil(
+        item.avatarKey,
+        normalizarTipoPerfilVendedor(
+          item.tipoPerfil || resolveSellerProfileType(item.nombre)
+        )
+      ),
       documento: item.documento,
       telefono: item.telefono,
       email: item.email,
@@ -236,6 +251,8 @@ export async function POST(req: Request) {
       return session.response;
     }
 
+    await ensureVendorProfileVisualColumns();
+
     const body = (await req.json()) as Record<string, unknown>;
     const nombre = normalizeText(body.nombre);
     const documento = normalizeDocument(body.documento);
@@ -244,6 +261,8 @@ export async function POST(req: Request) {
     const pin = normalizePin(body.pin);
     const sedeIds = parseSedeIds(body.sedeIds);
     const activo = body.activo !== false;
+    const tipoPerfil = normalizarTipoPerfilVendedor(body.tipoPerfil);
+    const avatarKey = normalizarAvatarPerfil(body.avatarKey, tipoPerfil);
 
     if (!nombre) {
       return NextResponse.json(
@@ -293,6 +312,8 @@ export async function POST(req: Request) {
         documento: documento || null,
         telefono: telefono || null,
         email: email || null,
+        tipoPerfil,
+        avatarKey,
         activo,
         pinHash: hashPassword(pin),
         debeCambiarPin: true,
@@ -329,6 +350,8 @@ export async function PATCH(req: Request) {
       return session.response;
     }
 
+    await ensureVendorProfileVisualColumns();
+
     const body = (await req.json()) as Record<string, unknown>;
     const vendedorId = parseSellerId(body.vendedorId);
     const nombre = normalizeText(body.nombre);
@@ -338,6 +361,8 @@ export async function PATCH(req: Request) {
     const pin = normalizePin(body.pin);
     const sedeIds = parseSedeIds(body.sedeIds);
     const activo = body.activo !== false;
+    const tipoPerfil = normalizarTipoPerfilVendedor(body.tipoPerfil);
+    const avatarKey = normalizarAvatarPerfil(body.avatarKey, tipoPerfil);
 
     if (!vendedorId) {
       return NextResponse.json(
@@ -415,6 +440,8 @@ export async function PATCH(req: Request) {
           documento: documento || null,
           telefono: telefono || null,
           email: email || null,
+          tipoPerfil,
+          avatarKey,
           activo,
           ...(pin
             ? {

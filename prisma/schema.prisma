@@ -64,6 +64,8 @@ model Vendedor {
   documento         String?        @unique
   telefono          String?
   email             String?
+  tipoPerfil        String         @default("VENDEDOR")
+  avatarKey         String?
   activo            Boolean        @default(true)
   pinHash           String
   pinTemporalHash   String?

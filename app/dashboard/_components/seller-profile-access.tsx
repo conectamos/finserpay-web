@@ -3,6 +3,10 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import FinserBrand from "@/app/_components/finser-brand";
+import {
+  normalizarAvatarPerfil,
+  obtenerAvatarPerfilSrc,
+} from "@/lib/profile-avatars";
 import LogoutButton from "./logout-button";
 
 type SellerAccessItem = {
@@ -13,6 +17,7 @@ type SellerAccessItem = {
   email: string | null;
   debeCambiarPin: boolean;
   tipoPerfil?: string | null;
+  avatarKey?: string | null;
 };
 
 type SellerVisualKind = "vendedor" | "supervisor";
@@ -26,6 +31,38 @@ function resolveSellerVisualKind(seller: SellerAccessItem): SellerVisualKind {
   }
 
   return "vendedor";
+}
+
+function getSellerAvatarSrc(seller: SellerAccessItem) {
+  const visualKind = resolveSellerVisualKind(seller);
+  const tipo = visualKind === "supervisor" ? "SUPERVISOR" : "VENDEDOR";
+  return obtenerAvatarPerfilSrc(normalizarAvatarPerfil(seller.avatarKey, tipo));
+}
+
+function ProfileAvatar({
+  seller,
+  size = "large",
+}: {
+  seller: SellerAccessItem;
+  size?: "large" | "medium";
+}) {
+  const avatarSrc = getSellerAvatarSrc(seller);
+  const dimensions = size === "large" ? "h-36 w-36" : "h-24 w-24";
+
+  return (
+    <div
+      className={[
+        "mx-auto flex items-center justify-center overflow-hidden rounded-[32px] border border-zinc-300 bg-white shadow-[0_18px_34px_rgba(15,23,42,0.14)]",
+        dimensions,
+      ].join(" ")}
+    >
+      <img
+        src={avatarSrc}
+        alt={seller.nombre}
+        className="h-full w-full object-cover"
+      />
+    </div>
+  );
 }
 
 function SellerPhoneIllustration({ label }: { label: string }) {
@@ -473,15 +510,7 @@ export default function SellerProfileAccess({
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
                 <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.82),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(24,24,27,0.06),transparent_34%)]" />
                 <div className="relative">
-                  {visualKind === "supervisor" ? (
-                    <SupervisorObservationIllustration
-                      label={`Supervisor ${seller.nombre} revisando la operacion`}
-                    />
-                  ) : (
-                    <SellerPhoneIllustration
-                      label={`Asesor ${seller.nombre} con celular`}
-                    />
-                  )}
+                  <ProfileAvatar seller={seller} />
                 </div>
                 <p className="relative mt-5 text-2xl font-black tracking-tight text-slate-950">
                   {seller.nombre}
@@ -520,6 +549,10 @@ export default function SellerProfileAccess({
                   Ingresa tu PIN
                 </h2>
                 <p className="relative mt-2 text-sm text-slate-500">{selectedSeller.nombre}</p>
+              </div>
+
+              <div className="relative hidden sm:block">
+                <ProfileAvatar seller={selectedSeller} size="medium" />
               </div>
 
               <button

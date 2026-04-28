@@ -4,6 +4,8 @@ import { getSessionUser } from "@/lib/auth";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { isAdminRole } from "@/lib/roles";
+import { obtenerAvatarPerfilSrc } from "@/lib/profile-avatars";
+import { ensureVendorProfileVisualColumns } from "@/lib/vendor-profile-schema";
 import LogoutButton from "./_components/logout-button";
 import FinserBrand from "../_components/finser-brand";
 import SellerProfileAccess from "./_components/seller-profile-access";
@@ -512,6 +514,9 @@ export default async function DashboardPage() {
   const rolUsuario = usuario?.rol?.nombre ?? "USUARIO";
   const sedeLabel = usuario?.sede?.nombre ?? "GLOBAL";
   const admin = isAdminRole(rolUsuario);
+  if (!admin) {
+    await ensureVendorProfileVisualColumns();
+  }
   const sellerSession = admin ? null : await getSellerSessionUser(session);
   const assignedSellers = admin
     ? []
@@ -531,6 +536,8 @@ export default async function DashboardPage() {
               documento: true,
               telefono: true,
               email: true,
+              tipoPerfil: true,
+              avatarKey: true,
               debeCambiarPin: true,
             },
           },
@@ -543,6 +550,9 @@ export default async function DashboardPage() {
       });
   const nombreVisible = sellerSession?.nombre ?? nombreUsuario;
   const nombreCorto = nombreVisible.split(" ")[0] || nombreVisible;
+  const sellerAvatarSrc = sellerSession
+    ? obtenerAvatarPerfilSrc(sellerSession.avatarKey)
+    : null;
   const sellerIsSupervisor = !admin && sellerSession?.tipoPerfil === "SUPERVISOR";
   const sellerSearchHref = sellerIsSupervisor
     ? "/dashboard/clientes"
@@ -780,8 +790,16 @@ export default async function DashboardPage() {
                           ? "Supervisor"
                           : "Vendedor"}
                     </span>
-                  <div className="flex h-14 w-14 items-center justify-center rounded-full border border-emerald-900/10 bg-[linear-gradient(135deg,#12b886_0%,#18a7b5_100%)] text-white shadow-[0_10px_24px_rgba(18,184,134,0.22)]">
-                    <SellerIcon kind="new-sale" className="h-8 w-8" />
+                  <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full border border-emerald-900/10 bg-white shadow-[0_10px_24px_rgba(18,184,134,0.22)]">
+                    {sellerAvatarSrc ? (
+                      <img
+                        src={sellerAvatarSrc}
+                        alt={sellerSession?.nombre || "Perfil vendedor"}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <SellerIcon kind="new-sale" className="h-8 w-8" />
+                    )}
                   </div>
                 </div>
               </div>

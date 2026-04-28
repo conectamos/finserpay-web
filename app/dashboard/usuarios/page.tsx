@@ -3,6 +3,14 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import {
+  type AvatarPerfilKey,
+  type TipoPerfilVendedor,
+  normalizarAvatarPerfil,
+  obtenerAvatarDefaultPorTipo,
+  obtenerAvatarPerfilSrc,
+  obtenerOpcionesAvatarPorTipo,
+} from "@/lib/profile-avatars";
 
 type SessionUser = {
   id: number;
@@ -23,7 +31,8 @@ type SedeItem = {
 type SellerItem = {
   id: number;
   nombre: string;
-  tipoPerfil: "VENDEDOR" | "SUPERVISOR";
+  tipoPerfil: TipoPerfilVendedor;
+  avatarKey: AvatarPerfilKey;
   documento: string | null;
   telefono: string | null;
   email: string | null;
@@ -63,6 +72,8 @@ type AdminUsersResponse = {
 
 type SellerDraft = {
   nombre: string;
+  tipoPerfil: TipoPerfilVendedor;
+  avatarKey: AvatarPerfilKey;
   documento: string;
   telefono: string;
   email: string;
@@ -98,6 +109,69 @@ function sanitizePin(value: string) {
 
 function sanitizePhone(value: string) {
   return value.replace(/[^\d+]/g, "");
+}
+
+function AvatarBadge({
+  avatarKey,
+  label,
+  size = "small",
+}: {
+  avatarKey: AvatarPerfilKey;
+  label: string;
+  size?: "small" | "large";
+}) {
+  const dimensions = size === "large" ? "h-24 w-24" : "h-14 w-14";
+
+  return (
+    <div
+      className={[
+        "shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm",
+        dimensions,
+      ].join(" ")}
+    >
+      <img
+        src={obtenerAvatarPerfilSrc(avatarKey)}
+        alt={label}
+        className="h-full w-full object-cover"
+      />
+    </div>
+  );
+}
+
+function AvatarSelector({
+  tipoPerfil,
+  avatarKey,
+  onChange,
+}: {
+  tipoPerfil: TipoPerfilVendedor;
+  avatarKey: AvatarPerfilKey;
+  onChange: (avatarKey: AvatarPerfilKey) => void;
+}) {
+  const opciones = obtenerOpcionesAvatarPorTipo(tipoPerfil);
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="text-sm font-semibold text-slate-700">Avatar del perfil</p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        {opciones.map((opcion) => (
+          <button
+            key={opcion.value}
+            type="button"
+            onClick={() => onChange(opcion.value)}
+            className={[
+              "flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition",
+              avatarKey === opcion.value
+                ? "border-slate-950 bg-slate-50"
+                : "border-slate-200 bg-white hover:border-slate-400",
+            ].join(" ")}
+          >
+            <AvatarBadge avatarKey={opcion.value} label={opcion.label} />
+            <span className="text-sm font-bold text-slate-900">{opcion.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function SedeTransferBoard({
@@ -222,11 +296,14 @@ function SellerProfileButton({
       ].join(" ")}
     >
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="font-black text-slate-950">{seller.nombre}</p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">
-            {seller.documento || "Sin documento"}
-          </p>
+        <div className="flex min-w-0 items-start gap-3">
+          <AvatarBadge avatarKey={seller.avatarKey} label={seller.nombre} />
+          <div className="min-w-0">
+            <p className="truncate font-black text-slate-950">{seller.nombre}</p>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              {seller.documento || "Sin documento"}
+            </p>
+          </div>
         </div>
         <span
           className={[
@@ -269,11 +346,14 @@ function AdminProfileButton({
       ].join(" ")}
     >
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="font-black text-slate-950">{admin.nombre}</p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">
-            Usuario: {admin.usuario}
-          </p>
+        <div className="flex min-w-0 items-start gap-3">
+          <AvatarBadge avatarKey="ADMINISTRADOR_HOMBRE" label={admin.nombre} />
+          <div className="min-w-0">
+            <p className="truncate font-black text-slate-950">{admin.nombre}</p>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              Usuario: {admin.usuario}
+            </p>
+          </div>
         </div>
         <span
           className={[
@@ -307,6 +387,8 @@ export default function GestionVendedoresPage() {
 
   const [nuevo, setNuevo] = useState<SellerDraft>({
     nombre: "",
+    tipoPerfil: "VENDEDOR",
+    avatarKey: obtenerAvatarDefaultPorTipo("VENDEDOR"),
     documento: "",
     telefono: "",
     email: "",
@@ -334,6 +416,8 @@ export default function GestionVendedoresPage() {
         (acc, item) => {
           acc[item.id] = {
             nombre: item.nombre,
+            tipoPerfil: item.tipoPerfil,
+            avatarKey: normalizarAvatarPerfil(item.avatarKey, item.tipoPerfil),
             documento: item.documento || "",
             telefono: item.telefono || "",
             email: item.email || "",
@@ -438,6 +522,14 @@ export default function GestionVendedoresPage() {
     }));
   };
 
+  const actualizarNuevoTipo = (tipoPerfil: TipoPerfilVendedor) => {
+    setNuevo((current) => ({
+      ...current,
+      tipoPerfil,
+      avatarKey: obtenerAvatarDefaultPorTipo(tipoPerfil),
+    }));
+  };
+
   const actualizarEdicion = (
     vendedorId: number,
     campo: keyof SellerDraft,
@@ -448,6 +540,20 @@ export default function GestionVendedoresPage() {
       [vendedorId]: {
         ...current[vendedorId],
         [campo]: valor,
+      },
+    }));
+  };
+
+  const actualizarEdicionTipo = (
+    vendedorId: number,
+    tipoPerfil: TipoPerfilVendedor
+  ) => {
+    setEdiciones((current) => ({
+      ...current,
+      [vendedorId]: {
+        ...current[vendedorId],
+        tipoPerfil,
+        avatarKey: obtenerAvatarDefaultPorTipo(tipoPerfil),
       },
     }));
   };
@@ -464,6 +570,8 @@ export default function GestionVendedoresPage() {
         },
         body: JSON.stringify({
           nombre: nuevo.nombre,
+          tipoPerfil: nuevo.tipoPerfil,
+          avatarKey: nuevo.avatarKey,
           documento: nuevo.documento,
           telefono: nuevo.telefono,
           email: nuevo.email,
@@ -487,6 +595,8 @@ export default function GestionVendedoresPage() {
       setMensaje(data.mensaje || "Vendedor creado correctamente");
       setNuevo({
         nombre: "",
+        tipoPerfil: "VENDEDOR",
+        avatarKey: obtenerAvatarDefaultPorTipo("VENDEDOR"),
         documento: "",
         telefono: "",
         email: "",
@@ -516,6 +626,8 @@ export default function GestionVendedoresPage() {
         body: JSON.stringify({
           vendedorId,
           nombre: draft.nombre,
+          tipoPerfil: draft.tipoPerfil,
+          avatarKey: draft.avatarKey,
           documento: draft.documento,
           telefono: draft.telefono,
           email: draft.email,
@@ -699,6 +811,20 @@ export default function GestionVendedoresPage() {
             </label>
 
             <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+              Tipo de perfil
+              <select
+                value={nuevo.tipoPerfil}
+                onChange={(event) =>
+                  actualizarNuevoTipo(event.target.value as TipoPerfilVendedor)
+                }
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="VENDEDOR">Vendedor</option>
+                <option value="SUPERVISOR">Supervisor</option>
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
               Telefono
               <input
                 value={nuevo.telefono}
@@ -743,6 +869,14 @@ export default function GestionVendedoresPage() {
               />
               Activo
             </label>
+          </div>
+
+          <div className="mt-6">
+            <AvatarSelector
+              tipoPerfil={nuevo.tipoPerfil}
+              avatarKey={nuevo.avatarKey}
+              onChange={(avatarKey) => actualizarNuevo("avatarKey", avatarKey)}
+            />
           </div>
 
           <div className="mt-6">
@@ -933,19 +1067,26 @@ export default function GestionVendedoresPage() {
                   className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-5"
                 >
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div>
-                      <div className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                        {vendedor.tipoPerfil === "SUPERVISOR"
-                          ? "Supervisor"
-                          : "Vendedor"}{" "}
-                        #{vendedor.id}
+                    <div className="flex gap-4">
+                      <AvatarBadge
+                        avatarKey={draft.avatarKey}
+                        label={draft.nombre || vendedor.nombre}
+                        size="large"
+                      />
+                      <div>
+                        <div className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                          {draft.tipoPerfil === "SUPERVISOR"
+                            ? "Supervisor"
+                            : "Vendedor"}{" "}
+                          #{vendedor.id}
+                        </div>
+                        <h3 className="mt-3 text-2xl font-black text-slate-950">
+                          {vendedor.nombre}
+                        </h3>
+                        <p className="mt-2 text-sm text-slate-500">
+                          Ultimo ingreso: {formatDate(vendedor.ultimoIngresoAt)}
+                        </p>
                       </div>
-                      <h3 className="mt-3 text-2xl font-black text-slate-950">
-                        {vendedor.nombre}
-                      </h3>
-                      <p className="mt-2 text-sm text-slate-500">
-                        Ultimo ingreso: {formatDate(vendedor.ultimoIngresoAt)}
-                      </p>
                     </div>
 
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
@@ -985,6 +1126,23 @@ export default function GestionVendedoresPage() {
                         }
                         className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                       />
+                    </label>
+
+                    <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                      Tipo de perfil
+                      <select
+                        value={draft.tipoPerfil}
+                        onChange={(event) =>
+                          actualizarEdicionTipo(
+                            vendedor.id,
+                            event.target.value as TipoPerfilVendedor
+                          )
+                        }
+                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                      >
+                        <option value="VENDEDOR">Vendedor</option>
+                        <option value="SUPERVISOR">Supervisor</option>
+                      </select>
                     </label>
 
                     <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
@@ -1038,6 +1196,16 @@ export default function GestionVendedoresPage() {
                       />
                       Activo
                     </label>
+                  </div>
+
+                  <div className="mt-6">
+                    <AvatarSelector
+                      tipoPerfil={draft.tipoPerfil}
+                      avatarKey={draft.avatarKey}
+                      onChange={(avatarKey) =>
+                        actualizarEdicion(vendedor.id, "avatarKey", avatarKey)
+                      }
+                    />
                   </div>
 
                   <div className="mt-6">
