@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   type AvatarPerfilKey,
   type TipoPerfilVendedor,
+  type TipoPerfilVisual,
   normalizarAvatarPerfil,
   obtenerAvatarDefaultPorTipo,
   obtenerAvatarPerfilSrc,
@@ -52,6 +53,7 @@ type AdminItem = {
   id: number;
   nombre: string;
   usuario: string;
+  avatarKey: AvatarPerfilKey;
   activo: boolean;
   rolNombre: string;
   sede: {
@@ -150,7 +152,7 @@ function AvatarSelector({
   avatarKey,
   onChange,
 }: {
-  tipoPerfil: TipoPerfilVendedor;
+  tipoPerfil: TipoPerfilVisual;
   avatarKey: AvatarPerfilKey;
   onChange: (avatarKey: AvatarPerfilKey) => void;
 }) {
@@ -354,7 +356,7 @@ function AdminProfileButton({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <AvatarBadge avatarKey="ADMINISTRADOR_HOMBRE" label={admin.nombre} />
+          <AvatarBadge avatarKey={admin.avatarKey} label={admin.nombre} />
           <div className="min-w-0">
             <p className="truncate font-black text-slate-950">{admin.nombre}</p>
             <p className="mt-1 text-xs font-semibold text-slate-500">
@@ -938,15 +940,17 @@ export default function GestionVendedoresPage() {
             </label>
           </div>
 
-          {!nuevoEsAdmin && (
           <div className="mt-6">
             <AvatarSelector
-              tipoPerfil={nuevo.tipoPerfil as TipoPerfilVendedor}
+              tipoPerfil={
+                nuevoEsAdmin
+                  ? "ADMINISTRADOR"
+                  : (nuevo.tipoPerfil as TipoPerfilVendedor)
+              }
               avatarKey={nuevo.avatarKey}
               onChange={(avatarKey) => actualizarNuevo("avatarKey", avatarKey)}
             />
           </div>
-          )}
 
           {!nuevoEsAdmin && (
           <div className="mt-6">

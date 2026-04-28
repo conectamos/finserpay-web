@@ -8,6 +8,7 @@ import {
   normalizarTipoPerfilVendedor,
 } from "@/lib/profile-avatars";
 import { ensureVendorProfileVisualColumns } from "@/lib/vendor-profile-schema";
+import { ensureUserProfileVisualColumns } from "@/lib/user-profile-schema";
 
 function isAdminRole(rolNombre: string) {
   return String(rolNombre || "").trim().toUpperCase() === "ADMIN";
@@ -92,7 +93,10 @@ async function requireAdmin() {
 }
 
 async function loadAdminSellersPayload() {
-  await ensureVendorProfileVisualColumns();
+  await Promise.all([
+    ensureVendorProfileVisualColumns(),
+    ensureUserProfileVisualColumns(),
+  ]);
 
   const [sedes, vendedores, administradores] = await Promise.all([
     prisma.sede.findMany({
@@ -151,6 +155,7 @@ async function loadAdminSellersPayload() {
         id: true,
         nombre: true,
         usuario: true,
+        avatarKey: true,
         activo: true,
         createdAt: true,
         updatedAt: true,
@@ -183,6 +188,7 @@ async function loadAdminSellersPayload() {
       id: item.id,
       nombre: item.nombre,
       usuario: item.usuario,
+      avatarKey: normalizarAvatarPerfil(item.avatarKey, "ADMINISTRADOR"),
       activo: item.activo,
       rolNombre: item.rol.nombre,
       sede: item.sede,
@@ -289,8 +295,14 @@ export async function POST(req: Request) {
     const avatarKey = normalizarAvatarPerfil(body.avatarKey, tipoPerfil);
 
     if (tipoPerfilRaw === "ADMINISTRADOR") {
+      await ensureUserProfileVisualColumns();
+
       const usuario = normalizeUsername(body.usuario);
       const clave = String(body.clave || body.pin || "").trim();
+      const avatarAdministrador = normalizarAvatarPerfil(
+        body.avatarKey,
+        "ADMINISTRADOR"
+      );
       const sedeId =
         parseSedeId(body.sedeId) ||
         (sedeIds.length === 1 ? sedeIds[0] : null);
@@ -352,6 +364,7 @@ export async function POST(req: Request) {
           nombre,
           usuario,
           claveHash: hashPassword(clave),
+          avatarKey: avatarAdministrador,
           activo,
           rolId: adminRole.id,
           sedeId,
