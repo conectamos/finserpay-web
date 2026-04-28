@@ -19,6 +19,5 @@ export const config = {
     "/alertas/prestamos/:path*",
     "/dashboard/financiero/:path*",
     "/dashboard/deuda-sedes/:path*",
-    "/dashboard/sedes/:path*",
   ],
 };

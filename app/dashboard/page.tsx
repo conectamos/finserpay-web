@@ -433,7 +433,7 @@ function AdminManagementCard() {
             "border border-zinc-950 bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] text-white hover:opacity-95",
           ].join(" ")}
         >
-          GESTIONAR SEDE
+          Gestionar sede
         </Link>
         <Link
           href="/dashboard/usuarios"
@@ -442,7 +442,7 @@ function AdminManagementCard() {
             "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50",
           ].join(" ")}
         >
-          GESTIONAR VENDEDOR
+          Gestionar vendedor
         </Link>
       </div>
     </section>
