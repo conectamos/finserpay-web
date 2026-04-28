@@ -234,7 +234,7 @@ function SedeTransferBoard({
             ))
           ) : (
             <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
-              Selecciona una o varias sedes para este vendedor.
+              Selecciona una o varias sedes para este usuario.
             </div>
           )}
         </div>
@@ -451,10 +451,10 @@ export default function GestionVendedoresPage() {
       if (usersRes.ok) {
         applyData(usersData);
       } else {
-        setMensaje(usersData.error || "No se pudo cargar la gestion de vendedores");
+        setMensaje(usersData.error || "No se pudo cargar la gestion de usuarios");
       }
     } catch {
-      setMensaje("Error cargando la gestion de vendedores");
+      setMensaje("Error cargando la gestion de usuarios");
     } finally {
       setCargando(false);
     }
@@ -587,12 +587,12 @@ export default function GestionVendedoresPage() {
       };
 
       if (!res.ok) {
-        setMensaje(data.error || "No se pudo crear el vendedor");
+        setMensaje(data.error || "No se pudo crear el usuario");
         return;
       }
 
       applyData(data);
-      setMensaje(data.mensaje || "Vendedor creado correctamente");
+      setMensaje(data.mensaje || "Usuario creado correctamente");
       setNuevo({
         nombre: "",
         tipoPerfil: "VENDEDOR",
@@ -605,7 +605,7 @@ export default function GestionVendedoresPage() {
         sedeIds: [],
       });
     } catch {
-      setMensaje("Error creando el vendedor");
+      setMensaje("Error creando el usuario");
     } finally {
       setGuardandoNuevo(false);
     }
@@ -643,14 +643,14 @@ export default function GestionVendedoresPage() {
       };
 
       if (!res.ok) {
-        setMensaje(data.error || "No se pudo actualizar el vendedor");
+        setMensaje(data.error || "No se pudo actualizar el usuario");
         return;
       }
 
       applyData(data);
-      setMensaje(data.mensaje || "Vendedor actualizado correctamente");
+      setMensaje(data.mensaje || "Usuario actualizado correctamente");
     } catch {
-      setMensaje("Error actualizando el vendedor");
+      setMensaje("Error actualizando el usuario");
     } finally {
       setProcesandoId(null);
     }
@@ -683,15 +683,15 @@ export default function GestionVendedoresPage() {
       };
 
       if (!res.ok) {
-        setMensaje(data.error || "No se pudo eliminar el vendedor");
+        setMensaje(data.error || "No se pudo eliminar el usuario");
         return;
       }
 
       applyData(data);
       setSelectedProfile(null);
-      setMensaje(data.mensaje || "Vendedor eliminado correctamente");
+      setMensaje(data.mensaje || "Usuario eliminado correctamente");
     } catch {
-      setMensaje("Error eliminando el vendedor");
+      setMensaje("Error eliminando el usuario");
     } finally {
       setProcesandoId(null);
     }
@@ -702,10 +702,10 @@ export default function GestionVendedoresPage() {
       <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
         <div className="mx-auto max-w-7xl rounded-[32px] bg-white px-8 py-12 shadow-sm ring-1 ring-slate-200">
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Vendedores
+            Usuarios
           </p>
           <h1 className="mt-3 text-3xl font-black text-slate-950">
-            Cargando gestion de vendedores...
+            Cargando gestion de usuarios...
           </h1>
         </div>
       </div>
@@ -720,10 +720,10 @@ export default function GestionVendedoresPage() {
             Acceso restringido
           </div>
           <h1 className="mt-4 text-3xl font-black text-slate-950">
-            Solo el administrador puede gestionar vendedores
+            Solo el administrador puede gestionar usuarios
           </h1>
           <p className="mt-3 text-sm text-slate-500">
-            Desde aqui asignas vendedores a las sedes y reinicias sus PIN cuando haga falta.
+            Desde aqui asignas usuarios a las sedes y reinicias sus PIN cuando haga falta.
           </p>
           <div className="mt-6">
             <Link
@@ -749,11 +749,11 @@ export default function GestionVendedoresPage() {
               </div>
 
               <h1 className="mt-4 text-4xl font-black tracking-tight md:text-5xl">
-                Vendedores por sede
+                Usuarios por sede
               </h1>
 
               <p className="mt-3 text-sm leading-6 text-slate-200 md:text-base">
-                El acceso a la sede se hace con usuario y clave. Luego cada vendedor entra a su perfil con PIN propio y puede cambiarlo despues.
+                El acceso a la sede se hace con usuario y clave. Luego cada perfil entra con PIN propio y puede cambiarlo despues.
               </p>
             </div>
 
@@ -776,13 +776,13 @@ export default function GestionVendedoresPage() {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                Nuevo vendedor
+                Nuevo usuario
               </div>
               <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
                 Crear perfil con PIN
               </h2>
               <p className="mt-2 text-sm text-slate-500">
-                El PIN inicial debe tener entre 4 y 6 digitos. El vendedor podra cambiarlo desde su perfil.
+                El PIN inicial debe tener entre 4 y 6 digitos. El usuario podra cambiarlo desde su perfil.
               </p>
             </div>
           </div>
@@ -805,7 +805,7 @@ export default function GestionVendedoresPage() {
                 onChange={(event) =>
                   actualizarNuevo("documento", sanitizeDocument(event.target.value))
                 }
-                placeholder="Cedula del vendedor"
+                placeholder="Cedula del usuario"
                 className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               />
             </label>
@@ -884,7 +884,7 @@ export default function GestionVendedoresPage() {
               Asignacion de sedes
             </p>
             <p className="mt-1 text-sm text-slate-500">
-              Marca las sedes en las que este vendedor podra abrir su perfil.
+              Marca las sedes en las que este usuario podra abrir su perfil.
             </p>
             <div className="mt-4">
               <SedeTransferBoard
@@ -902,7 +902,7 @@ export default function GestionVendedoresPage() {
               disabled={guardandoNuevo}
               className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {guardandoNuevo ? "Creando..." : "Crear vendedor"}
+              {guardandoNuevo ? "Creando..." : "Crear usuario"}
             </button>
           </div>
         </section>
@@ -1234,7 +1234,7 @@ export default function GestionVendedoresPage() {
                           disabled={procesandoId === vendedor.id}
                           className="rounded-2xl border border-red-200 bg-white px-5 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-70"
                         >
-                          Eliminar vendedor
+                          Eliminar usuario
                         </button>
 
                         <button

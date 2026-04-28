@@ -70,7 +70,7 @@ async function requireAdmin() {
     return {
       ok: false as const,
       response: NextResponse.json(
-        { error: "Solo el administrador puede gestionar vendedores" },
+        { error: "Solo el administrador puede gestionar usuarios" },
         { status: 403 }
       ),
     };
@@ -237,7 +237,7 @@ export async function GET() {
   } catch (error) {
     console.error("ERROR LISTANDO VENDEDORES:", error);
     return NextResponse.json(
-      { error: "No se pudo cargar la gestion de vendedores" },
+      { error: "No se pudo cargar la gestion de usuarios" },
       { status: 500 }
     );
   }
@@ -266,7 +266,7 @@ export async function POST(req: Request) {
 
     if (!nombre) {
       return NextResponse.json(
-        { error: "El nombre del vendedor es obligatorio" },
+        { error: "El nombre del usuario es obligatorio" },
         { status: 400 }
       );
     }
@@ -280,7 +280,7 @@ export async function POST(req: Request) {
 
     if (!sedeIds.length) {
       return NextResponse.json(
-        { error: "Debes asignar al menos una sede al vendedor" },
+        { error: "Debes asignar al menos una sede al usuario" },
         { status: 400 }
       );
     }
@@ -300,7 +300,7 @@ export async function POST(req: Request) {
 
       if (existingDocument) {
         return NextResponse.json(
-          { error: "Ya existe un vendedor con ese documento" },
+          { error: "Ya existe un usuario con ese documento" },
           { status: 400 }
         );
       }
@@ -330,13 +330,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      mensaje: "Vendedor creado correctamente",
+      mensaje: "Usuario creado correctamente",
       ...(await loadAdminSellersPayload()),
     });
   } catch (error) {
     console.error("ERROR CREANDO VENDEDOR:", error);
     return NextResponse.json(
-      { error: "No se pudo crear el vendedor" },
+      { error: "No se pudo crear el usuario" },
       { status: 500 }
     );
   }
@@ -366,14 +366,14 @@ export async function PATCH(req: Request) {
 
     if (!vendedorId) {
       return NextResponse.json(
-        { error: "Vendedor invalido" },
+        { error: "Usuario invalido" },
         { status: 400 }
       );
     }
 
     if (!nombre) {
       return NextResponse.json(
-        { error: "El nombre del vendedor es obligatorio" },
+        { error: "El nombre del usuario es obligatorio" },
         { status: 400 }
       );
     }
@@ -387,7 +387,7 @@ export async function PATCH(req: Request) {
 
     if (!sedeIds.length) {
       return NextResponse.json(
-        { error: "Debes asignar al menos una sede al vendedor" },
+        { error: "Debes asignar al menos una sede al usuario" },
         { status: 400 }
       );
     }
@@ -401,7 +401,7 @@ export async function PATCH(req: Request) {
 
     if (!seller) {
       return NextResponse.json(
-        { error: "Vendedor no encontrado" },
+        { error: "Usuario no encontrado" },
         { status: 404 }
       );
     }
@@ -426,7 +426,7 @@ export async function PATCH(req: Request) {
 
       if (existingDocument) {
         return NextResponse.json(
-          { error: "Ya existe otro vendedor con ese documento" },
+          { error: "Ya existe otro usuario con ese documento" },
           { status: 400 }
         );
       }
@@ -471,14 +471,14 @@ export async function PATCH(req: Request) {
     return NextResponse.json({
       ok: true,
       mensaje: pin
-        ? "Vendedor actualizado y PIN reiniciado correctamente"
-        : "Vendedor actualizado correctamente",
+        ? "Usuario actualizado y PIN reiniciado correctamente"
+        : "Usuario actualizado correctamente",
       ...(await loadAdminSellersPayload()),
     });
   } catch (error) {
     console.error("ERROR ACTUALIZANDO VENDEDOR:", error);
     return NextResponse.json(
-      { error: "No se pudo actualizar el vendedor" },
+      { error: "No se pudo actualizar el usuario" },
       { status: 500 }
     );
   }
@@ -497,7 +497,7 @@ export async function DELETE(req: Request) {
 
     if (!vendedorId) {
       return NextResponse.json(
-        { error: "Vendedor invalido" },
+        { error: "Usuario invalido" },
         { status: 400 }
       );
     }
@@ -511,7 +511,7 @@ export async function DELETE(req: Request) {
 
     if (!seller) {
       return NextResponse.json(
-        { error: "Vendedor no encontrado" },
+        { error: "Usuario no encontrado" },
         { status: 404 }
       );
     }
@@ -533,13 +533,13 @@ export async function DELETE(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      mensaje: "Vendedor eliminado correctamente",
+      mensaje: "Usuario eliminado correctamente",
       ...(await loadAdminSellersPayload()),
     });
   } catch (error) {
     console.error("ERROR ELIMINANDO VENDEDOR:", error);
     return NextResponse.json(
-      { error: "No se pudo eliminar el vendedor" },
+      { error: "No se pudo eliminar el usuario" },
       { status: 500 }
     );
   }
