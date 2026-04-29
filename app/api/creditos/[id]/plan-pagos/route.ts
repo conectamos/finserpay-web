@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
@@ -147,6 +148,7 @@ export async function GET(
       montoCredito: Number(credito.montoCredito || 0),
       valorCuota: Number(credito.valorCuota || 0),
       plazoMeses: Number(credito.plazoMeses || 1),
+      frecuenciaPago: credito.frecuenciaPago,
       fechaPrimerPago: credito.fechaPrimerPago || credito.fechaProximoPago,
       abonos: abonos.map((item) => ({
         valor: Number(item.valor || 0),
@@ -201,18 +203,19 @@ export async function GET(
 
     const summaryRows = [
       ["Credito", money(Number(credito.montoCredito || 0))],
-      ["Cuota mensual", money(Number(credito.valorCuota || 0))],
+      ["Valor cuota", money(Number(credito.valorCuota || 0))],
+      ["Frecuencia", getPaymentFrequencyLabel(credito.frecuenciaPago)],
       ["Primer pago", dateLabel(credito.fechaPrimerPago)],
       ["Abonado", money(plan.totalPaid)],
     ];
 
-    const starts = [36, 171, 306, 441];
+    const starts = [36, 142, 248, 354, 460];
     summaryRows.forEach(([label, value], index) => {
       const x = starts[index];
-      doc.save().roundedRect(x, 188, 118, 46, 12).fillAndStroke("#FFFFFF", "#E2E8F0").restore();
+      doc.save().roundedRect(x, 188, 94, 46, 12).fillAndStroke("#FFFFFF", "#E2E8F0").restore();
       doc.fillColor("#64748B").font(fonts.bold).fontSize(8).text(label, x + 12, 198);
       doc.fillColor("#0F172A").font(fonts.bold).fontSize(11).text(value, x + 12, 213, {
-        width: 94,
+        width: 70,
       });
     });
 

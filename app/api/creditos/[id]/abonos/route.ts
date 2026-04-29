@@ -165,6 +165,7 @@ async function loadCredit(creditId: number, admin: boolean, sedeId: number) {
       cuotaInicial: true,
       valorCuota: true,
       plazoMeses: true,
+      frecuenciaPago: true,
       fechaPrimerPago: true,
       fechaProximoPago: true,
       referenciaPago: true,
@@ -245,6 +246,7 @@ async function loadPaymentPlan(credit: Awaited<ReturnType<typeof loadCredit>>) {
     montoCredito: Number(credit.montoCredito || 0),
     valorCuota: Number(credit.valorCuota || 0),
     plazoMeses: Number(credit.plazoMeses || 1),
+    frecuenciaPago: credit.frecuenciaPago,
     fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
     abonos: abonos.map((item) => ({
       valor: Number(item.valor || 0),
@@ -382,6 +384,7 @@ async function syncMoraAutomation(credit: LoadedCredit, plan: PaymentPlan) {
         cuotaInicial: true,
         valorCuota: true,
         plazoMeses: true,
+        frecuenciaPago: true,
         fechaPrimerPago: true,
         fechaProximoPago: true,
         referenciaPago: true,
@@ -739,6 +742,7 @@ export async function POST(
         montoCredito: Number(credit.montoCredito || 0),
         valorCuota: Number(credit.valorCuota || 0),
         plazoMeses: Number(credit.plazoMeses || 1),
+        frecuenciaPago: credit.frecuenciaPago,
         fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
         abonos: txAbonos.map((item) => ({
           valor: Number(item.valor || 0),

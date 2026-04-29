@@ -7,6 +7,7 @@ import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
+import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -495,6 +496,8 @@ export async function GET(
       addParagraph(doc, "No se encontraron referencias familiares registradas en el snapshot del contrato.", fonts);
     }
 
+    const frecuenciaPagoLabel = getPaymentFrequencyLabel(credito.frecuenciaPago);
+
     addSectionTitle(doc, "4. Resumen del credito", fonts);
     addFieldGrid(
       doc,
@@ -511,6 +514,7 @@ export async function GET(
         },
         { label: "Valor total a pagar", value: formatCurrency(credito.montoCredito) },
         { label: "Numero de cuotas", value: String(credito.plazoMeses || "-") },
+        { label: "Frecuencia de pago", value: frecuenciaPagoLabel },
         { label: "Valor de cada cuota", value: formatCurrency(credito.valorCuota) },
         { label: "Primer pago", value: formatDate(credito.fechaPrimerPago) },
         { label: "Referencia de pago", value: credito.referenciaPago || "-" },
@@ -542,7 +546,7 @@ export async function GET(
     );
     addParagraph(
       doc,
-      `2. CONDICIONES DEL CREDITO. Total a pagar: ${formatCurrency(credito.montoCredito)}. Total fianza a pagar: ${formatCurrency(credito.valorFianza)}. Numero de cuotas: ${credito.plazoMeses || "-"}. Valor por cuota: ${formatCurrency(credito.valorCuota)}. Fecha primer pago: ${formatDate(credito.fechaPrimerPago)}. El incumplimiento de una o mas cuotas dara lugar a exigibilidad inmediata, intereses de mora y gastos de cobranza.`,
+      `2. CONDICIONES DEL CREDITO. Total a pagar: ${formatCurrency(credito.montoCredito)}. Total fianza a pagar: ${formatCurrency(credito.valorFianza)}. Numero de cuotas: ${credito.plazoMeses || "-"}. Frecuencia de pago: ${frecuenciaPagoLabel}. Valor por cuota: ${formatCurrency(credito.valorCuota)}. Fecha primer pago: ${formatDate(credito.fechaPrimerPago)}. El incumplimiento de una o mas cuotas dara lugar a exigibilidad inmediata, intereses de mora y gastos de cobranza.`,
       fonts
     );
     addParagraph(
@@ -614,7 +618,7 @@ export async function GET(
     );
     addParagraph(
       doc,
-      `1. FORMA DE PAGO. La suma sera cancelada en ${credito.plazoMeses || "-"} cuotas de ${formatCurrency(credito.valorCuota)} cada una, con fecha de inicio ${formatDate(credito.fechaPrimerPago)}.`,
+      `1. FORMA DE PAGO. La suma sera cancelada en ${credito.plazoMeses || "-"} cuotas de ${formatCurrency(credito.valorCuota)} cada una, con frecuencia ${frecuenciaPagoLabel.toLowerCase()} y fecha de inicio ${formatDate(credito.fechaPrimerPago)}.`,
       fonts
     );
     addParagraph(

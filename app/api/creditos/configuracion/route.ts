@@ -71,6 +71,8 @@ export async function PATCH(req: Request) {
     const settings = await updateCreditSettings({
       tasaInteresEa: body.tasaInteresEa,
       fianzaPorcentaje: body.fianzaPorcentaje,
+      plazoCuotas: body.plazoCuotas,
+      frecuenciaPago: body.frecuenciaPago,
     });
 
     return NextResponse.json({ ok: true, settings });

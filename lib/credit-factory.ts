@@ -16,9 +16,21 @@ export type CreditAdminCommand =
 export const CREDIT_ABONO_CAJA_MARKER = "ABONO_CREDITO_ID:";
 export const DEFAULT_LEGAL_CONSUMER_RATE_EA = 17.84;
 export const DEFAULT_FIANCO_SURETY_PERCENTAGE = 60;
+export const DEFAULT_CREDIT_INSTALLMENTS = 12;
+export const MAX_CREDIT_INSTALLMENTS = 16;
+export const DEFAULT_PAYMENT_FREQUENCY = "QUINCENAL";
 export const MAX_DEVICE_FINANCING_BASE = 800_000;
 export const DEFAULT_LEGAL_RATE_REFERENCE =
   "SFC consumo y ordinario vigente del 1 al 30 de abril de 2026";
+
+export const PAYMENT_FREQUENCY_OPTIONS = [
+  { value: "SEMANAL", label: "Semanal", days: 7, periodsPerYear: 52 },
+  { value: "CATORCENAL", label: "Catorcenal", days: 14, periodsPerYear: 26 },
+  { value: "QUINCENAL", label: "Quincenal", days: 15, periodsPerYear: 24 },
+  { value: "MENSUAL", label: "Mensual", days: 30, periodsPerYear: 12 },
+] as const;
+
+export type PaymentFrequency = (typeof PAYMENT_FREQUENCY_OPTIONS)[number]["value"];
 
 export function sanitizeDeviceValue(value: unknown) {
   return String(value ?? "").trim().replace(/\s+/g, "");
@@ -130,6 +142,51 @@ export function normalizePaymentMethod(value: unknown) {
   return "EFECTIVO";
 }
 
+export function normalizePaymentFrequency(value: unknown): PaymentFrequency {
+  const frequency = String(value ?? "").trim().toUpperCase();
+  const match = PAYMENT_FREQUENCY_OPTIONS.find((option) => option.value === frequency);
+
+  return match?.value || DEFAULT_PAYMENT_FREQUENCY;
+}
+
+export function getPaymentFrequencyLabel(value: unknown) {
+  const frequency = normalizePaymentFrequency(value);
+  return (
+    PAYMENT_FREQUENCY_OPTIONS.find((option) => option.value === frequency)?.label ||
+    "Quincenal"
+  );
+}
+
+export function getPaymentFrequencyPeriodsPerYear(value: unknown) {
+  const frequency = normalizePaymentFrequency(value);
+  return (
+    PAYMENT_FREQUENCY_OPTIONS.find((option) => option.value === frequency)
+      ?.periodsPerYear || 24
+  );
+}
+
+export function addPaymentFrequency(
+  date: Date | number | string,
+  frequencyValue: unknown,
+  periods = 1
+) {
+  const frequency = normalizePaymentFrequency(frequencyValue);
+  const baseDate = new Date(date);
+  const next = Number.isNaN(baseDate.getTime()) ? new Date() : baseDate;
+  next.setHours(12, 0, 0, 0);
+
+  if (frequency === "MENSUAL") {
+    next.setMonth(next.getMonth() + periods);
+    return next;
+  }
+
+  const days =
+    PAYMENT_FREQUENCY_OPTIONS.find((option) => option.value === frequency)?.days || 15;
+  next.setDate(next.getDate() + days * periods);
+
+  return next;
+}
+
 export function calculateFinancedBalance(
   valorTotalEquipo: number | null | undefined,
   cuotaInicial: number | null | undefined
@@ -153,12 +210,24 @@ export function calculateRequiredInitialPayment(
   return Math.round(initial * 100) / 100;
 }
 
-export function getDefaultFirstPaymentDate(from: Date | number | string = new Date()) {
+export function getDefaultFirstPaymentDate(
+  from: Date | number | string = new Date(),
+  frequency: unknown = DEFAULT_PAYMENT_FREQUENCY
+) {
   const baseDate = new Date(from);
   const normalized = Number.isNaN(baseDate.getTime()) ? new Date() : baseDate;
   normalized.setHours(12, 0, 0, 0);
-  normalized.setDate(normalized.getDate() + 15);
-  return normalized.toISOString().slice(0, 10);
+  return addPaymentFrequency(normalized, frequency, 1).toISOString().slice(0, 10);
+}
+
+export function getDefaultFirstPaymentDateObject(
+  frequency: unknown = DEFAULT_PAYMENT_FREQUENCY,
+  from: Date | number | string = new Date()
+) {
+  const baseDate = new Date(from);
+  const normalized = Number.isNaN(baseDate.getTime()) ? new Date() : baseDate;
+  normalized.setHours(12, 0, 0, 0);
+  return addPaymentFrequency(normalized, frequency, 1);
 }
 
 export function calculateInstallmentValue(
@@ -183,11 +252,22 @@ export function annualEffectiveToMonthlyEffectiveRate(
   return Math.round(monthlyRate * 1000000) / 1000000;
 }
 
+export function annualEffectiveToPeriodicEffectiveRate(
+  annualRateEaPercent: number | null | undefined,
+  periodsPerYear: number | null | undefined
+) {
+  const annualRate = Math.max(0, Number(annualRateEaPercent || 0)) / 100;
+  const periods = Math.max(1, Number(periodsPerYear || 1));
+  const periodicRate = Math.pow(1 + annualRate, 1 / periods) - 1;
+  return Math.round(periodicRate * 1000000) / 1000000;
+}
+
 export function calculateCreditCharges(options: {
   saldoBaseFinanciado?: number | null;
   cuotas?: number | null;
   tasaInteresEa?: number | null;
   fianzaPorcentaje?: number | null;
+  frecuenciaPago?: string | null;
 }) {
   const saldoBaseFinanciado = Math.max(0, Number(options.saldoBaseFinanciado || 0));
   const cuotas = Math.max(0, Math.trunc(Number(options.cuotas || 0)));
@@ -199,9 +279,14 @@ export function calculateCreditCharges(options: {
     0,
     Number(options.fianzaPorcentaje ?? DEFAULT_FIANCO_SURETY_PERCENTAGE)
   );
+  const frecuenciaPago = normalizePaymentFrequency(options.frecuenciaPago);
   const tasaMensual = annualEffectiveToMonthlyEffectiveRate(tasaInteresEa);
+  const tasaPeriodo = annualEffectiveToPeriodicEffectiveRate(
+    tasaInteresEa,
+    getPaymentFrequencyPeriodsPerYear(frecuenciaPago)
+  );
   const valorInteres =
-    Math.round(saldoBaseFinanciado * tasaMensual * Math.max(1, cuotas) * 100) / 100;
+    Math.round(saldoBaseFinanciado * tasaPeriodo * Math.max(1, cuotas) * 100) / 100;
   const valorFianza =
     Math.round((saldoBaseFinanciado * fianzaPorcentaje) / 100 * 100) / 100;
   const montoCreditoTotal =
@@ -214,6 +299,8 @@ export function calculateCreditCharges(options: {
     cuotas,
     tasaInteresEa,
     tasaMensual,
+    tasaPeriodo,
+    frecuenciaPago,
     valorInteres,
     fianzaPorcentaje,
     valorFianza,

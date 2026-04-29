@@ -1,7 +1,10 @@
+import { addPaymentFrequency, normalizePaymentFrequency } from "@/lib/credit-factory";
+
 export type CreditPaymentPlanInput = {
   montoCredito?: number | null;
   valorCuota?: number | null;
   plazoMeses?: number | null;
+  frecuenciaPago?: string | null;
   fechaPrimerPago?: Date | string | null;
   abonos?: Array<{
     valor?: number | null;
@@ -39,12 +42,6 @@ function normalizeDate(value: Date | string | null | undefined, fallback = new D
   return date;
 }
 
-function addDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
 function toDateOnlyIso(date: Date) {
   const normalized = new Date(date);
   normalized.setHours(12, 0, 0, 0);
@@ -54,6 +51,7 @@ function toDateOnlyIso(date: Date) {
 export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
   const total = Math.max(0, Number(input.montoCredito || 0));
   const cuotas = Math.max(1, Math.trunc(Number(input.plazoMeses || 1)));
+  const frecuenciaPago = normalizePaymentFrequency(input.frecuenciaPago);
   const defaultQuota = Math.max(0, Number(input.valorCuota || 0));
   const firstDueDate = normalizeDate(input.fechaPrimerPago);
   const today = normalizeDate(input.today, new Date());
@@ -78,7 +76,7 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
       const paid = roundMoney(Math.min(programmed, remainingPaid));
       remainingPaid = roundMoney(Math.max(0, remainingPaid - paid));
       const pending = normalizePending(Math.max(0, programmed - paid));
-      const dueDate = addDays(firstDueDate, index * 15);
+      const dueDate = addPaymentFrequency(firstDueDate, frecuenciaPago, index);
       dueDate.setHours(23, 59, 59, 999);
       const isPaid = pending <= 0;
       const isOverdue = !isPaid && dueDate.getTime() < today.getTime();

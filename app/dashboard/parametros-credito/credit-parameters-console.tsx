@@ -2,6 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import {
+  DEFAULT_CREDIT_INSTALLMENTS,
+  DEFAULT_PAYMENT_FREQUENCY,
+  MAX_CREDIT_INSTALLMENTS,
+  PAYMENT_FREQUENCY_OPTIONS,
+  getPaymentFrequencyLabel,
+} from "@/lib/credit-factory";
 
 type SessionUser = {
   rolNombre: string;
@@ -10,6 +17,8 @@ type SessionUser = {
 type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
+  plazoCuotas: number;
+  frecuenciaPago: string;
   updatedAt: string | null;
 };
 
@@ -27,6 +36,16 @@ function percentValue(value: number | string) {
   const parsed = Number(normalized);
 
   return Number.isFinite(parsed) ? String(parsed) : "";
+}
+
+function installmentValue(value: number | string) {
+  const parsed = Math.trunc(Number(value));
+
+  if (!Number.isFinite(parsed)) {
+    return String(DEFAULT_CREDIT_INSTALLMENTS);
+  }
+
+  return String(Math.max(1, Math.min(MAX_CREDIT_INSTALLMENTS, parsed)));
 }
 
 function dateTime(value: string | null) {
@@ -53,6 +72,8 @@ export default function CreditParametersConsole() {
   const [settings, setSettings] = useState<CreditSettings | null>(null);
   const [tasaInteresEa, setTasaInteresEa] = useState("");
   const [fianzaPorcentaje, setFianzaPorcentaje] = useState("");
+  const [plazoCuotas, setPlazoCuotas] = useState(String(DEFAULT_CREDIT_INSTALLMENTS));
+  const [frecuenciaPago, setFrecuenciaPago] = useState(DEFAULT_PAYMENT_FREQUENCY);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ text: string; tone: "red" | "emerald" } | null>(
@@ -73,6 +94,8 @@ export default function CreditParametersConsole() {
     setSettings(nextSettings);
     setTasaInteresEa(percentValue(nextSettings.tasaInteresEa));
     setFianzaPorcentaje(percentValue(nextSettings.fianzaPorcentaje));
+    setPlazoCuotas(installmentValue(nextSettings.plazoCuotas));
+    setFrecuenciaPago(nextSettings.frecuenciaPago || DEFAULT_PAYMENT_FREQUENCY);
   };
 
   const loadSettings = async () => {
@@ -118,6 +141,8 @@ export default function CreditParametersConsole() {
           body: JSON.stringify({
             tasaInteresEa,
             fianzaPorcentaje,
+            plazoCuotas,
+            frecuenciaPago,
           }),
         }
       );
@@ -188,8 +213,8 @@ export default function CreditParametersConsole() {
                 Parametros de credito
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                Define el porcentaje de interes y de fianza que se aplica en el
-                calculo del paso 2 de la fabrica de creditos.
+                Define interes, fianza, plazo y frecuencia para el paso 2 de la
+                fabrica de creditos.
               </p>
             </div>
 
@@ -229,7 +254,7 @@ export default function CreditParametersConsole() {
               Calculo del credito
             </p>
             <h2 className="mt-2 text-2xl font-black text-slate-950">
-              Editar porcentajes
+              Editar parametros
             </h2>
 
             <div className="mt-5 grid gap-4">
@@ -257,6 +282,44 @@ export default function CreditParametersConsole() {
                   className={inputClass}
                   placeholder="60"
                 />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-semibold text-slate-700">
+                  Plazo por defecto
+                </span>
+                <select
+                  value={plazoCuotas}
+                  onChange={(event) => setPlazoCuotas(event.target.value)}
+                  className={inputClass}
+                >
+                  {Array.from({ length: MAX_CREDIT_INSTALLMENTS }, (_, index) => {
+                    const option = String(index + 1);
+
+                    return (
+                      <option key={option} value={option}>
+                        {option} cuota{option === "1" ? "" : "s"}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-semibold text-slate-700">
+                  Frecuencia de pago
+                </span>
+                <select
+                  value={frecuenciaPago}
+                  onChange={(event) => setFrecuenciaPago(event.target.value)}
+                  className={inputClass}
+                >
+                  {PAYMENT_FREQUENCY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <button
@@ -296,11 +359,30 @@ export default function CreditParametersConsole() {
                   {settings?.fianzaPorcentaje ?? 0}%
                 </p>
               </div>
+
+              <div className="rounded-[22px] border border-slate-200 bg-[#fbfefd] px-4 py-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Plazo
+                </p>
+                <p className="mt-2 text-3xl font-black text-slate-950">
+                  {settings?.plazoCuotas ?? DEFAULT_CREDIT_INSTALLMENTS}
+                </p>
+                <p className="mt-1 text-xs font-semibold text-slate-500">cuotas</p>
+              </div>
+
+              <div className="rounded-[22px] border border-slate-200 bg-[#fbfefd] px-4 py-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Frecuencia
+                </p>
+                <p className="mt-2 text-3xl font-black text-slate-950">
+                  {getPaymentFrequencyLabel(settings?.frecuenciaPago)}
+                </p>
+              </div>
             </div>
 
             <div className="mt-5 rounded-[22px] border border-emerald-100 bg-emerald-50 px-4 py-4 text-sm leading-6 text-emerald-900">
-              Al guardar, el paso 2 toma estos porcentajes automaticamente para
-              calcular total a pagar y valor por cuota en nuevas ventas.
+              Al guardar, el paso 2 toma estos valores automaticamente para
+              calcular cuotas, primer pago y total a pagar en nuevas ventas.
             </div>
 
             <p className="mt-4 text-xs font-semibold text-slate-400">

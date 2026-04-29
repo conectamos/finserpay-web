@@ -69,6 +69,7 @@ export async function PATCH(
               cuotaInicial: true,
               valorCuota: true,
               plazoMeses: true,
+              frecuenciaPago: true,
               fechaPrimerPago: true,
               fechaProximoPago: true,
               sedeId: true,
@@ -126,6 +127,7 @@ export async function PATCH(
         montoCredito: Number(abono.credito.montoCredito || 0),
         valorCuota: Number(abono.credito.valorCuota || 0),
         plazoMeses: Number(abono.credito.plazoMeses || 1),
+        frecuenciaPago: abono.credito.frecuenciaPago,
         fechaPrimerPago: abono.credito.fechaPrimerPago || abono.credito.fechaProximoPago,
         abonos: activeAbonos.map((item) => ({
           valor: Number(item.valor || 0),

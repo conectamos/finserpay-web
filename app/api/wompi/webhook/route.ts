@@ -64,6 +64,7 @@ async function syncMoraAfterWompiPayment(creditId: number) {
       montoCredito: true,
       valorCuota: true,
       plazoMeses: true,
+      frecuenciaPago: true,
       fechaPrimerPago: true,
       fechaProximoPago: true,
       deliverableLabel: true,
@@ -100,6 +101,7 @@ async function syncMoraAfterWompiPayment(creditId: number) {
     montoCredito: Number(credit.montoCredito || 0),
     valorCuota: Number(credit.valorCuota || 0),
     plazoMeses: Number(credit.plazoMeses || 1),
+    frecuenciaPago: credit.frecuenciaPago,
     fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
     abonos: credit.abonos.map((item) => ({
       valor: Number(item.valor || 0),
@@ -168,6 +170,7 @@ async function processApprovedPayment(transaction: NonNullable<WompiEvent["data"
           montoCredito: true,
           valorCuota: true,
           plazoMeses: true,
+          frecuenciaPago: true,
           fechaPrimerPago: true,
           fechaProximoPago: true,
           usuarioId: true,
@@ -234,6 +237,7 @@ async function processApprovedPayment(transaction: NonNullable<WompiEvent["data"
       montoCredito: Number(intent.credito.montoCredito || 0),
       valorCuota: Number(intent.credito.valorCuota || 0),
       plazoMeses: Number(intent.credito.plazoMeses || 1),
+      frecuenciaPago: intent.credito.frecuenciaPago,
       fechaPrimerPago:
         intent.credito.fechaPrimerPago || intent.credito.fechaProximoPago,
       abonos: abonos.map((item) => ({

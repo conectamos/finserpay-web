@@ -39,6 +39,7 @@ export async function GET(req: Request) {
         montoCredito: true,
         valorCuota: true,
         plazoMeses: true,
+        frecuenciaPago: true,
         fechaCredito: true,
         fechaPrimerPago: true,
         fechaProximoPago: true,
@@ -75,6 +76,7 @@ export async function GET(req: Request) {
         montoCredito: Number(credit.montoCredito || 0),
         valorCuota: Number(credit.valorCuota || 0),
         plazoMeses: Number(credit.plazoMeses || 1),
+        frecuenciaPago: credit.frecuenciaPago,
         fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
         abonos: credit.abonos.map((item) => ({
           valor: Number(item.valor || 0),

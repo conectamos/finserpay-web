@@ -16,11 +16,15 @@ import {
   calculateCreditCharges,
   calculateFinancedBalance,
   calculateRequiredInitialPayment,
+  DEFAULT_CREDIT_INSTALLMENTS,
   DEFAULT_FIANCO_SURETY_PERCENTAGE,
   DEFAULT_LEGAL_CONSUMER_RATE_EA,
   DEFAULT_LEGAL_RATE_REFERENCE,
+  DEFAULT_PAYMENT_FREQUENCY,
   generatePagareNumber,
   getDefaultFirstPaymentDate,
+  getPaymentFrequencyLabel,
+  MAX_CREDIT_INSTALLMENTS,
   MAX_DEVICE_FINANCING_BASE,
 } from "@/lib/credit-factory";
 import {
@@ -159,6 +163,7 @@ type CreditItem = {
   montoCredito: number;
   cuotaInicial: number;
   plazoMeses: number | null;
+  frecuenciaPago: string | null;
   tasaInteresEa: number;
   valorInteres: number;
   fianzaPorcentaje: number;
@@ -242,6 +247,8 @@ type EquipmentCatalogResponse = {
 type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
+  plazoCuotas: number;
+  frecuenciaPago: string;
   updatedAt: string | null;
 };
 
@@ -407,7 +414,6 @@ const DEPARTMENT_OPTIONS = Object.keys(DEPARTMENT_CITY_OPTIONS).map((value) => (
 }));
 
 const FLEXIBLE_WIZARD_FOR_TESTING = false;
-const MAX_CREDIT_INSTALLMENTS = 16;
 const CREDIT_INSTALLMENT_OPTIONS = Array.from(
   { length: MAX_CREDIT_INSTALLMENTS },
   (_, index) => String(index + 1)
@@ -1596,19 +1602,23 @@ export default function CreditFactoryConsole({
   const [creditSettings, setCreditSettings] = useState<CreditSettings>({
     tasaInteresEa: DEFAULT_LEGAL_CONSUMER_RATE_EA,
     fianzaPorcentaje: DEFAULT_FIANCO_SURETY_PERCENTAGE,
+    plazoCuotas: DEFAULT_CREDIT_INSTALLMENTS,
+    frecuenciaPago: DEFAULT_PAYMENT_FREQUENCY,
     updatedAt: null,
   });
   const [imei, setImei] = useState("");
   const [valorEquipoTotal, setValorEquipoTotal] = useState("");
   const [cuotaInicial, setCuotaInicial] = useState("");
-  const [plazoMeses, setPlazoMeses] = useState("12");
+  const [plazoMeses, setPlazoMeses] = useState(String(DEFAULT_CREDIT_INSTALLMENTS));
   const [tasaInteresEa, setTasaInteresEa] = useState(
     String(DEFAULT_LEGAL_CONSUMER_RATE_EA)
   );
   const [fianzaPorcentaje, setFianzaPorcentaje] = useState(
     String(DEFAULT_FIANCO_SURETY_PERCENTAGE)
   );
-  const [fechaPrimerPago, setFechaPrimerPago] = useState(getDefaultFirstPaymentDate());
+  const [fechaPrimerPago, setFechaPrimerPago] = useState(
+    getDefaultFirstPaymentDate(new Date(), DEFAULT_PAYMENT_FREQUENCY)
+  );
   const [contratoAceptado, setContratoAceptado] = useState(false);
   const [contratoFotoDataUrl, setContratoFotoDataUrl] = useState("");
   const [contratoCedulaFrenteDataUrl, setContratoCedulaFrenteDataUrl] = useState("");
@@ -1794,9 +1804,11 @@ export default function CreditFactoryConsole({
       fianzaPorcentajeNumero >= 0
         ? fianzaPorcentajeNumero
         : DEFAULT_FIANCO_SURETY_PERCENTAGE,
+    frecuenciaPago: creditSettings.frecuenciaPago,
   });
   const saldoFinanciado = financialPlan.montoCreditoTotal;
   const valorCuota = financialPlan.valorCuota;
+  const frecuenciaPagoLabel = getPaymentFrequencyLabel(creditSettings.frecuenciaPago);
   const referenciaEquipo = [equipoMarca.trim(), equipoModelo.trim()]
     .filter(Boolean)
     .join(" ");
@@ -1852,6 +1864,7 @@ export default function CreditFactoryConsole({
           <p className="font-black text-slate-950">1. FORMA DE PAGO</p>
           <ul className="mt-2 list-disc space-y-1 pl-5">
             <li>Numero de cuotas: {plazoMesesNumero || "{{NUM_CUOTAS}}"}</li>
+            <li>Frecuencia de pago: {frecuenciaPagoLabel}</li>
             <li>Valor de cada cuota: {currency(valorCuota)}</li>
             <li>Fecha de inicio: {fechaPrimerPagoLabel}</li>
           </ul>
@@ -2630,7 +2643,8 @@ export default function CreditFactoryConsole({
             <p className="font-black text-slate-950">PRIMERA – FORMA DE PAGO</p>
             <p className="mt-2">
               La obligacion sera pagada en {plazoMesesNumero || "{{cuotas}}"} cuotas
-              de {currency(valorCuota)} cada una, conforme al plan pactado.
+              de {currency(valorCuota)} cada una, con frecuencia {frecuenciaPagoLabel.toLowerCase()},
+              conforme al plan pactado.
             </p>
           </div>
           <div className="mt-5">
@@ -2877,6 +2891,10 @@ export default function CreditFactoryConsole({
       setCreditSettings(nextSettings);
       setTasaInteresEa(String(nextSettings.tasaInteresEa));
       setFianzaPorcentaje(String(nextSettings.fianzaPorcentaje));
+      setPlazoMeses(String(nextSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS));
+      setFechaPrimerPago(
+        getDefaultFirstPaymentDate(new Date(), nextSettings.frecuenciaPago)
+      );
     } catch (error) {
       setNotice({
         text:
@@ -3873,10 +3891,12 @@ export default function CreditFactoryConsole({
     setImei("");
     setValorEquipoTotal("");
     setCuotaInicial("");
-    setPlazoMeses("12");
+    setPlazoMeses(String(creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS));
     setTasaInteresEa(String(creditSettings.tasaInteresEa));
     setFianzaPorcentaje(String(creditSettings.fianzaPorcentaje));
-    setFechaPrimerPago(getDefaultFirstPaymentDate());
+    setFechaPrimerPago(
+      getDefaultFirstPaymentDate(new Date(), creditSettings.frecuenciaPago)
+    );
     setContratoAceptado(false);
     setContratoFotoDataUrl("");
     setContratoFotoAudit(null);
@@ -3961,6 +3981,7 @@ export default function CreditFactoryConsole({
           valorEquipoTotal,
           cuotaInicial,
           plazoMeses,
+          frecuenciaPago: creditSettings.frecuenciaPago,
           tasaInteresEa: financialPlan.tasaInteresEa,
           fianzaPorcentaje: financialPlan.fianzaPorcentaje,
           fechaPrimerPago,
@@ -4405,6 +4426,7 @@ export default function CreditFactoryConsole({
           <p className="mt-2">El DEUDOR se obliga a pagar:</p>
           <p className="mt-2">Total a pagar: {currency(saldoFinanciado)}</p>
           <p>Numero de cuotas: {plazoMesesNumero || "{{NUM_CUOTAS}}"}</p>
+          <p>Frecuencia de pago: {frecuenciaPagoLabel}</p>
           <p>Valor por cuota: {currency(valorCuota)}</p>
           <p>Fecha primer pago: {fechaPrimerPagoLabel}</p>
           <p className="mt-2">El incumplimiento de una o mas cuotas dara lugar a:</p>
@@ -5823,6 +5845,15 @@ export default function CreditFactoryConsole({
                         </select>
                       </div>
 
+                      <div>
+                        <label className="mb-2 block text-sm font-semibold text-slate-700">
+                          Frecuencia
+                        </label>
+                        <div className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-900">
+                          {frecuenciaPagoLabel}
+                        </div>
+                      </div>
+
                       <div className="md:col-span-2">
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Primer pago
@@ -5834,7 +5865,7 @@ export default function CreditFactoryConsole({
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                         />
                         <p className="mt-2 text-xs font-medium text-slate-500">
-                          Se calcula automaticamente a 15 dias desde hoy.
+                          Se calcula automaticamente con frecuencia {frecuenciaPagoLabel.toLowerCase()}.
                         </p>
                       </div>
                     </div>
@@ -5898,7 +5929,15 @@ export default function CreditFactoryConsole({
                             Valor final distribuido en cuotas.
                           </p>
                         </div>
-                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4 md:col-span-2">
+                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                            Frecuencia
+                          </p>
+                          <p className="mt-2 text-2xl font-black text-slate-950">
+                            {frecuenciaPagoLabel}
+                          </p>
+                        </div>
+                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                             Valor por cuota
                           </p>
@@ -6765,7 +6804,8 @@ export default function CreditFactoryConsole({
                           <p className="font-black text-slate-950">PRIMERA – FORMA DE PAGO</p>
                           <p className="mt-2">
                             La obligacion sera pagada en {plazoMesesNumero || "{{cuotas}}"} cuotas
-                            de {currency(valorCuota)} cada una, conforme al plan pactado.
+                            de {currency(valorCuota)} cada una, con frecuencia {frecuenciaPagoLabel.toLowerCase()},
+                            conforme al plan pactado.
                           </p>
                         </div>
 
@@ -7227,6 +7267,15 @@ export default function CreditFactoryConsole({
 
               <div>
                 <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Frecuencia
+                </label>
+                <div className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-900">
+                  {frecuenciaPagoLabel}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
                   Primer pago
                 </label>
                 <input
@@ -7236,7 +7285,7 @@ export default function CreditFactoryConsole({
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 />
                 <p className="mt-2 text-xs font-medium text-slate-500">
-                  Fecha automatica a 15 dias desde la creacion del credito.
+                  Fecha automatica segun frecuencia {frecuenciaPagoLabel.toLowerCase()}.
                 </p>
               </div>
             </div>

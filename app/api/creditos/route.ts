@@ -8,10 +8,14 @@ import {
   calculateFinancedBalance,
   calculateRequiredInitialPayment,
   calculateInstallmentValue,
+  DEFAULT_CREDIT_INSTALLMENTS,
   extendDays,
   generateCreditFolio,
   generatePagareNumber,
   generatePaymentReference,
+  getDefaultFirstPaymentDateObject,
+  MAX_CREDIT_INSTALLMENTS,
+  normalizePaymentFrequency,
   resolveCreditPaymentSummary,
   resolveCreditState,
   sanitizeDeviceValue,
@@ -43,7 +47,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION = false;
-const MAX_CREDIT_INSTALLMENTS = 16;
 
 const CONTRACT_TEMPLATE_TITLE =
   "CONTRATO DE FINANCIACION DE EQUIPO MOVIL, AUTORIZACION DE TRATAMIENTO DE DATOS Y USO DE HERRAMIENTAS TECNOLOGICAS";
@@ -144,6 +147,7 @@ type CreditCreateBody = {
   equipoCatalogoId?: number | string;
   fianzaPorcentaje?: number | string;
   fechaPrimerPago?: string;
+  frecuenciaPago?: string;
   imei?: string;
   montoCredito?: number | string;
   pagareAceptado?: boolean;
@@ -210,6 +214,7 @@ function serializeCredit(item: any, paymentMap?: Map<number, PaymentAggregate>) 
     montoCredito: Number(item.montoCredito || 0),
     valorCuota: Number(item.valorCuota || 0),
     plazoMeses: Number(item.plazoMeses || 1),
+    frecuenciaPago: item.frecuenciaPago,
     fechaPrimerPago: item.fechaPrimerPago || item.fechaProximoPago,
     abonos: payment.totalAbonado > 0 ? [{ valor: payment.totalAbonado }] : [],
   });
@@ -240,6 +245,7 @@ function serializeCredit(item: any, paymentMap?: Map<number, PaymentAggregate>) 
     montoCredito: item.montoCredito,
     cuotaInicial: item.cuotaInicial,
     plazoMeses: item.plazoMeses,
+    frecuenciaPago: item.frecuenciaPago,
     tasaInteresEa: item.tasaInteresEa,
     valorInteres: item.valorInteres,
     fianzaPorcentaje: item.fianzaPorcentaje,
@@ -575,11 +581,22 @@ export async function POST(req: Request) {
       valorEquipoTotalInput,
       precioBaseVentaCatalogo
     );
+    const creditSettings = await getCreditSettings();
+    const plazoMesesInput = Math.trunc(toNumber(body.plazoMeses));
     const plazoMeses = Math.min(
       MAX_CREDIT_INSTALLMENTS,
-      Math.max(0, Math.trunc(toNumber(body.plazoMeses)))
+      Math.max(
+        1,
+        plazoMesesInput > 0
+          ? plazoMesesInput
+          : creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS
+      )
     );
-    const fechaPrimerPago = extendDays(15, null);
+    const frecuenciaPago = normalizePaymentFrequency(
+      body.frecuenciaPago || creditSettings.frecuenciaPago
+    );
+    const fechaPrimerPago =
+      toNullableDate(body.fechaPrimerPago) || getDefaultFirstPaymentDateObject(frecuenciaPago);
     const contratoAceptado = Boolean(body.contratoAceptado);
     const contratoFirmaDataUrl = sanitizeImageDataUrl(body.contratoFirmaDataUrl);
     const contratoFotoDataUrl = sanitizeImageDataUrl(
@@ -606,7 +623,6 @@ export async function POST(req: Request) {
     const cartaAceptada = Boolean(body.cartaAceptada);
     const autorizacionDatosAceptada = Boolean(body.autorizacionDatosAceptada);
     const montoCreditoInput = toNumber(body.montoCredito);
-    const creditSettings = await getCreditSettings();
     const saldoBaseFinanciado = calculateFinancedBalance(valorEquipoTotalInput, cuotaInicial);
     const financialPlan = calculateCreditCharges({
       saldoBaseFinanciado:
@@ -614,6 +630,7 @@ export async function POST(req: Request) {
       cuotas: plazoMeses,
       tasaInteresEa: creditSettings.tasaInteresEa,
       fianzaPorcentaje: creditSettings.fianzaPorcentaje,
+      frecuenciaPago,
     });
     const montoCredito =
       financialPlan.montoCreditoTotal > 0
@@ -1092,6 +1109,7 @@ export async function POST(req: Request) {
         valorCuota,
         valorTotalEquipo: valorEquipoTotal,
         cuotas: plazoMeses,
+        frecuenciaPago,
         fechaPrimerPago: fechaPrimerPago.toISOString(),
       },
       financiador: {
@@ -1163,6 +1181,7 @@ export async function POST(req: Request) {
         titulo: PAGARE_TEMPLATE_TITLE,
         valorTotal: montoCredito,
         cuotas: plazoMeses,
+        frecuenciaPago,
         valorCuota,
         fecha: contratoAceptadoAt.toISOString(),
         fechaPrimerPago: fechaPrimerPago.toISOString(),
@@ -1258,6 +1277,7 @@ export async function POST(req: Request) {
         montoCredito,
         cuotaInicial,
         plazoMeses: plazoMeses > 0 ? plazoMeses : null,
+        frecuenciaPago,
         tasaInteresEa: financialPlan.tasaInteresEa,
         valorInteres: financialPlan.valorInteres,
         fianzaPorcentaje: financialPlan.fianzaPorcentaje,

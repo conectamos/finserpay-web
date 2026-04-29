@@ -88,6 +88,7 @@ export async function POST(req: Request) {
         montoCredito: true,
         valorCuota: true,
         plazoMeses: true,
+        frecuenciaPago: true,
         fechaPrimerPago: true,
         fechaProximoPago: true,
         abonos: {
@@ -118,6 +119,7 @@ export async function POST(req: Request) {
       montoCredito: Number(credit.montoCredito || 0),
       valorCuota: Number(credit.valorCuota || 0),
       plazoMeses: Number(credit.plazoMeses || 1),
+      frecuenciaPago: credit.frecuenciaPago,
       fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
       abonos: credit.abonos.map((item) => ({
         valor: Number(item.valor || 0),
