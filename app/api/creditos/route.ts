@@ -598,9 +598,9 @@ export async function POST(req: Request) {
     const contratoVideoAprobacionDataUrl = sanitizeVideoDataUrl(
       body.contratoVideoAprobacionDataUrl
     );
-    const contratoVideoAprobacionDurationSeconds = Math.min(
-      7,
-      Math.max(0, Math.round(toNumber(body.contratoVideoAprobacionDurationSeconds)))
+    const contratoVideoAprobacionDurationSeconds = Math.max(
+      0,
+      Math.round(toNumber(body.contratoVideoAprobacionDurationSeconds))
     );
     const pagareAceptado = Boolean(body.pagareAceptado);
     const cartaAceptada = Boolean(body.cartaAceptada);
@@ -920,13 +920,6 @@ export async function POST(req: Request) {
     if (!contratoVideoAprobacionDataUrl) {
       return NextResponse.json(
         { error: "Debes registrar el video de aprobacion del cliente" },
-        { status: 400 }
-      );
-    }
-
-    if (contratoVideoAprobacionDurationSeconds < 6) {
-      return NextResponse.json(
-        { error: "El video de aprobacion debe durar al menos 6 segundos" },
         { status: 400 }
       );
     }

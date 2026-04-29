@@ -626,7 +626,7 @@ function ensureVideoDataUrl(value: string, file?: File) {
   }
 
   if (normalized.length > 10_000_000) {
-    throw new Error("El video es demasiado pesado. Vuelve a grabarlo en 7 segundos.");
+    throw new Error("El video es demasiado pesado. Vuelve a grabarlo con menor peso.");
   }
 
   return normalized;
@@ -883,7 +883,7 @@ function CameraCaptureModal({
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(7);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const documentSlot = slot === "cedula-frente" || slot === "cedula-respaldo";
   const videoSlot = slot === "video-aprobacion";
 
@@ -907,7 +907,7 @@ function CameraCaptureModal({
     if (!open || !slot) {
       stopActiveStream();
       setRecording(false);
-      setSecondsLeft(7);
+      setRecordingSeconds(0);
       return;
     }
 
@@ -987,7 +987,7 @@ function CameraCaptureModal({
     const chunks = [...recordedChunksRef.current];
     recordedChunksRef.current = [];
     setRecording(false);
-    setSecondsLeft(7);
+    setRecordingSeconds(0);
 
     if (!slotValue || slotValue !== "video-aprobacion") {
       return;
@@ -1108,7 +1108,7 @@ function CameraCaptureModal({
       recordedChunksRef.current = [];
       setRecording(true);
       setError("");
-      setSecondsLeft(7);
+      setRecordingSeconds(0);
 
       const startedAt = Date.now();
       const recorder = mimeType
@@ -1128,36 +1128,34 @@ function CameraCaptureModal({
       recorder.onstop = () => {
         const elapsedSeconds = Math.max(
           1,
-          Math.min(7, Math.round((Date.now() - startedAt) / 1000))
+          Math.round((Date.now() - startedAt) / 1000)
         );
         finishVideoCapture(elapsedSeconds);
       };
       recorder.start(250);
 
       countdownRef.current = window.setInterval(() => {
-        setSecondsLeft((current) => {
-          if (current <= 1) {
-            if (countdownRef.current) {
-              window.clearInterval(countdownRef.current);
-              countdownRef.current = null;
-            }
-            if (recorder.state !== "inactive") {
-              recorder.stop();
-            }
-            return 0;
-          }
-
-          return current - 1;
-        });
+        setRecordingSeconds((current) => current + 1);
       }, 1000);
     } catch (recordError) {
       setRecording(false);
-      setSecondsLeft(7);
+      setRecordingSeconds(0);
       setError(
         recordError instanceof Error
           ? recordError.message
           : "No se pudo iniciar la grabacion de video."
       );
+    }
+  };
+
+  const stopVideoRecording = () => {
+    if (countdownRef.current) {
+      window.clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      recorderRef.current.stop();
     }
   };
 
@@ -1179,7 +1177,7 @@ function CameraCaptureModal({
             </h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
               {videoSlot
-                ? "Graba un video corto donde el cliente diga: YO [NOMBRE] APRUEBO LA COMPRA CON FINSERPAY."
+                ? "Graba el video donde el cliente diga: YO [NOMBRE] APRUEBO LA COMPRA CON FINSERPAY."
                 : "Se abre la camara del computador para capturar la evidencia y anexarla al contrato digital."}
             </p>
           </div>
@@ -1247,13 +1245,13 @@ function CameraCaptureModal({
           {videoSlot ? (
             <button
               type="button"
-              onClick={startVideoRecording}
-              disabled={starting || Boolean(error) || recording}
+              onClick={recording ? stopVideoRecording : startVideoRecording}
+              disabled={starting || Boolean(error)}
               className="rounded-2xl bg-[#1f8f65] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#18724f] disabled:opacity-70"
             >
               {recording
-                ? `Grabando... ${secondsLeft}s`
-                : "Grabar video de 7 segundos"}
+                ? `Detener grabacion (${recordingSeconds}s)`
+                : "Grabar video"}
             </button>
           ) : (
             <button
@@ -3200,14 +3198,15 @@ export default function CreditFactoryConsole({
     }
 
     try {
-      const durationSeconds = await readVideoDuration(file);
+      let durationSeconds: number | undefined;
 
-      if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-        throw new Error("No se pudo leer la duracion del video.");
-      }
-
-      if (durationSeconds > 7.5) {
-        throw new Error("El video debe durar maximo 7 segundos.");
+      try {
+        const measuredDuration = await readVideoDuration(file);
+        if (Number.isFinite(measuredDuration) && measuredDuration > 0) {
+          durationSeconds = Math.max(1, Math.round(measuredDuration));
+        }
+      } catch {
+        durationSeconds = undefined;
       }
 
       const dataUrl = ensureVideoDataUrl(await readFileAsDataUrl(file), file);
@@ -3215,7 +3214,7 @@ export default function CreditFactoryConsole({
       setContratoVideoAprobacionAudit({
         capturedAt: new Date().toISOString(),
         source: "upload",
-        durationSeconds: Math.max(1, Math.round(durationSeconds)),
+        durationSeconds,
       });
       setNotice({
         text: "Video de aprobacion cargado correctamente.",
@@ -3236,7 +3235,7 @@ export default function CreditFactoryConsole({
         setContratoVideoAprobacionAudit({
           capturedAt: new Date().toISOString(),
           source: "camera",
-          durationSeconds: 7,
+          durationSeconds: undefined,
         });
         setNotice({
           text: "Video de aprobacion capturado correctamente.",
@@ -3289,7 +3288,10 @@ export default function CreditFactoryConsole({
         setContratoVideoAprobacionAudit({
           capturedAt: audit?.capturedAt || new Date().toISOString(),
           source: audit?.source === "upload" ? "upload" : "camera",
-          durationSeconds: audit?.durationSeconds || 7,
+          durationSeconds:
+            audit?.durationSeconds && audit.durationSeconds > 0
+              ? audit.durationSeconds
+              : undefined,
         });
         setNotice({
           text: "Video de aprobacion capturado correctamente.",
@@ -3389,7 +3391,10 @@ export default function CreditFactoryConsole({
         source:
           session.evidence.videoAprobacionSource === "upload" ? "upload" : "camera",
         durationSeconds:
-          session.evidence.videoAprobacionDuration || 7,
+          session.evidence.videoAprobacionDuration &&
+          session.evidence.videoAprobacionDuration > 0
+            ? session.evidence.videoAprobacionDuration
+            : undefined,
       });
       importedCount += 1;
     }
@@ -6127,7 +6132,7 @@ export default function CreditFactoryConsole({
 
                       <VideoEvidenceCard
                         title="Video corto de aprobacion"
-                        description='Graba 7 segundos donde el cliente diga: "YO [NOMBRE] APRUEBO LA COMPRA CON FINSERPAY".'
+                        description='Graba el video donde el cliente diga: "YO [NOMBRE] APRUEBO LA COMPRA CON FINSERPAY".'
                         metaLabel={
                           contratoVideoAprobacionAudit
                             ? `Capturado: ${evidenceAuditTime(
@@ -6562,7 +6567,7 @@ export default function CreditFactoryConsole({
                         ))}
                       </div>
 
-                      {!entregaValidada && (
+                      {!entregaValidada && !FLEXIBLE_WIZARD_FOR_TESTING && (
                         <div className="mt-5 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
                           El credito solo se puede finalizar cuando Zero Touch confirme que el equipo esta entregable.
                         </div>
@@ -6693,7 +6698,7 @@ export default function CreditFactoryConsole({
                         ))}
                       </div>
 
-                      {!entregaValidada && (
+                      {!entregaValidada && !FLEXIBLE_WIZARD_FOR_TESTING && (
                         <div className="mt-5 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
                           El credito solo se puede finalizar cuando Zero Touch confirme que el equipo esta entregable.
                         </div>

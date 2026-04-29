@@ -440,59 +440,101 @@ export default function SellerProfileAccess({
   };
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(180deg,#f2f4f7_0%,#e4e7ec_58%,#dde1e7_100%)] text-slate-950">
-      <header className="border-b border-zinc-800 bg-[linear-gradient(135deg,#050506_0%,#18181b_42%,#3f3f46_100%)] px-4 py-5 text-white shadow-[0_16px_40px_rgba(15,23,42,0.20)] sm:px-8">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-4">
-            <div className="rounded-full border border-white/16 bg-[linear-gradient(180deg,rgba(255,255,255,0.14)_0%,rgba(255,255,255,0.05)_100%)] p-3">
-              <FinserBrand compact dark />
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(17,24,39,0.05),transparent_22%),radial-gradient(circle_at_top_right,rgba(16,185,129,0.08),transparent_24%),linear-gradient(180deg,#f6f8fb_0%,#edf1f6_52%,#e7edf4_100%)] text-slate-950">
+      <main className="mx-auto max-w-7xl px-4 py-5 sm:px-8 sm:py-7">
+        <section className="relative overflow-hidden rounded-[34px] border border-zinc-300/80 bg-[linear-gradient(135deg,#0b0c0f_0%,#1b1d23_40%,#404550_100%)] p-4 text-white shadow-[0_28px_80px_rgba(15,23,42,0.22)] sm:p-5">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.16),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.14),transparent_28%)]" />
+          <div className="relative flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center">
+              <div className="rounded-[28px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.14)_0%,rgba(255,255,255,0.05)_100%)] px-4 py-3 shadow-[0_14px_34px_rgba(0,0,0,0.18)]">
+                <FinserBrand dark />
+              </div>
+
+              <div className="rounded-[28px] border border-white/10 bg-white/8 px-5 py-4 backdrop-blur">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-100/90">
+                  Acceso comercial
+                </p>
+                <p className="mt-2 text-2xl font-black tracking-tight">Ingreso por sede</p>
+                <p className="mt-1 text-sm text-zinc-300">{sedeNombre}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-2xl font-black tracking-tight">FINSER PAY</p>
-              <p className="text-sm text-zinc-300">Ingreso por sede: {sedeNombre}</p>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="rounded-[24px] border border-white/10 bg-white/8 px-4 py-3 text-sm text-zinc-200 backdrop-blur">
+                Selecciona un asesor y valida con PIN personal.
+              </div>
+              <LogoutButton className="min-w-[180px] justify-center" />
             </div>
-          </div>
-
-          <LogoutButton className="min-w-[180px] justify-center" />
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-8">
-        <section className="relative overflow-hidden rounded-[30px] border border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#eef1f5_58%,#e1e5eb_100%)] px-6 py-6 shadow-[0_20px_40px_rgba(15,23,42,0.10)]">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.82),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(24,24,27,0.06),transparent_34%)]" />
-          <p className="relative text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-700">
-            Perfil del asesor
-          </p>
-          <h1 className="relative mt-3 text-4xl font-black tracking-tight text-slate-950">
-            Selecciona el perfil de esta sede
-          </h1>
-          <p className="relative mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-            Primero entra la sede con usuario y clave. Luego cada vendedor o
-            supervisor abre su perfil con PIN propio para que el sistema sepa
-            quien crea clientes, supervisa creditos y recibe abonos.
-          </p>
-
-          <div className="mt-6 max-w-2xl">
-            <label className="mb-2 block text-sm font-semibold text-zinc-700">
-              Nombre del asesor
-            </label>
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar asesor o supervisor..."
-              className="w-full rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-zinc-700 focus:ring-2 focus:ring-zinc-200"
-            />
           </div>
         </section>
 
+        <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_360px]">
+          <div className="relative overflow-hidden rounded-[34px] border border-zinc-200 bg-[linear-gradient(180deg,#ffffff_0%,#f5f8fb_62%,#eef3f8_100%)] px-6 py-7 shadow-[0_22px_48px_rgba(15,23,42,0.08)]">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.88),transparent_36%),radial-gradient(circle_at_bottom_right,rgba(15,23,42,0.05),transparent_34%)]" />
+            <p className="relative text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-600">
+              Perfil del asesor
+            </p>
+            <h1 className="relative mt-4 max-w-3xl text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">
+              Selecciona quien va a operar esta sede
+            </h1>
+            <p className="relative mt-4 max-w-3xl text-sm leading-7 text-slate-600 sm:text-[15px]">
+              Cada vendedor o supervisor entra con su PIN para dejar trazabilidad
+              real sobre ventas, supervisión de créditos y recaudo.
+            </p>
+
+            <div className="relative mt-7">
+              <label className="mb-2 block text-sm font-semibold text-zinc-700">
+                Buscar asesor
+              </label>
+              <div className="flex flex-col gap-3 md:flex-row">
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Nombre, cédula o teléfono del asesor"
+                  className="w-full flex-1 rounded-[22px] border border-zinc-200 bg-white px-5 py-4 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                />
+                <div className="inline-flex items-center justify-center rounded-[22px] border border-zinc-200 bg-slate-950 px-5 py-4 text-sm font-bold text-white shadow-[0_14px_30px_rgba(15,23,42,0.14)]">
+                  {filteredSellers.length} perfil{filteredSellers.length === 1 ? "" : "es"}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside className="relative overflow-hidden rounded-[34px] border border-zinc-200 bg-[linear-gradient(180deg,#ffffff_0%,#f5f8fb_62%,#eef3f8_100%)] px-5 py-6 shadow-[0_20px_42px_rgba(15,23,42,0.07)]">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.12),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(15,23,42,0.05),transparent_34%)]" />
+            <div className="relative">
+              <div className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                Flujo
+              </div>
+              <h2 className="mt-4 text-2xl font-black tracking-tight text-slate-950">
+                Acceso ordenado
+              </h2>
+              <div className="mt-5 space-y-3">
+                {[
+                  "La sede entra una sola vez con usuario y clave.",
+                  "Cada perfil se abre con PIN individual.",
+                  "El sistema registra quién vendió o supervisó.",
+                ].map((item) => (
+                  <div
+                    key={item}
+                    className="rounded-[22px] border border-white/70 bg-white/72 px-4 py-3 text-sm leading-6 text-slate-600 shadow-[0_10px_24px_rgba(15,23,42,0.05)]"
+                  >
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </aside>
+        </section>
+
         {mensaje && (
-          <div className="mt-6 rounded-2xl border border-zinc-300 bg-[linear-gradient(180deg,#fafafa_0%,#eceef2_100%)] px-4 py-4 text-sm font-medium text-zinc-800">
+          <div className="mt-6 rounded-[26px] border border-amber-200 bg-[linear-gradient(180deg,#fffdf6_0%,#f7f1df_100%)] px-5 py-4 text-sm font-medium text-amber-900 shadow-[0_10px_26px_rgba(180,132,28,0.08)]">
             {mensaje}
           </div>
         )}
 
-        <section className="mt-8 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+        <section className="mt-8 grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
           {filteredSellers.map((seller) => {
             const visualKind = resolveSellerVisualKind(seller);
 
@@ -505,30 +547,51 @@ export default function SellerProfileAccess({
                   setPin("");
                   setSelectedSeller(seller);
                 }}
-                className="relative overflow-hidden rounded-[30px] border border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#eef1f5_58%,#e1e5eb_100%)] px-6 py-7 text-center shadow-[0_18px_38px_rgba(15,23,42,0.10)] transition hover:-translate-y-1 hover:shadow-[0_24px_42px_rgba(15,23,42,0.14)]"
+                className="group relative overflow-hidden rounded-[34px] border border-zinc-200 bg-[linear-gradient(180deg,#ffffff_0%,#f5f8fb_62%,#eef3f8_100%)] px-5 py-5 text-left shadow-[0_18px_38px_rgba(15,23,42,0.08)] transition duration-200 hover:-translate-y-1 hover:border-emerald-300 hover:shadow-[0_26px_48px_rgba(15,23,42,0.12)]"
               >
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
-                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.82),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(24,24,27,0.06),transparent_34%)]" />
-                <div className="relative">
-                  <ProfileAvatar seller={seller} />
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)] opacity-70" />
+                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.9),transparent_36%),radial-gradient(circle_at_bottom_right,rgba(15,23,42,0.05),transparent_34%)]" />
+                <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center">
+                  <div className="shrink-0">
+                    <ProfileAvatar seller={seller} size="medium" />
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-600">
+                        {visualKind === "supervisor" ? "Supervisor" : "Vendedor"}
+                      </span>
+                      <span
+                        className={[
+                          "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
+                          seller.debeCambiarPin
+                            ? "border-amber-200 bg-amber-50 text-amber-700"
+                            : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                        ].join(" ")}
+                      >
+                        {seller.debeCambiarPin ? "PIN pendiente" : "Activo"}
+                      </span>
+                    </div>
+
+                    <p className="mt-4 truncate text-[1.9rem] font-black leading-tight tracking-tight text-slate-950">
+                      {seller.nombre}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      {seller.documento || seller.telefono || "Perfil comercial asignado a la sede"}
+                    </p>
+
+                    <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-slate-950 bg-slate-950 px-4 py-2 text-sm font-bold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition group-hover:bg-emerald-700 group-hover:border-emerald-700">
+                      Abrir perfil
+                      <span aria-hidden="true">-&gt;</span>
+                    </div>
+                  </div>
                 </div>
-                <p className="relative mt-5 text-2xl font-black tracking-tight text-slate-950">
-                  {seller.nombre}
-                </p>
-                <p className="relative mt-2 text-sm text-slate-500">
-                  {visualKind === "supervisor"
-                    ? "Supervisor"
-                    : seller.documento || "Vendedor"}
-                </p>
-                <p className="relative mt-1 text-sm text-zinc-700">
-                  {seller.debeCambiarPin ? "PIN pendiente de cambio" : "Perfil activo"}
-                </p>
               </button>
             );
           })}
 
           {!filteredSellers.length && (
-            <div className="rounded-[28px] border border-dashed border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#eef1f5_100%)] px-5 py-8 text-sm text-slate-500 sm:col-span-2 xl:col-span-4">
+            <div className="rounded-[30px] border border-dashed border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#f3f6fa_100%)] px-6 py-10 text-sm text-slate-500 lg:col-span-2 2xl:col-span-3">
               No hay perfiles asignados a esta sede para ese filtro.
             </div>
           )}
