@@ -29,6 +29,10 @@ function nombreUsuarioSede(nombreSede: string) {
   return `Usuario ${nombreSede}`;
 }
 
+function mismoId(a?: number | null, b?: number | null) {
+  return Number(a || 0) === Number(b || 0);
+}
+
 async function requireAdmin() {
   const user = await getSessionUser();
 
@@ -253,46 +257,142 @@ export async function POST(req: Request) {
       );
     }
 
-    const [sedeExistente, usuarioExistente] = await Promise.all([
+    const [sedePorNombre, sedePorCodigo, usuarioExistente] = await Promise.all([
       prisma.sede.findUnique({
         where: { nombre },
-        select: { id: true },
+        select: {
+          id: true,
+          nombre: true,
+          codigo: true,
+          activa: true,
+        },
       }),
+      codigo
+        ? prisma.sede.findUnique({
+            where: { codigo },
+            select: {
+              id: true,
+              nombre: true,
+              codigo: true,
+              activa: true,
+            },
+          })
+        : Promise.resolve(null),
       prisma.usuario.findUnique({
         where: { usuario: usuarioAcceso },
-        select: { id: true },
+        select: {
+          id: true,
+          activo: true,
+          sedeId: true,
+          sede: {
+            select: {
+              id: true,
+              nombre: true,
+              codigo: true,
+              activa: true,
+            },
+          },
+        },
       }),
     ]);
 
-    if (sedeExistente) {
+    if (sedePorNombre?.activa) {
       return NextResponse.json(
         { error: "Ya existe una sede con ese nombre" },
         { status: 400 }
       );
     }
 
-    if (codigo) {
-      const codigoExistente = await prisma.sede.findUnique({
-        where: { codigo },
-        select: { id: true },
-      });
+    if (sedePorCodigo?.activa) {
+      return NextResponse.json(
+        { error: "Ese codigo de sede ya existe" },
+        { status: 400 }
+      );
+    }
 
-      if (codigoExistente) {
+    if (
+      sedePorNombre &&
+      sedePorCodigo &&
+      !mismoId(sedePorNombre.id, sedePorCodigo.id)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Ese nombre y ese codigo pertenecen a sedes eliminadas diferentes",
+        },
+        { status: 400 }
+      );
+    }
+
+    const sedeParaReactivar =
+      sedePorNombre && !sedePorNombre.activa
+        ? sedePorNombre
+        : sedePorCodigo && !sedePorCodigo.activa
+          ? sedePorCodigo
+          : usuarioExistente &&
+              !usuarioExistente.activo &&
+              !usuarioExistente.sede.activa
+            ? usuarioExistente.sede
+            : null;
+
+    if (usuarioExistente) {
+      const usuarioPerteneceALaSedeReactivada =
+        sedeParaReactivar && mismoId(usuarioExistente.sedeId, sedeParaReactivar.id);
+
+      if (!usuarioPerteneceALaSedeReactivada) {
         return NextResponse.json(
-          { error: "Ese codigo de sede ya existe" },
+          { error: "Ese usuario de acceso ya existe" },
           { status: 400 }
         );
       }
     }
 
-    if (usuarioExistente) {
-      return NextResponse.json(
-        { error: "Ese usuario de acceso ya existe" },
-        { status: 400 }
-      );
-    }
-
     await prisma.$transaction(async (tx) => {
+      if (sedeParaReactivar) {
+        await tx.sede.update({
+          where: { id: sedeParaReactivar.id },
+          data: {
+            nombre,
+            codigo,
+            activa: true,
+          },
+        });
+
+        const accesoAnterior = await tx.usuario.findFirst({
+          where: {
+            sedeId: sedeParaReactivar.id,
+            rolId: rolUsuarioId,
+          },
+          select: { id: true },
+          orderBy: { id: "asc" },
+        });
+
+        if (accesoAnterior) {
+          await tx.usuario.update({
+            where: { id: accesoAnterior.id },
+            data: {
+              nombre: nombreUsuarioSede(nombre),
+              usuario: usuarioAcceso,
+              claveHash: hashPassword(clave),
+              activo: true,
+            },
+          });
+        } else {
+          await tx.usuario.create({
+            data: {
+              nombre: nombreUsuarioSede(nombre),
+              usuario: usuarioAcceso,
+              claveHash: hashPassword(clave),
+              activo: true,
+              rolId: rolUsuarioId,
+              sedeId: sedeParaReactivar.id,
+            },
+          });
+        }
+
+        return;
+      }
+
       const sede = await tx.sede.create({
         data: {
           nombre,
@@ -320,7 +420,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      mensaje: "Sede creada correctamente",
+      mensaje: sedeParaReactivar
+        ? "Sede reactivada correctamente"
+        : "Sede creada correctamente",
       sedes,
     });
   } catch (error) {
