@@ -437,6 +437,31 @@ function AdminShortcutCard({
 function AdminManagementCard() {
   const actionClass =
     "inline-flex min-h-11 items-center justify-center rounded-2xl px-4 py-3 text-center text-sm font-black transition";
+  const actions = [
+    {
+      href: "/dashboard/sedes",
+      label: "Gestionar sedes",
+      className:
+        "border border-zinc-950 bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] text-white hover:opacity-95",
+    },
+    {
+      href: "/dashboard/usuarios",
+      label: "Gestionar usuarios",
+      className: "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50",
+    },
+    {
+      href: "/dashboard/catalogo-equipos",
+      label: "Catalogo equipos",
+      className:
+        "border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100",
+    },
+    {
+      href: "/dashboard/parametros-credito",
+      label: "Parametros credito",
+      className:
+        "border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100",
+    },
+  ];
 
   return (
     <section className="group relative overflow-hidden rounded-[28px] border border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#eef0f4_58%,#e1e4e9_100%)] p-5 shadow-[0_14px_32px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_44px_rgba(15,23,42,0.12)]">
@@ -451,28 +476,19 @@ function AdminManagementCard() {
         GESTIÓN
       </h3>
       <p className="relative mt-3 text-sm leading-6 text-zinc-600">
-        Administra puntos de venta, accesos y perfiles comerciales desde una sola tarjeta.
+        Administra accesos, perfiles, catalogo y reglas del credito desde una sola tarjeta.
       </p>
 
       <div className="relative mt-5 grid gap-3 sm:grid-cols-2">
-        <Link
-          href="/dashboard/sedes"
-          className={[
-            actionClass,
-            "border border-zinc-950 bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] text-white hover:opacity-95",
-          ].join(" ")}
-        >
-          Gestionar sedes
-        </Link>
-        <Link
-          href="/dashboard/usuarios"
-          className={[
-            actionClass,
-            "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50",
-          ].join(" ")}
-        >
-          Gestionar usuarios
-        </Link>
+        {actions.map((action) => (
+          <Link
+            key={action.href}
+            href={action.href}
+            className={[actionClass, action.className].join(" ")}
+          >
+            {action.label}
+          </Link>
+        ))}
       </div>
     </section>
   );
@@ -1003,22 +1019,6 @@ export default async function DashboardPage() {
   ];
 
   const adminShortcuts: AdminShortcut[] = [
-    {
-      href: "/dashboard/catalogo-equipos",
-      title: "Catalogo de equipos",
-      description:
-        "Administra marcas, modelos y precio base para que el asesor solo seleccione y venda.",
-      eyebrow: "Equipos",
-      tone: "amber",
-    },
-    {
-      href: "/dashboard/parametros-credito",
-      title: "Parametros del credito",
-      description:
-        "Configura porcentaje de fianza e interes para las nuevas ventas de FINSER PAY.",
-      eyebrow: "Calculo",
-      tone: "sky",
-    },
     {
       href: "/dashboard/creditos",
       title: "Fabrica de creditos",
