@@ -66,6 +66,7 @@ type CreditReportResponse = {
     totalRecaudado: number;
     totalPendiente: number;
     creditosPagados: number;
+    creditosAnulados?: number;
     entregables: number;
   };
   items: CreditReportItem[];
@@ -152,13 +153,15 @@ function SummaryCard({
 }: {
   label: string;
   value: string;
-  tone?: "slate" | "teal" | "amber";
+  tone?: "slate" | "teal" | "amber" | "rose";
 }) {
   const toneClasses =
     tone === "teal"
       ? "border-teal-200 bg-teal-50 text-[#145a5a]"
       : tone === "amber"
         ? "border-amber-200 bg-amber-50 text-amber-700"
+        : tone === "rose"
+          ? "border-rose-200 bg-rose-50 text-rose-700"
         : "border-slate-200 bg-white text-slate-900";
 
   return (
@@ -325,15 +328,11 @@ export default function ReporteCreditosPage() {
           </div>
         </div>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <SummaryCard
             label="Total creditos"
             value={loading ? "..." : String(summary?.totalCreditos || 0)}
             tone="teal"
-          />
-          <SummaryCard
-            label="Inicial dada"
-            value={loading ? "..." : formatMoney(summary?.totalInicial || 0)}
           />
           <SummaryCard
             label="Credito autorizado"
@@ -352,6 +351,15 @@ export default function ReporteCreditosPage() {
           <SummaryCard
             label="Creditos pagados"
             value={loading ? "..." : String(summary?.creditosPagados || 0)}
+          />
+          <SummaryCard
+            label="Creditos anulados"
+            value={loading ? "..." : String(summary?.creditosAnulados || 0)}
+            tone="rose"
+          />
+          <SummaryCard
+            label="Inicial dada"
+            value={loading ? "..." : formatMoney(summary?.totalInicial || 0)}
           />
         </section>
 

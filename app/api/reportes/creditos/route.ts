@@ -224,6 +224,10 @@ export async function GET(req: Request) {
         const isAnnulled = item.estado === "ANULADO";
 
         acc.totalCreditos += 1;
+        if (isAnnulled) {
+          acc.creditosAnulados += 1;
+        }
+
         if (!isAnnulled) {
           acc.totalMontoCredito += item.creditoAutorizado;
           acc.totalCreditoAutorizado += item.creditoAutorizado;
@@ -254,6 +258,7 @@ export async function GET(req: Request) {
         totalRecaudado: 0,
         totalPendiente: 0,
         creditosPagados: 0,
+        creditosAnulados: 0,
         entregables: 0,
       }
     );
