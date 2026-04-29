@@ -441,34 +441,28 @@ export default function SellerProfileAccess({
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(17,24,39,0.05),transparent_22%),radial-gradient(circle_at_top_right,rgba(16,185,129,0.08),transparent_24%),linear-gradient(180deg,#f6f8fb_0%,#edf1f6_52%,#e7edf4_100%)] text-slate-950">
-      <main className="mx-auto max-w-7xl px-4 py-5 sm:px-8 sm:py-7">
-        <section className="relative overflow-hidden rounded-[34px] border border-zinc-300/80 bg-[linear-gradient(135deg,#0b0c0f_0%,#1b1d23_40%,#404550_100%)] p-4 text-white shadow-[0_28px_80px_rgba(15,23,42,0.22)] sm:p-5">
+      <main className="mx-auto max-w-6xl px-4 py-5 sm:px-8 sm:py-7">
+        <section className="relative overflow-hidden rounded-[32px] border border-zinc-300/80 bg-[linear-gradient(135deg,#0b0c0f_0%,#1b1d23_46%,#34423f_100%)] p-4 text-white shadow-[0_24px_64px_rgba(15,23,42,0.20)] sm:p-5">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.16),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.14),transparent_28%)]" />
-          <div className="relative flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center">
+          <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
               <div className="rounded-[28px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.14)_0%,rgba(255,255,255,0.05)_100%)] px-4 py-3 shadow-[0_14px_34px_rgba(0,0,0,0.18)]">
                 <FinserBrand dark />
               </div>
 
-              <div className="rounded-[28px] border border-white/10 bg-white/8 px-5 py-4 backdrop-blur">
+              <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-100/90">
-                  Acceso comercial
+                  Sede activa
                 </p>
-                <p className="mt-2 text-2xl font-black tracking-tight">Ingreso por sede</p>
-                <p className="mt-1 text-sm text-zinc-300">{sedeNombre}</p>
+                <p className="mt-1 text-2xl font-black tracking-tight">{sedeNombre}</p>
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="rounded-[24px] border border-white/10 bg-white/8 px-4 py-3 text-sm text-zinc-200 backdrop-blur">
-                Selecciona un asesor y valida con PIN personal.
-              </div>
-              <LogoutButton className="min-w-[180px] justify-center" />
-            </div>
+            <LogoutButton className="min-w-[160px] justify-center" />
           </div>
         </section>
 
-        <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_360px]">
+        <section className="mt-6">
           <div className="relative overflow-hidden rounded-[34px] border border-zinc-200 bg-[linear-gradient(180deg,#ffffff_0%,#f5f8fb_62%,#eef3f8_100%)] px-6 py-7 shadow-[0_22px_48px_rgba(15,23,42,0.08)]">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.88),transparent_36%),radial-gradient(circle_at_bottom_right,rgba(15,23,42,0.05),transparent_34%)]" />
@@ -476,9 +470,9 @@ export default function SellerProfileAccess({
               Perfil del asesor
             </p>
             <h1 className="relative mt-4 max-w-3xl text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">
-              Selecciona quien va a operar esta sede
+              Selecciona asesor
             </h1>
-            <p className="relative mt-4 max-w-3xl text-sm leading-7 text-slate-600 sm:text-[15px]">
+            <p className="hidden">
               Cada vendedor o supervisor entra con su PIN para dejar trazabilidad
               real sobre ventas, supervisión de créditos y recaudo.
             </p>
@@ -494,14 +488,11 @@ export default function SellerProfileAccess({
                   placeholder="Nombre, cédula o teléfono del asesor"
                   className="w-full flex-1 rounded-[22px] border border-zinc-200 bg-white px-5 py-4 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
                 />
-                <div className="inline-flex items-center justify-center rounded-[22px] border border-zinc-200 bg-slate-950 px-5 py-4 text-sm font-bold text-white shadow-[0_14px_30px_rgba(15,23,42,0.14)]">
-                  {filteredSellers.length} perfil{filteredSellers.length === 1 ? "" : "es"}
-                </div>
               </div>
             </div>
           </div>
 
-          <aside className="relative overflow-hidden rounded-[34px] border border-zinc-200 bg-[linear-gradient(180deg,#ffffff_0%,#f5f8fb_62%,#eef3f8_100%)] px-5 py-6 shadow-[0_20px_42px_rgba(15,23,42,0.07)]">
+          <aside className="hidden">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.12),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(15,23,42,0.05),transparent_34%)]" />
             <div className="relative">
               <div className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
@@ -534,7 +525,7 @@ export default function SellerProfileAccess({
           </div>
         )}
 
-        <section className="mt-8 grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
+        <section className="mt-6 grid gap-5 md:grid-cols-2">
           {filteredSellers.map((seller) => {
             const visualKind = resolveSellerVisualKind(seller);
 
@@ -547,7 +538,7 @@ export default function SellerProfileAccess({
                   setPin("");
                   setSelectedSeller(seller);
                 }}
-                className="group relative overflow-hidden rounded-[34px] border border-zinc-200 bg-[linear-gradient(180deg,#ffffff_0%,#f5f8fb_62%,#eef3f8_100%)] px-5 py-5 text-left shadow-[0_18px_38px_rgba(15,23,42,0.08)] transition duration-200 hover:-translate-y-1 hover:border-emerald-300 hover:shadow-[0_26px_48px_rgba(15,23,42,0.12)]"
+                className="group relative overflow-hidden rounded-[30px] border border-zinc-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_64%,#eef3f8_100%)] px-5 py-5 text-left shadow-[0_14px_30px_rgba(15,23,42,0.07)] transition duration-200 hover:-translate-y-1 hover:border-emerald-300 hover:shadow-[0_22px_42px_rgba(15,23,42,0.11)]"
               >
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)] opacity-70" />
                 <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.9),transparent_36%),radial-gradient(circle_at_bottom_right,rgba(15,23,42,0.05),transparent_34%)]" />
@@ -557,31 +548,15 @@ export default function SellerProfileAccess({
                   </div>
 
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-600">
-                        {visualKind === "supervisor" ? "Supervisor" : "Vendedor"}
-                      </span>
-                      <span
-                        className={[
-                          "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
-                          seller.debeCambiarPin
-                            ? "border-amber-200 bg-amber-50 text-amber-700"
-                            : "border-emerald-200 bg-emerald-50 text-emerald-700",
-                        ].join(" ")}
-                      >
-                        {seller.debeCambiarPin ? "PIN pendiente" : "Activo"}
-                      </span>
-                    </div>
-
-                    <p className="mt-4 truncate text-[1.9rem] font-black leading-tight tracking-tight text-slate-950">
+                    <p className="truncate text-[1.75rem] font-black leading-tight tracking-tight text-slate-950">
                       {seller.nombre}
                     </p>
-                    <p className="mt-2 text-sm leading-6 text-slate-500">
-                      {seller.documento || seller.telefono || "Perfil comercial asignado a la sede"}
+                    <p className="mt-1 text-sm font-semibold text-slate-500">
+                      {visualKind === "supervisor" ? "Supervisor" : "Vendedor"}
                     </p>
 
-                    <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-slate-950 bg-slate-950 px-4 py-2 text-sm font-bold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition group-hover:bg-emerald-700 group-hover:border-emerald-700">
-                      Abrir perfil
+                    <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-slate-950 bg-slate-950 px-4 py-2 text-sm font-bold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition group-hover:bg-emerald-700 group-hover:border-emerald-700">
+                      Entrar
                       <span aria-hidden="true">-&gt;</span>
                     </div>
                   </div>
@@ -591,7 +566,7 @@ export default function SellerProfileAccess({
           })}
 
           {!filteredSellers.length && (
-            <div className="rounded-[30px] border border-dashed border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#f3f6fa_100%)] px-6 py-10 text-sm text-slate-500 lg:col-span-2 2xl:col-span-3">
+            <div className="rounded-[30px] border border-dashed border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#f3f6fa_100%)] px-6 py-10 text-sm text-slate-500 md:col-span-2">
               No hay perfiles asignados a esta sede para ese filtro.
             </div>
           )}
