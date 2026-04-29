@@ -432,7 +432,7 @@ export async function GET(req: Request) {
       );
     }
 
-    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
+    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR" && !search) {
       return NextResponse.json({
         canAdmin: false,
         scope: "vendedor",

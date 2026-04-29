@@ -10,6 +10,7 @@ export const metadata = {
 };
 
 type SearchParams = Promise<{ search?: string; mode?: string; selected?: string }>;
+type EntryMode = "default" | "create-client" | "delivery" | "simulator";
 
 export default async function CreditosPage(props: {
   searchParams: SearchParams;
@@ -31,14 +32,24 @@ export default async function CreditosPage(props: {
   const searchParams = await props.searchParams;
   const initialSearch = String(searchParams?.search || "").trim();
   const initialSelectedId = Number(searchParams?.selected || 0);
-  const requestedEntryMode =
-    String(searchParams?.mode || "").trim().toLowerCase() === "create-client"
-      ? "create-client"
-      : "default";
-  const entryMode =
-    !isAdminRole(session.rolNombre) && sellerSession?.tipoPerfil !== "SUPERVISOR"
-      ? "create-client"
-      : requestedEntryMode;
+  const rawEntryMode = String(searchParams?.mode || "").trim().toLowerCase();
+  let requestedEntryMode: EntryMode = "default";
+
+  if (
+    rawEntryMode === "create-client" ||
+    rawEntryMode === "delivery" ||
+    rawEntryMode === "simulator"
+  ) {
+    requestedEntryMode = rawEntryMode;
+  }
+
+  const advisorSession =
+    !isAdminRole(session.rolNombre) && sellerSession?.tipoPerfil !== "SUPERVISOR";
+  const entryMode: EntryMode = advisorSession
+    ? requestedEntryMode === "delivery" || requestedEntryMode === "simulator"
+      ? requestedEntryMode
+      : "create-client"
+    : requestedEntryMode;
 
   if (
     sellerSession?.tipoPerfil === "SUPERVISOR" &&

@@ -1539,7 +1539,7 @@ export default function CreditFactoryConsole({
   view?: "factory" | "payments" | "lookup";
   initialSearch?: string;
   initialSelectedId?: number | null;
-  entryMode?: "default" | "create-client";
+  entryMode?: "default" | "create-client" | "delivery" | "simulator";
 }) {
   const canAdmin = String(initialSession.rolNombre || "").toUpperCase() === "ADMIN";
   const canSupervisor = !canAdmin && initialSeller?.tipoPerfil === "SUPERVISOR";
@@ -1547,7 +1547,9 @@ export default function CreditFactoryConsole({
   const paymentsView = view === "payments";
   const lookupView = view === "lookup";
   const createClientMode = !paymentsView && !lookupView && entryMode === "create-client";
-  const lookupMode = lookupView && canViewSavedCredits;
+  const deliveryMode = !paymentsView && !lookupView && entryMode === "delivery";
+  const simulatorMode = !paymentsView && !lookupView && entryMode === "simulator";
+  const lookupMode = (lookupView && canViewSavedCredits) || deliveryMode;
   const showSearchSection = paymentsView || lookupMode;
   const pathname = usePathname();
   const normalizedInitialSearch = initialSearch.trim();
@@ -1570,7 +1572,7 @@ export default function CreditFactoryConsole({
   const selectedCreditPanelRef = useRef<HTMLDivElement | null>(null);
   const lookupDetailPanelRef = useRef<HTMLDivElement | null>(null);
   const historySectionRef = useRef<HTMLDivElement | null>(null);
-  const [wizardStep, setWizardStep] = useState(1);
+  const [wizardStep, setWizardStep] = useState(simulatorMode ? 2 : 1);
   const [clienteNombre, setClienteNombre] = useState("");
   const [clientePrimerNombre, setClientePrimerNombre] = useState("");
   const [clientePrimerApellido, setClientePrimerApellido] = useState("");
@@ -2470,11 +2472,19 @@ export default function CreditFactoryConsole({
   };
   const heroEyebrow = paymentsView
     ? "Abonos y recaudo"
+    : deliveryMode
+      ? "Validacion de entrega"
+    : simulatorMode
+      ? "Simulador"
     : lookupMode
       ? "Clientes y expedientes"
       : "Fabrica de creditos";
   const heroTitle = paymentsView
     ? "Recibe cuotas y consulta cartera"
+    : deliveryMode
+      ? "Consulta si el equipo esta entregable"
+    : simulatorMode
+      ? "Simula equipo, inicial y cuotas"
     : lookupMode
       ? "Busca el cliente y abre su expediente"
     : createClientMode
@@ -2482,6 +2492,10 @@ export default function CreditFactoryConsole({
       : "Genera, inscribe y valida entrega";
   const heroDescription = paymentsView
     ? "Esta vista queda enfocada en buscar clientes, revisar saldo pendiente, registrar abonos y consultar historial de pagos sin mezclar la creacion del credito."
+    : deliveryMode
+      ? "Escribe numero de cedula o IMEI, consulta el credito y revisa si ya esta listo para entregar."
+    : simulatorMode
+      ? "Selecciona marca, modelo, precio e inicial para revisar cuotas antes de iniciar la venta."
     : lookupMode
       ? "Busca por cedula, folio, telefono, IMEI o nombre y revisa solo la ficha del credito seleccionado, sin mezclar formularios de venta."
     : createClientMode
@@ -2489,6 +2503,8 @@ export default function CreditFactoryConsole({
       : "El flujo queda enfocado en generar el credito, inscribir el equipo en Equality y confirmar si el dispositivo si se puede entregar al cliente.";
   const searchDescription = paymentsView
     ? "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid para ubicar el caso y recibir el pago de las cuotas desde esta vista separada."
+    : deliveryMode
+      ? "Escribe la cedula del cliente o el IMEI del equipo. Al consultar se mostrara si el credito ya esta en estado entregable."
     : lookupMode
       ? "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid. Si hay varias coincidencias, primero eliges una y luego solo se muestra ese cliente."
       : "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid para ubicar creditos existentes y revisar su estado sin salir de la fabrica.";
@@ -3005,7 +3021,7 @@ export default function CreditFactoryConsole({
 
       if (lookupMode) {
         setShowSearchResults(true);
-        setShowLookupDetail(false);
+        setShowLookupDetail(deliveryMode && nextSelectedId !== null);
         if (nextSelectedId !== null) {
           focusSelectedCreditPanel();
         }
@@ -3024,6 +3040,12 @@ export default function CreditFactoryConsole({
     void loadEquipmentCatalog();
     void loadCreditSettings();
   }, []);
+
+  useEffect(() => {
+    if (simulatorMode) {
+      setWizardStep(2);
+    }
+  }, [simulatorMode]);
 
   useEffect(() => {
     if (!paymentsView && !lookupMode) {
@@ -4391,6 +4413,10 @@ export default function CreditFactoryConsole({
       params.set("search", nextSearch);
     }
 
+    if (deliveryMode) {
+      params.set("mode", "delivery");
+    }
+
     params.set("selected", String(creditId));
     const href = params.toString() ? `${pathname}?${params.toString()}` : pathname;
     window.location.assign(href);
@@ -4639,24 +4665,28 @@ export default function CreditFactoryConsole({
                   >
                     Volver al dashboard
                   </Link>
-                  <Link
-                    href="/dashboard/integraciones"
-                    className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
-                  >
-                    Ver integraciones
-                  </Link>
-                  <Link
-                    href={
-                      paymentsView
-                        ? "/dashboard/creditos?mode=create-client"
-                        : lookupMode
-                          ? "/dashboard/abonos"
-                          : "/dashboard/abonos"
-                    }
-                    className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
-                  >
-                    {paymentsView ? "Ir a crear cliente" : "Ir a abonos"}
-                  </Link>
+                  {canViewSavedCredits && (
+                    <>
+                      <Link
+                        href="/dashboard/integraciones"
+                        className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
+                      >
+                        Ver integraciones
+                      </Link>
+                      <Link
+                        href={
+                          paymentsView
+                            ? "/dashboard/creditos?mode=create-client"
+                            : lookupMode
+                              ? "/dashboard/abonos"
+                              : "/dashboard/abonos"
+                        }
+                        className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
+                      >
+                        {paymentsView ? "Ir a crear cliente" : "Ir a abonos"}
+                      </Link>
+                    </>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -4697,7 +4727,7 @@ export default function CreditFactoryConsole({
           }
         >
           <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]">
-            Buscar cliente
+            {deliveryMode ? "Validar entrega" : "Buscar cliente"}
           </div>
           <h2
             className={[
@@ -4705,7 +4735,11 @@ export default function CreditFactoryConsole({
               paymentsView ? "mt-3 text-2xl" : "mt-4 text-3xl",
             ].join(" ")}
           >
-            {paymentsView ? "Busca el cliente para recaudar" : "Encuentra al cliente y su credito"}
+            {paymentsView
+              ? "Busca el cliente para recaudar"
+              : deliveryMode
+                ? "Consulta estado de entrega"
+                : "Encuentra al cliente y su credito"}
           </h2>
           <p
             className={[
@@ -4727,7 +4761,7 @@ export default function CreditFactoryConsole({
                   void searchCredits();
                 }
               }}
-              placeholder="Cedula, telefono, nombre, folio o IMEI"
+              placeholder={deliveryMode ? "Cedula o IMEI" : "Cedula, telefono, nombre, folio o IMEI"}
                className="flex-1 rounded-[18px] border border-emerald-950/14 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
             />
 
@@ -4737,7 +4771,7 @@ export default function CreditFactoryConsole({
               disabled={loadingList}
               className="fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"
             >
-              {loadingList ? "Buscando..." : "Buscar cliente"}
+              {loadingList ? "Buscando..." : deliveryMode ? "Consultar" : "Buscar cliente"}
             </button>
 
             <button
@@ -4782,6 +4816,8 @@ export default function CreditFactoryConsole({
                 ? "mt-6"
                 : lookupMode
                   ? "mt-6"
+                  : simulatorMode
+                    ? "mt-6"
                   : "mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]"
           }
         >
@@ -4795,18 +4831,29 @@ export default function CreditFactoryConsole({
               <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">
-                    Flujo de venta
+                    {simulatorMode ? "Simulador" : "Flujo de venta"}
                   </p>
                   <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-                    5 pasos para cerrar el credito
+                    {simulatorMode ? "Equipo y plan financiero" : "5 pasos para cerrar el credito"}
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Paso actual: <span className="font-semibold text-slate-950">{activeFactoryStep.label}</span>.{" "}
-                    Siguiente accion: <span className="font-semibold text-slate-950">{nextFactoryStep.action}</span>
+                    {simulatorMode
+                      ? "Selecciona el equipo para revisar inicial, credito autorizado y valor por cuota."
+                      : (
+                          <>
+                            Paso actual: <span className="font-semibold text-slate-950">{activeFactoryStep.label}</span>.{" "}
+                            Siguiente accion: <span className="font-semibold text-slate-950">{nextFactoryStep.action}</span>
+                          </>
+                        )}
                   </p>
                 </div>
 
-                <div className="min-w-[260px] rounded-[20px] border border-[#d8e6e5] bg-white/88 px-4 py-3">
+                <div
+                  className={[
+                    "min-w-[260px] rounded-[20px] border border-[#d8e6e5] bg-white/88 px-4 py-3",
+                    simulatorMode ? "hidden" : "",
+                  ].join(" ")}
+                >
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-semibold text-slate-700">Avance general</p>
                     <p className="text-xl font-black tracking-tight text-slate-950">
@@ -4823,8 +4870,17 @@ export default function CreditFactoryConsole({
               </div>
             </div>
 
-            <div className="mt-4 grid gap-4 xl:grid-cols-[220px_1fr] xl:items-start">
-              <aside className="fp-step-rail rounded-[22px] border border-[#d8e6e5] bg-white/88 p-2.5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+            <div
+              className={
+                simulatorMode ? "mt-4" : "mt-4 grid gap-4 xl:grid-cols-[220px_1fr] xl:items-start"
+              }
+            >
+              <aside
+                className={[
+                  "fp-step-rail rounded-[22px] border border-[#d8e6e5] bg-white/88 p-2.5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]",
+                  simulatorMode ? "hidden" : "",
+                ].join(" ")}
+              >
                 {factorySteps.map((step) => {
                   const active = step.id === wizardStep;
 
@@ -5703,24 +5759,32 @@ export default function CreditFactoryConsole({
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <div className="inline-flex rounded-full border border-[#e6d6bd] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8a5a21]">
-                        Paso 2
+                        {simulatorMode ? "Simulador" : "Paso 2"}
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        Equipo y plan financiero
+                        {simulatorMode ? "Equipo, inicial y cuotas" : "Equipo y plan financiero"}
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Captura el equipo, define la inicial y confirma la cuota que vera el cliente.
+                        {simulatorMode
+                          ? "Selecciona un equipo y revisa el valor de inicial, credito autorizado, plazo y cuotas."
+                          : "Captura el equipo, define la inicial y confirma la cuota que vera el cliente."}
                       </p>
                     </div>
                     <div
                       className={[
                         "inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
-                        stepEquipoReady
+                        simulatorMode
+                          ? "border-sky-200 bg-sky-50 text-sky-700"
+                          : stepEquipoReady
                           ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                           : "border-amber-200 bg-amber-50 text-amber-700",
                       ].join(" ")}
                     >
-                      {stepEquipoReady ? "Equipo listo" : "Falta informacion"}
+                      {simulatorMode
+                        ? "Solo consulta"
+                        : stepEquipoReady
+                          ? "Equipo listo"
+                          : "Falta informacion"}
                     </div>
                   </div>
 
@@ -5796,7 +5860,7 @@ export default function CreditFactoryConsole({
                         )}
                       </div>
 
-                      <div>
+                      <div className={simulatorMode ? "hidden" : ""}>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           IMEI / deviceUid
                         </label>
@@ -7089,61 +7153,63 @@ export default function CreditFactoryConsole({
               )}
             </div>
 
-            <div className="fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-[24px] border border-[#d8e6e5] bg-white/92 px-4 py-4 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur">
-              {wizardStep > 1 && (
+            {!simulatorMode && (
+              <div className="fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-[24px] border border-[#d8e6e5] bg-white/92 px-4 py-4 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur">
+                {wizardStep > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setWizardStep((current) => Math.max(1, current - 1))}
+                    className="rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa]"
+                  >
+                    Anterior
+                  </button>
+                )}
+
+                {wizardStep < 5 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void advanceToStep(wizardStep + 1);
+                    }}
+                    className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01]"
+                  >
+                    Siguiente paso
+                  </button>
+                )}
+
+                {wizardStep === 5 && (
+                  <button
+                    type="button"
+                    onClick={() => void createCredit()}
+                    disabled={creating || !ventaLista}
+                    className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"
+                  >
+                    {creating ? "Finalizando credito..." : "Finalizar credito"}
+                  </button>
+                )}
+
                 <button
                   type="button"
-                  onClick={() => setWizardStep((current) => Math.max(1, current - 1))}
-                  className="rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa]"
+                  onClick={() => resetForm()}
+                  disabled={creating}
+                  className="rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa] disabled:opacity-70"
                 >
-                  Anterior
+                  Limpiar
                 </button>
-              )}
 
-              {wizardStep < 5 && (
-                <button
-                  type="button"
-                        onClick={() => {
-                          void advanceToStep(wizardStep + 1);
-                        }}
-                  className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01]"
-                >
-                  Siguiente paso
-                </button>
-              )}
+                {FLEXIBLE_WIZARD_FOR_TESTING && (
+                  <span className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2 text-xs font-medium text-sky-700">
+                    Modo pruebas: puedes saltar entre pasos y cerrar sin la validacion final de entrega.
+                  </span>
+                )}
 
-              {wizardStep === 5 && (
-                <button
-                  type="button"
-                  onClick={() => void createCredit()}
-                  disabled={creating || !ventaLista}
-                  className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"
-                >
-                  {creating ? "Finalizando credito..." : "Finalizar credito"}
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => resetForm()}
-                disabled={creating}
-                className="rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa] disabled:opacity-70"
-              >
-                Limpiar
-              </button>
-
-              {FLEXIBLE_WIZARD_FOR_TESTING && (
-                <span className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2 text-xs font-medium text-sky-700">
-                  Modo pruebas: puedes saltar entre pasos y cerrar sin la validacion final de entrega.
-                </span>
-              )}
-
-              {wizardStep === 5 && !ventaLista && !FLEXIBLE_WIZARD_FOR_TESTING && (
-                <span className="text-sm font-medium text-amber-700">
-                  Primero valida la entregabilidad del dispositivo para habilitar el cierre.
-                </span>
-              )}
-            </div>
+                {wizardStep === 5 && !ventaLista && !FLEXIBLE_WIZARD_FOR_TESTING && (
+                  <span className="text-sm font-medium text-amber-700">
+                    Primero valida la entregabilidad del dispositivo para habilitar el cierre.
+                  </span>
+                )}
+              </div>
+            )}
               </div>
             </div>
 
@@ -7699,14 +7765,18 @@ export default function CreditFactoryConsole({
             ref={lookupMode ? selectedCreditPanelRef : null}
             className={[
               "rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] p-6 shadow-[0_18px_50px_rgba(15,23,42,0.07)]",
-              createClientMode ? "hidden" : "",
+              createClientMode || simulatorMode ? "hidden" : "",
             ].join(" ")}
           >
             <div className="inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
-              {lookupMode ? "Expediente del cliente" : "Entrega"}
+              {deliveryMode ? "Validacion de entrega" : lookupMode ? "Expediente del cliente" : "Entrega"}
             </div>
             <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">
-              {lookupMode ? "Cliente y expediente seleccionado" : "Validacion operativa"}
+              {deliveryMode
+                ? "Resultado de consulta"
+                : lookupMode
+                  ? "Cliente y expediente seleccionado"
+                  : "Validacion operativa"}
             </h2>
 
             {!selectedCredit ? (
@@ -7715,13 +7785,17 @@ export default function CreditFactoryConsole({
                   ? "Buscando coincidencias..."
                   : lookupMode
                     ? activeSearch
-                      ? "La busqueda devolvio varias coincidencias. Selecciona una para ver solo ese expediente."
-                      : "Escribe un dato del cliente o del credito para abrir un expediente puntual."
+                      ? deliveryMode
+                        ? "La consulta encontro varias coincidencias. Selecciona una para validar la entrega."
+                        : "La busqueda devolvio varias coincidencias. Selecciona una para ver solo ese expediente."
+                      : deliveryMode
+                        ? "Escribe numero de cedula o IMEI y consulta si el equipo esta entregable."
+                        : "Escribe un dato del cliente o del credito para abrir un expediente puntual."
                     : "Genera o selecciona un credito para ver si el equipo ya se puede entregar."}
               </div>
             ) : (
               <div className="mt-6 space-y-4">
-                {lookupMode && (
+                {lookupMode && !deliveryMode && (
                   <>
                     <div className="rounded-[28px] border border-[#dbe5ec] bg-white px-5 py-5 shadow-sm">
                       <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
@@ -8217,7 +8291,7 @@ export default function CreditFactoryConsole({
                   </div>
                 )}
 
-                {lookupMode && (
+                {lookupMode && !deliveryMode && (
                   <div
                     ref={historySectionRef}
                     className="rounded-[24px] border border-[#dbe5ec] bg-white px-5 py-5 shadow-sm"
@@ -8435,10 +8509,18 @@ export default function CreditFactoryConsole({
             <div className="flex items-end justify-between gap-4">
               <div>
                 <div className="inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
-                  {paymentsView ? "Seleccion de cliente" : "Clientes / creditos"}
+                  {paymentsView
+                    ? "Seleccion de cliente"
+                    : deliveryMode
+                      ? "Estado de entrega"
+                      : "Clientes / creditos"}
                 </div>
                 <h2 className="mt-4 text-2xl font-black tracking-tight text-slate-950">
-                  {paymentsView ? "Selecciona el credito correcto" : "Resultados de busqueda"}
+                  {paymentsView
+                    ? "Selecciona el credito correcto"
+                    : deliveryMode
+                      ? "Resultado de la consulta"
+                      : "Resultados de busqueda"}
                 </h2>
               </div>
 
@@ -8460,14 +8542,18 @@ export default function CreditFactoryConsole({
                 : activeSearch
                   ? `Mostrando coincidencias para "${activeSearch}".`
                   : lookupMode
-                    ? "Sin filtro activo. La vista queda vacia hasta que busques un cliente o credito."
+                    ? deliveryMode
+                      ? "Sin filtro activo. Ingresa cedula o IMEI para validar la entrega."
+                      : "Sin filtro activo. La vista queda vacia hasta que busques un cliente o credito."
                     : "Sin filtro activo. Se muestran los creditos mas recientes dentro de tu alcance."}
             </p>
 
             <div className="mt-5 space-y-3">
               {!credits.length && !loadingList ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-                  No encontramos clientes o creditos con ese criterio de busqueda.
+                  {deliveryMode
+                    ? "No encontramos un credito con esa cedula o IMEI."
+                    : "No encontramos clientes o creditos con ese criterio de busqueda."}
                 </div>
               ) : (
                 credits.map((credit) => (

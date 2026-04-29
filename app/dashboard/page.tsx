@@ -684,11 +684,11 @@ export default async function DashboardPage() {
       icon: "credit",
     },
     {
-      href: sellerIsSupervisor ? "/dashboard#busqueda-rapida" : "/dashboard/creditos",
+      href: sellerIsSupervisor ? "/dashboard#busqueda-rapida" : "/dashboard/creditos?mode=delivery",
       title: sellerIsSupervisor ? "Buscar cliente" : "Validar entrega",
       description: sellerIsSupervisor
         ? "Abre el expediente del cliente, revisa documentos firmados y consulta el caso correcto."
-        : "Confirma si el equipo ya quedo listo para entregar despues del enrolamiento.",
+        : "Consulta por cedula o IMEI si el equipo ya quedo listo para entregar.",
       icon: sellerIsSupervisor ? "clients" : "search",
     },
     ...(sellerIsSupervisor
@@ -717,33 +717,31 @@ export default async function DashboardPage() {
         ]
       : [
           {
-            href: "/dashboard/creditos",
+            href: "/dashboard/creditos?mode=simulator",
             title: "Simulador",
             description:
-              "Revisa valor financiado, cuotas e informacion del equipo antes de cerrar la venta.",
+              "Selecciona equipo, inicial y cuotas antes de iniciar la venta.",
             icon: "calculator" as const,
           },
         ]),
   ];
 
-  const sellerMenuItems: SellerMenuItem[] = [
-    { href: "/dashboard", label: "Inicio", icon: "home", active: true },
-    { href: "/dashboard/creditos?mode=create-client", label: "Crear cliente", icon: "new-sale" },
-    ...(sellerIsSupervisor
-      ? [
-          { href: "/dashboard#busqueda-rapida", label: "Buscar cliente", icon: "clients" as const },
-          { href: "/dashboard/abonos", label: "Abonos", icon: "payments" as const },
-          { href: "/dashboard/reportes/creditos", label: "Creditos por fecha", icon: "calculator" as const },
-          { href: "/dashboard/reportes/abonos", label: "Abonos por fecha", icon: "payments" as const },
-        ]
-      : [{ href: "/dashboard/creditos", label: "Validar entrega", icon: "search" as const }]),
-    {
-      href: sellerIsSupervisor ? "/dashboard#busqueda-rapida" : "/dashboard/creditos",
-      label: sellerIsSupervisor ? "Expedientes" : "Simulador",
-      icon: sellerIsSupervisor ? ("clients" as const) : "calculator",
-    },
-    { href: "/dashboard/pin", label: "Cambiar PIN", icon: "search" },
-  ];
+  const sellerMenuItems: SellerMenuItem[] = sellerIsSupervisor
+    ? [
+        { href: "/dashboard", label: "Inicio", icon: "home", active: true },
+        { href: "/dashboard/creditos?mode=create-client", label: "Crear cliente", icon: "new-sale" },
+        { href: "/dashboard#busqueda-rapida", label: "Buscar cliente", icon: "clients" as const },
+        { href: "/dashboard/abonos", label: "Abonos", icon: "payments" as const },
+        { href: "/dashboard/reportes/creditos", label: "Creditos por fecha", icon: "calculator" as const },
+        { href: "/dashboard/reportes/abonos", label: "Abonos por fecha", icon: "payments" as const },
+        { href: "/dashboard#busqueda-rapida", label: "Expedientes", icon: "clients" as const },
+        { href: "/dashboard/pin", label: "Cambiar PIN", icon: "search" },
+      ]
+    : [
+        { href: "/dashboard/creditos?mode=create-client", label: "Crear cliente", icon: "new-sale" },
+        { href: "/dashboard/creditos?mode=delivery", label: "Validar entrega", icon: "search" },
+        { href: "/dashboard/creditos?mode=simulator", label: "Simulador", icon: "calculator" },
+      ];
 
   if (!admin) {
     return (
@@ -854,60 +852,60 @@ export default async function DashboardPage() {
                   </section>
                 )}
 
-                <section
-                  id="busqueda-rapida"
-                  className="fp-surface relative overflow-hidden rounded-[28px] px-6 py-8"
-                >
-                  <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
+                {sellerIsSupervisor && (
+                  <section
+                    id="busqueda-rapida"
+                    className="fp-surface relative overflow-hidden rounded-[28px] px-6 py-8"
+                  >
+                    <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
 
-                  <div className="relative">
-                    <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]">
-                      Busqueda rapida
+                    <div className="relative">
+                      <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]">
+                        Busqueda rapida
+                      </div>
+
+                      <h2 className="mt-5 text-3xl font-black leading-tight tracking-tight text-slate-950 sm:text-4xl">
+                        Encuentra clientes y abre el flujo correcto
+                      </h2>
+
+                      <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
+                        Busca por cedula, telefono, folio, IMEI o deviceUid para pasar directo a recaudo o revisar la cartera desde {sedeLabel}.
+                      </p>
                     </div>
 
-                    <h2 className="mt-5 text-3xl font-black leading-tight tracking-tight text-slate-950 sm:text-4xl">
-                      Encuentra clientes y abre el flujo correcto
-                    </h2>
-
-                    <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
-                      {sellerIsSupervisor
-                        ? `Busca por cedula, telefono, folio, IMEI o deviceUid para pasar directo a recaudo o revisar la cartera desde ${sedeLabel}.`
-                        : `Busca por cedula, telefono, folio, IMEI o deviceUid para continuar ventas y validar equipos desde ${sedeLabel}.`}
-                    </p>
-                  </div>
-
-                  <form
-                    action={sellerSearchHref}
-                    className="relative mt-8 flex flex-col gap-3 xl:flex-row"
-                  >
-                    <input
-                      type="text"
-                      name="search"
-                      placeholder="Cedula del cliente, IMEI o folio"
-                      className="flex-1 rounded-[18px] border border-zinc-300 bg-white px-5 py-4 text-base text-slate-900 outline-none transition focus:border-zinc-700 focus:ring-2 focus:ring-zinc-200"
-                    />
-
-                    <button
-                      type="submit"
-                      className="inline-flex items-center justify-center gap-2 rounded-[18px] bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] px-6 py-4 text-lg font-bold text-white shadow-[0_12px_24px_rgba(15,23,42,0.18)] transition hover:opacity-95"
+                    <form
+                      action={sellerSearchHref}
+                      className="relative mt-8 flex flex-col gap-3 xl:flex-row"
                     >
-                      Buscar
-                      <SellerIcon kind="search" className="h-6 w-6" />
-                    </button>
-                  </form>
+                      <input
+                        type="text"
+                        name="search"
+                        placeholder="Cedula del cliente, IMEI o folio"
+                        className="flex-1 rounded-[18px] border border-zinc-300 bg-white px-5 py-4 text-base text-slate-900 outline-none transition focus:border-zinc-700 focus:ring-2 focus:ring-zinc-200"
+                      />
 
-                  <div className="relative mt-5 flex flex-wrap gap-2">
-                    <span className="rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#f8fafc_0%,#e5e7eb_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-700">
-                      Sede {sedeLabel}
-                    </span>
-                    <span className="rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#f8fafc_0%,#e5e7eb_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-700">
-                      Zero Touch listo
-                    </span>
-                    <span className="rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#f8fafc_0%,#e5e7eb_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-700">
-                      {sellerIsSupervisor ? "Perfil supervisor" : "Perfil vendedor"}
-                    </span>
-                  </div>
-                </section>
+                      <button
+                        type="submit"
+                        className="inline-flex items-center justify-center gap-2 rounded-[18px] bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] px-6 py-4 text-lg font-bold text-white shadow-[0_12px_24px_rgba(15,23,42,0.18)] transition hover:opacity-95"
+                      >
+                        Buscar
+                        <SellerIcon kind="search" className="h-6 w-6" />
+                      </button>
+                    </form>
+
+                    <div className="relative mt-5 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#f8fafc_0%,#e5e7eb_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-700">
+                        Sede {sedeLabel}
+                      </span>
+                      <span className="rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#f8fafc_0%,#e5e7eb_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-700">
+                        Zero Touch listo
+                      </span>
+                      <span className="rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#f8fafc_0%,#e5e7eb_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-700">
+                        Perfil supervisor
+                      </span>
+                    </div>
+                  </section>
+                )}
 
                 <section className="mx-auto mt-10 grid max-w-5xl gap-6 md:grid-cols-3">
                   {sellerActions.map((action) => (
@@ -915,34 +913,29 @@ export default async function DashboardPage() {
                   ))}
                 </section>
 
-                <Link
-                  href={sellerIsSupervisor ? "/dashboard#busqueda-rapida" : "/dashboard/creditos"}
-                  className="group relative mx-auto mt-10 flex max-w-5xl flex-col items-start justify-between gap-4 overflow-hidden rounded-[30px] border border-zinc-700/30 bg-[linear-gradient(135deg,#050506_0%,#18181b_42%,#52525b_100%)] px-7 py-7 text-white shadow-[0_18px_34px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 sm:flex-row sm:items-center"
-                >
-                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.16),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.05),transparent_32%)]" />
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-300">
-                      Herramienta comercial
-                    </p>
-                    <p className="mt-3 text-2xl font-black tracking-tight">
-                      {sellerIsSupervisor
-                        ? "Abrir clientes y expedientes"
-                        : "Simular credito y preparar la venta"}
-                    </p>
-                    <p className="mt-2 text-sm leading-6 text-white/76">
-                      {sellerIsSupervisor
-                        ? "Consulta el caso correcto, revisa documentos firmados y abre el seguimiento del cliente."
-                        : "Revisa valor financiado, cuotas e informacion del equipo antes de cerrar el negocio."}
-                    </p>
-                  </div>
+                {sellerIsSupervisor && (
+                  <Link
+                    href="/dashboard#busqueda-rapida"
+                    className="group relative mx-auto mt-10 flex max-w-5xl flex-col items-start justify-between gap-4 overflow-hidden rounded-[30px] border border-zinc-700/30 bg-[linear-gradient(135deg,#050506_0%,#18181b_42%,#52525b_100%)] px-7 py-7 text-white shadow-[0_18px_34px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 sm:flex-row sm:items-center"
+                  >
+                    <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.16),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.05),transparent_32%)]" />
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-300">
+                        Herramienta comercial
+                      </p>
+                      <p className="mt-3 text-2xl font-black tracking-tight">
+                        Abrir clientes y expedientes
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/76">
+                        Consulta el caso correcto, revisa documentos firmados y abre el seguimiento del cliente.
+                      </p>
+                    </div>
 
-                  <div className="relative flex h-20 w-20 items-center justify-center rounded-[24px] border border-white/16 bg-white/10">
-                    <SellerIcon
-                      kind={sellerIsSupervisor ? "clients" : "calculator"}
-                      className="h-12 w-12"
-                    />
-                  </div>
-                </Link>
+                    <div className="relative flex h-20 w-20 items-center justify-center rounded-[24px] border border-white/16 bg-white/10">
+                      <SellerIcon kind="clients" className="h-12 w-12" />
+                    </div>
+                  </Link>
+                )}
               </div>
             </main>
           </div>
