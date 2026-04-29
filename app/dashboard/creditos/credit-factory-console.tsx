@@ -20,12 +20,15 @@ import {
   DEFAULT_FIANCO_SURETY_PERCENTAGE,
   DEFAULT_LEGAL_CONSUMER_RATE_EA,
   DEFAULT_LEGAL_RATE_REFERENCE,
+  DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
   generatePagareNumber,
   getDefaultFirstPaymentDate,
+  getCreditInstallmentOptions,
   getPaymentFrequencyLabel,
-  MAX_CREDIT_INSTALLMENTS,
   MAX_DEVICE_FINANCING_BASE,
+  normalizeCreditInstallmentLimit,
+  normalizeCreditInstallments,
 } from "@/lib/credit-factory";
 import {
   runCedulaValidation,
@@ -248,6 +251,7 @@ type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
   plazoCuotas: number;
+  plazoMaximoCuotas: number;
   frecuenciaPago: string;
   updatedAt: string | null;
 };
@@ -414,10 +418,6 @@ const DEPARTMENT_OPTIONS = Object.keys(DEPARTMENT_CITY_OPTIONS).map((value) => (
 }));
 
 const FLEXIBLE_WIZARD_FOR_TESTING = false;
-const CREDIT_INSTALLMENT_OPTIONS = Array.from(
-  { length: MAX_CREDIT_INSTALLMENTS },
-  (_, index) => String(index + 1)
-);
 
 const copCurrencyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -1603,6 +1603,7 @@ export default function CreditFactoryConsole({
     tasaInteresEa: DEFAULT_LEGAL_CONSUMER_RATE_EA,
     fianzaPorcentaje: DEFAULT_FIANCO_SURETY_PERCENTAGE,
     plazoCuotas: DEFAULT_CREDIT_INSTALLMENTS,
+    plazoMaximoCuotas: DEFAULT_MAX_CREDIT_INSTALLMENTS,
     frecuenciaPago: DEFAULT_PAYMENT_FREQUENCY,
     updatedAt: null,
   });
@@ -1786,9 +1787,17 @@ export default function CreditFactoryConsole({
       ? Math.max(0, valorTotalEquipoNumero - precioBaseVentaCatalogo)
       : Math.max(0, valorTotalEquipoNumero - MAX_DEVICE_FINANCING_BASE);
   const cuotaInicialNumero = Math.max(0, Number(cuotaInicial || 0));
-  const plazoMesesNumero = Math.min(
-    MAX_CREDIT_INSTALLMENTS,
-    Math.max(0, Math.trunc(Number(plazoMeses || 0)))
+  const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
+    creditSettings.plazoMaximoCuotas
+  );
+  const creditInstallmentOptions = useMemo(
+    () => getCreditInstallmentOptions(plazoMaximoCuotas),
+    [plazoMaximoCuotas]
+  );
+  const plazoMesesNumero = normalizeCreditInstallments(
+    plazoMeses,
+    creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
+    plazoMaximoCuotas
   );
   const tasaInteresEaNumero = Math.max(0, Number(tasaInteresEa || 0));
   const fianzaPorcentajeNumero = Math.max(0, Number(fianzaPorcentaje || 0));
@@ -2887,11 +2896,22 @@ export default function CreditFactoryConsole({
         );
       }
 
-      const nextSettings = result.data.settings;
+      const nextMaxInstallments = normalizeCreditInstallmentLimit(
+        result.data.settings.plazoMaximoCuotas
+      );
+      const nextSettings = {
+        ...result.data.settings,
+        plazoMaximoCuotas: nextMaxInstallments,
+        plazoCuotas: normalizeCreditInstallments(
+          result.data.settings.plazoCuotas,
+          DEFAULT_CREDIT_INSTALLMENTS,
+          nextMaxInstallments
+        ),
+      };
       setCreditSettings(nextSettings);
       setTasaInteresEa(String(nextSettings.tasaInteresEa));
       setFianzaPorcentaje(String(nextSettings.fianzaPorcentaje));
-      setPlazoMeses(String(nextSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS));
+      setPlazoMeses(String(nextSettings.plazoCuotas));
       setFechaPrimerPago(
         getDefaultFirstPaymentDate(new Date(), nextSettings.frecuenciaPago)
       );
@@ -3891,7 +3911,15 @@ export default function CreditFactoryConsole({
     setImei("");
     setValorEquipoTotal("");
     setCuotaInicial("");
-    setPlazoMeses(String(creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS));
+    setPlazoMeses(
+      String(
+        normalizeCreditInstallments(
+          creditSettings.plazoCuotas,
+          DEFAULT_CREDIT_INSTALLMENTS,
+          creditSettings.plazoMaximoCuotas
+        )
+      )
+    );
     setTasaInteresEa(String(creditSettings.tasaInteresEa));
     setFianzaPorcentaje(String(creditSettings.fianzaPorcentaje));
     setFechaPrimerPago(
@@ -5837,7 +5865,7 @@ export default function CreditFactoryConsole({
                           onChange={(event) => setPlazoMeses(event.target.value)}
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                         >
-                          {CREDIT_INSTALLMENT_OPTIONS.map((option) => (
+                          {creditInstallmentOptions.map((option) => (
                             <option key={option} value={option}>
                               {option}
                             </option>
@@ -7257,7 +7285,7 @@ export default function CreditFactoryConsole({
                   onChange={(event) => setPlazoMeses(event.target.value)}
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 >
-                  {CREDIT_INSTALLMENT_OPTIONS.map((option) => (
+                  {creditInstallmentOptions.map((option) => (
                     <option key={option} value={option}>
                       {option}
                     </option>

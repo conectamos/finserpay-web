@@ -14,7 +14,8 @@ import {
   generatePagareNumber,
   generatePaymentReference,
   getDefaultFirstPaymentDateObject,
-  MAX_CREDIT_INSTALLMENTS,
+  normalizeCreditInstallmentLimit,
+  normalizeCreditInstallments,
   normalizePaymentFrequency,
   resolveCreditPaymentSummary,
   resolveCreditState,
@@ -583,14 +584,13 @@ export async function POST(req: Request) {
     );
     const creditSettings = await getCreditSettings();
     const plazoMesesInput = Math.trunc(toNumber(body.plazoMeses));
-    const plazoMeses = Math.min(
-      MAX_CREDIT_INSTALLMENTS,
-      Math.max(
-        1,
-        plazoMesesInput > 0
-          ? plazoMesesInput
-          : creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS
-      )
+    const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
+      creditSettings.plazoMaximoCuotas
+    );
+    const plazoMeses = normalizeCreditInstallments(
+      plazoMesesInput,
+      creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
+      plazoMaximoCuotas
     );
     const frecuenciaPago = normalizePaymentFrequency(
       body.frecuenciaPago || creditSettings.frecuenciaPago

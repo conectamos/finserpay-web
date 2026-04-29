@@ -17,7 +17,8 @@ export const CREDIT_ABONO_CAJA_MARKER = "ABONO_CREDITO_ID:";
 export const DEFAULT_LEGAL_CONSUMER_RATE_EA = 17.84;
 export const DEFAULT_FIANCO_SURETY_PERCENTAGE = 60;
 export const DEFAULT_CREDIT_INSTALLMENTS = 12;
-export const MAX_CREDIT_INSTALLMENTS = 16;
+export const DEFAULT_MAX_CREDIT_INSTALLMENTS = 16;
+export const MAX_CREDIT_INSTALLMENTS = 60;
 export const DEFAULT_PAYMENT_FREQUENCY = "QUINCENAL";
 export const MAX_DEVICE_FINANCING_BASE = 800_000;
 export const DEFAULT_LEGAL_RATE_REFERENCE =
@@ -47,6 +48,47 @@ export function sanitizeSearch(value: unknown) {
 export function toNumber(value: unknown) {
   const normalized = Number(value);
   return Number.isFinite(normalized) ? normalized : 0;
+}
+
+export function normalizeCreditInstallmentLimit(
+  value: unknown,
+  fallback = DEFAULT_MAX_CREDIT_INSTALLMENTS
+) {
+  const parsed = Math.trunc(Number(value));
+  const fallbackValue = Math.trunc(Number(fallback));
+  const candidate =
+    Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : Number.isFinite(fallbackValue) && fallbackValue > 0
+        ? fallbackValue
+        : DEFAULT_MAX_CREDIT_INSTALLMENTS;
+
+  return Math.max(1, Math.min(MAX_CREDIT_INSTALLMENTS, candidate));
+}
+
+export function normalizeCreditInstallments(
+  value: unknown,
+  fallback = DEFAULT_CREDIT_INSTALLMENTS,
+  maxInstallments: unknown = DEFAULT_MAX_CREDIT_INSTALLMENTS
+) {
+  const max = normalizeCreditInstallmentLimit(maxInstallments);
+  const parsed = Math.trunc(Number(value));
+  const fallbackValue = Math.trunc(Number(fallback));
+  const candidate =
+    Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : Number.isFinite(fallbackValue) && fallbackValue > 0
+        ? fallbackValue
+        : DEFAULT_CREDIT_INSTALLMENTS;
+
+  return Math.max(1, Math.min(max, candidate));
+}
+
+export function getCreditInstallmentOptions(maxInstallments: unknown) {
+  return Array.from(
+    { length: normalizeCreditInstallmentLimit(maxInstallments) },
+    (_, index) => String(index + 1)
+  );
 }
 
 export function toNullableDate(value: unknown) {

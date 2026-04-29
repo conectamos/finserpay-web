@@ -72,6 +72,7 @@ export async function PATCH(req: Request) {
       tasaInteresEa: body.tasaInteresEa,
       fianzaPorcentaje: body.fianzaPorcentaje,
       plazoCuotas: body.plazoCuotas,
+      plazoMaximoCuotas: body.plazoMaximoCuotas,
       frecuenciaPago: body.frecuenciaPago,
     });
 

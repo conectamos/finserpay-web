@@ -3,8 +3,10 @@ import {
   DEFAULT_CREDIT_INSTALLMENTS,
   DEFAULT_FIANCO_SURETY_PERCENTAGE,
   DEFAULT_LEGAL_CONSUMER_RATE_EA,
+  DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
-  MAX_CREDIT_INSTALLMENTS,
+  normalizeCreditInstallmentLimit,
+  normalizeCreditInstallments,
   normalizePaymentFrequency,
 } from "@/lib/credit-factory";
 
@@ -16,6 +18,7 @@ export type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
   plazoCuotas: number;
+  plazoMaximoCuotas: number;
   frecuenciaPago: string;
   updatedAt: string | null;
 };
@@ -35,24 +38,24 @@ function normalizePercentage(value: unknown, fallback: number) {
   return Math.max(0, Math.min(100, Math.round(parsed * 100) / 100));
 }
 
-function normalizeInstallments(value: unknown, fallback = DEFAULT_CREDIT_INSTALLMENTS) {
-  const parsed = Math.trunc(Number(value));
-
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return Math.max(1, Math.min(MAX_CREDIT_INSTALLMENTS, parsed));
-}
-
 function toCreditSettings(row?: Record<string, unknown> | null): CreditSettings {
+  const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
+    row?.plazoMaximoCuotas,
+    DEFAULT_MAX_CREDIT_INSTALLMENTS
+  );
+
   return {
     tasaInteresEa: toNumber(row?.tasaInteresEa, DEFAULT_LEGAL_CONSUMER_RATE_EA),
     fianzaPorcentaje: toNumber(
       row?.fianzaPorcentaje,
       DEFAULT_FIANCO_SURETY_PERCENTAGE
     ),
-    plazoCuotas: normalizeInstallments(row?.plazoCuotas),
+    plazoCuotas: normalizeCreditInstallments(
+      row?.plazoCuotas,
+      DEFAULT_CREDIT_INSTALLMENTS,
+      plazoMaximoCuotas
+    ),
+    plazoMaximoCuotas,
     frecuenciaPago: normalizePaymentFrequency(row?.frecuenciaPago),
     updatedAt:
       row?.updatedAt instanceof Date
@@ -75,6 +78,7 @@ export async function ensureCreditSettingsTable() {
       "tasaInteresEa" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_LEGAL_CONSUMER_RATE_EA},
       "fianzaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_FIANCO_SURETY_PERCENTAGE},
       "plazoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_CREDIT_INSTALLMENTS},
+      "plazoMaximoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_CREDIT_INSTALLMENTS},
       "frecuenciaPago" TEXT NOT NULL DEFAULT '${DEFAULT_PAYMENT_FREQUENCY}',
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -86,17 +90,22 @@ export async function ensureCreditSettingsTable() {
   `);
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "CreditoConfiguracion"
+    ADD COLUMN IF NOT EXISTS "plazoMaximoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_CREDIT_INSTALLMENTS}
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracion"
     ADD COLUMN IF NOT EXISTS "frecuenciaPago" TEXT NOT NULL DEFAULT '${DEFAULT_PAYMENT_FREQUENCY}'
   `);
   await prisma.$executeRawUnsafe(
     `INSERT INTO "CreditoConfiguracion"
-      (nombre, "tasaInteresEa", "fianzaPorcentaje", "plazoCuotas", "frecuenciaPago", "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+      (nombre, "tasaInteresEa", "fianzaPorcentaje", "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
      ON CONFLICT (nombre) DO NOTHING`,
     CREDIT_SETTINGS_KEY,
     DEFAULT_LEGAL_CONSUMER_RATE_EA,
     DEFAULT_FIANCO_SURETY_PERCENTAGE,
     DEFAULT_CREDIT_INSTALLMENTS,
+    DEFAULT_MAX_CREDIT_INSTALLMENTS,
     DEFAULT_PAYMENT_FREQUENCY
   );
 
@@ -107,7 +116,7 @@ export async function getCreditSettings() {
   await ensureCreditSettingsTable();
 
   const rows = (await prisma.$queryRawUnsafe(
-    `SELECT "tasaInteresEa", "fianzaPorcentaje", "plazoCuotas", "frecuenciaPago", "updatedAt"
+    `SELECT "tasaInteresEa", "fianzaPorcentaje", "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago", "updatedAt"
      FROM "CreditoConfiguracion"
      WHERE nombre = $1
      LIMIT 1`,
@@ -121,6 +130,7 @@ export async function updateCreditSettings(params: {
   tasaInteresEa: unknown;
   fianzaPorcentaje: unknown;
   plazoCuotas?: unknown;
+  plazoMaximoCuotas?: unknown;
   frecuenciaPago?: unknown;
 }) {
   await ensureCreditSettingsTable();
@@ -134,7 +144,15 @@ export async function updateCreditSettings(params: {
     params.fianzaPorcentaje,
     current.fianzaPorcentaje
   );
-  const plazoCuotas = normalizeInstallments(params.plazoCuotas, current.plazoCuotas);
+  const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
+    params.plazoMaximoCuotas,
+    current.plazoMaximoCuotas
+  );
+  const plazoCuotas = normalizeCreditInstallments(
+    params.plazoCuotas,
+    current.plazoCuotas,
+    plazoMaximoCuotas
+  );
   const frecuenciaPago = normalizePaymentFrequency(
     params.frecuenciaPago || current.frecuenciaPago
   );
@@ -144,14 +162,16 @@ export async function updateCreditSettings(params: {
      SET "tasaInteresEa" = $2,
          "fianzaPorcentaje" = $3,
          "plazoCuotas" = $4,
-         "frecuenciaPago" = $5,
+         "plazoMaximoCuotas" = $5,
+         "frecuenciaPago" = $6,
          "updatedAt" = NOW()
      WHERE nombre = $1
-     RETURNING "tasaInteresEa", "fianzaPorcentaje", "plazoCuotas", "frecuenciaPago", "updatedAt"`,
+     RETURNING "tasaInteresEa", "fianzaPorcentaje", "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago", "updatedAt"`,
     CREDIT_SETTINGS_KEY,
     tasaInteresEa,
     fianzaPorcentaje,
     plazoCuotas,
+    plazoMaximoCuotas,
     frecuenciaPago
   )) as Array<Record<string, unknown>>;
 

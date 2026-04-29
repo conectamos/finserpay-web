@@ -4,10 +4,14 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   DEFAULT_CREDIT_INSTALLMENTS,
+  DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
   MAX_CREDIT_INSTALLMENTS,
   PAYMENT_FREQUENCY_OPTIONS,
   getPaymentFrequencyLabel,
+  getCreditInstallmentOptions,
+  normalizeCreditInstallmentLimit,
+  normalizeCreditInstallments,
 } from "@/lib/credit-factory";
 
 type SessionUser = {
@@ -18,6 +22,7 @@ type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
   plazoCuotas: number;
+  plazoMaximoCuotas: number;
   frecuenciaPago: string;
   updatedAt: string | null;
 };
@@ -38,14 +43,23 @@ function percentValue(value: number | string) {
   return Number.isFinite(parsed) ? String(parsed) : "";
 }
 
-function installmentValue(value: number | string) {
-  const parsed = Math.trunc(Number(value));
+function installmentValue(
+  value: number | string,
+  maxInstallments: number | string = DEFAULT_MAX_CREDIT_INSTALLMENTS
+) {
+  return String(
+    normalizeCreditInstallments(
+      value,
+      DEFAULT_CREDIT_INSTALLMENTS,
+      maxInstallments
+    )
+  );
+}
 
-  if (!Number.isFinite(parsed)) {
-    return String(DEFAULT_CREDIT_INSTALLMENTS);
-  }
-
-  return String(Math.max(1, Math.min(MAX_CREDIT_INSTALLMENTS, parsed)));
+function installmentLimitValue(value: number | string) {
+  return String(
+    normalizeCreditInstallmentLimit(value, DEFAULT_MAX_CREDIT_INSTALLMENTS)
+  );
 }
 
 function dateTime(value: string | null) {
@@ -73,6 +87,9 @@ export default function CreditParametersConsole() {
   const [tasaInteresEa, setTasaInteresEa] = useState("");
   const [fianzaPorcentaje, setFianzaPorcentaje] = useState("");
   const [plazoCuotas, setPlazoCuotas] = useState(String(DEFAULT_CREDIT_INSTALLMENTS));
+  const [plazoMaximoCuotas, setPlazoMaximoCuotas] = useState(
+    String(DEFAULT_MAX_CREDIT_INSTALLMENTS)
+  );
   const [frecuenciaPago, setFrecuenciaPago] = useState(DEFAULT_PAYMENT_FREQUENCY);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -81,6 +98,8 @@ export default function CreditParametersConsole() {
   );
 
   const esAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
+  const plazoMaximoNormalizado = normalizeCreditInstallmentLimit(plazoMaximoCuotas);
+  const plazoCuotasOptions = getCreditInstallmentOptions(plazoMaximoNormalizado);
 
   const loadSession = async () => {
     const result = await requestJson<SessionUser>("/api/session");
@@ -91,11 +110,26 @@ export default function CreditParametersConsole() {
   };
 
   const applySettings = (nextSettings: CreditSettings) => {
+    const nextMaxInstallments = installmentLimitValue(
+      nextSettings.plazoMaximoCuotas || DEFAULT_MAX_CREDIT_INSTALLMENTS
+    );
+
     setSettings(nextSettings);
     setTasaInteresEa(percentValue(nextSettings.tasaInteresEa));
     setFianzaPorcentaje(percentValue(nextSettings.fianzaPorcentaje));
-    setPlazoCuotas(installmentValue(nextSettings.plazoCuotas));
+    setPlazoMaximoCuotas(nextMaxInstallments);
+    setPlazoCuotas(installmentValue(nextSettings.plazoCuotas, nextMaxInstallments));
     setFrecuenciaPago(nextSettings.frecuenciaPago || DEFAULT_PAYMENT_FREQUENCY);
+  };
+
+  const handleMaxInstallmentsChange = (value: string) => {
+    const cleanValue = value.replace(/\D/g, "");
+    const nextMax = normalizeCreditInstallmentLimit(
+      cleanValue || DEFAULT_MAX_CREDIT_INSTALLMENTS
+    );
+
+    setPlazoMaximoCuotas(cleanValue);
+    setPlazoCuotas((current) => installmentValue(current, nextMax));
   };
 
   const loadSettings = async () => {
@@ -142,6 +176,7 @@ export default function CreditParametersConsole() {
             tasaInteresEa,
             fianzaPorcentaje,
             plazoCuotas,
+            plazoMaximoCuotas,
             frecuenciaPago,
           }),
         }
@@ -286,16 +321,29 @@ export default function CreditParametersConsole() {
 
               <label className="block">
                 <span className="mb-2 block text-sm font-semibold text-slate-700">
-                  Plazo por defecto
+                  Plazo maximo
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  max={MAX_CREDIT_INSTALLMENTS}
+                  value={plazoMaximoCuotas}
+                  onChange={(event) => handleMaxInstallmentsChange(event.target.value)}
+                  className={inputClass}
+                  placeholder="16"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-semibold text-slate-700">
+                  Plazo sugerido
                 </span>
                 <select
                   value={plazoCuotas}
                   onChange={(event) => setPlazoCuotas(event.target.value)}
                   className={inputClass}
                 >
-                  {Array.from({ length: MAX_CREDIT_INSTALLMENTS }, (_, index) => {
-                    const option = String(index + 1);
-
+                  {plazoCuotasOptions.map((option) => {
                     return (
                       <option key={option} value={option}>
                         {option} cuota{option === "1" ? "" : "s"}
@@ -362,7 +410,17 @@ export default function CreditParametersConsole() {
 
               <div className="rounded-[22px] border border-slate-200 bg-[#fbfefd] px-4 py-4">
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Plazo
+                  Plazo maximo
+                </p>
+                <p className="mt-2 text-3xl font-black text-slate-950">
+                  {settings?.plazoMaximoCuotas ?? DEFAULT_MAX_CREDIT_INSTALLMENTS}
+                </p>
+                <p className="mt-1 text-xs font-semibold text-slate-500">cuotas</p>
+              </div>
+
+              <div className="rounded-[22px] border border-slate-200 bg-[#fbfefd] px-4 py-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Plazo sugerido
                 </p>
                 <p className="mt-2 text-3xl font-black text-slate-950">
                   {settings?.plazoCuotas ?? DEFAULT_CREDIT_INSTALLMENTS}

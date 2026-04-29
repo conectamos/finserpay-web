@@ -367,6 +367,7 @@ model CreditoConfiguracion {
   tasaInteresEa     Float    @default(17.84)
   fianzaPorcentaje  Float    @default(60)
   plazoCuotas       Int      @default(12)
+  plazoMaximoCuotas Int      @default(16)
   frecuenciaPago    String   @default("QUINCENAL")
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
