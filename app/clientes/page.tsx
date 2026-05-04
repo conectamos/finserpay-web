@@ -559,7 +559,7 @@ export default function ClienteConsultaPage() {
                         type="button"
                         onClick={() => void payWithWompi(credit)}
                         disabled={payingCreditId === credit.id || totalToPay <= 0}
-                        className="mt-4 inline-flex w-full items-center justify-center rounded-[18px] bg-[#6b7280] px-5 py-3.5 text-sm font-bold text-white transition hover:bg-[#4b5563] disabled:opacity-70"
+                        className="mt-4 inline-flex w-full items-center justify-center rounded-[18px] bg-[#6d28d9] px-5 py-3.5 text-sm font-bold text-white shadow-[0_16px_34px_rgba(109,40,217,0.28)] transition hover:-translate-y-0.5 hover:bg-[#5b21b6] disabled:opacity-70"
                       >
                         {payingCreditId === credit.id ? "Abriendo..." : "Pagar con Wompi"}
                       </button>
