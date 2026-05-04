@@ -259,6 +259,7 @@ type CreditSettings = {
 type CreditDocumentException = {
   documentoNormalizado: string;
   permiteMultiplesCreditos: boolean;
+  permiteEntregaSinVerificacion: boolean;
   activo: boolean;
 };
 
@@ -273,7 +274,7 @@ type CreateCreditResponse = {
   ok: boolean;
   warning?: string;
   item: CreditItem;
-  deliveryStatus: DeliveryStatus;
+  deliveryStatus: DeliveryStatus | null;
 };
 
 type CommandResponse = {
@@ -2366,7 +2367,23 @@ export default function CreditFactoryConsole({
     pagareAceptado &&
     cartaAceptada &&
     autorizacionDatosAceptada;
-  const entregaValidada = Boolean(deliveryValidation?.status?.ready);
+  const entregaSinVerificacionAutorizada = Boolean(
+    creditDocumentException?.permiteEntregaSinVerificacion
+  );
+  const entregaValidada = Boolean(
+    deliveryValidation?.status?.ready || entregaSinVerificacionAutorizada
+  );
+  const deliveryStatusLabel = deliveryValidation?.status?.ready
+    ? deliveryValidation.status.label
+    : entregaSinVerificacionAutorizada
+      ? "Entrega autorizada"
+      : deliveryValidation?.status?.label || "Pendiente por validar";
+  const deliveryStatusDetail = deliveryValidation?.status?.ready
+    ? deliveryValidation.status.detail
+    : entregaSinVerificacionAutorizada
+      ? "Esta cedula tiene excepcion administrativa para entregar sin verificar dispositivo."
+      : deliveryValidation?.status?.detail ||
+        "Aun no se ha ejecutado la validacion final de entrega.";
   const deliveryRequirementReady = FLEXIBLE_WIZARD_FOR_TESTING || entregaValidada;
   const ventaLista =
     stepClienteReady &&
@@ -2553,9 +2570,11 @@ export default function CreditFactoryConsole({
     {
       id: 5,
       label: "Entrega",
-      detail: "Zero Touch",
+      detail: entregaSinVerificacionAutorizada ? "Excepcion" : "Zero Touch",
       ready: entregaValidada,
-      action: "Valida el equipo y cierra solo si queda entregable.",
+      action: entregaSinVerificacionAutorizada
+        ? "Cierre autorizado por excepcion administrativa."
+        : "Valida el equipo y cierra solo si queda entregable.",
     },
   ];
   const completedFactorySteps = factorySteps.filter((step) => step.ready).length;
@@ -6646,7 +6665,9 @@ export default function CreditFactoryConsole({
                         Validacion del equipo
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        El cierre queda reservado para validar la entregabilidad del dispositivo con Zero Touch antes de crear el credito.
+                        {entregaSinVerificacionAutorizada
+                          ? "Esta cedula tiene autorizacion administrativa para cerrar la entrega sin validar el dispositivo."
+                          : "El cierre queda reservado para validar la entregabilidad del dispositivo con Zero Touch antes de crear el credito."}
                       </p>
                     </div>
                     <div
@@ -6687,7 +6708,7 @@ export default function CreditFactoryConsole({
                         <div
                           className={[
                             "rounded-2xl border px-4 py-4",
-                            deliveryValidation?.status?.ready
+                            entregaValidada
                               ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                               : deliveryValidation
                                 ? "border-amber-200 bg-amber-50 text-amber-800"
@@ -6698,11 +6719,10 @@ export default function CreditFactoryConsole({
                             Estado actual
                           </p>
                           <p className="mt-2 text-xl font-black">
-                            {deliveryValidation?.status?.label || "Pendiente por validar"}
+                            {deliveryStatusLabel}
                           </p>
                           <p className="mt-2 leading-6">
-                            {deliveryValidation?.status?.detail ||
-                              "Aun no se ha ejecutado la validacion final de entrega."}
+                            {deliveryStatusDetail}
                           </p>
                           {deliveryValidation && (
                             <div className="mt-3 space-y-1 text-xs">
@@ -6719,10 +6739,14 @@ export default function CreditFactoryConsole({
                           <button
                             type="button"
                             onClick={() => void validateDeliveryBeforeFinalize()}
-                            disabled={validatingDelivery}
+                            disabled={
+                              validatingDelivery || entregaSinVerificacionAutorizada
+                            }
                             className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
                           >
-                            {validatingDelivery
+                            {entregaSinVerificacionAutorizada
+                              ? "Verificacion no requerida"
+                              : validatingDelivery
                               ? "Validando entrega..."
                               : "Inscribir y validar entrega"}
                           </button>
@@ -6819,7 +6843,7 @@ export default function CreditFactoryConsole({
                         <div
                           className={[
                             "rounded-2xl border px-4 py-4",
-                            deliveryValidation?.status?.ready
+                            entregaValidada
                               ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                               : deliveryValidation
                                 ? "border-amber-200 bg-amber-50 text-amber-800"
@@ -6830,11 +6854,10 @@ export default function CreditFactoryConsole({
                             Estado actual
                           </p>
                           <p className="mt-2 text-xl font-black">
-                            {deliveryValidation?.status?.label || "Pendiente por validar"}
+                            {deliveryStatusLabel}
                           </p>
                           <p className="mt-2 leading-6">
-                            {deliveryValidation?.status?.detail ||
-                              "Aun no se ha ejecutado la validacion final de entrega."}
+                            {deliveryStatusDetail}
                           </p>
                           {deliveryValidation && (
                             <div className="mt-3 space-y-1 text-xs">
@@ -6851,10 +6874,14 @@ export default function CreditFactoryConsole({
                           <button
                             type="button"
                             onClick={() => void validateDeliveryBeforeFinalize()}
-                            disabled={validatingDelivery}
+                            disabled={
+                              validatingDelivery || entregaSinVerificacionAutorizada
+                            }
                             className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
                           >
-                            {validatingDelivery
+                            {entregaSinVerificacionAutorizada
+                              ? "Verificacion no requerida"
+                              : validatingDelivery
                               ? "Validando entrega..."
                               : "Inscribir y validar entrega"}
                           </button>

@@ -30,6 +30,7 @@ import {
 import {
   getEqualityDeviceMeta,
   getPayloadSummary,
+  type EqualityDeliveryStatus,
 } from "@/lib/equality-device-meta";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import {
@@ -849,6 +850,9 @@ export async function POST(req: Request) {
     const documentCanHaveMultipleActiveCredits = Boolean(
       effectiveCreditSettings.documentException?.permiteMultiplesCreditos
     );
+    const documentCanSkipDeliveryVerification = Boolean(
+      effectiveCreditSettings.documentException?.permiteEntregaSinVerificacion
+    );
 
     if (!documentCanHaveMultipleActiveCredits) {
       const clientCredits = await prisma.credito.findMany({
@@ -978,7 +982,8 @@ export async function POST(req: Request) {
     }
 
     const allowPendingDeliveryClose =
-      ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION;
+      ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION ||
+      documentCanSkipDeliveryVerification;
 
     if (!isEqualityConfigured() && !allowPendingDeliveryClose) {
       return NextResponse.json(
@@ -1000,7 +1005,7 @@ export async function POST(req: Request) {
       | ReturnType<typeof getEqualityDeviceMeta>
       | null = null;
 
-    if (isEqualityConfigured()) {
+    if (isEqualityConfigured() && !documentCanSkipDeliveryVerification) {
       try {
         equalityUpload = await runBusinessSafe(() =>
           uploadEqualityInventoryDevice(deviceUid)
@@ -1057,8 +1062,22 @@ export async function POST(req: Request) {
         { status: 409 }
       );
     }
-    const pendingDeliveryWarning =
-      allowPendingDeliveryClose && !equalityMeta?.deliveryStatus?.ready
+    const administrativeDeliveryStatus: EqualityDeliveryStatus | null =
+      documentCanSkipDeliveryVerification && !equalityMeta?.deliveryStatus?.ready
+        ? {
+            label: "Entrega autorizada",
+            detail:
+              "Entrega permitida sin verificar dispositivo por excepcion administrativa.",
+            ready: true,
+            tone: "emerald",
+          }
+        : null;
+    const effectiveDeliveryStatus =
+      administrativeDeliveryStatus || equalityMeta?.deliveryStatus || null;
+    const pendingDeliveryWarning = administrativeDeliveryStatus
+      ? "Credito creado con excepcion administrativa: entrega permitida sin verificar dispositivo."
+      : ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION &&
+          !equalityMeta?.deliveryStatus?.ready
         ? "Credito creado en modo prueba: la validacion final de entrega quedo pendiente."
         : undefined;
 
@@ -1295,10 +1314,10 @@ export async function POST(req: Request) {
         fechaProximoPago: fechaPrimerPago,
         referenciaPago,
         estado: resolveCreditState({
-          deliverable: equalityMeta?.deliveryStatus,
+          deliverable: effectiveDeliveryStatus,
         }),
-        deliverableLabel: equalityMeta?.deliveryStatus?.label || null,
-        deliverableReady: Boolean(equalityMeta?.deliveryStatus?.ready),
+        deliverableLabel: effectiveDeliveryStatus?.label || null,
+        deliverableReady: Boolean(effectiveDeliveryStatus?.ready),
         equalityState: equalityMeta?.deviceState || null,
         equalityService: equalityMeta?.serviceDetails || null,
         equalityPayload: equalityQuery as Prisma.InputJsonValue,
@@ -1348,7 +1367,7 @@ export async function POST(req: Request) {
       ok: true,
       warning: pendingDeliveryWarning,
       item: serializeCredit(created),
-      deliveryStatus: equalityMeta?.deliveryStatus || null,
+      deliveryStatus: effectiveDeliveryStatus,
       equality: equalitySummary
         ? {
             upload: equalityUpload,

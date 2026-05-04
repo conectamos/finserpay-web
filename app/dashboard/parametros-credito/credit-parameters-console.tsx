@@ -37,6 +37,7 @@ type CreditDocumentException = {
   plazoMaximoCuotas: number | null;
   frecuenciaPago: string | null;
   permiteMultiplesCreditos: boolean;
+  permiteEntregaSinVerificacion: boolean;
   activo: boolean;
   observacion: string | null;
   updatedAt: string | null;
@@ -118,6 +119,10 @@ export default function CreditParametersConsole() {
   const [exceptionPlazoMaximoCuotas, setExceptionPlazoMaximoCuotas] = useState("");
   const [exceptionFrecuenciaPago, setExceptionFrecuenciaPago] = useState("");
   const [exceptionPermiteMultiples, setExceptionPermiteMultiples] = useState(false);
+  const [
+    exceptionEntregaSinVerificacion,
+    setExceptionEntregaSinVerificacion,
+  ] = useState(false);
   const [exceptionActivo, setExceptionActivo] = useState(true);
   const [exceptionObservacion, setExceptionObservacion] = useState("");
   const [loading, setLoading] = useState(true);
@@ -187,6 +192,7 @@ export default function CreditParametersConsole() {
     setExceptionPlazoMaximoCuotas("");
     setExceptionFrecuenciaPago("");
     setExceptionPermiteMultiples(false);
+    setExceptionEntregaSinVerificacion(false);
     setExceptionActivo(true);
     setExceptionObservacion("");
   };
@@ -203,6 +209,7 @@ export default function CreditParametersConsole() {
     );
     setExceptionFrecuenciaPago(item.frecuenciaPago || "");
     setExceptionPermiteMultiples(item.permiteMultiplesCreditos);
+    setExceptionEntregaSinVerificacion(item.permiteEntregaSinVerificacion);
     setExceptionActivo(item.activo);
     setExceptionObservacion(item.observacion || "");
   };
@@ -296,6 +303,7 @@ export default function CreditParametersConsole() {
             plazoMaximoCuotas: exceptionPlazoMaximoCuotas || null,
             frecuenciaPago: exceptionFrecuenciaPago || null,
             permiteMultiplesCreditos: exceptionPermiteMultiples,
+            permiteEntregaSinVerificacion: exceptionEntregaSinVerificacion,
             activo: exceptionActivo,
             observacion: exceptionObservacion,
           }),
@@ -759,6 +767,18 @@ export default function CreditParametersConsole() {
                   <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700">
                     <input
                       type="checkbox"
+                      checked={exceptionEntregaSinVerificacion}
+                      onChange={(event) =>
+                        setExceptionEntregaSinVerificacion(event.target.checked)
+                      }
+                      className="h-4 w-4 rounded border-slate-300 text-[#0f5d59] focus:ring-emerald-100"
+                    />
+                    Entregar sin verificar dispositivo
+                  </label>
+
+                  <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700">
+                    <input
+                      type="checkbox"
                       checked={exceptionActivo}
                       onChange={(event) => setExceptionActivo(event.target.checked)}
                       className="h-4 w-4 rounded border-slate-300 text-[#0f5d59] focus:ring-emerald-100"
@@ -794,12 +814,19 @@ export default function CreditParametersConsole() {
                           <p className="text-lg font-black text-slate-950">
                             {item.documentoNormalizado}
                           </p>
-                          <p className="mt-1 text-xs font-semibold text-slate-500">
-                            {item.activo ? "Activa" : "Inactiva"} -{" "}
-                            {item.permiteMultiplesCreditos
-                              ? "Multiples creditos permitidos"
-                              : "Un credito activo"}
-                          </p>
+                          <div className="mt-1 flex flex-wrap gap-2 text-xs font-semibold text-slate-500">
+                            <span>
+                              {item.activo ? "Activa" : "Inactiva"} -{" "}
+                              {item.permiteMultiplesCreditos
+                                ? "Multiples creditos permitidos"
+                                : "Un credito activo"}
+                            </span>
+                            {item.permiteEntregaSinVerificacion ? (
+                              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
+                                Entrega sin verificar dispositivo
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
                         <div className="flex gap-2">
                           <button

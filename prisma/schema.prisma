@@ -380,11 +380,12 @@ model CreditoConfiguracionDocumento {
   tasaInteresEa            Float?
   fianzaPorcentaje         Float?
   plazoCuotas              Int?
-  plazoMaximoCuotas        Int?
-  frecuenciaPago           String?
-  permiteMultiplesCreditos Boolean  @default(false)
-  activo                   Boolean  @default(true)
-  observacion              String?
+    plazoMaximoCuotas        Int?
+    frecuenciaPago           String?
+    permiteMultiplesCreditos Boolean  @default(false)
+    permiteEntregaSinVerificacion Boolean @default(false)
+    activo                   Boolean  @default(true)
+    observacion              String?
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
 

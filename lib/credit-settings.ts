@@ -34,6 +34,7 @@ export type CreditDocumentException = {
   plazoMaximoCuotas: number | null;
   frecuenciaPago: string | null;
   permiteMultiplesCreditos: boolean;
+  permiteEntregaSinVerificacion: boolean;
   activo: boolean;
   observacion: string | null;
   createdAt: string | null;
@@ -177,6 +178,7 @@ function toDocumentException(
     plazoMaximoCuotas: toNullableNumber(row.plazoMaximoCuotas),
     frecuenciaPago: row.frecuenciaPago ? String(row.frecuenciaPago) : null,
     permiteMultiplesCreditos: Boolean(row.permiteMultiplesCreditos),
+    permiteEntregaSinVerificacion: Boolean(row.permiteEntregaSinVerificacion),
     activo: row.activo === null || row.activo === undefined ? true : Boolean(row.activo),
     observacion: row.observacion ? String(row.observacion) : null,
     createdAt: toIsoString(row.createdAt),
@@ -226,6 +228,7 @@ export async function ensureCreditSettingsTable() {
       "plazoMaximoCuotas" INTEGER,
       "frecuenciaPago" TEXT,
       "permiteMultiplesCreditos" BOOLEAN NOT NULL DEFAULT FALSE,
+      "permiteEntregaSinVerificacion" BOOLEAN NOT NULL DEFAULT FALSE,
       activo BOOLEAN NOT NULL DEFAULT TRUE,
       observacion TEXT,
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -235,6 +238,10 @@ export async function ensureCreditSettingsTable() {
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "CreditoConfiguracionDocumento"
     ADD COLUMN IF NOT EXISTS "permiteMultiplesCreditos" BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracionDocumento"
+    ADD COLUMN IF NOT EXISTS "permiteEntregaSinVerificacion" BOOLEAN NOT NULL DEFAULT FALSE
   `);
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "CreditoConfiguracionDocumento"
@@ -294,7 +301,8 @@ export async function getCreditDocumentException(documento: unknown) {
   const rows = (await prisma.$queryRawUnsafe(
     `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
             "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
-            "permiteMultiplesCreditos", activo, observacion, "createdAt", "updatedAt"
+            "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
+            activo, observacion, "createdAt", "updatedAt"
      FROM "CreditoConfiguracionDocumento"
      WHERE "documentoNormalizado" = $1
      LIMIT 1`,
@@ -324,7 +332,8 @@ export async function listCreditDocumentExceptions() {
   const rows = (await prisma.$queryRawUnsafe(
     `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
             "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
-            "permiteMultiplesCreditos", activo, observacion, "createdAt", "updatedAt"
+            "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
+            activo, observacion, "createdAt", "updatedAt"
      FROM "CreditoConfiguracionDocumento"
      ORDER BY "updatedAt" DESC, id DESC`
   )) as Array<Record<string, unknown>>;
@@ -392,6 +401,7 @@ export async function upsertCreditDocumentException(params: {
   plazoMaximoCuotas?: unknown;
   frecuenciaPago?: unknown;
   permiteMultiplesCreditos?: unknown;
+  permiteEntregaSinVerificacion?: unknown;
   activo?: unknown;
   observacion?: unknown;
 }) {
@@ -419,8 +429,9 @@ export async function upsertCreditDocumentException(params: {
     `INSERT INTO "CreditoConfiguracionDocumento"
       (documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
        "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
-       "permiteMultiplesCreditos", activo, observacion, "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+       "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
+       activo, observacion, "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
      ON CONFLICT ("documentoNormalizado")
      DO UPDATE SET
        documento = EXCLUDED.documento,
@@ -430,12 +441,14 @@ export async function upsertCreditDocumentException(params: {
        "plazoMaximoCuotas" = EXCLUDED."plazoMaximoCuotas",
        "frecuenciaPago" = EXCLUDED."frecuenciaPago",
        "permiteMultiplesCreditos" = EXCLUDED."permiteMultiplesCreditos",
+       "permiteEntregaSinVerificacion" = EXCLUDED."permiteEntregaSinVerificacion",
        activo = EXCLUDED.activo,
        observacion = EXCLUDED.observacion,
        "updatedAt" = NOW()
      RETURNING id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
        "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
-       "permiteMultiplesCreditos", activo, observacion, "createdAt", "updatedAt"`,
+       "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
+       activo, observacion, "createdAt", "updatedAt"`,
     documentoNormalizado,
     documentoNormalizado,
     normalizeOptionalPercentage(params.tasaInteresEa),
@@ -444,6 +457,7 @@ export async function upsertCreditDocumentException(params: {
     normalizeOptionalInstallmentLimit(params.plazoMaximoCuotas),
     frecuenciaPago,
     Boolean(params.permiteMultiplesCreditos),
+    Boolean(params.permiteEntregaSinVerificacion),
     activo,
     observacion
   )) as Array<Record<string, unknown>>;

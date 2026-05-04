@@ -16,6 +16,7 @@ import {
 import {
   getEqualityDeviceMeta,
   getPayloadSummary,
+  type EqualityDeliveryStatus,
 } from "@/lib/equality-device-meta";
 import {
   isEqualityApiError,
@@ -24,6 +25,7 @@ import {
   unlockEqualityDevice,
 } from "@/lib/equality-zero-touch";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import { isAdminRole } from "@/lib/roles";
 
 export const runtime = "nodejs";
@@ -260,14 +262,28 @@ export async function POST(
       );
     }
 
+    const effectiveCreditSettings = await getEffectiveCreditSettings(
+      current.clienteDocumento
+    );
+    const documentCanSkipDeliveryVerification = Boolean(
+      effectiveCreditSettings.documentException?.permiteEntregaSinVerificacion
+    );
+    const shouldApplyDeliveryException =
+      command === "consult-device" && documentCanSkipDeliveryVerification;
+
     let adminMessage = "Comando aplicado";
     let remotePayload: unknown = null;
     let remoteQuery: unknown = null;
 
     switch (command) {
       case "consult-device":
-        remoteQuery = await queryEqualityDevices(current.deviceUid);
-        adminMessage = "Consulta remota actualizada";
+        if (shouldApplyDeliveryException) {
+          adminMessage =
+            "Entrega autorizada por excepcion administrativa sin verificar dispositivo";
+        } else {
+          remoteQuery = await queryEqualityDevices(current.deviceUid);
+          adminMessage = "Consulta remota actualizada";
+        }
         break;
       case "payment-reference":
         await prisma.credito.update({
@@ -421,6 +437,18 @@ export async function POST(
     const payloadSource = remoteQuery || remotePayload || reloaded.equalityPayload;
     const deviceMeta = getEqualityDeviceMeta(payloadSource);
     const summary = getPayloadSummary(payloadSource);
+    const administrativeDeliveryStatus: EqualityDeliveryStatus | null =
+      shouldApplyDeliveryException && !deviceMeta.deliveryStatus?.ready
+        ? {
+            label: "Entrega autorizada",
+            detail:
+              "Entrega permitida sin verificar dispositivo por excepcion administrativa.",
+            ready: true,
+            tone: "emerald",
+          }
+        : null;
+    const effectiveDeliveryStatus =
+      administrativeDeliveryStatus || deviceMeta.deliveryStatus || null;
     const nextPayload =
       payloadSource && typeof payloadSource === "object"
         ? (payloadSource as Prisma.InputJsonValue)
@@ -437,19 +465,22 @@ export async function POST(
                 ? false
                 : reloaded.bloqueoRobo,
           bloqueoMora: reloaded.bloqueoMora,
-          deliverable: deviceMeta.deliveryStatus || null,
+          deliverable: effectiveDeliveryStatus,
           pazYSalvoEmitidoAt: reloaded.pazYSalvoEmitidoAt,
         }),
         deliverableLabel:
-          deviceMeta.deliveryStatus?.label || reloaded.deliverableLabel,
+          effectiveDeliveryStatus?.label || reloaded.deliverableLabel,
         deliverableReady:
-          typeof deviceMeta.deliveryStatus?.ready === "boolean"
-            ? deviceMeta.deliveryStatus.ready
+          typeof effectiveDeliveryStatus?.ready === "boolean"
+            ? effectiveDeliveryStatus.ready
             : reloaded.deliverableReady,
         equalityState: deviceMeta.deviceState || reloaded.equalityState,
         equalityService: deviceMeta.serviceDetails || reloaded.equalityService,
         equalityPayload: nextPayload,
-        equalityLastCheckAt: payloadSource ? new Date() : reloaded.equalityLastCheckAt,
+        equalityLastCheckAt:
+          payloadSource || administrativeDeliveryStatus
+            ? new Date()
+            : reloaded.equalityLastCheckAt,
         bloqueoRobo:
           command === "toggle-stolen-lock"
             ? !current.bloqueoRobo
@@ -495,11 +526,12 @@ export async function POST(
       ok: true,
       message: adminMessage,
       item: serializeCredit(updated, paymentSummary),
-      remote: payloadSource
+      remote: payloadSource || administrativeDeliveryStatus
         ? {
             payload: payloadSource,
             ...summary,
             ...deviceMeta,
+            deliveryStatus: effectiveDeliveryStatus,
           }
         : null,
     });

@@ -123,6 +123,7 @@ export async function POST(req: Request) {
       plazoMaximoCuotas: body.plazoMaximoCuotas,
       frecuenciaPago: body.frecuenciaPago,
       permiteMultiplesCreditos: body.permiteMultiplesCreditos,
+      permiteEntregaSinVerificacion: body.permiteEntregaSinVerificacion,
       activo: body.activo,
       observacion: body.observacion,
     });
