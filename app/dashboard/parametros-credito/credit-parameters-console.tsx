@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   DEFAULT_CREDIT_INSTALLMENTS,
+  DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
   DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
   MAX_CREDIT_INSTALLMENTS,
@@ -21,6 +22,7 @@ type SessionUser = {
 type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
+  cuotaInicialPorcentaje: number;
   plazoCuotas: number;
   plazoMaximoCuotas: number;
   frecuenciaPago: string;
@@ -33,6 +35,7 @@ type CreditDocumentException = {
   documentoNormalizado: string;
   tasaInteresEa: number | null;
   fianzaPorcentaje: number | null;
+  cuotaInicialPorcentaje: number | null;
   plazoCuotas: number | null;
   plazoMaximoCuotas: number | null;
   frecuenciaPago: string | null;
@@ -115,6 +118,8 @@ export default function CreditParametersConsole() {
   const [exceptionDocumento, setExceptionDocumento] = useState("");
   const [exceptionTasaInteresEa, setExceptionTasaInteresEa] = useState("");
   const [exceptionFianzaPorcentaje, setExceptionFianzaPorcentaje] = useState("");
+  const [exceptionCuotaInicialPorcentaje, setExceptionCuotaInicialPorcentaje] =
+    useState("");
   const [exceptionPlazoCuotas, setExceptionPlazoCuotas] = useState("");
   const [exceptionPlazoMaximoCuotas, setExceptionPlazoMaximoCuotas] = useState("");
   const [exceptionFrecuenciaPago, setExceptionFrecuenciaPago] = useState("");
@@ -188,6 +193,7 @@ export default function CreditParametersConsole() {
     setExceptionDocumento("");
     setExceptionTasaInteresEa("");
     setExceptionFianzaPorcentaje("");
+    setExceptionCuotaInicialPorcentaje("");
     setExceptionPlazoCuotas("");
     setExceptionPlazoMaximoCuotas("");
     setExceptionFrecuenciaPago("");
@@ -202,6 +208,9 @@ export default function CreditParametersConsole() {
     setExceptionTasaInteresEa(item.tasaInteresEa === null ? "" : String(item.tasaInteresEa));
     setExceptionFianzaPorcentaje(
       item.fianzaPorcentaje === null ? "" : String(item.fianzaPorcentaje)
+    );
+    setExceptionCuotaInicialPorcentaje(
+      item.cuotaInicialPorcentaje === null ? "" : String(item.cuotaInicialPorcentaje)
     );
     setExceptionPlazoCuotas(item.plazoCuotas === null ? "" : String(item.plazoCuotas));
     setExceptionPlazoMaximoCuotas(
@@ -299,6 +308,7 @@ export default function CreditParametersConsole() {
             documento: exceptionDocumento,
             tasaInteresEa: exceptionTasaInteresEa || null,
             fianzaPorcentaje: exceptionFianzaPorcentaje || null,
+            cuotaInicialPorcentaje: exceptionCuotaInicialPorcentaje || null,
             plazoCuotas: exceptionPlazoCuotas || null,
             plazoMaximoCuotas: exceptionPlazoMaximoCuotas || null,
             frecuenciaPago: exceptionFrecuenciaPago || null,
@@ -573,6 +583,17 @@ export default function CreditParametersConsole() {
 
               <div className="rounded-[22px] border border-slate-200 bg-[#fbfefd] px-4 py-4">
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Inicial
+                </p>
+                <p className="mt-2 text-3xl font-black text-slate-950">
+                  {settings?.cuotaInicialPorcentaje ??
+                    DEFAULT_INITIAL_PAYMENT_PERCENTAGE}
+                  %
+                </p>
+              </div>
+
+              <div className="rounded-[22px] border border-slate-200 bg-[#fbfefd] px-4 py-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                   Plazo maximo
                 </p>
                 <p className="mt-2 text-3xl font-black text-slate-950">
@@ -679,6 +700,21 @@ export default function CreditParametersConsole() {
                       inputMode="decimal"
                       className={inputClass}
                       placeholder={`${settings?.fianzaPorcentaje ?? 0}`}
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-semibold text-slate-700">
+                      Inicial (%)
+                    </span>
+                    <input
+                      value={exceptionCuotaInicialPorcentaje}
+                      onChange={(event) =>
+                        setExceptionCuotaInicialPorcentaje(event.target.value)
+                      }
+                      inputMode="decimal"
+                      className={inputClass}
+                      placeholder={`${settings?.cuotaInicialPorcentaje ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE}`}
                     />
                   </label>
 
@@ -852,6 +888,9 @@ export default function CreditParametersConsole() {
                       <div className="mt-4 grid gap-2 text-xs font-semibold text-slate-600 sm:grid-cols-2">
                         <span>Interes: {item.effectiveSettings.tasaInteresEa}%</span>
                         <span>Fianza: {item.effectiveSettings.fianzaPorcentaje}%</span>
+                        <span>
+                          Inicial: {item.effectiveSettings.cuotaInicialPorcentaje}%
+                        </span>
                         <span>
                           Plazo: {item.effectiveSettings.plazoCuotas}/
                           {item.effectiveSettings.plazoMaximoCuotas} cuotas

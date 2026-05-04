@@ -579,12 +579,13 @@ export async function POST(req: Request) {
     const precioBaseVentaCatalogo = catalogItem?.activo
       ? catalogItem.precioBaseVenta
       : null;
-    const cuotaInicial = calculateRequiredInitialPayment(
-      valorEquipoTotalInput,
-      precioBaseVentaCatalogo
-    );
     const effectiveCreditSettings = await getEffectiveCreditSettings(clienteDocumento);
     const creditSettings = effectiveCreditSettings.settings;
+    const cuotaInicial = calculateRequiredInitialPayment(
+      valorEquipoTotalInput,
+      precioBaseVentaCatalogo,
+      creditSettings.cuotaInicialPorcentaje
+    );
     const plazoMesesInput = Math.trunc(toNumber(body.plazoMeses));
     const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
       creditSettings.plazoMaximoCuotas

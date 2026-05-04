@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import {
   DEFAULT_CREDIT_INSTALLMENTS,
   DEFAULT_FIANCO_SURETY_PERCENTAGE,
+  DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
   DEFAULT_LEGAL_CONSUMER_RATE_EA,
   DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
@@ -18,6 +19,7 @@ let creditSettingsTableReady = false;
 export type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
+  cuotaInicialPorcentaje: number;
   plazoCuotas: number;
   plazoMaximoCuotas: number;
   frecuenciaPago: string;
@@ -30,6 +32,7 @@ export type CreditDocumentException = {
   documentoNormalizado: string;
   tasaInteresEa: number | null;
   fianzaPorcentaje: number | null;
+  cuotaInicialPorcentaje: number | null;
   plazoCuotas: number | null;
   plazoMaximoCuotas: number | null;
   frecuenciaPago: string | null;
@@ -124,6 +127,10 @@ function toCreditSettings(row?: Record<string, unknown> | null): CreditSettings 
       row?.fianzaPorcentaje,
       DEFAULT_FIANCO_SURETY_PERCENTAGE
     ),
+    cuotaInicialPorcentaje: toNumber(
+      row?.cuotaInicialPorcentaje,
+      DEFAULT_INITIAL_PAYMENT_PERCENTAGE
+    ),
     plazoCuotas: normalizeCreditInstallments(
       row?.plazoCuotas,
       DEFAULT_CREDIT_INSTALLMENTS,
@@ -151,6 +158,9 @@ function mergeDocumentSettings(
       toNullableNumber(row?.tasaInteresEa) ?? globalSettings.tasaInteresEa,
     fianzaPorcentaje:
       toNullableNumber(row?.fianzaPorcentaje) ?? globalSettings.fianzaPorcentaje,
+    cuotaInicialPorcentaje:
+      toNullableNumber(row?.cuotaInicialPorcentaje) ??
+      globalSettings.cuotaInicialPorcentaje,
     plazoMaximoCuotas: normalizedMax,
     plazoCuotas: normalizeCreditInstallments(
       toNullableNumber(row?.plazoCuotas) ?? globalSettings.plazoCuotas,
@@ -174,6 +184,7 @@ function toDocumentException(
     documentoNormalizado: String(row.documentoNormalizado || ""),
     tasaInteresEa: toNullableNumber(row.tasaInteresEa),
     fianzaPorcentaje: toNullableNumber(row.fianzaPorcentaje),
+    cuotaInicialPorcentaje: toNullableNumber(row.cuotaInicialPorcentaje),
     plazoCuotas: toNullableNumber(row.plazoCuotas),
     plazoMaximoCuotas: toNullableNumber(row.plazoMaximoCuotas),
     frecuenciaPago: row.frecuenciaPago ? String(row.frecuenciaPago) : null,
@@ -198,12 +209,17 @@ export async function ensureCreditSettingsTable() {
       nombre TEXT NOT NULL UNIQUE,
       "tasaInteresEa" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_LEGAL_CONSUMER_RATE_EA},
       "fianzaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_FIANCO_SURETY_PERCENTAGE},
+      "cuotaInicialPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INITIAL_PAYMENT_PERCENTAGE},
       "plazoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_CREDIT_INSTALLMENTS},
       "plazoMaximoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_CREDIT_INSTALLMENTS},
       "frecuenciaPago" TEXT NOT NULL DEFAULT '${DEFAULT_PAYMENT_FREQUENCY}',
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracion"
+    ADD COLUMN IF NOT EXISTS "cuotaInicialPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INITIAL_PAYMENT_PERCENTAGE}
   `);
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "CreditoConfiguracion"
@@ -224,6 +240,7 @@ export async function ensureCreditSettingsTable() {
       "documentoNormalizado" TEXT NOT NULL UNIQUE,
       "tasaInteresEa" DOUBLE PRECISION,
       "fianzaPorcentaje" DOUBLE PRECISION,
+      "cuotaInicialPorcentaje" DOUBLE PRECISION,
       "plazoCuotas" INTEGER,
       "plazoMaximoCuotas" INTEGER,
       "frecuenciaPago" TEXT,
@@ -234,6 +251,10 @@ export async function ensureCreditSettingsTable() {
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracionDocumento"
+    ADD COLUMN IF NOT EXISTS "cuotaInicialPorcentaje" DOUBLE PRECISION
   `);
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "CreditoConfiguracionDocumento"
@@ -253,12 +274,13 @@ export async function ensureCreditSettingsTable() {
   `);
   await prisma.$executeRawUnsafe(
     `INSERT INTO "CreditoConfiguracion"
-      (nombre, "tasaInteresEa", "fianzaPorcentaje", "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago", "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+      (nombre, "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
      ON CONFLICT (nombre) DO NOTHING`,
     CREDIT_SETTINGS_KEY,
     DEFAULT_LEGAL_CONSUMER_RATE_EA,
     DEFAULT_FIANCO_SURETY_PERCENTAGE,
+    DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
     DEFAULT_CREDIT_INSTALLMENTS,
     DEFAULT_MAX_CREDIT_INSTALLMENTS,
     DEFAULT_PAYMENT_FREQUENCY
@@ -279,7 +301,7 @@ export async function getCreditSettings() {
   await ensureCreditSettingsTable();
 
   const rows = (await prisma.$queryRawUnsafe(
-    `SELECT "tasaInteresEa", "fianzaPorcentaje", "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago", "updatedAt"
+    `SELECT "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago", "updatedAt"
      FROM "CreditoConfiguracion"
      WHERE nombre = $1
      LIMIT 1`,
@@ -299,7 +321,7 @@ export async function getCreditDocumentException(documento: unknown) {
 
   const globalSettings = await getCreditSettings();
   const rows = (await prisma.$queryRawUnsafe(
-    `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
+    `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje",
             "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
             "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
             activo, observacion, "createdAt", "updatedAt"
@@ -330,7 +352,7 @@ export async function listCreditDocumentExceptions() {
   await ensureCreditSettingsTable();
   const globalSettings = await getCreditSettings();
   const rows = (await prisma.$queryRawUnsafe(
-    `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
+    `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje",
             "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
             "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
             activo, observacion, "createdAt", "updatedAt"
@@ -344,6 +366,7 @@ export async function listCreditDocumentExceptions() {
 export async function updateCreditSettings(params: {
   tasaInteresEa: unknown;
   fianzaPorcentaje: unknown;
+  cuotaInicialPorcentaje?: unknown;
   plazoCuotas?: unknown;
   plazoMaximoCuotas?: unknown;
   frecuenciaPago?: unknown;
@@ -371,20 +394,29 @@ export async function updateCreditSettings(params: {
   const frecuenciaPago = normalizePaymentFrequency(
     params.frecuenciaPago || current.frecuenciaPago
   );
+  const cuotaInicialPorcentaje =
+    params.cuotaInicialPorcentaje === undefined
+      ? current.cuotaInicialPorcentaje
+      : normalizePercentage(
+          params.cuotaInicialPorcentaje,
+          current.cuotaInicialPorcentaje
+        );
 
   const rows = (await prisma.$queryRawUnsafe(
     `UPDATE "CreditoConfiguracion"
      SET "tasaInteresEa" = $2,
          "fianzaPorcentaje" = $3,
-         "plazoCuotas" = $4,
-         "plazoMaximoCuotas" = $5,
-         "frecuenciaPago" = $6,
+         "cuotaInicialPorcentaje" = $4,
+         "plazoCuotas" = $5,
+         "plazoMaximoCuotas" = $6,
+         "frecuenciaPago" = $7,
          "updatedAt" = NOW()
      WHERE nombre = $1
-     RETURNING "tasaInteresEa", "fianzaPorcentaje", "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago", "updatedAt"`,
+     RETURNING "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago", "updatedAt"`,
     CREDIT_SETTINGS_KEY,
     tasaInteresEa,
     fianzaPorcentaje,
+    cuotaInicialPorcentaje,
     plazoCuotas,
     plazoMaximoCuotas,
     frecuenciaPago
@@ -397,6 +429,7 @@ export async function upsertCreditDocumentException(params: {
   documento: unknown;
   tasaInteresEa?: unknown;
   fianzaPorcentaje?: unknown;
+  cuotaInicialPorcentaje?: unknown;
   plazoCuotas?: unknown;
   plazoMaximoCuotas?: unknown;
   frecuenciaPago?: unknown;
@@ -427,16 +460,17 @@ export async function upsertCreditDocumentException(params: {
 
   const rows = (await prisma.$queryRawUnsafe(
     `INSERT INTO "CreditoConfiguracionDocumento"
-      (documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
+      (documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje",
        "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
        "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
        activo, observacion, "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
      ON CONFLICT ("documentoNormalizado")
      DO UPDATE SET
        documento = EXCLUDED.documento,
        "tasaInteresEa" = EXCLUDED."tasaInteresEa",
        "fianzaPorcentaje" = EXCLUDED."fianzaPorcentaje",
+       "cuotaInicialPorcentaje" = EXCLUDED."cuotaInicialPorcentaje",
        "plazoCuotas" = EXCLUDED."plazoCuotas",
        "plazoMaximoCuotas" = EXCLUDED."plazoMaximoCuotas",
        "frecuenciaPago" = EXCLUDED."frecuenciaPago",
@@ -445,7 +479,7 @@ export async function upsertCreditDocumentException(params: {
        activo = EXCLUDED.activo,
        observacion = EXCLUDED.observacion,
        "updatedAt" = NOW()
-     RETURNING id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
+     RETURNING id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje",
        "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
        "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
        activo, observacion, "createdAt", "updatedAt"`,
@@ -453,6 +487,7 @@ export async function upsertCreditDocumentException(params: {
     documentoNormalizado,
     normalizeOptionalPercentage(params.tasaInteresEa),
     normalizeOptionalPercentage(params.fianzaPorcentaje),
+    normalizeOptionalPercentage(params.cuotaInicialPorcentaje),
     plazoCuotas,
     normalizeOptionalInstallmentLimit(params.plazoMaximoCuotas),
     frecuenciaPago,

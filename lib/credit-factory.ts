@@ -16,6 +16,7 @@ export type CreditAdminCommand =
 export const CREDIT_ABONO_CAJA_MARKER = "ABONO_CREDITO_ID:";
 export const DEFAULT_LEGAL_CONSUMER_RATE_EA = 17.84;
 export const DEFAULT_FIANCO_SURETY_PERCENTAGE = 60;
+export const DEFAULT_INITIAL_PAYMENT_PERCENTAGE = 20;
 export const DEFAULT_CREDIT_INSTALLMENTS = 12;
 export const DEFAULT_MAX_CREDIT_INSTALLMENTS = 16;
 export const MAX_CREDIT_INSTALLMENTS = 60;
@@ -242,14 +243,19 @@ export function calculateFinancedBalance(
 
 export function calculateRequiredInitialPayment(
   valorTotalEquipo: number | null | undefined,
-  precioBaseVenta?: number | null
+  precioBaseVenta?: number | null,
+  initialPaymentPercentage: number | null | undefined = DEFAULT_INITIAL_PAYMENT_PERCENTAGE
 ) {
   const total = Math.max(0, Number(valorTotalEquipo || 0));
   const catalogBase = Math.max(0, Number(precioBaseVenta || 0));
+  const percentage = Math.max(
+    0,
+    Math.min(100, Number(initialPaymentPercentage ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE))
+  );
   const limit = catalogBase > 0 ? catalogBase : MAX_DEVICE_FINANCING_BASE;
   const financedBase = Math.min(total, limit);
   const excedente = Math.max(0, total - limit);
-  const initial = financedBase * 0.2 + excedente;
+  const initial = (financedBase * percentage) / 100 + excedente;
 
   return Math.round(initial * 100) / 100;
 }

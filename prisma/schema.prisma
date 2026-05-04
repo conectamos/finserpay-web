@@ -362,15 +362,16 @@ model CatalogoEquipoModelo {
 }
 
 model CreditoConfiguracion {
-  id                Int      @id @default(autoincrement())
-  nombre            String   @unique
-  tasaInteresEa     Float    @default(17.84)
-  fianzaPorcentaje  Float    @default(60)
-  plazoCuotas       Int      @default(12)
-  plazoMaximoCuotas Int      @default(16)
-  frecuenciaPago    String   @default("QUINCENAL")
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                       Int      @id @default(autoincrement())
+  nombre                   String   @unique
+  tasaInteresEa            Float    @default(17.84)
+  fianzaPorcentaje         Float    @default(60)
+  cuotaInicialPorcentaje   Float    @default(20)
+  plazoCuotas              Int      @default(12)
+  plazoMaximoCuotas        Int      @default(16)
+  frecuenciaPago           String   @default("QUINCENAL")
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 }
 
 model CreditoConfiguracionDocumento {
@@ -379,13 +380,14 @@ model CreditoConfiguracionDocumento {
   documentoNormalizado     String   @unique
   tasaInteresEa            Float?
   fianzaPorcentaje         Float?
+  cuotaInicialPorcentaje   Float?
   plazoCuotas              Int?
-    plazoMaximoCuotas        Int?
-    frecuenciaPago           String?
-    permiteMultiplesCreditos Boolean  @default(false)
-    permiteEntregaSinVerificacion Boolean @default(false)
-    activo                   Boolean  @default(true)
-    observacion              String?
+  plazoMaximoCuotas        Int?
+  frecuenciaPago           String?
+  permiteMultiplesCreditos Boolean  @default(false)
+  permiteEntregaSinVerificacion Boolean  @default(false)
+  activo                   Boolean  @default(true)
+  observacion              String?
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
 

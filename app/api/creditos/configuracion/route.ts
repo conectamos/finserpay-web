@@ -90,6 +90,7 @@ export async function PATCH(req: Request) {
     const settings = await updateCreditSettings({
       tasaInteresEa: body.tasaInteresEa,
       fianzaPorcentaje: body.fianzaPorcentaje,
+      cuotaInicialPorcentaje: body.cuotaInicialPorcentaje,
       plazoCuotas: body.plazoCuotas,
       plazoMaximoCuotas: body.plazoMaximoCuotas,
       frecuenciaPago: body.frecuenciaPago,
@@ -119,6 +120,7 @@ export async function POST(req: Request) {
       documento: body.documento,
       tasaInteresEa: body.tasaInteresEa,
       fianzaPorcentaje: body.fianzaPorcentaje,
+      cuotaInicialPorcentaje: body.cuotaInicialPorcentaje,
       plazoCuotas: body.plazoCuotas,
       plazoMaximoCuotas: body.plazoMaximoCuotas,
       frecuenciaPago: body.frecuenciaPago,

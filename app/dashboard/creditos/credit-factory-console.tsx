@@ -18,6 +18,7 @@ import {
   calculateRequiredInitialPayment,
   DEFAULT_CREDIT_INSTALLMENTS,
   DEFAULT_FIANCO_SURETY_PERCENTAGE,
+  DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
   DEFAULT_LEGAL_CONSUMER_RATE_EA,
   DEFAULT_LEGAL_RATE_REFERENCE,
   DEFAULT_MAX_CREDIT_INSTALLMENTS,
@@ -250,6 +251,7 @@ type EquipmentCatalogResponse = {
 type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
+  cuotaInicialPorcentaje: number;
   plazoCuotas: number;
   plazoMaximoCuotas: number;
   frecuenciaPago: string;
@@ -1612,6 +1614,7 @@ export default function CreditFactoryConsole({
   const [creditSettings, setCreditSettings] = useState<CreditSettings>({
     tasaInteresEa: DEFAULT_LEGAL_CONSUMER_RATE_EA,
     fianzaPorcentaje: DEFAULT_FIANCO_SURETY_PERCENTAGE,
+    cuotaInicialPorcentaje: DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
     plazoCuotas: DEFAULT_CREDIT_INSTALLMENTS,
     plazoMaximoCuotas: DEFAULT_MAX_CREDIT_INSTALLMENTS,
     frecuenciaPago: DEFAULT_PAYMENT_FREQUENCY,
@@ -1799,6 +1802,8 @@ export default function CreditFactoryConsole({
     precioBaseVentaCatalogo > 0
       ? Math.max(0, valorTotalEquipoNumero - precioBaseVentaCatalogo)
       : Math.max(0, valorTotalEquipoNumero - MAX_DEVICE_FINANCING_BASE);
+  const initialPaymentPercentage =
+    creditSettings.cuotaInicialPorcentaje ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE;
   const cuotaInicialNumero = Math.max(0, Number(cuotaInicial || 0));
   const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
     creditSettings.plazoMaximoCuotas
@@ -3166,11 +3171,16 @@ export default function CreditFactoryConsole({
       String(
         calculateRequiredInitialPayment(
           totalValue,
-          precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined
+          precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined,
+          initialPaymentPercentage
         )
       )
     );
-  }, [precioBaseVentaCatalogo, valorEquipoTotal]);
+  }, [
+    initialPaymentPercentage,
+    precioBaseVentaCatalogo,
+    valorEquipoTotal,
+  ]);
 
   useEffect(() => {
     if (!paymentsView) {
@@ -5982,6 +5992,7 @@ export default function CreditFactoryConsole({
                           {precioBaseVentaCatalogo > 0
                             ? `Base del modelo: ${currency(precioBaseVentaCatalogo)}. Excedente a inicial: ${currency(excedentePrecioBase)}.`
                             : `Base maxima sin catalogo: ${currency(MAX_DEVICE_FINANCING_BASE)}.`}
+                          {` Inicial base: ${initialPaymentPercentage}%.`}
                         </p>
                       </div>
 
@@ -6059,7 +6070,7 @@ export default function CreditFactoryConsole({
                         </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Inicial
+                            Inicial ({initialPaymentPercentage}%)
                           </p>
                           <p className="mt-2 text-2xl font-black text-slate-950">
                             {currency(cuotaInicialNumero)}
