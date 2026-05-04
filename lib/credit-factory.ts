@@ -21,8 +21,8 @@ export const DEFAULT_MAX_CREDIT_INSTALLMENTS = 16;
 export const MAX_CREDIT_INSTALLMENTS = 60;
 export const DEFAULT_PAYMENT_FREQUENCY = "QUINCENAL";
 export const MAX_DEVICE_FINANCING_BASE = 800_000;
-export const MAX_VIDEO_DATA_URL_LENGTH = 36_000_000;
-export const MAX_VIDEO_UPLOAD_BYTES = 25 * 1024 * 1024;
+export const MAX_VIDEO_DATA_URL_LENGTH = 64_000_000;
+export const MAX_VIDEO_UPLOAD_BYTES = 45 * 1024 * 1024;
 export const DEFAULT_LEGAL_RATE_REFERENCE =
   "SFC consumo y ordinario vigente del 1 al 30 de abril de 2026";
 

@@ -76,6 +76,20 @@ async function uploadedFileToDataUrl(file: File, mimeType: string) {
   return `data:${mimeType};base64,${buffer.toString("base64")}`;
 }
 
+function serializeSessionForResponse(
+  session: Parameters<typeof serializeCaptureSession>[0],
+  origin: string,
+  options: { compactVideo?: boolean } = {}
+) {
+  const serialized = serializeCaptureSession(session, origin);
+
+  if (options.compactVideo) {
+    serialized.evidence.videoAprobacionDataUrl = null;
+  }
+
+  return serialized;
+}
+
 async function buildPatchFromMultipart(formData: FormData) {
   const kind = String(formData.get("kind") || "").trim().toLowerCase();
   const source = String(formData.get("source") || "upload").trim().slice(0, 20) || "upload";
@@ -159,6 +173,8 @@ async function buildPatchFromMultipart(formData: FormData) {
 export async function GET(request: Request, context: TokenRouteContext) {
   const { token } = await context.params;
   const captureSession = await findSessionByToken(token);
+  const url = new URL(request.url);
+  const compactVideo = url.searchParams.get("compactVideo") === "true";
 
   if (!captureSession) {
     return NextResponse.json({ error: "Sesion no encontrada" }, { status: 404 });
@@ -179,12 +195,13 @@ export async function GET(request: Request, context: TokenRouteContext) {
 
   return NextResponse.json({
     ok: true,
-    session: serializeCaptureSession(
+    session: serializeSessionForResponse(
       {
         ...captureSession,
         estado,
       },
-      resolveCaptureSessionOrigin(request)
+      resolveCaptureSessionOrigin(request),
+      { compactVideo }
     ),
   });
 }
@@ -215,16 +232,19 @@ export async function POST(request: Request, context: TokenRouteContext) {
     );
   }
 
+  const url = new URL(request.url);
+  const compactVideo = url.searchParams.get("compactVideo") === "true";
   const contentType = request.headers.get("content-type") || "";
   const isMultipart = contentType.toLowerCase().includes("multipart/form-data");
-  const formData = isMultipart ? await request.formData() : null;
-  const redirectToRaw = formData ? String(formData.get("redirectTo") || "") : "";
-  const body = isMultipart
-    ? null
-    : ((await request.json().catch(() => ({}))) as Record<string, unknown>);
+  let formData: FormData | null = null;
+  let body: Record<string, unknown> | null = null;
   let patch: Record<string, unknown>;
 
   try {
+    formData = isMultipart ? await request.formData() : null;
+    body = isMultipart
+      ? null
+      : ((await request.json().catch(() => ({}))) as Record<string, unknown>);
     patch = isMultipart
       ? await buildPatchFromMultipart(formData as FormData)
       : sanitizeCaptureSessionPatch(body as Record<string, unknown>);
@@ -239,6 +259,7 @@ export async function POST(request: Request, context: TokenRouteContext) {
       { status: 400 }
     );
   }
+  const redirectToRaw = formData ? String(formData.get("redirectTo") || "") : "";
   const candidate = {
     ...captureSession,
     ...patch,
@@ -264,6 +285,8 @@ export async function POST(request: Request, context: TokenRouteContext) {
 
   return NextResponse.json({
     ok: true,
-    session: serializeCaptureSession(updated, resolveCaptureSessionOrigin(request)),
+    session: serializeSessionForResponse(updated, resolveCaptureSessionOrigin(request), {
+      compactVideo,
+    }),
   });
 }

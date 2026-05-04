@@ -8,7 +8,10 @@ import {
   type ChangeEvent,
 } from "react";
 import FinserBrand from "@/app/_components/finser-brand";
-import { MAX_VIDEO_UPLOAD_BYTES } from "@/lib/credit-factory";
+import {
+  MAX_VIDEO_DATA_URL_LENGTH,
+  MAX_VIDEO_UPLOAD_BYTES,
+} from "@/lib/credit-factory";
 
 type CaptureSessionPayload = {
   token: string;
@@ -95,6 +98,31 @@ async function requestMultipart<T>(url: string, formData: FormData) {
     status: response.status,
     data,
   };
+}
+
+function normalizeVideoDataUrl(value: string, file: File) {
+  let normalized = String(value || "").trim();
+  const inferredMimeType = inferVideoMimeType(file);
+
+  if (
+    inferredMimeType &&
+    /^data:(application\/octet-stream)?;base64,/i.test(normalized)
+  ) {
+    normalized = normalized.replace(
+      /^data:(application\/octet-stream)?;base64,/i,
+      `data:${inferredMimeType};base64,`
+    );
+  }
+
+  if (!/^data:video\/(webm|mp4|ogg|quicktime|mov|x-m4v);base64,/i.test(normalized)) {
+    throw new Error("El video debe guardarse en formato WebM, MP4, OGG o MOV.");
+  }
+
+  if (normalized.length > MAX_VIDEO_DATA_URL_LENGTH) {
+    throw new Error("El video es demasiado pesado. Graba una toma mas corta.");
+  }
+
+  return normalized;
 }
 
 async function readFileAsDataUrl(file: File) {
@@ -659,7 +687,7 @@ export default function MobileCaptureClient({
     try {
       pushDebug("Consultando sesion QR...");
       const result = await requestJson<CaptureSessionResponse>(
-        `/api/creditos/captura-session/${token}`
+        `/api/creditos/captura-session/${token}?compactVideo=true`
       );
 
       if (!result.ok || !result.data?.session) {
@@ -714,7 +742,7 @@ export default function MobileCaptureClient({
       setUploadingKey(uploadingState);
       pushDebug(`Subiendo evidencia ${uploadingState}...`);
       const result = await requestJson<CaptureSessionResponse>(
-        `/api/creditos/captura-session/${token}`,
+        `/api/creditos/captura-session/${token}?compactVideo=true`,
         {
           method: "POST",
           headers: {
@@ -759,7 +787,7 @@ export default function MobileCaptureClient({
       setUploadingKey(uploadingState);
       pushDebug(`Subiendo evidencia ${uploadingState}...`);
       const result = await requestMultipart<CaptureSessionResponse>(
-        `/api/creditos/captura-session/${token}`,
+        `/api/creditos/captura-session/${token}?compactVideo=true`,
         formData
       );
 
@@ -787,6 +815,24 @@ export default function MobileCaptureClient({
     } finally {
       setUploadingKey(null);
     }
+  };
+
+  const saveVideoEvidenceJsonFallback = async (
+    file: File,
+    durationSeconds: number
+  ) => {
+    pushDebug("Intentando respaldo JSON para video...");
+    const dataUrl = normalizeVideoDataUrl(await readFileAsDataUrl(file), file);
+    return await savePatch(
+      {
+        videoAprobacionDataUrl: dataUrl,
+        videoAprobacionCapturedAt: new Date().toISOString(),
+        videoAprobacionSource: "camera",
+        videoAprobacionDuration: Math.max(1, Math.round(durationSeconds)),
+      },
+      "Video de aprobacion sincronizado.",
+      "video-aprobacion"
+    );
   };
 
   const saveImageEvidenceDataUrl = async (
@@ -912,11 +958,19 @@ export default function MobileCaptureClient({
       formData.set("duration", String(Math.max(1, Math.round(durationSeconds))));
       formData.set("file", file, file.name || "video-aprobacion.mov");
       pushDebug("Video procesado.");
-      await saveMultipartEvidence(
+      const savedSession = await saveMultipartEvidence(
         formData,
         "Video de aprobacion sincronizado.",
         "video-aprobacion"
       );
+
+      if (!savedSession?.evidence.videoReady) {
+        const fallbackSaved = await saveVideoEvidenceJsonFallback(file, durationSeconds);
+
+        if (!fallbackSaved) {
+          await loadSession();
+        }
+      }
     } catch (error) {
       pushDebug("Error procesando video.");
       setNotice({
@@ -1052,7 +1106,7 @@ export default function MobileCaptureClient({
               </p>
             </div>
             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              build qr-v5
+              build qr-v6
             </span>
           </div>
           <div className="mt-4 space-y-2">
