@@ -261,6 +261,40 @@ export default function ClienteConsultaPage() {
                   </span>
                 </div>
 
+                <div className="mt-5 rounded-[24px] border border-[#f6d047] bg-[#fff9dc] p-4 shadow-[0_16px_34px_rgba(214,146,10,0.14)]">
+                  <div className="grid gap-4 sm:grid-cols-[132px_1fr] sm:items-center">
+                    <div className="rounded-[18px] bg-white p-2 shadow-[inset_0_0_0_1px_rgba(215,25,32,0.10)]">
+                      <img
+                        src="/branding/efecty-logo.svg"
+                        alt="Efecty"
+                        className="h-auto w-full"
+                      />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#a84405]">
+                        Pago en punto fisico
+                      </p>
+                      <h3 className="mt-1 text-lg font-black text-[#171717]">
+                        Tambien puedes pagar por EFECTY
+                      </h3>
+                      <div className="mt-3 grid gap-2 text-sm font-bold text-slate-800">
+                        <p>
+                          Convenio:{" "}
+                          <span className="font-black text-[#d71920]">
+                            113950 FINANSERVICES
+                          </span>
+                        </p>
+                        <p>
+                          Referencia:{" "}
+                          <span className="font-black text-[#d71920]">
+                            Numero de cedula
+                          </span>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
                   <label className="sr-only" htmlFor="cliente-documento">
                     Numero de cedula
