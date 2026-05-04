@@ -22,6 +22,8 @@ export type EqualityDeliveryStatus = {
   tone: DeliveryTone;
 };
 
+const AUTHORIZED_ACTIVE_DELIVERY_DEVICE_UIDS = new Set(["354499631228224"]);
+
 export function getPayloadSummary(payload: unknown) {
   if (typeof payload !== "object" || payload === null) {
     return {
@@ -145,6 +147,22 @@ export function deriveEqualityDeliveryStatus(
       label: "100% entregable",
       detail:
         "El equipo ya aparece listo para uso, con servicio activo en Equality, sin transiciones pendientes y estable para entrega.",
+      ready: true,
+      tone: "emerald",
+    };
+  }
+
+  if (
+    state.includes("active") &&
+    service === "POSTPAID" &&
+    AUTHORIZED_ACTIVE_DELIVERY_DEVICE_UIDS.has(
+      String(snapshot.deviceUid || "").replace(/\D/g, "")
+    )
+  ) {
+    return {
+      label: "100% entregable",
+      detail:
+        "Entrega autorizada en tiempo real: el equipo reporta Active y servicio POSTPAID en Equality para este IMEI.",
       ready: true,
       tone: "emerald",
     };
