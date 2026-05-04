@@ -24,6 +24,19 @@ export type EqualityDeliveryStatus = {
 
 const AUTHORIZED_ACTIVE_DELIVERY_DEVICE_UIDS = new Set(["354499631228224"]);
 
+function isSamsungDevice(snapshot: EqualityDeviceSnapshot) {
+  const deviceText = [
+    snapshot.deviceManufacturer,
+    snapshot.deviceMarketName,
+    snapshot.deviceModel,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return deviceText.includes("samsung");
+}
+
 export function getPayloadSummary(payload: unknown) {
   if (typeof payload !== "object" || payload === null) {
     return {
@@ -155,14 +168,15 @@ export function deriveEqualityDeliveryStatus(
   if (
     state.includes("active") &&
     service === "POSTPAID" &&
-    AUTHORIZED_ACTIVE_DELIVERY_DEVICE_UIDS.has(
+    (AUTHORIZED_ACTIVE_DELIVERY_DEVICE_UIDS.has(
       String(snapshot.deviceUid || "").replace(/\D/g, "")
-    )
+    ) ||
+      isSamsungDevice(snapshot))
   ) {
     return {
       label: "100% entregable",
       detail:
-        "Entrega autorizada en tiempo real: el equipo reporta Active y servicio POSTPAID en Equality para este IMEI.",
+        "Entrega autorizada en tiempo real: el equipo reporta Active y servicio POSTPAID en Equality para esta referencia.",
       ready: true,
       tone: "emerald",
     };
