@@ -1,5 +1,4 @@
-import { getSessionUser } from "@/lib/auth";
-import { isAdminRole } from "@/lib/roles";
+import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
 import EqualityZeroTouchConsole from "./equality-zero-touch-console";
 
 export const metadata = {
@@ -8,15 +7,11 @@ export const metadata = {
 };
 
 export default async function EqualityPage() {
-  const session = await getSessionUser();
-
-  if (!session) {
-    return <div className="p-10">No autenticado</div>;
-  }
+  const { session } = await requireAdminDashboardAccess();
 
   return (
     <EqualityZeroTouchConsole
-      canAdmin={isAdminRole(session.rolNombre)}
+      canAdmin
       roleName={session.rolNombre}
     />
   );

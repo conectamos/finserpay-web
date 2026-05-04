@@ -1,4 +1,4 @@
-import { getSessionUser } from "@/lib/auth";
+import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
 import IntegrationsHub from "./integrations-hub";
 
 export const metadata = {
@@ -7,11 +7,7 @@ export const metadata = {
 };
 
 export default async function IntegracionesPage() {
-  const session = await getSessionUser();
-
-  if (!session) {
-    return <div className="p-10">No autenticado</div>;
-  }
+  const { session } = await requireAdminDashboardAccess();
 
   return <IntegrationsHub initialSession={session} />;
 }
