@@ -434,6 +434,50 @@ function AdminShortcutCard({
   );
 }
 
+function AdminOperationCard() {
+  const actionClass =
+    "inline-flex min-h-12 items-center justify-center rounded-2xl px-4 py-3 text-center text-sm font-black transition";
+
+  return (
+    <section className="group relative overflow-hidden rounded-[28px] border border-emerald-200 bg-[linear-gradient(180deg,#ffffff_0%,#edf8f5_58%,#ddeeea_100%)] p-5 shadow-[0_14px_32px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_44px_rgba(15,23,42,0.12)]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#18a7b5,#111827)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(18,184,134,0.16),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(24,167,181,0.12),transparent_34%)]" />
+
+      <div className="relative inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-800">
+        Flujo diario
+      </div>
+
+      <h3 className="relative mt-4 text-2xl font-black uppercase tracking-tight text-zinc-950">
+        OPERACIÓN
+      </h3>
+      <p className="relative mt-3 text-sm leading-6 text-zinc-600">
+        Accesos directos para crear creditos y recaudar pagos desde el panel principal.
+      </p>
+
+      <div className="relative mt-5 grid gap-3 sm:grid-cols-2">
+        <Link
+          href="/dashboard/creditos"
+          className={[
+            actionClass,
+            "border border-zinc-950 bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] text-white hover:opacity-95",
+          ].join(" ")}
+        >
+          Crear crédito
+        </Link>
+        <Link
+          href="/dashboard/abonos"
+          className={[
+            actionClass,
+            "border border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-50",
+          ].join(" ")}
+        >
+          Recaudo
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 function AdminManagementCard() {
   const actionClass =
     "inline-flex min-h-11 items-center justify-center rounded-2xl px-4 py-3 text-center text-sm font-black transition";
@@ -1028,22 +1072,6 @@ export default async function DashboardPage() {
 
   const adminShortcuts: AdminShortcut[] = [
     {
-      href: "/dashboard/abonos",
-      title: "Abonos y recaudo",
-      description:
-        "Busca clientes, revisa cartera y registra pagos de cuotas desde el modulo operativo.",
-      eyebrow: "Cartera",
-      tone: "sky",
-    },
-    {
-      href: "/dashboard/creditos",
-      title: "Fabrica de creditos",
-      description:
-        "Abre el flujo comercial completo para ventas, contrato, pagare y enrolamiento de equipos.",
-      eyebrow: "Operacion",
-      tone: "teal",
-    },
-    {
       href: "/dashboard/equality",
       title: "Equality",
       description:
@@ -1139,6 +1167,7 @@ export default async function DashboardPage() {
           </div>
 
           <div className="mt-6 grid gap-5 xl:grid-cols-3">
+            <AdminOperationCard />
             <AdminManagementCard />
             <AdminAnnulmentsCard />
             {adminShortcuts.map((shortcut) => (
