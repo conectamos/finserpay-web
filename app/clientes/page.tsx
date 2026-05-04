@@ -262,12 +262,12 @@ export default function ClienteConsultaPage() {
                 </div>
 
                 <div className="mt-5 rounded-[24px] border border-[#f6d047] bg-[#fff9dc] p-4 shadow-[0_16px_34px_rgba(214,146,10,0.14)]">
-                  <div className="grid gap-4 sm:grid-cols-[132px_1fr] sm:items-center">
-                    <div className="rounded-[18px] bg-white p-2 shadow-[inset_0_0_0_1px_rgba(215,25,32,0.10)]">
+                  <div className="grid gap-4 sm:grid-cols-[104px_1fr] sm:items-center">
+                    <div className="flex justify-center sm:justify-start">
                       <img
                         src="/branding/efecty-logo.svg"
                         alt="Efecty"
-                        className="h-auto w-full"
+                        className="h-24 w-24 rounded-full shadow-[0_12px_24px_rgba(214,146,10,0.22)]"
                       />
                     </div>
                     <div>
