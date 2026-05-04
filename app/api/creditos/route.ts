@@ -48,6 +48,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION = false;
+const MULTI_CREDIT_DOCUMENTS = new Set(["1023028341"]);
 
 const CONTRACT_TEMPLATE_TITLE =
   "CONTRATO DE FINANCIACION DE EQUIPO MOVIL, AUTORIZACION DE TRATAMIENTO DE DATOS Y USO DE HERRAMIENTAS TECNOLOGICAS";
@@ -845,36 +846,43 @@ export async function POST(req: Request) {
       );
     }
 
-    const clientCredits = await prisma.credito.findMany({
-      where: {
-        clienteDocumento,
-        estado: {
-          not: "ANULADO",
-        },
-      },
-      select: {
-        id: true,
-        folio: true,
-        montoCredito: true,
-        cuotaInicial: true,
-      },
-    });
+    const documentCanHaveMultipleActiveCredits = MULTI_CREDIT_DOCUMENTS.has(
+      clienteDocumento.replace(/\D/g, "")
+    );
 
-    if (clientCredits.length) {
-      const clientPaymentMap = await buildPaymentSummaryMap(
-        clientCredits.map((item) => item.id)
-      );
-      const activeCredit = clientCredits.find(
-        (item) => getCreditPendingBalance(item, clientPaymentMap.get(item.id)) > 0
-      );
-
-      if (activeCredit) {
-        return NextResponse.json(
-          {
-            error: `La cedula ya tiene saldo vigente en el credito ${activeCredit.folio}. Solo puedes crear una nueva venta cuando el saldo este en $0.`,
+    if (!documentCanHaveMultipleActiveCredits) {
+      const clientCredits = await prisma.credito.findMany({
+        where: {
+          clienteDocumento,
+          estado: {
+            not: "ANULADO",
           },
-          { status: 400 }
+        },
+        select: {
+          id: true,
+          folio: true,
+          montoCredito: true,
+          cuotaInicial: true,
+        },
+      });
+
+      if (clientCredits.length) {
+        const clientPaymentMap = await buildPaymentSummaryMap(
+          clientCredits.map((item) => item.id)
         );
+        const activeCredit = clientCredits.find(
+          (item) =>
+            getCreditPendingBalance(item, clientPaymentMap.get(item.id)) > 0
+        );
+
+        if (activeCredit) {
+          return NextResponse.json(
+            {
+              error: `La cedula ya tiene saldo vigente en el credito ${activeCredit.folio}. Solo puedes crear una nueva venta cuando el saldo este en $0.`,
+            },
+            { status: 400 }
+          );
+        }
       }
     }
 
