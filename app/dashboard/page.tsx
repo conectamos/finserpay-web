@@ -695,9 +695,9 @@ export default async function DashboardPage() {
       ? [
           {
             href: "/dashboard/abonos",
-            title: "Abonos",
+            title: "Abonos y recaudo",
             description:
-              "Busca al cliente, revisa cartera y recibe cuotas sin mezclarlo con la creacion.",
+              "Busca al cliente, revisa cartera y registra pagos de cuotas desde el modulo de recaudo.",
             icon: "payments" as const,
           },
           {
@@ -731,7 +731,7 @@ export default async function DashboardPage() {
         { href: "/dashboard", label: "Inicio", icon: "home", active: true },
         { href: "/dashboard/creditos?mode=create-client", label: "Crear cliente", icon: "new-sale" },
         { href: "/dashboard#busqueda-rapida", label: "Buscar cliente", icon: "clients" as const },
-        { href: "/dashboard/abonos", label: "Abonos", icon: "payments" as const },
+        { href: "/dashboard/abonos", label: "Abonos y recaudo", icon: "payments" as const },
         { href: "/dashboard/reportes/creditos", label: "Creditos por fecha", icon: "calculator" as const },
         { href: "/dashboard/reportes/abonos", label: "Abonos por fecha", icon: "payments" as const },
         { href: "/dashboard#busqueda-rapida", label: "Expedientes", icon: "clients" as const },
@@ -893,7 +893,22 @@ export default async function DashboardPage() {
                       </button>
                     </form>
 
-                    <div className="relative mt-5 flex flex-wrap gap-2">
+                    <div className="relative mt-5 flex flex-wrap gap-3">
+                      <Link
+                        href="/dashboard/abonos"
+                        className="inline-flex items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-black text-emerald-800 transition hover:bg-emerald-100"
+                      >
+                        Abrir abonos y recaudo
+                      </Link>
+                      <Link
+                        href="/dashboard/reportes/abonos"
+                        className="inline-flex items-center justify-center rounded-2xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-black text-zinc-800 transition hover:bg-zinc-50"
+                      >
+                        Ver abonos por fecha
+                      </Link>
+                    </div>
+
+                    <div className="relative mt-4 flex flex-wrap gap-2">
                       <span className="rounded-full border border-zinc-300 bg-[linear-gradient(180deg,#f8fafc_0%,#e5e7eb_100%)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-700">
                         Sede {sedeLabel}
                       </span>
@@ -1012,6 +1027,14 @@ export default async function DashboardPage() {
   ];
 
   const adminShortcuts: AdminShortcut[] = [
+    {
+      href: "/dashboard/abonos",
+      title: "Abonos y recaudo",
+      description:
+        "Busca clientes, revisa cartera y registra pagos de cuotas desde el modulo operativo.",
+      eyebrow: "Cartera",
+      tone: "sky",
+    },
     {
       href: "/dashboard/creditos",
       title: "Fabrica de creditos",
