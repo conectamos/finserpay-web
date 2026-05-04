@@ -53,7 +53,7 @@ export default async function CreditosPage(props: {
 
   if (
     sellerSession?.tipoPerfil === "SUPERVISOR" &&
-    entryMode !== "create-client"
+    !["create-client", "simulator"].includes(entryMode)
   ) {
     redirect("/dashboard");
   }

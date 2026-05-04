@@ -451,10 +451,10 @@ function AdminOperationCard() {
         OPERACIÓN
       </h3>
       <p className="relative mt-3 text-sm leading-6 text-zinc-600">
-        Accesos directos para crear creditos y recaudar pagos desde el panel principal.
+        Accesos directos para crear creditos, simular cuotas y recaudar pagos desde el panel principal.
       </p>
 
-      <div className="relative mt-5 grid gap-3 sm:grid-cols-2">
+      <div className="relative mt-5 grid gap-3 sm:grid-cols-3">
         <Link
           href="/dashboard/creditos"
           className={[
@@ -463,6 +463,15 @@ function AdminOperationCard() {
           ].join(" ")}
         >
           Crear crédito
+        </Link>
+        <Link
+          href="/dashboard/creditos?mode=simulator"
+          className={[
+            actionClass,
+            "border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100",
+          ].join(" ")}
+        >
+          Simulador
         </Link>
         <Link
           href="/dashboard/abonos"
@@ -745,6 +754,13 @@ export default async function DashboardPage() {
             icon: "payments" as const,
           },
           {
+            href: "/dashboard/creditos?mode=simulator",
+            title: "Simulador",
+            description:
+              "Selecciona equipo, inicial y cuotas antes de orientar una venta.",
+            icon: "calculator" as const,
+          },
+          {
             href: "/dashboard/reportes/creditos",
             title: "Creditos por fecha",
             description:
@@ -776,6 +792,7 @@ export default async function DashboardPage() {
         { href: "/dashboard/creditos?mode=create-client", label: "Crear cliente", icon: "new-sale" },
         { href: "/dashboard#busqueda-rapida", label: "Buscar cliente", icon: "clients" as const },
         { href: "/dashboard/abonos", label: "Abonos y recaudo", icon: "payments" as const },
+        { href: "/dashboard/creditos?mode=simulator", label: "Simulador", icon: "calculator" as const },
         { href: "/dashboard/reportes/creditos", label: "Creditos por fecha", icon: "calculator" as const },
         { href: "/dashboard/reportes/abonos", label: "Abonos por fecha", icon: "payments" as const },
         { href: "/dashboard#busqueda-rapida", label: "Expedientes", icon: "clients" as const },
