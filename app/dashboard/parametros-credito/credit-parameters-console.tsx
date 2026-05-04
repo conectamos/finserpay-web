@@ -27,9 +27,28 @@ type CreditSettings = {
   updatedAt: string | null;
 };
 
+type CreditDocumentException = {
+  id: number;
+  documento: string;
+  documentoNormalizado: string;
+  tasaInteresEa: number | null;
+  fianzaPorcentaje: number | null;
+  plazoCuotas: number | null;
+  plazoMaximoCuotas: number | null;
+  frecuenciaPago: string | null;
+  permiteMultiplesCreditos: boolean;
+  activo: boolean;
+  observacion: string | null;
+  updatedAt: string | null;
+  effectiveSettings: CreditSettings;
+};
+
 type CreditSettingsResponse = {
   ok?: boolean;
   settings?: CreditSettings;
+  globalSettings?: CreditSettings;
+  documentException?: CreditDocumentException | null;
+  exceptions?: CreditDocumentException[];
   error?: string;
 };
 
@@ -91,8 +110,20 @@ export default function CreditParametersConsole() {
     String(DEFAULT_MAX_CREDIT_INSTALLMENTS)
   );
   const [frecuenciaPago, setFrecuenciaPago] = useState(DEFAULT_PAYMENT_FREQUENCY);
+  const [exceptions, setExceptions] = useState<CreditDocumentException[]>([]);
+  const [exceptionDocumento, setExceptionDocumento] = useState("");
+  const [exceptionTasaInteresEa, setExceptionTasaInteresEa] = useState("");
+  const [exceptionFianzaPorcentaje, setExceptionFianzaPorcentaje] = useState("");
+  const [exceptionPlazoCuotas, setExceptionPlazoCuotas] = useState("");
+  const [exceptionPlazoMaximoCuotas, setExceptionPlazoMaximoCuotas] = useState("");
+  const [exceptionFrecuenciaPago, setExceptionFrecuenciaPago] = useState("");
+  const [exceptionPermiteMultiples, setExceptionPermiteMultiples] = useState(false);
+  const [exceptionActivo, setExceptionActivo] = useState(true);
+  const [exceptionObservacion, setExceptionObservacion] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingException, setSavingException] = useState(false);
+  const [deletingException, setDeletingException] = useState("");
   const [notice, setNotice] = useState<{ text: string; tone: "red" | "emerald" } | null>(
     null
   );
@@ -100,6 +131,10 @@ export default function CreditParametersConsole() {
   const esAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
   const plazoMaximoNormalizado = normalizeCreditInstallmentLimit(plazoMaximoCuotas);
   const plazoCuotasOptions = getCreditInstallmentOptions(plazoMaximoNormalizado);
+  const exceptionMaxInstallments = exceptionPlazoMaximoCuotas
+    ? normalizeCreditInstallmentLimit(exceptionPlazoMaximoCuotas)
+    : plazoMaximoNormalizado;
+  const exceptionInstallmentOptions = getCreditInstallmentOptions(exceptionMaxInstallments);
 
   const loadSession = async () => {
     const result = await requestJson<SessionUser>("/api/session");
@@ -132,11 +167,51 @@ export default function CreditParametersConsole() {
     setPlazoCuotas((current) => installmentValue(current, nextMax));
   };
 
+  const handleExceptionMaxInstallmentsChange = (value: string) => {
+    const cleanValue = value.replace(/\D/g, "");
+    const nextMax = cleanValue
+      ? normalizeCreditInstallmentLimit(cleanValue)
+      : plazoMaximoNormalizado;
+
+    setExceptionPlazoMaximoCuotas(cleanValue);
+    setExceptionPlazoCuotas((current) =>
+      current ? installmentValue(current, nextMax) : current
+    );
+  };
+
+  const resetExceptionForm = () => {
+    setExceptionDocumento("");
+    setExceptionTasaInteresEa("");
+    setExceptionFianzaPorcentaje("");
+    setExceptionPlazoCuotas("");
+    setExceptionPlazoMaximoCuotas("");
+    setExceptionFrecuenciaPago("");
+    setExceptionPermiteMultiples(false);
+    setExceptionActivo(true);
+    setExceptionObservacion("");
+  };
+
+  const editException = (item: CreditDocumentException) => {
+    setExceptionDocumento(item.documentoNormalizado);
+    setExceptionTasaInteresEa(item.tasaInteresEa === null ? "" : String(item.tasaInteresEa));
+    setExceptionFianzaPorcentaje(
+      item.fianzaPorcentaje === null ? "" : String(item.fianzaPorcentaje)
+    );
+    setExceptionPlazoCuotas(item.plazoCuotas === null ? "" : String(item.plazoCuotas));
+    setExceptionPlazoMaximoCuotas(
+      item.plazoMaximoCuotas === null ? "" : String(item.plazoMaximoCuotas)
+    );
+    setExceptionFrecuenciaPago(item.frecuenciaPago || "");
+    setExceptionPermiteMultiples(item.permiteMultiplesCreditos);
+    setExceptionActivo(item.activo);
+    setExceptionObservacion(item.observacion || "");
+  };
+
   const loadSettings = async () => {
     try {
       setLoading(true);
       const result = await requestJson<CreditSettingsResponse>(
-        "/api/creditos/configuracion"
+        "/api/creditos/configuracion?includeExceptions=true"
       );
 
       if (!result.ok || !result.data.settings) {
@@ -144,6 +219,7 @@ export default function CreditParametersConsole() {
       }
 
       applySettings(result.data.settings);
+      setExceptions(result.data.exceptions || []);
     } catch (error) {
       setNotice({
         text:
@@ -187,6 +263,7 @@ export default function CreditParametersConsole() {
       }
 
       applySettings(result.data.settings);
+      setExceptions(result.data.exceptions || exceptions);
       setNotice({ text: "Parametros actualizados correctamente", tone: "emerald" });
     } catch (error) {
       setNotice({
@@ -198,6 +275,84 @@ export default function CreditParametersConsole() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveException = async () => {
+    try {
+      setSavingException(true);
+      setNotice(null);
+
+      const result = await requestJson<CreditSettingsResponse>(
+        "/api/creditos/configuracion",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            documento: exceptionDocumento,
+            tasaInteresEa: exceptionTasaInteresEa || null,
+            fianzaPorcentaje: exceptionFianzaPorcentaje || null,
+            plazoCuotas: exceptionPlazoCuotas || null,
+            plazoMaximoCuotas: exceptionPlazoMaximoCuotas || null,
+            frecuenciaPago: exceptionFrecuenciaPago || null,
+            permiteMultiplesCreditos: exceptionPermiteMultiples,
+            activo: exceptionActivo,
+            observacion: exceptionObservacion,
+          }),
+        }
+      );
+
+      if (!result.ok || !result.data.documentException) {
+        throw new Error(result.data.error || "No se pudo guardar la excepcion");
+      }
+
+      setExceptions(result.data.exceptions || []);
+      resetExceptionForm();
+      setNotice({ text: "Excepcion por cedula guardada", tone: "emerald" });
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo guardar la excepcion",
+        tone: "red",
+      });
+    } finally {
+      setSavingException(false);
+    }
+  };
+
+  const deleteException = async (documento: string) => {
+    try {
+      setDeletingException(documento);
+      setNotice(null);
+
+      const result = await requestJson<CreditSettingsResponse>(
+        `/api/creditos/configuracion?documento=${encodeURIComponent(documento)}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (!result.ok) {
+        throw new Error(result.data.error || "No se pudo eliminar la excepcion");
+      }
+
+      setExceptions(result.data.exceptions || []);
+      if (exceptionDocumento.replace(/\D/g, "") === documento.replace(/\D/g, "")) {
+        resetExceptionForm();
+      }
+      setNotice({ text: "Excepcion eliminada", tone: "emerald" });
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo eliminar la excepcion",
+        tone: "red",
+      });
+    } finally {
+      setDeletingException("");
     }
   };
 
@@ -448,6 +603,254 @@ export default function CreditParametersConsole() {
             </p>
           </section>
         </div>
+
+        <section className="border-t border-[#dcebe8] px-6 py-6 sm:px-8">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                Excepciones por cedula
+              </p>
+              <h2 className="mt-3 text-2xl font-black text-slate-950">
+                Parametros especificos por cliente
+              </h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                Si una cedula no tiene excepcion activa, la fabrica usa los
+                parametros globales. Los campos vacios heredan el valor global.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={resetExceptionForm}
+              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              Nueva excepcion
+            </button>
+          </div>
+
+          <div className="mt-5 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+            <section className="rounded-[26px] border border-slate-200 bg-[#fbfefd] p-5">
+              <div className="grid gap-4">
+                <label className="block">
+                  <span className="mb-2 block text-sm font-semibold text-slate-700">
+                    Cedula
+                  </span>
+                  <input
+                    value={exceptionDocumento}
+                    onChange={(event) =>
+                      setExceptionDocumento(event.target.value.replace(/\D/g, ""))
+                    }
+                    inputMode="numeric"
+                    className={inputClass}
+                    placeholder="1023028341"
+                  />
+                </label>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-semibold text-slate-700">
+                      Interes E.A. (%)
+                    </span>
+                    <input
+                      value={exceptionTasaInteresEa}
+                      onChange={(event) => setExceptionTasaInteresEa(event.target.value)}
+                      inputMode="decimal"
+                      className={inputClass}
+                      placeholder={`${settings?.tasaInteresEa ?? 0}`}
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-semibold text-slate-700">
+                      Fianza (%)
+                    </span>
+                    <input
+                      value={exceptionFianzaPorcentaje}
+                      onChange={(event) =>
+                        setExceptionFianzaPorcentaje(event.target.value)
+                      }
+                      inputMode="decimal"
+                      className={inputClass}
+                      placeholder={`${settings?.fianzaPorcentaje ?? 0}`}
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-semibold text-slate-700">
+                      Plazo maximo
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={MAX_CREDIT_INSTALLMENTS}
+                      value={exceptionPlazoMaximoCuotas}
+                      onChange={(event) =>
+                        handleExceptionMaxInstallmentsChange(event.target.value)
+                      }
+                      className={inputClass}
+                      placeholder={`${settings?.plazoMaximoCuotas ?? DEFAULT_MAX_CREDIT_INSTALLMENTS}`}
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-semibold text-slate-700">
+                      Plazo sugerido
+                    </span>
+                    <select
+                      value={exceptionPlazoCuotas}
+                      onChange={(event) => setExceptionPlazoCuotas(event.target.value)}
+                      className={inputClass}
+                    >
+                      <option value="">Usar global</option>
+                      {exceptionInstallmentOptions.map((option) => {
+                        return (
+                          <option key={option} value={option}>
+                            {option} cuota{option === "1" ? "" : "s"}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                </div>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-semibold text-slate-700">
+                    Frecuencia de pago
+                  </span>
+                  <select
+                    value={exceptionFrecuenciaPago}
+                    onChange={(event) => setExceptionFrecuenciaPago(event.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="">Usar global</option>
+                    {PAYMENT_FREQUENCY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-semibold text-slate-700">
+                    Observacion
+                  </span>
+                  <textarea
+                    value={exceptionObservacion}
+                    onChange={(event) => setExceptionObservacion(event.target.value)}
+                    rows={3}
+                    className={inputClass}
+                    placeholder="Motivo administrativo de la excepcion"
+                  />
+                </label>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={exceptionPermiteMultiples}
+                      onChange={(event) =>
+                        setExceptionPermiteMultiples(event.target.checked)
+                      }
+                      className="h-4 w-4 rounded border-slate-300 text-[#0f5d59] focus:ring-emerald-100"
+                    />
+                    Permitir mas de 1 credito activo
+                  </label>
+
+                  <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={exceptionActivo}
+                      onChange={(event) => setExceptionActivo(event.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-[#0f5d59] focus:ring-emerald-100"
+                    />
+                    Excepcion activa
+                  </label>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void saveException()}
+                  disabled={savingException}
+                  className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-[0_14px_30px_rgba(15,23,42,0.18)] transition hover:bg-slate-800 disabled:opacity-70"
+                >
+                  {savingException ? "Guardando..." : "Guardar excepcion"}
+                </button>
+              </div>
+            </section>
+
+            <section className="rounded-[26px] border border-slate-200 bg-white p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                Cedulas configuradas
+              </p>
+              <div className="mt-4 space-y-3">
+                {exceptions.length ? (
+                  exceptions.map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-[22px] border border-slate-200 bg-[#fbfefd] px-4 py-4"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-lg font-black text-slate-950">
+                            {item.documentoNormalizado}
+                          </p>
+                          <p className="mt-1 text-xs font-semibold text-slate-500">
+                            {item.activo ? "Activa" : "Inactiva"} -{" "}
+                            {item.permiteMultiplesCreditos
+                              ? "Multiples creditos permitidos"
+                              : "Un credito activo"}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => editException(item)}
+                            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void deleteException(item.documentoNormalizado)}
+                            disabled={deletingException === item.documentoNormalizado}
+                            className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 disabled:opacity-60"
+                          >
+                            {deletingException === item.documentoNormalizado
+                              ? "Eliminando"
+                              : "Eliminar"}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-2 text-xs font-semibold text-slate-600 sm:grid-cols-2">
+                        <span>Interes: {item.effectiveSettings.tasaInteresEa}%</span>
+                        <span>Fianza: {item.effectiveSettings.fianzaPorcentaje}%</span>
+                        <span>
+                          Plazo: {item.effectiveSettings.plazoCuotas}/
+                          {item.effectiveSettings.plazoMaximoCuotas} cuotas
+                        </span>
+                        <span>
+                          Frecuencia:{" "}
+                          {getPaymentFrequencyLabel(item.effectiveSettings.frecuenciaPago)}
+                        </span>
+                      </div>
+
+                      {item.observacion ? (
+                        <p className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-500">
+                          {item.observacion}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-[22px] border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm font-semibold text-slate-500">
+                    Aun no hay excepciones por cedula.
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+        </section>
       </section>
     </main>
   );

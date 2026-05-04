@@ -373,6 +373,24 @@ model CreditoConfiguracion {
   updatedAt         DateTime @updatedAt
 }
 
+model CreditoConfiguracionDocumento {
+  id                       Int      @id @default(autoincrement())
+  documento                String
+  documentoNormalizado     String   @unique
+  tasaInteresEa            Float?
+  fianzaPorcentaje         Float?
+  plazoCuotas              Int?
+  plazoMaximoCuotas        Int?
+  frecuenciaPago           String?
+  permiteMultiplesCreditos Boolean  @default(false)
+  activo                   Boolean  @default(true)
+  observacion              String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@index([activo])
+}
+
 model InventarioPrincipal {
   id              Int              @id @default(autoincrement())
   imei            String           @unique

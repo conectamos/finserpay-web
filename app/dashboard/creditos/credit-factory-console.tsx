@@ -256,9 +256,16 @@ type CreditSettings = {
   updatedAt: string | null;
 };
 
+type CreditDocumentException = {
+  documentoNormalizado: string;
+  permiteMultiplesCreditos: boolean;
+  activo: boolean;
+};
+
 type CreditSettingsResponse = {
   ok?: boolean;
   settings?: CreditSettings;
+  documentException?: CreditDocumentException | null;
   error?: string;
 };
 
@@ -1609,6 +1616,9 @@ export default function CreditFactoryConsole({
     frecuenciaPago: DEFAULT_PAYMENT_FREQUENCY,
     updatedAt: null,
   });
+  const [creditDocumentException, setCreditDocumentException] =
+    useState<CreditDocumentException | null>(null);
+  const [creditSettingsDocument, setCreditSettingsDocument] = useState("");
   const [imei, setImei] = useState("");
   const [valorEquipoTotal, setValorEquipoTotal] = useState("");
   const [cuotaInicial, setCuotaInicial] = useState("");
@@ -1820,6 +1830,9 @@ export default function CreditFactoryConsole({
   const saldoFinanciado = financialPlan.montoCreditoTotal;
   const valorCuota = financialPlan.valorCuota;
   const frecuenciaPagoLabel = getPaymentFrequencyLabel(creditSettings.frecuenciaPago);
+  const creditSettingsScopeLabel = creditDocumentException
+    ? `Parametros especiales para cedula ${creditDocumentException.documentoNormalizado}`
+    : "Parametros globales";
   const referenciaEquipo = [equipoMarca.trim(), equipoModelo.trim()]
     .filter(Boolean)
     .join(" ");
@@ -2900,10 +2913,43 @@ export default function CreditFactoryConsole({
     }
   };
 
-  const loadCreditSettings = async () => {
+  const applyCreditSettings = (
+    nextSettingsInput: CreditSettings,
+    nextException: CreditDocumentException | null,
+    documentValue: string
+  ) => {
+    const nextMaxInstallments = normalizeCreditInstallmentLimit(
+      nextSettingsInput.plazoMaximoCuotas
+    );
+    const nextSettings = {
+      ...nextSettingsInput,
+      plazoMaximoCuotas: nextMaxInstallments,
+      plazoCuotas: normalizeCreditInstallments(
+        nextSettingsInput.plazoCuotas,
+        DEFAULT_CREDIT_INSTALLMENTS,
+        nextMaxInstallments
+      ),
+    };
+
+    setCreditSettings(nextSettings);
+    setCreditDocumentException(nextException);
+    setCreditSettingsDocument(documentValue);
+    setTasaInteresEa(String(nextSettings.tasaInteresEa));
+    setFianzaPorcentaje(String(nextSettings.fianzaPorcentaje));
+    setPlazoMeses(String(nextSettings.plazoCuotas));
+    setFechaPrimerPago(
+      getDefaultFirstPaymentDate(new Date(), nextSettings.frecuenciaPago)
+    );
+  };
+
+  const loadCreditSettings = async (documentValue = "") => {
     try {
+      const normalizedDocument = documentValue.replace(/\D/g, "");
+      const endpoint = normalizedDocument
+        ? `/api/creditos/configuracion?documento=${encodeURIComponent(normalizedDocument)}`
+        : "/api/creditos/configuracion";
       const result = await requestJson<CreditSettingsResponse>(
-        "/api/creditos/configuracion"
+        endpoint
       );
 
       if (!result.ok || !result.data.settings) {
@@ -2912,24 +2958,10 @@ export default function CreditFactoryConsole({
         );
       }
 
-      const nextMaxInstallments = normalizeCreditInstallmentLimit(
-        result.data.settings.plazoMaximoCuotas
-      );
-      const nextSettings = {
-        ...result.data.settings,
-        plazoMaximoCuotas: nextMaxInstallments,
-        plazoCuotas: normalizeCreditInstallments(
-          result.data.settings.plazoCuotas,
-          DEFAULT_CREDIT_INSTALLMENTS,
-          nextMaxInstallments
-        ),
-      };
-      setCreditSettings(nextSettings);
-      setTasaInteresEa(String(nextSettings.tasaInteresEa));
-      setFianzaPorcentaje(String(nextSettings.fianzaPorcentaje));
-      setPlazoMeses(String(nextSettings.plazoCuotas));
-      setFechaPrimerPago(
-        getDefaultFirstPaymentDate(new Date(), nextSettings.frecuenciaPago)
+      applyCreditSettings(
+        result.data.settings,
+        result.data.documentException || null,
+        normalizedDocument
       );
     } catch (error) {
       setNotice({
@@ -3040,6 +3072,21 @@ export default function CreditFactoryConsole({
     void loadEquipmentCatalog();
     void loadCreditSettings();
   }, []);
+
+  useEffect(() => {
+    const normalizedDocument = clienteDocumento.replace(/\D/g, "");
+    const targetDocument = normalizedDocument.length >= 5 ? normalizedDocument : "";
+
+    if (targetDocument === creditSettingsDocument) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void loadCreditSettings(targetDocument);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [clienteDocumento, creditSettingsDocument]);
 
   useEffect(() => {
     if (simulatorMode) {
@@ -3969,6 +4016,7 @@ export default function CreditFactoryConsole({
     setMobileCaptureQrDataUrl("");
     mobileCaptureAppliedRef.current = "";
     setSignaturePadKey((current) => current + 1);
+    void loadCreditSettings();
   };
 
   const upsertCredit = (item: CreditItem) => {
@@ -5769,6 +5817,16 @@ export default function CreditFactoryConsole({
                           ? "Selecciona un equipo y revisa el valor de inicial, credito autorizado, plazo y cuotas."
                           : "Captura el equipo, define la inicial y confirma la cuota que vera el cliente."}
                       </p>
+                      <div
+                        className={[
+                          "mt-3 inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]",
+                          creditDocumentException
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : "border-slate-200 bg-slate-50 text-slate-500",
+                        ].join(" ")}
+                      >
+                        {creditSettingsScopeLabel}
+                      </div>
                     </div>
                     <div
                       className={[

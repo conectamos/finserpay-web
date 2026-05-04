@@ -39,7 +39,7 @@ import {
   queryEqualityDevices,
   uploadEqualityInventoryDevice,
 } from "@/lib/equality-zero-touch";
-import { getCreditSettings } from "@/lib/credit-settings";
+import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { findEquipmentCatalogItem } from "@/lib/equipment-catalog";
 import { isAdminRole } from "@/lib/roles";
@@ -48,7 +48,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION = false;
-const MULTI_CREDIT_DOCUMENTS = new Set(["1023028341"]);
 
 const CONTRACT_TEMPLATE_TITLE =
   "CONTRATO DE FINANCIACION DE EQUIPO MOVIL, AUTORIZACION DE TRATAMIENTO DE DATOS Y USO DE HERRAMIENTAS TECNOLOGICAS";
@@ -583,7 +582,8 @@ export async function POST(req: Request) {
       valorEquipoTotalInput,
       precioBaseVentaCatalogo
     );
-    const creditSettings = await getCreditSettings();
+    const effectiveCreditSettings = await getEffectiveCreditSettings(clienteDocumento);
+    const creditSettings = effectiveCreditSettings.settings;
     const plazoMesesInput = Math.trunc(toNumber(body.plazoMeses));
     const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
       creditSettings.plazoMaximoCuotas
@@ -846,8 +846,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const documentCanHaveMultipleActiveCredits = MULTI_CREDIT_DOCUMENTS.has(
-      clienteDocumento.replace(/\D/g, "")
+    const documentCanHaveMultipleActiveCredits = Boolean(
+      effectiveCreditSettings.documentException?.permiteMultiplesCreditos
     );
 
     if (!documentCanHaveMultipleActiveCredits) {

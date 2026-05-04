@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { getCreditSettings, updateCreditSettings } from "@/lib/credit-settings";
+import {
+  deleteCreditDocumentException,
+  getEffectiveCreditSettings,
+  listCreditDocumentExceptions,
+  updateCreditSettings,
+  upsertCreditDocumentException,
+} from "@/lib/credit-settings";
 import { isAdminRole } from "@/lib/roles";
 
 export const runtime = "nodejs";
@@ -39,7 +45,7 @@ async function requireAdmin() {
   return session;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const session = await requireUser();
 
@@ -47,9 +53,22 @@ export async function GET() {
       return session.response;
     }
 
-    const settings = await getCreditSettings();
+    const url = new URL(req.url);
+    const documento = url.searchParams.get("documento") || "";
+    const includeExceptions = url.searchParams.get("includeExceptions") === "true";
+    const effective = await getEffectiveCreditSettings(documento);
+    const exceptions =
+      includeExceptions && isAdminRole(session.user.rolNombre)
+        ? await listCreditDocumentExceptions()
+        : undefined;
 
-    return NextResponse.json({ ok: true, settings });
+    return NextResponse.json({
+      ok: true,
+      settings: effective.settings,
+      globalSettings: effective.globalSettings,
+      documentException: effective.documentException,
+      exceptions,
+    });
   } catch (error) {
     console.error("ERROR GET CONFIGURACION CREDITO:", error);
     return NextResponse.json(
@@ -75,12 +94,88 @@ export async function PATCH(req: Request) {
       plazoMaximoCuotas: body.plazoMaximoCuotas,
       frecuenciaPago: body.frecuenciaPago,
     });
+    const exceptions = await listCreditDocumentExceptions();
 
-    return NextResponse.json({ ok: true, settings });
+    return NextResponse.json({ ok: true, settings, exceptions });
   } catch (error) {
     console.error("ERROR PATCH CONFIGURACION CREDITO:", error);
     return NextResponse.json(
       { error: "No se pudo guardar la configuracion de credito" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const session = await requireAdmin();
+
+    if (!session.ok) {
+      return session.response;
+    }
+
+    const body = (await req.json()) as Record<string, unknown>;
+    const exception = await upsertCreditDocumentException({
+      documento: body.documento,
+      tasaInteresEa: body.tasaInteresEa,
+      fianzaPorcentaje: body.fianzaPorcentaje,
+      plazoCuotas: body.plazoCuotas,
+      plazoMaximoCuotas: body.plazoMaximoCuotas,
+      frecuenciaPago: body.frecuenciaPago,
+      permiteMultiplesCreditos: body.permiteMultiplesCreditos,
+      activo: body.activo,
+      observacion: body.observacion,
+    });
+    const exceptions = await listCreditDocumentExceptions();
+
+    return NextResponse.json({
+      ok: true,
+      settings: exception.effectiveSettings,
+      documentException: exception,
+      exceptions,
+    });
+  } catch (error) {
+    console.error("ERROR POST CONFIGURACION CREDITO DOCUMENTO:", error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "No se pudo guardar la excepcion por cedula",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const session = await requireAdmin();
+
+    if (!session.ok) {
+      return session.response;
+    }
+
+    const url = new URL(req.url);
+    await deleteCreditDocumentException(url.searchParams.get("documento"));
+    const exceptions = await listCreditDocumentExceptions();
+    const effective = await getEffectiveCreditSettings();
+
+    return NextResponse.json({
+      ok: true,
+      settings: effective.settings,
+      globalSettings: effective.globalSettings,
+      exceptions,
+    });
+  } catch (error) {
+    console.error("ERROR DELETE CONFIGURACION CREDITO DOCUMENTO:", error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "No se pudo eliminar la excepcion por cedula",
+      },
       { status: 500 }
     );
   }
