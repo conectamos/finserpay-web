@@ -205,6 +205,53 @@ body {
   background: linear-gradient(90deg, #145a5a 0%, #12b886 56%, #b7e45c 100%);
 }
 
+.fp-client-query {
+  position: relative;
+  overflow: hidden;
+}
+
+.fp-client-query::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(
+    115deg,
+    transparent 0%,
+    rgba(18, 184, 134, 0.1) 40%,
+    rgba(24, 167, 181, 0.22) 50%,
+    rgba(18, 184, 134, 0.1) 60%,
+    transparent 100%
+  );
+  transform: translateX(-120%);
+  animation: fp-client-scan 3.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.fp-client-query > * {
+  position: relative;
+  z-index: 1;
+}
+
+.fp-client-input-shell {
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.fp-client-input-shell:focus-within {
+  border-color: rgba(18, 184, 134, 0.85);
+  box-shadow: 0 0 0 5px rgba(18, 184, 134, 0.14), 0 18px 34px rgba(15, 23, 42, 0.1);
+  transform: translateY(-1px);
+}
+
+.fp-client-step {
+  opacity: 0;
+  animation: fp-client-step-in 360ms ease-out forwards;
+}
+
+.fp-client-result,
+.fp-client-empty {
+  animation: fp-stage-in 300ms ease-out;
+}
+
 @keyframes fp-pulse {
   0% {
     opacity: 0.75;
@@ -231,6 +278,28 @@ body {
   from {
     opacity: 0;
     transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fp-client-scan {
+  0%,
+  28% {
+    transform: translateX(-120%);
+  }
+  72%,
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes fp-client-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
   }
   to {
     opacity: 1;

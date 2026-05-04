@@ -93,6 +93,12 @@ function getPayableInstallments(credit: ClientCredit) {
   return credit.cuotas.filter((item) => item.saldoPendiente > 0);
 }
 
+function getPaidInstallments(credit: ClientCredit) {
+  return credit.cuotas.filter(
+    (item) => item.estado === "PAGO" || item.saldoPendiente <= 0
+  );
+}
+
 async function requestJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, { cache: "no-store", ...init });
   const data = (await response.json().catch(() => ({}))) as T;
@@ -224,34 +230,88 @@ export default function ClienteConsultaPage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#edf7f3] px-4 py-8 text-slate-950">
-      <section className="mx-auto max-w-6xl overflow-hidden rounded-[32px] border border-emerald-950/10 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.10)]">
-        <div className="bg-[linear-gradient(135deg,#0f3d36_0%,#145a5a_55%,#18b6a7_100%)] px-6 py-7 text-white md:px-8">
-          <FinserBrand dark />
-          <h1 className="mt-6 text-3xl font-black tracking-tight md:text-4xl">
-            Consulta de cuotas
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-emerald-50">
-            Ingresa tu cedula para ver pagos realizados, cuotas pendientes y estado de tu credito.
-          </p>
-        </div>
+    <main className="min-h-screen bg-[#eaf4f2] px-4 py-8 text-slate-950">
+      <section className="mx-auto max-w-6xl overflow-hidden rounded-[34px] border border-emerald-950/10 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.10)]">
+        <div className="relative overflow-hidden bg-[linear-gradient(135deg,#10231f_0%,#145a5a_58%,#18a7b5_100%)] px-6 py-7 text-white md:px-8">
+          <div className="relative z-10">
+            <FinserBrand dark />
+            <div className="mt-7 grid gap-6 lg:grid-cols-[0.85fr_1.15fr] lg:items-end">
+              <div>
+                <p className="inline-flex rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-emerald-50">
+                  Portal clientes
+                </p>
+                <h1 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">
+                  Consulta tus cuotas
+                </h1>
+                <p className="mt-3 max-w-xl text-sm leading-6 text-emerald-50">
+                  Revisa tu credito, pagos realizados y saldo disponible para pagar en linea.
+                </p>
+              </div>
 
-        <div className="grid gap-4 border-b border-slate-200 px-6 py-5 md:grid-cols-[1fr_auto] md:px-8">
-          <input
-            value={documento}
-            onChange={(event) => setDocumento(event.target.value.replace(/\D/g, ""))}
-            inputMode="numeric"
-            placeholder="Numero de cedula"
-            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100"
-          />
-          <button
-            type="button"
-            onClick={() => void consultar()}
-            disabled={loading}
-            className="rounded-2xl bg-[#145a5a] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
-          >
-            {loading ? "Consultando..." : "Consultar"}
-          </button>
+              <div className="fp-client-query rounded-[28px] border border-white/20 bg-white/95 p-4 text-slate-950 shadow-[0_24px_60px_rgba(8,28,24,0.24)] md:p-5">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#0f766e]">
+                      Identificacion
+                    </p>
+                    <h2 className="mt-1 text-xl font-black">Ingresa tu cedula</h2>
+                  </div>
+                  <span className="inline-flex w-fit rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-700">
+                    Consulta segura
+                  </span>
+                </div>
+
+                <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
+                  <label className="sr-only" htmlFor="cliente-documento">
+                    Numero de cedula
+                  </label>
+                  <div className="fp-client-input-shell relative rounded-[22px] border border-slate-200 bg-white shadow-[0_14px_30px_rgba(15,23,42,0.08)]">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-[#10231f] px-3 py-1 text-[11px] font-black text-white">
+                      CC
+                    </span>
+                    <input
+                      id="cliente-documento"
+                      value={documento}
+                      onChange={(event) =>
+                        setDocumento(event.target.value.replace(/\D/g, ""))
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !loading) {
+                          void consultar();
+                        }
+                      }}
+                      inputMode="numeric"
+                      placeholder="Numero de cedula"
+                      className="h-14 w-full rounded-[22px] border-0 bg-transparent py-3 pl-16 pr-4 text-lg font-black text-slate-950 outline-none placeholder:text-slate-400"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void consultar()}
+                    disabled={loading}
+                    className="rounded-[22px] bg-[#101319] px-7 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(15,23,42,0.28)] transition hover:-translate-y-0.5 hover:bg-[#145a5a] disabled:opacity-70"
+                  >
+                    {loading ? "Consultando..." : "Consultar"}
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                  {["Cedula", "Credito", "Pago"].map((label, index) => (
+                    <div
+                      key={label}
+                      className="fp-client-step rounded-2xl border border-slate-200 bg-[#f8fbfb] px-3 py-2"
+                      style={{ animationDelay: `${index * 80}ms` }}
+                    >
+                      <span className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">
+                        Paso {index + 1}
+                      </span>
+                      <p className="mt-1 text-sm font-black text-slate-950">{label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {notice ? (
@@ -268,6 +328,27 @@ export default function ClienteConsultaPage() {
         ) : null}
 
         <div className="space-y-5 px-6 py-6 md:px-8">
+          {!items.length ? (
+            <div className="fp-client-empty rounded-[28px] border border-dashed border-emerald-200 bg-[#f8fdfb] p-5 shadow-[0_12px_32px_rgba(15,23,42,0.04)] md:p-6">
+              <div className="grid gap-4 md:grid-cols-[auto_1fr] md:items-center">
+                <div className="grid h-16 w-16 place-items-center rounded-[22px] bg-[#10231f] text-2xl font-black text-white shadow-[0_14px_30px_rgba(15,35,31,0.22)]">
+                  CC
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#0f766e]">
+                    Estado de cuenta
+                  </p>
+                  <h3 className="mt-2 text-2xl font-black text-slate-950">
+                    Tu informacion aparecera aqui
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Veras saldo disponible, cuotas pagas, proxima cuota y acceso a pago en linea.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {items.map((credit) => {
             const payableInstallments = getPayableInstallments(credit);
             const selected = new Set(selectedInstallments[credit.id] || []);
@@ -279,11 +360,18 @@ export default function ClienteConsultaPage() {
             const paymentReference = selectedNumbers.length
               ? `${credit.folio}-CUOTAS-${selectedNumbers.join("-")}`
               : credit.folio;
+            const paidInstallments = getPaidInstallments(credit);
+            const totalInstallments = credit.cuotas.length;
+            const paidCount = paidInstallments.length;
+            const progressPercent = totalInstallments
+              ? Math.round((paidCount / totalInstallments) * 100)
+              : 0;
+            const nextInstallment = payableInstallments[0];
 
             return (
             <section
               key={credit.id}
-              className="rounded-[28px] border border-slate-200 bg-[#fbfdfb] p-5 shadow-sm"
+              className="fp-client-result rounded-[30px] border border-slate-200 bg-[#fbfdfb] p-5 shadow-[0_18px_44px_rgba(15,23,42,0.07)]"
             >
               <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div>
@@ -309,18 +397,60 @@ export default function ClienteConsultaPage() {
                 </span>
               </div>
 
-              <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                  <p className="text-xs font-semibold text-slate-500">Saldo pendiente</p>
+              <div className="mt-5 rounded-[24px] border border-emerald-100 bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#0f766e]">
+                      Avance del credito
+                    </p>
+                    <p className="mt-1 text-sm font-bold text-slate-700">
+                      {paidCount} de {totalInstallments || 0} cuotas pagas realizadas
+                    </p>
+                  </div>
+                  <div className="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-sm font-black text-emerald-800">
+                    {progressPercent}%
+                  </div>
+                </div>
+                <div className="mt-3 h-3 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-[linear-gradient(90deg,#12b886_0%,#18a7b5_70%,#b7e45c_100%)] transition-all duration-500"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-4">
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
+                  <p className="text-xs font-black uppercase tracking-[0.14em] text-emerald-700">
+                    Saldo disponible
+                  </p>
                   <p className="mt-2 text-xl font-black">{money(credit.saldoPendiente)}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                  <p className="text-xs font-semibold text-slate-500">Pagado</p>
+                  <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+                    Cuotas pagas
+                  </p>
+                  <p className="mt-2 text-xl font-black">
+                    {paidCount}
+                    <span className="text-sm font-bold text-slate-500">
+                      {" "}
+                      / {totalInstallments || 0}
+                    </span>
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                  <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+                    Total pagado
+                  </p>
                   <p className="mt-2 text-xl font-black">{money(credit.totalPagado)}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                  <p className="text-xs font-semibold text-slate-500">Valor cuota</p>
-                  <p className="mt-2 text-xl font-black">{money(credit.valorCuota)}</p>
+                  <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+                    Proxima cuota
+                  </p>
+                  <p className="mt-2 text-xl font-black">
+                    {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
+                  </p>
                 </div>
               </div>
 
@@ -331,7 +461,7 @@ export default function ClienteConsultaPage() {
                       Pago en linea
                     </p>
                     <h3 className="mt-2 text-2xl font-black text-slate-950">
-                      Elige las cuotas que vas a pagar
+                      Selecciona tu saldo disponible
                     </h3>
                     <p className="mt-2 text-sm leading-6 text-slate-700">
                       Referencia sugerida:{" "}
@@ -361,7 +491,7 @@ export default function ClienteConsultaPage() {
                         </div>
                         <div className="mt-4 rounded-[18px] bg-[#111111] px-4 py-3">
                           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8ff0df]">
-                            Total exacto a pagar
+                            Saldo disponible
                           </p>
                           <p className="mt-1 text-2xl font-black">
                             {money(totalToPay)}
@@ -416,7 +546,7 @@ export default function ClienteConsultaPage() {
                       <th className="px-4 py-4">Fecha</th>
                       <th className="px-4 py-4">Valor</th>
                       <th className="px-4 py-4">Abonado</th>
-                      <th className="px-4 py-4">Saldo</th>
+                      <th className="px-4 py-4">Saldo disponible</th>
                       <th className="px-4 py-4">Estado</th>
                     </tr>
                   </thead>
