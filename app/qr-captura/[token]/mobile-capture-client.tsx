@@ -8,6 +8,7 @@ import {
   type ChangeEvent,
 } from "react";
 import FinserBrand from "@/app/_components/finser-brand";
+import { MAX_VIDEO_UPLOAD_BYTES } from "@/lib/credit-factory";
 
 type CaptureSessionPayload = {
   token: string;
@@ -71,6 +72,21 @@ async function requestJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, {
     cache: "no-store",
     ...init,
+  });
+  const data = (await response.json().catch(() => null)) as T & { error?: string };
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    data,
+  };
+}
+
+async function requestMultipart<T>(url: string, formData: FormData) {
+  const response = await fetch(url, {
+    cache: "no-store",
+    method: "POST",
+    body: formData,
   });
   const data = (await response.json().catch(() => null)) as T & { error?: string };
 
@@ -197,7 +213,7 @@ function inferVideoMimeType(file: File) {
   const type = String(file.type || "").toLowerCase();
   const name = String(file.name || "").toLowerCase();
 
-  if (/^video\/(webm|mp4|ogg|quicktime|x-m4v)$/i.test(type)) {
+  if (/^video\/(webm|mp4|ogg|quicktime|mov|x-m4v)$/i.test(type)) {
     return type;
   }
 
@@ -222,31 +238,6 @@ function inferVideoMimeType(file: File) {
   }
 
   return "";
-}
-
-function ensureVideoDataUrl(value: string, file?: File) {
-  let normalized = String(value || "").trim();
-  const inferredMimeType = file ? inferVideoMimeType(file) : "";
-
-  if (
-    inferredMimeType &&
-    /^data:(application\/octet-stream)?;base64,/i.test(normalized)
-  ) {
-    normalized = normalized.replace(
-      /^data:(application\/octet-stream)?;base64,/i,
-      `data:${inferredMimeType};base64,`
-    );
-  }
-
-  if (!/^data:video\/(webm|mp4|ogg|quicktime|mov|x-m4v);base64,/i.test(normalized)) {
-    throw new Error("El video debe guardarse en formato WebM, MP4, OGG o MOV.");
-  }
-
-  if (normalized.length > 10_000_000) {
-    throw new Error("El video es demasiado pesado. Graba una toma mas corta.");
-  }
-
-  return normalized;
 }
 
 function auditTime(value: string | null) {
@@ -759,6 +750,45 @@ export default function MobileCaptureClient({
     }
   };
 
+  const saveMultipartEvidence = async (
+    formData: FormData,
+    successText: string,
+    uploadingState: string
+  ) => {
+    try {
+      setUploadingKey(uploadingState);
+      pushDebug(`Subiendo evidencia ${uploadingState}...`);
+      const result = await requestMultipart<CaptureSessionResponse>(
+        `/api/creditos/captura-session/${token}`,
+        formData
+      );
+
+      if (!result.ok || !result.data?.session) {
+        throw new Error(result.data?.error || "No se pudo sincronizar la captura.");
+      }
+
+      setSession(result.data.session);
+      pushDebug(`Evidencia ${uploadingState} sincronizada.`);
+      setNotice({
+        tone: "emerald",
+        text: successText,
+      });
+      return result.data.session;
+    } catch (error) {
+      pushDebug(`Fallo la subida de ${uploadingState}.`);
+      setNotice({
+        tone: "red",
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo sincronizar la captura.",
+      });
+      return null;
+    } finally {
+      setUploadingKey(null);
+    }
+  };
+
   const saveImageEvidenceDataUrl = async (
     kind: ImageCaptureKind,
     dataUrl: string
@@ -857,6 +887,15 @@ export default function MobileCaptureClient({
       const previewUrl = URL.createObjectURL(file);
       replaceLocalPreview("video-aprobacion", previewUrl);
       pushDebug("Preview local lista para video.");
+
+      if (!inferVideoMimeType(file)) {
+        throw new Error("El video debe estar en formato MP4, MOV, WEBM u OGG.");
+      }
+
+      if (file.size > MAX_VIDEO_UPLOAD_BYTES) {
+        throw new Error("El video es demasiado pesado. Graba una toma mas corta.");
+      }
+
       const durationSeconds = await readVideoDuration(file);
 
       if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
@@ -867,17 +906,14 @@ export default function MobileCaptureClient({
         throw new Error("El video debe durar maximo 7 segundos.");
       }
 
-      const capturedAt = new Date().toISOString();
-      const dataUrl = ensureVideoDataUrl(await readFileAsDataUrl(file), file);
-      replaceLocalPreview("video-aprobacion", dataUrl);
+      const formData = new FormData();
+      formData.set("kind", "video-aprobacion");
+      formData.set("source", "camera");
+      formData.set("duration", String(Math.max(1, Math.round(durationSeconds))));
+      formData.set("file", file, file.name || "video-aprobacion.mov");
       pushDebug("Video procesado.");
-      await savePatch(
-        {
-          videoAprobacionDataUrl: dataUrl,
-          videoAprobacionCapturedAt: capturedAt,
-          videoAprobacionSource: "camera",
-          videoAprobacionDuration: Math.max(1, Math.round(durationSeconds)),
-        },
+      await saveMultipartEvidence(
+        formData,
         "Video de aprobacion sincronizado.",
         "video-aprobacion"
       );

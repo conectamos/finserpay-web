@@ -5,6 +5,7 @@ import {
   sanitizeCaptureSessionPatch,
   serializeCaptureSession,
 } from "@/lib/credit-capture-session";
+import { MAX_VIDEO_UPLOAD_BYTES, toNumber } from "@/lib/credit-factory";
 import prisma from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -59,7 +60,7 @@ function uploadedVideoMimeType(file: File) {
     return "video/ogg";
   }
 
-  if (/^video\/quicktime$/i.test(type) || /\.(mov|qt)$/i.test(name)) {
+  if (/^video\/(quicktime|mov)$/i.test(type) || /\.(mov|qt)$/i.test(name)) {
     return "video/quicktime";
   }
 
@@ -127,9 +128,14 @@ async function buildPatchFromMultipart(formData: FormData) {
 
   if (kind === "video-aprobacion") {
     const mimeType = uploadedVideoMimeType(file);
+    const duration = Math.max(0, Math.round(toNumber(formData.get("duration"))));
 
     if (!mimeType) {
       throw new Error("El video debe ser MP4, WEBM, OGG o MOV.");
+    }
+
+    if (file.size > MAX_VIDEO_UPLOAD_BYTES) {
+      throw new Error("El video es demasiado pesado. Graba una toma mas corta.");
     }
 
     const dataUrl = await uploadedFileToDataUrl(file, mimeType);
@@ -137,7 +143,7 @@ async function buildPatchFromMultipart(formData: FormData) {
       videoAprobacionDataUrl: dataUrl,
       videoAprobacionCapturedAt: capturedAt,
       videoAprobacionSource: source,
-      videoAprobacionDuration: null,
+      videoAprobacionDuration: duration || null,
     });
 
     if (!patch.videoAprobacionDataUrl) {
@@ -216,9 +222,23 @@ export async function POST(request: Request, context: TokenRouteContext) {
   const body = isMultipart
     ? null
     : ((await request.json().catch(() => ({}))) as Record<string, unknown>);
-  const patch = isMultipart
-    ? await buildPatchFromMultipart(formData as FormData)
-    : sanitizeCaptureSessionPatch(body as Record<string, unknown>);
+  let patch: Record<string, unknown>;
+
+  try {
+    patch = isMultipart
+      ? await buildPatchFromMultipart(formData as FormData)
+      : sanitizeCaptureSessionPatch(body as Record<string, unknown>);
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "No se pudo preparar la evidencia.",
+      },
+      { status: 400 }
+    );
+  }
   const candidate = {
     ...captureSession,
     ...patch,
@@ -235,7 +255,7 @@ export async function POST(request: Request, context: TokenRouteContext) {
     },
   });
 
-  if (isMultipart) {
+  if (isMultipart && redirectToRaw) {
     const redirectTo = redirectToRaw || `/qr-captura/${token}`;
     return NextResponse.redirect(new URL(redirectTo, resolveCaptureSessionOrigin(request)), {
       status: 303,
