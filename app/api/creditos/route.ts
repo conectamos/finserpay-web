@@ -535,7 +535,22 @@ export async function POST(req: Request) {
     const admin = isAdminRole(user.rolNombre);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
 
-    const body = (await req.json()) as CreditCreateBody;
+    let body: CreditCreateBody;
+
+    try {
+      body = (await req.json()) as CreditCreateBody;
+    } catch (error) {
+      console.error("ERROR LEYENDO EVIDENCIAS DEL CREDITO:", error);
+
+      return NextResponse.json(
+        {
+          error:
+            "Las evidencias del credito llegaron incompletas. Intenta finalizar de nuevo para reenviar las fotos, firma y video.",
+        },
+        { status: 413 }
+      );
+    }
+
     const clientePrimerNombre = sanitizeText(body.clientePrimerNombre);
     const clientePrimerApellido = sanitizeText(body.clientePrimerApellido);
     const clienteTipoDocumento = sanitizeText(body.clienteTipoDocumento);

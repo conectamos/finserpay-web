@@ -23,6 +23,9 @@ function resolveAllowedDevOrigins() {
 const nextConfig: NextConfig = {
   output: "standalone",
   allowedDevOrigins: resolveAllowedDevOrigins(),
+  experimental: {
+    proxyClientMaxBodySize: "80mb",
+  },
 };
 
 export default nextConfig;
