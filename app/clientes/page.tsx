@@ -25,6 +25,7 @@ type ClientCredit = {
   sedeNombre: string;
   estadoPago: "PAGADO" | "AL_DIA" | "MORA";
   saldoPendiente: number;
+  saldoDisponible?: number;
   totalPagado: number;
   cuotas: ClientInstallment[];
   abonos: Array<{
@@ -99,6 +100,10 @@ function getPaidInstallments(credit: ClientCredit) {
   );
 }
 
+function getAvailableBalance(credit: ClientCredit) {
+  return Math.max(0, Number(credit.saldoDisponible ?? credit.totalPagado ?? 0));
+}
+
 async function requestJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, { cache: "no-store", ...init });
   const data = (await response.json().catch(() => ({}))) as T;
@@ -111,6 +116,7 @@ export default function ClienteConsultaPage() {
   const [selectedInstallments, setSelectedInstallments] = useState<Record<number, number[]>>(
     {}
   );
+  const [openCreditId, setOpenCreditId] = useState<number | null>(null);
   const [payingCreditId, setPayingCreditId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<{ text: string; tone: "red" | "emerald" } | null>(
@@ -132,6 +138,7 @@ export default function ClienteConsultaPage() {
 
       const nextItems = result.data.items || [];
       setItems(nextItems);
+      setOpenCreditId(null);
       setSelectedInstallments(
         Object.fromEntries(
           nextItems
@@ -150,6 +157,7 @@ export default function ClienteConsultaPage() {
       });
     } catch (error) {
       setItems([]);
+      setOpenCreditId(null);
       setNotice({
         text: error instanceof Error ? error.message : "No se pudo consultar la cedula",
         tone: "red",
@@ -244,7 +252,7 @@ export default function ClienteConsultaPage() {
                   Consulta tus cuotas
                 </h1>
                 <p className="mt-3 max-w-xl text-sm leading-6 text-emerald-50">
-                  Revisa tu credito, pagos realizados y saldo disponible para pagar en linea.
+                  Revisa tus creditos, cuotas pendientes y pagos realizados en un solo lugar.
                 </p>
               </div>
 
@@ -376,7 +384,7 @@ export default function ClienteConsultaPage() {
                     Tu informacion aparecera aqui
                   </h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Veras saldo disponible, cuotas pagas, proxima cuota y acceso a pago en linea.
+                    Veras tus creditos cerrados y podras abrir cada uno para revisar cuotas y pagar.
                   </p>
                 </div>
               </div>
@@ -397,6 +405,8 @@ export default function ClienteConsultaPage() {
             const paidInstallments = getPaidInstallments(credit);
             const totalInstallments = credit.cuotas.length;
             const paidCount = paidInstallments.length;
+            const availableBalance = getAvailableBalance(credit);
+            const isOpen = openCreditId === credit.id;
             const progressPercent = totalInstallments
               ? Math.round((paidCount / totalInstallments) * 100)
               : 0;
@@ -417,18 +427,27 @@ export default function ClienteConsultaPage() {
                     {credit.referenciaEquipo || "Equipo financiado"} | {credit.sedeNombre}
                   </p>
                 </div>
-                <span
-                  className={[
-                    "inline-flex rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.16em]",
-                    credit.estadoPago === "MORA"
-                      ? "border-red-200 bg-red-50 text-red-700"
-                      : credit.estadoPago === "PAGADO"
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                        : "border-sky-200 bg-sky-50 text-sky-700",
-                  ].join(" ")}
-                >
-                  {credit.estadoPago === "AL_DIA" ? "Al dia" : credit.estadoPago}
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={[
+                      "inline-flex rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.16em]",
+                      credit.estadoPago === "MORA"
+                        ? "border-red-200 bg-red-50 text-red-700"
+                        : credit.estadoPago === "PAGADO"
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-sky-200 bg-sky-50 text-sky-700",
+                    ].join(" ")}
+                  >
+                    {credit.estadoPago === "AL_DIA" ? "Al dia" : credit.estadoPago}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setOpenCreditId(isOpen ? null : credit.id)}
+                    className="inline-flex items-center justify-center rounded-full bg-[#101319] px-4 py-2 text-xs font-black text-white shadow-[0_12px_24px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-[#145a5a]"
+                  >
+                    {isOpen ? "Cerrar credito" : "Abrir credito"}
+                  </button>
+                </div>
               </div>
 
               <div className="mt-5 rounded-[24px] border border-emerald-100 bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
@@ -453,12 +472,12 @@ export default function ClienteConsultaPage() {
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-3 md:grid-cols-4">
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
                   <p className="text-xs font-black uppercase tracking-[0.14em] text-emerald-700">
                     Saldo disponible
                   </p>
-                  <p className="mt-2 text-xl font-black">{money(credit.saldoPendiente)}</p>
+                  <p className="mt-2 text-xl font-black">{money(availableBalance)}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
                   <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
@@ -474,12 +493,6 @@ export default function ClienteConsultaPage() {
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
                   <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-                    Total pagado
-                  </p>
-                  <p className="mt-2 text-xl font-black">{money(credit.totalPagado)}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                  <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
                     Proxima cuota
                   </p>
                   <p className="mt-2 text-xl font-black">
@@ -488,6 +501,8 @@ export default function ClienteConsultaPage() {
                 </div>
               </div>
 
+              {isOpen ? (
+              <>
               <div className="mt-5 rounded-[24px] border border-[#d7e3e5] bg-white p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="flex-1">
@@ -495,7 +510,7 @@ export default function ClienteConsultaPage() {
                       Pago en linea
                     </p>
                     <h3 className="mt-2 text-2xl font-black text-slate-950">
-                      Selecciona tu saldo disponible
+                      Selecciona la cuota a pagar
                     </h3>
                     <p className="mt-2 text-sm leading-6 text-slate-700">
                       Referencia sugerida:{" "}
@@ -525,7 +540,7 @@ export default function ClienteConsultaPage() {
                         </div>
                         <div className="mt-4 rounded-[18px] bg-[#111111] px-4 py-3">
                           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8ff0df]">
-                            Saldo disponible
+                            Valor a pagar
                           </p>
                           <p className="mt-1 text-2xl font-black">
                             {money(totalToPay)}
@@ -580,7 +595,7 @@ export default function ClienteConsultaPage() {
                       <th className="px-4 py-4">Fecha</th>
                       <th className="px-4 py-4">Valor</th>
                       <th className="px-4 py-4">Abonado</th>
-                      <th className="px-4 py-4">Saldo disponible</th>
+                      <th className="px-4 py-4">Saldo pendiente</th>
                       <th className="px-4 py-4">Estado</th>
                     </tr>
                   </thead>
@@ -635,6 +650,8 @@ export default function ClienteConsultaPage() {
                   </tbody>
                 </table>
               </div>
+              </>
+              ) : null}
             </section>
             );
           })}

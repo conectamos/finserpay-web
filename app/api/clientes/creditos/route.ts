@@ -98,6 +98,7 @@ export async function GET(req: Request) {
         sedeNombre: credit.sede.nombre,
         estadoPago: plan.estadoPago,
         saldoPendiente: plan.saldoPendiente,
+        saldoDisponible: plan.totalPaid,
         totalPagado: plan.totalPaid,
         cuotas: plan.installments,
         abonos: credit.abonos.map((item) => ({
