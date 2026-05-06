@@ -118,12 +118,6 @@ function installmentLabel(item: ClientInstallment) {
   return "Pendiente";
 }
 
-function installmentDotClass(item: ClientInstallment) {
-  if (item.saldoPendiente <= 0) return "bg-[#15a66a]";
-  if (item.estaEnMora) return "bg-[#e34c2f]";
-  return "bg-[#a7e66f]";
-}
-
 function installmentAmount(item: ClientInstallment) {
   return item.saldoPendiente > 0 ? item.saldoPendiente : item.valorProgramado;
 }
@@ -596,6 +590,12 @@ export default function ClienteConsultaPage() {
   const totalCount = activeCredit?.cuotas.length || 0;
   const progress = totalCount ? Math.round((paidCount / totalCount) * 100) : 0;
   const nextInstallment = payable[0] || null;
+  const overdueInstallments = payable.filter((item) => item.estaEnMora);
+  const upcomingInstallments = payable.filter((item) => !item.estaEnMora);
+  const nextUpcomingInstallment = upcomingInstallments[0] || null;
+  const futureInstallments = upcomingInstallments.slice(1);
+  const pendingAmount = installmentsAmount(payable);
+  const overdueAmount = installmentsAmount(overdueInstallments);
   const clientNotices = activeCredit
     ? buildClientNotices(activeCredit, nextInstallment)
     : [];
@@ -970,52 +970,178 @@ export default function ClienteConsultaPage() {
                           </span>
                         }
                       />
-                      <div className="mt-3 divide-y divide-[#edf0f4]">
-                        {activeCredit.cuotas.map((item) => {
-                          const isPayable = item.saldoPendiente > 0;
-
-                          return (
-                            <button
-                              key={item.numero}
-                              type="button"
-                              disabled={!isPayable}
-                              onClick={() => {
-                                selectPaymentLimit(activeCredit.id, item.numero);
-                              }}
-                              className={[
-                                "flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left disabled:cursor-default",
-                                item.numero === selectedPaymentLimit
-                                  ? "bg-[#f5ffef]"
-                                  : "bg-transparent",
-                              ].join(" ")}
-                            >
-                              <span
-                                className={[
-                                  "h-2.5 w-2.5 shrink-0 rounded-full",
-                                  installmentDotClass(item),
-                                ].join(" ")}
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-black text-[#252a35]">
-                                  Cuota {item.numero}
-                                </span>
-                                <span className="mt-1 block text-xs font-bold text-[#8a919d]">
-                                  {dateLabel(item.fechaVencimiento)} -{" "}
-                                  {installmentLabel(item)}
-                                </span>
-                              </span>
-                              <span className="shrink-0 text-right text-sm font-black text-[#252a35]">
-                                {money(installmentAmount(item))}
-                                {item.numero === selectedPaymentLimit ? (
-                                  <span className="mt-1 block text-[11px] font-black text-[#4f9b35]">
-                                    Seleccionada
-                                  </span>
-                                ) : null}
-                              </span>
-                            </button>
-                          );
-                        })}
+                      <div className="mt-3 rounded-lg bg-[#111317] p-4 text-white">
+                        <p className="text-xs font-black uppercase text-white/55">
+                          Saldo pendiente
+                        </p>
+                        <p className="mt-1 text-3xl font-black leading-none">
+                          {money(pendingAmount)}
+                        </p>
+                        <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                          <div className="rounded-md bg-white/8 px-2 py-2">
+                            <p className="text-[11px] font-bold text-white/55">
+                              Vencidas
+                            </p>
+                            <p className="mt-1 text-sm font-black">
+                              {overdueInstallments.length}
+                            </p>
+                          </div>
+                          <div className="rounded-md bg-white/8 px-2 py-2">
+                            <p className="text-[11px] font-bold text-white/55">
+                              Proxima
+                            </p>
+                            <p className="mt-1 truncate text-sm font-black">
+                              {nextUpcomingInstallment
+                                ? dateLabel(nextUpcomingInstallment.fechaVencimiento)
+                                : "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-md bg-white/8 px-2 py-2">
+                            <p className="text-[11px] font-bold text-white/55">
+                              Seleccion
+                            </p>
+                            <p className="mt-1 truncate text-sm font-black">
+                              {selectedPaymentLabel}
+                            </p>
+                          </div>
+                        </div>
                       </div>
+
+                      {!payable.length ? (
+                        <p className="mt-3 rounded-lg bg-[#f6f7f9] px-4 py-3 text-sm font-bold text-[#626976]">
+                          No tienes pagos pendientes.
+                        </p>
+                      ) : null}
+
+                      {overdueInstallments.length ? (
+                        <div className="mt-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <h3 className="text-sm font-black text-[#b63b20]">
+                              Vencidas
+                            </h3>
+                            <span className="rounded-md bg-[#fff1ed] px-2 py-1 text-xs font-black text-[#b63b20]">
+                              {money(overdueAmount)}
+                            </span>
+                          </div>
+                          <div className="mt-2 grid gap-2">
+                            {overdueInstallments.map((item) => (
+                              <button
+                                key={item.numero}
+                                type="button"
+                                onClick={() =>
+                                  selectPaymentLimit(activeCredit.id, item.numero)
+                                }
+                                className={[
+                                  "grid min-h-16 grid-cols-[1fr_auto] items-center gap-3 rounded-lg border px-3 py-2 text-left",
+                                  item.numero === selectedPaymentLimit
+                                    ? "border-[#a7e66f] bg-[#f5ffef]"
+                                    : "border-[#fde1d8] bg-[#fff8f6]",
+                                ].join(" ")}
+                              >
+                                <span className="min-w-0">
+                                  <span className="block text-sm font-black text-[#252a35]">
+                                    Cuota {item.numero}
+                                  </span>
+                                  <span className="mt-1 block text-xs font-bold text-[#8a919d]">
+                                    {dateLabel(item.fechaVencimiento)} -{" "}
+                                    {installmentLabel(item)}
+                                  </span>
+                                </span>
+                                <span className="shrink-0 text-right text-sm font-black text-[#252a35]">
+                                  {money(installmentAmount(item))}
+                                  {item.numero === selectedPaymentLimit ? (
+                                    <span className="mt-1 block text-[11px] font-black text-[#4f9b35]">
+                                      Seleccionada
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {nextUpcomingInstallment ? (
+                        <div className="mt-4">
+                          <h3 className="text-sm font-black text-[#3f7d2d]">
+                            Proxima cuota
+                          </h3>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              selectPaymentLimit(
+                                activeCredit.id,
+                                nextUpcomingInstallment.numero
+                              )
+                            }
+                            className={[
+                              "mt-2 grid min-h-16 w-full grid-cols-[1fr_auto] items-center gap-3 rounded-lg border px-3 py-2 text-left",
+                              nextUpcomingInstallment.numero === selectedPaymentLimit
+                                ? "border-[#a7e66f] bg-[#f5ffef]"
+                                : "border-[#dfece0] bg-[#fbfff8]",
+                            ].join(" ")}
+                          >
+                            <span className="min-w-0">
+                              <span className="block text-sm font-black text-[#252a35]">
+                                Cuota {nextUpcomingInstallment.numero}
+                              </span>
+                              <span className="mt-1 block text-xs font-bold text-[#8a919d]">
+                                {dateLabel(nextUpcomingInstallment.fechaVencimiento)} -{" "}
+                                {installmentLabel(nextUpcomingInstallment)}
+                              </span>
+                            </span>
+                            <span className="shrink-0 text-right text-sm font-black text-[#252a35]">
+                              {money(installmentAmount(nextUpcomingInstallment))}
+                              {nextUpcomingInstallment.numero ===
+                              selectedPaymentLimit ? (
+                                <span className="mt-1 block text-[11px] font-black text-[#4f9b35]">
+                                  Seleccionada
+                                </span>
+                              ) : null}
+                            </span>
+                          </button>
+                        </div>
+                      ) : null}
+
+                      {futureInstallments.length ? (
+                        <div className="mt-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <h3 className="text-sm font-black text-[#252a35]">
+                              Futuras
+                            </h3>
+                            <span className="text-xs font-black text-[#7d8490]">
+                              {futureInstallments.length} cuotas
+                            </span>
+                          </div>
+                          <div className="mt-2 grid grid-cols-3 gap-2">
+                            {futureInstallments.map((item) => (
+                              <button
+                                key={item.numero}
+                                type="button"
+                                onClick={() =>
+                                  selectPaymentLimit(activeCredit.id, item.numero)
+                                }
+                                className={[
+                                  "min-h-16 rounded-lg border px-2 py-2 text-left",
+                                  item.numero === selectedPaymentLimit
+                                    ? "border-[#a7e66f] bg-[#f5ffef]"
+                                    : "border-[#edf0f4] bg-[#fbfcfd]",
+                                ].join(" ")}
+                              >
+                                <span className="block text-xs font-black text-[#252a35]">
+                                  C{item.numero}
+                                </span>
+                                <span className="mt-1 block text-[11px] font-bold text-[#8a919d]">
+                                  {dateLabel(item.fechaVencimiento)}
+                                </span>
+                                <span className="mt-1 block truncate text-[11px] font-black text-[#252a35]">
+                                  {money(installmentAmount(item))}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
                     </>
                   ) : null}
 
