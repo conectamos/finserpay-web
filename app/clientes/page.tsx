@@ -89,22 +89,50 @@ function getAvailableBalance(credit: ClientCredit) {
   return Math.max(0, Number(credit.saldoDisponible ?? credit.totalPagado ?? 0));
 }
 
+function getFirstName(value: string) {
+  const first = value.trim().split(/\s+/)[0] || "Cliente";
+  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+}
+
 function stateLabel(estado: ClientCredit["estadoPago"]) {
   if (estado === "AL_DIA") return "Al dia";
   if (estado === "PAGADO") return "Pagado";
   return "En mora";
 }
 
-function stateClass(estado: ClientCredit["estadoPago"]) {
-  if (estado === "MORA") return "bg-[#fff1ec] text-[#c2410c]";
-  if (estado === "PAGADO") return "bg-[#e8fff4] text-[#047857]";
-  return "bg-[#e7f8ff] text-[#0369a1]";
+function stateClasses(estado: ClientCredit["estadoPago"]) {
+  if (estado === "MORA") return "border-[#ff6b4a] text-[#ff6b4a]";
+  if (estado === "PAGADO") return "border-[#11a66a] text-[#087a4f]";
+  return "border-[#18a7b5] text-[#087989]";
 }
 
 async function requestJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, { cache: "no-store", ...init });
   const data = (await response.json().catch(() => ({}))) as T;
   return { ok: response.ok, data };
+}
+
+function FinserLogo({ large = false }: { large?: boolean }) {
+  return (
+    <div className="flex flex-col items-center">
+      <img
+        src="/icons/finserpay-client-192.png"
+        alt="FINSER PAY"
+        className={[
+          "object-cover shadow-[0_16px_32px_rgba(17,19,23,0.18)]",
+          large ? "h-24 w-24 rounded-[28px]" : "h-12 w-12 rounded-2xl",
+        ].join(" ")}
+      />
+      <p
+        className={[
+          "mt-3 font-black text-[#252a35]",
+          large ? "text-3xl" : "text-lg",
+        ].join(" ")}
+      >
+        FINSER PAY
+      </p>
+    </div>
+  );
 }
 
 function PrimaryButton({
@@ -123,9 +151,28 @@ function PrimaryButton({
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-[#111317] px-5 text-sm font-black text-white shadow-[0_14px_30px_rgba(17,19,23,0.22)] transition hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-60"
+      className="inline-flex h-14 w-full items-center justify-center rounded-full bg-[#ff8a18] px-5 text-base font-black text-white shadow-[0_16px_30px_rgba(255,138,24,0.26)] transition active:scale-[0.99] disabled:bg-[#dedede] disabled:text-[#9a9a9a] disabled:shadow-none"
     >
       {children}
+    </button>
+  );
+}
+
+function AccessButton({
+  label,
+  icon,
+  onClick,
+}: {
+  label: string;
+  icon: string;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" onClick={onClick} className="min-w-[96px] text-center">
+      <span className="mx-auto grid h-20 w-20 place-items-center rounded-[34px] bg-[#f7f4ef] text-2xl font-black text-[#ff8a18] shadow-[0_14px_24px_rgba(17,19,23,0.06)]">
+        {icon}
+      </span>
+      <span className="mt-3 block text-sm font-bold leading-4 text-[#55565b]">{label}</span>
     </button>
   );
 }
@@ -182,13 +229,11 @@ export default function ClienteConsultaPage() {
         )
       );
       setNotice(
-        silent
+        silent || nextItems.length
           ? null
           : {
-              text: nextItems.length
-                ? "Consulta cargada."
-                : "No encontramos creditos con esa cedula.",
-              tone: nextItems.length ? "emerald" : "red",
+              text: "No encontramos creditos con esa cedula.",
+              tone: "red",
             }
       );
     } catch (error) {
@@ -269,78 +314,55 @@ export default function ClienteConsultaPage() {
     setNotice(null);
   };
 
-  const hasSavedSession = Boolean(activeDocumento && items.length);
+  const activeCredit = items.find((item) => item.id === openCreditId) || items[0] || null;
+  const paidCount = activeCredit ? getPaidInstallments(activeCredit).length : 0;
+  const payable = activeCredit ? getPayableInstallments(activeCredit) : [];
+  const totalCount = activeCredit?.cuotas.length || 0;
+  const progress = totalCount ? Math.round((paidCount / totalCount) * 100) : 0;
+  const nextInstallment = payable[0] || null;
+  const selectedCuotas = activeCredit ? cuotasSeleccionadas(activeCredit) : [];
+  const totalToPay = activeCredit ? selectedTotal(activeCredit) : 0;
+  const canSubmit = normalizeDocument(documento).length >= 5 && bootstrapped && !loading;
+  const firstName = activeCredit ? getFirstName(activeCredit.clienteNombre) : "";
 
-  return (
-    <main className="min-h-screen overflow-x-hidden bg-[#f4f7f6] text-[#101319]">
-      <div className="mx-auto flex min-h-screen w-full max-w-full flex-col bg-[#f4f7f6] shadow-[0_0_60px_rgba(15,23,42,0.08)] sm:max-w-[430px]">
-        <header className="sticky top-0 z-20 border-b border-black/5 bg-[#111317] px-5 pb-5 pt-4 text-white">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <img
-                src="/icons/finserpay-client-192.png"
-                alt="FINSER PAY"
-                className="h-11 w-11 rounded-2xl object-cover"
-              />
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.26em] text-white/55">
-                  Portal cliente
-                </p>
-                <h1 className="text-lg font-black tracking-[0.04em]">FINSER PAY</h1>
-              </div>
-            </div>
-            {activeDocumento ? (
-              <button
-                type="button"
-                onClick={forgetDocument}
-                className="rounded-full border border-white/15 px-3 py-2 text-[11px] font-black text-white/80"
+  if (!items.length) {
+    return (
+      <main className="min-h-screen overflow-x-hidden bg-white text-[#252a35]">
+        <div className="mx-auto flex min-h-screen w-full max-w-full flex-col px-8 py-10 sm:max-w-[430px]">
+          <div className="flex flex-1 flex-col justify-center">
+            <FinserLogo large />
+
+            <section className="mt-12 text-center">
+              <h1 className="text-3xl font-black leading-tight">
+                Bienvenido a FINSER PAY
+              </h1>
+              <p className="mt-4 text-lg font-medium text-[#929292]">
+                Ingresa tu documento para continuar
+              </p>
+            </section>
+
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void consultar();
+              }}
+              className="mt-10 rounded-[32px] bg-white p-6 shadow-[0_22px_48px_rgba(17,19,23,0.14)]"
+            >
+              <label
+                htmlFor="documento"
+                className="mb-3 block text-sm font-bold text-[#9a9a9a]"
               >
-                Cambiar
-              </button>
-            ) : null}
-          </div>
-
-          <div className="mt-5 rounded-[28px] bg-[linear-gradient(135deg,#2f3339_0%,#14161a_60%,#06070a_100%)] p-5 shadow-[0_20px_45px_rgba(0,0,0,0.26)]">
-            <p className="w-fit rounded-full bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white/70">
-              Soy cliente
-            </p>
-            <h2 className="mt-4 text-2xl font-black leading-tight">
-              Tus cuotas en una vista simple.
-            </h2>
-            <p className="mt-3 text-sm leading-6 text-white/72">
-              Consulta tu credito, mira cuanto has pagado y elige como pagar.
-            </p>
-          </div>
-        </header>
-
-        <section className="flex-1 space-y-4 px-5 py-5">
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void consultar();
-            }}
-            className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_18px_40px_rgba(15,23,42,0.06)]"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#0f766e]">
-                  Acceso
-                </p>
-                <h3 className="mt-1 text-xl font-black">Soy cliente</h3>
-              </div>
-              {hasSavedSession ? (
-                <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-700">
-                  Activo
-                </span>
-              ) : null}
-            </div>
-
-            <div className="mt-4 grid gap-3">
-              <label htmlFor="documento" className="text-xs font-black text-slate-500">
-                Cedula
+                Documento de identidad
               </label>
-              <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-[#f8faf9] px-4">
-                <span className="text-xs font-black text-slate-400">CC</span>
+              <div className="flex h-16 items-center rounded-[24px] border border-[#e0e0e0] bg-[#f8f9fb] px-4">
+                <div className="mr-3 flex items-center gap-2 border-r border-[#dddddd] pr-3">
+                  <span className="grid h-6 w-8 overflow-hidden rounded-[3px] border border-black/5">
+                    <span className="bg-[#fcd116]" />
+                    <span className="bg-[#003893]" />
+                    <span className="bg-[#ce1126]" />
+                  </span>
+                  <span className="font-black text-[#3b4251]">CC</span>
+                </div>
                 <input
                   id="documento"
                   value={documento}
@@ -348,284 +370,398 @@ export default function ClienteConsultaPage() {
                     setDocumento(normalizeDocument(event.target.value))
                   }
                   inputMode="numeric"
-                  placeholder="Numero de cedula"
-                  className="h-14 w-full bg-transparent py-4 text-lg font-black outline-none placeholder:text-slate-300"
+                  placeholder="Documento"
+                  className="min-w-0 flex-1 bg-transparent text-lg font-semibold text-[#30343d] outline-none placeholder:text-[#b4b4b4]"
                 />
               </div>
-              <PrimaryButton disabled={loading || !bootstrapped} type="submit">
-                {loading ? "Consultando..." : "Consultar credito"}
-              </PrimaryButton>
-            </div>
-          </form>
+              <div className="mt-8">
+                <PrimaryButton disabled={!canSubmit} type="submit">
+                  {loading ? "Consultando..." : "Continuar"}
+                </PrimaryButton>
+              </div>
+            </form>
 
-          {notice ? (
-            <div
+            {notice ? (
+              <div
+                className={[
+                  "mt-5 rounded-2xl border px-4 py-3 text-sm font-bold",
+                  notice.tone === "emerald"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-red-200 bg-red-50 text-red-700",
+                ].join(" ")}
+              >
+                {notice.text}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="pb-4 pt-8 text-center">
+            <p className="text-sm font-black text-[#ff8a18]">Soy cliente</p>
+            <p className="mt-4 text-sm font-medium text-[#a1a1a1]">Version 1.0</p>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen overflow-x-hidden bg-white text-[#323337]">
+      <div className="mx-auto min-h-screen w-full max-w-full bg-white pb-28 sm:max-w-[430px]">
+        <header className="relative overflow-hidden px-8 pb-8 pt-10">
+          <div className="absolute -left-20 -top-24 h-56 w-[340px] rounded-br-[180px] bg-[#111317]" />
+          <div className="relative flex items-start justify-between">
+            <div className="flex items-center gap-3 text-white">
+              <img
+                src="/icons/finserpay-client-192.png"
+                alt="FINSER PAY"
+                className="h-11 w-11 rounded-2xl object-cover"
+              />
+              <div className="max-w-[190px]">
+                <p className="text-lg font-black">Hola,</p>
+                <p className="truncate text-2xl font-light">{firstName}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={forgetDocument}
+              className="rounded-full bg-[#f7f4ef] px-4 py-2 text-xs font-black text-[#525252] shadow-sm"
+            >
+              Cambiar
+            </button>
+          </div>
+
+          <section className="mt-16 text-center">
+            <p className="text-2xl font-light">
+              Cuota{" "}
+              <span className="font-black">
+                {nextInstallment ? nextInstallment.numero : paidCount}
+              </span>{" "}
+              de <span className="font-black">{totalCount}</span>
+            </p>
+            <p className="mt-5 text-6xl font-black leading-none text-[#383838]">
+              {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
+            </p>
+            <span
               className={[
-                "rounded-2xl border px-4 py-3 text-sm font-bold",
-                notice.tone === "emerald"
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                  : "border-red-200 bg-red-50 text-red-700",
+                "mt-5 inline-flex rounded-full border px-5 py-2 text-base font-medium",
+                activeCredit ? stateClasses(activeCredit.estadoPago) : "",
               ].join(" ")}
             >
-              {notice.text}
+              {activeCredit ? stateLabel(activeCredit.estadoPago) : "Sin credito"}
+            </span>
+
+            <div className="mt-8 h-3 rounded-full bg-[#e1dfdb]">
+              <div
+                className="h-full rounded-full bg-[linear-gradient(90deg,#111317_0%,#ff8a18_100%)]"
+                style={{ width: `${progress}%` }}
+              />
             </div>
-          ) : null}
 
-          {!items.length ? (
-            <section className="rounded-[28px] border border-dashed border-slate-300 bg-white p-5 text-center">
-              <p className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#111317] text-sm font-black text-white">
-                FP
-              </p>
-              <h3 className="mt-4 text-xl font-black">Consulta lista</h3>
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                Ingresa tu cedula una vez. La app la recordara en este celular.
-              </p>
-            </section>
-          ) : null}
-
-          {items.length ? (
-            <section className="grid grid-cols-3 gap-2">
-              <div className="rounded-2xl bg-white p-3 shadow-sm">
-                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">
-                  Creditos
-                </p>
-                <p className="mt-1 text-xl font-black">{items.length}</p>
-              </div>
-              <div className="rounded-2xl bg-white p-3 shadow-sm">
-                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">
-                  Pagadas
-                </p>
-                <p className="mt-1 text-xl font-black">
-                  {items.reduce((sum, credit) => sum + getPaidInstallments(credit).length, 0)}
+            <div className="mt-8 flex items-center justify-between rounded-[28px] border border-[#cfcac4] bg-white p-3 pl-5">
+              <div className="text-left">
+                <p className="text-sm font-medium text-[#666]">Fecha limite</p>
+                <p className="text-lg font-black">
+                  {nextInstallment ? dateLabel(nextInstallment.fechaVencimiento) : "-"}
                 </p>
               </div>
-              <div className="rounded-2xl bg-white p-3 shadow-sm">
-                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">
-                  Debes
-                </p>
-                <p className="mt-1 text-xl font-black">
-                  {items.reduce((sum, credit) => sum + getPayableInstallments(credit).length, 0)}
-                </p>
-              </div>
-            </section>
-          ) : null}
-
-          {items.map((credit) => {
-            const paidCount = getPaidInstallments(credit).length;
-            const payable = getPayableInstallments(credit);
-            const totalCount = credit.cuotas.length;
-            const progress = totalCount ? Math.round((paidCount / totalCount) * 100) : 0;
-            const isOpen = openCreditId === credit.id;
-            const nextInstallment = payable[0] || null;
-            const selectedCuotas = cuotasSeleccionadas(credit);
-            const totalToPay = selectedTotal(credit);
-            const selectedText = selectedCuotas.length
-              ? selectedCuotas.map((item) => item.numero).join(", ")
-              : "-";
-
-            return (
-              <article
-                key={credit.id}
-                className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.06)]"
+              <button
+                type="button"
+                onClick={() => activeCredit && void payWithWompi(activeCredit)}
+                disabled={!activeCredit || !payable.length || payingCreditId === activeCredit.id}
+                className="h-16 rounded-[24px] bg-[#ff8a18] px-8 text-lg font-black text-white shadow-[0_14px_28px_rgba(255,138,24,0.25)] disabled:bg-[#dedede] disabled:text-[#999]"
               >
-                <button
-                  type="button"
-                  onClick={() => setOpenCreditId(isOpen ? null : credit.id)}
-                  className="w-full p-4 text-left"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#0f766e]">
-                        {credit.folio}
-                      </p>
-                      <h3 className="mt-2 text-xl font-black capitalize">
-                        {credit.clienteNombre.toLowerCase()}
-                      </h3>
-                      <p className="mt-1 text-sm font-bold text-slate-500">
-                        {credit.referenciaEquipo || "Equipo financiado"}
-                      </p>
-                    </div>
-                    <span
+                {payingCreditId === activeCredit?.id ? "Abriendo" : "Pagar"}
+              </button>
+            </div>
+          </section>
+        </header>
+
+        {notice ? (
+          <div
+            className={[
+              "mx-8 mb-5 rounded-2xl border px-4 py-3 text-sm font-bold",
+              notice.tone === "emerald"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-red-200 bg-red-50 text-red-700",
+            ].join(" ")}
+          >
+            {notice.text}
+          </div>
+        ) : null}
+
+        <section className="px-8">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-[24px] bg-[#f8f8f8] p-4 text-center">
+              <p className="text-2xl font-black">{paidCount}</p>
+              <p className="mt-1 text-xs font-bold text-[#858585]">Pagadas</p>
+            </div>
+            <div className="rounded-[24px] bg-[#f8f8f8] p-4 text-center">
+              <p className="text-2xl font-black">{payable.length}</p>
+              <p className="mt-1 text-xs font-bold text-[#858585]">Pendientes</p>
+            </div>
+            <div className="rounded-[24px] bg-[#f8f8f8] p-4 text-center">
+              <p className="text-xl font-black">
+                {activeCredit ? money(getAvailableBalance(activeCredit)) : money(0)}
+              </p>
+              <p className="mt-1 text-xs font-bold text-[#858585]">Disponible</p>
+            </div>
+          </div>
+
+          <div className="mt-8 flex items-center justify-between">
+            <h2 className="text-2xl font-black">Explora</h2>
+          </div>
+          <div className="mt-5 flex gap-5 overflow-x-auto pb-2">
+            <AccessButton
+              icon="$"
+              label="Pagar cuota"
+              onClick={() =>
+                document.getElementById("pago-en-linea")?.scrollIntoView({
+                  behavior: "smooth",
+                })
+              }
+            />
+            <AccessButton
+              icon="P"
+              label="Medios de pago"
+              onClick={() =>
+                document.getElementById("medios-pago")?.scrollIntoView({
+                  behavior: "smooth",
+                })
+              }
+            />
+            <AccessButton
+              icon="C"
+              label="Plan de pagos"
+              onClick={() =>
+                document.getElementById("plan-pagos")?.scrollIntoView({
+                  behavior: "smooth",
+                })
+              }
+            />
+            <AccessButton
+              icon="H"
+              label="Historial"
+              onClick={() =>
+                document.getElementById("historial")?.scrollIntoView({
+                  behavior: "smooth",
+                })
+              }
+            />
+          </div>
+        </section>
+
+        {activeCredit ? (
+          <section className="mt-8 space-y-5 px-8">
+            <article className="rounded-[30px] bg-[#f3f5ff] p-5">
+              <p className="text-sm font-black text-[#717ab3]">Tu equipo financiado</p>
+              <p className="mt-2 text-2xl font-black text-[#545b91]">
+                {activeCredit.referenciaEquipo || "Equipo financiado"}
+              </p>
+              <p className="mt-3 text-sm font-bold text-[#7a7f9e]">
+                IMEI: {activeCredit.imei || activeCredit.deviceUid || "No registrado"}
+              </p>
+            </article>
+
+            <article
+              id="pago-en-linea"
+              className="rounded-[30px] border border-[#ececec] bg-white p-5 shadow-[0_16px_36px_rgba(17,19,23,0.08)]"
+            >
+              <h2 className="text-2xl font-black">Pagar cuota</h2>
+              {payable.length ? (
+                <>
+                  <label className="mt-4 block text-sm font-bold text-[#858585]">
+                    Selecciona hasta que cuota deseas pagar
+                  </label>
+                  <select
+                    value={selectedLimit[activeCredit.id] || payable[0]?.numero || ""}
+                    onChange={(event) =>
+                      setSelectedLimit((current) => ({
+                        ...current,
+                        [activeCredit.id]: Number(event.target.value),
+                      }))
+                    }
+                    className="mt-3 h-14 w-full rounded-[22px] border border-[#e4e4e4] bg-[#fafafa] px-4 text-base font-black outline-none"
+                  >
+                    {payable.map((item) => (
+                      <option key={item.numero} value={item.numero}>
+                        Hasta cuota {item.numero} - {money(item.saldoPendiente)}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-4 rounded-[24px] bg-[#111317] p-4 text-white">
+                    <p className="text-sm font-bold text-white/60">Total a pagar</p>
+                    <p className="mt-1 text-3xl font-black">{money(totalToPay)}</p>
+                    <p className="mt-2 text-xs font-bold text-white/55">
+                      Cuotas:{" "}
+                      {selectedCuotas.length
+                        ? selectedCuotas.map((item) => item.numero).join(", ")
+                        : "-"}
+                    </p>
+                  </div>
+                  <div className="mt-4">
+                    <PrimaryButton
+                      disabled={payingCreditId === activeCredit.id || totalToPay <= 0}
+                      onClick={() => void payWithWompi(activeCredit)}
+                    >
+                      {payingCreditId === activeCredit.id ? "Abriendo Wompi..." : "Pagar con Wompi"}
+                    </PrimaryButton>
+                  </div>
+                </>
+              ) : (
+                <p className="mt-3 text-sm font-bold text-[#777]">
+                  No tienes cuotas pendientes para pagar.
+                </p>
+              )}
+            </article>
+
+            <article id="medios-pago" className="rounded-[30px] bg-[#f8f8f8] p-5">
+              <h2 className="text-2xl font-black">Medios de pago</h2>
+              <div className="mt-4 grid gap-3">
+                <div className="rounded-[24px] bg-white p-4 shadow-sm">
+                  <p className="text-lg font-black">Efecty</p>
+                  <p className="mt-1 text-sm font-bold text-[#777]">
+                    Pago presencial. Referencia: cedula del cliente.
+                  </p>
+                </div>
+                <div className="rounded-[24px] bg-white p-4 shadow-sm">
+                  <p className="text-lg font-black">Bancolombia Ahorros</p>
+                  <p className="mt-1 text-2xl font-black text-[#111317]">71800000458</p>
+                </div>
+                <div className="rounded-[24px] bg-white p-4 shadow-sm">
+                  <p className="text-lg font-black">Wompi</p>
+                  <p className="mt-1 text-sm font-bold text-[#777]">
+                    Pago en linea desde la cuota seleccionada.
+                  </p>
+                </div>
+              </div>
+            </article>
+
+            <article className="rounded-[30px] bg-white p-5 shadow-[0_16px_36px_rgba(17,19,23,0.08)]">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-black">Mis creditos</h2>
+                <span className="text-sm font-black text-[#ff8a18]">{items.length}</span>
+              </div>
+              <div className="mt-4 grid gap-3">
+                {items.map((credit) => {
+                  const isActive = credit.id === activeCredit.id;
+                  const creditPaid = getPaidInstallments(credit).length;
+                  const creditTotal = credit.cuotas.length;
+
+                  return (
+                    <button
+                      key={credit.id}
+                      type="button"
+                      onClick={() => setOpenCreditId(credit.id)}
                       className={[
-                        "shrink-0 rounded-full px-3 py-1 text-[11px] font-black",
-                        stateClass(credit.estadoPago),
+                        "rounded-[24px] p-4 text-left transition",
+                        isActive ? "bg-[#111317] text-white" : "bg-[#f8f8f8] text-[#323337]",
                       ].join(" ")}
                     >
-                      {stateLabel(credit.estadoPago)}
-                    </span>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-3 gap-2">
-                    <div className="rounded-2xl bg-[#f5f7f7] p-3">
-                      <p className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-400">
-                        Pagadas
-                      </p>
-                      <p className="mt-1 text-lg font-black">
-                        {paidCount}/{totalCount}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl bg-[#f5f7f7] p-3">
-                      <p className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-400">
-                        Debes
-                      </p>
-                      <p className="mt-1 text-lg font-black">{payable.length}</p>
-                    </div>
-                    <div className="rounded-2xl bg-emerald-50 p-3">
-                      <p className="text-[9px] font-black uppercase tracking-[0.12em] text-emerald-600">
-                        Disponible
-                      </p>
-                      <p className="mt-1 text-lg font-black">
-                        {money(getAvailableBalance(credit))}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
-                    <div
-                      className="h-full rounded-full bg-[#111317] transition-all"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                </button>
-
-                {isOpen ? (
-                  <div className="border-t border-slate-100 px-4 pb-4">
-                    <div className="mt-4 rounded-2xl bg-[#111317] p-4 text-white">
-                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/50">
-                        Proxima cuota
-                      </p>
-                      <div className="mt-2 flex items-end justify-between gap-3">
-                        <div>
-                          <p className="text-3xl font-black">
-                            {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
-                          </p>
-                          <p className="mt-1 text-xs font-bold text-white/55">
-                            {nextInstallment
-                              ? `Cuota ${nextInstallment.numero} vence ${dateLabel(nextInstallment.fechaVencimiento)}`
-                              : "Credito sin saldo pendiente"}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black">{credit.folio}</p>
+                          <p className="mt-1 truncate text-sm font-bold opacity-70">
+                            {credit.referenciaEquipo || "Equipo financiado"}
                           </p>
                         </div>
-                        <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black">
-                          {progress}%
+                        <span className="shrink-0 text-xs font-black">
+                          {creditPaid}/{creditTotal}
                         </span>
                       </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </article>
+
+            <details
+              id="plan-pagos"
+              className="rounded-[30px] bg-white p-5 shadow-[0_16px_36px_rgba(17,19,23,0.08)]"
+            >
+              <summary className="cursor-pointer text-2xl font-black">Plan de pagos</summary>
+              <div className="mt-4 grid gap-3">
+                {activeCredit.cuotas.map((item) => (
+                  <div
+                    key={item.numero}
+                    className="flex items-center justify-between gap-3 rounded-[22px] bg-[#f8f8f8] px-4 py-3"
+                  >
+                    <div>
+                      <p className="font-black">Cuota {item.numero}</p>
+                      <p className="text-sm font-bold text-[#858585]">
+                        {dateLabel(item.fechaVencimiento)}
+                      </p>
                     </div>
-
-                    <div className="mt-4 grid gap-3">
-                      <div className="rounded-2xl border border-slate-200 p-4">
-                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                          Equipo
-                        </p>
-                        <p className="mt-1 text-sm font-black">
-                          {credit.referenciaEquipo || "Equipo financiado"}
-                        </p>
-                        <p className="mt-1 text-xs font-bold text-slate-500">
-                          IMEI: {credit.imei || credit.deviceUid || "No registrado"}
-                        </p>
-                      </div>
-
-                      <div className="rounded-2xl border border-slate-200 p-4">
-                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                          Medios de pago
-                        </p>
-                        <div className="mt-3 grid gap-2">
-                          <div className="rounded-2xl bg-[#fff8dc] p-3">
-                            <p className="text-sm font-black">Efecty</p>
-                            <p className="mt-1 text-xs font-bold text-slate-600">
-                              Pago presencial. Referencia: cedula del cliente.
-                            </p>
-                          </div>
-                          <div className="rounded-2xl bg-[#eef6ff] p-3">
-                            <p className="text-sm font-black">Bancolombia Ahorros</p>
-                            <p className="mt-1 text-lg font-black">71800000458</p>
-                          </div>
-                          <div className="rounded-2xl bg-[#f1e9ff] p-3">
-                            <p className="text-sm font-black">Wompi</p>
-                            <p className="mt-1 text-xs font-bold text-slate-600">
-                              Paga en linea con el valor de la cuota seleccionada.
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {payable.length ? (
-                        <div className="rounded-2xl border border-slate-200 p-4">
-                          <label className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                            Elegir cuota a pagar
-                          </label>
-                          <select
-                            value={selectedLimit[credit.id] || payable[0]?.numero || ""}
-                            onChange={(event) =>
-                              setSelectedLimit((current) => ({
-                                ...current,
-                                [credit.id]: Number(event.target.value),
-                              }))
-                            }
-                            className="mt-3 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black outline-none"
-                          >
-                            {payable.map((item) => (
-                              <option key={item.numero} value={item.numero}>
-                                Pagar hasta cuota {item.numero} - {money(item.saldoPendiente)}
-                              </option>
-                            ))}
-                          </select>
-
-                          <div className="mt-3 rounded-2xl bg-[#f5f7f7] p-3">
-                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                              Cuotas seleccionadas
-                            </p>
-                            <p className="mt-1 text-sm font-black">{selectedText}</p>
-                            <p className="mt-2 text-2xl font-black">{money(totalToPay)}</p>
-                          </div>
-
-                          <PrimaryButton
-                            disabled={payingCreditId === credit.id || totalToPay <= 0}
-                            onClick={() => void payWithWompi(credit)}
-                          >
-                            {payingCreditId === credit.id ? "Abriendo Wompi..." : "Pagar con Wompi"}
-                          </PrimaryButton>
-                        </div>
-                      ) : null}
-
-                      <details className="rounded-2xl border border-slate-200 p-4">
-                        <summary className="cursor-pointer text-sm font-black">
-                          Ver plan de pagos
-                        </summary>
-                        <div className="mt-3 grid gap-2">
-                          {credit.cuotas.map((item) => (
-                            <div
-                              key={item.numero}
-                              className="flex items-center justify-between gap-3 rounded-2xl bg-[#f7f9f9] px-3 py-3"
-                            >
-                              <div>
-                                <p className="text-sm font-black">Cuota {item.numero}</p>
-                                <p className="text-xs font-bold text-slate-500">
-                                  {dateLabel(item.fechaVencimiento)}
-                                </p>
-                              </div>
-                              <div className="text-right">
-                                <p className="text-sm font-black">
-                                  {money(item.saldoPendiente)}
-                                </p>
-                                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
-                                  {item.saldoPendiente <= 0
-                                    ? "Pagada"
-                                    : item.estaEnMora
-                                      ? "Mora"
-                                      : "Pendiente"}
-                                </p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
+                    <div className="text-right">
+                      <p className="font-black">{money(item.saldoPendiente)}</p>
+                      <p className="text-xs font-black text-[#858585]">
+                        {item.saldoPendiente <= 0
+                          ? "Pagada"
+                          : item.estaEnMora
+                            ? "Mora"
+                            : "Pendiente"}
+                      </p>
                     </div>
                   </div>
-                ) : null}
-              </article>
-            );
-          })}
-        </section>
+                ))}
+              </div>
+            </details>
+
+            <article id="historial" className="rounded-[30px] bg-white p-5">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-black">Transacciones</h2>
+              </div>
+              <div className="mt-4 grid gap-3">
+                {activeCredit.abonos.length ? (
+                  activeCredit.abonos.map((abono) => (
+                    <div
+                      key={abono.id}
+                      className="flex items-center justify-between rounded-[22px] bg-[#f8f8f8] px-4 py-3"
+                    >
+                      <div>
+                        <p className="font-black">{abono.metodoPago}</p>
+                        <p className="text-sm font-bold text-[#858585]">
+                          {dateLabel(abono.fechaAbono)}
+                        </p>
+                      </div>
+                      <p className="font-black">{money(abono.valor)}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="rounded-[22px] bg-[#f8f8f8] px-4 py-4 text-sm font-bold text-[#777]">
+                    Aun no hay pagos registrados.
+                  </p>
+                )}
+              </div>
+            </article>
+          </section>
+        ) : null}
+
+        <nav className="fixed bottom-0 left-1/2 z-20 flex w-full max-w-[430px] -translate-x-1/2 items-center justify-around border-t border-[#efefef] bg-white px-8 py-4 shadow-[0_-18px_38px_rgba(17,19,23,0.08)]">
+          <button type="button" className="text-center text-[#111317]">
+            <span className="mx-auto block h-1 w-12 rounded-full bg-[#111317]" />
+            <span className="mt-2 block text-sm font-black">Inicio</span>
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              document.getElementById("plan-pagos")?.scrollIntoView({ behavior: "smooth" })
+            }
+            className="text-center text-[#8a8a8a]"
+          >
+            <span className="mx-auto grid h-10 w-10 place-items-center rounded-2xl bg-[#f4f4f4] text-sm font-black">
+              P
+            </span>
+            <span className="mt-1 block text-sm font-bold">Plan</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => activeCredit && void payWithWompi(activeCredit)}
+            disabled={!activeCredit || !payable.length || payingCreditId === activeCredit.id}
+            className="grid h-20 w-20 -translate-y-7 place-items-center rounded-full bg-[#ff8a18] text-sm font-black text-white shadow-[0_16px_32px_rgba(255,138,24,0.28)] disabled:bg-[#dedede]"
+          >
+            Pagar
+          </button>
+        </nav>
       </div>
     </main>
   );
