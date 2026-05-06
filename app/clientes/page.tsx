@@ -52,6 +52,12 @@ type WompiCheckoutResponse = {
   reference?: string;
 };
 
+type PaymentReturnNotice = {
+  reference: string;
+  creditId: number | null;
+  checkedAt?: string | null;
+};
+
 type ExplorerPanel = "payments" | "pending" | "history" | null;
 type ClientNoticeTone = "red" | "green" | "blue" | "gray";
 
@@ -415,12 +421,18 @@ export default function ClienteConsultaPage() {
   const [confirmPaymentCreditId, setConfirmPaymentCreditId] = useState<number | null>(
     null
   );
+  const [paymentReturn, setPaymentReturn] = useState<PaymentReturnNotice | null>(null);
+  const [refreshingPayment, setRefreshingPayment] = useState(false);
   const [activePanel, setActivePanel] = useState<ExplorerPanel>(null);
   const [notice, setNotice] = useState<{ text: string; tone: "red" | "emerald" } | null>(
     null
   );
 
-  const consultar = useCallback(async (rawDocument: string, silent = false) => {
+  const consultar = useCallback(async (
+    rawDocument: string,
+    silent = false,
+    preferredCreditId: number | null = null
+  ) => {
     const normalized = normalizeDocument(rawDocument);
 
     if (normalized.length < 5) {
@@ -441,7 +453,11 @@ export default function ClienteConsultaPage() {
       }
 
       const nextItems = result.data.items || [];
-      const nextOpenId = nextItems[0]?.id ?? null;
+      const preferredOpenId =
+        preferredCreditId && nextItems.some((item) => item.id === preferredCreditId)
+          ? preferredCreditId
+          : null;
+      const nextOpenId = preferredOpenId ?? nextItems[0]?.id ?? null;
 
       localStorage.setItem(STORAGE_KEY, normalized);
       setDocumento(normalized);
@@ -481,15 +497,25 @@ export default function ClienteConsultaPage() {
   }, []);
 
   useEffect(() => {
-    const urlDocument = normalizeDocument(
-      new URLSearchParams(window.location.search).get("documento") || ""
-    );
+    const params = new URLSearchParams(window.location.search);
+    const urlDocument = normalizeDocument(params.get("documento") || "");
     const storedDocument = normalizeDocument(localStorage.getItem(STORAGE_KEY) || "");
     const nextDocument = urlDocument || storedDocument;
+    const wompiReference =
+      params.get("wompiReference") || params.get("reference") || "";
+    const creditFromUrl = Math.trunc(Number(params.get("credito") || 0)) || null;
+
+    if (wompiReference) {
+      setPaymentReturn({
+        reference: wompiReference,
+        creditId: creditFromUrl,
+        checkedAt: null,
+      });
+    }
 
     if (nextDocument) {
       setDocumento(nextDocument);
-      void consultar(nextDocument, true);
+      void consultar(nextDocument, true, creditFromUrl);
     }
   }, [consultar]);
 
@@ -562,6 +588,7 @@ export default function ClienteConsultaPage() {
     setOpenCreditId(null);
     setActivePanel(null);
     setConfirmPaymentCreditId(null);
+    setPaymentReturn(null);
     setNotice(null);
   };
 
@@ -583,6 +610,47 @@ export default function ClienteConsultaPage() {
     setConfirmPaymentCreditId(null);
     window.setTimeout(() => scrollToSection("cliente-dashboard"), 40);
   };
+
+  const refreshPaymentStatus = useCallback(async () => {
+    const targetDocument = activeDocumento || documento;
+
+    if (!targetDocument) return;
+
+    try {
+      setRefreshingPayment(true);
+      await consultar(
+        targetDocument,
+        true,
+        paymentReturn?.creditId ?? openCreditId
+      );
+      setPaymentReturn((current) =>
+        current
+          ? {
+              ...current,
+              checkedAt: new Date().toISOString(),
+            }
+          : current
+      );
+    } finally {
+      setRefreshingPayment(false);
+    }
+  }, [
+    activeDocumento,
+    consultar,
+    documento,
+    openCreditId,
+    paymentReturn?.creditId,
+  ]);
+
+  useEffect(() => {
+    if (!paymentReturn?.reference || !activeDocumento) return;
+
+    const timer = window.setTimeout(() => {
+      void refreshPaymentStatus();
+    }, 8000);
+
+    return () => window.clearTimeout(timer);
+  }, [activeDocumento, paymentReturn?.reference, refreshPaymentStatus]);
 
   const activeCredit = items.find((item) => item.id === openCreditId) || items[0] || null;
   const paidCount = activeCredit ? getPaidInstallments(activeCredit).length : 0;
@@ -754,6 +822,48 @@ export default function ClienteConsultaPage() {
             >
               {notice.text}
             </div>
+          ) : null}
+
+          {paymentReturn ? (
+            <section className="rounded-lg border border-[#dfece0] bg-white p-4 shadow-sm">
+              <div className="grid grid-cols-[38px_1fr] gap-3">
+                <span className="grid h-9 w-9 place-items-center rounded-md bg-[#f1fbeb] text-sm font-black text-[#3f7d2d]">
+                  W
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-black text-[#171b22]">
+                    Pago enviado a validacion
+                  </p>
+                  <p className="mt-1 text-xs font-bold leading-5 text-[#6d7480]">
+                    Si Wompi ya confirmo el pago, tus cuotas e historial se
+                    actualizaran aqui. Puede tardar unos minutos.
+                  </p>
+                  <p className="mt-2 truncate text-[11px] font-black uppercase text-[#8a919d]">
+                    Ref. {paymentReturn.reference}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-[1fr_auto] items-center gap-3">
+                <p className="min-w-0 truncate text-xs font-bold text-[#7d8490]">
+                  {paymentReturn.checkedAt
+                    ? `Ultima revision ${new Date(
+                        paymentReturn.checkedAt
+                      ).toLocaleTimeString("es-CO", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}`
+                    : "La app revisara automaticamente."}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void refreshPaymentStatus()}
+                  disabled={refreshingPayment || loading}
+                  className="min-h-10 rounded-lg bg-[#a7e66f] px-3 text-xs font-black text-[#102316] disabled:bg-[#d9dde4] disabled:text-[#7e8490]"
+                >
+                  {refreshingPayment ? "Actualizando" : "Actualizar estado"}
+                </button>
+              </div>
+            </section>
           ) : null}
 
           {activeCredit ? (
