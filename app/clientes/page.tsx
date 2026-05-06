@@ -53,6 +53,13 @@ type WompiCheckoutResponse = {
 };
 
 type ExplorerPanel = "payments" | "pending" | "history" | null;
+type ClientNoticeTone = "red" | "green" | "blue" | "gray";
+
+type ClientNotice = {
+  title: string;
+  detail: string;
+  tone: ClientNoticeTone;
+};
 
 const STORAGE_KEY = "finserpay.cliente.documento";
 const WOMPI_PUBLIC_LINK = "https://checkout.wompi.co/l/4banHJ";
@@ -133,6 +140,70 @@ function installmentsRangeLabel(items: ClientInstallment[]) {
 
 function creditTitle(credit: ClientCredit) {
   return credit.referenciaEquipo || `Credito ${credit.folio}`;
+}
+
+function noticeToneClasses(tone: ClientNoticeTone) {
+  if (tone === "red") return "bg-[#fff5f2] text-[#b63b20]";
+  if (tone === "green") return "bg-[#f1fbeb] text-[#3f7d2d]";
+  if (tone === "blue") return "bg-[#eef9fb] text-[#087989]";
+  return "bg-[#f5f6f8] text-[#626976]";
+}
+
+function buildClientNotices(
+  credit: ClientCredit,
+  nextInstallment: ClientInstallment | null
+) {
+  const notices: ClientNotice[] = [];
+  const overdueCount = credit.cuotas.filter(
+    (item) => item.saldoPendiente > 0 && item.estaEnMora
+  ).length;
+  const lastPayment = credit.abonos[0] || null;
+
+  if (overdueCount) {
+    notices.push({
+      title: "Tienes cuotas vencidas",
+      detail: `${overdueCount} ${overdueCount === 1 ? "cuota" : "cuotas"} en mora.`,
+      tone: "red",
+    });
+  } else if (credit.estadoPago === "PAGADO" || !nextInstallment) {
+    notices.push({
+      title: "Credito al dia",
+      detail: "No tienes cuotas pendientes en este momento.",
+      tone: "green",
+    });
+  } else {
+    notices.push({
+      title: "Proxima cuota",
+      detail: `${dateLabel(nextInstallment.fechaVencimiento)} por ${money(
+        nextInstallment.saldoPendiente
+      )}.`,
+      tone: "green",
+    });
+  }
+
+  if (nextInstallment) {
+    notices.push({
+      title: "Cuota a pagar",
+      detail: `Cuota ${nextInstallment.numero} de ${credit.cuotas.length}.`,
+      tone: overdueCount ? "red" : "blue",
+    });
+  }
+
+  notices.push(
+    lastPayment
+      ? {
+          title: "Ultimo pago",
+          detail: `${dateLabel(lastPayment.fechaAbono)} por ${money(lastPayment.valor)}.`,
+          tone: "gray",
+        }
+      : {
+          title: "Sin pagos registrados",
+          detail: "Cuando pagues, veras el movimiento en historial.",
+          tone: "gray",
+        }
+  );
+
+  return notices.slice(0, 3);
 }
 
 function scrollToSection(id: string) {
@@ -525,6 +596,9 @@ export default function ClienteConsultaPage() {
   const totalCount = activeCredit?.cuotas.length || 0;
   const progress = totalCount ? Math.round((paidCount / totalCount) * 100) : 0;
   const nextInstallment = payable[0] || null;
+  const clientNotices = activeCredit
+    ? buildClientNotices(activeCredit, nextInstallment)
+    : [];
   const selectedInstallments = activeCredit ? cuotasSeleccionadas(activeCredit) : [];
   const selectedAmount = installmentsAmount(selectedInstallments);
   const selectedPaymentLabel = installmentsRangeLabel(selectedInstallments);
@@ -727,6 +801,42 @@ export default function ClienteConsultaPage() {
                     <span>{paidCount} pagadas</span>
                     <span>{progress}% completado</span>
                   </div>
+                </div>
+              </section>
+
+              <section className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm">
+                <SectionTitle
+                  title="Avisos"
+                  aside={
+                    <span className="rounded-md bg-[#effbe6] px-2 py-1 text-xs font-black text-[#3f7d2d]">
+                      Hoy
+                    </span>
+                  }
+                />
+                <div className="mt-3 grid gap-2">
+                  {clientNotices.map((item) => (
+                    <div
+                      key={`${item.title}-${item.detail}`}
+                      className="grid grid-cols-[34px_1fr] items-center gap-3 rounded-lg bg-[#f9fafb] px-3 py-3"
+                    >
+                      <span
+                        className={[
+                          "grid h-8 w-8 place-items-center rounded-md text-sm font-black",
+                          noticeToneClasses(item.tone),
+                        ].join(" ")}
+                      >
+                        !
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-black text-[#252a35]">
+                          {item.title}
+                        </span>
+                        <span className="mt-1 block truncate text-xs font-bold text-[#7d8490]">
+                          {item.detail}
+                        </span>
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </section>
 
