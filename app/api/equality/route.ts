@@ -32,7 +32,7 @@ type EqualityAction =
   | "upload";
 
 function isBusinessStatus(status: number) {
-  return [400, 404, 409].includes(status);
+  return [400, 404, 409, 422].includes(status);
 }
 
 async function runBusinessSafe<T>(work: () => Promise<T>) {
@@ -170,7 +170,10 @@ export async function POST(req: Request) {
 
     if (!isEqualityConfigured()) {
       return NextResponse.json(
-        { error: "EQUALITY_HBM_ACCESS_TOKEN no esta configurado" },
+        {
+          error:
+            "Configura TRUSTONIC_API_KEY o EQUALITY_HBM_ACCESS_TOKEN para usar Zero Touch",
+        },
         { status: 503 }
       );
     }

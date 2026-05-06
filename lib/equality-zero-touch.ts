@@ -1,5 +1,8 @@
 const DEFAULT_EQUALITY_BASE_URL = "https://hbm-api.solucionfaas.com/v1/hbm";
 const DEFAULT_EQUALITY_VARIANT = "A";
+const DEFAULT_TRUSTONIC_BASE_URL = "https://api.cloud.trustonic.com";
+const TRUSTONIC_TOKEN_TTL_FALLBACK_MS = 50 * 60 * 1000;
+const TRUSTONIC_TOKEN_REFRESH_SKEW_MS = 60 * 1000;
 
 export type EqualityServiceCode =
   | "DEVICE_PIN_UNLOCK"
@@ -43,13 +46,24 @@ class EqualityApiError extends Error {
   }
 }
 
-function getEqualityConfiguredToken() {
-  const rawToken = String(
+type TrustonicTokenCache = {
+  expiresAt: number;
+  token: string;
+};
+
+let trustonicTokenCache: TrustonicTokenCache | null = null;
+
+function getLegacyEqualityTokenValue() {
+  return String(
     process.env.EQUALITY_HBM_ACCESS_TOKEN ||
       process.env.EQUALITY_ZERO_TOUCH_TOKEN ||
       process.env.EQUALITY_API_TOKEN ||
       ""
   ).trim();
+}
+
+function getEqualityConfiguredToken() {
+  const rawToken = getLegacyEqualityTokenValue();
 
   if (!rawToken) {
     throw new Error("EQUALITY_HBM_ACCESS_TOKEN no esta configurado");
@@ -62,18 +76,48 @@ function getEqualityConfiguredToken() {
   return `Bearer ${rawToken}`;
 }
 
+function getTrustonicApiKeyValue() {
+  return String(process.env.TRUSTONIC_API_KEY || "").trim();
+}
+
+function getTrustonicApiKey() {
+  const apiKey = getTrustonicApiKeyValue();
+
+  if (!apiKey) {
+    throw new Error("TRUSTONIC_API_KEY no esta configurado");
+  }
+
+  return apiKey;
+}
+
+function getTrustonicTenantId() {
+  return String(
+    process.env.TRUSTONIC_TENANT_ID ||
+      process.env.TRUSTONIC_TENANT ||
+      process.env.TRUSTONIC_TENANTID ||
+      ""
+  ).trim();
+}
+
+function getTrustonicBaseUrl() {
+  return String(process.env.TRUSTONIC_BASE_URL || DEFAULT_TRUSTONIC_BASE_URL)
+    .trim()
+    .replace(/\/+$/, "");
+}
+
+export function isTrustonicDirectConfigured() {
+  return Boolean(getTrustonicApiKeyValue());
+}
+
 export function isEqualityConfigured() {
-  return Boolean(
-    String(
-      process.env.EQUALITY_HBM_ACCESS_TOKEN ||
-        process.env.EQUALITY_ZERO_TOUCH_TOKEN ||
-        process.env.EQUALITY_API_TOKEN ||
-        ""
-    ).trim()
-  );
+  return isTrustonicDirectConfigured() || Boolean(getLegacyEqualityTokenValue());
 }
 
 export function getEqualityBaseUrl() {
+  if (isTrustonicDirectConfigured()) {
+    return getTrustonicBaseUrl();
+  }
+
   const value = String(
     process.env.EQUALITY_HBM_BASE_URL || DEFAULT_EQUALITY_BASE_URL
   )
@@ -127,6 +171,186 @@ function getEqualityMessage(payload: unknown, fallbackStatus: number) {
   return `Equality Zero Touch respondio con estado ${fallbackStatus}`;
 }
 
+function getTrustonicResultFromList(record: Record<string, unknown>) {
+  const listKeys = [
+    "deviceList",
+    "lockResponseList",
+    "unlockResponseList",
+    "releaseResponseList",
+    "messageResponseList",
+    "lockMessageResponseList",
+    "pinUnlockResponseList",
+  ];
+
+  for (const key of listKeys) {
+    const value = record[key];
+    const first =
+      Array.isArray(value) && value.length > 0 && typeof value[0] === "object"
+        ? (value[0] as Record<string, unknown>)
+        : null;
+
+    if (!first) {
+      continue;
+    }
+
+    if (Array.isArray(first.serviceList) && first.serviceList.length > 0) {
+      const service = first.serviceList.find(
+        (item): item is Record<string, unknown> =>
+          typeof item === "object" && item !== null
+      );
+
+      if (service) {
+        return service;
+      }
+    }
+
+    return first;
+  }
+
+  return null;
+}
+
+function getTrustonicMessage(payload: unknown, fallbackStatus: number) {
+  if (typeof payload !== "object" || payload === null) {
+    return `Trustonic respondio con estado ${fallbackStatus}`;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const result = getTrustonicResultFromList(record);
+
+  if (typeof record.resultMessage === "string" && record.resultMessage) {
+    return record.resultMessage;
+  }
+
+  if (typeof record.message === "string" && record.message) {
+    return record.message;
+  }
+
+  if (typeof result?.resultMessage === "string" && result.resultMessage) {
+    return result.resultMessage;
+  }
+
+  return `Trustonic respondio con estado ${fallbackStatus}`;
+}
+
+function parseTrustonicExpireTime(expireTime: unknown) {
+  if (typeof expireTime === "string" && expireTime.trim()) {
+    const parsed = Date.parse(expireTime);
+
+    if (Number.isFinite(parsed)) {
+      return Math.max(parsed - TRUSTONIC_TOKEN_REFRESH_SKEW_MS, Date.now());
+    }
+  }
+
+  return Date.now() + TRUSTONIC_TOKEN_TTL_FALLBACK_MS;
+}
+
+async function getTrustonicAccessToken() {
+  if (trustonicTokenCache && trustonicTokenCache.expiresAt > Date.now()) {
+    return trustonicTokenCache.token;
+  }
+
+  const response = await fetch(`${getTrustonicBaseUrl()}/api/v1/authorization/token`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      apiKey: getTrustonicApiKey(),
+    },
+    cache: "no-store",
+  });
+
+  const text = await response.text();
+  let parsed: unknown = null;
+
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = text;
+  }
+
+  if (!response.ok) {
+    throw new EqualityApiError(
+      getTrustonicMessage(parsed, response.status),
+      response.status,
+      parsed
+    );
+  }
+
+  const token =
+    typeof parsed === "object" &&
+    parsed !== null &&
+    typeof (parsed as Record<string, unknown>).token === "string"
+      ? String((parsed as Record<string, unknown>).token).replace(/^Bearer\s+/i, "")
+      : "";
+
+  if (!token) {
+    throw new EqualityApiError(
+      "Trustonic no devolvio token de acceso",
+      response.status,
+      parsed
+    );
+  }
+
+  trustonicTokenCache = {
+    expiresAt:
+      typeof parsed === "object" && parsed !== null
+        ? parseTrustonicExpireTime((parsed as Record<string, unknown>).expireTime)
+        : Date.now() + TRUSTONIC_TOKEN_TTL_FALLBACK_MS,
+    token,
+  };
+
+  return token;
+}
+
+async function executeTrustonicRequest(
+  path: string,
+  options: {
+    body?: Record<string, unknown>;
+    method?: "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
+  } = {}
+) {
+  const token = await getTrustonicAccessToken();
+  const tenantId = getTrustonicTenantId();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: `Bearer ${token}`,
+  };
+
+  if (tenantId) {
+    headers.tenantId = tenantId;
+  }
+
+  if (options.body) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const response = await fetch(`${getTrustonicBaseUrl()}${path}`, {
+    method: options.method || "POST",
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    cache: "no-store",
+  });
+
+  const text = await response.text();
+  let parsed: unknown = null;
+
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = text;
+  }
+
+  if (!response.ok) {
+    throw new EqualityApiError(
+      getTrustonicMessage(parsed, response.status),
+      response.status,
+      parsed
+    );
+  }
+
+  return parsed as EqualityServicePayload;
+}
+
 export async function executeEqualityService(
   code: EqualityServiceCode,
   data: Record<string, unknown>,
@@ -176,6 +400,18 @@ export async function executeEqualityService(
 }
 
 export async function queryEqualityDevices(deviceUid: string) {
+  if (isTrustonicDirectConfigured()) {
+    return executeTrustonicRequest("/api/v2/query/devices", {
+      body: {
+        deviceList: [
+          {
+            deviceUid: normalizeEqualityDeviceUid(deviceUid),
+          },
+        ],
+      },
+    });
+  }
+
   return executeEqualityService("QUERY_DEVICES", {
     deviceList: [
       {
@@ -186,6 +422,26 @@ export async function queryEqualityDevices(deviceUid: string) {
 }
 
 export async function uploadEqualityInventoryDevice(deviceUid: string) {
+  if (isTrustonicDirectConfigured()) {
+    return executeTrustonicRequest("/api/v2/inventory/upload", {
+      body: {
+        deviceList: [
+          {
+            deviceType: "mobile",
+            idType: "imei",
+            deviceUid: normalizeEqualityDeviceUid(deviceUid),
+            serviceList: [
+              {
+                serviceName: "deviceFinancing",
+                paymentMethod: "postpaid",
+              },
+            ],
+          },
+        ],
+      },
+    });
+  }
+
   return executeEqualityService("INVENTORY_UPLOAD", {
     deviceList: [
       {
@@ -198,6 +454,24 @@ export async function uploadEqualityInventoryDevice(deviceUid: string) {
 }
 
 export async function activateEqualityFinancingService(deviceUid: string) {
+  if (isTrustonicDirectConfigured()) {
+    return executeTrustonicRequest("/api/v2/service/activate", {
+      body: {
+        deviceList: [
+          {
+            deviceUid: normalizeEqualityDeviceUid(deviceUid),
+            serviceList: [
+              {
+                serviceName: "deviceFinancing",
+                paymentMethod: "postpaid",
+              },
+            ],
+          },
+        ],
+      },
+    });
+  }
+
   return executeEqualityService("SERVICE_ACTIVATE", {
     deviceList: [
       {
@@ -221,6 +495,22 @@ export async function lockEqualityDevice(
     lockType?: string;
   }
 ) {
+  if (isTrustonicDirectConfigured()) {
+    return executeTrustonicRequest("/api/v2/device/lock", {
+      body: {
+        lockList: [
+          {
+            deviceUid: normalizeEqualityDeviceUid(deviceUid),
+            lockType: options?.lockType || "lock",
+            lockMsgTitle: options?.lockMsgTitle || "Telefono bloqueado",
+            lockMsgContent:
+              options?.lockMsgContent || "Equipo bloqueado por falta de pago.",
+          },
+        ],
+      },
+    });
+  }
+
   return executeEqualityService("DEVICE_LOCK", {
     lockList: [
       {
@@ -235,6 +525,18 @@ export async function lockEqualityDevice(
 }
 
 export async function unlockEqualityDevice(deviceUid: string) {
+  if (isTrustonicDirectConfigured()) {
+    return executeTrustonicRequest("/api/v2/device/unlock", {
+      body: {
+        unLockList: [
+          {
+            deviceUid: normalizeEqualityDeviceUid(deviceUid),
+          },
+        ],
+      },
+    });
+  }
+
   return executeEqualityService("DEVICE_UNLOCK", {
     unLockList: [
       {
@@ -248,6 +550,20 @@ export async function releaseEqualityDevice(
   deviceUid: string,
   reason = "End of contract"
 ) {
+  if (isTrustonicDirectConfigured()) {
+    return executeTrustonicRequest("/api/v2/device/release", {
+      method: "PUT",
+      body: {
+        deviceReleaseList: [
+          {
+            deviceUid: normalizeEqualityDeviceUid(deviceUid),
+            reason: String(reason || "End of contract").trim(),
+          },
+        ],
+      },
+    });
+  }
+
   return executeEqualityService("DEVICE_RELEASE", {
     deviceReleaseList: [
       {
@@ -266,6 +582,22 @@ export async function notifyEqualityDevice(
     notificationType?: string;
   }
 ) {
+  if (isTrustonicDirectConfigured()) {
+    return executeTrustonicRequest("/api/v2/device/notify", {
+      body: {
+        messageList: [
+          {
+            deviceUid: normalizeEqualityDeviceUid(deviceUid),
+            notificationTitle: options?.notificationTitle || "Proximo pago",
+            notificationType: options?.notificationType || "headsup",
+            notificationContent:
+              options?.notificationContent || "Se aproxima tu fecha de pago",
+          },
+        ],
+      },
+    });
+  }
+
   return executeEqualityService("DEVICE_NOTIFY", {
     messageList: [
       {
@@ -286,6 +618,21 @@ export async function sendEqualityLockMessage(
     messageTitle?: string;
   }
 ) {
+  if (isTrustonicDirectConfigured()) {
+    return executeTrustonicRequest("/api/v2/device/lockMessage", {
+      body: {
+        lockMessageList: [
+          {
+            deviceUid: normalizeEqualityDeviceUid(deviceUid),
+            messageTitle: options?.messageTitle || "Tienes un pago vencido",
+            messageContent:
+              options?.messageContent || "Desbloquea tu equipo haz tu pago.",
+          },
+        ],
+      },
+    });
+  }
+
   return executeEqualityService("DEVICE_LOCK_MESSAGE", {
     lockMessageList: [
       {
@@ -295,6 +642,62 @@ export async function sendEqualityLockMessage(
           options?.messageContent || "Desbloquea tu equipo haz tu pago.",
       },
     ],
+  });
+}
+
+export async function addEqualityContract(
+  deviceUid: string,
+  contractId: string | number,
+  assignedContractDate = new Date().toISOString()
+) {
+  return executeTrustonicRequest("/api/v2/contract/addContract", {
+    body: {
+      addContractList: [
+        {
+          deviceUid: normalizeEqualityDeviceUid(deviceUid),
+          contractId,
+          assignedContractDate,
+        },
+      ],
+    },
+  });
+}
+
+export async function updateEqualityContractPayment(
+  deviceUid: string,
+  cycleNumber: string | number
+) {
+  return executeTrustonicRequest("/api/v2/contract/updatePayment", {
+    method: "PUT",
+    body: {
+      updatePaymentList: [
+        {
+          deviceUid: normalizeEqualityDeviceUid(deviceUid),
+          deviceBillingCycles: [
+            {
+              cycleNumber,
+            },
+          ],
+        },
+      ],
+    },
+  });
+}
+
+export async function exitEqualityContract(
+  deviceUid: string,
+  exitReason = "End of contract"
+) {
+  return executeTrustonicRequest("/api/v2/contract/exitContract", {
+    method: "PUT",
+    body: {
+      exitContractList: [
+        {
+          deviceUid: normalizeEqualityDeviceUid(deviceUid),
+          exitReason: String(exitReason || "End of contract").trim(),
+        },
+      ],
+    },
   });
 }
 

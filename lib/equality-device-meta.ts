@@ -51,19 +51,69 @@ export function getPayloadSummary(payload: unknown) {
     typeof record.dataResponse === "object" && record.dataResponse !== null
       ? (record.dataResponse as Record<string, unknown>)
       : null;
+  const trustonicResult = getTrustonicResultFromList(record);
 
   return {
     resultCode:
-      typeof dataResponse?.resultCode === "string" ? dataResponse.resultCode : null,
+      typeof dataResponse?.resultCode === "string"
+        ? dataResponse.resultCode
+        : typeof record.resultCode === "string"
+          ? record.resultCode
+          : typeof trustonicResult?.resultCode === "string"
+            ? trustonicResult.resultCode
+            : null,
     resultMessage:
       typeof dataResponse?.resultMessage === "string"
         ? dataResponse.resultMessage
         : typeof record.message === "string"
           ? record.message
-          : null,
+          : typeof record.resultMessage === "string"
+            ? record.resultMessage
+            : typeof trustonicResult?.resultMessage === "string"
+              ? trustonicResult.resultMessage
+              : null,
     remoteStatusCode:
       typeof record.statusCode === "number" ? record.statusCode : null,
   };
+}
+
+function getTrustonicResultFromList(record: Record<string, unknown>) {
+  const listKeys = [
+    "deviceList",
+    "lockResponseList",
+    "unlockResponseList",
+    "releaseResponseList",
+    "messageResponseList",
+    "lockMessageResponseList",
+    "pinUnlockResponseList",
+  ];
+
+  for (const key of listKeys) {
+    const list = record[key];
+    const first =
+      Array.isArray(list) && list.length > 0 && typeof list[0] === "object"
+        ? (list[0] as Record<string, unknown>)
+        : null;
+
+    if (!first) {
+      continue;
+    }
+
+    if (Array.isArray(first.serviceList) && first.serviceList.length > 0) {
+      const service = first.serviceList.find(
+        (item): item is Record<string, unknown> =>
+          typeof item === "object" && item !== null
+      );
+
+      if (service) {
+        return service;
+      }
+    }
+
+    return first;
+  }
+
+  return null;
 }
 
 export function extractEqualityDeviceSnapshot(
@@ -78,9 +128,16 @@ export function extractEqualityDeviceSnapshot(
     typeof record.dataResponse === "object" && record.dataResponse !== null
       ? (record.dataResponse as Record<string, unknown>)
       : null;
-  const deviceResponseList = Array.isArray(dataResponse?.deviceResponseList)
+  const rootDeviceResponseList = Array.isArray(record.deviceResponseList)
+    ? record.deviceResponseList
+    : [];
+  const dataResponseDeviceResponseList = Array.isArray(dataResponse?.deviceResponseList)
     ? dataResponse.deviceResponseList
     : [];
+  const deviceResponseList =
+    dataResponseDeviceResponseList.length > 0
+      ? dataResponseDeviceResponseList
+      : rootDeviceResponseList;
   const firstItem =
     deviceResponseList.length > 0 &&
     typeof deviceResponseList[0] === "object" &&
