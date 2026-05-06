@@ -975,9 +975,6 @@ export default function ClienteConsultaPage() {
                               <p className="text-xs font-black uppercase text-[#7d8490]">
                                 Referencia
                               </p>
-                              <p className="mt-1 text-[11px] font-black uppercase text-[#8a919d]">
-                                Numero de cedula
-                              </p>
                               <p className="mt-1 break-all text-lg font-black text-[#171b22]">
                                 {paymentReference}
                               </p>
