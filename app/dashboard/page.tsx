@@ -591,6 +591,104 @@ function AdminAnnulmentsCard() {
   );
 }
 
+type DashboardTone = "dark" | "orange" | "blue" | "green" | "light" | "danger";
+
+type DashboardTileProps = {
+  href: string;
+  eyebrow: string;
+  title: string;
+  description: string;
+  icon: SellerIconKind;
+  tone?: DashboardTone;
+};
+
+function DashboardTile({
+  href,
+  eyebrow,
+  title,
+  description,
+  icon,
+  tone = "light",
+}: DashboardTileProps) {
+  const toneMap: Record<DashboardTone, string> = {
+    dark: "border-[#24262d] bg-[#15171d] text-white",
+    orange: "border-[#ffd2a4] bg-[#fff7ee] text-[#3a342d]",
+    blue: "border-[#dbe4ff] bg-[#f4f7ff] text-[#303847]",
+    green: "border-[#ccefe4] bg-[#f3fffa] text-[#253a35]",
+    light: "border-[#e6dfd2] bg-white text-[#303847]",
+    danger: "border-[#ffd0d0] bg-[#fff7f7] text-[#3c3030]",
+  };
+  const iconTone: Record<DashboardTone, string> = {
+    dark: "bg-white/10 text-white border-white/12",
+    orange: "bg-[#ff8a16] text-white border-[#ff8a16]",
+    blue: "bg-[#506bb4] text-white border-[#506bb4]",
+    green: "bg-[#126b60] text-white border-[#126b60]",
+    light: "bg-[#f4f0e7] text-[#303847] border-[#e2d8c9]",
+    danger: "bg-[#111318] text-white border-[#111318]",
+  };
+
+  return (
+    <Link
+      href={href}
+      className={[
+        "fp-dashboard-tile group relative flex min-h-[148px] flex-col justify-between overflow-hidden rounded-[30px] border p-5 shadow-[0_18px_42px_rgba(48,56,71,0.08)] transition hover:-translate-y-0.5 hover:shadow-[0_24px_50px_rgba(48,56,71,0.12)]",
+        toneMap[tone],
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] opacity-70">
+            {eyebrow}
+          </p>
+          <h3 className="mt-3 text-2xl font-black leading-tight tracking-tight">
+            {title}
+          </h3>
+        </div>
+        <span
+          className={[
+            "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border shadow-[0_12px_24px_rgba(48,56,71,0.12)]",
+            iconTone[tone],
+          ].join(" ")}
+        >
+          <SellerIcon kind={icon} className="h-7 w-7" />
+        </span>
+      </div>
+      <p className="mt-4 text-sm leading-6 opacity-[0.72]">{description}</p>
+    </Link>
+  );
+}
+
+function DashboardButton({
+  href,
+  label,
+  tone = "light",
+}: {
+  href: string;
+  label: string;
+  tone?: DashboardTone;
+}) {
+  const toneMap: Record<DashboardTone, string> = {
+    dark: "border-[#111318] bg-[#111318] text-white",
+    orange: "border-[#ff8a16] bg-[#ff8a16] text-white",
+    blue: "border-[#506bb4] bg-[#506bb4] text-white",
+    green: "border-[#126b60] bg-[#126b60] text-white",
+    light: "border-[#e0d8ca] bg-white text-[#303847]",
+    danger: "border-[#ffd0d0] bg-white text-[#c01b1b]",
+  };
+
+  return (
+    <Link
+      href={href}
+      className={[
+        "inline-flex min-h-11 items-center justify-center rounded-2xl border px-4 py-3 text-center text-sm font-black transition hover:-translate-y-0.5",
+        toneMap[tone],
+      ].join(" ")}
+    >
+      {label}
+    </Link>
+  );
+}
+
 export default async function DashboardPage() {
   const session = await getSessionUser();
 
@@ -806,6 +904,143 @@ export default async function DashboardPage() {
 
   if (!admin) {
     return (
+      <div className="fp-dashboard-app min-h-screen text-[#303847]">
+        <main className="mx-auto max-w-5xl px-4 py-5 sm:px-6 lg:py-8">
+          <header className="flex flex-col gap-4 rounded-[32px] border border-[#e6dfd2] bg-white/90 p-4 shadow-[0_18px_48px_rgba(48,56,71,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-4">
+              <DashboardLogoBadge compact />
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#ff8a16]">
+                  Panel comercial
+                </p>
+                <p className="mt-1 text-sm font-bold text-[#687080]">
+                  {sedeLabel} - {sellerIsSupervisor ? "Supervisor" : "Vendedor"}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-[#e6dfd2] bg-white shadow-[0_10px_24px_rgba(48,56,71,0.08)]">
+                {sellerAvatarSrc ? (
+                  <img
+                    src={sellerAvatarSrc ?? undefined}
+                    alt={sellerSession?.nombre || "Perfil vendedor"}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <SellerIcon kind="new-sale" className="h-7 w-7" />
+                )}
+              </div>
+              <LogoutButton className="min-w-0 justify-center !border-[#111318] !bg-[#111318] !text-white" />
+            </div>
+          </header>
+
+          {sellerSession?.debeCambiarPin && (
+            <section className="mt-5 rounded-[30px] border border-[#ffd2a4] bg-[#fff7ee] p-5 shadow-[0_16px_38px_rgba(48,56,71,0.06)]">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#b85f00]">
+                Seguridad
+              </p>
+              <h2 className="mt-2 text-2xl font-black text-[#303847]">
+                Cambia tu PIN inicial
+              </h2>
+              <DashboardButton href="/dashboard/pin" label="Actualizar PIN" tone="orange" />
+            </section>
+          )}
+
+          <section className="mt-5 overflow-hidden rounded-[38px] border border-[#eadfcd] bg-white p-6 shadow-[0_24px_70px_rgba(48,56,71,0.08)] sm:p-8">
+            <div className="grid gap-6 lg:grid-cols-[1fr_280px] lg:items-center">
+              <div>
+                <div className="inline-flex rounded-full border border-[#ffd2a4] bg-[#fff7ee] px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-[#b85f00]">
+                  Inicio
+                </div>
+                <h1 className="mt-5 text-4xl font-black leading-[1.05] tracking-tight text-[#303847] sm:text-5xl">
+                  Hola, {nombreCorto}
+                </h1>
+                <p className="mt-4 max-w-xl text-sm leading-6 text-[#687080]">
+                  {sellerIsSupervisor
+                    ? "Busca clientes, recibe cuotas y revisa reportes de tu sede."
+                    : "Crea ventas, valida entrega y consulta el simulador sin ruido."}
+                </p>
+                <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+                  <DashboardButton href="/dashboard/creditos?mode=create-client" label="Nuevo credito" tone="orange" />
+                  <DashboardButton
+                    href={sellerIsSupervisor ? "/dashboard/clientes" : "/dashboard/creditos?mode=delivery"}
+                    label={sellerIsSupervisor ? "Buscar cliente" : "Validar entrega"}
+                    tone="dark"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-[30px] border border-[#ccefe4] bg-[#f3fffa] p-5">
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#126b60]">
+                  Perfil activo
+                </p>
+                <p className="mt-3 text-2xl font-black text-[#303847]">
+                  {sellerSession?.nombre}
+                </p>
+                <p className="mt-2 text-sm font-bold text-[#687080]">
+                  {sellerIsSupervisor ? "Supervision" : "Asesor comercial"}
+                </p>
+              </div>
+            </div>
+          </section>
+
+          {sellerIsSupervisor && (
+            <section
+              id="busqueda-rapida"
+              className="mt-5 rounded-[34px] border border-[#e6dfd2] bg-white p-5 shadow-[0_18px_48px_rgba(48,56,71,0.07)]"
+            >
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#126b60]">
+                Busqueda rapida
+              </p>
+              <form action={sellerSearchHref} className="mt-4 flex flex-col gap-3 sm:flex-row">
+                <input
+                  type="text"
+                  name="search"
+                  placeholder="Cedula, IMEI o folio"
+                  className="min-h-14 flex-1 rounded-2xl border border-[#e0d8ca] bg-[#fffdf8] px-5 text-base text-[#303847] outline-none transition focus:border-[#ff8a16] focus:ring-4 focus:ring-[#ff8a16]/15"
+                />
+                <button
+                  type="submit"
+                  className="inline-flex min-h-14 items-center justify-center rounded-2xl bg-[#111318] px-6 text-sm font-black text-white transition hover:-translate-y-0.5"
+                >
+                  Buscar
+                </button>
+              </form>
+            </section>
+          )}
+
+          <section className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <DashboardTile
+              href="/dashboard/creditos?mode=create-client"
+              eyebrow="Venta"
+              title="Nuevo credito"
+              description="Crear cliente y abrir venta."
+              icon="new-sale"
+              tone="orange"
+            />
+            <DashboardTile
+              href={sellerIsSupervisor ? "/dashboard/abonos" : "/dashboard/creditos?mode=delivery"}
+              eyebrow={sellerIsSupervisor ? "Recaudo" : "Entrega"}
+              title={sellerIsSupervisor ? "Abonos" : "Validar"}
+              description={sellerIsSupervisor ? "Recibir cuotas de clientes." : "Confirmar si puede entregar."}
+              icon={sellerIsSupervisor ? "payments" : "search"}
+              tone="green"
+            />
+            <DashboardTile
+              href={sellerIsSupervisor ? "/dashboard/reportes/creditos" : "/dashboard/creditos?mode=simulator"}
+              eyebrow={sellerIsSupervisor ? "Reportes" : "Simulador"}
+              title={sellerIsSupervisor ? "Por fecha" : "Cuotas"}
+              description={sellerIsSupervisor ? "Ventas y abonos de la sede." : "Calcular antes de vender."}
+              icon="calculator"
+              tone="blue"
+            />
+          </section>
+        </main>
+      </div>
+    );
+
+    return (
       <div className="fp-shell min-h-screen text-slate-950">
         <div className="min-h-screen lg:grid lg:grid-cols-[292px_minmax(0,1fr)]">
           <aside className="fp-hero flex flex-col text-white shadow-[18px_0_48px_rgba(23,32,29,0.18)]">
@@ -879,7 +1114,7 @@ export default async function DashboardPage() {
                   <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full border border-emerald-900/10 bg-white shadow-[0_10px_24px_rgba(18,184,134,0.22)]">
                     {sellerAvatarSrc ? (
                       <img
-                        src={sellerAvatarSrc}
+                        src={sellerAvatarSrc ?? undefined}
                         alt={sellerSession?.nombre || "Perfil vendedor"}
                         className="h-full w-full object-cover"
                       />
@@ -1134,75 +1369,145 @@ export default async function DashboardPage() {
   ];
 
   return (
-    <div className="fp-shell min-h-screen text-slate-950">
-      <main className="mx-auto max-w-7xl px-4 py-8">
-        <section className="fp-hero relative overflow-hidden rounded-[30px] border border-emerald-950/10 px-6 py-7 text-white shadow-[0_24px_80px_rgba(23,32,29,0.20)] md:px-8">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-3xl">
-              <div className="relative inline-flex rounded-full border border-white/14 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-50">
-                Administracion
-              </div>
+    <div className="fp-dashboard-app min-h-screen text-[#303847]">
+      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:py-8">
+        <header className="fp-admin-topbar flex flex-col gap-4 rounded-[34px] border border-[#e6dfd2] bg-white/88 p-4 shadow-[0_18px_48px_rgba(48,56,71,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <DashboardLogoBadge compact />
+            <div className="hidden h-10 w-px bg-[#e6dfd2] sm:block" />
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#ff8a16]">
+                Panel admin
+              </p>
+              <p className="mt-1 text-sm font-bold text-[#687080]">
+                {sedeLabel} - {rolUsuario}
+              </p>
+            </div>
+          </div>
+          <LogoutButton className="w-full justify-center !border-[#111318] !bg-[#111318] !text-white sm:w-auto" />
+        </header>
 
-              <div className="relative mt-4">
-                <DashboardLogoBadge dark />
-              </div>
+        <section className="fp-admin-home mt-5 grid gap-5 lg:grid-cols-[1.25fr_0.75fr]">
+          <div className="relative overflow-hidden rounded-[38px] border border-[#eadfcd] bg-white p-6 shadow-[0_24px_70px_rgba(48,56,71,0.08)] sm:p-8">
+            <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[#ff8a16]/16" />
+            <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-[#506bb4]/12" />
 
-              <h1 className="relative mt-5 text-4xl font-black tracking-tight md:text-5xl">
-                Centro de control
+            <div className="relative">
+              <div className="inline-flex rounded-full border border-[#ffd2a4] bg-[#fff7ee] px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-[#b85f00]">
+                Inicio rapido
+              </div>
+              <h1 className="mt-5 max-w-2xl text-4xl font-black leading-[1.05] tracking-tight text-[#303847] sm:text-5xl">
+                Hola, {nombreUsuario.split(" ")[0] || nombreUsuario}. Elige una accion.
               </h1>
-
-              <p className="relative mt-3 text-sm leading-6 text-zinc-300 md:text-base">
-                {saludo}
+              <p className="mt-4 max-w-xl text-sm leading-6 text-[#687080]">
+                Menos panel, mas operacion: ventas, recaudo, reportes y gestion desde accesos claros.
               </p>
             </div>
 
-            <div className="relative flex flex-col gap-3 sm:flex-row">
-              <Link
-                href="/dashboard/reportes"
-                className="rounded-2xl border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.14)_0%,rgba(255,255,255,0.06)_100%)] px-5 py-3 text-center text-sm font-semibold text-white transition hover:bg-white/14"
-              >
-                Ver reportes
-              </Link>
-              <LogoutButton className="min-w-[160px] justify-center" />
+            <div className="relative mt-7 grid gap-3 sm:grid-cols-3">
+              <DashboardButton href="/dashboard/creditos?mode=create-client" label="Nuevo credito" tone="orange" />
+              <DashboardButton href="/dashboard/abonos" label="Recibir abono" tone="dark" />
+              <DashboardButton href="/dashboard/reportes" label="Ver reportes" tone="light" />
             </div>
+          </div>
+
+          <aside className="grid gap-3 rounded-[34px] border border-[#e6dfd2] bg-[#fffaf2] p-5 shadow-[0_18px_48px_rgba(48,56,71,0.06)]">
+            <div className="rounded-[26px] bg-white px-5 py-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#8a909b]">
+                Creditos
+              </p>
+              <p className="mt-2 text-4xl font-black text-[#303847]">
+                {adminStats?.[0] ?? 0}
+              </p>
+            </div>
+            <div className="rounded-[26px] bg-white px-5 py-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#8a909b]">
+                Abonos activos
+              </p>
+              <p className="mt-2 text-4xl font-black text-[#303847]">
+                {adminStats?.[1] ?? 0}
+              </p>
+            </div>
+            <div className="rounded-[26px] border border-[#ccefe4] bg-[#f3fffa] px-5 py-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#126b60]">
+                Estado
+              </p>
+              <p className="mt-2 text-lg font-black text-[#303847]">
+                Operacion activa
+              </p>
+            </div>
+          </aside>
+        </section>
+
+        <section className="mt-5 grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-[34px] border border-[#e6dfd2] bg-white p-5 shadow-[0_18px_48px_rgba(48,56,71,0.07)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#126b60]">
+                  Gestion
+                </p>
+                <h2 className="mt-3 text-3xl font-black tracking-tight text-[#303847]">
+                  Administracion
+                </h2>
+              </div>
+              <span className="h-3 w-3 rounded-full bg-[#12b886] shadow-[0_0_0_8px_rgba(18,184,134,0.12)]" />
+            </div>
+            <p className="mt-3 text-sm leading-6 text-[#687080]">
+              Sedes, usuarios, catalogo y parametros del credito quedan juntos.
+            </p>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <DashboardButton href="/dashboard/sedes" label="Sedes" tone="dark" />
+              <DashboardButton href="/dashboard/usuarios" label="Usuarios" tone="light" />
+              <DashboardButton href="/dashboard/catalogo-equipos" label="Catalogo equipos" tone="green" />
+              <DashboardButton href="/dashboard/parametros-credito" label="Parametros credito" tone="orange" />
+            </div>
+          </div>
+
+          <div className="grid gap-5 sm:grid-cols-2">
+            <DashboardTile
+              href="/dashboard/creditos?mode=create-client"
+              eyebrow="Venta"
+              title="Fabrica"
+              description="Abrir venta guiada para el asesor."
+              icon="new-sale"
+              tone="orange"
+            />
+            <DashboardTile
+              href="/dashboard/abonos"
+              eyebrow="Cartera"
+              title="Recaudo"
+              description="Buscar cliente y registrar cuota."
+              icon="payments"
+              tone="green"
+            />
           </div>
         </section>
 
-        <section className="fp-surface relative mt-6 overflow-hidden rounded-[28px] p-6">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#12b886,#b7e45c,#ff6b4a)]" />
-          <div>
-            <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
-              Modulos principales
-            </div>
-            <h2 className="mt-4 text-3xl font-black tracking-tight text-zinc-950">
-              Operacion, administracion y reportes
-            </h2>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-600">
-              La vista admin ahora queda alineada con el estilo de `Sedes`: clara, ejecutiva y enfocada en accesos, cartera e integraciones.
-            </p>
-          </div>
-
-          <div className="mt-6 grid gap-5 xl:grid-cols-3">
-            <AdminOperationCard />
-            <AdminManagementCard />
-            <AdminAnnulmentsCard />
-            {adminShortcuts.map((shortcut) => (
-              <AdminShortcutCard key={shortcut.href} {...shortcut} />
-            ))}
-            <AdminTotalCard
-              href="/dashboard/reportes/creditos"
-              title="Total creditos"
-              value={String(adminStats?.[0] ?? 0)}
-              detail="Creditos creados en este portal."
-            />
-            <AdminTotalCard
-              href="/dashboard/reportes/abonos"
-              title="Total abonos"
-              value={String(adminStats?.[1] ?? 0)}
-              detail="Abonos activos registrados en cartera."
-            />
-          </div>
+        <section className="mt-5 grid gap-5 lg:grid-cols-3">
+          <DashboardTile
+            href="/dashboard/reportes"
+            eyebrow="Tablas"
+            title="Reportes"
+            description="Creditos y abonos por fecha."
+            icon="calculator"
+            tone="blue"
+          />
+          <DashboardTile
+            href="/dashboard/reportes/creditos"
+            eyebrow="Control"
+            title="Anulaciones"
+            description="Anular credito o recaudo desde reportes."
+            icon="search"
+            tone="danger"
+          />
+          <DashboardTile
+            href="/dashboard/integraciones"
+            eyebrow="Zero Touch"
+            title="Integraciones"
+            description="Trustonic, Equality y estado remoto."
+            icon="clients"
+            tone="light"
+          />
         </section>
       </main>
     </div>
