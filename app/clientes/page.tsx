@@ -121,6 +121,10 @@ function installmentAmount(item: ClientInstallment) {
   return item.saldoPendiente > 0 ? item.saldoPendiente : item.valorProgramado;
 }
 
+function creditTitle(credit: ClientCredit) {
+  return credit.referenciaEquipo || `Credito ${credit.folio}`;
+}
+
 function scrollToSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
 }
@@ -473,6 +477,12 @@ export default function ClienteConsultaPage() {
     window.setTimeout(() => scrollToSection("explora-panel"), 80);
   };
 
+  const selectCredit = (creditId: number) => {
+    setOpenCreditId(creditId);
+    setActivePanel(null);
+    window.setTimeout(() => scrollToSection("cliente-dashboard"), 40);
+  };
+
   const activeCredit = items.find((item) => item.id === openCreditId) || items[0] || null;
   const paidCount = activeCredit ? getPaidInstallments(activeCredit).length : 0;
   const payable = activeCredit ? getPayableInstallments(activeCredit) : [];
@@ -666,6 +676,71 @@ export default function ClienteConsultaPage() {
                 </div>
               </section>
 
+              {items.length > 1 ? (
+                <section className="rounded-lg border border-[#dfece0] bg-white p-4 shadow-sm">
+                  <SectionTitle
+                    title="Creditos vigentes"
+                    aside={
+                      <span className="rounded-md bg-[#effbe6] px-2 py-1 text-xs font-black text-[#3f7d2d]">
+                        {items.length} activos
+                      </span>
+                    }
+                  />
+                  <div className="mt-3 grid gap-2">
+                    {items.map((credit, index) => {
+                      const isActive = credit.id === activeCredit.id;
+                      const creditPaid = getPaidInstallments(credit).length;
+                      const creditTotal = credit.cuotas.length;
+                      const creditNext = getPayableInstallments(credit)[0] || null;
+
+                      return (
+                        <button
+                          key={credit.id}
+                          type="button"
+                          onClick={() => selectCredit(credit.id)}
+                          className={[
+                            "grid min-h-20 w-full grid-cols-[1fr_auto] gap-3 rounded-lg border px-3 py-3 text-left transition active:scale-[0.99]",
+                            isActive
+                              ? "border-[#a7e66f] bg-[#f5ffef] shadow-[0_10px_22px_rgba(111,194,70,0.14)]"
+                              : "border-[#edf0f4] bg-[#fbfcfd]",
+                          ].join(" ")}
+                        >
+                          <span className="min-w-0">
+                            <span className="block text-[11px] font-black uppercase text-[#7d8490]">
+                              Credito {index + 1}
+                            </span>
+                            <span className="mt-1 block truncate text-sm font-black text-[#171b22]">
+                              {creditTitle(credit)}
+                            </span>
+                            <span className="mt-1 block truncate text-xs font-bold text-[#848c98]">
+                              IMEI {credit.imei || credit.deviceUid || "No registrado"}
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-right">
+                            <span
+                              className={[
+                                "inline-flex rounded-md px-2 py-1 text-[11px] font-black",
+                                isActive
+                                  ? "bg-[#a7e66f] text-[#102316]"
+                                  : "bg-[#eef1f5] text-[#626976]",
+                              ].join(" ")}
+                            >
+                              {isActive ? "Activo" : "Ver"}
+                            </span>
+                            <span className="mt-2 block text-xs font-black text-[#252a35]">
+                              {creditPaid}/{creditTotal}
+                            </span>
+                            <span className="mt-1 block text-xs font-bold text-[#7d8490]">
+                              {creditNext ? money(creditNext.saldoPendiente) : "Al dia"}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : null}
+
               <section className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm">
                 <SectionTitle title="Tu equipo financiado" />
                 <div className="mt-3 grid gap-3">
@@ -674,7 +749,7 @@ export default function ClienteConsultaPage() {
                       Referencia
                     </p>
                     <p className="mt-1 truncate text-base font-black text-[#171b22]">
-                      {activeCredit.referenciaEquipo || "Equipo financiado"}
+                      {creditTitle(activeCredit)}
                     </p>
                   </div>
                   <div className="rounded-lg bg-[#f6f7f9] px-3 py-3">
