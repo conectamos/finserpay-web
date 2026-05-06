@@ -347,6 +347,9 @@ export default function ClienteConsultaPage() {
   const [selectedLimit, setSelectedLimit] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(false);
   const [payingCreditId, setPayingCreditId] = useState<number | null>(null);
+  const [confirmPaymentCreditId, setConfirmPaymentCreditId] = useState<number | null>(
+    null
+  );
   const [activePanel, setActivePanel] = useState<ExplorerPanel>(null);
   const [notice, setNotice] = useState<{ text: string; tone: "red" | "emerald" } | null>(
     null
@@ -381,6 +384,7 @@ export default function ClienteConsultaPage() {
       setItems(nextItems);
       setOpenCreditId(nextOpenId);
       setActivePanel(null);
+      setConfirmPaymentCreditId(null);
       setSelectedLimit(
         Object.fromEntries(
           nextItems
@@ -436,6 +440,16 @@ export default function ClienteConsultaPage() {
     }));
   };
 
+  const openWompiConfirm = (credit: ClientCredit) => {
+    if (!cuotasSeleccionadas(credit).length) {
+      setNotice({ text: "Selecciona una cuota para pagar.", tone: "red" });
+      return;
+    }
+
+    setNotice(null);
+    setConfirmPaymentCreditId(credit.id);
+  };
+
   const payWithWompi = async (credit: ClientCredit) => {
     const cuotaNumeros = cuotasSeleccionadas(credit).map((item) => item.numero);
 
@@ -446,6 +460,7 @@ export default function ClienteConsultaPage() {
 
     try {
       setPayingCreditId(credit.id);
+      setConfirmPaymentCreditId(null);
       setNotice(null);
 
       const result = await requestJson<WompiCheckoutResponse>(
@@ -481,15 +496,18 @@ export default function ClienteConsultaPage() {
     setItems([]);
     setOpenCreditId(null);
     setActivePanel(null);
+    setConfirmPaymentCreditId(null);
     setNotice(null);
   };
 
   const returnHome = () => {
     setActivePanel(null);
+    setConfirmPaymentCreditId(null);
     scrollToSection("cliente-dashboard");
   };
 
   const openPanel = (panel: Exclude<ExplorerPanel, null>) => {
+    setConfirmPaymentCreditId(null);
     setActivePanel(panel);
     window.setTimeout(() => scrollToSection("explora-panel"), 80);
   };
@@ -497,6 +515,7 @@ export default function ClienteConsultaPage() {
   const selectCredit = (creditId: number) => {
     setOpenCreditId(creditId);
     setActivePanel(null);
+    setConfirmPaymentCreditId(null);
     window.setTimeout(() => scrollToSection("cliente-dashboard"), 40);
   };
 
@@ -520,6 +539,13 @@ export default function ClienteConsultaPage() {
   const canSubmit = !loading;
   const firstName = activeCredit ? getFirstName(activeCredit.clienteNombre) : "";
   const paymentReference = activeCredit?.clienteDocumento || activeDocumento || documento;
+  const confirmCredit =
+    items.find((item) => item.id === confirmPaymentCreditId) || null;
+  const confirmInstallments = confirmCredit ? cuotasSeleccionadas(confirmCredit) : [];
+  const confirmAmount = installmentsAmount(confirmInstallments);
+  const confirmPaymentLabel = installmentsRangeLabel(confirmInstallments);
+  const confirmPaymentReference =
+    confirmCredit?.clienteDocumento || activeDocumento || documento;
 
   if (!items.length) {
     return (
@@ -682,7 +708,7 @@ export default function ClienteConsultaPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => void payWithWompi(activeCredit)}
+                    onClick={() => openWompiConfirm(activeCredit)}
                     disabled={!payable.length || payingCreditId === activeCredit.id}
                     className="rounded-lg bg-[#a7e66f] px-5 py-3 text-sm font-black text-[#102316] shadow-[0_12px_24px_rgba(111,194,70,0.25)] disabled:bg-white/20 disabled:text-white/45"
                   >
@@ -794,7 +820,7 @@ export default function ClienteConsultaPage() {
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   <QuickAction
                     label="Pagar cuota"
-                    onClick={() => void payWithWompi(activeCredit)}
+                    onClick={() => openWompiConfirm(activeCredit)}
                   >
                     <CardIcon />
                   </QuickAction>
@@ -1002,7 +1028,7 @@ export default function ClienteConsultaPage() {
                           <div className="mt-4">
                             <PrimaryButton
                               disabled={payingCreditId === activeCredit.id || !payable.length}
-                              onClick={() => void payWithWompi(activeCredit)}
+                              onClick={() => openWompiConfirm(activeCredit)}
                             >
                               {payingCreditId === activeCredit.id
                                 ? "Abriendo Wompi..."
@@ -1066,13 +1092,95 @@ export default function ClienteConsultaPage() {
           </button>
           <button
             type="button"
-            onClick={() => activeCredit && void payWithWompi(activeCredit)}
+            onClick={() => activeCredit && openWompiConfirm(activeCredit)}
             disabled={!activeCredit || !payable.length || payingCreditId === activeCredit.id}
             className="rounded-lg bg-[#a7e66f] px-2 py-3 text-center text-xs font-black text-[#102316] shadow-[0_10px_20px_rgba(111,194,70,0.2)] disabled:bg-[#d9dde4] disabled:text-[#7e8490]"
           >
             Pagar
           </button>
         </nav>
+
+        {confirmCredit ? (
+          <div
+            aria-modal="true"
+            role="dialog"
+            aria-labelledby="confirm-payment-title"
+            className="fixed inset-0 z-40 flex items-end justify-center bg-black/45 px-4 pb-4"
+          >
+            <div className="w-full max-w-[440px] rounded-lg bg-white p-4 shadow-[0_20px_44px_rgba(0,0,0,0.28)]">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-black uppercase text-[#6c747f]">Wompi</p>
+                  <h2
+                    id="confirm-payment-title"
+                    className="mt-1 text-xl font-black text-[#171b22]"
+                  >
+                    Confirmar pago
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Cancelar pago"
+                  onClick={() => setConfirmPaymentCreditId(null)}
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[#dde1e8] bg-white text-lg font-black text-[#535b66]"
+                >
+                  x
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-lg bg-[#f8fff4] p-4">
+                <p className="text-xs font-black uppercase text-[#5f8f44]">
+                  Valor a pagar
+                </p>
+                <p className="mt-1 text-3xl font-black leading-none text-[#171b22]">
+                  {money(confirmAmount)}
+                </p>
+                <p className="mt-2 text-sm font-bold text-[#67706b]">
+                  {confirmPaymentLabel}
+                </p>
+              </div>
+
+              <div className="mt-4 grid gap-3 text-sm">
+                <div className="grid grid-cols-[82px_1fr] gap-3">
+                  <span className="font-black uppercase text-[#7d8490]">Equipo</span>
+                  <span className="truncate font-black text-[#252a35]">
+                    {creditTitle(confirmCredit)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-[82px_1fr] gap-3">
+                  <span className="font-black uppercase text-[#7d8490]">IMEI</span>
+                  <span className="break-all font-black text-[#252a35]">
+                    {confirmCredit.imei || confirmCredit.deviceUid || "No registrado"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-[82px_1fr] gap-3">
+                  <span className="font-black uppercase text-[#7d8490]">Cedula</span>
+                  <span className="font-black text-[#252a35]">
+                    {confirmPaymentReference}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-[1fr_1.4fr] gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmPaymentCreditId(null)}
+                  className="min-h-12 rounded-lg border border-[#dde1e8] bg-white px-3 text-sm font-black text-[#414854]"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void payWithWompi(confirmCredit)}
+                  disabled={payingCreditId === confirmCredit.id}
+                  className="min-h-12 rounded-lg bg-[#a7e66f] px-3 text-sm font-black text-[#102316] shadow-[0_10px_20px_rgba(111,194,70,0.22)] disabled:bg-[#d9dde4] disabled:text-[#7e8490]"
+                >
+                  {payingCreditId === confirmCredit.id ? "Abriendo..." : "Ir a Wompi"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </main>
   );
