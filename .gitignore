@@ -43,3 +43,9 @@ tmp-*
 next-env.d.ts
 
 /app/generated/prisma
+
+# android client
+/android-client/.gradle/
+/android-client/build/
+/android-client/app/build/
+/android-client/local.properties

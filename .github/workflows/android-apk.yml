@@ -1,0 +1,51 @@
+name: Android APK Clientes
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "android-client/**"
+      - ".github/workflows/android-apk.yml"
+      - "public/icons/**"
+      - "public/branding/finserpay-logo.jpg"
+
+jobs:
+  build-apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Build debug APK
+        working-directory: android-client
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Rename APK
+        run: cp android-client/app/build/outputs/apk/debug/app-debug.apk android-client/app/build/outputs/apk/debug/finserpay-clientes-debug.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: finserpay-clientes-debug-apk
+          path: android-client/app/build/outputs/apk/debug/finserpay-clientes-debug.apk
