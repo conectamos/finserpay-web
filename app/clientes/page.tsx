@@ -513,6 +513,10 @@ export default function ClienteConsultaPage() {
     activeCredit && nextInstallment
       ? selectedLimit[activeCredit.id] || nextInstallment.numero
       : 0;
+  const selectedPaymentIndex = payable.findIndex(
+    (item) => item.numero === selectedPaymentLimit
+  );
+  const selectedPaymentStep = selectedPaymentIndex >= 0 ? selectedPaymentIndex : 0;
   const canSubmit = !loading;
   const firstName = activeCredit ? getFirstName(activeCredit.clienteNombre) : "";
   const paymentReference = activeCredit?.clienteDocumento || activeDocumento || documento;
@@ -909,31 +913,48 @@ export default function ClienteConsultaPage() {
                           {payable.length > 1 ? (
                             <div className="mt-4">
                               <p className="text-xs font-black uppercase text-[#7d8490]">
-                                Pagar hasta
+                                Ajustar cuotas
                               </p>
-                              <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-                                {payable.map((item) => (
-                                  <button
-                                    key={item.numero}
-                                    type="button"
-                                    onClick={() =>
-                                      selectPaymentLimit(activeCredit.id, item.numero)
+                              <div className="mt-2 grid grid-cols-[40px_1fr_40px] items-center gap-2">
+                                <button
+                                  type="button"
+                                  aria-label="Pagar menos cuotas"
+                                  disabled={selectedPaymentStep <= 0}
+                                  onClick={() => {
+                                    const previous = payable[selectedPaymentStep - 1];
+                                    if (previous) {
+                                      selectPaymentLimit(activeCredit.id, previous.numero);
                                     }
-                                    className={[
-                                      "min-w-[104px] rounded-lg border px-3 py-2 text-left",
-                                      item.numero === selectedPaymentLimit
-                                        ? "border-[#a7e66f] bg-[#a7e66f] text-[#102316]"
-                                        : "border-[#dfe5dd] bg-white text-[#303743]",
-                                    ].join(" ")}
-                                  >
-                                    <span className="block text-xs font-black">
-                                      Cuota {item.numero}
-                                    </span>
-                                    <span className="mt-1 block text-[11px] font-bold">
-                                      {money(item.saldoPendiente)}
-                                    </span>
-                                  </button>
-                                ))}
+                                  }}
+                                  className="grid h-10 w-10 place-items-center rounded-lg border border-[#dfe5dd] bg-white text-xl font-black text-[#303743] disabled:text-[#c2c8d0]"
+                                >
+                                  -
+                                </button>
+                                <div className="min-w-0 rounded-lg bg-white px-3 py-2 text-center">
+                                  <p className="truncate text-sm font-black text-[#171b22]">
+                                    {selectedPaymentLabel}
+                                  </p>
+                                  <p className="mt-1 text-[11px] font-bold text-[#7d8490]">
+                                    {selectedInstallments.length}{" "}
+                                    {selectedInstallments.length === 1
+                                      ? "cuota seleccionada"
+                                      : "cuotas seleccionadas"}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  aria-label="Pagar mas cuotas"
+                                  disabled={selectedPaymentStep >= payable.length - 1}
+                                  onClick={() => {
+                                    const next = payable[selectedPaymentStep + 1];
+                                    if (next) {
+                                      selectPaymentLimit(activeCredit.id, next.numero);
+                                    }
+                                  }}
+                                  className="grid h-10 w-10 place-items-center rounded-lg border border-[#a7e66f] bg-[#a7e66f] text-xl font-black text-[#102316] disabled:border-[#dfe5dd] disabled:bg-white disabled:text-[#c2c8d0]"
+                                >
+                                  +
+                                </button>
                               </div>
                             </div>
                           ) : null}
@@ -953,6 +974,9 @@ export default function ClienteConsultaPage() {
                             <div>
                               <p className="text-xs font-black uppercase text-[#7d8490]">
                                 Referencia
+                              </p>
+                              <p className="mt-1 text-[11px] font-black uppercase text-[#8a919d]">
+                                Numero de cedula
                               </p>
                               <p className="mt-1 break-all text-lg font-black text-[#171b22]">
                                 {paymentReference}
