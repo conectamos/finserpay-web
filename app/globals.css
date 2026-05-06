@@ -205,6 +205,207 @@ body {
   background: linear-gradient(90deg, #145a5a 0%, #12b886 56%, #b7e45c 100%);
 }
 
+.fp-seller-app {
+  background:
+    radial-gradient(circle at -8% 4%, rgba(255, 138, 22, 0.28) 0 120px, transparent 121px),
+    radial-gradient(circle at 105% 92%, rgba(79, 101, 181, 0.2) 0 150px, transparent 151px),
+    #fffdf8;
+  background-size: auto;
+}
+
+.fp-seller-app > .mx-auto {
+  max-width: 1180px;
+}
+
+.fp-seller-hero {
+  border-color: rgba(232, 214, 185, 0.9) !important;
+  background: rgba(255, 255, 255, 0.9) !important;
+  box-shadow: 0 20px 54px rgba(53, 60, 75, 0.08) !important;
+  padding: 22px 26px !important;
+}
+
+.fp-seller-hero h1 {
+  max-width: 620px;
+  color: #343a46;
+  font-size: clamp(1.75rem, 3vw, 2.65rem);
+  letter-spacing: 0;
+}
+
+.fp-seller-hero p {
+  max-width: 600px;
+  color: #6b7280;
+}
+
+.fp-seller-hero .fp-kicker,
+.fp-seller-hero [class*="tracking-[0.22em]"] {
+  border-color: rgba(255, 138, 22, 0.25);
+  background: rgba(255, 138, 22, 0.08);
+  color: #b85f00;
+}
+
+.fp-seller-workbench {
+  --seller-orange: #ff8a16;
+  --seller-blue: #506bb4;
+  --seller-ink: #343a46;
+  --seller-soft: #fff8ee;
+}
+
+.fp-seller-panel {
+  border-color: rgba(222, 213, 196, 0.9) !important;
+  background: rgba(255, 253, 248, 0.94) !important;
+  box-shadow: 0 18px 48px rgba(52, 58, 70, 0.07) !important;
+}
+
+.fp-seller-flow-intro {
+  border-color: rgba(255, 138, 22, 0.18) !important;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(255, 138, 22, 0.18), transparent 32%),
+    linear-gradient(135deg, #fffaf2 0%, #ffffff 62%, #f3f5ff 100%) !important;
+  padding: 18px 20px !important;
+}
+
+.fp-seller-flow-intro::after {
+  display: none;
+}
+
+.fp-seller-flow-intro h2,
+.fp-active-step-summary p,
+.fp-seller-form-card h3 {
+  color: var(--seller-ink);
+}
+
+.fp-seller-app .fp-flow-progress,
+.fp-seller-app .fp-form-meter {
+  background: linear-gradient(90deg, var(--seller-orange) 0%, #ffb347 58%, var(--seller-blue) 100%);
+}
+
+.fp-seller-app .fp-step-rail {
+  border-color: rgba(222, 213, 196, 0.9) !important;
+  background: rgba(255, 255, 255, 0.84) !important;
+  box-shadow: 0 18px 38px rgba(52, 58, 70, 0.06) !important;
+}
+
+.fp-seller-step-button {
+  border-radius: 22px !important;
+}
+
+.fp-seller-step-button.fp-step-active {
+  border-color: rgba(255, 138, 22, 0.4) !important;
+  background: linear-gradient(135deg, #ff8a16 0%, #506bb4 110%) !important;
+  box-shadow: 0 14px 30px rgba(255, 138, 22, 0.18) !important;
+}
+
+.fp-seller-step-button:not(.fp-step-active):hover {
+  border-color: rgba(255, 138, 22, 0.22) !important;
+  background: #fff8ee !important;
+}
+
+.fp-seller-step-button > span:first-child {
+  border-radius: 999px !important;
+}
+
+.fp-active-step-summary {
+  display: none;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  border-color: rgba(222, 213, 196, 0.9) !important;
+  background: rgba(255, 255, 255, 0.9) !important;
+}
+
+.fp-active-step-summary .fp-active-step-meter {
+  grid-column: 1 / -1;
+  margin-top: 0 !important;
+  border-color: rgba(255, 138, 22, 0.16) !important;
+  background: #fff8ee !important;
+  padding: 10px 14px !important;
+}
+
+.fp-active-step-summary .fp-active-step-meter .mt-3.flex {
+  display: none;
+}
+
+.fp-seller-form-card {
+  border-color: rgba(222, 213, 196, 0.9) !important;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(255, 138, 22, 0.08), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 252, 247, 0.98) 100%) !important;
+  box-shadow: 0 22px 52px rgba(52, 58, 70, 0.08) !important;
+}
+
+.fp-seller-form-card [class*="border-[#e6d6bd]"] {
+  border-color: rgba(255, 138, 22, 0.26) !important;
+  background: rgba(255, 138, 22, 0.08) !important;
+  color: #b85f00 !important;
+}
+
+.fp-seller-form-card input:not([type="checkbox"]),
+.fp-seller-form-card select,
+.fp-seller-form-card textarea {
+  border-color: rgba(52, 58, 70, 0.16) !important;
+  border-radius: 18px !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  box-shadow: 0 10px 24px rgba(52, 58, 70, 0.04) !important;
+}
+
+.fp-seller-form-card input:not([type="checkbox"]):focus,
+.fp-seller-form-card select:focus,
+.fp-seller-form-card textarea:focus {
+  border-color: var(--seller-orange) !important;
+  box-shadow: 0 0 0 4px rgba(255, 138, 22, 0.15), 0 14px 28px rgba(52, 58, 70, 0.06) !important;
+}
+
+.fp-seller-form-card button[class*="fp-action"],
+.fp-seller-app .fp-action {
+  background: linear-gradient(135deg, #ff8a16 0%, #506bb4 100%) !important;
+  box-shadow: 0 14px 30px rgba(255, 138, 22, 0.22) !important;
+}
+
+@media (min-width: 1280px) {
+  .fp-seller-app .xl\:grid-cols-\[220px_1fr\] {
+    grid-template-columns: 184px minmax(0, 1fr) !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .fp-seller-app {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .fp-seller-hero {
+    padding: 18px !important;
+  }
+
+  .fp-seller-hero h1 {
+    font-size: 2rem;
+    line-height: 1.08;
+  }
+
+  .fp-seller-hero p {
+    font-size: 0.95rem;
+    line-height: 1.6;
+  }
+
+  .fp-seller-hero a {
+    min-width: 0 !important;
+    width: 100%;
+  }
+
+  .fp-seller-flow-intro h2 {
+    font-size: 1.85rem;
+    line-height: 1.12;
+  }
+
+  .fp-seller-flow-intro {
+    padding: 16px !important;
+  }
+
+  .fp-active-step-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
 .fp-client-query {
   position: relative;
   overflow: hidden;
