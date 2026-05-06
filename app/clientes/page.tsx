@@ -121,6 +121,16 @@ function installmentAmount(item: ClientInstallment) {
   return item.saldoPendiente > 0 ? item.saldoPendiente : item.valorProgramado;
 }
 
+function installmentsAmount(items: ClientInstallment[]) {
+  return items.reduce((total, item) => total + Math.max(0, item.saldoPendiente), 0);
+}
+
+function installmentsRangeLabel(items: ClientInstallment[]) {
+  if (!items.length) return "Sin cuotas";
+  if (items.length === 1) return `Cuota ${items[0].numero}`;
+  return `Cuotas ${items[0].numero} a ${items[items.length - 1].numero}`;
+}
+
 function creditTitle(credit: ClientCredit) {
   return credit.referenciaEquipo || `Credito ${credit.folio}`;
 }
@@ -419,6 +429,13 @@ export default function ClienteConsultaPage() {
     return getPayableInstallments(credit).filter((item) => item.numero <= limit);
   };
 
+  const selectPaymentLimit = (creditId: number, installmentNumber: number) => {
+    setSelectedLimit((current) => ({
+      ...current,
+      [creditId]: installmentNumber,
+    }));
+  };
+
   const payWithWompi = async (credit: ClientCredit) => {
     const cuotaNumeros = cuotasSeleccionadas(credit).map((item) => item.numero);
 
@@ -489,6 +506,13 @@ export default function ClienteConsultaPage() {
   const totalCount = activeCredit?.cuotas.length || 0;
   const progress = totalCount ? Math.round((paidCount / totalCount) * 100) : 0;
   const nextInstallment = payable[0] || null;
+  const selectedInstallments = activeCredit ? cuotasSeleccionadas(activeCredit) : [];
+  const selectedAmount = installmentsAmount(selectedInstallments);
+  const selectedPaymentLabel = installmentsRangeLabel(selectedInstallments);
+  const selectedPaymentLimit =
+    activeCredit && nextInstallment
+      ? selectedLimit[activeCredit.id] || nextInstallment.numero
+      : 0;
   const canSubmit = !loading;
   const firstName = activeCredit ? getFirstName(activeCredit.clienteNombre) : "";
   const paymentReference = activeCredit?.clienteDocumento || activeDocumento || documento;
@@ -816,12 +840,14 @@ export default function ClienteConsultaPage() {
                               type="button"
                               disabled={!isPayable}
                               onClick={() => {
-                                setSelectedLimit((current) => ({
-                                  ...current,
-                                  [activeCredit.id]: item.numero,
-                                }));
+                                selectPaymentLimit(activeCredit.id, item.numero);
                               }}
-                              className="flex w-full items-center gap-3 py-3 text-left disabled:cursor-default"
+                              className={[
+                                "flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left disabled:cursor-default",
+                                item.numero === selectedPaymentLimit
+                                  ? "bg-[#f5ffef]"
+                                  : "bg-transparent",
+                              ].join(" ")}
                             >
                               <span
                                 className={[
@@ -840,6 +866,11 @@ export default function ClienteConsultaPage() {
                               </span>
                               <span className="shrink-0 text-right text-sm font-black text-[#252a35]">
                                 {money(installmentAmount(item))}
+                                {item.numero === selectedPaymentLimit ? (
+                                  <span className="mt-1 block text-[11px] font-black text-[#4f9b35]">
+                                    Seleccionada
+                                  </span>
+                                ) : null}
                               </span>
                             </button>
                           );
@@ -852,6 +883,62 @@ export default function ClienteConsultaPage() {
                     <>
                       <SectionTitle title="Medios de pago" />
                       <div className="mt-3 grid gap-3">
+                        <div className="rounded-lg border border-[#dfece0] bg-[#f8fff4] p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-black uppercase text-[#5f8f44]">
+                                Valor a pagar
+                              </p>
+                              <p className="mt-1 text-3xl font-black leading-none text-[#171b22]">
+                                {money(selectedAmount)}
+                              </p>
+                              <p className="mt-2 text-sm font-bold text-[#67706b]">
+                                {selectedPaymentLabel}
+                              </p>
+                            </div>
+                            <span
+                              className={[
+                                "shrink-0 rounded-md px-2 py-1 text-xs font-black",
+                                stateClasses(activeCredit.estadoPago),
+                              ].join(" ")}
+                            >
+                              {stateLabel(activeCredit.estadoPago)}
+                            </span>
+                          </div>
+
+                          {payable.length > 1 ? (
+                            <div className="mt-4">
+                              <p className="text-xs font-black uppercase text-[#7d8490]">
+                                Pagar hasta
+                              </p>
+                              <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                                {payable.map((item) => (
+                                  <button
+                                    key={item.numero}
+                                    type="button"
+                                    onClick={() =>
+                                      selectPaymentLimit(activeCredit.id, item.numero)
+                                    }
+                                    className={[
+                                      "min-w-[104px] rounded-lg border px-3 py-2 text-left",
+                                      item.numero === selectedPaymentLimit
+                                        ? "border-[#a7e66f] bg-[#a7e66f] text-[#102316]"
+                                        : "border-[#dfe5dd] bg-white text-[#303743]",
+                                    ].join(" ")}
+                                  >
+                                    <span className="block text-xs font-black">
+                                      Cuota {item.numero}
+                                    </span>
+                                    <span className="mt-1 block text-[11px] font-bold">
+                                      {money(item.saldoPendiente)}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+
                         <div className="rounded-lg border border-[#edf0f4] bg-[#fffdf1] p-4">
                           <EfectyLogo />
                           <div className="mt-4 grid grid-cols-2 gap-3">
@@ -889,7 +976,7 @@ export default function ClienteConsultaPage() {
                         <div className="rounded-lg border border-[#edf0f4] bg-white p-4">
                           <WompiLogo />
                           <p className="mt-3 text-sm font-bold text-[#737b88]">
-                            Pago en linea con la cuota seleccionada.
+                            Pago en linea seguro por el valor seleccionado.
                           </p>
                           <div className="mt-4">
                             <PrimaryButton
@@ -898,7 +985,7 @@ export default function ClienteConsultaPage() {
                             >
                               {payingCreditId === activeCredit.id
                                 ? "Abriendo Wompi..."
-                                : "Pagar con Wompi"}
+                                : `Pagar ${money(selectedAmount)}`}
                             </PrimaryButton>
                           </div>
                         </div>
