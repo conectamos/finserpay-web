@@ -49,3 +49,5 @@ next-env.d.ts
 /android-client/build/
 /android-client/app/build/
 /android-client/local.properties
+/.android-build-tools/
+/dist-apk/
