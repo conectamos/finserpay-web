@@ -52,6 +52,8 @@ type WompiCheckoutResponse = {
   reference?: string;
 };
 
+type ExplorerPanel = "payments" | "pending" | "history" | null;
+
 const STORAGE_KEY = "finserpay.cliente.documento";
 const WOMPI_PUBLIC_LINK = "https://checkout.wompi.co/l/4banHJ";
 
@@ -331,6 +333,7 @@ export default function ClienteConsultaPage() {
   const [selectedLimit, setSelectedLimit] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(false);
   const [payingCreditId, setPayingCreditId] = useState<number | null>(null);
+  const [activePanel, setActivePanel] = useState<ExplorerPanel>(null);
   const [notice, setNotice] = useState<{ text: string; tone: "red" | "emerald" } | null>(
     null
   );
@@ -363,6 +366,7 @@ export default function ClienteConsultaPage() {
       setActiveDocumento(normalized);
       setItems(nextItems);
       setOpenCreditId(nextOpenId);
+      setActivePanel(null);
       setSelectedLimit(
         Object.fromEntries(
           nextItems
@@ -455,7 +459,18 @@ export default function ClienteConsultaPage() {
     setActiveDocumento("");
     setItems([]);
     setOpenCreditId(null);
+    setActivePanel(null);
     setNotice(null);
+  };
+
+  const returnHome = () => {
+    setActivePanel(null);
+    scrollToSection("cliente-dashboard");
+  };
+
+  const openPanel = (panel: Exclude<ExplorerPanel, null>) => {
+    setActivePanel(panel);
+    window.setTimeout(() => scrollToSection("explora-panel"), 80);
   };
 
   const activeCredit = items.find((item) => item.id === openCreditId) || items[0] || null;
@@ -561,7 +576,7 @@ export default function ClienteConsultaPage() {
             <button
               type="button"
               aria-label="Volver al dashboard"
-              onClick={() => scrollToSection("cliente-dashboard")}
+              onClick={returnHome}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[#dde1e8] bg-white text-[#171b22] shadow-sm active:bg-[#f3f4f6]"
             >
               <HomeIcon />
@@ -682,212 +697,173 @@ export default function ClienteConsultaPage() {
                   </QuickAction>
                   <QuickAction
                     label="Medios de pago"
-                    onClick={() => scrollToSection("medios-pago")}
+                    onClick={() => openPanel("payments")}
                   >
                     <PaymentsIcon />
                   </QuickAction>
                   <QuickAction
                     label="Pagos pendientes"
-                    onClick={() => scrollToSection("plan-pagos")}
+                    onClick={() => openPanel("pending")}
                   >
                     <CalendarIcon />
                   </QuickAction>
                   <QuickAction
                     label="Historial"
-                    onClick={() => scrollToSection("historial")}
+                    onClick={() => openPanel("history")}
                   >
                     <HistoryIcon />
                   </QuickAction>
                 </div>
               </section>
 
-              <section
-                id="plan-pagos"
-                className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm"
-              >
-                <SectionTitle
-                  title="Plan de pagos"
-                  aside={
-                    <span className="text-xs font-black text-[#7d8490]">
-                      {paidCount}/{totalCount}
-                    </span>
-                  }
-                />
-                <div className="mt-3 divide-y divide-[#edf0f4]">
-                  {activeCredit.cuotas.map((item) => {
-                    const isPayable = item.saldoPendiente > 0;
-
-                    return (
-                      <button
-                        key={item.numero}
-                        type="button"
-                        disabled={!isPayable}
-                        onClick={() => {
-                          setSelectedLimit((current) => ({
-                            ...current,
-                            [activeCredit.id]: item.numero,
-                          }));
-                        }}
-                        className="flex w-full items-center gap-3 py-3 text-left disabled:cursor-default"
-                      >
-                        <span
-                          className={[
-                            "h-2.5 w-2.5 shrink-0 rounded-full",
-                            installmentDotClass(item),
-                          ].join(" ")}
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-black text-[#252a35]">
-                            Cuota {item.numero}
+              {activePanel ? (
+                <section
+                  id="explora-panel"
+                  className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm"
+                >
+                  {activePanel === "pending" ? (
+                    <>
+                      <SectionTitle
+                        title="Pagos pendientes"
+                        aside={
+                          <span className="text-xs font-black text-[#7d8490]">
+                            {paidCount}/{totalCount}
                           </span>
-                          <span className="mt-1 block text-xs font-bold text-[#8a919d]">
-                            {dateLabel(item.fechaVencimiento)} - {installmentLabel(item)}
-                          </span>
-                        </span>
-                        <span className="shrink-0 text-right text-sm font-black text-[#252a35]">
-                          {money(installmentAmount(item))}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
+                        }
+                      />
+                      <div className="mt-3 divide-y divide-[#edf0f4]">
+                        {activeCredit.cuotas.map((item) => {
+                          const isPayable = item.saldoPendiente > 0;
 
-              <section
-                id="medios-pago"
-                className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm"
-              >
-                <SectionTitle title="Medios de pago" />
-                <div className="mt-3 grid gap-3">
-                  <div className="rounded-lg border border-[#edf0f4] bg-[#fffdf1] p-4">
-                    <EfectyLogo />
-                    <div className="mt-4 grid grid-cols-2 gap-3">
-                      <div>
-                        <p className="text-xs font-black uppercase text-[#7d8490]">
-                          Convenio
-                        </p>
-                        <p className="mt-1 text-lg font-black text-[#171b22]">113950</p>
+                          return (
+                            <button
+                              key={item.numero}
+                              type="button"
+                              disabled={!isPayable}
+                              onClick={() => {
+                                setSelectedLimit((current) => ({
+                                  ...current,
+                                  [activeCredit.id]: item.numero,
+                                }));
+                              }}
+                              className="flex w-full items-center gap-3 py-3 text-left disabled:cursor-default"
+                            >
+                              <span
+                                className={[
+                                  "h-2.5 w-2.5 shrink-0 rounded-full",
+                                  installmentDotClass(item),
+                                ].join(" ")}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-black text-[#252a35]">
+                                  Cuota {item.numero}
+                                </span>
+                                <span className="mt-1 block text-xs font-bold text-[#8a919d]">
+                                  {dateLabel(item.fechaVencimiento)} -{" "}
+                                  {installmentLabel(item)}
+                                </span>
+                              </span>
+                              <span className="shrink-0 text-right text-sm font-black text-[#252a35]">
+                                {money(installmentAmount(item))}
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-[#7d8490]">
-                          Referencia
-                        </p>
-                        <p className="mt-1 break-all text-lg font-black text-[#171b22]">
-                          {paymentReference}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                    </>
+                  ) : null}
 
-                  <div className="rounded-lg border border-[#edf0f4] bg-white p-4">
-                    <BancolombiaLogo />
-                    <div className="mt-4">
-                      <p className="text-xs font-black uppercase text-[#7d8490]">
-                        Cuenta de ahorros
-                      </p>
-                      <p className="mt-1 text-2xl font-black text-[#171b22]">
-                        71800000458
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-[#edf0f4] bg-white p-4">
-                    <WompiLogo />
-                    <p className="mt-3 text-sm font-bold text-[#737b88]">
-                      Pago en linea con la cuota seleccionada.
-                    </p>
-                    <div className="mt-4">
-                      <PrimaryButton
-                        disabled={payingCreditId === activeCredit.id || !payable.length}
-                        onClick={() => void payWithWompi(activeCredit)}
-                      >
-                        {payingCreditId === activeCredit.id
-                          ? "Abriendo Wompi..."
-                          : "Pagar con Wompi"}
-                      </PrimaryButton>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {items.length > 1 ? (
-                <section className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm">
-                  <SectionTitle
-                    title="Mis creditos"
-                    aside={
-                      <span className="text-xs font-black text-[#4f9b35]">
-                        {items.length}
-                      </span>
-                    }
-                  />
-                  <div className="mt-3 grid gap-2">
-                    {items.map((credit) => {
-                      const isActive = credit.id === activeCredit.id;
-                      const creditPaid = getPaidInstallments(credit).length;
-                      const creditTotal = credit.cuotas.length;
-
-                      return (
-                        <button
-                          key={credit.id}
-                          type="button"
-                          onClick={() => setOpenCreditId(credit.id)}
-                          className={[
-                            "rounded-lg border px-3 py-3 text-left transition",
-                            isActive
-                              ? "border-[#111317] bg-[#111317] text-white"
-                              : "border-[#e7eaf0] bg-[#f8f9fb] text-[#323337]",
-                          ].join(" ")}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-black">{credit.folio}</p>
-                              <p className="mt-1 truncate text-xs font-bold opacity-70">
-                                {credit.referenciaEquipo || "Equipo financiado"}
+                  {activePanel === "payments" ? (
+                    <>
+                      <SectionTitle title="Medios de pago" />
+                      <div className="mt-3 grid gap-3">
+                        <div className="rounded-lg border border-[#edf0f4] bg-[#fffdf1] p-4">
+                          <EfectyLogo />
+                          <div className="mt-4 grid grid-cols-2 gap-3">
+                            <div>
+                              <p className="text-xs font-black uppercase text-[#7d8490]">
+                                Convenio
+                              </p>
+                              <p className="mt-1 text-lg font-black text-[#171b22]">
+                                113950
                               </p>
                             </div>
-                            <span className="shrink-0 text-xs font-black">
-                              {creditPaid}/{creditTotal}
-                            </span>
+                            <div>
+                              <p className="text-xs font-black uppercase text-[#7d8490]">
+                                Referencia
+                              </p>
+                              <p className="mt-1 break-all text-lg font-black text-[#171b22]">
+                                {paymentReference}
+                              </p>
+                            </div>
                           </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                        </div>
+
+                        <div className="rounded-lg border border-[#edf0f4] bg-white p-4">
+                          <BancolombiaLogo />
+                          <div className="mt-4">
+                            <p className="text-xs font-black uppercase text-[#7d8490]">
+                              Cuenta de ahorros
+                            </p>
+                            <p className="mt-1 text-2xl font-black text-[#171b22]">
+                              71800000458
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-[#edf0f4] bg-white p-4">
+                          <WompiLogo />
+                          <p className="mt-3 text-sm font-bold text-[#737b88]">
+                            Pago en linea con la cuota seleccionada.
+                          </p>
+                          <div className="mt-4">
+                            <PrimaryButton
+                              disabled={payingCreditId === activeCredit.id || !payable.length}
+                              onClick={() => void payWithWompi(activeCredit)}
+                            >
+                              {payingCreditId === activeCredit.id
+                                ? "Abriendo Wompi..."
+                                : "Pagar con Wompi"}
+                            </PrimaryButton>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
+
+                  {activePanel === "history" ? (
+                    <>
+                      <SectionTitle title="Historial" />
+                      <div className="mt-3 divide-y divide-[#edf0f4]">
+                        {activeCredit.abonos.length ? (
+                          activeCredit.abonos.map((abono) => (
+                            <div
+                              key={abono.id}
+                              className="flex items-center justify-between gap-4 py-3"
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-black text-[#252a35]">
+                                  {abono.metodoPago}
+                                </p>
+                                <p className="mt-1 text-xs font-bold text-[#8a919d]">
+                                  {dateLabel(abono.fechaAbono)}
+                                </p>
+                              </div>
+                              <p className="shrink-0 text-sm font-black text-[#252a35]">
+                                {money(abono.valor)}
+                              </p>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="rounded-lg bg-[#f6f7f9] px-4 py-3 text-sm font-bold text-[#626976]">
+                            Aun no hay pagos registrados.
+                          </p>
+                        )}
+                      </div>
+                    </>
+                  ) : null}
                 </section>
               ) : null}
-
-              <section
-                id="historial"
-                className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm"
-              >
-                <SectionTitle title="Historial" />
-                <div className="mt-3 divide-y divide-[#edf0f4]">
-                  {activeCredit.abonos.length ? (
-                    activeCredit.abonos.map((abono) => (
-                      <div
-                        key={abono.id}
-                        className="flex items-center justify-between gap-4 py-3"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-black text-[#252a35]">
-                            {abono.metodoPago}
-                          </p>
-                          <p className="mt-1 text-xs font-bold text-[#8a919d]">
-                            {dateLabel(abono.fechaAbono)}
-                          </p>
-                        </div>
-                        <p className="shrink-0 text-sm font-black text-[#252a35]">
-                          {money(abono.valor)}
-                        </p>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="rounded-lg bg-[#f6f7f9] px-4 py-3 text-sm font-bold text-[#626976]">
-                      Aun no hay pagos registrados.
-                    </p>
-                  )}
-                </div>
-              </section>
             </>
           ) : null}
         </div>
@@ -899,7 +875,7 @@ export default function ClienteConsultaPage() {
           </button>
           <button
             type="button"
-            onClick={() => scrollToSection("plan-pagos")}
+            onClick={() => openPanel("pending")}
             className="rounded-lg px-2 py-2 text-center text-[#7d8490] active:bg-[#f5f6f8]"
           >
             <span className="block text-xs font-black">Pendientes</span>
