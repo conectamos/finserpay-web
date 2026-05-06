@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Image from "next/image";
+import { useCallback, useEffect, useState } from "react";
 
 type ClientInstallment = {
   numero: number;
@@ -85,10 +86,6 @@ function getPaidInstallments(credit: ClientCredit) {
   );
 }
 
-function getAvailableBalance(credit: ClientCredit) {
-  return Math.max(0, Number(credit.saldoDisponible ?? credit.totalPagado ?? 0));
-}
-
 function getFirstName(value: string) {
   const first = value.trim().split(/\s+/)[0] || "Cliente";
   return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
@@ -101,31 +98,29 @@ function stateLabel(estado: ClientCredit["estadoPago"]) {
 }
 
 function stateClasses(estado: ClientCredit["estadoPago"]) {
-  if (estado === "MORA") return "border-[#ff6b4a] text-[#ff6b4a]";
-  if (estado === "PAGADO") return "border-[#11a66a] text-[#087a4f]";
-  return "border-[#18a7b5] text-[#087989]";
+  if (estado === "MORA") return "bg-[#fff1ed] text-[#b63b20]";
+  if (estado === "PAGADO") return "bg-[#e8f7ef] text-[#087a4f]";
+  return "bg-[#e8f7fb] text-[#087989]";
 }
 
 function installmentLabel(item: ClientInstallment) {
-  if (item.saldoPendiente <= 0) return "Pagado";
-  if (item.estaEnMora) return "Atrasado";
+  if (item.saldoPendiente <= 0) return "Pagada";
+  if (item.estaEnMora) return "Atrasada";
   return "Pendiente";
 }
 
 function installmentDotClass(item: ClientInstallment) {
-  if (item.saldoPendiente <= 0) return "bg-[#18bd7b]";
-  if (item.estaEnMora) return "bg-[#ff4868]";
-  return "bg-[#ff8a18]";
-}
-
-function installmentIconClass(item: ClientInstallment) {
-  if (item.saldoPendiente <= 0) return "bg-[#c8c5bf] text-white";
-  if (item.estaEnMora) return "bg-[#ffd2a3] text-[#ff6b4a]";
-  return "bg-[#ffd2a3] text-[#ff8a18]";
+  if (item.saldoPendiente <= 0) return "bg-[#15a66a]";
+  if (item.estaEnMora) return "bg-[#e34c2f]";
+  return "bg-[#a7e66f]";
 }
 
 function installmentAmount(item: ClientInstallment) {
   return item.saldoPendiente > 0 ? item.saldoPendiente : item.valorProgramado;
+}
+
+function scrollToSection(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
 }
 
 async function requestJson<T>(url: string, init?: RequestInit) {
@@ -134,25 +129,32 @@ async function requestJson<T>(url: string, init?: RequestInit) {
   return { ok: response.ok, data };
 }
 
-function FinserLogo({ large = false }: { large?: boolean }) {
+function AppLogo({ large = false }: { large?: boolean }) {
   return (
-    <div className="flex flex-col items-center">
-      <img
+    <div className={large ? "text-center" : "flex items-center gap-3"}>
+      <Image
         src="/icons/finserpay-client-192.png"
         alt="FINSER PAY"
+        width={large ? 80 : 40}
+        height={large ? 80 : 40}
         className={[
-          "object-cover shadow-[0_16px_32px_rgba(17,19,23,0.18)]",
-          large ? "h-24 w-24 rounded-[28px]" : "h-12 w-12 rounded-2xl",
+          "object-cover",
+          large ? "mx-auto h-20 w-20 rounded-lg" : "h-10 w-10 rounded-lg",
         ].join(" ")}
       />
-      <p
-        className={[
-          "mt-3 font-black text-[#252a35]",
-          large ? "text-3xl" : "text-lg",
-        ].join(" ")}
-      >
-        FINSER PAY
-      </p>
+      <div className={large ? "mt-4" : "min-w-0"}>
+        <p
+          className={[
+            "font-black text-[#111317]",
+            large ? "text-3xl" : "truncate text-base",
+          ].join(" ")}
+        >
+          FINSER PAY
+        </p>
+        {!large ? (
+          <p className="truncate text-xs font-bold text-[#7a7f87]">Clientes</p>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -173,29 +175,151 @@ function PrimaryButton({
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-14 w-full items-center justify-center rounded-full bg-[#ff8a18] px-5 text-base font-black text-white shadow-[0_16px_30px_rgba(255,138,24,0.26)] transition active:scale-[0.99] disabled:bg-[#dedede] disabled:text-[#9a9a9a] disabled:shadow-none"
+      className="inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-[#a7e66f] px-5 py-3 text-sm font-black text-[#102316] shadow-[0_10px_20px_rgba(111,194,70,0.22)] transition active:scale-[0.99] disabled:bg-[#d9dde4] disabled:text-[#7e8490] disabled:shadow-none"
     >
       {children}
     </button>
   );
 }
 
-function AccessButton({
+function SectionTitle({
+  title,
+  aside,
+}: {
+  title: string;
+  aside?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <h2 className="text-lg font-black text-[#171b22]">{title}</h2>
+      {aside ? <div className="shrink-0">{aside}</div> : null}
+    </div>
+  );
+}
+
+function QuickAction({
   label,
-  icon,
+  children,
   onClick,
 }: {
   label: string;
-  icon: string;
+  children: React.ReactNode;
   onClick: () => void;
 }) {
   return (
-    <button type="button" onClick={onClick} className="min-w-[96px] text-center">
-      <span className="mx-auto grid h-20 w-20 place-items-center rounded-[34px] bg-[#f7f4ef] text-2xl font-black text-[#ff8a18] shadow-[0_14px_24px_rgba(17,19,23,0.06)]">
-        {icon}
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex min-h-16 items-center gap-3 rounded-lg border border-[#e6e8ee] bg-white px-3 text-left shadow-sm active:bg-[#f6f7f9]"
+    >
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[#f1f3f7] text-[#111317]">
+        {children}
       </span>
-      <span className="mt-3 block text-sm font-bold leading-4 text-[#55565b]">{label}</span>
+      <span className="min-w-0 text-sm font-black leading-4 text-[#323744]">
+        {label}
+      </span>
     </button>
+  );
+}
+
+function HomeIcon() {
+  return (
+    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function CardIcon() {
+  return (
+    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M3 7.5A2.5 2.5 0 0 1 5.5 5h13A2.5 2.5 0 0 1 21 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9Z"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path d="M3 10h18M7 15h4" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function HistoryIcon() {
+  return (
+    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M4 4v6h6M5.2 15a7.5 7.5 0 1 0 1.7-7.9L4 10"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+      <path d="M12 8v5l3 2" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function PaymentsIcon() {
+  return (
+    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M5 6h14M5 12h14M5 18h14"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function EfectyLogo() {
+  return (
+    <div className="flex h-11 w-24 items-center justify-center rounded-md bg-[#f6d313] text-[18px] font-black italic text-[#1d2b57]">
+      efecty
+    </div>
+  );
+}
+
+function BancolombiaLogo() {
+  return (
+    <div className="flex h-11 items-center gap-2 text-[#222]">
+      <span className="grid h-8 w-8 gap-1">
+        <span className="block h-2 w-7 -rotate-12 rounded-sm bg-[#222]" />
+        <span className="block h-2 w-7 -rotate-12 rounded-sm bg-[#222]" />
+        <span className="block h-2 w-7 -rotate-12 rounded-sm bg-[#222]" />
+      </span>
+      <span className="text-[22px] font-black tracking-normal">Bancolombia</span>
+    </div>
+  );
+}
+
+function WompiLogo() {
+  return (
+    <div className="flex h-11 items-center gap-2">
+      <span className="grid h-9 w-9 place-items-center rounded-md bg-[#6b35ff] text-sm font-black text-white">
+        W
+      </span>
+      <span className="text-[22px] font-black text-[#171b22]">Wompi</span>
+    </div>
   );
 }
 
@@ -206,13 +330,12 @@ export default function ClienteConsultaPage() {
   const [openCreditId, setOpenCreditId] = useState<number | null>(null);
   const [selectedLimit, setSelectedLimit] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(false);
-  const [bootstrapped, setBootstrapped] = useState(false);
   const [payingCreditId, setPayingCreditId] = useState<number | null>(null);
   const [notice, setNotice] = useState<{ text: string; tone: "red" | "emerald" } | null>(
     null
   );
 
-  const consultar = async (rawDocument = documento, silent = false) => {
+  const consultar = useCallback(async (rawDocument: string, silent = false) => {
     const normalized = normalizeDocument(rawDocument);
 
     if (normalized.length < 5) {
@@ -268,26 +391,25 @@ export default function ClienteConsultaPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    const savedDocument = normalizeDocument(localStorage.getItem(STORAGE_KEY) || "");
-    if (savedDocument) {
-      setDocumento(savedDocument);
-      void consultar(savedDocument, true).finally(() => setBootstrapped(true));
-      return;
-    }
+    const urlDocument = normalizeDocument(
+      new URLSearchParams(window.location.search).get("documento") || ""
+    );
+    const storedDocument = normalizeDocument(localStorage.getItem(STORAGE_KEY) || "");
+    const nextDocument = urlDocument || storedDocument;
 
-    setBootstrapped(true);
-  }, []);
+    if (nextDocument) {
+      setDocumento(nextDocument);
+      void consultar(nextDocument, true);
+    }
+  }, [consultar]);
 
   const cuotasSeleccionadas = (credit: ClientCredit) => {
     const limit = selectedLimit[credit.id] || 0;
     return getPayableInstallments(credit).filter((item) => item.numero <= limit);
   };
-
-  const selectedTotal = (credit: ClientCredit) =>
-    cuotasSeleccionadas(credit).reduce((sum, item) => sum + item.saldoPendiente, 0);
 
   const payWithWompi = async (credit: ClientCredit) => {
     const cuotaNumeros = cuotasSeleccionadas(credit).map((item) => item.numero);
@@ -342,61 +464,67 @@ export default function ClienteConsultaPage() {
   const totalCount = activeCredit?.cuotas.length || 0;
   const progress = totalCount ? Math.round((paidCount / totalCount) * 100) : 0;
   const nextInstallment = payable[0] || null;
-  const selectedCuotas = activeCredit ? cuotasSeleccionadas(activeCredit) : [];
-  const totalToPay = activeCredit ? selectedTotal(activeCredit) : 0;
-  const canSubmit = normalizeDocument(documento).length >= 5 && bootstrapped && !loading;
+  const canSubmit = !loading;
   const firstName = activeCredit ? getFirstName(activeCredit.clienteNombre) : "";
+  const paymentReference = activeCredit?.clienteDocumento || activeDocumento || documento;
 
   if (!items.length) {
     return (
-      <main className="min-h-screen overflow-x-hidden bg-white text-[#252a35]">
-        <div className="mx-auto flex min-h-screen w-full max-w-full flex-col px-8 py-10 sm:max-w-[430px]">
-          <div className="flex flex-1 flex-col justify-center">
-            <FinserLogo large />
+      <main className="min-h-screen bg-[#f5f6f8] text-[#171b22]">
+        <div className="mx-auto flex min-h-screen w-full max-w-[440px] flex-col px-5 py-7">
+          <header className="flex items-center justify-between">
+            <AppLogo />
+            <span className="rounded-md bg-white px-3 py-2 text-xs font-black text-[#626976] shadow-sm">
+              Clientes
+            </span>
+          </header>
 
-            <section className="mt-12 text-center">
-              <h1 className="text-3xl font-black leading-tight">
-                Bienvenido a FINSER PAY
+          <section className="flex flex-1 flex-col justify-center py-8">
+            <AppLogo large />
+            <div className="mt-8 text-center">
+              <h1 className="text-2xl font-black leading-tight text-[#171b22]">
+                Consulta tu credito
               </h1>
-              <p className="mt-4 text-lg font-medium text-[#929292]">
-                Ingresa tu documento para continuar
+              <p className="mx-auto mt-3 max-w-[280px] text-sm font-semibold leading-6 text-[#6d7480]">
+                Entra con tu cedula para ver cuotas, pagos y medios disponibles.
               </p>
-            </section>
+            </div>
 
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                void consultar();
+                const formData = new FormData(event.currentTarget);
+                const formDocument = String(formData.get("documento") || documento);
+                void consultar(formDocument);
               }}
-              className="mt-10 rounded-[32px] bg-white p-6 shadow-[0_22px_48px_rgba(17,19,23,0.14)]"
+              className="mt-8 rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-[0_16px_36px_rgba(17,19,23,0.08)]"
             >
               <label
                 htmlFor="documento"
-                className="mb-3 block text-sm font-bold text-[#9a9a9a]"
+                className="block text-xs font-black uppercase text-[#737b88]"
               >
                 Documento de identidad
               </label>
-              <div className="flex h-16 items-center rounded-[24px] border border-[#e0e0e0] bg-[#f8f9fb] px-4">
-                <div className="mr-3 flex items-center gap-2 border-r border-[#dddddd] pr-3">
-                  <span className="grid h-6 w-8 overflow-hidden rounded-[3px] border border-black/5">
-                    <span className="bg-[#fcd116]" />
-                    <span className="bg-[#003893]" />
-                    <span className="bg-[#ce1126]" />
-                  </span>
-                  <span className="font-black text-[#3b4251]">CC</span>
-                </div>
+              <div className="mt-3 flex min-h-14 items-center rounded-lg border border-[#dfe3ea] bg-[#f8f9fb] px-3">
+                <span className="mr-3 rounded-md bg-white px-2 py-1 text-sm font-black text-[#303743] shadow-sm">
+                  CC
+                </span>
                 <input
                   id="documento"
-                  value={documento}
-                  onChange={(event) =>
-                    setDocumento(normalizeDocument(event.target.value))
-                  }
+                  name="documento"
+                  defaultValue={documento}
+                  onInput={(event) => {
+                    const normalized = normalizeDocument(event.currentTarget.value);
+                    if (event.currentTarget.value !== normalized) {
+                      event.currentTarget.value = normalized;
+                    }
+                  }}
                   inputMode="numeric"
-                  placeholder="Documento"
-                  className="min-w-0 flex-1 bg-transparent text-lg font-semibold text-[#30343d] outline-none placeholder:text-[#b4b4b4]"
+                  placeholder="Numero de cedula"
+                  className="min-w-0 flex-1 bg-transparent text-lg font-black text-[#1f2430] outline-none placeholder:text-[#a0a7b2]"
                 />
               </div>
-              <div className="mt-8">
+              <div className="mt-4">
                 <PrimaryButton disabled={!canSubmit} type="submit">
                   {loading ? "Consultando..." : "Continuar"}
                 </PrimaryButton>
@@ -406,7 +534,7 @@ export default function ClienteConsultaPage() {
             {notice ? (
               <div
                 className={[
-                  "mt-5 rounded-2xl border px-4 py-3 text-sm font-bold",
+                  "mt-4 rounded-lg border px-4 py-3 text-sm font-bold",
                   notice.tone === "emerald"
                     ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                     : "border-red-200 bg-red-50 text-red-700",
@@ -415,404 +543,373 @@ export default function ClienteConsultaPage() {
                 {notice.text}
               </div>
             ) : null}
-          </div>
+          </section>
 
-          <div className="pb-4 pt-8 text-center">
-            <p className="text-sm font-black text-[#ff8a18]">Soy cliente</p>
-            <p className="mt-4 text-sm font-medium text-[#a1a1a1]">Version 1.0</p>
-          </div>
+          <footer className="pb-2 text-center text-xs font-bold text-[#88909c]">
+            Portal clientes FINSER PAY
+          </footer>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-white text-[#323337]">
-      <div className="mx-auto min-h-screen w-full max-w-full bg-white pb-28 sm:max-w-[430px]">
-        <header className="relative overflow-hidden px-8 pb-8 pt-10">
-          <div className="absolute -left-20 -top-24 h-56 w-[340px] rounded-br-[180px] bg-[#111317]" />
-          <div className="relative flex items-start justify-between">
-            <div className="flex items-center gap-3 text-white">
-              <img
-                src="/icons/finserpay-client-192.png"
-                alt="FINSER PAY"
-                className="h-11 w-11 rounded-2xl object-cover"
-              />
-              <div className="max-w-[190px]">
-                <p className="text-lg font-black">Hola,</p>
-                <p className="truncate text-2xl font-light">{firstName}</p>
-              </div>
+    <main id="cliente-dashboard" className="min-h-screen bg-[#f5f6f8] text-[#252a35]">
+      <div className="mx-auto min-h-screen w-full max-w-[440px] pb-24">
+        <header className="sticky top-0 z-20 border-b border-[#e8eaf0] bg-[#f5f6f8]/95 px-5 py-4 backdrop-blur">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              aria-label="Volver al dashboard"
+              onClick={() => scrollToSection("cliente-dashboard")}
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[#dde1e8] bg-white text-[#171b22] shadow-sm active:bg-[#f3f4f6]"
+            >
+              <HomeIcon />
+            </button>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-black text-[#7d8490]">Hola, {firstName}</p>
+              <p className="truncate text-lg font-black text-[#171b22]">
+                Tu credito FINSER PAY
+              </p>
             </div>
             <button
               type="button"
               onClick={forgetDocument}
-              className="rounded-full bg-[#f7f4ef] px-4 py-2 text-xs font-black text-[#525252] shadow-sm"
+              className="rounded-md border border-[#dde1e8] bg-white px-3 py-2 text-xs font-black text-[#414854] shadow-sm"
             >
               Cambiar
             </button>
           </div>
-
-          <section className="mt-16 text-center">
-            <p className="text-2xl font-light">
-              Cuota{" "}
-              <span className="font-black">
-                {nextInstallment ? nextInstallment.numero : paidCount}
-              </span>{" "}
-              de <span className="font-black">{totalCount}</span>
-            </p>
-            <p className="mt-5 text-6xl font-black leading-none text-[#383838]">
-              {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
-            </p>
-            <span
-              className={[
-                "mt-5 inline-flex rounded-full border px-5 py-2 text-base font-medium",
-                activeCredit ? stateClasses(activeCredit.estadoPago) : "",
-              ].join(" ")}
-            >
-              {activeCredit ? stateLabel(activeCredit.estadoPago) : "Sin credito"}
-            </span>
-
-            <div className="mt-8 h-3 rounded-full bg-[#e1dfdb]">
-              <div
-                className="h-full rounded-full bg-[linear-gradient(90deg,#111317_0%,#ff8a18_100%)]"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-
-            <div className="mt-8 flex items-center justify-between rounded-[28px] border border-[#cfcac4] bg-white p-3 pl-5">
-              <div className="text-left">
-                <p className="text-sm font-medium text-[#666]">Fecha limite</p>
-                <p className="text-lg font-black">
-                  {nextInstallment ? dateLabel(nextInstallment.fechaVencimiento) : "-"}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => activeCredit && void payWithWompi(activeCredit)}
-                disabled={!activeCredit || !payable.length || payingCreditId === activeCredit.id}
-                className="h-16 rounded-[24px] bg-[#ff8a18] px-8 text-lg font-black text-white shadow-[0_14px_28px_rgba(255,138,24,0.25)] disabled:bg-[#dedede] disabled:text-[#999]"
-              >
-                {payingCreditId === activeCredit?.id ? "Abriendo" : "Pagar"}
-              </button>
-            </div>
-          </section>
         </header>
 
-        {notice ? (
-          <div
-            className={[
-              "mx-8 mb-5 rounded-2xl border px-4 py-3 text-sm font-bold",
-              notice.tone === "emerald"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                : "border-red-200 bg-red-50 text-red-700",
-            ].join(" ")}
-          >
-            {notice.text}
-          </div>
-        ) : null}
-
-        <section className="px-8">
-          <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-[24px] bg-[#f8f8f8] p-4 text-center">
-              <p className="text-2xl font-black">{paidCount}</p>
-              <p className="mt-1 text-xs font-bold text-[#858585]">Pagadas</p>
-            </div>
-            <div className="rounded-[24px] bg-[#f8f8f8] p-4 text-center">
-              <p className="text-2xl font-black">{payable.length}</p>
-              <p className="mt-1 text-xs font-bold text-[#858585]">Pendientes</p>
-            </div>
-            <div className="rounded-[24px] bg-[#f8f8f8] p-4 text-center">
-              <p className="text-xl font-black">
-                {activeCredit ? money(getAvailableBalance(activeCredit)) : money(0)}
-              </p>
-              <p className="mt-1 text-xs font-bold text-[#858585]">Disponible</p>
-            </div>
-          </div>
-
-          <div className="mt-8 flex items-center justify-between">
-            <h2 className="text-2xl font-black">Explora</h2>
-          </div>
-          <div className="mt-5 flex gap-5 overflow-x-auto pb-2">
-            <AccessButton
-              icon="$"
-              label="Pagar cuota"
-              onClick={() =>
-                document.getElementById("pago-en-linea")?.scrollIntoView({
-                  behavior: "smooth",
-                })
-              }
-            />
-            <AccessButton
-              icon="P"
-              label="Medios de pago"
-              onClick={() =>
-                document.getElementById("medios-pago")?.scrollIntoView({
-                  behavior: "smooth",
-                })
-              }
-            />
-            <AccessButton
-              icon="C"
-              label="Pagos pendientes"
-              onClick={() =>
-                document.getElementById("plan-pagos")?.scrollIntoView({
-                  behavior: "smooth",
-                })
-              }
-            />
-            <AccessButton
-              icon="H"
-              label="Historial"
-              onClick={() =>
-                document.getElementById("historial")?.scrollIntoView({
-                  behavior: "smooth",
-                })
-              }
-            />
-          </div>
-        </section>
-
-        {activeCredit ? (
-          <section className="mt-8 space-y-5 px-8">
-            <article className="rounded-[30px] bg-[#f3f5ff] p-5">
-              <p className="text-sm font-black text-[#717ab3]">Tu equipo financiado</p>
-              <p className="mt-2 text-2xl font-black text-[#545b91]">
-                {activeCredit.referenciaEquipo || "Equipo financiado"}
-              </p>
-              <p className="mt-3 text-sm font-bold text-[#7a7f9e]">
-                IMEI: {activeCredit.imei || activeCredit.deviceUid || "No registrado"}
-              </p>
-            </article>
-
-            <article
-              id="pago-en-linea"
-              className="rounded-[30px] border border-[#ececec] bg-white p-5 shadow-[0_16px_36px_rgba(17,19,23,0.08)]"
+        <div className="space-y-4 px-5 py-4">
+          {notice ? (
+            <div
+              className={[
+                "rounded-lg border px-4 py-3 text-sm font-bold",
+                notice.tone === "emerald"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-red-200 bg-red-50 text-red-700",
+              ].join(" ")}
             >
-              <h2 className="text-2xl font-black">Pagar cuota</h2>
-              {payable.length ? (
-                <>
-                  <label className="mt-4 block text-sm font-bold text-[#858585]">
-                    Selecciona hasta que cuota deseas pagar
-                  </label>
-                  <select
-                    value={selectedLimit[activeCredit.id] || payable[0]?.numero || ""}
-                    onChange={(event) =>
-                      setSelectedLimit((current) => ({
-                        ...current,
-                        [activeCredit.id]: Number(event.target.value),
-                      }))
-                    }
-                    className="mt-3 h-14 w-full rounded-[22px] border border-[#e4e4e4] bg-[#fafafa] px-4 text-base font-black outline-none"
-                  >
-                    {payable.map((item) => (
-                      <option key={item.numero} value={item.numero}>
-                        Hasta cuota {item.numero} - {money(item.saldoPendiente)}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="mt-4 rounded-[24px] bg-[#111317] p-4 text-white">
-                    <p className="text-sm font-bold text-white/60">Total a pagar</p>
-                    <p className="mt-1 text-3xl font-black">{money(totalToPay)}</p>
-                    <p className="mt-2 text-xs font-bold text-white/55">
-                      Cuotas:{" "}
-                      {selectedCuotas.length
-                        ? selectedCuotas.map((item) => item.numero).join(", ")
-                        : "-"}
+              {notice.text}
+            </div>
+          ) : null}
+
+          {activeCredit ? (
+            <>
+              <section className="rounded-lg bg-[#111317] p-5 text-white shadow-[0_18px_36px_rgba(17,19,23,0.18)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-white/60">Proxima cuota</p>
+                    <p className="mt-2 text-4xl font-black leading-none">
+                      {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
+                    </p>
+                    <p className="mt-3 text-sm font-bold text-white/68">
+                      Cuota {nextInstallment ? nextInstallment.numero : paidCount} de{" "}
+                      {totalCount}
                     </p>
                   </div>
-                  <div className="mt-4">
-                    <PrimaryButton
-                      disabled={payingCreditId === activeCredit.id || totalToPay <= 0}
-                      onClick={() => void payWithWompi(activeCredit)}
-                    >
-                      {payingCreditId === activeCredit.id ? "Abriendo Wompi..." : "Pagar con Wompi"}
-                    </PrimaryButton>
+                  <span
+                    className={[
+                      "shrink-0 rounded-md px-3 py-2 text-xs font-black",
+                      stateClasses(activeCredit.estadoPago),
+                    ].join(" ")}
+                  >
+                    {stateLabel(activeCredit.estadoPago)}
+                  </span>
+                </div>
+
+                <div className="mt-5 grid grid-cols-[1fr_auto] items-end gap-4">
+                  <div>
+                    <p className="text-xs font-bold text-white/55">Fecha limite</p>
+                    <p className="mt-1 text-lg font-black">
+                      {nextInstallment ? dateLabel(nextInstallment.fechaVencimiento) : "-"}
+                    </p>
                   </div>
-                </>
-              ) : (
-                <p className="mt-3 text-sm font-bold text-[#777]">
-                  No tienes cuotas pendientes para pagar.
-                </p>
-              )}
-            </article>
-
-            <article id="medios-pago" className="rounded-[30px] bg-[#f8f8f8] p-5">
-              <h2 className="text-2xl font-black">Medios de pago</h2>
-              <div className="mt-4 grid gap-3">
-                <div className="rounded-[24px] bg-white p-4 shadow-sm">
-                  <p className="text-lg font-black">Efecty</p>
-                  <p className="mt-1 text-sm font-bold text-[#777]">
-                    Pago presencial. Referencia: cedula del cliente.
-                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void payWithWompi(activeCredit)}
+                    disabled={!payable.length || payingCreditId === activeCredit.id}
+                    className="rounded-lg bg-[#a7e66f] px-5 py-3 text-sm font-black text-[#102316] shadow-[0_12px_24px_rgba(111,194,70,0.25)] disabled:bg-white/20 disabled:text-white/45"
+                  >
+                    {payingCreditId === activeCredit.id ? "Abriendo" : "Pagar"}
+                  </button>
                 </div>
-                <div className="rounded-[24px] bg-white p-4 shadow-sm">
-                  <p className="text-lg font-black">Bancolombia Ahorros</p>
-                  <p className="mt-1 text-2xl font-black text-[#111317]">71800000458</p>
+
+                <div className="mt-5">
+                  <div className="h-2 overflow-hidden rounded-full bg-white/15">
+                    <div
+                      className="h-full rounded-full bg-[#a7e66f]"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <div className="mt-2 flex justify-between text-xs font-bold text-white/55">
+                    <span>{paidCount} pagadas</span>
+                    <span>{progress}% completado</span>
+                  </div>
                 </div>
-                <div className="rounded-[24px] bg-white p-4 shadow-sm">
-                  <p className="text-lg font-black">Wompi</p>
-                  <p className="mt-1 text-sm font-bold text-[#777]">
-                    Pago en linea desde la cuota seleccionada.
-                  </p>
+              </section>
+
+              <section className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm">
+                <SectionTitle title="Tu equipo financiado" />
+                <div className="mt-3 grid gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-[#7d8490]">
+                      Referencia
+                    </p>
+                    <p className="mt-1 truncate text-base font-black text-[#171b22]">
+                      {activeCredit.referenciaEquipo || "Equipo financiado"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-[#f6f7f9] px-3 py-3">
+                    <p className="text-xs font-black uppercase text-[#7d8490]">IMEI</p>
+                    <p className="mt-1 break-all text-sm font-black text-[#252a35]">
+                      {activeCredit.imei || activeCredit.deviceUid || "No registrado"}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            </article>
+              </section>
 
-            <article className="rounded-[30px] bg-white p-5 shadow-[0_16px_36px_rgba(17,19,23,0.08)]">
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-black">Mis creditos</h2>
-                <span className="text-sm font-black text-[#ff8a18]">{items.length}</span>
-              </div>
-              <div className="mt-4 grid gap-3">
-                {items.map((credit) => {
-                  const isActive = credit.id === activeCredit.id;
-                  const creditPaid = getPaidInstallments(credit).length;
-                  const creditTotal = credit.cuotas.length;
+              <section className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm">
+                <SectionTitle title="Explora" />
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <QuickAction
+                    label="Pagar cuota"
+                    onClick={() => void payWithWompi(activeCredit)}
+                  >
+                    <CardIcon />
+                  </QuickAction>
+                  <QuickAction
+                    label="Medios de pago"
+                    onClick={() => scrollToSection("medios-pago")}
+                  >
+                    <PaymentsIcon />
+                  </QuickAction>
+                  <QuickAction
+                    label="Pagos pendientes"
+                    onClick={() => scrollToSection("plan-pagos")}
+                  >
+                    <CalendarIcon />
+                  </QuickAction>
+                  <QuickAction
+                    label="Historial"
+                    onClick={() => scrollToSection("historial")}
+                  >
+                    <HistoryIcon />
+                  </QuickAction>
+                </div>
+              </section>
 
-                  return (
-                    <button
-                      key={credit.id}
-                      type="button"
-                      onClick={() => setOpenCreditId(credit.id)}
-                      className={[
-                        "rounded-[24px] p-4 text-left transition",
-                        isActive ? "bg-[#111317] text-white" : "bg-[#f8f8f8] text-[#323337]",
-                      ].join(" ")}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-black">{credit.folio}</p>
-                          <p className="mt-1 truncate text-sm font-bold opacity-70">
-                            {credit.referenciaEquipo || "Equipo financiado"}
-                          </p>
-                        </div>
-                        <span className="shrink-0 text-xs font-black">
-                          {creditPaid}/{creditTotal}
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </article>
+              <section
+                id="plan-pagos"
+                className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm"
+              >
+                <SectionTitle
+                  title="Plan de pagos"
+                  aside={
+                    <span className="text-xs font-black text-[#7d8490]">
+                      {paidCount}/{totalCount}
+                    </span>
+                  }
+                />
+                <div className="mt-3 divide-y divide-[#edf0f4]">
+                  {activeCredit.cuotas.map((item) => {
+                    const isPayable = item.saldoPendiente > 0;
 
-            <article
-              id="plan-pagos"
-              className="relative overflow-hidden rounded-[30px] bg-white px-5 pb-2 pt-20 shadow-[0_16px_36px_rgba(17,19,23,0.08)]"
-            >
-              <div className="absolute -left-20 -top-24 h-48 w-52 rounded-br-[160px] bg-[#ff8a18]" />
-              <h2 className="relative text-2xl font-black">Pagos pendientes</h2>
-              <div className="relative mt-5 divide-y divide-[#e2ded8]">
-                {activeCredit.cuotas.map((item) => {
-                  const isPayable = item.saldoPendiente > 0;
-
-                  return (
-                    <button
-                      key={item.numero}
-                      type="button"
-                      disabled={!isPayable}
-                      onClick={() => {
-                        setSelectedLimit((current) => ({
-                          ...current,
-                          [activeCredit.id]: item.numero,
-                        }));
-                        document
-                          .getElementById("pago-en-linea")
-                          ?.scrollIntoView({ behavior: "smooth" });
-                      }}
-                      className="flex w-full items-center gap-3 py-5 text-left disabled:cursor-default"
-                    >
-                      <span
-                        className={[
-                          "grid h-14 w-14 shrink-0 place-items-center rounded-full text-sm font-black",
-                          installmentIconClass(item),
-                        ].join(" ")}
+                    return (
+                      <button
+                        key={item.numero}
+                        type="button"
+                        disabled={!isPayable}
+                        onClick={() => {
+                          setSelectedLimit((current) => ({
+                            ...current,
+                            [activeCredit.id]: item.numero,
+                          }));
+                        }}
+                        className="flex w-full items-center gap-3 py-3 text-left disabled:cursor-default"
                       >
-                        C{item.numero}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block whitespace-nowrap text-lg font-black text-[#3b3b3b]">
-                          Cuota {item.numero}
+                        <span
+                          className={[
+                            "h-2.5 w-2.5 shrink-0 rounded-full",
+                            installmentDotClass(item),
+                          ].join(" ")}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-black text-[#252a35]">
+                            Cuota {item.numero}
+                          </span>
+                          <span className="mt-1 block text-xs font-bold text-[#8a919d]">
+                            {dateLabel(item.fechaVencimiento)} - {installmentLabel(item)}
+                          </span>
                         </span>
-                        <span className="mt-1 block text-base font-medium text-[#5f5f5f]">
-                          {dateLabel(item.fechaVencimiento)}
-                        </span>
-                      </span>
-                      <span className="shrink-0 text-right">
-                        <span className="flex items-center justify-end gap-2 text-base font-medium text-[#8a8884]">
-                          <span
-                            className={[
-                              "h-3 w-3 rounded-full",
-                              installmentDotClass(item),
-                            ].join(" ")}
-                          />
-                          {installmentLabel(item)}
-                        </span>
-                        <span className="mt-1 block text-lg font-black text-[#3b3b3b]">
+                        <span className="shrink-0 text-right text-sm font-black text-[#252a35]">
                           {money(installmentAmount(item))}
                         </span>
-                      </span>
-                      <span className="shrink-0 text-2xl font-light text-[#5c5a57]">
-                        &gt;
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </article>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
 
-            <article id="historial" className="rounded-[30px] bg-white p-5">
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-black">Transacciones</h2>
-              </div>
-              <div className="mt-4 grid gap-3">
-                {activeCredit.abonos.length ? (
-                  activeCredit.abonos.map((abono) => (
-                    <div
-                      key={abono.id}
-                      className="flex items-center justify-between rounded-[22px] bg-[#f8f8f8] px-4 py-3"
-                    >
+              <section
+                id="medios-pago"
+                className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm"
+              >
+                <SectionTitle title="Medios de pago" />
+                <div className="mt-3 grid gap-3">
+                  <div className="rounded-lg border border-[#edf0f4] bg-[#fffdf1] p-4">
+                    <EfectyLogo />
+                    <div className="mt-4 grid grid-cols-2 gap-3">
                       <div>
-                        <p className="font-black">{abono.metodoPago}</p>
-                        <p className="text-sm font-bold text-[#858585]">
-                          {dateLabel(abono.fechaAbono)}
+                        <p className="text-xs font-black uppercase text-[#7d8490]">
+                          Convenio
+                        </p>
+                        <p className="mt-1 text-lg font-black text-[#171b22]">113950</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-[#7d8490]">
+                          Referencia
+                        </p>
+                        <p className="mt-1 break-all text-lg font-black text-[#171b22]">
+                          {paymentReference}
                         </p>
                       </div>
-                      <p className="font-black">{money(abono.valor)}</p>
                     </div>
-                  ))
-                ) : (
-                  <p className="rounded-[22px] bg-[#f8f8f8] px-4 py-4 text-sm font-bold text-[#777]">
-                    Aun no hay pagos registrados.
-                  </p>
-                )}
-              </div>
-            </article>
-          </section>
-        ) : null}
+                  </div>
 
-        <nav className="fixed bottom-0 left-1/2 z-20 flex w-full max-w-[430px] -translate-x-1/2 items-center justify-around border-t border-[#efefef] bg-white px-8 py-4 shadow-[0_-18px_38px_rgba(17,19,23,0.08)]">
-          <button type="button" className="text-center text-[#111317]">
-            <span className="mx-auto block h-1 w-12 rounded-full bg-[#111317]" />
-            <span className="mt-2 block text-sm font-black">Inicio</span>
+                  <div className="rounded-lg border border-[#edf0f4] bg-white p-4">
+                    <BancolombiaLogo />
+                    <div className="mt-4">
+                      <p className="text-xs font-black uppercase text-[#7d8490]">
+                        Cuenta de ahorros
+                      </p>
+                      <p className="mt-1 text-2xl font-black text-[#171b22]">
+                        71800000458
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-[#edf0f4] bg-white p-4">
+                    <WompiLogo />
+                    <p className="mt-3 text-sm font-bold text-[#737b88]">
+                      Pago en linea con la cuota seleccionada.
+                    </p>
+                    <div className="mt-4">
+                      <PrimaryButton
+                        disabled={payingCreditId === activeCredit.id || !payable.length}
+                        onClick={() => void payWithWompi(activeCredit)}
+                      >
+                        {payingCreditId === activeCredit.id
+                          ? "Abriendo Wompi..."
+                          : "Pagar con Wompi"}
+                      </PrimaryButton>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {items.length > 1 ? (
+                <section className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm">
+                  <SectionTitle
+                    title="Mis creditos"
+                    aside={
+                      <span className="text-xs font-black text-[#4f9b35]">
+                        {items.length}
+                      </span>
+                    }
+                  />
+                  <div className="mt-3 grid gap-2">
+                    {items.map((credit) => {
+                      const isActive = credit.id === activeCredit.id;
+                      const creditPaid = getPaidInstallments(credit).length;
+                      const creditTotal = credit.cuotas.length;
+
+                      return (
+                        <button
+                          key={credit.id}
+                          type="button"
+                          onClick={() => setOpenCreditId(credit.id)}
+                          className={[
+                            "rounded-lg border px-3 py-3 text-left transition",
+                            isActive
+                              ? "border-[#111317] bg-[#111317] text-white"
+                              : "border-[#e7eaf0] bg-[#f8f9fb] text-[#323337]",
+                          ].join(" ")}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-black">{credit.folio}</p>
+                              <p className="mt-1 truncate text-xs font-bold opacity-70">
+                                {credit.referenciaEquipo || "Equipo financiado"}
+                              </p>
+                            </div>
+                            <span className="shrink-0 text-xs font-black">
+                              {creditPaid}/{creditTotal}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : null}
+
+              <section
+                id="historial"
+                className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm"
+              >
+                <SectionTitle title="Historial" />
+                <div className="mt-3 divide-y divide-[#edf0f4]">
+                  {activeCredit.abonos.length ? (
+                    activeCredit.abonos.map((abono) => (
+                      <div
+                        key={abono.id}
+                        className="flex items-center justify-between gap-4 py-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-[#252a35]">
+                            {abono.metodoPago}
+                          </p>
+                          <p className="mt-1 text-xs font-bold text-[#8a919d]">
+                            {dateLabel(abono.fechaAbono)}
+                          </p>
+                        </div>
+                        <p className="shrink-0 text-sm font-black text-[#252a35]">
+                          {money(abono.valor)}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="rounded-lg bg-[#f6f7f9] px-4 py-3 text-sm font-bold text-[#626976]">
+                      Aun no hay pagos registrados.
+                    </p>
+                  )}
+                </div>
+              </section>
+            </>
+          ) : null}
+        </div>
+
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[440px] -translate-x-1/2 grid-cols-3 border-t border-[#e8eaf0] bg-white px-4 py-3 shadow-[0_-10px_26px_rgba(17,19,23,0.08)]">
+          <button type="button" className="rounded-lg px-2 py-2 text-center text-[#111317]">
+            <span className="mx-auto block h-1 w-8 rounded-full bg-[#111317]" />
+            <span className="mt-2 block text-xs font-black">Inicio</span>
           </button>
           <button
             type="button"
-            onClick={() =>
-              document.getElementById("plan-pagos")?.scrollIntoView({ behavior: "smooth" })
-            }
-            className="text-center text-[#8a8a8a]"
+            onClick={() => scrollToSection("plan-pagos")}
+            className="rounded-lg px-2 py-2 text-center text-[#7d8490] active:bg-[#f5f6f8]"
           >
-            <span className="mx-auto grid h-10 w-10 place-items-center rounded-2xl bg-[#f4f4f4] text-sm font-black">
-              P
-            </span>
-            <span className="mt-1 block text-sm font-bold">Plan</span>
+            <span className="block text-xs font-black">Pendientes</span>
+            <span className="mt-1 block text-xs font-bold">{paidCount}/{totalCount}</span>
           </button>
           <button
             type="button"
             onClick={() => activeCredit && void payWithWompi(activeCredit)}
             disabled={!activeCredit || !payable.length || payingCreditId === activeCredit.id}
-            className="grid h-20 w-20 -translate-y-7 place-items-center rounded-full bg-[#ff8a18] text-sm font-black text-white shadow-[0_16px_32px_rgba(255,138,24,0.28)] disabled:bg-[#dedede]"
+            className="rounded-lg bg-[#a7e66f] px-2 py-3 text-center text-xs font-black text-[#102316] shadow-[0_10px_20px_rgba(111,194,70,0.2)] disabled:bg-[#d9dde4] disabled:text-[#7e8490]"
           >
             Pagar
           </button>
