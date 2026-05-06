@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import FinserBrand from "@/app/_components/finser-brand";
+import { useEffect, useState } from "react";
 
 type ClientInstallment = {
   numero: number;
@@ -19,6 +18,8 @@ type ClientCredit = {
   clienteNombre: string;
   clienteDocumento: string | null;
   referenciaEquipo: string | null;
+  imei?: string | null;
+  deviceUid?: string | null;
   fechaCredito: string;
   montoCredito: number;
   valorCuota: number;
@@ -50,6 +51,9 @@ type WompiCheckoutResponse = {
   reference?: string;
 };
 
+const STORAGE_KEY = "finserpay.cliente.documento";
+const WOMPI_PUBLIC_LINK = "https://checkout.wompi.co/l/4banHJ";
+
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
@@ -61,33 +65,14 @@ function money(value: number) {
 }
 
 function dateLabel(value: string | null | undefined) {
-  if (!value) {
-    return "-";
-  }
-
+  if (!value) return "-";
   const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "-";
-  }
-
-  return date.toLocaleDateString("es-CO");
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
 }
 
-function installmentStateLabel(item: ClientInstallment) {
-  return item.estaEnMora ? "MORA" : item.estado;
-}
-
-function installmentStateClasses(item: ClientInstallment) {
-  if (item.estaEnMora) {
-    return "border-[#ffb08a] bg-[#ffefe4] text-[#c85216]";
-  }
-
-  if (item.estado === "PAGO") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-
-  return "border-slate-200 bg-slate-100 text-slate-700";
+function normalizeDocument(value: string) {
+  return value.replace(/\D/g, "");
 }
 
 function getPayableInstallments(credit: ClientCredit) {
@@ -104,30 +89,72 @@ function getAvailableBalance(credit: ClientCredit) {
   return Math.max(0, Number(credit.saldoDisponible ?? credit.totalPagado ?? 0));
 }
 
+function stateLabel(estado: ClientCredit["estadoPago"]) {
+  if (estado === "AL_DIA") return "Al dia";
+  if (estado === "PAGADO") return "Pagado";
+  return "En mora";
+}
+
+function stateClass(estado: ClientCredit["estadoPago"]) {
+  if (estado === "MORA") return "bg-[#fff1ec] text-[#c2410c]";
+  if (estado === "PAGADO") return "bg-[#e8fff4] text-[#047857]";
+  return "bg-[#e7f8ff] text-[#0369a1]";
+}
+
 async function requestJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, { cache: "no-store", ...init });
   const data = (await response.json().catch(() => ({}))) as T;
   return { ok: response.ok, data };
 }
 
+function PrimaryButton({
+  children,
+  disabled,
+  onClick,
+  type = "button",
+}: {
+  children: React.ReactNode;
+  disabled?: boolean;
+  onClick?: () => void;
+  type?: "button" | "submit";
+}) {
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-[#111317] px-5 text-sm font-black text-white shadow-[0_14px_30px_rgba(17,19,23,0.22)] transition hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-60"
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function ClienteConsultaPage() {
   const [documento, setDocumento] = useState("");
+  const [activeDocumento, setActiveDocumento] = useState("");
   const [items, setItems] = useState<ClientCredit[]>([]);
-  const [selectedInstallments, setSelectedInstallments] = useState<Record<number, number[]>>(
-    {}
-  );
   const [openCreditId, setOpenCreditId] = useState<number | null>(null);
-  const [payingCreditId, setPayingCreditId] = useState<number | null>(null);
+  const [selectedLimit, setSelectedLimit] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(false);
+  const [bootstrapped, setBootstrapped] = useState(false);
+  const [payingCreditId, setPayingCreditId] = useState<number | null>(null);
   const [notice, setNotice] = useState<{ text: string; tone: "red" | "emerald" } | null>(
     null
   );
 
-  const consultar = async () => {
+  const consultar = async (rawDocument = documento, silent = false) => {
+    const normalized = normalizeDocument(rawDocument);
+
+    if (normalized.length < 5) {
+      setNotice({ text: "Ingresa una cedula valida.", tone: "red" });
+      return;
+    }
+
     try {
       setLoading(true);
-      setNotice(null);
-      const normalized = documento.replace(/\D/g, "");
+      if (!silent) setNotice(null);
+
       const result = await requestJson<ClientCreditsResponse>(
         `/api/clientes/creditos?documento=${encodeURIComponent(normalized)}`
       );
@@ -137,24 +164,33 @@ export default function ClienteConsultaPage() {
       }
 
       const nextItems = result.data.items || [];
+      const nextOpenId = nextItems[0]?.id ?? null;
+
+      localStorage.setItem(STORAGE_KEY, normalized);
+      setDocumento(normalized);
+      setActiveDocumento(normalized);
       setItems(nextItems);
-      setOpenCreditId(null);
-      setSelectedInstallments(
+      setOpenCreditId(nextOpenId);
+      setSelectedLimit(
         Object.fromEntries(
           nextItems
             .map((credit) => {
               const nextInstallment = getPayableInstallments(credit)[0];
-              return nextInstallment ? [credit.id, [nextInstallment.numero]] : null;
+              return nextInstallment ? [credit.id, nextInstallment.numero] : null;
             })
-            .filter((item): item is [number, number[]] => Boolean(item))
+            .filter((item): item is [number, number] => Boolean(item))
         )
       );
-      setNotice({
-        text: result.data.items?.length
-          ? "Consulta cargada correctamente."
-          : "No encontramos creditos con esa cedula.",
-        tone: result.data.items?.length ? "emerald" : "red",
-      });
+      setNotice(
+        silent
+          ? null
+          : {
+              text: nextItems.length
+                ? "Consulta cargada."
+                : "No encontramos creditos con esa cedula.",
+              tone: nextItems.length ? "emerald" : "red",
+            }
+      );
     } catch (error) {
       setItems([]);
       setOpenCreditId(null);
@@ -167,43 +203,34 @@ export default function ClienteConsultaPage() {
     }
   };
 
-  const updateSelectedInstallments = (
-    credit: ClientCredit,
-    numero: number,
-    checked: boolean
-  ) => {
-    const payableNumbers = getPayableInstallments(credit).map((item) => item.numero);
-    const currentSet = new Set(selectedInstallments[credit.id] || []);
-    const nextNumbers = checked
-      ? payableNumbers.filter((item) => item <= numero)
-      : payableNumbers.filter((item) => item < numero && currentSet.has(item));
+  useEffect(() => {
+    const savedDocument = normalizeDocument(localStorage.getItem(STORAGE_KEY) || "");
+    if (savedDocument) {
+      setDocumento(savedDocument);
+      void consultar(savedDocument, true).finally(() => setBootstrapped(true));
+      return;
+    }
 
-    setSelectedInstallments((current) => ({
-      ...current,
-      [credit.id]: nextNumbers,
-    }));
+    setBootstrapped(true);
+  }, []);
+
+  const cuotasSeleccionadas = (credit: ClientCredit) => {
+    const limit = selectedLimit[credit.id] || 0;
+    return getPayableInstallments(credit).filter((item) => item.numero <= limit);
   };
 
-  const selectedTotal = (credit: ClientCredit) => {
-    const selected = new Set(selectedInstallments[credit.id] || []);
-
-    return getPayableInstallments(credit)
-      .filter((item) => selected.has(item.numero))
-      .reduce((sum, item) => sum + item.saldoPendiente, 0);
-  };
+  const selectedTotal = (credit: ClientCredit) =>
+    cuotasSeleccionadas(credit).reduce((sum, item) => sum + item.saldoPendiente, 0);
 
   const payWithWompi = async (credit: ClientCredit) => {
+    const cuotaNumeros = cuotasSeleccionadas(credit).map((item) => item.numero);
+
+    if (!cuotaNumeros.length) {
+      setNotice({ text: "Selecciona una cuota para pagar.", tone: "red" });
+      return;
+    }
+
     try {
-      const cuotaNumeros = selectedInstallments[credit.id] || [];
-
-      if (!cuotaNumeros.length) {
-        setNotice({
-          text: "Selecciona al menos una cuota para pagar.",
-          tone: "red",
-        });
-        return;
-      }
-
       setPayingCreditId(credit.id);
       setNotice(null);
 
@@ -211,452 +238,395 @@ export default function ClienteConsultaPage() {
         "/api/clientes/wompi-checkout",
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             creditoId: credit.id,
             cuotaNumeros,
-            documento: credit.clienteDocumento || documento,
+            documento: credit.clienteDocumento || activeDocumento || documento,
           }),
         }
       );
 
       if (!result.ok || !result.data.checkoutUrl) {
-        throw new Error(result.data.error || "No se pudo preparar el pago con Wompi");
+        window.location.assign(WOMPI_PUBLIC_LINK);
+        return;
       }
 
       window.location.assign(result.data.checkoutUrl);
-    } catch (error) {
-      setNotice({
-        text: error instanceof Error ? error.message : "No se pudo abrir Wompi",
-        tone: "red",
-      });
+    } catch {
+      window.location.assign(WOMPI_PUBLIC_LINK);
     } finally {
       setPayingCreditId(null);
     }
   };
 
+  const forgetDocument = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    setDocumento("");
+    setActiveDocumento("");
+    setItems([]);
+    setOpenCreditId(null);
+    setNotice(null);
+  };
+
+  const hasSavedSession = Boolean(activeDocumento && items.length);
+
   return (
-    <main className="min-h-screen bg-[#eaf4f2] px-4 py-8 text-slate-950">
-      <section className="mx-auto max-w-6xl overflow-hidden rounded-[34px] border border-emerald-950/10 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.10)]">
-        <div className="relative overflow-hidden bg-[linear-gradient(135deg,#10231f_0%,#145a5a_58%,#18a7b5_100%)] px-6 py-7 text-white md:px-8">
-          <div className="relative z-10">
-            <FinserBrand dark />
-            <div className="mt-7 grid gap-6 lg:grid-cols-[0.85fr_1.15fr] lg:items-end">
+    <main className="min-h-screen overflow-x-hidden bg-[#f4f7f6] text-[#101319]">
+      <div className="mx-auto flex min-h-screen w-full max-w-full flex-col bg-[#f4f7f6] shadow-[0_0_60px_rgba(15,23,42,0.08)] sm:max-w-[430px]">
+        <header className="sticky top-0 z-20 border-b border-black/5 bg-[#111317] px-5 pb-5 pt-4 text-white">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <img
+                src="/icons/finserpay-client-192.png"
+                alt="FINSER PAY"
+                className="h-11 w-11 rounded-2xl object-cover"
+              />
               <div>
-                <p className="inline-flex rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-emerald-50">
-                  Portal clientes
+                <p className="text-[10px] font-black uppercase tracking-[0.26em] text-white/55">
+                  Portal cliente
                 </p>
-                <h1 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">
-                  Consulta tus cuotas
-                </h1>
-                <p className="mt-3 max-w-xl text-sm leading-6 text-emerald-50">
-                  Revisa tus creditos, cuotas pendientes y pagos realizados en un solo lugar.
-                </p>
-              </div>
-
-              <div className="fp-client-query rounded-[28px] border border-white/20 bg-white/95 p-4 text-slate-950 shadow-[0_24px_60px_rgba(8,28,24,0.24)] md:p-5">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#0f766e]">
-                      Identificacion
-                    </p>
-                    <h2 className="mt-1 text-xl font-black">Ingresa tu cedula</h2>
-                  </div>
-                  <span className="inline-flex w-fit rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-700">
-                    Consulta segura
-                  </span>
-                </div>
-
-                <div className="mt-5 rounded-[24px] border border-[#f6d047] bg-[#fff9dc] p-4 shadow-[0_16px_34px_rgba(214,146,10,0.14)]">
-                  <div className="grid gap-4 sm:grid-cols-[104px_1fr] sm:items-center">
-                    <div className="flex justify-center sm:justify-start">
-                      <img
-                        src="/branding/efecty-logo.svg"
-                        alt="Efecty"
-                        className="h-24 w-24 rounded-full shadow-[0_12px_24px_rgba(214,146,10,0.22)]"
-                      />
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#a84405]">
-                        Pago en punto fisico
-                      </p>
-                      <h3 className="mt-1 text-lg font-black text-[#171717]">
-                        Tambien puedes pagar por EFECTY
-                      </h3>
-                      <div className="mt-3 grid gap-2 text-sm font-bold text-slate-800">
-                        <p>
-                          Convenio:{" "}
-                          <span className="font-black text-[#d71920]">
-                            113950 FINANSERVICES
-                          </span>
-                        </p>
-                        <p>
-                          Referencia:{" "}
-                          <span className="font-black text-[#d71920]">
-                            Numero de cedula
-                          </span>
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
-                  <label className="sr-only" htmlFor="cliente-documento">
-                    Numero de cedula
-                  </label>
-                  <div className="fp-client-input-shell relative rounded-[22px] border border-slate-200 bg-white shadow-[0_14px_30px_rgba(15,23,42,0.08)]">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-[#10231f] px-3 py-1 text-[11px] font-black text-white">
-                      CC
-                    </span>
-                    <input
-                      id="cliente-documento"
-                      value={documento}
-                      onChange={(event) =>
-                        setDocumento(event.target.value.replace(/\D/g, ""))
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" && !loading) {
-                          void consultar();
-                        }
-                      }}
-                      inputMode="numeric"
-                      placeholder="Numero de cedula"
-                      className="h-14 w-full rounded-[22px] border-0 bg-transparent py-3 pl-16 pr-4 text-lg font-black text-slate-950 outline-none placeholder:text-slate-400"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void consultar()}
-                    disabled={loading}
-                    className="rounded-[22px] bg-[#101319] px-7 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(15,23,42,0.28)] transition hover:-translate-y-0.5 hover:bg-[#145a5a] disabled:opacity-70"
-                  >
-                    {loading ? "Consultando..." : "Consultar"}
-                  </button>
-                </div>
-
-                <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                  {["Cedula", "Credito", "Pago"].map((label, index) => (
-                    <div
-                      key={label}
-                      className="fp-client-step rounded-2xl border border-slate-200 bg-[#f8fbfb] px-3 py-2"
-                      style={{ animationDelay: `${index * 80}ms` }}
-                    >
-                      <span className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">
-                        Paso {index + 1}
-                      </span>
-                      <p className="mt-1 text-sm font-black text-slate-950">{label}</p>
-                    </div>
-                  ))}
-                </div>
+                <h1 className="text-lg font-black tracking-[0.04em]">FINSER PAY</h1>
               </div>
             </div>
+            {activeDocumento ? (
+              <button
+                type="button"
+                onClick={forgetDocument}
+                className="rounded-full border border-white/15 px-3 py-2 text-[11px] font-black text-white/80"
+              >
+                Cambiar
+              </button>
+            ) : null}
           </div>
-        </div>
 
-        {notice ? (
-          <div
-            className={[
-              "mx-6 mt-5 rounded-2xl border px-4 py-3 text-sm font-semibold md:mx-8",
-              notice.tone === "emerald"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                : "border-red-200 bg-red-50 text-red-700",
-            ].join(" ")}
+          <div className="mt-5 rounded-[28px] bg-[linear-gradient(135deg,#2f3339_0%,#14161a_60%,#06070a_100%)] p-5 shadow-[0_20px_45px_rgba(0,0,0,0.26)]">
+            <p className="w-fit rounded-full bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white/70">
+              Soy cliente
+            </p>
+            <h2 className="mt-4 text-2xl font-black leading-tight">
+              Tus cuotas en una vista simple.
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-white/72">
+              Consulta tu credito, mira cuanto has pagado y elige como pagar.
+            </p>
+          </div>
+        </header>
+
+        <section className="flex-1 space-y-4 px-5 py-5">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void consultar();
+            }}
+            className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_18px_40px_rgba(15,23,42,0.06)]"
           >
-            {notice.text}
-          </div>
-        ) : null}
-
-        <div className="space-y-5 px-6 py-6 md:px-8">
-          {!items.length ? (
-            <div className="fp-client-empty rounded-[28px] border border-dashed border-emerald-200 bg-[#f8fdfb] p-5 shadow-[0_12px_32px_rgba(15,23,42,0.04)] md:p-6">
-              <div className="grid gap-4 md:grid-cols-[auto_1fr] md:items-center">
-                <div className="grid h-16 w-16 place-items-center rounded-[22px] bg-[#10231f] text-2xl font-black text-white shadow-[0_14px_30px_rgba(15,35,31,0.22)]">
-                  CC
-                </div>
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#0f766e]">
-                    Estado de cuenta
-                  </p>
-                  <h3 className="mt-2 text-2xl font-black text-slate-950">
-                    Tu informacion aparecera aqui
-                  </h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Veras tus creditos cerrados y podras abrir cada uno para revisar cuotas y pagar.
-                  </p>
-                </div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#0f766e]">
+                  Acceso
+                </p>
+                <h3 className="mt-1 text-xl font-black">Soy cliente</h3>
               </div>
+              {hasSavedSession ? (
+                <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-700">
+                  Activo
+                </span>
+              ) : null}
+            </div>
+
+            <div className="mt-4 grid gap-3">
+              <label htmlFor="documento" className="text-xs font-black text-slate-500">
+                Cedula
+              </label>
+              <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-[#f8faf9] px-4">
+                <span className="text-xs font-black text-slate-400">CC</span>
+                <input
+                  id="documento"
+                  value={documento}
+                  onChange={(event) =>
+                    setDocumento(normalizeDocument(event.target.value))
+                  }
+                  inputMode="numeric"
+                  placeholder="Numero de cedula"
+                  className="h-14 w-full bg-transparent py-4 text-lg font-black outline-none placeholder:text-slate-300"
+                />
+              </div>
+              <PrimaryButton disabled={loading || !bootstrapped} type="submit">
+                {loading ? "Consultando..." : "Consultar credito"}
+              </PrimaryButton>
+            </div>
+          </form>
+
+          {notice ? (
+            <div
+              className={[
+                "rounded-2xl border px-4 py-3 text-sm font-bold",
+                notice.tone === "emerald"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-red-200 bg-red-50 text-red-700",
+              ].join(" ")}
+            >
+              {notice.text}
             </div>
           ) : null}
 
+          {!items.length ? (
+            <section className="rounded-[28px] border border-dashed border-slate-300 bg-white p-5 text-center">
+              <p className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#111317] text-sm font-black text-white">
+                FP
+              </p>
+              <h3 className="mt-4 text-xl font-black">Consulta lista</h3>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                Ingresa tu cedula una vez. La app la recordara en este celular.
+              </p>
+            </section>
+          ) : null}
+
+          {items.length ? (
+            <section className="grid grid-cols-3 gap-2">
+              <div className="rounded-2xl bg-white p-3 shadow-sm">
+                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">
+                  Creditos
+                </p>
+                <p className="mt-1 text-xl font-black">{items.length}</p>
+              </div>
+              <div className="rounded-2xl bg-white p-3 shadow-sm">
+                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">
+                  Pagadas
+                </p>
+                <p className="mt-1 text-xl font-black">
+                  {items.reduce((sum, credit) => sum + getPaidInstallments(credit).length, 0)}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-white p-3 shadow-sm">
+                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">
+                  Debes
+                </p>
+                <p className="mt-1 text-xl font-black">
+                  {items.reduce((sum, credit) => sum + getPayableInstallments(credit).length, 0)}
+                </p>
+              </div>
+            </section>
+          ) : null}
+
           {items.map((credit) => {
-            const payableInstallments = getPayableInstallments(credit);
-            const selected = new Set(selectedInstallments[credit.id] || []);
-            const selectedInstallmentsData = payableInstallments.filter((item) =>
-              selected.has(item.numero)
-            );
-            const totalToPay = selectedTotal(credit);
-            const selectedNumbers = Array.from(selected).sort((a, b) => a - b);
-            const paymentReference = selectedNumbers.length
-              ? `${credit.folio}-CUOTAS-${selectedNumbers.join("-")}`
-              : credit.folio;
-            const paidInstallments = getPaidInstallments(credit);
-            const totalInstallments = credit.cuotas.length;
-            const paidCount = paidInstallments.length;
-            const availableBalance = getAvailableBalance(credit);
+            const paidCount = getPaidInstallments(credit).length;
+            const payable = getPayableInstallments(credit);
+            const totalCount = credit.cuotas.length;
+            const progress = totalCount ? Math.round((paidCount / totalCount) * 100) : 0;
             const isOpen = openCreditId === credit.id;
-            const progressPercent = totalInstallments
-              ? Math.round((paidCount / totalInstallments) * 100)
-              : 0;
-            const nextInstallment = payableInstallments[0];
+            const nextInstallment = payable[0] || null;
+            const selectedCuotas = cuotasSeleccionadas(credit);
+            const totalToPay = selectedTotal(credit);
+            const selectedText = selectedCuotas.length
+              ? selectedCuotas.map((item) => item.numero).join(", ")
+              : "-";
 
             return (
-            <section
-              key={credit.id}
-              className="fp-client-result rounded-[30px] border border-slate-200 bg-[#fbfdfb] p-5 shadow-[0_18px_44px_rgba(15,23,42,0.07)]"
-            >
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">
-                    Credito {credit.folio}
-                  </p>
-                  <h2 className="mt-2 text-2xl font-black">{credit.clienteNombre}</h2>
-                  <p className="mt-1 text-sm text-slate-600">
-                    {credit.referenciaEquipo || "Equipo financiado"} | {credit.sedeNombre}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span
-                    className={[
-                      "inline-flex rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.16em]",
-                      credit.estadoPago === "MORA"
-                        ? "border-red-200 bg-red-50 text-red-700"
-                        : credit.estadoPago === "PAGADO"
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border-sky-200 bg-sky-50 text-sky-700",
-                    ].join(" ")}
-                  >
-                    {credit.estadoPago === "AL_DIA" ? "Al dia" : credit.estadoPago}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setOpenCreditId(isOpen ? null : credit.id)}
-                    className="inline-flex items-center justify-center rounded-full bg-[#101319] px-4 py-2 text-xs font-black text-white shadow-[0_12px_24px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-[#145a5a]"
-                  >
-                    {isOpen ? "Cerrar credito" : "Abrir credito"}
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-5 rounded-[24px] border border-emerald-100 bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#0f766e]">
-                      Avance del credito
-                    </p>
-                    <p className="mt-1 text-sm font-bold text-slate-700">
-                      {paidCount} de {totalInstallments || 0} cuotas pagas realizadas
-                    </p>
-                  </div>
-                  <div className="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-sm font-black text-emerald-800">
-                    {progressPercent}%
-                  </div>
-                </div>
-                <div className="mt-3 h-3 overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className="h-full rounded-full bg-[linear-gradient(90deg,#12b886_0%,#18a7b5_70%,#b7e45c_100%)] transition-all duration-500"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
-                  <p className="text-xs font-black uppercase tracking-[0.14em] text-emerald-700">
-                    Saldo disponible
-                  </p>
-                  <p className="mt-2 text-xl font-black">{money(availableBalance)}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                  <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-                    Cuotas pagas
-                  </p>
-                  <p className="mt-2 text-xl font-black">
-                    {paidCount}
-                    <span className="text-sm font-bold text-slate-500">
-                      {" "}
-                      / {totalInstallments || 0}
+              <article
+                key={credit.id}
+                className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.06)]"
+              >
+                <button
+                  type="button"
+                  onClick={() => setOpenCreditId(isOpen ? null : credit.id)}
+                  className="w-full p-4 text-left"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#0f766e]">
+                        {credit.folio}
+                      </p>
+                      <h3 className="mt-2 text-xl font-black capitalize">
+                        {credit.clienteNombre.toLowerCase()}
+                      </h3>
+                      <p className="mt-1 text-sm font-bold text-slate-500">
+                        {credit.referenciaEquipo || "Equipo financiado"}
+                      </p>
+                    </div>
+                    <span
+                      className={[
+                        "shrink-0 rounded-full px-3 py-1 text-[11px] font-black",
+                        stateClass(credit.estadoPago),
+                      ].join(" ")}
+                    >
+                      {stateLabel(credit.estadoPago)}
                     </span>
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                  <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-                    Proxima cuota
-                  </p>
-                  <p className="mt-2 text-xl font-black">
-                    {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
-                  </p>
-                </div>
-              </div>
-
-              {isOpen ? (
-              <>
-              <div className="mt-5 rounded-[24px] border border-[#d7e3e5] bg-white p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="flex-1">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#1d5b63]">
-                      Pago en linea
-                    </p>
-                    <h3 className="mt-2 text-2xl font-black text-slate-950">
-                      Selecciona la cuota a pagar
-                    </h3>
-                    <p className="mt-2 text-sm leading-6 text-slate-700">
-                      Referencia sugerida:{" "}
-                      <span className="font-bold text-slate-950">{paymentReference}</span>
-                    </p>
                   </div>
 
-                  {payableInstallments.length ? (
-                    <div className="w-full lg:max-w-[420px]">
-                      <div className="rounded-[22px] border border-[#0f5654] bg-[#0f5654] px-5 py-4 text-white shadow-[0_16px_40px_rgba(15,86,84,0.22)]">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#98ece0]">
-                              Cuotas seleccionadas
-                            </p>
-                            <p className="mt-2 text-2xl font-black">
-                              {selectedNumbers.length
-                                ? selectedNumbers.join(", ")
-                                : "Ninguna"}
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    <div className="rounded-2xl bg-[#f5f7f7] p-3">
+                      <p className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-400">
+                        Pagadas
+                      </p>
+                      <p className="mt-1 text-lg font-black">
+                        {paidCount}/{totalCount}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-[#f5f7f7] p-3">
+                      <p className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-400">
+                        Debes
+                      </p>
+                      <p className="mt-1 text-lg font-black">{payable.length}</p>
+                    </div>
+                    <div className="rounded-2xl bg-emerald-50 p-3">
+                      <p className="text-[9px] font-black uppercase tracking-[0.12em] text-emerald-600">
+                        Disponible
+                      </p>
+                      <p className="mt-1 text-lg font-black">
+                        {money(getAvailableBalance(credit))}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full bg-[#111317] transition-all"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                </button>
+
+                {isOpen ? (
+                  <div className="border-t border-slate-100 px-4 pb-4">
+                    <div className="mt-4 rounded-2xl bg-[#111317] p-4 text-white">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/50">
+                        Proxima cuota
+                      </p>
+                      <div className="mt-2 flex items-end justify-between gap-3">
+                        <div>
+                          <p className="text-3xl font-black">
+                            {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
+                          </p>
+                          <p className="mt-1 text-xs font-bold text-white/55">
+                            {nextInstallment
+                              ? `Cuota ${nextInstallment.numero} vence ${dateLabel(nextInstallment.fechaVencimiento)}`
+                              : "Credito sin saldo pendiente"}
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black">
+                          {progress}%
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3">
+                      <div className="rounded-2xl border border-slate-200 p-4">
+                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                          Equipo
+                        </p>
+                        <p className="mt-1 text-sm font-black">
+                          {credit.referenciaEquipo || "Equipo financiado"}
+                        </p>
+                        <p className="mt-1 text-xs font-bold text-slate-500">
+                          IMEI: {credit.imei || credit.deviceUid || "No registrado"}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 p-4">
+                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                          Medios de pago
+                        </p>
+                        <div className="mt-3 grid gap-2">
+                          <div className="rounded-2xl bg-[#fff8dc] p-3">
+                            <p className="text-sm font-black">Efecty</p>
+                            <p className="mt-1 text-xs font-bold text-slate-600">
+                              Pago presencial. Referencia: cedula del cliente.
                             </p>
                           </div>
-                          <div className="rounded-full bg-[#ff7a30] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
-                            {selectedInstallmentsData.some((item) => item.estaEnMora)
-                              ? "Con mora"
-                              : "Al dia"}
+                          <div className="rounded-2xl bg-[#eef6ff] p-3">
+                            <p className="text-sm font-black">Bancolombia Ahorros</p>
+                            <p className="mt-1 text-lg font-black">71800000458</p>
                           </div>
-                        </div>
-                        <div className="mt-4 rounded-[18px] bg-[#111111] px-4 py-3">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8ff0df]">
-                            Valor a pagar
-                          </p>
-                          <p className="mt-1 text-2xl font-black">
-                            {money(totalToPay)}
-                          </p>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {selectedInstallmentsData.length ? (
-                            selectedInstallmentsData.map((item) => (
-                              <span
-                                key={item.numero}
-                                className={[
-                                  "inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em]",
-                                  item.estaEnMora
-                                    ? "border-[#ffb08a] bg-[#ffefe4] text-[#ff7a30]"
-                                    : item.estado === "PAGO"
-                                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                      : "border-white/20 bg-white/10 text-white",
-                                ].join(" ")}
-                              >
-                                Cuota {item.numero}: {installmentStateLabel(item)}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-xs font-semibold text-[#c6e8e3]">
-                              Marca una cuota para ver el detalle del pago.
-                            </span>
-                          )}
+                          <div className="rounded-2xl bg-[#f1e9ff] p-3">
+                            <p className="text-sm font-black">Wompi</p>
+                            <p className="mt-1 text-xs font-bold text-slate-600">
+                              Paga en linea con el valor de la cuota seleccionada.
+                            </p>
+                          </div>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void payWithWompi(credit)}
-                        disabled={payingCreditId === credit.id || totalToPay <= 0}
-                        className="mt-4 inline-flex w-full items-center justify-center rounded-[18px] bg-[#6d28d9] px-5 py-3.5 text-sm font-bold text-white shadow-[0_16px_34px_rgba(109,40,217,0.28)] transition hover:-translate-y-0.5 hover:bg-[#5b21b6] disabled:opacity-70"
-                      >
-                        {payingCreditId === credit.id ? "Abriendo..." : "Pagar con Wompi"}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">
-                      No tienes cuotas pendientes para pagar.
-                    </div>
-                  )}
-                </div>
-              </div>
 
-              <div className="mt-5 overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="bg-[#171717] text-[11px] uppercase tracking-[0.16em] text-white">
-                    <tr>
-                      <th className="px-4 py-4">Cuota</th>
-                      <th className="px-4 py-4">Fecha</th>
-                      <th className="px-4 py-4">Valor</th>
-                      <th className="px-4 py-4">Abonado</th>
-                      <th className="px-4 py-4">Saldo pendiente</th>
-                      <th className="px-4 py-4">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {credit.cuotas.map((item, index) => (
-                      <tr
-                        key={item.numero}
-                        className={index % 2 === 0 ? "bg-[#eef8f9]" : "bg-white"}
-                      >
-                        <td className="px-4 py-3.5 font-bold text-slate-950">
-                          <label className="flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={selected.has(item.numero)}
-                              disabled={item.saldoPendiente <= 0 || payingCreditId === credit.id}
-                              onChange={(event) =>
-                                updateSelectedInstallments(
-                                  credit,
-                                  item.numero,
-                                  event.target.checked
-                                )
-                              }
-                              className="h-5 w-5 rounded border-slate-300 text-[#145a5a] focus:ring-[#145a5a]"
-                            />
-                            <span>{item.numero}</span>
+                      {payable.length ? (
+                        <div className="rounded-2xl border border-slate-200 p-4">
+                          <label className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                            Elegir cuota a pagar
                           </label>
-                        </td>
-                        <td className="px-4 py-3.5 text-slate-700">
-                          {dateLabel(item.fechaVencimiento)}
-                        </td>
-                        <td className="px-4 py-3.5 text-slate-700">
-                          {money(item.valorProgramado)}
-                        </td>
-                        <td className="px-4 py-3.5 text-slate-700">
-                          {money(item.valorAbonado)}
-                        </td>
-                        <td className="px-4 py-3.5 font-bold text-slate-950">
-                          {money(item.saldoPendiente)}
-                        </td>
-                        <td className="px-4 py-3.5">
-                          <span
-                            className={[
-                              "inline-flex rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em]",
-                              installmentStateClasses(item),
-                            ].join(" ")}
+                          <select
+                            value={selectedLimit[credit.id] || payable[0]?.numero || ""}
+                            onChange={(event) =>
+                              setSelectedLimit((current) => ({
+                                ...current,
+                                [credit.id]: Number(event.target.value),
+                              }))
+                            }
+                            className="mt-3 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black outline-none"
                           >
-                            {installmentStateLabel(item)}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              </>
-              ) : null}
-            </section>
+                            {payable.map((item) => (
+                              <option key={item.numero} value={item.numero}>
+                                Pagar hasta cuota {item.numero} - {money(item.saldoPendiente)}
+                              </option>
+                            ))}
+                          </select>
+
+                          <div className="mt-3 rounded-2xl bg-[#f5f7f7] p-3">
+                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                              Cuotas seleccionadas
+                            </p>
+                            <p className="mt-1 text-sm font-black">{selectedText}</p>
+                            <p className="mt-2 text-2xl font-black">{money(totalToPay)}</p>
+                          </div>
+
+                          <PrimaryButton
+                            disabled={payingCreditId === credit.id || totalToPay <= 0}
+                            onClick={() => void payWithWompi(credit)}
+                          >
+                            {payingCreditId === credit.id ? "Abriendo Wompi..." : "Pagar con Wompi"}
+                          </PrimaryButton>
+                        </div>
+                      ) : null}
+
+                      <details className="rounded-2xl border border-slate-200 p-4">
+                        <summary className="cursor-pointer text-sm font-black">
+                          Ver plan de pagos
+                        </summary>
+                        <div className="mt-3 grid gap-2">
+                          {credit.cuotas.map((item) => (
+                            <div
+                              key={item.numero}
+                              className="flex items-center justify-between gap-3 rounded-2xl bg-[#f7f9f9] px-3 py-3"
+                            >
+                              <div>
+                                <p className="text-sm font-black">Cuota {item.numero}</p>
+                                <p className="text-xs font-bold text-slate-500">
+                                  {dateLabel(item.fechaVencimiento)}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-sm font-black">
+                                  {money(item.saldoPendiente)}
+                                </p>
+                                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
+                                  {item.saldoPendiente <= 0
+                                    ? "Pagada"
+                                    : item.estaEnMora
+                                      ? "Mora"
+                                      : "Pendiente"}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+                ) : null}
+              </article>
             );
           })}
-        </div>
-      </section>
+        </section>
+      </div>
     </main>
   );
 }

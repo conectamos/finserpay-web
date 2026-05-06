@@ -36,6 +36,8 @@ export async function GET(req: Request) {
         referenciaEquipo: true,
         equipoMarca: true,
         equipoModelo: true,
+        imei: true,
+        deviceUid: true,
         montoCredito: true,
         valorCuota: true,
         plazoMeses: true,
@@ -92,6 +94,8 @@ export async function GET(req: Request) {
         referenciaEquipo:
           credit.referenciaEquipo ||
           [credit.equipoMarca, credit.equipoModelo].filter(Boolean).join(" "),
+        imei: credit.imei,
+        deviceUid: credit.deviceUid,
         fechaCredito: credit.fechaCredito.toISOString(),
         montoCredito: Number(credit.montoCredito || 0),
         valorCuota: Number(credit.valorCuota || 0),
