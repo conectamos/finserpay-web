@@ -613,6 +613,13 @@ export default function ClienteConsultaPage() {
   const canSubmit = !loading;
   const firstName = activeCredit ? getFirstName(activeCredit.clienteNombre) : "";
   const paymentReference = activeCredit?.clienteDocumento || activeDocumento || documento;
+  const lastHistoryPayment = activeCredit?.abonos[0] || null;
+  const historyPaymentCount = activeCredit?.abonos.length || 0;
+  const historyPaymentCountLabel = `${historyPaymentCount} ${
+    historyPaymentCount === 1 ? "pago" : "pagos"
+  }`;
+  const historyTotalPaid = activeCredit?.totalPagado || 0;
+  const historyBalance = activeCredit?.saldoPendiente ?? pendingAmount;
   const confirmCredit =
     items.find((item) => item.id === confirmPaymentCreditId) || null;
   const confirmInstallments = confirmCredit ? cuotasSeleccionadas(confirmCredit) : [];
@@ -1278,20 +1285,60 @@ export default function ClienteConsultaPage() {
 
                   {activePanel === "history" ? (
                     <>
-                      <SectionTitle title="Historial" />
-                      <div className="mt-3 divide-y divide-[#edf0f4]">
+                      <SectionTitle
+                        title="Historial"
+                        aside={
+                          <span className="rounded-md bg-[#effbe6] px-2 py-1 text-xs font-black text-[#3f7d2d]">
+                            {historyPaymentCountLabel}
+                          </span>
+                        }
+                      />
+
+                      <div className="mt-3 rounded-lg bg-[#111317] p-4 text-white">
+                        <p className="text-xs font-black uppercase text-white/55">
+                          Total pagado
+                        </p>
+                        <p className="mt-1 text-3xl font-black leading-none">
+                          {money(historyTotalPaid)}
+                        </p>
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                          <div className="rounded-md bg-white/8 px-3 py-2">
+                            <p className="text-[11px] font-bold text-white/55">
+                              Ultimo pago
+                            </p>
+                            <p className="mt-1 truncate text-sm font-black">
+                              {lastHistoryPayment
+                                ? dateLabel(lastHistoryPayment.fechaAbono)
+                                : "Sin pagos"}
+                            </p>
+                          </div>
+                          <div className="rounded-md bg-white/8 px-3 py-2">
+                            <p className="text-[11px] font-bold text-white/55">
+                              Saldo
+                            </p>
+                            <p className="mt-1 truncate text-sm font-black">
+                              {money(historyBalance)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid gap-2">
                         {activeCredit.abonos.length ? (
                           activeCredit.abonos.map((abono) => (
                             <div
                               key={abono.id}
-                              className="flex items-center justify-between gap-4 py-3"
+                              className="grid grid-cols-[44px_1fr_auto] items-center gap-3 rounded-lg bg-[#f9fafb] px-3 py-3"
                             >
+                              <div className="grid h-11 w-11 place-items-center rounded-md bg-[#eef9fb] text-xs font-black text-[#087989]">
+                                {dateLabel(abono.fechaAbono)}
+                              </div>
                               <div className="min-w-0">
                                 <p className="truncate text-sm font-black text-[#252a35]">
                                   {abono.metodoPago}
                                 </p>
                                 <p className="mt-1 text-xs font-bold text-[#8a919d]">
-                                  {dateLabel(abono.fechaAbono)}
+                                  Pago registrado
                                 </p>
                               </div>
                               <p className="shrink-0 text-sm font-black text-[#252a35]">
@@ -1300,9 +1347,21 @@ export default function ClienteConsultaPage() {
                             </div>
                           ))
                         ) : (
-                          <p className="rounded-lg bg-[#f6f7f9] px-4 py-3 text-sm font-bold text-[#626976]">
-                            Aun no hay pagos registrados.
-                          </p>
+                          <div className="rounded-lg bg-[#f6f7f9] p-4">
+                            <p className="text-sm font-black text-[#252a35]">
+                              Aun no hay pagos registrados.
+                            </p>
+                            <p className="mt-1 text-xs font-bold text-[#7d8490]">
+                              Cuando hagas un pago, aparecera aqui.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => openPanel("payments")}
+                              className="mt-3 min-h-11 w-full rounded-lg bg-[#a7e66f] px-4 text-sm font-black text-[#102316]"
+                            >
+                              Ver medios de pago
+                            </button>
+                          </div>
                         )}
                       </div>
                     </>
