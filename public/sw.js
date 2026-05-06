@@ -1,4 +1,4 @@
-const CACHE_NAME = "finserpay-client-v1";
+const CACHE_NAME = "finserpay-client-v2";
 const STATIC_ASSETS = [
   "/clientes",
   "/icons/finserpay-client-192.png",
