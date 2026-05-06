@@ -106,6 +106,28 @@ function stateClasses(estado: ClientCredit["estadoPago"]) {
   return "border-[#18a7b5] text-[#087989]";
 }
 
+function installmentLabel(item: ClientInstallment) {
+  if (item.saldoPendiente <= 0) return "Pagado";
+  if (item.estaEnMora) return "Atrasado";
+  return "Pendiente";
+}
+
+function installmentDotClass(item: ClientInstallment) {
+  if (item.saldoPendiente <= 0) return "bg-[#18bd7b]";
+  if (item.estaEnMora) return "bg-[#ff4868]";
+  return "bg-[#ff8a18]";
+}
+
+function installmentIconClass(item: ClientInstallment) {
+  if (item.saldoPendiente <= 0) return "bg-[#c8c5bf] text-white";
+  if (item.estaEnMora) return "bg-[#ffd2a3] text-[#ff6b4a]";
+  return "bg-[#ffd2a3] text-[#ff8a18]";
+}
+
+function installmentAmount(item: ClientInstallment) {
+  return item.saldoPendiente > 0 ? item.saldoPendiente : item.valorProgramado;
+}
+
 async function requestJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, { cache: "no-store", ...init });
   const data = (await response.json().catch(() => ({}))) as T;
@@ -531,7 +553,7 @@ export default function ClienteConsultaPage() {
             />
             <AccessButton
               icon="C"
-              label="Plan de pagos"
+              label="Pagos pendientes"
               onClick={() =>
                 document.getElementById("plan-pagos")?.scrollIntoView({
                   behavior: "smooth",
@@ -674,37 +696,70 @@ export default function ClienteConsultaPage() {
               </div>
             </article>
 
-            <details
+            <article
               id="plan-pagos"
-              className="rounded-[30px] bg-white p-5 shadow-[0_16px_36px_rgba(17,19,23,0.08)]"
+              className="relative overflow-hidden rounded-[30px] bg-white px-5 pb-2 pt-20 shadow-[0_16px_36px_rgba(17,19,23,0.08)]"
             >
-              <summary className="cursor-pointer text-2xl font-black">Plan de pagos</summary>
-              <div className="mt-4 grid gap-3">
-                {activeCredit.cuotas.map((item) => (
-                  <div
-                    key={item.numero}
-                    className="flex items-center justify-between gap-3 rounded-[22px] bg-[#f8f8f8] px-4 py-3"
-                  >
-                    <div>
-                      <p className="font-black">Cuota {item.numero}</p>
-                      <p className="text-sm font-bold text-[#858585]">
-                        {dateLabel(item.fechaVencimiento)}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-black">{money(item.saldoPendiente)}</p>
-                      <p className="text-xs font-black text-[#858585]">
-                        {item.saldoPendiente <= 0
-                          ? "Pagada"
-                          : item.estaEnMora
-                            ? "Mora"
-                            : "Pendiente"}
-                      </p>
-                    </div>
-                  </div>
-                ))}
+              <div className="absolute -left-20 -top-24 h-48 w-52 rounded-br-[160px] bg-[#ff8a18]" />
+              <h2 className="relative text-2xl font-black">Pagos pendientes</h2>
+              <div className="relative mt-5 divide-y divide-[#e2ded8]">
+                {activeCredit.cuotas.map((item) => {
+                  const isPayable = item.saldoPendiente > 0;
+
+                  return (
+                    <button
+                      key={item.numero}
+                      type="button"
+                      disabled={!isPayable}
+                      onClick={() => {
+                        setSelectedLimit((current) => ({
+                          ...current,
+                          [activeCredit.id]: item.numero,
+                        }));
+                        document
+                          .getElementById("pago-en-linea")
+                          ?.scrollIntoView({ behavior: "smooth" });
+                      }}
+                      className="flex w-full items-center gap-3 py-5 text-left disabled:cursor-default"
+                    >
+                      <span
+                        className={[
+                          "grid h-14 w-14 shrink-0 place-items-center rounded-full text-sm font-black",
+                          installmentIconClass(item),
+                        ].join(" ")}
+                      >
+                        C{item.numero}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block whitespace-nowrap text-lg font-black text-[#3b3b3b]">
+                          Cuota {item.numero}
+                        </span>
+                        <span className="mt-1 block text-base font-medium text-[#5f5f5f]">
+                          {dateLabel(item.fechaVencimiento)}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-right">
+                        <span className="flex items-center justify-end gap-2 text-base font-medium text-[#8a8884]">
+                          <span
+                            className={[
+                              "h-3 w-3 rounded-full",
+                              installmentDotClass(item),
+                            ].join(" ")}
+                          />
+                          {installmentLabel(item)}
+                        </span>
+                        <span className="mt-1 block text-lg font-black text-[#3b3b3b]">
+                          {money(installmentAmount(item))}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-2xl font-light text-[#5c5a57]">
+                        &gt;
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
-            </details>
+            </article>
 
             <article id="historial" className="rounded-[30px] bg-white p-5">
               <div className="flex items-center justify-between">
