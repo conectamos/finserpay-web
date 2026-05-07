@@ -16,6 +16,7 @@ const LEGACY_PAGE_PREFIXES = [
 ];
 
 const ADMIN_ONLY_DASHBOARD_PREFIXES = [
+  "/dashboard/cartera",
   "/dashboard/catalogo-equipos",
   "/dashboard/equality",
   "/dashboard/integraciones",
