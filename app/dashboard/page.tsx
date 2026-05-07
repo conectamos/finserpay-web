@@ -468,7 +468,7 @@ function AdminOperationCard() {
           href="/dashboard/creditos?mode=simulator"
           className={[
             actionClass,
-            "border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100",
+            "border border-[#d9c691] bg-[#fbf8ef] text-[#6d5a22] hover:bg-white",
           ].join(" ")}
         >
           Simulador
@@ -612,18 +612,18 @@ function DashboardTile({
 }: DashboardTileProps) {
   const toneMap: Record<DashboardTone, string> = {
     dark: "border-[#24262d] bg-[#15171d] text-white",
-    orange: "border-[#ffd2a4] bg-[#fff7ee] text-[#3a342d]",
-    blue: "border-[#dbe4ff] bg-[#f4f7ff] text-[#303847]",
-    green: "border-[#ccefe4] bg-[#f3fffa] text-[#253a35]",
-    light: "border-[#e6dfd2] bg-white text-[#303847]",
+    orange: "border-[#d9c691] bg-[#fbf8ef] text-[#22201a]",
+    blue: "border-[#d7dce2] bg-[#f3f5f4] text-[#20242a]",
+    green: "border-[#cce7df] bg-[#eff8f5] text-[#173c38]",
+    light: "border-[#d7dce2] bg-white text-[#20242a]",
     danger: "border-[#ffd0d0] bg-[#fff7f7] text-[#3c3030]",
   };
   const iconTone: Record<DashboardTone, string> = {
     dark: "bg-white/10 text-white border-white/12",
-    orange: "bg-[#ff8a16] text-white border-[#ff8a16]",
-    blue: "bg-[#506bb4] text-white border-[#506bb4]",
-    green: "bg-[#126b60] text-white border-[#126b60]",
-    light: "bg-[#f4f0e7] text-[#303847] border-[#e2d8c9]",
+    orange: "bg-[#bfa46a] text-white border-[#bfa46a]",
+    blue: "bg-[#20242a] text-white border-[#20242a]",
+    green: "bg-[#0f766e] text-white border-[#0f766e]",
+    light: "bg-[#f4f5f4] text-[#20242a] border-[#d7dce2]",
     danger: "bg-[#111318] text-white border-[#111318]",
   };
 
@@ -669,10 +669,10 @@ function DashboardButton({
 }) {
   const toneMap: Record<DashboardTone, string> = {
     dark: "border-[#111318] bg-[#111318] text-white",
-    orange: "border-[#ff8a16] bg-[#ff8a16] text-white",
-    blue: "border-[#506bb4] bg-[#506bb4] text-white",
-    green: "border-[#126b60] bg-[#126b60] text-white",
-    light: "border-[#e0d8ca] bg-white text-[#303847]",
+    orange: "border-[#0f766e] bg-[#0f766e] text-white",
+    blue: "border-[#20242a] bg-[#20242a] text-white",
+    green: "border-[#0f766e] bg-[#0f766e] text-white",
+    light: "border-[#d7dce2] bg-white text-[#20242a]",
     danger: "border-[#ffd0d0] bg-white text-[#c01b1b]",
   };
 
@@ -904,13 +904,13 @@ export default async function DashboardPage() {
 
   if (!admin) {
     return (
-      <div className="fp-dashboard-app min-h-screen text-[#303847]">
+      <div className="fp-dashboard-app min-h-screen text-[#20242a]">
         <main className="mx-auto max-w-5xl px-4 py-5 sm:px-6 lg:py-8">
-          <header className="flex flex-col gap-4 rounded-[32px] border border-[#e6dfd2] bg-white/90 p-4 shadow-[0_18px_48px_rgba(48,56,71,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+          <header className="flex flex-col gap-4 rounded-[32px] border border-[#d7dce2] bg-white/92 p-4 shadow-[0_18px_48px_rgba(17,19,24,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-4">
               <DashboardLogoBadge compact />
               <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#ff8a16]">
+                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#6d5a22]">
                   Panel comercial
                 </p>
                 <p className="mt-1 text-sm font-bold text-[#687080]">
@@ -920,7 +920,7 @@ export default async function DashboardPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-[#e6dfd2] bg-white shadow-[0_10px_24px_rgba(48,56,71,0.08)]">
+              <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-[#d7dce2] bg-white shadow-[0_10px_24px_rgba(17,19,24,0.08)]">
                 {sellerAvatarSrc ? (
                   <img
                     src={sellerAvatarSrc ?? undefined}
@@ -936,24 +936,24 @@ export default async function DashboardPage() {
           </header>
 
           {sellerSession?.debeCambiarPin && (
-            <section className="mt-5 rounded-[30px] border border-[#ffd2a4] bg-[#fff7ee] p-5 shadow-[0_16px_38px_rgba(48,56,71,0.06)]">
-              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#b85f00]">
+            <section className="mt-5 rounded-[30px] border border-[#d9c691] bg-[#fbf8ef] p-5 shadow-[0_16px_38px_rgba(17,19,24,0.06)]">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#6d5a22]">
                 Seguridad
               </p>
-              <h2 className="mt-2 text-2xl font-black text-[#303847]">
+              <h2 className="mt-2 text-2xl font-black text-[#20242a]">
                 Cambia tu PIN inicial
               </h2>
               <DashboardButton href="/dashboard/pin" label="Actualizar PIN" tone="orange" />
             </section>
           )}
 
-          <section className="mt-5 overflow-hidden rounded-[38px] border border-[#eadfcd] bg-white p-6 shadow-[0_24px_70px_rgba(48,56,71,0.08)] sm:p-8">
+          <section className="mt-5 overflow-hidden rounded-[38px] border border-[#d7dce2] bg-white p-6 shadow-[0_24px_70px_rgba(17,19,24,0.08)] sm:p-8">
             <div className="grid gap-6 lg:grid-cols-[1fr_280px] lg:items-center">
               <div>
-                <div className="inline-flex rounded-full border border-[#ffd2a4] bg-[#fff7ee] px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-[#b85f00]">
+                <div className="inline-flex rounded-full border border-[#d9c691] bg-[#fbf8ef] px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-[#6d5a22]">
                   Inicio
                 </div>
-                <h1 className="mt-5 text-4xl font-black leading-[1.05] tracking-tight text-[#303847] sm:text-5xl">
+                <h1 className="mt-5 text-4xl font-black leading-[1.05] tracking-tight text-[#20242a] sm:text-5xl">
                   Hola, {nombreCorto}
                 </h1>
                 <p className="mt-4 max-w-xl text-sm leading-6 text-[#687080]">
@@ -971,11 +971,11 @@ export default async function DashboardPage() {
                 </div>
               </div>
 
-              <div className="rounded-[30px] border border-[#ccefe4] bg-[#f3fffa] p-5">
-                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#126b60]">
+              <div className="rounded-[30px] border border-[#cce7df] bg-[#eff8f5] p-5">
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#0f766e]">
                   Perfil activo
                 </p>
-                <p className="mt-3 text-2xl font-black text-[#303847]">
+                <p className="mt-3 text-2xl font-black text-[#20242a]">
                   {sellerSession?.nombre}
                 </p>
                 <p className="mt-2 text-sm font-bold text-[#687080]">
@@ -988,9 +988,9 @@ export default async function DashboardPage() {
           {sellerIsSupervisor && (
             <section
               id="busqueda-rapida"
-              className="mt-5 rounded-[34px] border border-[#e6dfd2] bg-white p-5 shadow-[0_18px_48px_rgba(48,56,71,0.07)]"
+              className="mt-5 rounded-[34px] border border-[#d7dce2] bg-white p-5 shadow-[0_18px_48px_rgba(17,19,24,0.07)]"
             >
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#126b60]">
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
                 Busqueda rapida
               </p>
               <form action={sellerSearchHref} className="mt-4 flex flex-col gap-3 sm:flex-row">
@@ -998,7 +998,7 @@ export default async function DashboardPage() {
                   type="text"
                   name="search"
                   placeholder="Cedula, IMEI o folio"
-                  className="min-h-14 flex-1 rounded-2xl border border-[#e0d8ca] bg-[#fffdf8] px-5 text-base text-[#303847] outline-none transition focus:border-[#ff8a16] focus:ring-4 focus:ring-[#ff8a16]/15"
+                  className="min-h-14 flex-1 rounded-2xl border border-[#d7dce2] bg-[#fbfbf7] px-5 text-base text-[#20242a] outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#0f766e]/15"
                 />
                 <button
                   type="submit"
@@ -1351,8 +1351,8 @@ export default async function DashboardPage() {
       ],
     },
     {
-      accent: "bg-sky-500",
-      badge: "border-sky-200 bg-sky-50 text-sky-700",
+      accent: "bg-[#20242a]",
+      badge: "border-[#d7dce2] bg-[#f3f5f4] text-[#20242a]",
       eyebrow: "Cartera",
       title: "Abonos y recaudo",
       description:
@@ -1369,14 +1369,14 @@ export default async function DashboardPage() {
   ];
 
   return (
-    <div className="fp-dashboard-app min-h-screen text-[#303847]">
+    <div className="fp-dashboard-app min-h-screen text-[#20242a]">
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:py-8">
-        <header className="fp-admin-topbar flex flex-col gap-4 rounded-[34px] border border-[#e6dfd2] bg-white/88 p-4 shadow-[0_18px_48px_rgba(48,56,71,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+        <header className="fp-admin-topbar flex flex-col gap-4 rounded-[34px] border border-[#d7dce2] bg-white/90 p-4 shadow-[0_18px_48px_rgba(17,19,24,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
             <DashboardLogoBadge compact />
-            <div className="hidden h-10 w-px bg-[#e6dfd2] sm:block" />
+            <div className="hidden h-10 w-px bg-[#d7dce2] sm:block" />
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#ff8a16]">
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#6d5a22]">
                 Panel admin
               </p>
               <p className="mt-1 text-sm font-bold text-[#687080]">
@@ -1388,15 +1388,15 @@ export default async function DashboardPage() {
         </header>
 
         <section className="fp-admin-home mt-5 grid gap-5 lg:grid-cols-[1.25fr_0.75fr]">
-          <div className="relative overflow-hidden rounded-[38px] border border-[#eadfcd] bg-white p-6 shadow-[0_24px_70px_rgba(48,56,71,0.08)] sm:p-8">
-            <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[#ff8a16]/16" />
-            <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-[#506bb4]/12" />
+          <div className="relative overflow-hidden rounded-[38px] border border-[#d7dce2] bg-white p-6 shadow-[0_24px_70px_rgba(17,19,24,0.08)] sm:p-8">
+            <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[#bfa46a]/14" />
+            <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-[#0f766e]/10" />
 
             <div className="relative">
-              <div className="inline-flex rounded-full border border-[#ffd2a4] bg-[#fff7ee] px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-[#b85f00]">
+              <div className="inline-flex rounded-full border border-[#d9c691] bg-[#fbf8ef] px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-[#6d5a22]">
                 Inicio rapido
               </div>
-              <h1 className="mt-5 max-w-2xl text-4xl font-black leading-[1.05] tracking-tight text-[#303847] sm:text-5xl">
+              <h1 className="mt-5 max-w-2xl text-4xl font-black leading-[1.05] tracking-tight text-[#20242a] sm:text-5xl">
                 Hola, {nombreUsuario.split(" ")[0] || nombreUsuario}. Elige una accion.
               </h1>
               <p className="mt-4 max-w-xl text-sm leading-6 text-[#687080]">
@@ -1411,12 +1411,12 @@ export default async function DashboardPage() {
             </div>
           </div>
 
-          <aside className="grid gap-3 rounded-[34px] border border-[#e6dfd2] bg-[#fffaf2] p-5 shadow-[0_18px_48px_rgba(48,56,71,0.06)]">
+          <aside className="grid gap-3 rounded-[34px] border border-[#d7dce2] bg-[#fbf8ef] p-5 shadow-[0_18px_48px_rgba(17,19,24,0.06)]">
             <div className="rounded-[26px] bg-white px-5 py-4">
               <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#8a909b]">
                 Creditos
               </p>
-              <p className="mt-2 text-4xl font-black text-[#303847]">
+              <p className="mt-2 text-4xl font-black text-[#20242a]">
                 {adminStats?.[0] ?? 0}
               </p>
             </div>
@@ -1424,15 +1424,15 @@ export default async function DashboardPage() {
               <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#8a909b]">
                 Abonos activos
               </p>
-              <p className="mt-2 text-4xl font-black text-[#303847]">
+              <p className="mt-2 text-4xl font-black text-[#20242a]">
                 {adminStats?.[1] ?? 0}
               </p>
             </div>
-            <div className="rounded-[26px] border border-[#ccefe4] bg-[#f3fffa] px-5 py-4">
-              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#126b60]">
+            <div className="rounded-[26px] border border-[#cce7df] bg-[#eff8f5] px-5 py-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#0f766e]">
                 Estado
               </p>
-              <p className="mt-2 text-lg font-black text-[#303847]">
+              <p className="mt-2 text-lg font-black text-[#20242a]">
                 Operacion activa
               </p>
             </div>
@@ -1440,17 +1440,17 @@ export default async function DashboardPage() {
         </section>
 
         <section className="mt-5 grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-[34px] border border-[#e6dfd2] bg-white p-5 shadow-[0_18px_48px_rgba(48,56,71,0.07)]">
+          <div className="rounded-[34px] border border-[#d7dce2] bg-white p-5 shadow-[0_18px_48px_rgba(17,19,24,0.07)]">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#126b60]">
+                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
                   Gestion
                 </p>
-                <h2 className="mt-3 text-3xl font-black tracking-tight text-[#303847]">
+                <h2 className="mt-3 text-3xl font-black tracking-tight text-[#20242a]">
                   Administracion
                 </h2>
               </div>
-              <span className="h-3 w-3 rounded-full bg-[#12b886] shadow-[0_0_0_8px_rgba(18,184,134,0.12)]" />
+              <span className="h-3 w-3 rounded-full bg-[#0f766e] shadow-[0_0_0_8px_rgba(15,118,110,0.12)]" />
             </div>
             <p className="mt-3 text-sm leading-6 text-[#687080]">
               Sedes, usuarios, catalogo y parametros del credito quedan juntos.
