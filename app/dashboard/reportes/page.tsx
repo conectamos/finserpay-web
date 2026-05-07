@@ -13,6 +13,11 @@ const reportCards = [
     description: "Ve los pagos dia a dia, cuanto se recaudo y cuanto sigue pendiente por cobrar.",
   },
   {
+    href: "/dashboard/cartera",
+    title: "Cartera",
+    description: "Revisa creditos activos, pagos, mora por edades y lectura completa de riesgo.",
+  },
+  {
     href: "/dashboard/sedes",
     title: "Puntos de venta",
     description: "Crea sedes y administra el acceso base de cada punto de venta.",

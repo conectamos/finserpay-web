@@ -789,6 +789,7 @@ export default async function DashboardPage() {
     ...(admin
       ? [
           { href: "/dashboard/reportes", label: "Reportes admin" },
+          { href: "/dashboard/cartera", label: "Cartera" },
           { href: "/dashboard/usuarios", label: "Vendedores" },
           { href: "/dashboard/sedes", label: "Sedes" },
           { href: "/dashboard/catalogo-equipos", label: "Catalogo de equipos" },
@@ -1404,9 +1405,10 @@ export default async function DashboardPage() {
               </p>
             </div>
 
-            <div className="relative mt-7 grid gap-3 sm:grid-cols-3">
+            <div className="relative mt-7 grid gap-3 sm:grid-cols-4">
               <DashboardButton href="/dashboard/creditos?mode=create-client" label="Nuevo credito" tone="orange" />
               <DashboardButton href="/dashboard/abonos" label="Recibir abono" tone="dark" />
+              <DashboardButton href="/dashboard/cartera" label="Cartera" tone="green" />
               <DashboardButton href="/dashboard/reportes" label="Ver reportes" tone="light" />
             </div>
           </div>
@@ -1479,6 +1481,14 @@ export default async function DashboardPage() {
               description="Buscar cliente y registrar cuota."
               icon="payments"
               tone="green"
+            />
+            <DashboardTile
+              href="/dashboard/cartera"
+              eyebrow="Salud cartera"
+              title="Cartera"
+              description="Mora, pagos y riesgo financiero."
+              icon="credit"
+              tone="light"
             />
           </div>
         </section>
