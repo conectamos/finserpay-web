@@ -12,6 +12,13 @@ build
 .vercel
 .turbo
 tsconfig.tsbuildinfo
+android-client
+.android-build-tools
+dist-apk
+*.apk
+*.aab
+.codex-*.png
+.github
 README.md
 DEPLOYMENT-RAILWAY.md
 CLAUDE.md
