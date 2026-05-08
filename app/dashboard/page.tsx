@@ -763,7 +763,18 @@ export default async function DashboardPage() {
 
   const adminStats = admin
     ? await Promise.all([
-        prisma.credito.count(),
+        prisma.credito.count({
+          where: {
+            estado: {
+              not: "ANULADO",
+            },
+          },
+        }),
+        prisma.credito.count({
+          where: {
+            estado: "ANULADO",
+          },
+        }),
         prisma.creditoAbono.count({
           where: {
             estado: {
@@ -771,7 +782,17 @@ export default async function DashboardPage() {
             },
           },
         }),
-      ])
+        prisma.creditoAbono.count({
+          where: {
+            estado: "ANULADO",
+          },
+        }),
+      ]).then(([creditosActivos, creditosAnulados, abonosActivos, recaudosAnulados]) => ({
+        abonosActivos,
+        creditosActivos,
+        creditosAnulados,
+        recaudosAnulados,
+      }))
     : null;
 
   if (!admin && !sellerSession) {
@@ -1417,10 +1438,18 @@ export default async function DashboardPage() {
           <aside className="grid gap-3 rounded-[34px] border border-[#d7dce2] bg-[#fbf8ef] p-5 shadow-[0_18px_48px_rgba(17,19,24,0.06)]">
             <div className="rounded-[26px] bg-white px-5 py-4">
               <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#8a909b]">
-                Creditos
+                Creditos activos
               </p>
               <p className="mt-2 text-4xl font-black text-[#20242a]">
-                {adminStats?.[0] ?? 0}
+                {adminStats?.creditosActivos ?? 0}
+              </p>
+            </div>
+            <div className="rounded-[26px] border border-red-100 bg-red-50 px-5 py-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-red-700">
+                Creditos anulados
+              </p>
+              <p className="mt-2 text-4xl font-black text-red-800">
+                {adminStats?.creditosAnulados ?? 0}
               </p>
             </div>
             <div className="rounded-[26px] bg-white px-5 py-4">
@@ -1428,7 +1457,15 @@ export default async function DashboardPage() {
                 Abonos activos
               </p>
               <p className="mt-2 text-4xl font-black text-[#20242a]">
-                {adminStats?.[1] ?? 0}
+                {adminStats?.abonosActivos ?? 0}
+              </p>
+            </div>
+            <div className="rounded-[26px] border border-red-100 bg-red-50 px-5 py-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-red-700">
+                Recaudos anulados
+              </p>
+              <p className="mt-2 text-4xl font-black text-red-800">
+                {adminStats?.recaudosAnulados ?? 0}
               </p>
             </div>
             <div className="rounded-[26px] border border-[#cce7df] bg-[#eff8f5] px-5 py-4">
