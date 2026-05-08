@@ -4724,68 +4724,102 @@ export default function CreditFactoryConsole({
             </div>
           </section>
         ) : (
-          <section className="fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-              <div className="max-w-3xl">
-                <FinserBrand />
-                <div className="mt-4 inline-flex rounded-full border border-[#c7dbe0] bg-[#f7fbfa] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#145a5a]">
-                  {heroEyebrow}
-                </div>
-                <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">
-                  {heroTitle}
-                </h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                  {heroDescription}
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-3 lg:items-end">
-                <div className="flex flex-wrap gap-2">
-                  <Link
-                    href="/dashboard"
-                    className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                  >
-                    Volver al dashboard
-                  </Link>
-                  {canViewSavedCredits && (
-                    <>
-                      <Link
-                        href="/dashboard/integraciones"
-                        className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
-                      >
-                        Ver integraciones
-                      </Link>
-                      <Link
-                        href={
-                          paymentsView
-                            ? "/dashboard/creditos?mode=create-client"
-                            : lookupMode
-                              ? "/dashboard/abonos"
-                              : "/dashboard/abonos"
-                        }
-                        className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
-                      >
-                        {paymentsView ? "Ir a crear cliente" : "Ir a abonos"}
-                      </Link>
-                    </>
-                  )}
+          <section
+            className={[
+              "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6",
+              simulatorMode ? "fp-simulator-hero" : "",
+            ].join(" ")}
+          >
+            {simulatorMode ? (
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                  <FinserBrand compact showTagline={false} />
+                  <div className="hidden h-10 w-px bg-[#e8decb] sm:block" />
+                  <div>
+                    <div className="inline-flex rounded-full border border-[#e6d6bd] bg-[#faf7ef] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#7a5c20]">
+                      Simulador
+                    </div>
+                    <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
+                      Calcula cuotas
+                    </h1>
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                     {initialSession.sedeNombre}
                   </span>
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
-                    {initialSession.rolNombre}
-                  </span>
-                  {initialSeller ? (
-                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
-                      {initialSeller.nombre}
-                    </span>
-                  ) : null}
+                  <Link
+                    href="/dashboard"
+                    className="inline-flex justify-center rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Volver
+                  </Link>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-3xl">
+                  <FinserBrand />
+                  <div className="mt-4 inline-flex rounded-full border border-[#c7dbe0] bg-[#f7fbfa] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#145a5a]">
+                    {heroEyebrow}
+                  </div>
+                  <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">
+                    {heroTitle}
+                  </h1>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                    {heroDescription}
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-3 lg:items-end">
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      href="/dashboard"
+                      className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      Volver al dashboard
+                    </Link>
+                    {canViewSavedCredits && (
+                      <>
+                        <Link
+                          href="/dashboard/integraciones"
+                          className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
+                        >
+                          Ver integraciones
+                        </Link>
+                        <Link
+                          href={
+                            paymentsView
+                              ? "/dashboard/creditos?mode=create-client"
+                              : lookupMode
+                                ? "/dashboard/abonos"
+                                : "/dashboard/abonos"
+                          }
+                          className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
+                        >
+                          {paymentsView ? "Ir a crear cliente" : "Ir a abonos"}
+                        </Link>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                      {initialSession.sedeNombre}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                      {initialSession.rolNombre}
+                    </span>
+                    {initialSeller ? (
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                        {initialSeller.nombre}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -4913,14 +4947,14 @@ export default function CreditFactoryConsole({
               <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">
-                    {simulatorMode ? "Simulador" : "Flujo de venta"}
+                    {simulatorMode ? "Calculo rapido" : "Flujo de venta"}
                   </p>
                   <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-                    {simulatorMode ? "Equipo y plan financiero" : "Nueva venta en 5 pasos"}
+                    {simulatorMode ? "Equipo e inicial" : "Nueva venta en 5 pasos"}
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
                     {simulatorMode
-                      ? "Selecciona el equipo para revisar inicial, credito autorizado y valor por cuota."
+                      ? "Elige modelo, inicial y plazo."
                       : (
                           <>
                             Paso actual: <span className="font-semibold text-slate-950">{activeFactoryStep.label}</span>
@@ -5843,16 +5877,17 @@ export default function CreditFactoryConsole({
                         {simulatorMode ? "Simulador" : "Paso 2"}
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        {simulatorMode ? "Equipo, inicial y cuotas" : "Equipo y plan financiero"}
+                        {simulatorMode ? "Equipo y cuotas" : "Equipo y plan financiero"}
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {simulatorMode
-                          ? "Selecciona un equipo y revisa el valor de inicial, credito autorizado, plazo y cuotas."
+                          ? "Selecciona equipo, inicial y plazo."
                           : "Captura el equipo, define la inicial y confirma la cuota que vera el cliente."}
                       </p>
                       <div
                         className={[
                           "mt-3 inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]",
+                          simulatorMode ? "hidden" : "",
                           creditDocumentException
                             ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                             : "border-slate-200 bg-slate-50 text-slate-500",
@@ -5865,7 +5900,7 @@ export default function CreditFactoryConsole({
                       className={[
                         "inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
                         simulatorMode
-                          ? "border-sky-200 bg-sky-50 text-sky-700"
+                          ? "hidden"
                           : stepEquipoReady
                           ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                           : "border-amber-200 bg-amber-50 text-amber-700",
@@ -9290,7 +9325,7 @@ export default function CreditFactoryConsole({
         <section
           className={[
             "mt-8 rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] p-6 shadow-[0_18px_50px_rgba(15,23,42,0.07)]",
-            paymentsView || createClientMode || lookupMode ? "hidden" : "",
+            paymentsView || createClientMode || lookupMode || simulatorMode ? "hidden" : "",
           ].join(" ")}
         >
           <div className="inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">

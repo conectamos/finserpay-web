@@ -269,6 +269,18 @@ body {
   color: #6b7280;
 }
 
+.fp-simulator-hero {
+  padding: 16px 20px !important;
+  border-radius: 28px !important;
+}
+
+.fp-simulator-hero h1 {
+  max-width: none;
+  color: #20242a;
+  font-size: clamp(1.45rem, 2vw, 2rem);
+  line-height: 1.05;
+}
+
 .fp-seller-hero .fp-kicker,
 .fp-seller-hero [class*="tracking-[0.22em]"] {
   border-color: rgba(191, 164, 106, 0.32);
@@ -421,6 +433,10 @@ body {
   .fp-seller-hero a {
     min-width: 0 !important;
     width: 100%;
+  }
+
+  .fp-simulator-hero a {
+    width: auto !important;
   }
 
   .fp-seller-flow-intro h2 {
