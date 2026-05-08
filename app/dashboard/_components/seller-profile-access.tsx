@@ -20,6 +20,12 @@ type SellerAccessItem = {
   avatarKey?: string | null;
 };
 
+type SedeAccessItem = {
+  id: number;
+  nombre: string;
+  codigo: string | null;
+};
+
 type SellerVisualKind = "vendedor" | "supervisor";
 
 function resolveSellerVisualKind(seller: SellerAccessItem): SellerVisualKind {
@@ -385,6 +391,8 @@ export default function SellerProfileAccess({
   const [pin, setPin] = useState("");
   const [mensaje, setMensaje] = useState("");
   const [abriendo, setAbriendo] = useState(false);
+  const [selectingSede, setSelectingSede] = useState(false);
+  const [availableSedes, setAvailableSedes] = useState<SedeAccessItem[]>([]);
 
   const filteredSellers = useMemo(() => {
     const normalized = search.trim().toLowerCase();
@@ -401,7 +409,7 @@ export default function SellerProfileAccess({
     );
   }, [search, sellers]);
 
-  const openSellerProfile = async () => {
+  const openSellerProfile = async (sedeId?: number) => {
     if (!selectedSeller) {
       return;
     }
@@ -418,11 +426,14 @@ export default function SellerProfileAccess({
         body: JSON.stringify({
           vendedorId: selectedSeller.id,
           pin,
+          ...(sedeId ? { sedeId } : {}),
         }),
       });
 
       const data = (await response.json()) as {
         error?: string;
+        requiresSedeSelection?: boolean;
+        availableSedes?: SedeAccessItem[];
         mustChangePin?: boolean;
       };
 
@@ -431,8 +442,16 @@ export default function SellerProfileAccess({
         return;
       }
 
+      if (data.requiresSedeSelection) {
+        setAvailableSedes(data.availableSedes || []);
+        setSelectingSede(true);
+        return;
+      }
+
       setPin("");
       setSelectedSeller(null);
+      setSelectingSede(false);
+      setAvailableSedes([]);
       router.replace(data.mustChangePin ? "/dashboard/pin" : "/dashboard");
       router.refresh();
     } catch {
@@ -539,6 +558,8 @@ export default function SellerProfileAccess({
                 onClick={() => {
                   setMensaje("");
                   setPin("");
+                  setSelectingSede(false);
+                  setAvailableSedes([]);
                   setSelectedSeller(seller);
                 }}
                 className="group relative overflow-hidden rounded-[22px] border border-zinc-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_64%,#eef3f8_100%)] px-3 py-3 text-left shadow-[0_10px_22px_rgba(15,23,42,0.06)] transition duration-200 hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-[0_16px_28px_rgba(15,23,42,0.10)]"
@@ -586,12 +607,16 @@ export default function SellerProfileAccess({
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="relative text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                  Acceso al perfil
+                  {selectingSede ? "Sede de venta" : "Acceso al perfil"}
                 </p>
                 <h2 className="relative mt-2 text-3xl font-black tracking-tight text-slate-950">
-                  Ingresa tu PIN
+                  {selectingSede ? "Donde esta realizando la venta?" : "Ingresa tu PIN"}
                 </h2>
-                <p className="relative mt-2 text-sm text-slate-500">{selectedSeller.nombre}</p>
+                <p className="relative mt-2 text-sm text-slate-500">
+                  {selectingSede
+                    ? "El credito quedara registrado en la sede que elijas."
+                    : selectedSeller.nombre}
+                </p>
               </div>
 
               <div className="relative hidden sm:block">
@@ -600,31 +625,69 @@ export default function SellerProfileAccess({
 
               <button
                 type="button"
-                onClick={() => setSelectedSeller(null)}
+                onClick={() => {
+                  setSelectedSeller(null);
+                  setSelectingSede(false);
+                  setAvailableSedes([]);
+                }}
                 className="relative rounded-full border border-zinc-300 bg-white/70 px-3 py-1 text-sm font-semibold text-zinc-600 transition hover:bg-white"
               >
                 X
               </button>
             </div>
 
-            <div className="relative mt-6">
-              <input
-                type="password"
-                value={pin}
-                onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                placeholder="PIN de 4 a 6 digitos"
-                className="w-full rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-center text-2xl tracking-[0.3em] text-slate-900 outline-none transition focus:border-zinc-700 focus:ring-2 focus:ring-zinc-200"
-              />
-            </div>
+            {selectingSede ? (
+              <div className="relative mt-6 space-y-3">
+                {availableSedes.map((sede) => (
+                  <button
+                    key={sede.id}
+                    type="button"
+                    onClick={() => void openSellerProfile(sede.id)}
+                    disabled={abriendo}
+                    className="w-full rounded-[22px] border border-zinc-200 bg-white px-5 py-4 text-left shadow-[0_10px_22px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:border-emerald-300 disabled:opacity-70"
+                  >
+                    <span className="block text-lg font-black tracking-tight text-slate-950">
+                      {sede.nombre}
+                    </span>
+                    {sede.codigo && (
+                      <span className="mt-1 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        {sede.codigo}
+                      </span>
+                    )}
+                  </button>
+                ))}
 
-            <button
-              type="button"
-              onClick={() => void openSellerProfile()}
-              disabled={abriendo}
-              className="relative mt-5 w-full rounded-2xl bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] px-5 py-3 text-lg font-bold text-white shadow-[0_12px_24px_rgba(15,23,42,0.18)] transition hover:opacity-95 disabled:opacity-70"
-            >
-              {abriendo ? "Validando..." : "Confirmar"}
-            </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectingSede(false)}
+                  disabled={abriendo}
+                  className="w-full rounded-2xl border border-zinc-300 bg-white/80 px-5 py-3 text-sm font-bold text-slate-700 transition hover:bg-white disabled:opacity-70"
+                >
+                  Volver al PIN
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="relative mt-6">
+                  <input
+                    type="password"
+                    value={pin}
+                    onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="PIN de 4 a 6 digitos"
+                    className="w-full rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-center text-2xl tracking-[0.3em] text-slate-900 outline-none transition focus:border-zinc-700 focus:ring-2 focus:ring-zinc-200"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void openSellerProfile()}
+                  disabled={abriendo}
+                  className="relative mt-5 w-full rounded-2xl bg-[linear-gradient(180deg,#27272a_0%,#09090b_100%)] px-5 py-3 text-lg font-bold text-white shadow-[0_12px_24px_rgba(15,23,42,0.18)] transition hover:opacity-95 disabled:opacity-70"
+                >
+                  {abriendo ? "Validando..." : "Confirmar"}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

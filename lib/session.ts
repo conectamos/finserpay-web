@@ -10,6 +10,7 @@ type SessionPayload = {
 };
 
 type SellerSessionPayload = {
+  accesoSedeId?: number;
   exp: number;
   sedeId: number;
   userId: number;
@@ -55,6 +56,7 @@ export function createSessionToken(userId: number) {
 }
 
 export function createSellerSessionToken(payload: {
+  accesoSedeId?: number;
   sedeId: number;
   userId: number;
   vendedorId: number;

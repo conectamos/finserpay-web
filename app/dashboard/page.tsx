@@ -706,17 +706,18 @@ export default async function DashboardPage() {
 
   const nombreUsuario = usuario?.nombre ?? "Usuario";
   const rolUsuario = usuario?.rol?.nombre ?? "USUARIO";
-  const sedeLabel = usuario?.sede?.nombre ?? "GLOBAL";
+  const sedeAccesoLabel = usuario?.sede?.nombre ?? "GLOBAL";
   const admin = isAdminRole(rolUsuario);
   if (!admin) {
     await ensureVendorProfileVisualColumns();
   }
   const sellerSession = admin ? null : await getSellerSessionUser(session);
+  const sedeLabel = sellerSession?.sedeNombre ?? session.sedeNombre ?? sedeAccesoLabel;
   const assignedSellers = admin
     ? []
     : await prisma.sedeVendedor.findMany({
         where: {
-          sedeId: session.sedeId,
+          sedeId: session.sedeAccesoId ?? session.sedeId,
           activo: true,
           vendedor: {
             activo: true,
@@ -776,7 +777,7 @@ export default async function DashboardPage() {
   if (!admin && !sellerSession) {
     return (
       <SellerProfileAccess
-        sedeNombre={sedeLabel}
+        sedeNombre={sedeAccesoLabel}
         sellers={assignedSellers.map((item) => item.vendedor)}
       />
     );

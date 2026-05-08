@@ -22,6 +22,8 @@ export type SellerSessionUser = {
   documento: string | null;
   telefono: string | null;
   email: string | null;
+  accesoSedeId: number;
+  accesoSedeNombre: string;
   sedeId: number;
   sedeNombre: string;
 };
@@ -59,13 +61,15 @@ export async function getSellerSessionUser(
 
   await ensureVendorProfileVisualColumns();
 
+  const accesoSedeId = sellerSession.accesoSedeId ?? sellerSession.sedeId;
+
   const seller = await prisma.vendedor.findFirst({
     where: {
       id: sellerSession.vendedorId,
       activo: true,
       asignaciones: {
         some: {
-          sedeId: currentUser.sedeId,
+          sedeId: accesoSedeId,
           activo: true,
         },
       },
@@ -82,7 +86,7 @@ export async function getSellerSessionUser(
       email: true,
       asignaciones: {
         where: {
-          sedeId: currentUser.sedeId,
+          sedeId: accesoSedeId,
           activo: true,
         },
         select: {
@@ -102,6 +106,21 @@ export async function getSellerSessionUser(
     return null;
   }
 
+  const operatingSede = await prisma.sede.findFirst({
+    where: {
+      id: sellerSession.sedeId,
+      activa: true,
+    },
+    select: {
+      id: true,
+      nombre: true,
+    },
+  });
+
+  if (!operatingSede) {
+    return null;
+  }
+
   const tipoPerfil = normalizarTipoPerfilVendedor(
     seller.tipoPerfil || resolveSellerProfileType(seller.nombre)
   );
@@ -116,7 +135,9 @@ export async function getSellerSessionUser(
     documento: seller.documento,
     telefono: seller.telefono,
     email: seller.email,
-    sedeId: seller.asignaciones[0].sede.id,
-    sedeNombre: seller.asignaciones[0].sede.nombre,
+    accesoSedeId: seller.asignaciones[0].sede.id,
+    accesoSedeNombre: seller.asignaciones[0].sede.nombre,
+    sedeId: operatingSede.id,
+    sedeNombre: operatingSede.nombre,
   } satisfies SellerSessionUser;
 }

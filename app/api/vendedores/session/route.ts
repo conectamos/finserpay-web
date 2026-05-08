@@ -43,6 +43,53 @@ function serializeSeller(item: {
   };
 }
 
+function normalizeSedeAccess(value?: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function isVentasAccessSede(sede?: { nombre?: string | null; codigo?: string | null }) {
+  const values = [sede?.nombre, sede?.codigo].map(normalizeSedeAccess);
+  return values.some((value) => value === "VENTAS" || value === "VENTA");
+}
+
+function serializeSede(item: { id: number; nombre: string; codigo: string | null }) {
+  return {
+    id: item.id,
+    nombre: item.nombre,
+    codigo: item.codigo,
+  };
+}
+
+async function getOperationalSedes(accessSedeId: number) {
+  const sedes = await prisma.sede.findMany({
+    where: {
+      activa: true,
+      NOT: {
+        id: accessSedeId,
+      },
+    },
+    select: {
+      id: true,
+      nombre: true,
+      codigo: true,
+    },
+    orderBy: [
+      {
+        nombre: "asc",
+      },
+      {
+        id: "asc",
+      },
+    ],
+  });
+
+  return sedes.map(serializeSede);
+}
+
 async function getAssignedSellersForSede(sedeId: number) {
   await ensureVendorProfileVisualColumns();
 
@@ -87,9 +134,10 @@ export async function GET() {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
+    const accessSedeId = user.sedeAccesoId ?? user.sedeId;
     const [currentSeller, sellers] = await Promise.all([
       getSellerSessionUser(user),
-      getAssignedSellersForSede(user.sedeId),
+      getAssignedSellersForSede(accessSedeId),
     ]);
 
     return NextResponse.json({
@@ -115,10 +163,12 @@ export async function POST(req: Request) {
     }
 
     await ensureVendorProfileVisualColumns();
+    const accessSedeId = user.sedeAccesoId ?? user.sedeId;
 
     const body = (await req.json()) as Record<string, unknown>;
     const vendedorId = Number(body.vendedorId || 0);
     const pin = String(body.pin || "").replace(/\D/g, "").trim();
+    const requestedSedeId = Number(body.sedeId || body.operationalSedeId || 0);
 
     if (!Number.isInteger(vendedorId) || vendedorId <= 0) {
       return NextResponse.json(
@@ -136,7 +186,7 @@ export async function POST(req: Request) {
 
     const assignment = await prisma.sedeVendedor.findFirst({
       where: {
-        sedeId: user.sedeId,
+        sedeId: accessSedeId,
         vendedorId,
         activo: true,
         vendedor: {
@@ -157,6 +207,13 @@ export async function POST(req: Request) {
             avatarKey: true,
             pinHash: true,
             pinTemporalHash: true,
+          },
+        },
+        sede: {
+          select: {
+            id: true,
+            nombre: true,
+            codigo: true,
           },
         },
       },
@@ -188,16 +245,68 @@ export async function POST(req: Request) {
       },
     });
 
+    const isVentasAccess = isVentasAccessSede(assignment.sede);
+    const operationalSedeId = isVentasAccess
+      ? requestedSedeId
+      : accessSedeId;
+
+    if (isVentasAccess && !operationalSedeId) {
+      const sedes = await getOperationalSedes(accessSedeId);
+
+      if (!sedes.length) {
+        return NextResponse.json(
+          { error: "No hay sedes activas disponibles para realizar la venta" },
+          { status: 400 }
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+        requiresSedeSelection: true,
+        seller: serializeSeller(assignment.vendedor),
+        availableSedes: sedes,
+        mustChangePin: assignment.vendedor.debeCambiarPin,
+      });
+    }
+
+    const operationalSede = await prisma.sede.findFirst({
+      where: {
+        id: operationalSedeId,
+        activa: true,
+      },
+      select: {
+        id: true,
+        nombre: true,
+        codigo: true,
+      },
+    });
+
+    if (!operationalSede) {
+      return NextResponse.json(
+        { error: "Selecciona una sede activa para realizar la venta" },
+        { status: 400 }
+      );
+    }
+
+    if (!isVentasAccess && operationalSede.id !== accessSedeId) {
+      return NextResponse.json(
+        { error: "Esta sede de acceso no permite operar en otra sede" },
+        { status: 403 }
+      );
+    }
+
     const response = NextResponse.json({
       ok: true,
       seller: serializeSeller(assignment.vendedor),
+      operationalSede: serializeSede(operationalSede),
       mustChangePin: assignment.vendedor.debeCambiarPin,
     });
 
     response.cookies.set(
       SELLER_SESSION_COOKIE_NAME,
       createSellerSessionToken({
-        sedeId: user.sedeId,
+        accesoSedeId: accessSedeId,
+        sedeId: operationalSede.id,
         userId: user.id,
         vendedorId: assignment.vendedor.id,
       }),
