@@ -267,6 +267,12 @@ export default async function CarteraPage() {
             </div>
 
             <div className="flex flex-wrap gap-3">
+              <a
+                href="/api/dashboard/cartera/export"
+                className="rounded-2xl border border-[#b9e5d3] bg-[#ecfdf5] px-5 py-3 text-sm font-black text-[#0f766e] transition hover:-translate-y-0.5"
+              >
+                Descargar Excel
+              </a>
               <Link
                 href="/dashboard/reportes/creditos"
                 className="rounded-2xl border border-[#d7dce2] bg-white px-5 py-3 text-sm font-black text-[#20242a] transition hover:-translate-y-0.5"
