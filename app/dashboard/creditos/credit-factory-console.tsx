@@ -296,6 +296,9 @@ type CreditPaymentItem = {
   valor: number;
   metodoPago: string;
   observacion: string | null;
+  estado?: string;
+  anuladoAt?: string | null;
+  anulacionMotivo?: string | null;
   fechaAbono: string;
   createdAt: string;
   usuario: {
@@ -4226,8 +4229,13 @@ export default function CreditFactoryConsole({
       await loadPayments(selectedCredit.id);
       await loadCredits(true, activeSearch);
 
+      window.open(
+        `/api/creditos/${selectedCredit.id}/abonos/${result.data.item.id}/recibo`,
+        "_blank"
+      );
+
       setNotice({
-        text: result.data.message,
+        text: `${result.data.message}. Recibo generado.`,
         tone: result.data.summary.saldoPendiente <= 0 ? "emerald" : "amber",
       });
     } catch (error) {
@@ -4327,6 +4335,23 @@ export default function CreditFactoryConsole({
     }
 
     window.open(`/api/creditos/${credit.id}/plan-pagos`, "_blank");
+  };
+
+  const downloadPaymentReceipt = (payment: CreditPaymentItem) => {
+    const credit =
+      selectedCredit?.id === payment.creditoId
+        ? selectedCredit
+        : credits.find((item) => item.id === payment.creditoId) || null;
+
+    if (!credit) {
+      setNotice({
+        text: "Selecciona el credito antes de reimprimir el recibo.",
+        tone: "red",
+      });
+      return;
+    }
+
+    window.open(`/api/creditos/${credit.id}/abonos/${payment.id}/recibo`, "_blank");
   };
 
   const downloadExpedientePdf = (creditId?: number | null) => {
@@ -9308,33 +9333,64 @@ export default function CreditFactoryConsole({
                           Aun no hay abonos registrados para este credito.
                         </div>
                       ) : (
-                        payments.map((payment) => (
-                          <div
-                            key={payment.id}
-                            className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4"
-                          >
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                  {dateTime(payment.fechaAbono)}
-                                </p>
-                                <p className="mt-2 text-lg font-black text-slate-950">
-                                  {currency(payment.valor)}
-                                </p>
-                                <p className="mt-1 text-sm text-slate-500">
-                                  Metodo: {paymentMethodLabel(payment.metodoPago)}
-                                </p>
-                                <p className="mt-1 text-sm text-slate-500">
-                                  Recibido por {payment.usuario.nombre}
-                                </p>
-                              </div>
+                        payments.map((payment) => {
+                          const paymentAnnulled =
+                            String(payment.estado || "").toUpperCase() === "ANULADO";
 
-                              <div className="max-w-sm rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
-                                {payment.observacion || "Sin observacion"}
+                          return (
+                            <div
+                              key={payment.id}
+                              className={[
+                                "rounded-[22px] border px-4 py-4",
+                                paymentAnnulled
+                                  ? "border-red-200 bg-red-50/60"
+                                  : "border-[#e6dece] bg-[#fcfaf6]",
+                              ].join(" ")}
+                            >
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                      {dateTime(payment.fechaAbono)}
+                                    </p>
+                                    {paymentAnnulled ? (
+                                      <span className="rounded-full border border-red-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-red-600">
+                                        Anulado
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <p className="mt-2 text-lg font-black text-slate-950">
+                                    {currency(payment.valor)}
+                                  </p>
+                                  <p className="mt-1 text-sm text-slate-500">
+                                    Metodo: {paymentMethodLabel(payment.metodoPago)}
+                                  </p>
+                                  <p className="mt-1 text-sm text-slate-500">
+                                    Recibido por {payment.usuario.nombre}
+                                  </p>
+                                  {paymentAnnulled && payment.anulacionMotivo ? (
+                                    <p className="mt-1 text-sm font-semibold text-red-600">
+                                      Motivo: {payment.anulacionMotivo}
+                                    </p>
+                                  ) : null}
+                                </div>
+
+                                <div className="flex w-full max-w-sm flex-col gap-2">
+                                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                                    {payment.observacion || "Sin observacion"}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => downloadPaymentReceipt(payment)}
+                                    className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+                                  >
+                                    Reimprimir recibo
+                                  </button>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </div>
