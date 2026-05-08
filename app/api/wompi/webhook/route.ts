@@ -6,6 +6,10 @@ import {
   resolveCreditState,
 } from "@/lib/credit-factory";
 import {
+  DIGITAL_COLLECTION_CAJA_CONCEPT,
+  ensureDigitalCollectionSede,
+} from "@/lib/digital-collection-sede";
+import {
   getEqualityDeviceMeta,
   getPayloadSummary,
 } from "@/lib/equality-device-meta";
@@ -51,6 +55,12 @@ function parseCuotaNumeros(value: unknown) {
   return (Array.isArray(value) ? value : [])
     .map((item) => Number(item))
     .filter((item) => Number.isInteger(item) && item > 0);
+}
+
+function resolveAutomaticWompiPaymentMethod(value: unknown) {
+  const method = String(value || "").trim().toUpperCase();
+
+  return method === "NEQUI" ? "NEQUI" : "WOMPI";
 }
 
 async function syncMoraAfterWompiPayment(creditId: number) {
@@ -206,15 +216,24 @@ async function processApprovedPayment(transaction: NonNullable<WompiEvent["data"
   }
 
   const cuotas = parseCuotaNumeros(intent.cuotaNumeros);
+  const digitalSede = await ensureDigitalCollectionSede();
+  const paymentMethod = resolveAutomaticWompiPaymentMethod(
+    transaction.payment_method_type || intent.paymentMethodType
+  );
   const abono = await prisma.$transaction(async (tx) => {
     const created = await tx.creditoAbono.create({
       data: {
         creditoId: intent.creditoId,
         usuarioId: intent.credito.usuarioId,
-        sedeId: intent.credito.sedeId,
+        sedeId: digitalSede.id,
         valor: intent.amount,
-        metodoPago: "WOMPI",
-        observacion: `Pago Wompi ${intent.reference} - Cuotas ${cuotas.join(", ")}`,
+        metodoPago: paymentMethod,
+        observacion: [
+          `Pago ${paymentMethod} automatico ${intent.reference}`,
+          `Cuotas ${cuotas.join(", ")}`,
+          `Recaudo digital ${digitalSede.nombre}`,
+          `Sede credito ${intent.credito.sedeId}`,
+        ].join(" - "),
       },
     });
 
@@ -258,16 +277,16 @@ async function processApprovedPayment(transaction: NonNullable<WompiEvent["data"
     await tx.cajaMovimiento.create({
       data: {
         tipo: "INGRESO",
-        concepto: "ABONO CREDITO WOMPI",
+        concepto: DIGITAL_COLLECTION_CAJA_CONCEPT,
         valor: intent.amount,
         descripcion: creditCajaDescription({
           id: created.id,
           creditoFolio: intent.credito.folio,
           clienteNombre: intent.credito.clienteNombre,
-          metodoPago: "WOMPI",
-          observacion: `Referencia Wompi ${intent.reference}`,
+          metodoPago: paymentMethod,
+          observacion: `Referencia Wompi ${intent.reference} | Sede credito ${intent.credito.sedeId}`,
         }),
-        sedeId: intent.credito.sedeId,
+        sedeId: digitalSede.id,
       },
     });
 
