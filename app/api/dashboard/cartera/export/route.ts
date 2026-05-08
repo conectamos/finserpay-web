@@ -50,12 +50,12 @@ function dateFromIso(value: string) {
   return Number.isNaN(date.getTime()) ? new Date() : date;
 }
 
-function daysLate(dueDateIso: string, today: Date) {
+function signedDaysFromDueDate(dueDateIso: string, today: Date) {
   const due = dateFromIso(dueDateIso);
   const base = new Date(today);
   base.setHours(12, 0, 0, 0);
 
-  return Math.max(0, Math.floor((base.getTime() - due.getTime()) / 86_400_000));
+  return Math.floor((base.getTime() - due.getTime()) / 86_400_000);
 }
 
 function escapeHtml(value: unknown) {
@@ -142,18 +142,22 @@ function buildWorkbookHtml(rows: string) {
     <thead>
       <tr>
         <th>Fecha apertura</th>
-        <th>Cédula</th>
-        <th>Plazo crédito</th>
+        <th>Nombre del cliente</th>
+        <th>Cedula</th>
+        <th>Telefono del cliente</th>
+        <th>IMEI</th>
+        <th>Referencia</th>
+        <th>Plazo credito</th>
         <th>Frecuencia de pago</th>
         <th>SEDE</th>
-        <th>Fecha próxima cuota a pagar</th>
+        <th>Fecha proxima cuota a pagar</th>
         <th>Cuotas pendientes</th>
         <th>Valor cuota</th>
-        <th>Saldo obligación</th>
+        <th>Saldo obligacion</th>
         <th>Saldo capital</th>
         <th>Saldo fianza</th>
         <th>Saldo intereses</th>
-        <th>Días vencidos</th>
+        <th>Dias vencidos</th>
         <th>Ultimo pago que ha realizado</th>
       </tr>
     </thead>
@@ -237,15 +241,18 @@ export async function GET() {
       })
       .filter(({ plan }) => plan.saldoPendiente > 0)
       .map(({ credito, plan }) => {
-        const overdueInstallments = plan.installments.filter(
-          (installment) =>
-            installment.estaEnMora && installment.saldoPendiente > 0
+        const pendingInstallments = plan.installments.filter(
+          (installment) => installment.saldoPendiente > 0
         );
-        const diasVencidos = overdueInstallments.reduce(
-          (max, installment) =>
-            Math.max(max, daysLate(installment.fechaVencimiento, today)),
-          0
+        const signedPendingDays = pendingInstallments.map((installment) =>
+          signedDaysFromDueDate(installment.fechaVencimiento, today)
         );
+        const positiveDays = signedPendingDays.filter((days) => days > 0);
+        const diasVencidos = positiveDays.length
+          ? Math.max(...positiveDays)
+          : plan.nextInstallment
+            ? signedDaysFromDueDate(plan.nextInstallment.fechaVencimiento, today)
+            : 0;
         const lastPayment = credito.abonos[credito.abonos.length - 1] || null;
         const balances = splitOutstandingBalance({
           cuotaInicial: Number(credito.cuotaInicial || 0),
@@ -265,10 +272,18 @@ export async function GET() {
               .filter(Boolean)
               .join(" - ")
           : "";
+        const referenciaEquipo =
+          credito.referenciaEquipo ||
+          [credito.equipoMarca, credito.equipoModelo].filter(Boolean).join(" ") ||
+          "";
 
         return `<tr>
           ${textCell(formatDate(credito.fechaCredito))}
+          ${textCell(credito.clienteNombre)}
           ${textCell(credito.clienteDocumento || "")}
+          ${textCell(credito.clienteTelefono || "")}
+          ${textCell(credito.imei || "")}
+          ${textCell(referenciaEquipo)}
           ${numberCell(Number(credito.plazoMeses || 0))}
           ${textCell(getPaymentFrequencyLabel(credito.frecuenciaPago))}
           ${textCell(credito.sede.nombre)}
