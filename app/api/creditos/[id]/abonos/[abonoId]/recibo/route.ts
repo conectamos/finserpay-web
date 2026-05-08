@@ -241,6 +241,37 @@ function drawAmountLine(
   return Math.max(leftY, rightY, startY + 12) + 2;
 }
 
+function drawInstallmentLine(
+  doc: PDFKit.PDFDocument,
+  fonts: { regular: string; bold: string },
+  y: number,
+  quota: string,
+  date: string,
+  value: string,
+  bold = false
+) {
+  const startY = y;
+  const font = bold ? fonts.bold : fonts.regular;
+
+  doc.fillColor("#111111").font(font).fontSize(7.3).text(quota, POS_LEFT, y, {
+    width: 42,
+  });
+  const quotaY = doc.y;
+
+  doc.font(font).fontSize(7.3).text(date, POS_LEFT + 44, y, {
+    width: 68,
+  });
+  const dateY = doc.y;
+
+  doc.font(font).fontSize(7.3).text(value, POS_LEFT + 112, y, {
+    width: POS_CONTENT_WIDTH - 112,
+    align: "right",
+  });
+  const valueY = doc.y;
+
+  return Math.max(quotaY, dateY, valueY, startY + 9) + 3;
+}
+
 function buildPlan(
   credito: {
     montoCredito: number | string;
@@ -364,15 +395,10 @@ export async function GET(
     });
 
     const abonoTime = abono.fechaAbono.getTime();
-    const activeBeforeThisPayment = activeAbonos.filter((item) => {
-      const itemTime = item.fechaAbono.getTime();
-      return itemTime < abonoTime || (itemTime === abonoTime && item.id < abono.id);
-    });
     const activeUntilThisPayment = activeAbonos.filter((item) => {
       const itemTime = item.fechaAbono.getTime();
       return itemTime < abonoTime || (itemTime === abonoTime && item.id <= abono.id);
     });
-    const previousPlan = buildPlan(abono.credito, activeBeforeThisPayment);
     const currentPlan = buildPlan(abono.credito, activeUntilThisPayment);
     const isAnnulled = String(abono.estado || "").toUpperCase() === "ANULADO";
     const reciboNumero = `RP-${abono.credito.folio}-${abono.id}`;
@@ -384,12 +410,14 @@ export async function GET(
       abono.vendedor?.nombre ||
       abono.usuario.nombre ||
       abono.usuario.usuario;
+    const totalInstallments = Math.max(1, Math.trunc(Number(abono.credito.plazoMeses || 1)));
     const nextInstallments = currentPlan.installments
       .filter((item) => item.saldoPendiente > 0)
-      .slice(0, 4);
+      .slice(0, 6);
     const fonts = getPdfFonts();
+    const pageHeight = Math.max(690, 610 + nextInstallments.length * 15 + (isAnnulled ? 56 : 0));
     const doc = new PDFDocument({
-      size: [POS_WIDTH, isAnnulled ? 785 : 735],
+      size: [POS_WIDTH, pageHeight],
       margin: 0,
       compress: true,
       font: fonts.regular,
@@ -407,7 +435,12 @@ export async function GET(
       gap: 7,
     });
     y = drawCentered(doc, fonts, y, "SISTEMA P.O.S", { bold: true, size: 8, gap: 1 });
-    y = drawCentered(doc, fonts, y, "RECIBO DE ABONO", { bold: true, size: 10, gap: 6 });
+    y = drawCentered(doc, fonts, y, "RECIBO DE ABONO", { bold: true, size: 10, gap: 4 });
+    y = drawCentered(doc, fonts, y, "RES.DIAN: PENDIENTE FACTURACION ELECTRONICA", {
+      size: 6.5,
+      gap: 1,
+    });
+    y = drawCentered(doc, fonts, y, "VIG: PENDIENTE", { size: 6.5, gap: 6 });
 
     if (isAnnulled) {
       doc
@@ -448,6 +481,9 @@ export async function GET(
       size: 8,
       gap: 4,
     });
+    y = drawKeyValue(doc, fonts, y, "No. credito", shortText(abono.credito.folio, 34), {
+      boldValue: true,
+    });
     y = drawKeyValue(doc, fonts, y, "Metodo", paymentMethodLabel(abono.metodoPago));
     y = drawKeyValue(
       doc,
@@ -463,32 +499,23 @@ export async function GET(
       "Cuotas pagas",
       `${currentPlan.paidCount} DE ${abono.credito.plazoMeses || 1}`
     );
-    y = drawAmountLine(doc, fonts, y + 4, "Saldo anterior", money(previousPlan.saldoPendiente));
-    y = drawAmountLine(doc, fonts, y, "Valor abono", money(Number(abono.valor || 0)));
-    y = drawAmountLine(
-      doc,
-      fonts,
-      y,
-      "Saldo despues",
-      isAnnulled ? "ANULADO" : money(currentPlan.saldoPendiente)
-    );
-
-    y = drawRule(doc, y + 5);
-    y = drawCentered(doc, fonts, y, "RESUMEN", { bold: true, size: 8, gap: 4 });
-    y = drawKeyValue(doc, fonts, y, "Credito inicial", money(Number(abono.credito.montoCredito || 0)));
-    y = drawKeyValue(doc, fonts, y, "Total abonado", isAnnulled ? "ANULADO" : money(currentPlan.totalPaid));
-    y = drawKeyValue(doc, fonts, y, "Estado", isAnnulled ? "ANULADO" : currentPlan.estadoPago);
+    y = drawAmountLine(doc, fonts, y + 4, "Abono realizado", money(Number(abono.valor || 0)));
 
     if (nextInstallments.length) {
       y = drawRule(doc, y + 3);
-      y = drawCentered(doc, fonts, y, "PROXIMOS PAGOS", { bold: true, size: 8, gap: 5 });
-      y = drawKeyValue(doc, fonts, y, "Fecha", "Valor", { boldValue: true });
+      y = drawCentered(doc, fonts, y, "PROXIMAS SIGUIENTES 6 CUOTAS", {
+        bold: true,
+        size: 8,
+        gap: 5,
+      });
+      y = drawInstallmentLine(doc, fonts, y, "Cuota", "Fecha", "Valor", true);
 
       nextInstallments.forEach((item) => {
-        y = drawKeyValue(
+        y = drawInstallmentLine(
           doc,
           fonts,
           y,
+          `${item.numero}/${totalInstallments}`,
           dateLabel(item.fechaVencimiento),
           money(item.saldoPendiente)
         );
@@ -521,7 +548,7 @@ export async function GET(
     });
     y = drawCentered(doc, fonts, y, "No constituye paz y salvo.", { size: 7, gap: 6 });
     y = drawCentered(doc, fonts, y, "Gracias por tu pago.", { bold: true, size: 8.5, gap: 4 });
-    drawCentered(doc, fonts, y, "www.finserpay.com", { size: 7.5 });
+    drawCentered(doc, fonts, y, "www.finserpay.com/clientes", { size: 7.5 });
 
     doc.end();
 
