@@ -88,13 +88,13 @@ export default function DetalleCarteraPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setMensaje(data.error || "Error cargando detalle de cartera");
+        setMensaje(data.error || "Error cargando detalle de gastos");
         return;
       }
 
       setItems(Array.isArray(data.items) ? data.items : []);
     } catch {
-      setMensaje("Error cargando detalle de cartera");
+      setMensaje("Error cargando detalle de gastos");
     }
   };
 
@@ -157,15 +157,15 @@ export default function DetalleCarteraPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setMensaje(data.error || "Error actualizando gasto de cartera");
+        setMensaje(data.error || "Error actualizando gasto de operacion");
         return;
       }
 
-      setMensaje("Gasto de cartera actualizado correctamente");
+      setMensaje("Gasto de operacion actualizado correctamente");
       cerrarEdicion();
       await cargar(sedeFiltro);
     } catch {
-      setMensaje("Error actualizando gasto de cartera");
+      setMensaje("Error actualizando gasto de operacion");
     } finally {
       setProcesando(false);
     }
@@ -173,7 +173,7 @@ export default function DetalleCarteraPage() {
 
   const eliminarGasto = async (id: number) => {
     const confirmado = window.confirm(
-      "Deseas eliminar este gasto de cartera?"
+      "Deseas eliminar este gasto de operacion?"
     );
 
     if (!confirmado) return;
@@ -193,7 +193,7 @@ export default function DetalleCarteraPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setMensaje(data.error || "Error eliminando gasto de cartera");
+        setMensaje(data.error || "Error eliminando gasto de operacion");
         return;
       }
 
@@ -201,10 +201,10 @@ export default function DetalleCarteraPage() {
         cerrarEdicion();
       }
 
-      setMensaje("Gasto de cartera eliminado correctamente");
+      setMensaje("Gasto de operacion eliminado correctamente");
       await cargar(sedeFiltro);
     } catch {
-      setMensaje("Error eliminando gasto de cartera");
+      setMensaje("Error eliminando gasto de operacion");
     } finally {
       setProcesando(false);
     }
@@ -215,25 +215,25 @@ export default function DetalleCarteraPage() {
       <div className="mx-auto max-w-7xl">
         <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <div className="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-red-700">
+            <div className="inline-flex rounded-full border border-[#b9e5d3] bg-[#ecfdf5] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[#0f766e]">
               Financiero
             </div>
 
             <h1 className="mt-3 text-4xl font-black tracking-tight text-slate-950">
-              Detalle gasto cartera
+              Detalle gastos de operacion
             </h1>
 
             <p className="mt-2 text-sm text-slate-600 md:text-base">
-              Historico de gastos registrados en cartera.
+              Historico de gastos de operacion registrados.
             </p>
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row">
             <Link
               href="/dashboard/financiero/cartera"
-              className="rounded-2xl bg-red-600 px-5 py-3 text-center text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+              className="rounded-2xl bg-[#0f766e] px-5 py-3 text-center text-sm font-semibold text-white shadow-sm transition hover:bg-[#0b5f59]"
             >
-              + Registrar cartera
+              + Registrar gasto
             </Link>
 
             <Link
@@ -259,7 +259,7 @@ export default function DetalleCarteraPage() {
                     setSedeFiltro(value);
                     void cargar(value);
                   }}
-                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200"
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-[#0f766e] focus:ring-2 focus:ring-emerald-100"
                 >
                   <option value="">Todas las sedes</option>
                   {sedes.map((sede) => (
@@ -271,7 +271,7 @@ export default function DetalleCarteraPage() {
               </div>
 
               <div className="rounded-2xl bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">Total cartera</p>
+                <p className="text-sm text-slate-500">Total gastos</p>
                 <p className="mt-2 text-2xl font-bold text-slate-900">
                   {formatoPesos(total)}
                 </p>
@@ -282,7 +282,7 @@ export default function DetalleCarteraPage() {
 
         {!esAdmin && (
           <div className="mb-6 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-            <p className="text-sm text-slate-500">Total cartera</p>
+            <p className="text-sm text-slate-500">Total gastos</p>
             <p className="mt-2 text-2xl font-bold text-slate-900">
               {formatoPesos(total)}
             </p>
@@ -298,7 +298,7 @@ export default function DetalleCarteraPage() {
         <div className="overflow-hidden rounded-[28px] bg-white shadow-xl ring-1 ring-slate-200">
           <div className="border-b border-slate-200 px-6 py-5">
             <h2 className="text-lg font-semibold text-slate-900">
-              Gastos de cartera registrados
+              Gastos de operacion registrados
             </h2>
           </div>
 
@@ -324,7 +324,7 @@ export default function DetalleCarteraPage() {
                       colSpan={esAdmin ? 6 : 5}
                       className="px-6 py-12 text-center text-slate-500"
                     >
-                      No hay gastos de cartera registrados.
+                      No hay gastos de operacion registrados.
                     </td>
                   </tr>
                 ) : (
@@ -337,7 +337,7 @@ export default function DetalleCarteraPage() {
                         {item.id}
                       </td>
                       <td className="px-6 py-4">{formatoFecha(item.createdAt)}</td>
-                      <td className="px-6 py-4 font-semibold text-red-600">
+                      <td className="px-6 py-4 font-semibold text-[#0f766e]">
                         {formatoPesos(item.valor)}
                       </td>
                       <td className="px-6 py-4">{item.observacion ?? "-"}</td>
@@ -381,11 +381,11 @@ export default function DetalleCarteraPage() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h3 className="text-2xl font-bold text-slate-950">
-                    Editar gasto de cartera
+                    Editar gasto de operacion
                   </h3>
                   <p className="mt-2 text-sm text-slate-600">
                     Solo el administrador puede modificar o eliminar gastos de
-                    cartera.
+                    operacion.
                   </p>
                 </div>
 
@@ -406,7 +406,7 @@ export default function DetalleCarteraPage() {
                   <select
                     value={sedeEditando}
                     onChange={(e) => setSedeEditando(e.target.value)}
-                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200"
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-[#0f766e] focus:ring-2 focus:ring-emerald-100"
                   >
                     <option value="">Seleccionar sede</option>
                     {sedes.map((sede) => (
@@ -426,7 +426,7 @@ export default function DetalleCarteraPage() {
                     min="1"
                     value={valorEditando}
                     onChange={(e) => setValorEditando(e.target.value)}
-                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200"
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-[#0f766e] focus:ring-2 focus:ring-emerald-100"
                   />
                 </div>
 
@@ -437,7 +437,7 @@ export default function DetalleCarteraPage() {
                   <input
                     value={observacionEditando}
                     onChange={(e) => setObservacionEditando(e.target.value)}
-                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200"
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-[#0f766e] focus:ring-2 focus:ring-emerald-100"
                   />
                 </div>
               </div>
@@ -447,7 +447,7 @@ export default function DetalleCarteraPage() {
                   type="button"
                   onClick={guardarEdicion}
                   disabled={procesando}
-                  className="flex-1 rounded-2xl bg-red-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-70"
+                  className="flex-1 rounded-2xl bg-[#0f766e] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0b5f59] disabled:opacity-70"
                 >
                   {procesando ? "Guardando..." : "Guardar cambios"}
                 </button>

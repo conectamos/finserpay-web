@@ -89,38 +89,45 @@ export default async function CarteraPage() {
   await requireAdminDashboardAccess();
 
   const today = new Date();
-  const creditos = await prisma.credito.findMany({
-    include: {
-      abonos: {
-        where: {
-          estado: {
-            not: "ANULADO",
+  const [creditos, gastosOperacion] = await Promise.all([
+    prisma.credito.findMany({
+      include: {
+        abonos: {
+          where: {
+            estado: {
+              not: "ANULADO",
+            },
+          },
+          select: {
+            valor: true,
+            fechaAbono: true,
+          },
+          orderBy: {
+            fechaAbono: "asc",
           },
         },
-        select: {
-          valor: true,
-          fechaAbono: true,
+        sede: {
+          select: {
+            nombre: true,
+          },
         },
-        orderBy: {
-          fechaAbono: "asc",
-        },
-      },
-      sede: {
-        select: {
-          nombre: true,
+        vendedor: {
+          select: {
+            nombre: true,
+          },
         },
       },
-      vendedor: {
-        select: {
-          nombre: true,
-        },
+      orderBy: {
+        createdAt: "desc",
       },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-    take: 1000,
-  });
+      take: 1000,
+    }),
+    prisma.gastoCartera.findMany({
+      select: {
+        valor: true,
+      },
+    }),
+  ]);
 
   const cartera = creditos
     .filter((credito) => !isAnnulled(credito.estado))
@@ -164,6 +171,10 @@ export default async function CarteraPage() {
         cuotaInicial: Number(credito.cuotaInicial || 0),
         creditoAutorizado,
         montoCredito: Number(credito.montoCredito || 0),
+        gananciaProyectada: Math.max(
+          0,
+          Number(credito.montoCredito || 0) - creditoAutorizado
+        ),
         saldoPendiente: plan.saldoPendiente,
         totalPaid: plan.totalPaid,
         paidCount: plan.paidCount,
@@ -183,7 +194,16 @@ export default async function CarteraPage() {
   const totalMora = activeCredits.reduce((sum, item) => sum + item.saldoMora, 0);
   const totalPagado = cartera.reduce((sum, item) => sum + item.totalPaid, 0);
   const totalCredito = cartera.reduce((sum, item) => sum + item.montoCredito, 0);
-  const totalCapitalAutorizado = cartera.reduce((sum, item) => sum + item.creditoAutorizado, 0);
+  const totalInvertido = activeCredits.reduce((sum, item) => sum + item.creditoAutorizado, 0);
+  const totalGananciaBruta = activeCredits.reduce(
+    (sum, item) => sum + item.gananciaProyectada,
+    0
+  );
+  const totalGastosOperacion = gastosOperacion.reduce(
+    (sum, item) => sum + Number(item.valor || 0),
+    0
+  );
+  const totalGanancias = totalGananciaBruta - totalGastosOperacion;
   const totalSano = activeCredits
     .filter((item) => item.bucket === "alDia")
     .reduce((sum, item) => sum + item.saldoPendiente, 0);
@@ -213,7 +233,6 @@ export default async function CarteraPage() {
   const clientsTemprana = [...clientRisk.values()].filter((value) => value === "temprana").length;
   const clientsMayor = [...clientRisk.values()].filter((value) => value === "mayor").length;
   const clientsAvanzada = [...clientRisk.values()].filter((value) => value === "avanzada").length;
-  const clientsMora = clientsTemprana + clientsMayor + clientsAvanzada;
   const pctMora = ratio(totalMora, totalPendiente);
   const pctSana = ratio(totalSano, totalPendiente);
   const pctRecuperado = ratio(totalPagado, totalCredito);
@@ -262,7 +281,7 @@ export default async function CarteraPage() {
                 Salud de cartera
               </h1>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-[#687080]">
-                Lectura global de creditos activos, pagos, mora por edades y recuperacion.
+                Lectura global de inversion, cartera por cobrar, ganancias, gastos y mora.
               </p>
             </div>
 
@@ -273,6 +292,18 @@ export default async function CarteraPage() {
               >
                 Descargar Excel
               </a>
+              <Link
+                href="/dashboard/financiero/cartera"
+                className="rounded-2xl border border-[#b9e5d3] bg-white px-5 py-3 text-sm font-black text-[#0f766e] transition hover:-translate-y-0.5"
+              >
+                Agregar gasto
+              </Link>
+              <Link
+                href="/dashboard/financiero/cartera/detalle"
+                className="rounded-2xl border border-[#d7dce2] bg-white px-5 py-3 text-sm font-black text-[#20242a] transition hover:-translate-y-0.5"
+              >
+                Detalle gastos
+              </Link>
               <Link
                 href="/dashboard/reportes/creditos"
                 className="rounded-2xl border border-[#d7dce2] bg-white px-5 py-3 text-sm font-black text-[#20242a] transition hover:-translate-y-0.5"
@@ -290,9 +321,9 @@ export default async function CarteraPage() {
         </header>
 
         <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard label="Creditos activos" value={String(activeCredits.length)} detail={`${paidCredits.length} creditos pagos`} />
-          <MetricCard label="Clientes en mora" value={String(clientsMora)} detail={`${clientsTemprana} temprana, ${clientsMayor} mayor, ${clientsAvanzada} avanzada`} />
+          <MetricCard label="Invertido" value={money(totalInvertido)} detail={`${activeCredits.length} creditos activos`} />
           <MetricCard label="Cartera por cobrar" value={money(totalPendiente)} detail={`${percent(pctSana)} cartera sana`} />
+          <MetricCard label="Ganancias" value={money(totalGanancias)} detail={`Bruta ${money(totalGananciaBruta)} | Gastos ${money(totalGastosOperacion)}`} warning={totalGanancias < 0} />
           <MetricCard label="Cartera en mora" value={money(totalMora)} detail={`${percent(pctMora)} del saldo pendiente`} warning={pctMora > 18} />
         </section>
 
@@ -306,8 +337,8 @@ export default async function CarteraPage() {
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <MiniMetric label="Recuperado" value={percent(pctRecuperado)} />
               <MiniMetric label="Creditos pagos" value={percent(pctPagados)} />
-              <MiniMetric label="Capital autorizado" value={money(totalCapitalAutorizado)} />
               <MiniMetric label="Recaudo total" value={money(totalPagado)} />
+              <MiniMetric label="Gastos operacion" value={money(totalGastosOperacion)} />
             </div>
           </div>
 
@@ -344,7 +375,7 @@ export default async function CarteraPage() {
         <section className="mt-5 overflow-hidden rounded-[30px] border border-[#d7dce2] bg-white shadow-[0_18px_48px_rgba(17,19,24,0.06)]">
           <div className="flex flex-col gap-2 border-b border-[#d7dce2] px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#6d5a22]">
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
                 Riesgos prioritarios
               </p>
               <h2 className="mt-2 text-2xl font-black tracking-tight text-[#20242a]">
@@ -457,8 +488,8 @@ function BucketCard({
   percentValue: number;
 }) {
   return (
-    <div className="rounded-[24px] border border-[#d7dce2] bg-[#fbf8ef] p-4">
-      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#6d5a22]">
+    <div className="rounded-[24px] border border-[#d7dce2] bg-[#f7fbf9] p-4">
+      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#0f766e]">
         {title}
       </p>
       <p className="mt-1 text-xs font-semibold text-[#687080]">{subtitle}</p>

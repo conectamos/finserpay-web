@@ -39,7 +39,7 @@ export default function GastoCarteraForm({
   backHref = "/dashboard",
   badgeLabel = "Financiero",
   detailHref = "/dashboard/financiero/cartera/detalle",
-  description = "Registra egresos de cartera que afectan el resumen general.",
+  description = "Registra gastos de operacion que afectan las ganancias de cartera.",
 }: GastoCarteraFormProps) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [sedes, setSedes] = useState<Sede[]>([]);
@@ -68,7 +68,7 @@ export default function GastoCarteraForm({
           }
         }
       } catch {
-        setMensaje("❌ Error cargando información inicial");
+        setMensaje("Error cargando informacion inicial");
       }
     };
 
@@ -97,15 +97,15 @@ export default function GastoCarteraForm({
       const data = await res.json();
 
       if (!res.ok) {
-        setMensaje(`❌ ${data.error || "Error registrando gasto de cartera"}`);
+        setMensaje(data.error || "Error registrando gasto de operacion");
         return;
       }
 
-      setMensaje("✅ Gasto de cartera registrado correctamente");
+      setMensaje("Gasto de operacion registrado correctamente");
       setValor("");
       setObservacion("");
     } catch {
-      setMensaje("❌ Error registrando gasto de cartera");
+      setMensaje("Error registrando gasto de operacion");
     } finally {
       setGuardando(false);
     }
@@ -116,11 +116,11 @@ export default function GastoCarteraForm({
       <div className="mx-auto max-w-3xl">
         <div className="mb-8 flex items-start justify-between gap-4">
           <div>
-            <div className="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold uppercase text-red-700">
+            <div className="inline-flex rounded-full border border-[#b9e5d3] bg-[#ecfdf5] px-3 py-1 text-xs font-semibold uppercase text-[#0f766e]">
               {badgeLabel}
             </div>
             <h1 className="mt-3 text-4xl font-black text-slate-950">
-              Registrar gasto cartera
+              Registrar gasto de operacion
             </h1>
             <p className="mt-2 text-slate-600">{description}</p>
           </div>
@@ -129,9 +129,9 @@ export default function GastoCarteraForm({
             {detailHref ? (
               <Link
                 href={detailHref}
-                className="rounded-2xl bg-red-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+                className="rounded-2xl bg-[#111318] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#2a2d33]"
               >
-                Ver detalle
+                Detalle gastos
               </Link>
             ) : null}
 
@@ -139,7 +139,7 @@ export default function GastoCarteraForm({
               href={backHref}
               className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
             >
-              ← Volver
+              Volver
             </Link>
           </div>
         </div>
@@ -154,7 +154,7 @@ export default function GastoCarteraForm({
                 <select
                   value={sedeId}
                   onChange={(e) => setSedeId(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200"
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-[#0f766e] focus:ring-2 focus:ring-emerald-100"
                 >
                   <option value="">Seleccionar sede</option>
                   {sedes.map((sede) => (
@@ -184,18 +184,18 @@ export default function GastoCarteraForm({
               <input
                 value={valor ? formatoPesos(valor) : ""}
                 onChange={(e) => setValor(limpiarNumero(e.target.value))}
-                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200"
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-[#0f766e] focus:ring-2 focus:ring-emerald-100"
               />
             </div>
 
             <div className="md:col-span-2">
               <label className="mb-2 block text-sm font-semibold text-slate-700">
-                Observación
+                Observacion
               </label>
               <input
                 value={observacion}
                 onChange={(e) => setObservacion(e.target.value)}
-                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200"
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-[#0f766e] focus:ring-2 focus:ring-emerald-100"
               />
             </div>
           </div>
@@ -205,9 +205,9 @@ export default function GastoCarteraForm({
               type="button"
               onClick={guardar}
               disabled={guardando}
-              className="flex-1 rounded-2xl bg-red-600 px-6 py-4 text-lg font-semibold text-white transition hover:bg-red-700 disabled:opacity-70"
+              className="flex-1 rounded-2xl bg-[#0f766e] px-6 py-4 text-lg font-semibold text-white transition hover:bg-[#0b5f59] disabled:opacity-70"
             >
-              {guardando ? "Guardando..." : "Registrar gasto cartera"}
+              {guardando ? "Guardando..." : "Registrar gasto de operacion"}
             </button>
           </div>
 

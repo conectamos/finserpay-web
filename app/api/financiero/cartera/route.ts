@@ -172,9 +172,9 @@ export async function GET(req: Request) {
       items: gastos,
     });
   } catch (error) {
-    console.error("ERROR LISTANDO GASTOS DE CARTERA:", error);
+    console.error("ERROR LISTANDO GASTOS DE OPERACION:", error);
     return NextResponse.json(
-      { error: "Error cargando gastos de cartera" },
+      { error: "Error cargando gastos de operacion" },
       { status: 500 }
     );
   }
@@ -251,13 +251,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      mensaje: "Gasto de cartera registrado correctamente",
+      mensaje: "Gasto de operacion registrado correctamente",
       item: resultado,
     });
   } catch (error) {
-    console.error("ERROR REGISTRANDO GASTO DE CARTERA:", error);
+    console.error("ERROR REGISTRANDO GASTO DE OPERACION:", error);
     return NextResponse.json(
-      { error: "Error registrando gasto de cartera" },
+      { error: "Error registrando gasto de operacion" },
       { status: 500 }
     );
   }
@@ -273,7 +273,7 @@ export async function PATCH(req: Request) {
 
     if (!access.esAdmin) {
       return NextResponse.json(
-        { error: "Solo el administrador puede editar cartera" },
+        { error: "Solo el administrador puede editar gastos de operacion" },
         { status: 403 }
       );
     }
@@ -365,20 +365,20 @@ export async function PATCH(req: Request) {
 
     if (!resultado) {
       return NextResponse.json(
-        { error: "Gasto de cartera no encontrado" },
+        { error: "Gasto de operacion no encontrado" },
         { status: 404 }
       );
     }
 
     return NextResponse.json({
       ok: true,
-      mensaje: "Gasto de cartera actualizado correctamente",
+      mensaje: "Gasto de operacion actualizado correctamente",
       item: resultado,
     });
   } catch (error) {
-    console.error("ERROR ACTUALIZANDO GASTO DE CARTERA:", error);
+    console.error("ERROR ACTUALIZANDO GASTO DE OPERACION:", error);
     return NextResponse.json(
-      { error: "Error actualizando gasto de cartera" },
+      { error: "Error actualizando gasto de operacion" },
       { status: 500 }
     );
   }
@@ -394,7 +394,7 @@ export async function DELETE(req: Request) {
 
     if (!access.esAdmin) {
       return NextResponse.json(
-        { error: "Solo el administrador puede eliminar cartera" },
+        { error: "Solo el administrador puede eliminar gastos de operacion" },
         { status: 403 }
       );
     }
@@ -445,19 +445,19 @@ export async function DELETE(req: Request) {
 
     if (!eliminado) {
       return NextResponse.json(
-        { error: "Gasto de cartera no encontrado" },
+        { error: "Gasto de operacion no encontrado" },
         { status: 404 }
       );
     }
 
     return NextResponse.json({
       ok: true,
-      mensaje: "Gasto de cartera eliminado correctamente",
+      mensaje: "Gasto de operacion eliminado correctamente",
     });
   } catch (error) {
-    console.error("ERROR ELIMINANDO GASTO DE CARTERA:", error);
+    console.error("ERROR ELIMINANDO GASTO DE OPERACION:", error);
     return NextResponse.json(
-      { error: "Error eliminando gasto de cartera" },
+      { error: "Error eliminando gasto de operacion" },
       { status: 500 }
     );
   }
