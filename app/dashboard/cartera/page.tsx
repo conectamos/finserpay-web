@@ -203,7 +203,7 @@ export default async function CarteraPage() {
     (sum, item) => sum + Number(item.valor || 0),
     0
   );
-  const totalGanancias = totalGananciaBruta - totalGastosOperacion;
+  const totalGanancias = totalGananciaBruta - totalGastosOperacion - totalMora;
   const totalSano = activeCredits
     .filter((item) => item.bucket === "alDia")
     .reduce((sum, item) => sum + item.saldoPendiente, 0);
@@ -324,7 +324,7 @@ export default async function CarteraPage() {
         <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <MetricCard label="Invertido" value={money(totalInvertido)} detail={`${activeCredits.length} creditos activos`} />
           <MetricCard label="Cartera por cobrar" value={money(totalPendiente)} detail={`${percent(pctSana)} cartera sana`} />
-          <MetricCard label="Ganancias" value={money(totalGanancias)} detail={`Bruta ${money(totalGananciaBruta)} | Gastos ${money(totalGastosOperacion)}`} warning={totalGanancias < 0} />
+          <MetricCard label="Ganancias" value={money(totalGanancias)} detail={`Bruta ${money(totalGananciaBruta)} | Gastos ${money(totalGastosOperacion)} | Mora ${money(totalMora)}`} warning={totalGanancias < 0} />
           <MetricCard label="Creditos activos" value={String(activeCredits.length)} detail={`${paidCredits.length} creditos pagos`} />
           <MetricCard label="Clientes en mora" value={String(clientsMora)} detail={`${clientsTemprana} temprana, ${clientsMayor} mayor, ${clientsAvanzada} avanzada`} warning={clientsAvanzada > 0} />
           <MetricCard label="Cartera en mora" value={money(totalMora)} detail={`${percent(pctMora)} del saldo pendiente`} warning={pctMora > 18} />
