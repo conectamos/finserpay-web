@@ -18,6 +18,7 @@ type ClientCredit = {
   folio: string;
   clienteNombre: string;
   clienteDocumento: string | null;
+  clienteTelefono?: string | null;
   referenciaEquipo: string | null;
   imei?: string | null;
   deviceUid?: string | null;
@@ -48,8 +49,13 @@ type WompiCheckoutResponse = {
   ok?: boolean;
   amount?: number;
   checkoutUrl?: string;
+  directError?: string | null;
   error?: string;
+  paymentMode?: "CHECKOUT" | "CHECKOUT_FALLBACK" | "NEQUI_DIRECT";
   reference?: string;
+  status?: string | null;
+  statusMessage?: string | null;
+  transactionId?: string | null;
 };
 
 type PaymentReturnNotice = {
@@ -68,7 +74,6 @@ type ClientNotice = {
 };
 
 const STORAGE_KEY = "finserpay.cliente.documento";
-const WOMPI_PUBLIC_LINK = "https://checkout.wompi.co/l/4banHJ";
 
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -89,6 +94,15 @@ function dateLabel(value: string | null | undefined) {
 
 function normalizeDocument(value: string) {
   return value.replace(/\D/g, "");
+}
+
+function normalizePhone(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits.startsWith("57") && digits.length === 12 ? digits.slice(2) : digits;
+}
+
+function formatNequiPhone(value: string) {
+  return normalizePhone(value).slice(0, 10);
 }
 
 function getPayableInstallments(credit: ClientCredit) {
@@ -421,6 +435,8 @@ export default function ClienteConsultaPage() {
   const [confirmPaymentCreditId, setConfirmPaymentCreditId] = useState<number | null>(
     null
   );
+  const [nequiPhone, setNequiPhone] = useState("");
+  const [acceptWompiTerms, setAcceptWompiTerms] = useState(false);
   const [paymentReturn, setPaymentReturn] = useState<PaymentReturnNotice | null>(null);
   const [refreshingPayment, setRefreshingPayment] = useState(false);
   const [activePanel, setActivePanel] = useState<ExplorerPanel>(null);
@@ -537,15 +553,33 @@ export default function ClienteConsultaPage() {
       return;
     }
 
+    const suggestedPhone = formatNequiPhone(credit.clienteTelefono || nequiPhone);
+
+    if (suggestedPhone) {
+      setNequiPhone(suggestedPhone);
+    }
+
+    setAcceptWompiTerms(false);
     setNotice(null);
     setConfirmPaymentCreditId(credit.id);
   };
 
   const payWithWompi = async (credit: ClientCredit) => {
     const cuotaNumeros = cuotasSeleccionadas(credit).map((item) => item.numero);
+    const cleanNequiPhone = formatNequiPhone(nequiPhone);
 
     if (!cuotaNumeros.length) {
       setNotice({ text: "Selecciona una cuota para pagar.", tone: "red" });
+      return;
+    }
+
+    if (cleanNequiPhone.length !== 10) {
+      setNotice({ text: "Ingresa un numero Nequi valido de 10 digitos.", tone: "red" });
+      return;
+    }
+
+    if (!acceptWompiTerms) {
+      setNotice({ text: "Acepta los terminos de Wompi para enviar el pago.", tone: "red" });
       return;
     }
 
@@ -560,21 +594,59 @@ export default function ClienteConsultaPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            acceptWompiTerms,
             creditoId: credit.id,
             cuotaNumeros,
             documento: credit.clienteDocumento || activeDocumento || documento,
+            nequiPhone: cleanNequiPhone,
+            paymentMethod: "NEQUI",
           }),
         }
       );
 
-      if (!result.ok || !result.data.checkoutUrl) {
-        window.location.assign(WOMPI_PUBLIC_LINK);
+      if (!result.ok) {
+        throw new Error(result.data.error || "No se pudo iniciar el pago");
+      }
+
+      if (result.data.paymentMode === "NEQUI_DIRECT") {
+        setPaymentReturn({
+          reference: result.data.reference || "",
+          creditId: credit.id,
+          checkedAt: null,
+        });
+        setNotice({
+          text:
+            "Solicitud enviada a Nequi. Abre la app Nequi, aprueba el pago y luego toca Actualizar estado.",
+          tone: "emerald",
+        });
+        setActivePanel("payments");
+        window.setTimeout(() => {
+          void refreshPaymentStatus();
+        }, 9000);
         return;
       }
 
+      if (!result.data.checkoutUrl) {
+        throw new Error(result.data.directError || "Wompi no entrego un enlace de pago");
+      }
+
+      if (result.data.directError) {
+        setNotice({
+          text: "Nequi directo no quedo disponible. Te llevamos al checkout seguro de Wompi.",
+          tone: "emerald",
+        });
+      }
+
       window.location.assign(result.data.checkoutUrl);
-    } catch {
-      window.location.assign(WOMPI_PUBLIC_LINK);
+    } catch (error) {
+      setConfirmPaymentCreditId(credit.id);
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo iniciar el pago con Wompi",
+        tone: "red",
+      });
     } finally {
       setPayingCreditId(null);
     }
@@ -588,6 +660,8 @@ export default function ClienteConsultaPage() {
     setOpenCreditId(null);
     setActivePanel(null);
     setConfirmPaymentCreditId(null);
+    setAcceptWompiTerms(false);
+    setNequiPhone("");
     setPaymentReturn(null);
     setNotice(null);
   };
@@ -1376,7 +1450,7 @@ export default function ClienteConsultaPage() {
                         <div className="rounded-lg border border-[#edf0f4] bg-white p-4">
                           <WompiLogo />
                           <p className="mt-3 text-sm font-bold text-[#737b88]">
-                            Pago en linea seguro por el valor seleccionado.
+                            Pago Nequi por el valor seleccionado.
                           </p>
                           <div className="mt-4">
                             <PrimaryButton
@@ -1515,7 +1589,9 @@ export default function ClienteConsultaPage() {
             <div className="w-full max-w-[440px] rounded-lg bg-white p-4 shadow-[0_20px_44px_rgba(0,0,0,0.28)]">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-black uppercase text-[#6c747f]">Wompi</p>
+                  <p className="text-xs font-black uppercase text-[#6c747f]">
+                    Nequi por Wompi
+                  </p>
                   <h2
                     id="confirm-payment-title"
                     className="mt-1 text-xl font-black text-[#171b22]"
@@ -1566,10 +1642,64 @@ export default function ClienteConsultaPage() {
                 </div>
               </div>
 
+              <div className="mt-4 rounded-lg border border-[#e6e8ee] bg-[#f8f9fb] p-4">
+                <label
+                  htmlFor="nequi-phone"
+                  className="block text-xs font-black uppercase text-[#6c747f]"
+                >
+                  Numero Nequi
+                </label>
+                <input
+                  id="nequi-phone"
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  value={nequiPhone}
+                  onChange={(event) => {
+                    setNequiPhone(formatNequiPhone(event.target.value));
+                    if (notice?.tone === "red") setNotice(null);
+                  }}
+                  placeholder="3001234567"
+                  className="mt-2 min-h-12 w-full rounded-lg border border-[#dde1e8] bg-white px-4 text-base font-black text-[#171b22] outline-none focus:border-[#a7e66f]"
+                />
+                <p className="mt-2 text-xs font-bold leading-5 text-[#737b88]">
+                  Wompi enviara la solicitud a Nequi. El pago queda registrado
+                  cuando el banco lo apruebe.
+                </p>
+                <label className="mt-3 grid cursor-pointer grid-cols-[22px_1fr] gap-3 text-xs font-bold leading-5 text-[#535b66]">
+                  <input
+                    type="checkbox"
+                    checked={acceptWompiTerms}
+                    onChange={(event) => {
+                      setAcceptWompiTerms(event.target.checked);
+                      if (notice?.tone === "red") setNotice(null);
+                    }}
+                    className="mt-1 h-4 w-4 accent-[#a7e66f]"
+                  />
+                  <span>Acepto reglamentos y politica de privacidad para hacer este pago.</span>
+                </label>
+              </div>
+
+              {notice ? (
+                <div
+                  className={[
+                    "mt-3 rounded-lg border px-4 py-3 text-xs font-bold leading-5",
+                    notice.tone === "emerald"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-red-200 bg-red-50 text-red-700",
+                  ].join(" ")}
+                >
+                  {notice.text}
+                </div>
+              ) : null}
+
               <div className="mt-5 grid grid-cols-[1fr_1.4fr] gap-2">
                 <button
                   type="button"
-                  onClick={() => setConfirmPaymentCreditId(null)}
+                  onClick={() => {
+                    setConfirmPaymentCreditId(null);
+                    setNotice(null);
+                  }}
                   className="min-h-12 rounded-lg border border-[#dde1e8] bg-white px-3 text-sm font-black text-[#414854]"
                 >
                   Cancelar
@@ -1577,10 +1707,16 @@ export default function ClienteConsultaPage() {
                 <button
                   type="button"
                   onClick={() => void payWithWompi(confirmCredit)}
-                  disabled={payingCreditId === confirmCredit.id}
+                  disabled={
+                    payingCreditId === confirmCredit.id ||
+                    nequiPhone.length !== 10 ||
+                    !acceptWompiTerms
+                  }
                   className="min-h-12 rounded-lg bg-[#a7e66f] px-3 text-sm font-black text-[#102316] shadow-[0_10px_20px_rgba(111,194,70,0.22)] disabled:bg-[#d9dde4] disabled:text-[#7e8490]"
                 >
-                  {payingCreditId === confirmCredit.id ? "Abriendo..." : "Ir a Wompi"}
+                  {payingCreditId === confirmCredit.id
+                    ? "Enviando..."
+                    : "Enviar a Nequi"}
                 </button>
               </div>
             </div>

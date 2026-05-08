@@ -4,15 +4,23 @@ import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { sanitizeSearch, sanitizeText, toNumber } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import prisma from "@/lib/prisma";
-import { buildWompiCheckoutUrl, isWompiConfigured } from "@/lib/wompi";
+import {
+  buildWompiCheckoutUrl,
+  createWompiNequiTransaction,
+  isWompiConfigured,
+  isWompiDirectApiConfigured,
+} from "@/lib/wompi";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type CheckoutBody = {
+  acceptWompiTerms?: boolean;
   creditoId?: number | string;
   cuotaNumeros?: Array<number | string>;
   documento?: string;
+  nequiPhone?: string;
+  paymentMethod?: string;
 };
 
 function parseInstallmentNumbers(value: CheckoutBody["cuotaNumeros"]) {
@@ -40,9 +48,25 @@ function generateWompiReference(creditId: number, cuotas: number[]) {
   return `FP-${creditId}-C${cuotas.join("-")}-${timestamp}-${suffix}`.slice(0, 120);
 }
 
+function normalizePhone(value: unknown) {
+  const digits = sanitizeText(value).replace(/\D/g, "");
+  return digits.startsWith("57") && digits.length === 12 ? digits.slice(2) : digits;
+}
+
+function resolveCustomerEmail(email: unknown, document: string | null | undefined) {
+  const configuredEmail = sanitizeText(email);
+
+  if (configuredEmail) {
+    return configuredEmail;
+  }
+
+  const documentPart = sanitizeText(document).replace(/\D/g, "") || "cliente";
+  return `cliente-${documentPart}@finserpay.com`;
+}
+
 export async function POST(req: Request) {
   try {
-    if (!isWompiConfigured()) {
+    if (!isWompiConfigured() && !isWompiDirectApiConfigured()) {
       return NextResponse.json(
         { error: "Wompi no esta configurado para recibir pagos en linea" },
         { status: 503 }
@@ -53,6 +77,9 @@ export async function POST(req: Request) {
     const creditoId = Math.trunc(toNumber(body.creditoId));
     const documento = sanitizeSearch(body.documento).replace(/\D/g, "");
     const cuotaNumeros = parseInstallmentNumbers(body.cuotaNumeros);
+    const paymentMethod = sanitizeText(body.paymentMethod).toUpperCase();
+    const wantsNequiDirect = paymentMethod === "NEQUI";
+    const nequiPhone = normalizePhone(body.nequiPhone);
 
     if (!creditoId || !documento || documento.length < 5) {
       return NextResponse.json(
@@ -66,6 +93,22 @@ export async function POST(req: Request) {
         { error: "Selecciona al menos una cuota para pagar" },
         { status: 400 }
       );
+    }
+
+    if (wantsNequiDirect) {
+      if (nequiPhone.length !== 10) {
+        return NextResponse.json(
+          { error: "Ingresa un numero Nequi valido de 10 digitos" },
+          { status: 400 }
+        );
+      }
+
+      if (!body.acceptWompiTerms) {
+        return NextResponse.json(
+          { error: "Debes aceptar los terminos de Wompi para enviar el pago" },
+          { status: 400 }
+        );
+      }
     }
 
     await ensureCreditAbonoAuditColumns();
@@ -166,8 +209,14 @@ export async function POST(req: Request) {
       req,
       `/clientes?credito=${credit.id}&wompiReference=${encodeURIComponent(reference)}`
     );
+    const storedCustomerEmail = sanitizeText(credit.clienteCorreo) || null;
+    const customerEmail = resolveCustomerEmail(
+      credit.clienteCorreo,
+      credit.clienteDocumento
+    );
+    const customerPhone = nequiPhone || sanitizeText(credit.clienteTelefono) || undefined;
 
-    await prisma.wompiPaymentIntent.create({
+    const paymentIntent = await prisma.wompiPaymentIntent.create({
       data: {
         reference,
         creditoId: credit.id,
@@ -175,26 +224,101 @@ export async function POST(req: Request) {
         amount,
         amountInCents,
         currency: "COP",
-        customerEmail: sanitizeText(credit.clienteCorreo) || null,
+        customerEmail: storedCustomerEmail || customerEmail,
         customerDocument: credit.clienteDocumento,
       },
     });
 
-    return NextResponse.json({
-      ok: true,
-      amount,
-      amountInCents,
-      checkoutUrl: buildWompiCheckoutUrl({
+    const buildCheckoutResponse = async (directError?: string) => {
+      if (directError) {
+        await prisma.wompiPaymentIntent.update({
+          where: { id: paymentIntent.id },
+          data: {
+            status: "CHECKOUT_FALLBACK",
+            payload: { directError } as Prisma.InputJsonValue,
+          },
+        });
+      }
+
+      if (!isWompiConfigured()) {
+        return NextResponse.json(
+          {
+            error: directError || "Wompi Checkout no esta configurado",
+            reference,
+          },
+          { status: 502 }
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+        amount,
         amountInCents,
-        customerDocument: credit.clienteDocumento,
-        customerEmail: sanitizeText(credit.clienteCorreo) || undefined,
-        customerName: credit.clienteNombre,
-        customerPhone: sanitizeText(credit.clienteTelefono) || undefined,
-        redirectUrl,
+        checkoutUrl: buildWompiCheckoutUrl({
+          amountInCents,
+          customerDocument: credit.clienteDocumento,
+          customerEmail: storedCustomerEmail || undefined,
+          customerName: credit.clienteNombre,
+          customerPhone,
+          redirectUrl,
+          reference,
+        }),
+        directError,
+        paymentMode: directError ? "CHECKOUT_FALLBACK" : "CHECKOUT",
         reference,
-      }),
-      reference,
-    });
+      });
+    };
+
+    if (wantsNequiDirect && isWompiDirectApiConfigured()) {
+      try {
+        const transaction = await createWompiNequiTransaction({
+          amountInCents,
+          customerDocument: credit.clienteDocumento,
+          customerEmail,
+          customerName: credit.clienteNombre,
+          nequiPhone,
+          reference,
+        });
+        const transactionId = sanitizeText(transaction.id) || null;
+        const status = sanitizeText(transaction.status) || "PENDING";
+        const statusMessage = sanitizeText(transaction.status_message) || null;
+
+        await prisma.wompiPaymentIntent.update({
+          where: { id: paymentIntent.id },
+          data: {
+            status,
+            transactionId,
+            paymentMethodType:
+              sanitizeText(transaction.payment_method_type) || "NEQUI",
+            payload: transaction as Prisma.InputJsonValue,
+          },
+        });
+
+        return NextResponse.json({
+          ok: true,
+          amount,
+          amountInCents,
+          paymentMode: "NEQUI_DIRECT",
+          reference,
+          status,
+          statusMessage,
+          transactionId,
+        });
+      } catch (error) {
+        const directError =
+          error instanceof Error
+            ? error.message
+            : "No se pudo crear la transaccion Nequi";
+        console.error("ERROR CREANDO PAGO NEQUI WOMPI:", error);
+        return buildCheckoutResponse(directError);
+      }
+    }
+
+    if (wantsNequiDirect && !isWompiDirectApiConfigured()) {
+      return buildCheckoutResponse("Falta configurar WOMPI_PRIVATE_KEY");
+    }
+
+    return buildCheckoutResponse();
   } catch (error) {
     console.error("ERROR CREANDO CHECKOUT WOMPI:", error);
     return NextResponse.json(

@@ -33,6 +33,7 @@ export async function GET(req: Request) {
         folio: true,
         clienteNombre: true,
         clienteDocumento: true,
+        clienteTelefono: true,
         referenciaEquipo: true,
         equipoMarca: true,
         equipoModelo: true,
@@ -91,6 +92,7 @@ export async function GET(req: Request) {
         folio: credit.folio,
         clienteNombre: credit.clienteNombre,
         clienteDocumento: credit.clienteDocumento,
+        clienteTelefono: credit.clienteTelefono,
         referenciaEquipo:
           credit.referenciaEquipo ||
           [credit.equipoMarca, credit.equipoModelo].filter(Boolean).join(" "),
