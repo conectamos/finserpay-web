@@ -22,6 +22,9 @@ const BUNDLED_FONT_REGULAR = path.join(
   "pdf-fonts",
   "Geist-Regular.ttf"
 );
+const POS_WIDTH = 226.77;
+const POS_LEFT = 12;
+const POS_CONTENT_WIDTH = POS_WIDTH - POS_LEFT * 2;
 
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -82,8 +85,29 @@ function dateTimeLabel(value: Date | string | null | undefined) {
   }
 
   return date.toLocaleString("es-CO", {
-    dateStyle: "medium",
-    timeStyle: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function dateLabel(value: Date | string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  return date.toLocaleDateString("es-CO", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
   });
 }
 
@@ -100,42 +124,145 @@ function textValue(value: string | number | null | undefined) {
   return normalized || "-";
 }
 
+function shortText(value: string | number | null | undefined, maxLength = 42) {
+  const normalized = textValue(value).replace(/\s+/g, " ");
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, Math.max(0, maxLength - 3))}...`
+    : normalized;
+}
+
 function paymentMethodLabel(value: string | null | undefined) {
   const normalized = String(value || "")
     .trim()
     .toUpperCase();
 
   const labels: Record<string, string> = {
-    BANCOLOMBIA: "Bancolombia",
-    EFECTIVO: "Efectivo",
-    NEQUI: "Nequi",
-    WOMPI: "Wompi",
+    BANCOLOMBIA: "BANCOLOMBIA",
+    EFECTIVO: "EFECTIVO",
+    NEQUI: "NEQUI",
+    WOMPI: "WOMPI",
   };
 
-  return labels[normalized] || textValue(value);
+  return labels[normalized] || textValue(value).toUpperCase();
 }
 
-function drawInfoBox(
+function drawCentered(
   doc: PDFKit.PDFDocument,
   fonts: { regular: string; bold: string },
-  x: number,
   y: number,
-  width: number,
+  text: string,
+  options: {
+    bold?: boolean;
+    size?: number;
+    color?: string;
+    gap?: number;
+  } = {}
+) {
+  doc
+    .fillColor(options.color || "#111111")
+    .font(options.bold ? fonts.bold : fonts.regular)
+    .fontSize(options.size || 8.5)
+    .text(text, POS_LEFT, y, {
+      width: POS_CONTENT_WIDTH,
+      align: "center",
+    });
+
+  return doc.y + (options.gap ?? 2);
+}
+
+function drawRule(doc: PDFKit.PDFDocument, y: number) {
+  doc
+    .moveTo(POS_LEFT, y)
+    .lineTo(POS_LEFT + POS_CONTENT_WIDTH, y)
+    .dash(2, { space: 2 })
+    .lineWidth(0.6)
+    .strokeColor("#111111")
+    .stroke()
+    .undash();
+
+  return y + 8;
+}
+
+function drawKeyValue(
+  doc: PDFKit.PDFDocument,
+  fonts: { regular: string; bold: string },
+  y: number,
   label: string,
   value: string,
-  accent = "#0F172A"
+  options: {
+    boldValue?: boolean;
+    size?: number;
+  } = {}
 ) {
-  doc.save().roundedRect(x, y, width, 58, 14).fillAndStroke("#FFFFFF", "#DDE7EC").restore();
+  const fontSize = options.size || 7.5;
+  const startY = y;
+
   doc
-    .fillColor("#64748B")
-    .font(fonts.bold)
-    .fontSize(8)
-    .text(label.toUpperCase(), x + 14, y + 13, { width: width - 28 });
+    .fillColor("#111111")
+    .font(fonts.regular)
+    .fontSize(fontSize)
+    .text(label.toUpperCase(), POS_LEFT, y, { width: 82 });
+  const leftY = doc.y;
+
   doc
-    .fillColor(accent)
+    .font(options.boldValue ? fonts.bold : fonts.regular)
+    .fontSize(fontSize)
+    .text(value, POS_LEFT + 86, y, {
+      width: POS_CONTENT_WIDTH - 86,
+      align: "right",
+    });
+  const rightY = doc.y;
+
+  return Math.max(leftY, rightY, startY + fontSize + 2) + 2;
+}
+
+function drawAmountLine(
+  doc: PDFKit.PDFDocument,
+  fonts: { regular: string; bold: string },
+  y: number,
+  label: string,
+  value: string
+) {
+  const startY = y;
+
+  doc
+    .fillColor("#111111")
     .font(fonts.bold)
-    .fontSize(13)
-    .text(value, x + 14, y + 31, { width: width - 28 });
+    .fontSize(8.5)
+    .text(label.toUpperCase(), POS_LEFT, y, { width: 102 });
+  const leftY = doc.y;
+
+  doc.font(fonts.bold).fontSize(9.2).text(value, POS_LEFT + 106, y, {
+    width: POS_CONTENT_WIDTH - 106,
+    align: "right",
+  });
+  const rightY = doc.y;
+
+  return Math.max(leftY, rightY, startY + 12) + 2;
+}
+
+function buildPlan(
+  credito: {
+    montoCredito: number | string;
+    valorCuota: number | string;
+    plazoMeses: number | null;
+    frecuenciaPago: string | null;
+    fechaPrimerPago: Date | null;
+    fechaProximoPago: Date | null;
+  },
+  abonos: Array<{ valor: number | string; fechaAbono: Date }>
+) {
+  return buildCreditPaymentPlan({
+    montoCredito: Number(credito.montoCredito || 0),
+    valorCuota: Number(credito.valorCuota || 0),
+    plazoMeses: Number(credito.plazoMeses || 1),
+    frecuenciaPago: credito.frecuenciaPago,
+    fechaPrimerPago: credito.fechaPrimerPago || credito.fechaProximoPago,
+    abonos: abonos.map((item) => ({
+      valor: Number(item.valor || 0),
+      fechaAbono: item.fechaAbono,
+    })),
+  });
 }
 
 export async function GET(
@@ -237,21 +364,16 @@ export async function GET(
     });
 
     const abonoTime = abono.fechaAbono.getTime();
+    const activeBeforeThisPayment = activeAbonos.filter((item) => {
+      const itemTime = item.fechaAbono.getTime();
+      return itemTime < abonoTime || (itemTime === abonoTime && item.id < abono.id);
+    });
     const activeUntilThisPayment = activeAbonos.filter((item) => {
       const itemTime = item.fechaAbono.getTime();
       return itemTime < abonoTime || (itemTime === abonoTime && item.id <= abono.id);
     });
-    const currentPlan = buildCreditPaymentPlan({
-      montoCredito: Number(abono.credito.montoCredito || 0),
-      valorCuota: Number(abono.credito.valorCuota || 0),
-      plazoMeses: Number(abono.credito.plazoMeses || 1),
-      frecuenciaPago: abono.credito.frecuenciaPago,
-      fechaPrimerPago: abono.credito.fechaPrimerPago || abono.credito.fechaProximoPago,
-      abonos: activeUntilThisPayment.map((item) => ({
-        valor: Number(item.valor || 0),
-        fechaAbono: item.fechaAbono,
-      })),
-    });
+    const previousPlan = buildPlan(abono.credito, activeBeforeThisPayment);
+    const currentPlan = buildPlan(abono.credito, activeUntilThisPayment);
     const isAnnulled = String(abono.estado || "").toUpperCase() === "ANULADO";
     const reciboNumero = `RP-${abono.credito.folio}-${abono.id}`;
     const equipo =
@@ -262,10 +384,13 @@ export async function GET(
       abono.vendedor?.nombre ||
       abono.usuario.nombre ||
       abono.usuario.usuario;
+    const nextInstallments = currentPlan.installments
+      .filter((item) => item.saldoPendiente > 0)
+      .slice(0, 4);
     const fonts = getPdfFonts();
     const doc = new PDFDocument({
-      size: "A4",
-      margin: 36,
+      size: [POS_WIDTH, isAnnulled ? 785 : 735],
+      margin: 0,
       compress: true,
       font: fonts.regular,
       info: {
@@ -274,139 +399,129 @@ export async function GET(
       },
     });
     const bufferPromise = toBuffer(doc);
+    let y = 14;
 
-    doc.save().roundedRect(36, 36, 523, 132, 18).fill("#F8FAFC").restore();
-    doc.save().roundedRect(36, 36, 8, 132, 4).fill(isAnnulled ? "#DC2626" : "#0F766E").restore();
-    doc.fillColor("#0F766E").font(fonts.bold).fontSize(10).text("FINSER PAY", 58, 55);
-    doc.fillColor("#0F172A").font(fonts.bold).fontSize(25).text("Recibo de pago", 58, 75);
-    doc
-      .fillColor("#475569")
-      .font(fonts.regular)
-      .fontSize(10.5)
-      .text(
-        `Recibo: ${reciboNumero}\nFolio credito: ${abono.credito.folio}\nSede: ${abono.sede.nombre}\nGenerado: ${dateTimeLabel(new Date())}`,
-        58,
-        109,
-        { width: 320 }
-      );
-    doc
-      .fillColor(isAnnulled ? "#B91C1C" : "#047857")
-      .font(fonts.bold)
-      .fontSize(12)
-      .text(isAnnulled ? "ANULADO" : "ABONO RECIBIDO", 400, 62, {
-        width: 120,
-        align: "right",
-      });
-    doc
-      .fillColor("#0F172A")
-      .font(fonts.bold)
-      .fontSize(21)
-      .text(money(Number(abono.valor || 0)), 382, 86, {
-        width: 150,
-        align: "right",
-      });
-    doc
-      .fillColor("#64748B")
-      .font(fonts.regular)
-      .fontSize(9)
-      .text("Valor recibido", 400, 113, { width: 120, align: "right" });
+    y = drawCentered(doc, fonts, y, "FINSER PAY", { bold: true, size: 13, gap: 1 });
+    y = drawCentered(doc, fonts, y, "Innovacion financiera con confianza", {
+      size: 7.2,
+      gap: 7,
+    });
+    y = drawCentered(doc, fonts, y, "SISTEMA P.O.S", { bold: true, size: 8, gap: 1 });
+    y = drawCentered(doc, fonts, y, "RECIBO DE ABONO", { bold: true, size: 10, gap: 6 });
 
     if (isAnnulled) {
       doc
-        .save()
-        .rotate(-18, { origin: [298, 390] })
-        .fillColor("#FCA5A5")
-        .opacity(0.22)
-        .font(fonts.bold)
-        .fontSize(72)
-        .text("ANULADO", 126, 360, { width: 350, align: "center" })
-        .restore();
-    }
-
-    drawInfoBox(doc, fonts, 36, 194, 248, "Cliente", textValue(abono.credito.clienteNombre));
-    drawInfoBox(doc, fonts, 304, 194, 255, "Documento", textValue(abono.credito.clienteDocumento));
-    drawInfoBox(doc, fonts, 36, 268, 248, "Telefono", textValue(abono.credito.clienteTelefono));
-    drawInfoBox(doc, fonts, 304, 268, 255, "Equipo", textValue(equipo));
-    drawInfoBox(doc, fonts, 36, 342, 248, "IMEI", textValue(abono.credito.imei));
-    drawInfoBox(doc, fonts, 304, 342, 255, "Metodo de pago", paymentMethodLabel(abono.metodoPago));
-    drawInfoBox(doc, fonts, 36, 416, 248, "Fecha del abono", dateTimeLabel(abono.fechaAbono));
-    drawInfoBox(doc, fonts, 304, 416, 255, "Recibido por", textValue(recibidoPor));
-    drawInfoBox(
-      doc,
-      fonts,
-      36,
-      490,
-      248,
-      "Total abonado a esta fecha",
-      isAnnulled ? "No aplica" : money(currentPlan.totalPaid),
-      isAnnulled ? "#B91C1C" : "#0F172A"
-    );
-    drawInfoBox(
-      doc,
-      fonts,
-      304,
-      490,
-      255,
-      "Saldo posterior del credito",
-      isAnnulled ? "No aplica" : money(currentPlan.saldoPendiente),
-      isAnnulled ? "#B91C1C" : "#0F172A"
-    );
-
-    doc
-      .save()
-      .roundedRect(36, 580, 523, isAnnulled ? 112 : 82, 16)
-      .fillAndStroke("#FFFFFF", "#DDE7EC")
-      .restore();
-    doc
-      .fillColor("#64748B")
-      .font(fonts.bold)
-      .fontSize(8)
-      .text("OBSERVACION", 52, 598);
-    doc
-      .fillColor("#0F172A")
-      .font(fonts.regular)
-      .fontSize(10)
-      .text(textValue(abono.observacion), 52, 616, { width: 491, height: 38 });
-
-    if (isAnnulled) {
+        .rect(POS_LEFT, y, POS_CONTENT_WIDTH, 18)
+        .fillAndStroke("#111111", "#111111");
       doc
-        .fillColor("#B91C1C")
+        .fillColor("#FFFFFF")
         .font(fonts.bold)
         .fontSize(9)
-        .text("Detalle de anulacion", 52, 654);
-      doc
-        .fillColor("#475569")
-        .font(fonts.regular)
-        .fontSize(9.5)
-        .text(
-          `Fecha: ${dateTimeLabel(abono.anuladoAt)}\nMotivo: ${textValue(abono.anulacionMotivo)}`,
-          52,
-          670,
-          { width: 491 }
-        );
+        .text("RECIBO ANULADO", POS_LEFT, y + 5, {
+          width: POS_CONTENT_WIDTH,
+          align: "center",
+        });
+      y += 26;
     }
 
-    const footerY = isAnnulled ? 726 : 704;
+    y = drawRule(doc, y);
+    y = drawKeyValue(doc, fonts, y, "Recibo No.", reciboNumero, { boldValue: true });
+    y = drawKeyValue(doc, fonts, y, "Fecha abono", dateTimeLabel(abono.fechaAbono));
+    y = drawKeyValue(doc, fonts, y, "Fecha impresion", dateTimeLabel(new Date()));
+    y = drawKeyValue(doc, fonts, y, "Sede", shortText(abono.sede.nombre, 34));
+    y = drawKeyValue(doc, fonts, y, "Cajero", shortText(recibidoPor, 34));
+
+    y = drawRule(doc, y + 3);
+    y = drawCentered(doc, fonts, y, "DATOS DEL CLIENTE", { bold: true, size: 8, gap: 4 });
+    y = drawKeyValue(doc, fonts, y, "Cliente", shortText(abono.credito.clienteNombre, 38), {
+      boldValue: true,
+    });
+    y = drawKeyValue(doc, fonts, y, "Documento", textValue(abono.credito.clienteDocumento));
+    y = drawKeyValue(doc, fonts, y, "Telefono", textValue(abono.credito.clienteTelefono));
+    y = drawKeyValue(doc, fonts, y, "Folio", shortText(abono.credito.folio, 34));
+    y = drawKeyValue(doc, fonts, y, "Equipo", shortText(equipo, 36));
+    y = drawKeyValue(doc, fonts, y, "IMEI", shortText(abono.credito.imei, 22));
+
+    y = drawRule(doc, y + 3);
+    y = drawCentered(doc, fonts, y, "APLICACION DEL ABONO", {
+      bold: true,
+      size: 8,
+      gap: 4,
+    });
+    y = drawKeyValue(doc, fonts, y, "Metodo", paymentMethodLabel(abono.metodoPago));
+    y = drawKeyValue(
+      doc,
+      fonts,
+      y,
+      "Frecuencia",
+      getPaymentFrequencyLabel(abono.credito.frecuenciaPago).toUpperCase()
+    );
+    y = drawKeyValue(
+      doc,
+      fonts,
+      y,
+      "Cuotas pagas",
+      `${currentPlan.paidCount} DE ${abono.credito.plazoMeses || 1}`
+    );
+    y = drawAmountLine(doc, fonts, y + 4, "Saldo anterior", money(previousPlan.saldoPendiente));
+    y = drawAmountLine(doc, fonts, y, "Valor abono", money(Number(abono.valor || 0)));
+    y = drawAmountLine(
+      doc,
+      fonts,
+      y,
+      "Saldo despues",
+      isAnnulled ? "ANULADO" : money(currentPlan.saldoPendiente)
+    );
+
+    y = drawRule(doc, y + 5);
+    y = drawCentered(doc, fonts, y, "RESUMEN", { bold: true, size: 8, gap: 4 });
+    y = drawKeyValue(doc, fonts, y, "Credito inicial", money(Number(abono.credito.montoCredito || 0)));
+    y = drawKeyValue(doc, fonts, y, "Total abonado", isAnnulled ? "ANULADO" : money(currentPlan.totalPaid));
+    y = drawKeyValue(doc, fonts, y, "Estado", isAnnulled ? "ANULADO" : currentPlan.estadoPago);
+
+    if (nextInstallments.length) {
+      y = drawRule(doc, y + 3);
+      y = drawCentered(doc, fonts, y, "PROXIMOS PAGOS", { bold: true, size: 8, gap: 5 });
+      y = drawKeyValue(doc, fonts, y, "Fecha", "Valor", { boldValue: true });
+
+      nextInstallments.forEach((item) => {
+        y = drawKeyValue(
+          doc,
+          fonts,
+          y,
+          dateLabel(item.fechaVencimiento),
+          money(item.saldoPendiente)
+        );
+      });
+    }
+
+    y = drawRule(doc, y + 5);
+    y = drawCentered(doc, fonts, y, "OBSERVACION", { bold: true, size: 8, gap: 4 });
     doc
-      .fillColor("#64748B")
+      .fillColor("#111111")
       .font(fonts.regular)
-      .fontSize(9)
-      .text(
-        `Frecuencia del credito: ${getPaymentFrequencyLabel(
-          abono.credito.frecuenciaPago
-        )}. Este recibo soporta el abono registrado en FINSER PAY y no constituye paz y salvo.`,
-        36,
-        footerY,
-        { width: 523, align: "center" }
-      );
-    doc
-      .fillColor("#94A3B8")
-      .font(fonts.regular)
-      .fontSize(8)
-      .text("Documento generado automaticamente por FINSER PAY.", 36, footerY + 34, {
-        width: 523,
+      .fontSize(7.5)
+      .text(shortText(abono.observacion, 170), POS_LEFT, y, {
+        width: POS_CONTENT_WIDTH,
         align: "center",
       });
+    y = doc.y + 8;
+
+    if (isAnnulled) {
+      y = drawRule(doc, y);
+      y = drawCentered(doc, fonts, y, "DETALLE DE ANULACION", { bold: true, size: 8, gap: 4 });
+      y = drawKeyValue(doc, fonts, y, "Fecha", dateTimeLabel(abono.anuladoAt));
+      y = drawKeyValue(doc, fonts, y, "Motivo", shortText(abono.anulacionMotivo, 55));
+    }
+
+    y = drawRule(doc, y + 4);
+    y = drawCentered(doc, fonts, y, "Este recibo soporta el abono registrado.", {
+      size: 7,
+      gap: 1,
+    });
+    y = drawCentered(doc, fonts, y, "No constituye paz y salvo.", { size: 7, gap: 6 });
+    y = drawCentered(doc, fonts, y, "Gracias por tu pago.", { bold: true, size: 8.5, gap: 4 });
+    drawCentered(doc, fonts, y, "www.finserpay.com", { size: 7.5 });
 
     doc.end();
 
@@ -415,7 +530,7 @@ export async function GET(
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="recibo-abono-${cleanFilePart(
+        "Content-Disposition": `attachment; filename="recibo-pos-abono-${cleanFilePart(
           abono.credito.folio
         )}-${abono.id}.pdf"`,
       },
