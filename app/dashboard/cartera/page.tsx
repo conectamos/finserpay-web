@@ -195,6 +195,7 @@ export default async function CarteraPage() {
   const totalPagado = cartera.reduce((sum, item) => sum + item.totalPaid, 0);
   const totalCredito = cartera.reduce((sum, item) => sum + item.montoCredito, 0);
   const totalInvertido = activeCredits.reduce((sum, item) => sum + item.creditoAutorizado, 0);
+  const bolsaRespaldoMora = totalInvertido * 0.1;
   const totalGananciaBruta = activeCredits.reduce(
     (sum, item) => sum + item.gananciaProyectada,
     0
@@ -323,6 +324,7 @@ export default async function CarteraPage() {
 
         <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <MetricCard label="Invertido" value={money(totalInvertido)} detail={`${activeCredits.length} creditos activos`} />
+          <MetricCard label="Bolsa de respaldo para mora" value={money(bolsaRespaldoMora)} detail="10% de lo invertido" />
           <MetricCard label="Cartera por cobrar" value={money(totalPendiente)} detail={`${percent(pctSana)} cartera sana`} />
           <MetricCard label="Ganancias" value={money(totalGanancias)} detail={`Bruta ${money(totalGananciaBruta)} | Gastos ${money(totalGastosOperacion)} | Mora ${money(totalMora)}`} warning={totalGanancias < 0} />
           <MetricCard label="Creditos activos" value={String(activeCredits.length)} detail={`${paidCredits.length} creditos pagos`} />
