@@ -12,11 +12,25 @@ function parsePositiveInt(value: string | null) {
   return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
 }
 
+const BOGOTA_UTC_OFFSET_MS = 5 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 function parseDate(value: string | null, endOfDay = false) {
   const normalized = String(value || "").trim();
 
   if (!normalized) {
     return null;
+  }
+
+  const ymd = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (ymd) {
+    const year = Number(ymd[1]);
+    const month = Number(ymd[2]);
+    const day = Number(ymd[3]);
+    const utcStartOfBogotaDay = Date.UTC(year, month - 1, day) + BOGOTA_UTC_OFFSET_MS;
+
+    return new Date(endOfDay ? utcStartOfBogotaDay + DAY_MS - 1 : utcStartOfBogotaDay);
   }
 
   const parsed = new Date(normalized);
@@ -26,9 +40,9 @@ function parseDate(value: string | null, endOfDay = false) {
   }
 
   if (endOfDay) {
-    parsed.setHours(23, 59, 59, 999);
+    parsed.setUTCHours(23, 59, 59, 999);
   } else {
-    parsed.setHours(0, 0, 0, 0);
+    parsed.setUTCHours(0, 0, 0, 0);
   }
 
   return parsed;
@@ -56,25 +70,38 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const search = sanitizeSearch(searchParams.get("search"));
+    const searchDigits = search.replace(/\D/g, "");
     const sedeId = admin ? parsePositiveInt(searchParams.get("sedeId")) : user.sedeId;
     const from = parseDate(searchParams.get("from"));
     const to = parseDate(searchParams.get("to"), true);
+    const searchConditions: Prisma.CreditoWhereInput[] = search
+      ? [
+          { clienteNombre: { contains: search, mode: "insensitive" } },
+          { clienteDocumento: { contains: search, mode: "insensitive" } },
+          { clienteTelefono: { contains: search, mode: "insensitive" } },
+          { folio: { contains: search, mode: "insensitive" } },
+          { imei: { contains: search, mode: "insensitive" } },
+          { deviceUid: { contains: search, mode: "insensitive" } },
+          { sede: { nombre: { contains: search, mode: "insensitive" } } },
+          { usuario: { nombre: { contains: search, mode: "insensitive" } } },
+          { vendedor: { nombre: { contains: search, mode: "insensitive" } } },
+        ]
+      : [];
+
+    if (searchDigits && searchDigits !== search) {
+      searchConditions.push(
+        { clienteDocumento: { contains: searchDigits, mode: "insensitive" } },
+        { clienteTelefono: { contains: searchDigits, mode: "insensitive" } },
+        { imei: { contains: searchDigits, mode: "insensitive" } },
+        { deviceUid: { contains: searchDigits, mode: "insensitive" } }
+      );
+    }
 
     const creditWhere: Prisma.CreditoWhereInput = {
       ...(sedeId ? { sedeId } : {}),
       ...(search
         ? {
-            OR: [
-              { clienteNombre: { contains: search, mode: "insensitive" } },
-              { clienteDocumento: { contains: search, mode: "insensitive" } },
-              { clienteTelefono: { contains: search, mode: "insensitive" } },
-              { folio: { contains: search, mode: "insensitive" } },
-              { imei: { contains: search, mode: "insensitive" } },
-              { deviceUid: { contains: search, mode: "insensitive" } },
-              { sede: { nombre: { contains: search, mode: "insensitive" } } },
-              { usuario: { nombre: { contains: search, mode: "insensitive" } } },
-              { vendedor: { nombre: { contains: search, mode: "insensitive" } } },
-            ],
+            OR: searchConditions,
           }
         : {}),
     };
