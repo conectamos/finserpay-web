@@ -4727,20 +4727,20 @@ export default function CreditFactoryConsole({
           <section
             className={[
               "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6",
-              simulatorMode ? "fp-simulator-hero" : "",
+              simulatorMode || deliveryMode ? "fp-tool-hero" : "",
             ].join(" ")}
           >
-            {simulatorMode ? (
+            {simulatorMode || deliveryMode ? (
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
                   <FinserBrand compact showTagline={false} />
                   <div className="hidden h-10 w-px bg-[#e8decb] sm:block" />
                   <div>
                     <div className="inline-flex rounded-full border border-[#e6d6bd] bg-[#faf7ef] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#7a5c20]">
-                      Simulador
+                      {deliveryMode ? "Entrega" : "Simulador"}
                     </div>
                     <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
-                      Calcula cuotas
+                      {deliveryMode ? "Validar entrega" : "Calcula cuotas"}
                     </h1>
                   </div>
                 </div>
@@ -4839,6 +4839,8 @@ export default function CreditFactoryConsole({
           className={
             paymentsView
               ? "mt-6 rounded-[24px] border border-[#d9e6ea] bg-white p-5 shadow-sm"
+              : deliveryMode
+                ? "fp-surface mt-6 rounded-[28px] p-5"
               : "fp-surface mt-6 rounded-[28px] p-6"
           }
         >
@@ -4854,7 +4856,7 @@ export default function CreditFactoryConsole({
             {paymentsView
               ? "Busca el cliente para recaudar"
               : deliveryMode
-                ? "Consulta estado de entrega"
+                ? "Busca el credito"
                 : "Encuentra al cliente y su credito"}
           </h2>
           <p
@@ -4865,10 +4867,12 @@ export default function CreditFactoryConsole({
           >
             {paymentsView
               ? "Busca por cedula, telefono, nombre, folio o IMEI y selecciona el credito correcto."
-              : searchDescription}
+              : deliveryMode
+                ? "Ingresa cedula o IMEI para saber si el equipo se puede entregar."
+                : searchDescription}
           </p>
 
-          <div className="mt-6 flex flex-col gap-3 lg:flex-row">
+          <div className={deliveryMode ? "mt-5 flex flex-col gap-3 lg:flex-row" : "mt-6 flex flex-col gap-3 lg:flex-row"}>
             <input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
@@ -4906,7 +4910,7 @@ export default function CreditFactoryConsole({
                 ? `Resultados encontrados: ${credits.length}`
                 : `Ultimos resultados disponibles: ${credits.length}`}
             </p>
-          ) : (
+          ) : deliveryMode ? null : (
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                 Alcance: {canAdmin ? "Global" : `Sede ${initialSession.sedeNombre}`}
@@ -7899,14 +7903,15 @@ export default function CreditFactoryConsole({
           <div
             ref={lookupMode ? selectedCreditPanelRef : null}
             className={[
-              "rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] p-6 shadow-[0_18px_50px_rgba(15,23,42,0.07)]",
-              createClientMode || simulatorMode ? "hidden" : "",
+              "rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] shadow-[0_18px_50px_rgba(15,23,42,0.07)]",
+              deliveryMode ? "p-5" : "p-6",
+              createClientMode || simulatorMode || (deliveryMode && !selectedCredit) ? "hidden" : "",
             ].join(" ")}
           >
             <div className="inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
               {deliveryMode ? "Validacion de entrega" : lookupMode ? "Expediente del cliente" : "Entrega"}
             </div>
-            <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">
+            <h2 className={deliveryMode ? "mt-3 text-2xl font-black tracking-tight text-slate-950" : "mt-4 text-3xl font-black tracking-tight text-slate-950"}>
               {deliveryMode
                 ? "Resultado de consulta"
                 : lookupMode
@@ -8178,7 +8183,12 @@ export default function CreditFactoryConsole({
                   </div>
                 </div>
 
-                <div className="rounded-[24px] border border-[#e6dece] bg-white px-5 py-5">
+                <div
+                  className={[
+                    "rounded-[24px] border border-[#e6dece] bg-white px-5 py-5",
+                    deliveryMode ? "hidden" : "",
+                  ].join(" ")}
+                >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -8327,7 +8337,12 @@ export default function CreditFactoryConsole({
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2">
+                <div
+                  className={[
+                    "grid gap-3 md:grid-cols-2",
+                    deliveryMode ? "hidden" : "",
+                  ].join(" ")}
+                >
                   <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                       Referencia de pago
@@ -8383,7 +8398,12 @@ export default function CreditFactoryConsole({
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2">
+                <div
+                  className={[
+                    "grid gap-3 md:grid-cols-2",
+                    deliveryMode ? "hidden" : "",
+                  ].join(" ")}
+                >
                   <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
                       Inicial
@@ -8633,7 +8653,11 @@ export default function CreditFactoryConsole({
                 ? "mt-6 grid gap-6 xl:grid-cols-[0.82fr_1.18fr]"
                 : "mt-6"
               : lookupMode && showResultsPanel
-                ? "mt-8"
+                ? deliveryMode
+                  ? activeSearch && !selectedCredit
+                    ? "mt-6"
+                    : "hidden"
+                  : "mt-8"
                 : createClientMode
                 ? "hidden"
                 : "hidden"
