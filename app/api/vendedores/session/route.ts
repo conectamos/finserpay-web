@@ -56,6 +56,13 @@ function isVentasAccessSede(sede?: { nombre?: string | null; codigo?: string | n
   return values.some((value) => value === "VENTAS" || value === "VENTA");
 }
 
+function isBlockedOperationalSede(sede?: { nombre?: string | null; codigo?: string | null }) {
+  const values = [sede?.nombre, sede?.codigo].map(normalizeSedeAccess);
+  return values.some(
+    (value) => value === "PP" || value === "PRINCIPAL" || value.includes("PRINCIPAL")
+  );
+}
+
 function serializeSede(item: { id: number; nombre: string; codigo: string | null }) {
   return {
     id: item.id,
@@ -87,7 +94,7 @@ async function getOperationalSedes(accessSedeId: number) {
     ],
   });
 
-  return sedes.map(serializeSede);
+  return sedes.filter((sede) => !isBlockedOperationalSede(sede)).map(serializeSede);
 }
 
 async function getAssignedSellersForSede(sedeId: number) {
@@ -285,6 +292,13 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "Selecciona una sede activa para realizar la venta" },
         { status: 400 }
+      );
+    }
+
+    if (isBlockedOperationalSede(operationalSede)) {
+      return NextResponse.json(
+        { error: "Esta sede no esta disponible para registrar ventas" },
+        { status: 403 }
       );
     }
 
