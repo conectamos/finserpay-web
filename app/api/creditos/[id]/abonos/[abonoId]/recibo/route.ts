@@ -435,12 +435,7 @@ export async function GET(
       gap: 7,
     });
     y = drawCentered(doc, fonts, y, "SISTEMA P.O.S", { bold: true, size: 8, gap: 1 });
-    y = drawCentered(doc, fonts, y, "RECIBO DE ABONO", { bold: true, size: 10, gap: 4 });
-    y = drawCentered(doc, fonts, y, "RES.DIAN: PENDIENTE FACTURACION ELECTRONICA", {
-      size: 6.5,
-      gap: 1,
-    });
-    y = drawCentered(doc, fonts, y, "VIG: PENDIENTE", { size: 6.5, gap: 6 });
+    y = drawCentered(doc, fonts, y, "RECIBO DE ABONO", { bold: true, size: 10, gap: 6 });
 
     if (isAnnulled) {
       doc
