@@ -6113,7 +6113,7 @@ export default function CreditFactoryConsole({
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                         />
                         <p className="mt-2 text-xs font-medium text-slate-500">
-                          Se calcula automaticamente con frecuencia {frecuenciaPagoLabel.toLowerCase()}.
+                          Se calcula automaticamente segun la fecha del credito y frecuencia {frecuenciaPagoLabel.toLowerCase()}.
                         </p>
                       </div>
                     </div>
@@ -7543,7 +7543,7 @@ export default function CreditFactoryConsole({
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 />
                 <p className="mt-2 text-xs font-medium text-slate-500">
-                  Fecha automatica segun frecuencia {frecuenciaPagoLabel.toLowerCase()}.
+                  Fecha automatica segun la fecha del credito y frecuencia {frecuenciaPagoLabel.toLowerCase()}.
                 </p>
               </div>
             </div>

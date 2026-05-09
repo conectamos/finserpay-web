@@ -210,15 +210,79 @@ export function getPaymentFrequencyPeriodsPerYear(value: unknown) {
   );
 }
 
+function normalizeDateAtNoon(value: Date | number | string = new Date()) {
+  const baseDate = new Date(value);
+  const normalized = Number.isNaN(baseDate.getTime()) ? new Date() : baseDate;
+  normalized.setHours(12, 0, 0, 0);
+  return normalized;
+}
+
+function createNoonDate(year: number, monthIndex: number, day: number) {
+  const date = new Date(year, monthIndex, day, 12, 0, 0, 0);
+  date.setHours(12, 0, 0, 0);
+  return date;
+}
+
+export function getQuincenalFirstPaymentDateObject(
+  from: Date | number | string = new Date()
+) {
+  const baseDate = normalizeDateAtNoon(from);
+  const creditDay = baseDate.getDate();
+  let dueMonth = baseDate.getMonth();
+  let dueYear = baseDate.getFullYear();
+  let dueDay = 17;
+
+  if (creditDay <= 5) {
+    dueDay = 17;
+  } else if (creditDay <= 20) {
+    dueDay = 2;
+    dueMonth += 1;
+  } else {
+    dueDay = 17;
+    dueMonth += 1;
+  }
+
+  const dueDate = createNoonDate(dueYear, dueMonth, dueDay);
+  dueYear = dueDate.getFullYear();
+  dueMonth = dueDate.getMonth();
+
+  return createNoonDate(dueYear, dueMonth, dueDay);
+}
+
+function addQuincenalPaymentPeriod(date: Date | number | string, periods: number) {
+  const baseDate = normalizeDateAtNoon(date);
+  let dueMonth = baseDate.getMonth();
+  let dueYear = baseDate.getFullYear();
+  let dueDay = baseDate.getDate() <= 2 ? 2 : 17;
+  const steps = Math.max(0, Math.trunc(Number(periods || 0)));
+
+  for (let index = 0; index < steps; index += 1) {
+    if (dueDay === 2) {
+      dueDay = 17;
+    } else {
+      dueDay = 2;
+      dueMonth += 1;
+    }
+
+    const normalized = createNoonDate(dueYear, dueMonth, dueDay);
+    dueYear = normalized.getFullYear();
+    dueMonth = normalized.getMonth();
+  }
+
+  return createNoonDate(dueYear, dueMonth, dueDay);
+}
+
 export function addPaymentFrequency(
   date: Date | number | string,
   frequencyValue: unknown,
   periods = 1
 ) {
   const frequency = normalizePaymentFrequency(frequencyValue);
-  const baseDate = new Date(date);
-  const next = Number.isNaN(baseDate.getTime()) ? new Date() : baseDate;
-  next.setHours(12, 0, 0, 0);
+  const next = normalizeDateAtNoon(date);
+
+  if (frequency === "QUINCENAL") {
+    return addQuincenalPaymentPeriod(next, periods);
+  }
 
   if (frequency === "MENSUAL") {
     next.setMonth(next.getMonth() + periods);
@@ -264,19 +328,25 @@ export function getDefaultFirstPaymentDate(
   from: Date | number | string = new Date(),
   frequency: unknown = DEFAULT_PAYMENT_FREQUENCY
 ) {
-  const baseDate = new Date(from);
-  const normalized = Number.isNaN(baseDate.getTime()) ? new Date() : baseDate;
-  normalized.setHours(12, 0, 0, 0);
-  return addPaymentFrequency(normalized, frequency, 1).toISOString().slice(0, 10);
+  const normalized = normalizeDateAtNoon(from);
+  const dueDate =
+    normalizePaymentFrequency(frequency) === "QUINCENAL"
+      ? getQuincenalFirstPaymentDateObject(normalized)
+      : addPaymentFrequency(normalized, frequency, 1);
+
+  return dueDate.toISOString().slice(0, 10);
 }
 
 export function getDefaultFirstPaymentDateObject(
   frequency: unknown = DEFAULT_PAYMENT_FREQUENCY,
   from: Date | number | string = new Date()
 ) {
-  const baseDate = new Date(from);
-  const normalized = Number.isNaN(baseDate.getTime()) ? new Date() : baseDate;
-  normalized.setHours(12, 0, 0, 0);
+  const normalized = normalizeDateAtNoon(from);
+
+  if (normalizePaymentFrequency(frequency) === "QUINCENAL") {
+    return getQuincenalFirstPaymentDateObject(normalized);
+  }
+
   return addPaymentFrequency(normalized, frequency, 1);
 }
 

@@ -613,8 +613,11 @@ export async function POST(req: Request) {
     const frecuenciaPago = normalizePaymentFrequency(
       body.frecuenciaPago || creditSettings.frecuenciaPago
     );
-    const fechaPrimerPago =
-      toNullableDate(body.fechaPrimerPago) || getDefaultFirstPaymentDateObject(frecuenciaPago);
+    const fechaCredito = new Date();
+    const fechaPrimerPago = getDefaultFirstPaymentDateObject(
+      frecuenciaPago,
+      fechaCredito
+    );
     const contratoAceptado = Boolean(body.contratoAceptado);
     const contratoFirmaDataUrl = sanitizeImageDataUrl(body.contratoFirmaDataUrl);
     const contratoFotoDataUrl = sanitizeImageDataUrl(
