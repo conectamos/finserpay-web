@@ -1807,7 +1807,16 @@ export default function CreditFactoryConsole({
       : Math.max(0, valorTotalEquipoNumero - MAX_DEVICE_FINANCING_BASE);
   const initialPaymentPercentage =
     creditSettings.cuotaInicialPorcentaje ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE;
+  const cuotaInicialMinimaNumero = calculateRequiredInitialPayment(
+    valorTotalEquipoNumero,
+    precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined,
+    initialPaymentPercentage
+  );
   const cuotaInicialNumero = Math.max(0, Number(cuotaInicial || 0));
+  const cuotaInicialValida =
+    valorTotalEquipoNumero > 0 &&
+    cuotaInicialNumero >= cuotaInicialMinimaNumero &&
+    cuotaInicialNumero <= valorTotalEquipoNumero;
   const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
     creditSettings.plazoMaximoCuotas
   );
@@ -2367,6 +2376,7 @@ export default function CreditFactoryConsole({
     Boolean(equipoMarca.trim()) &&
     Boolean(equipoModelo.trim()) &&
     imeiValido &&
+    cuotaInicialValida &&
     saldoFinanciado > 0 &&
     plazoMesesNumero > 0;
   const contratoListo = stepClienteReady && stepContratoReady && stepEquipoReady;
@@ -3010,6 +3020,20 @@ export default function CreditFactoryConsole({
     }
   };
 
+  const handleCuotaInicialBlur = () => {
+    if (!valorTotalEquipoNumero) {
+      setCuotaInicial("");
+      return;
+    }
+
+    const normalizedInitial = Math.max(
+      cuotaInicialMinimaNumero,
+      Math.min(cuotaInicialNumero, valorTotalEquipoNumero)
+    );
+
+    setCuotaInicial(String(Math.round(normalizedInitial)));
+  };
+
   const loadCredits = async (preserveSelected = true, searchValue = activeSearch) => {
     try {
       setLoadingList(true);
@@ -3170,18 +3194,9 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    setCuotaInicial(
-      String(
-        calculateRequiredInitialPayment(
-          totalValue,
-          precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined,
-          initialPaymentPercentage
-        )
-      )
-    );
+    setCuotaInicial(String(cuotaInicialMinimaNumero));
   }, [
-    initialPaymentPercentage,
-    precioBaseVentaCatalogo,
+    cuotaInicialMinimaNumero,
     valorEquipoTotal,
   ]);
 
@@ -6066,14 +6081,35 @@ export default function CreditFactoryConsole({
 
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Cuota inicial automatica
+                          Cuota inicial
                         </label>
                         <input
                           value={currencyInputValue(cuotaInicial)}
-                          readOnly
+                          onChange={(event) =>
+                            setCuotaInicial(event.target.value.replace(/\D/g, ""))
+                          }
+                          onBlur={handleCuotaInicialBlur}
+                          inputMode="numeric"
                           placeholder="$ 0"
-                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-900 outline-none"
+                          className={[
+                            "w-full rounded-2xl border bg-white px-4 py-3 text-base font-semibold text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200",
+                            cuotaInicial || !valorTotalEquipoNumero
+                              ? cuotaInicialValida || !valorTotalEquipoNumero
+                                ? "border-slate-300"
+                                : "border-red-300"
+                              : "border-slate-300",
+                          ].join(" ")}
                         />
+                        <p
+                          className={[
+                            "mt-2 text-xs font-medium",
+                            cuotaInicial && !cuotaInicialValida
+                              ? "text-red-600"
+                              : "text-slate-500",
+                          ].join(" ")}
+                        >
+                          Minimo: {currency(cuotaInicialMinimaNumero)}. Puedes subirla si el cliente da mas.
+                        </p>
                       </div>
 
                       <div>
@@ -6138,10 +6174,13 @@ export default function CreditFactoryConsole({
                         </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Inicial ({initialPaymentPercentage}%)
+                            Inicial
                           </p>
                           <p className="mt-2 text-2xl font-black text-slate-950">
                             {currency(cuotaInicialNumero)}
+                          </p>
+                          <p className="mt-1 text-xs font-medium text-slate-500">
+                            Minimo {currency(cuotaInicialMinimaNumero)}.
                           </p>
                         </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
@@ -7500,10 +7539,27 @@ export default function CreditFactoryConsole({
                 </label>
                 <input
                   value={currencyInputValue(cuotaInicial)}
-                  readOnly
+                  onChange={(event) => setCuotaInicial(event.target.value.replace(/\D/g, ""))}
+                  onBlur={handleCuotaInicialBlur}
+                  inputMode="numeric"
                   placeholder="$ 0"
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-900 outline-none"
+                  className={[
+                    "w-full rounded-2xl border bg-white px-4 py-3 text-base font-semibold text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200",
+                    cuotaInicial || !valorTotalEquipoNumero
+                      ? cuotaInicialValida || !valorTotalEquipoNumero
+                        ? "border-slate-300"
+                        : "border-red-300"
+                      : "border-slate-300",
+                  ].join(" ")}
                 />
+                <p
+                  className={[
+                    "mt-2 text-xs font-medium",
+                    cuotaInicial && !cuotaInicialValida ? "text-red-600" : "text-slate-500",
+                  ].join(" ")}
+                >
+                  Minimo: {currency(cuotaInicialMinimaNumero)}. Puedes subirla si el cliente da mas.
+                </p>
               </div>
 
               <div>

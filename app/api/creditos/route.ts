@@ -596,11 +596,16 @@ export async function POST(req: Request) {
       : null;
     const effectiveCreditSettings = await getEffectiveCreditSettings(clienteDocumento);
     const creditSettings = effectiveCreditSettings.settings;
-    const cuotaInicial = calculateRequiredInitialPayment(
+    const cuotaInicialMinima = calculateRequiredInitialPayment(
       valorEquipoTotalInput,
       precioBaseVentaCatalogo,
       creditSettings.cuotaInicialPorcentaje
     );
+    const cuotaInicialInput = toNumber(body.cuotaInicial);
+    const cuotaInicial =
+      cuotaInicialInput > 0
+        ? Math.max(cuotaInicialMinima, cuotaInicialInput)
+        : cuotaInicialMinima;
     const plazoMesesInput = Math.trunc(toNumber(body.plazoMeses));
     const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
       creditSettings.plazoMaximoCuotas
@@ -926,6 +931,15 @@ export async function POST(req: Request) {
     if (cuotaInicial < 0 || cuotaInicial > valorEquipoTotal) {
       return NextResponse.json(
         { error: "La cuota inicial no puede superar el valor total del equipo" },
+        { status: 400 }
+      );
+    }
+
+    if (cuotaInicialInput > 0 && cuotaInicialInput < cuotaInicialMinima) {
+      return NextResponse.json(
+        {
+          error: `La cuota inicial minima es ${Math.round(cuotaInicialMinima).toLocaleString("es-CO")}`,
+        },
         { status: 400 }
       );
     }
