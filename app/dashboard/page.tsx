@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
@@ -1004,6 +1005,47 @@ export default async function DashboardPage() {
                 <p className="mt-2 text-sm font-bold text-[#687080]">
                   {sellerIsSupervisor ? "Supervision" : "Asesor comercial"}
                 </p>
+              </div>
+            </div>
+          </section>
+
+          <section className="mt-5 overflow-hidden rounded-[34px] border border-[#d7dce2] bg-white p-5 shadow-[0_18px_48px_rgba(17,19,24,0.07)]">
+            <div className="grid gap-5 md:grid-cols-[168px_1fr] md:items-center">
+              <div className="rounded-[26px] border border-[#cce7df] bg-[#eff8f5] p-3">
+                <Image
+                  src="/downloads/finserpay-clientes-qr.svg"
+                  alt="QR descarga app FINSER PAY Clientes"
+                  width={720}
+                  height={720}
+                  className="aspect-square w-full rounded-[18px] bg-white"
+                />
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
+                  App clientes
+                </p>
+                <h2 className="mt-2 text-2xl font-black leading-tight text-[#20242a]">
+                  Instalar al finalizar la venta
+                </h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-[#687080]">
+                  El asesor puede escanear este QR desde el celular del cliente o abrir la descarga directa.
+                </p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <Link
+                    href="/app"
+                    target="_blank"
+                    className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-[#0f766e] bg-[#0f766e] px-4 text-center text-sm font-black text-white transition hover:-translate-y-0.5"
+                  >
+                    Abrir descarga
+                  </Link>
+                  <a
+                    href="/downloads/finserpay-clientes.apk"
+                    download
+                    className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-[#d7dce2] bg-[#fbfbf7] px-4 text-center text-sm font-black text-[#20242a] transition hover:-translate-y-0.5"
+                  >
+                    Descargar APK
+                  </a>
+                </div>
               </div>
             </div>
           </section>
