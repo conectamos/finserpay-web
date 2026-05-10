@@ -131,13 +131,21 @@ export function extractEqualityDeviceSnapshot(
   const rootDeviceResponseList = Array.isArray(record.deviceResponseList)
     ? record.deviceResponseList
     : [];
+  const rootDeviceList = Array.isArray(record.deviceList) ? record.deviceList : [];
   const dataResponseDeviceResponseList = Array.isArray(dataResponse?.deviceResponseList)
     ? dataResponse.deviceResponseList
+    : [];
+  const dataResponseDeviceList = Array.isArray(dataResponse?.deviceList)
+    ? dataResponse.deviceList
     : [];
   const deviceResponseList =
     dataResponseDeviceResponseList.length > 0
       ? dataResponseDeviceResponseList
-      : rootDeviceResponseList;
+      : dataResponseDeviceList.length > 0
+        ? dataResponseDeviceList
+        : rootDeviceResponseList.length > 0
+          ? rootDeviceResponseList
+          : rootDeviceList;
   const firstItem =
     deviceResponseList.length > 0 &&
     typeof deviceResponseList[0] === "object" &&
@@ -148,6 +156,28 @@ export function extractEqualityDeviceSnapshot(
   if (!firstItem) {
     return null;
   }
+
+  const serviceList = Array.isArray(firstItem.serviceList)
+    ? firstItem.serviceList.filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === "object" && item !== null
+      )
+    : [];
+  const firstService = serviceList[0] || null;
+  const serviceName =
+    typeof firstService?.serviceName === "string"
+      ? firstService.serviceName
+      : typeof firstService?.name === "string"
+        ? firstService.name
+        : "";
+  const serviceStatus =
+    typeof firstService?.serviceStatus === "string"
+      ? firstService.serviceStatus
+      : typeof firstService?.status === "string"
+        ? firstService.status
+        : "";
+  const servicePaymentMethod =
+    typeof firstService?.paymentMethod === "string" ? firstService.paymentMethod : "";
 
   return {
     createdTimeStamp:
@@ -173,7 +203,10 @@ export function extractEqualityDeviceSnapshot(
     serviceDetails:
       typeof firstItem.serviceDetails === "string"
         ? firstItem.serviceDetails
-        : null,
+        : [serviceName, serviceStatus, servicePaymentMethod]
+            .filter(Boolean)
+            .join(" ")
+            .trim() || null,
     stateInfo:
       typeof firstItem.stateInfo === "string" ? firstItem.stateInfo : null,
     tenantName:
@@ -197,6 +230,7 @@ export function deriveEqualityDeliveryStatus(
 
   const state = String(snapshot.stateInfo || "").trim().toLowerCase();
   const service = String(snapshot.serviceDetails || "").trim().toUpperCase();
+  const hasPostpaidService = service.includes("POSTPAID");
   const hasCheckIn = Boolean(String(snapshot.lastCheckIn || "").trim());
   const hasPendingTransitions =
     Boolean(String(snapshot.transitionState || "").trim()) ||
@@ -212,7 +246,7 @@ export function deriveEqualityDeliveryStatus(
     };
   }
 
-  if (state.includes("ready for use") && service === "POSTPAID" && hasCheckIn) {
+  if (state.includes("ready for use") && hasPostpaidService && hasCheckIn) {
     return {
       label: "100% entregable",
       detail:
@@ -224,7 +258,7 @@ export function deriveEqualityDeliveryStatus(
 
   if (
     state.includes("active") &&
-    service === "POSTPAID" &&
+    hasPostpaidService &&
     (AUTHORIZED_ACTIVE_DELIVERY_DEVICE_UIDS.has(
       String(snapshot.deviceUid || "").replace(/\D/g, "")
     ) ||
@@ -239,7 +273,7 @@ export function deriveEqualityDeliveryStatus(
     };
   }
 
-  if (state.includes("active") && service === "POSTPAID" && hasCheckIn) {
+  if (state.includes("active") && hasPostpaidService && hasCheckIn) {
     return {
       label: "100% entregable",
       detail:
@@ -316,6 +350,26 @@ export function deriveEqualityDeliveryStatus(
         "Equality ya muestra un servicio asociado al equipo, pero el estado remoto aun no confirma que este listo para entrega.",
       ready: false,
       tone: "sky",
+    };
+  }
+
+  if (snapshot.deviceUid && !state && !hasCheckIn) {
+    return {
+      label: "Inscrito sin check-in",
+      detail:
+        "El equipo ya fue recibido por Zero Touch, pero aun no reporta estado remoto ni primer check-in. Debe encenderse con internet y esperar a que Trustonic actualice el estado.",
+      ready: false,
+      tone: "amber",
+    };
+  }
+
+  if (snapshot.deviceUid && !state) {
+    return {
+      label: "Sin estado remoto",
+      detail:
+        "Zero Touch encontro el equipo, pero todavia no devolvio stateInfo. Reintenta la consulta despues de que el equipo tenga conexion y complete la sincronizacion.",
+      ready: false,
+      tone: "amber",
     };
   }
 
