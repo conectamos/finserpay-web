@@ -4187,6 +4187,8 @@ export default function CreditFactoryConsole({
           tone: "amber",
         });
       }
+
+      window.location.assign("/app");
     } catch (error) {
       setNotice({
         text: error instanceof Error ? error.message : "No se pudo crear el credito",
