@@ -60,6 +60,46 @@ type EndpointCardData = {
   tone: Tone;
 };
 
+const EXTERNAL_CREDIT_API_URL =
+  "https://finserpay.com/api/integraciones/creditos/imei?imei=350792390007233";
+const EXTERNAL_CREDIT_API_HEADER = "Authorization: Bearer TU_LLAVE_DE_API";
+const EXTERNAL_CREDIT_API_CURL = `curl "${EXTERNAL_CREDIT_API_URL}" \\
+  -H "${EXTERNAL_CREDIT_API_HEADER}"`;
+const EXTERNAL_CREDIT_API_RESPONSE = `{
+  "ok": true,
+  "active": true,
+  "imei": "350792390007233",
+  "deviceUid": "350792390007233",
+  "credit": {
+    "id": 123,
+    "folio": "FC-20260511-ABCD",
+    "estado": "ENTREGABLE",
+    "entregable": true,
+    "referenciaEquipo": "SAMSUNG A17 128GB",
+    "valorCreditoActivo": 1129784,
+    "valorFinanciadoBase": 640000,
+    "saldoPendiente": 1035600,
+    "valorCuota": 94149,
+    "frecuenciaPago": "QUINCENAL",
+    "frecuenciaPagoLabel": "Quincenal",
+    "cuotasTotales": 12,
+    "cuotasPagadas": 1,
+    "cuotasPendientes": 11,
+    "estadoPago": "AL_DIA",
+    "fechaCredito": "2026-05-11T17:00:00.000Z",
+    "sede": {
+      "id": 1,
+      "nombre": "SEDE1"
+    },
+    "proximaCuota": {
+      "numero": 2,
+      "fechaVencimiento": "2026-06-02",
+      "valor": 94149,
+      "estado": "PENDIENTE"
+    }
+  }
+}`;
+
 function formatoHora(valor?: string | null) {
   if (!valor) {
     return "Sin actualizar";
@@ -370,6 +410,26 @@ function SummaryShell({
   );
 }
 
+function CopyButton({
+  label,
+  onCopy,
+  value,
+}: {
+  label: string;
+  onCopy: (value: string, label: string) => void;
+  value: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onCopy(value, label)}
+      className="rounded-2xl border border-[#d9ccb9] bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.16em] text-slate-700 transition hover:-translate-y-0.5 hover:border-[#c79a57] hover:text-slate-950"
+    >
+      Copiar {label}
+    </button>
+  );
+}
+
 export default function IntegrationsHub({
   initialSession,
 }: {
@@ -378,6 +438,7 @@ export default function IntegrationsHub({
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [copyMessage, setCopyMessage] = useState("");
   const [isPending, startTransition] = useTransition();
   const requestRef = useRef<Promise<void> | null>(null);
 
@@ -421,6 +482,17 @@ export default function IntegrationsHub({
     },
     [startTransition]
   );
+
+  const copyText = useCallback(async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopyMessage(`${label} copiado.`);
+      window.setTimeout(() => setCopyMessage(""), 2500);
+    } catch {
+      setCopyMessage("No se pudo copiar automaticamente.");
+      window.setTimeout(() => setCopyMessage(""), 2500);
+    }
+  }, []);
 
   useLiveRefresh(
     async () => {
@@ -555,7 +627,131 @@ export default function IntegrationsHub({
           </div>
         )}
 
+        {copyMessage && (
+          <div className="mt-6 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-bold text-emerald-700 shadow-sm">
+            {copyMessage}
+          </div>
+        )}
+
         <DeviceOperationsConsole canAdmin={canAdmin} />
+
+        <section className="mt-8 rounded-[32px] border border-[#e7ddcd] bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.07)]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-emerald-700">
+                APIs para comercios
+              </div>
+              <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">
+                Consulta de credito activo por IMEI
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+                Entrega esta documentacion al comercio para que consulte el valor
+                del credito activo, cuota y frecuencia de pago usando solo el IMEI.
+              </p>
+            </div>
+
+            <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm leading-6 text-amber-800">
+              La llave se configura en Railway como{" "}
+              <span className="font-black">FINSERPAY_EXTERNAL_API_KEY</span>.
+              No incluyas la llave real en capturas publicas.
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-5 xl:grid-cols-[1fr_0.85fr]">
+            <article className="rounded-[28px] border border-[#e6dece] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">
+                    Endpoint
+                  </p>
+                  <p className="mt-2 text-xl font-black text-slate-950">
+                    GET /api/integraciones/creditos/imei
+                  </p>
+                </div>
+                <CopyButton label="URL" value={EXTERNAL_CREDIT_API_URL} onCopy={copyText} />
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-950 p-4 text-sm text-slate-100">
+                <p className="font-mono break-all">{EXTERNAL_CREDIT_API_URL}</p>
+              </div>
+
+              <div className="mt-5 grid gap-4 md:grid-cols-3">
+                <div className="rounded-2xl border border-[#e6dece] bg-white px-4 py-4">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                    Parametro
+                  </p>
+                  <p className="mt-2 text-lg font-black text-slate-950">imei</p>
+                  <p className="mt-1 text-sm text-slate-600">15 digitos.</p>
+                </div>
+                <div className="rounded-2xl border border-[#e6dece] bg-white px-4 py-4">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                    Header
+                  </p>
+                  <p className="mt-2 text-lg font-black text-slate-950">Authorization</p>
+                  <p className="mt-1 text-sm text-slate-600">Bearer TU_LLAVE.</p>
+                </div>
+                <div className="rounded-2xl border border-[#e6dece] bg-white px-4 py-4">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                    Respuesta
+                  </p>
+                  <p className="mt-2 text-lg font-black text-slate-950">JSON</p>
+                  <p className="mt-1 text-sm text-slate-600">Solo credito activo.</p>
+                </div>
+              </div>
+            </article>
+
+            <article className="rounded-[28px] border border-[#e6dece] bg-white p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">
+                    Ejemplo para enviar
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-slate-950">
+                    cURL
+                  </h3>
+                </div>
+                <CopyButton label="cURL" value={EXTERNAL_CREDIT_API_CURL} onCopy={copyText} />
+              </div>
+
+              <pre className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-950 p-4 text-xs leading-6 text-slate-100">
+                {EXTERNAL_CREDIT_API_CURL}
+              </pre>
+
+              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                  Codigos esperados
+                </p>
+                <div className="mt-3 space-y-2 text-sm text-slate-700">
+                  <p><span className="font-black">200:</span> credito activo encontrado.</p>
+                  <p><span className="font-black">401:</span> llave invalida o ausente.</p>
+                  <p><span className="font-black">404:</span> no hay credito activo para ese IMEI.</p>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <article className="mt-5 rounded-[28px] border border-[#e6dece] bg-white p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">
+                  Respuesta ejemplo
+                </p>
+                <h3 className="mt-2 text-xl font-black text-slate-950">
+                  Campos que recibe el comercio
+                </h3>
+              </div>
+              <CopyButton
+                label="JSON"
+                value={EXTERNAL_CREDIT_API_RESPONSE}
+                onCopy={copyText}
+              />
+            </div>
+
+            <pre className="mt-5 max-h-[520px] overflow-auto rounded-2xl border border-slate-200 bg-slate-950 p-4 text-xs leading-6 text-slate-100">
+              {EXTERNAL_CREDIT_API_RESPONSE}
+            </pre>
+          </article>
+        </section>
 
         <section className="mt-8 grid gap-8">
           <div>
