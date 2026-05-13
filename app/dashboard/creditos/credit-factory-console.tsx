@@ -1563,7 +1563,10 @@ export default function CreditFactoryConsole({
   const deliveryMode = !paymentsView && !lookupView && entryMode === "delivery";
   const simulatorMode = !paymentsView && !lookupView && entryMode === "simulator";
   const lookupMode = (lookupView && canViewSavedCredits) || deliveryMode;
-  const showSearchSection = paymentsView || lookupMode;
+  const adminFactoryAssistMode = canAdmin && createClientMode;
+  const canSearchCreditsInCurrentView = paymentsView || lookupMode || adminFactoryAssistMode;
+  const canAdminMoveFreelyInFactory = canAdmin && !paymentsView && !lookupMode;
+  const showSearchSection = paymentsView || lookupMode || adminFactoryAssistMode;
   const pathname = usePathname();
   const normalizedInitialSearch = initialSearch.trim();
   const [credits, setCredits] = useState<CreditItem[]>([]);
@@ -2664,7 +2667,9 @@ export default function CreditFactoryConsole({
     ? !selectedCredit || showPaymentResults
     : lookupMode
       ? true
-      : false;
+      : adminFactoryAssistMode
+        ? Boolean(activeSearch) || loadingList
+        : false;
   const showCompactSearchSection = paymentsView ? showResultsPanel : showSearchSection;
   const showPaymentsResultsGrid = paymentsView && showResultsPanel && Boolean(selectedCredit);
   const legalDocumentationStepContent = (
@@ -3039,7 +3044,7 @@ export default function CreditFactoryConsole({
       setLoadingList(true);
       const trimmedSearch = searchValue.trim();
 
-      if (!paymentsView && !lookupMode) {
+      if (!canSearchCreditsInCurrentView) {
         setActiveSearch("");
         setCredits([]);
         setSelectedId(null);
@@ -3047,7 +3052,7 @@ export default function CreditFactoryConsole({
         return;
       }
 
-      if (lookupMode && !trimmedSearch) {
+      if ((lookupMode || adminFactoryAssistMode) && !trimmedSearch) {
         setActiveSearch("");
         setCredits([]);
         setSelectedId(null);
@@ -3085,7 +3090,7 @@ export default function CreditFactoryConsole({
           trimmedSearch && result.data.items.length === 1
             ? result.data.items[0]?.id || null
             : null;
-      } else if (createClientMode) {
+      } else if (createClientMode || adminFactoryAssistMode) {
         nextSelectedId = null;
       } else if (lookupMode) {
         nextSelectedId =
@@ -3146,13 +3151,17 @@ export default function CreditFactoryConsole({
   }, [simulatorMode]);
 
   useEffect(() => {
-    if (!paymentsView && !lookupMode) {
+    if (!canSearchCreditsInCurrentView) {
       setLoadingList(false);
       return;
     }
 
     void loadCredits(Boolean(initialSelectedId), normalizedInitialSearch);
-  }, [paymentsView, lookupMode, initialSelectedId, normalizedInitialSearch]);
+  }, [
+    canSearchCreditsInCurrentView,
+    initialSelectedId,
+    normalizedInitialSearch,
+  ]);
 
   useEffect(() => {
     if (!selectedCredit) {
@@ -3688,9 +3697,11 @@ export default function CreditFactoryConsole({
     }
   };
 
+  const clampWizardStep = (targetStep: number) => Math.min(5, Math.max(1, targetStep));
+
   const goToStep = (targetStep: number) => {
-    if (FLEXIBLE_WIZARD_FOR_TESTING) {
-      setWizardStep(Math.min(5, Math.max(1, targetStep)));
+    if (FLEXIBLE_WIZARD_FOR_TESTING || canAdminMoveFreelyInFactory) {
+      setWizardStep(clampWizardStep(targetStep));
       return;
     }
 
@@ -3756,8 +3767,8 @@ export default function CreditFactoryConsole({
   };
 
   const advanceToStep = async (targetStep: number) => {
-    if (FLEXIBLE_WIZARD_FOR_TESTING) {
-      setWizardStep(Math.min(5, Math.max(1, targetStep)));
+    if (FLEXIBLE_WIZARD_FOR_TESTING || canAdminMoveFreelyInFactory) {
+      setWizardStep(clampWizardStep(targetStep));
       return;
     }
 
@@ -4490,6 +4501,23 @@ export default function CreditFactoryConsole({
     window.location.assign("/dashboard/creditos?mode=create-client");
   };
 
+  const openAdminAssistanceForCredit = (credit: CreditItem) => {
+    const params = new URLSearchParams();
+    const searchValue =
+      activeSearch ||
+      searchTerm.trim() ||
+      credit.clienteDocumento ||
+      credit.imei ||
+      credit.folio;
+
+    if (searchValue) {
+      params.set("search", searchValue);
+    }
+
+    params.set("selected", String(credit.id));
+    window.location.assign(`/dashboard/clientes?${params.toString()}`);
+  };
+
   useEffect(() => {
     if (!createClientMode) {
       return;
@@ -4887,7 +4915,11 @@ export default function CreditFactoryConsole({
           }
         >
           <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]">
-            {deliveryMode ? "Validar entrega" : "Buscar cliente"}
+            {deliveryMode
+              ? "Validar entrega"
+              : adminFactoryAssistMode
+                ? "Asistencia admin"
+                : "Buscar cliente"}
           </div>
           <h2
             className={[
@@ -4899,6 +4931,8 @@ export default function CreditFactoryConsole({
               ? "Busca el cliente para recaudar"
               : deliveryMode
                 ? "Busca el credito"
+                : adminFactoryAssistMode
+                  ? "Busca un caso para apoyar"
                 : "Encuentra al cliente y su credito"}
           </h2>
           <p
@@ -4911,6 +4945,8 @@ export default function CreditFactoryConsole({
               ? "Busca por cedula, telefono, nombre, folio o IMEI y selecciona el credito correcto."
               : deliveryMode
                 ? "Ingresa cedula o IMEI para saber si el equipo se puede entregar."
+                : adminFactoryAssistMode
+                  ? "Busca por cedula o IMEI para abrir el expediente guardado y ayudar al asesor desde el panel de clientes."
                 : searchDescription}
           </p>
 
@@ -4923,7 +4959,11 @@ export default function CreditFactoryConsole({
                   void searchCredits();
                 }
               }}
-              placeholder={deliveryMode ? "Cedula o IMEI" : "Cedula, telefono, nombre, folio o IMEI"}
+              placeholder={
+                deliveryMode || adminFactoryAssistMode
+                  ? "Cedula o IMEI"
+                  : "Cedula, telefono, nombre, folio o IMEI"
+              }
                className="flex-1 rounded-[18px] border border-emerald-950/14 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
             />
 
@@ -4933,7 +4973,13 @@ export default function CreditFactoryConsole({
               disabled={loadingList}
               className="fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"
             >
-              {loadingList ? "Buscando..." : deliveryMode ? "Consultar" : "Buscar cliente"}
+              {loadingList
+                ? "Buscando..."
+                : deliveryMode
+                  ? "Consultar"
+                  : adminFactoryAssistMode
+                    ? "Buscar caso"
+                    : "Buscar cliente"}
             </button>
 
             <button
@@ -8741,6 +8787,8 @@ export default function CreditFactoryConsole({
                     ? "mt-6"
                     : "hidden"
                   : "mt-8"
+                : adminFactoryAssistMode && showResultsPanel
+                  ? "mt-6"
                 : createClientMode
                 ? "hidden"
                 : "hidden"
@@ -8755,6 +8803,8 @@ export default function CreditFactoryConsole({
                     ? "Seleccion de cliente"
                     : deliveryMode
                       ? "Estado de entrega"
+                      : adminFactoryAssistMode
+                        ? "Asistencia admin"
                       : "Clientes / creditos"}
                 </div>
                 <h2 className="mt-4 text-2xl font-black tracking-tight text-slate-950">
@@ -8762,6 +8812,8 @@ export default function CreditFactoryConsole({
                     ? "Selecciona el credito correcto"
                     : deliveryMode
                       ? "Resultado de la consulta"
+                      : adminFactoryAssistMode
+                        ? "Casos encontrados"
                       : "Resultados de busqueda"}
                 </h2>
               </div>
@@ -8783,7 +8835,9 @@ export default function CreditFactoryConsole({
                   : "Selecciona un cliente para abrir la vista de recaudo."
                 : activeSearch
                   ? `Mostrando coincidencias para "${activeSearch}".`
-                  : lookupMode
+                  : adminFactoryAssistMode
+                    ? "Busca por cedula o IMEI para abrir el expediente del caso."
+                    : lookupMode
                     ? deliveryMode
                       ? "Sin filtro activo. Ingresa cedula o IMEI para validar la entrega."
                       : "Sin filtro activo. La vista queda vacia hasta que busques un cliente o credito."
@@ -8795,6 +8849,8 @@ export default function CreditFactoryConsole({
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
                   {deliveryMode
                     ? "No encontramos un credito con esa cedula o IMEI."
+                    : adminFactoryAssistMode
+                      ? "No encontramos un credito guardado con esa cedula o IMEI."
                     : "No encontramos clientes o creditos con ese criterio de busqueda."}
                 </div>
               ) : (
@@ -8803,6 +8859,10 @@ export default function CreditFactoryConsole({
                     key={credit.id}
                     type="button"
                     onClick={() => {
+                      if (adminFactoryAssistMode) {
+                        openAdminAssistanceForCredit(credit);
+                        return;
+                      }
                       if (lookupMode) {
                         openLookupCredit(credit.id);
                         return;
