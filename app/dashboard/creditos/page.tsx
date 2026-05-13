@@ -9,7 +9,12 @@ export const metadata = {
   description: "Flujo operativo para generar creditos, inscribir equipos y validar entregabilidad",
 };
 
-type SearchParams = Promise<{ search?: string; mode?: string; selected?: string }>;
+type SearchParams = Promise<{
+  search?: string;
+  mode?: string;
+  selected?: string;
+  draft?: string;
+}>;
 type EntryMode = "default" | "create-client" | "delivery" | "simulator";
 
 export default async function CreditosPage(props: {
@@ -32,6 +37,7 @@ export default async function CreditosPage(props: {
   const searchParams = await props.searchParams;
   const initialSearch = String(searchParams?.search || "").trim();
   const initialSelectedId = Number(searchParams?.selected || 0);
+  const initialDraftId = Number(searchParams?.draft || 0);
   const rawEntryMode = String(searchParams?.mode || "").trim().toLowerCase();
   let requestedEntryMode: EntryMode = "default";
 
@@ -61,6 +67,7 @@ export default async function CreditosPage(props: {
   if (
     (isAdminRole(session.rolNombre) || sellerSession?.tipoPerfil === "SUPERVISOR") &&
     (initialSearch || (Number.isInteger(initialSelectedId) && initialSelectedId > 0)) &&
+    !(Number.isInteger(initialDraftId) && initialDraftId > 0) &&
     entryMode !== "create-client"
   ) {
     const params = new URLSearchParams();
@@ -82,6 +89,7 @@ export default async function CreditosPage(props: {
       initialSeller={sellerSession}
       initialSearch={initialSearch}
       initialSelectedId={Number.isInteger(initialSelectedId) && initialSelectedId > 0 ? initialSelectedId : null}
+      initialDraftId={Number.isInteger(initialDraftId) && initialDraftId > 0 ? initialDraftId : null}
       entryMode={entryMode}
     />
   );

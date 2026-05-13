@@ -234,6 +234,50 @@ type CreditListResponse = {
   items: CreditItem[];
 };
 
+type CreditDraftPayload = Record<string, unknown>;
+
+type CreditDraftItem = {
+  id: number;
+  estado: string;
+  currentStep: number;
+  clienteNombre: string | null;
+  clienteDocumento: string | null;
+  clienteTelefono: string | null;
+  imei: string | null;
+  payload: CreditDraftPayload;
+  createdAt: string | null;
+  updatedAt: string | null;
+  closedAt: string | null;
+  usuario: {
+    id: number;
+    nombre: string;
+    usuario: string;
+  };
+  vendedor: {
+    id: number;
+    nombre: string;
+    documento: string | null;
+  } | null;
+  sede: {
+    id: number;
+    nombre: string;
+  };
+};
+
+type CreditDraftListResponse = {
+  ok?: boolean;
+  scope?: string;
+  search?: string;
+  items: CreditDraftItem[];
+  error?: string;
+};
+
+type CreditDraftSingleResponse = {
+  ok?: boolean;
+  item?: CreditDraftItem | null;
+  error?: string;
+};
+
 type EquipmentCatalogItem = {
   id: number;
   marca: string;
@@ -1545,6 +1589,7 @@ export default function CreditFactoryConsole({
   view = "factory",
   initialSearch = "",
   initialSelectedId = null,
+  initialDraftId = null,
   entryMode = "default",
 }: {
   initialSession: SessionUser;
@@ -1552,6 +1597,7 @@ export default function CreditFactoryConsole({
   view?: "factory" | "payments" | "lookup";
   initialSearch?: string;
   initialSelectedId?: number | null;
+  initialDraftId?: number | null;
   entryMode?: "default" | "create-client" | "delivery" | "simulator";
 }) {
   const canAdmin = String(initialSession.rolNombre || "").toUpperCase() === "ADMIN";
@@ -1579,6 +1625,13 @@ export default function CreditFactoryConsole({
   const [runningCommand, setRunningCommand] = useState<CreditAdminCommand | null>(null);
   const [searchTerm, setSearchTerm] = useState(normalizedInitialSearch);
   const [activeSearch, setActiveSearch] = useState(normalizedInitialSearch);
+  const [draftId, setDraftId] = useState<number | null>(initialDraftId);
+  const [draftSearchResults, setDraftSearchResults] = useState<CreditDraftItem[]>([]);
+  const [loadingDrafts, setLoadingDrafts] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<
+    "idle" | "loading" | "saving" | "saved" | "error"
+  >(initialDraftId ? "loading" : "idle");
+  const [draftLastSavedAt, setDraftLastSavedAt] = useState("");
   const [showPaymentResults, setShowPaymentResults] = useState(false);
   const [paymentsTab, setPaymentsTab] = useState<"pay" | "history">("pay");
   const [showSearchResults, setShowSearchResults] = useState(true);
@@ -1690,6 +1743,8 @@ export default function CreditFactoryConsole({
     checkedAt: null,
     checks: [],
   });
+  const draftSaveTimerRef = useRef<number | null>(null);
+  const applyingDraftRef = useRef(false);
 
   const selectedCredit = useMemo(
     () => credits.find((item) => item.id === selectedId) || null,
@@ -1857,6 +1912,106 @@ export default function CreditFactoryConsole({
   const referenciaEquipo = [equipoMarca.trim(), equipoModelo.trim()]
     .filter(Boolean)
     .join(" ");
+  const imeiDigits = imei.replace(/\D/g, "");
+  const factoryDraftPayload = useMemo(
+    () => ({
+      wizardStep,
+      clienteNombre,
+      clientePrimerNombre,
+      clientePrimerApellido,
+      clienteTipoDocumento,
+      clienteDireccion,
+      clienteDocumento,
+      clienteFechaNacimiento,
+      clienteFechaExpedicion,
+      clienteTelefono,
+      clienteCorreo,
+      clienteDepartamento,
+      clienteCiudad,
+      clienteGenero,
+      referenciaFamiliar1Nombre,
+      referenciaFamiliar1Parentesco,
+      referenciaFamiliar1Telefono,
+      referenciaFamiliar2Nombre,
+      referenciaFamiliar2Parentesco,
+      referenciaFamiliar2Telefono,
+      equipoMarca,
+      equipoModelo,
+      equipoCatalogoId: selectedEquipmentCatalogItem?.id || null,
+      imei: imeiDigits,
+      valorEquipoTotal,
+      cuotaInicial,
+      plazoMeses,
+      frecuenciaPago: creditSettings.frecuenciaPago,
+      tasaInteresEa: financialPlan.tasaInteresEa,
+      fianzaPorcentaje: financialPlan.fianzaPorcentaje,
+      fechaPrimerPago,
+      contratoAceptado,
+      pagareAceptado,
+      cartaAceptada,
+      autorizacionDatosAceptada,
+    }),
+    [
+      autorizacionDatosAceptada,
+      cartaAceptada,
+      clienteCiudad,
+      clienteCorreo,
+      clienteDepartamento,
+      clienteDireccion,
+      clienteDocumento,
+      clienteFechaExpedicion,
+      clienteFechaNacimiento,
+      clienteGenero,
+      clienteNombre,
+      clientePrimerApellido,
+      clientePrimerNombre,
+      clienteTelefono,
+      clienteTipoDocumento,
+      contratoAceptado,
+      creditSettings.frecuenciaPago,
+      cuotaInicial,
+      equipoMarca,
+      equipoModelo,
+      fechaPrimerPago,
+      fianzaPorcentajeNumero,
+      financialPlan.fianzaPorcentaje,
+      financialPlan.tasaInteresEa,
+      imeiDigits,
+      pagareAceptado,
+      plazoMeses,
+      referenciaFamiliar1Nombre,
+      referenciaFamiliar1Parentesco,
+      referenciaFamiliar1Telefono,
+      referenciaFamiliar2Nombre,
+      referenciaFamiliar2Parentesco,
+      referenciaFamiliar2Telefono,
+      selectedEquipmentCatalogItem?.id,
+      tasaInteresEaNumero,
+      valorEquipoTotal,
+      wizardStep,
+    ]
+  );
+  const draftHasMeaningfulData = useMemo(() => {
+    return Boolean(
+      clienteDocumento.trim() ||
+        clienteTelefono.trim() ||
+        clientePrimerNombre.trim() ||
+        clientePrimerApellido.trim() ||
+        equipoMarca.trim() ||
+        equipoModelo.trim() ||
+        imeiDigits ||
+        Number(valorEquipoTotal || 0) > 0
+    );
+  }, [
+    clienteDocumento,
+    clientePrimerApellido,
+    clientePrimerNombre,
+    clienteTelefono,
+    equipoMarca,
+    equipoModelo,
+    imeiDigits,
+    valorEquipoTotal,
+  ]);
   const cityOptions = useMemo(
     () => DEPARTMENT_CITY_OPTIONS[clienteDepartamento] || [],
     [clienteDepartamento]
@@ -2345,7 +2500,6 @@ export default function CreditFactoryConsole({
     mobileCaptureSession?.token,
     wizardStep,
   ]);
-  const imeiDigits = imei.replace(/\D/g, "");
   const imeiValido = imeiDigits.length === 15;
   const stepClienteReady =
     Boolean(clientePrimerNombre.trim()) &&
@@ -3124,6 +3278,44 @@ export default function CreditFactoryConsole({
     }
   };
 
+  const loadDrafts = async (searchValue = activeSearch) => {
+    if (!adminFactoryAssistMode) {
+      setDraftSearchResults([]);
+      return;
+    }
+
+    const trimmedSearch = searchValue.trim();
+
+    if (!trimmedSearch) {
+      setDraftSearchResults([]);
+      return;
+    }
+
+    try {
+      setLoadingDrafts(true);
+      const params = new URLSearchParams({
+        take: "12",
+        search: trimmedSearch,
+      });
+      const result = await requestJson<CreditDraftListResponse>(
+        `/api/creditos/borradores?${params.toString()}`
+      );
+
+      if (!result.ok) {
+        throw new Error(result.data?.error || "No se pudieron cargar los borradores");
+      }
+
+      setDraftSearchResults(result.data.items || []);
+    } catch (error) {
+      setNotice({
+        text: error instanceof Error ? error.message : "No se pudieron cargar los borradores",
+        tone: "red",
+      });
+    } finally {
+      setLoadingDrafts(false);
+    }
+  };
+
   useEffect(() => {
     void loadEquipmentCatalog();
     void loadCreditSettings();
@@ -3157,7 +3349,12 @@ export default function CreditFactoryConsole({
     }
 
     void loadCredits(Boolean(initialSelectedId), normalizedInitialSearch);
+
+    if (adminFactoryAssistMode) {
+      void loadDrafts(normalizedInitialSearch);
+    }
   }, [
+    adminFactoryAssistMode,
     canSearchCreditsInCurrentView,
     initialSelectedId,
     normalizedInitialSearch,
@@ -4013,7 +4210,15 @@ export default function CreditFactoryConsole({
   };
 
   const resetForm = () => {
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+
     setWizardStep(1);
+    setDraftId(null);
+    setDraftStatus("idle");
+    setDraftLastSavedAt("");
     setClienteNombre("");
     setClientePrimerNombre("");
     setClientePrimerApellido("");
@@ -4178,6 +4383,18 @@ export default function CreditFactoryConsole({
 
       upsertCredit(result.data.item);
       window.open(`/api/creditos/${result.data.item.id}/plan-pagos`, "_blank");
+      const closedDraftId = draftId;
+
+      if (closedDraftId) {
+        await requestJson<CreditDraftSingleResponse>("/api/creditos/borradores", {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ id: closedDraftId, estado: "CERRADO" }),
+        }).catch(() => null);
+      }
+
       resetForm();
 
       if (result.data.deliveryStatus?.ready) {
@@ -4447,11 +4664,15 @@ export default function CreditFactoryConsole({
       setShowSearchResults(true);
       setShowLookupDetail(false);
     }
-    await loadCredits(false, searchTerm);
+    await Promise.all([
+      loadCredits(false, searchTerm),
+      adminFactoryAssistMode ? loadDrafts(searchTerm) : Promise.resolve(),
+    ]);
   };
 
   const clearSearch = async () => {
     setSearchTerm("");
+    setDraftSearchResults([]);
     if (paymentsView) {
       setShowPaymentResults(true);
       setSelectedId(null);
@@ -4487,6 +4708,65 @@ export default function CreditFactoryConsole({
     setWizardStep(1);
   };
 
+  const applyDraftPayload = (draft: CreditDraftItem) => {
+    const payload = draft.payload || {};
+    const value = (key: string) => {
+      const current = payload[key];
+
+      if (typeof current === "number") {
+        return String(current);
+      }
+
+      return typeof current === "string" ? current : "";
+    };
+    const checked = (key: string) => payload[key] === true;
+
+    applyingDraftRef.current = true;
+    setDraftId(draft.id);
+    setDraftStatus("saved");
+    setDraftLastSavedAt(draft.updatedAt ? dateTime(draft.updatedAt) : "");
+    setClientePrimerNombre(value("clientePrimerNombre"));
+    setClientePrimerApellido(value("clientePrimerApellido"));
+    setClienteTipoDocumento(value("clienteTipoDocumento") || DOCUMENT_TYPE_OPTIONS[0].value);
+    setClienteDireccion(value("clienteDireccion"));
+    setClienteNombre(value("clienteNombre"));
+    setClienteDocumento(value("clienteDocumento"));
+    setClienteFechaNacimiento(value("clienteFechaNacimiento"));
+    setClienteFechaExpedicion(value("clienteFechaExpedicion"));
+    setClienteTelefono(value("clienteTelefono"));
+    setClienteCorreo(value("clienteCorreo"));
+    setClienteDepartamento(value("clienteDepartamento"));
+    setClienteCiudad(value("clienteCiudad"));
+    setClienteGenero(value("clienteGenero"));
+    setReferenciaFamiliar1Nombre(value("referenciaFamiliar1Nombre"));
+    setReferenciaFamiliar1Parentesco(value("referenciaFamiliar1Parentesco"));
+    setReferenciaFamiliar1Telefono(value("referenciaFamiliar1Telefono"));
+    setReferenciaFamiliar2Nombre(value("referenciaFamiliar2Nombre"));
+    setReferenciaFamiliar2Parentesco(value("referenciaFamiliar2Parentesco"));
+    setReferenciaFamiliar2Telefono(value("referenciaFamiliar2Telefono"));
+    setEquipoMarca(value("equipoMarca"));
+    setEquipoModelo(value("equipoModelo"));
+    setImei(value("imei"));
+    setValorEquipoTotal(value("valorEquipoTotal"));
+    setCuotaInicial(value("cuotaInicial"));
+    setPlazoMeses(value("plazoMeses") || plazoMeses);
+    setTasaInteresEa(value("tasaInteresEa") || tasaInteresEa);
+    setFianzaPorcentaje(value("fianzaPorcentaje") || fianzaPorcentaje);
+    setFechaPrimerPago(value("fechaPrimerPago") || fechaPrimerPago);
+    setContratoAceptado(checked("contratoAceptado"));
+    setPagareAceptado(checked("pagareAceptado"));
+    setCartaAceptada(checked("cartaAceptada"));
+    setAutorizacionDatosAceptada(checked("autorizacionDatosAceptada"));
+    setDeliveryValidation(null);
+    setWizardStep(
+      clampWizardStep(Number(payload.wizardStep || draft.currentStep || wizardStep))
+    );
+
+    window.setTimeout(() => {
+      applyingDraftRef.current = false;
+    }, 350);
+  };
+
   const createNewSaleFromClient = (creditId?: number | null) => {
     const credit =
       typeof creditId === "number"
@@ -4518,6 +4798,19 @@ export default function CreditFactoryConsole({
     window.location.assign(`/dashboard/clientes?${params.toString()}`);
   };
 
+  const openAdminAssistanceForDraft = (draft: CreditDraftItem) => {
+    const params = new URLSearchParams();
+
+    params.set("mode", "create-client");
+    params.set("draft", String(draft.id));
+
+    if (activeSearch || searchTerm.trim()) {
+      params.set("search", activeSearch || searchTerm.trim());
+    }
+
+    window.location.assign(`/dashboard/creditos?${params.toString()}`);
+  };
+
   useEffect(() => {
     if (!createClientMode) {
       return;
@@ -4546,6 +4839,118 @@ export default function CreditFactoryConsole({
       window.sessionStorage.removeItem("finserpay-client-prefill");
     }
   }, [createClientMode]);
+
+  useEffect(() => {
+    if (!createClientMode || !initialDraftId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadDraft = async () => {
+      try {
+        setDraftStatus("loading");
+        const params = new URLSearchParams({ id: String(initialDraftId) });
+        const result = await requestJson<CreditDraftSingleResponse>(
+          `/api/creditos/borradores?${params.toString()}`
+        );
+
+        if (!result.ok || !result.data?.item) {
+          throw new Error(result.data?.error || "No se encontro el borrador");
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        applyDraftPayload(result.data.item);
+        setNotice({
+          text: "Borrador cargado. Puedes continuar o corregir el proceso del asesor.",
+          tone: "emerald",
+        });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setDraftStatus("error");
+        setNotice({
+          text: error instanceof Error ? error.message : "No se pudo abrir el borrador",
+          tone: "red",
+        });
+      }
+    };
+
+    void loadDraft();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [createClientMode, initialDraftId]);
+
+  useEffect(() => {
+    if (!createClientMode || simulatorMode || deliveryMode || !draftHasMeaningfulData) {
+      return;
+    }
+
+    if (applyingDraftRef.current) {
+      return;
+    }
+
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);
+    }
+
+    draftSaveTimerRef.current = window.setTimeout(() => {
+      const saveDraft = async () => {
+        try {
+          setDraftStatus("saving");
+          const result = await requestJson<CreditDraftSingleResponse>(
+            "/api/creditos/borradores",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                id: draftId,
+                currentStep: wizardStep,
+                payload: factoryDraftPayload,
+              }),
+            }
+          );
+
+          if (!result.ok || !result.data?.item) {
+            throw new Error(result.data?.error || "No se pudo guardar el borrador");
+          }
+
+          setDraftId(result.data.item.id);
+          setDraftLastSavedAt(
+            result.data.item.updatedAt ? dateTime(result.data.item.updatedAt) : ""
+          );
+          setDraftStatus("saved");
+        } catch {
+          setDraftStatus("error");
+        }
+      };
+
+      void saveDraft();
+    }, 1200);
+
+    return () => {
+      if (draftSaveTimerRef.current) {
+        window.clearTimeout(draftSaveTimerRef.current);
+      }
+    };
+  }, [
+    createClientMode,
+    deliveryMode,
+    draftHasMeaningfulData,
+    draftId,
+    factoryDraftPayload,
+    simulatorMode,
+    wizardStep,
+  ]);
 
   const openLookupCredit = (creditId: number) => {
     if (!lookupMode) {
@@ -4946,7 +5351,7 @@ export default function CreditFactoryConsole({
               : deliveryMode
                 ? "Ingresa cedula o IMEI para saber si el equipo se puede entregar."
                 : adminFactoryAssistMode
-                  ? "Busca por cedula o IMEI para abrir el expediente guardado y ayudar al asesor desde el panel de clientes."
+                  ? "Busca por cedula o IMEI para abrir un borrador en curso o el expediente ya guardado."
                 : searchDescription}
           </p>
 
@@ -4970,10 +5375,10 @@ export default function CreditFactoryConsole({
             <button
               type="button"
               onClick={() => void searchCredits()}
-              disabled={loadingList}
+              disabled={loadingList || loadingDrafts}
               className="fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"
             >
-              {loadingList
+              {loadingList || loadingDrafts
                 ? "Buscando..."
                 : deliveryMode
                   ? "Consultar"
@@ -4985,7 +5390,7 @@ export default function CreditFactoryConsole({
             <button
               type="button"
               onClick={() => void clearSearch()}
-              disabled={loadingList && !activeSearch}
+              disabled={(loadingList || loadingDrafts) && !activeSearch}
               className="rounded-[18px] border border-emerald-950/14 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-emerald-50 disabled:opacity-70"
             >
               Limpiar
@@ -5004,7 +5409,7 @@ export default function CreditFactoryConsole({
                 Alcance: {canAdmin ? "Global" : `Sede ${initialSession.sedeNombre}`}
               </span>
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                Resultados: {credits.length}
+                Resultados: {credits.length + (adminFactoryAssistMode ? draftSearchResults.length : 0)}
               </span>
               {activeSearch && (
                 <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
@@ -7448,6 +7853,29 @@ export default function CreditFactoryConsole({
                   Limpiar
                 </button>
 
+                {createClientMode && draftHasMeaningfulData ? (
+                  <span
+                    className={[
+                      "rounded-2xl border px-4 py-2 text-xs font-semibold",
+                      draftStatus === "error"
+                        ? "border-red-200 bg-red-50 text-red-700"
+                        : draftStatus === "saving" || draftStatus === "loading"
+                          ? "border-amber-200 bg-amber-50 text-amber-700"
+                          : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                    ].join(" ")}
+                  >
+                    {draftStatus === "saving"
+                      ? "Guardando borrador..."
+                      : draftStatus === "loading"
+                        ? "Cargando borrador..."
+                        : draftStatus === "error"
+                          ? "Borrador no guardado"
+                          : draftId
+                            ? `Borrador #${draftId} guardado${draftLastSavedAt ? ` - ${draftLastSavedAt}` : ""}`
+                            : "Borrador listo para guardar"}
+                  </span>
+                ) : null}
+
                 {FLEXIBLE_WIZARD_FOR_TESTING && (
                   <span className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2 text-xs font-medium text-sky-700">
                     Modo pruebas: puedes saltar entre pasos y cerrar sin la validacion final de entrega.
@@ -8820,11 +9248,16 @@ export default function CreditFactoryConsole({
 
               <button
                 type="button"
-                onClick={() => void loadCredits(true, activeSearch)}
-                disabled={loadingList}
+                onClick={() => {
+                  void loadCredits(true, activeSearch);
+                  if (adminFactoryAssistMode) {
+                    void loadDrafts(activeSearch);
+                  }
+                }}
+                disabled={loadingList || loadingDrafts}
                 className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
               >
-                {loadingList ? "Actualizando..." : "Recargar"}
+                {loadingList || loadingDrafts ? "Actualizando..." : "Recargar"}
               </button>
             </div>
 
@@ -8845,16 +9278,66 @@ export default function CreditFactoryConsole({
             </p>
 
             <div className="mt-5 space-y-3">
-              {!credits.length && !loadingList ? (
+              {loadingDrafts && adminFactoryAssistMode ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+                  Buscando borradores en proceso...
+                </div>
+              ) : null}
+
+              {!credits.length &&
+              !loadingList &&
+              !loadingDrafts &&
+              (!adminFactoryAssistMode || !draftSearchResults.length) ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
                   {deliveryMode
                     ? "No encontramos un credito con esa cedula o IMEI."
                     : adminFactoryAssistMode
-                      ? "No encontramos un credito guardado con esa cedula o IMEI."
+                      ? "No encontramos borradores ni creditos guardados con esa cedula o IMEI."
                     : "No encontramos clientes o creditos con ese criterio de busqueda."}
                 </div>
               ) : (
-                credits.map((credit) => (
+                <>
+                {adminFactoryAssistMode
+                  ? draftSearchResults.map((draft) => (
+                      <button
+                        key={`draft-${draft.id}`}
+                        type="button"
+                        onClick={() => openAdminAssistanceForDraft(draft)}
+                        className="w-full rounded-[24px] border border-emerald-200 bg-emerald-50 px-4 py-4 text-left text-emerald-950 transition hover:-translate-y-0.5 hover:shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                              Borrador #{draft.id} - paso {draft.currentStep}
+                            </p>
+                            <p className="mt-2 text-lg font-black tracking-tight">
+                              {draft.clienteNombre || "Cliente en captura"}
+                            </p>
+                            <p className="mt-1 text-sm text-emerald-800">
+                              {draft.clienteDocumento || draft.clienteTelefono || "Sin documento aun"}
+                            </p>
+                            <p className="mt-1 text-sm text-emerald-700">
+                              {draft.imei || "IMEI pendiente"} - {draft.sede.nombre}
+                            </p>
+                          </div>
+
+                          <div className="text-right">
+                            <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                              En proceso
+                            </span>
+                            <p className="mt-3 text-sm font-semibold text-emerald-800">
+                              {draft.vendedor?.nombre || draft.usuario.nombre}
+                            </p>
+                            <p className="mt-1 text-xs text-emerald-700">
+                              {draft.updatedAt ? dateTime(draft.updatedAt) : "Sin fecha"}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    ))
+                  : null}
+
+                {credits.map((credit) => (
                   <button
                     key={credit.id}
                     type="button"
@@ -8932,7 +9415,8 @@ export default function CreditFactoryConsole({
                       </div>
                     </div>
                   </button>
-                ))
+                ))}
+                </>
               )}
             </div>
           </div>
