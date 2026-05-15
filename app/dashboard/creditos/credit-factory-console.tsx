@@ -27,9 +27,11 @@ import {
   getDefaultFirstPaymentDate,
   getCreditInstallmentOptions,
   getPaymentFrequencyLabel,
+  MAX_CREDIT_INSTALLMENTS,
   MAX_DEVICE_FINANCING_BASE,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
+  PAYMENT_FREQUENCY_OPTIONS,
 } from "@/lib/credit-factory";
 import {
   runCedulaValidation,
@@ -434,6 +436,7 @@ type CreditAdminCommand =
   | "payment-reference"
   | "toggle-stolen-lock"
   | "update-due-date"
+  | "update-plan"
   | "extend-1h"
   | "extend-24h"
   | "extend-48h"
@@ -1726,6 +1729,10 @@ export default function CreditFactoryConsole({
   const [creatingMobileCapture, setCreatingMobileCapture] = useState(false);
   const [observacionAdmin, setObservacionAdmin] = useState("");
   const [nextDueDate, setNextDueDate] = useState("");
+  const [planInstallments, setPlanInstallments] = useState("");
+  const [planFrequency, setPlanFrequency] = useState(DEFAULT_PAYMENT_FREQUENCY);
+  const [planFirstPaymentDate, setPlanFirstPaymentDate] = useState("");
+  const [updatingPlan, setUpdatingPlan] = useState(false);
   const [paymentValue, setPaymentValue] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("EFECTIVO");
   const [paymentObservation, setPaymentObservation] = useState("");
@@ -3368,6 +3375,11 @@ export default function CreditFactoryConsole({
     }
 
     setNextDueDate(dateOnly(selectedCredit.fechaProximoPago));
+    setPlanInstallments(String(selectedCredit.plazoMeses || DEFAULT_CREDIT_INSTALLMENTS));
+    setPlanFrequency(selectedCredit.frecuenciaPago || DEFAULT_PAYMENT_FREQUENCY);
+    setPlanFirstPaymentDate(
+      dateOnly(selectedCredit.fechaPrimerPago || selectedCredit.fechaProximoPago)
+    );
     setObservacionAdmin(selectedCredit.observacionAdmin || "");
   }, [selectedCredit?.id]);
 
@@ -4536,6 +4548,76 @@ export default function CreditFactoryConsole({
         tone: "red",
       });
     } finally {
+      setRunningCommand(null);
+    }
+  };
+
+  const updateCreditPlan = async () => {
+    if (!selectedCredit) {
+      setNotice({
+        text: "Selecciona un credito antes de ajustar el plan.",
+        tone: "red",
+      });
+      return;
+    }
+
+    const normalizedInstallments = Math.trunc(Number(planInstallments || 0));
+
+    if (!Number.isFinite(normalizedInstallments) || normalizedInstallments < 1) {
+      setNotice({
+        text: "Indica un numero de cuotas valido.",
+        tone: "red",
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Vas a recalcular este credito a ${normalizedInstallments} cuotas ${getPaymentFrequencyLabel(planFrequency).toLowerCase()}. Esto actualiza cuota, total del credito y plan de pagos.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setUpdatingPlan(true);
+      setRunningCommand("update-plan");
+      setNotice(null);
+
+      const result = await requestJson<CommandResponse>(
+        `/api/creditos/${selectedCredit.id}/command`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            command: "update-plan",
+            plazoMeses: normalizedInstallments,
+            frecuenciaPago: planFrequency,
+            fechaPrimerPago: planFirstPaymentDate || null,
+            observacionAdmin: "Correccion de plazo/frecuencia",
+          }),
+        }
+      );
+
+      if (!result.ok) {
+        throw new Error(result.data?.error || "No se pudo ajustar el plan");
+      }
+
+      upsertCredit(result.data.item);
+      await loadPayments(selectedCredit.id);
+      setNotice({
+        text: result.data.message,
+        tone: "emerald",
+      });
+    } catch (error) {
+      setNotice({
+        text: error instanceof Error ? error.message : "No se pudo ajustar el plan",
+        tone: "red",
+      });
+    } finally {
+      setUpdatingPlan(false);
       setRunningCommand(null);
     }
   };
@@ -9000,6 +9082,75 @@ export default function CreditFactoryConsole({
                     </p>
                   </div>
                 </div>
+
+                {canAdmin && !deliveryMode ? (
+                  <div className="rounded-[24px] border border-[#d9e7ea] bg-white px-5 py-5 shadow-sm">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          Ajuste admin
+                        </p>
+                        <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                          Corregir plan de pagos
+                        </h3>
+                      </div>
+
+                      <div className="grid w-full gap-3 md:grid-cols-4 xl:max-w-4xl">
+                        <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                          Cuotas
+                          <select
+                            value={planInstallments}
+                            onChange={(event) => setPlanInstallments(event.target.value)}
+                            className="h-12 rounded-2xl border border-[#ccd7dd] bg-white px-4 text-sm font-semibold text-slate-950 outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+                          >
+                            {Array.from(
+                              { length: MAX_CREDIT_INSTALLMENTS },
+                              (_, index) => String(index + 1)
+                            ).map((option) => (
+                              <option key={`plan-${option}`} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                          Frecuencia
+                          <select
+                            value={planFrequency}
+                            onChange={(event) => setPlanFrequency(event.target.value)}
+                            className="h-12 rounded-2xl border border-[#ccd7dd] bg-white px-4 text-sm font-semibold text-slate-950 outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+                          >
+                            {PAYMENT_FREQUENCY_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                          Primer pago
+                          <input
+                            type="date"
+                            value={planFirstPaymentDate}
+                            onChange={(event) => setPlanFirstPaymentDate(event.target.value)}
+                            className="h-12 rounded-2xl border border-[#ccd7dd] bg-white px-4 text-sm font-semibold text-slate-950 outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() => void updateCreditPlan()}
+                          disabled={updatingPlan || runningCommand !== null}
+                          className="h-12 self-end rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 text-sm font-black text-white shadow-[0_14px_30px_rgba(20,90,90,0.18)] transition hover:bg-[#0f4a4a] disabled:opacity-70"
+                        >
+                          {updatingPlan ? "Guardando..." : "Guardar plan"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
                   </div>
                 )}
 

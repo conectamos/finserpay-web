@@ -5,6 +5,7 @@ export type CreditAdminCommand =
   | "payment-reference"
   | "toggle-stolen-lock"
   | "update-due-date"
+  | "update-plan"
   | "extend-1h"
   | "extend-24h"
   | "extend-48h"

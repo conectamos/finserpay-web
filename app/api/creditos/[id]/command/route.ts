@@ -4,9 +4,15 @@ import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import {
+  calculateCreditCharges,
   extendDays,
   extendFromNow,
   generatePaymentReference,
+  getDefaultFirstPaymentDateObject,
+  getPaymentFrequencyLabel,
+  MAX_CREDIT_INSTALLMENTS,
+  normalizeCreditInstallments,
+  normalizePaymentFrequency,
   resolveCreditPaymentSummary,
   resolveCreditState,
   sanitizeText,
@@ -24,6 +30,7 @@ import {
   queryEqualityDevices,
   unlockEqualityDevice,
 } from "@/lib/equality-zero-touch";
+import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import { isAdminRole } from "@/lib/roles";
@@ -34,7 +41,10 @@ export const dynamic = "force-dynamic";
 type CommandBody = {
   command?: CreditAdminCommand;
   fechaProximoPago?: string;
+  fechaPrimerPago?: string;
+  frecuenciaPago?: string;
   observacionAdmin?: string;
+  plazoMeses?: number | string;
 };
 
 const SUPERVISOR_COMMANDS: CreditAdminCommand[] = [
@@ -82,6 +92,7 @@ function serializeCredit(item: any, payment?: PaymentSummary) {
     montoCredito: item.montoCredito,
     cuotaInicial: item.cuotaInicial,
     plazoMeses: item.plazoMeses,
+    frecuenciaPago: item.frecuenciaPago,
     tasaInteresEa: item.tasaInteresEa,
     valorInteres: item.valorInteres,
     fianzaPorcentaje: item.fianzaPorcentaje,
@@ -327,6 +338,117 @@ export async function POST(
         });
         adminMessage = "Fecha de pago actualizada";
         break;
+      case "update-plan": {
+        if (!admin) {
+          return NextResponse.json(
+            { error: "Solo el administrador puede ajustar el plan del credito" },
+            { status: 403 }
+          );
+        }
+
+        const nextInstallments = normalizeCreditInstallments(
+          body.plazoMeses,
+          current.plazoMeses || 1,
+          MAX_CREDIT_INSTALLMENTS
+        );
+        const nextFrequency = normalizePaymentFrequency(
+          body.frecuenciaPago || current.frecuenciaPago
+        );
+        const nextFirstPayment =
+          toNullableDate(body.fechaPrimerPago) ||
+          current.fechaPrimerPago ||
+          current.fechaProximoPago ||
+          getDefaultFirstPaymentDateObject(nextFrequency, current.fechaCredito);
+        const financialPlan = calculateCreditCharges({
+          saldoBaseFinanciado: current.saldoBaseFinanciado,
+          cuotas: nextInstallments,
+          tasaInteresEa: current.tasaInteresEa,
+          fianzaPorcentaje: current.fianzaPorcentaje,
+          frecuenciaPago: nextFrequency,
+        });
+
+        await ensureCreditAbonoAuditColumns();
+        const abonos = await prisma.creditoAbono.findMany({
+          where: {
+            creditoId: current.id,
+            estado: {
+              not: "ANULADO",
+            },
+          },
+          select: {
+            valor: true,
+            fechaAbono: true,
+          },
+          orderBy: {
+            fechaAbono: "asc",
+          },
+        });
+        const paymentPlan = buildCreditPaymentPlan({
+          montoCredito: financialPlan.montoCreditoTotal,
+          valorCuota: financialPlan.valorCuota,
+          plazoMeses: nextInstallments,
+          frecuenciaPago: nextFrequency,
+          fechaPrimerPago: nextFirstPayment,
+          abonos,
+        });
+        const nextDueDate = paymentPlan.nextInstallment?.saldoPendiente
+          ? toNullableDate(`${paymentPlan.nextInstallment.fechaVencimiento}T12:00:00`)
+          : null;
+        const timestamp = new Date().toISOString();
+        const nextObservation = [
+          current.observacionAdmin,
+          `[${timestamp}] AJUSTE PLAN: ${current.plazoMeses || 1} ${getPaymentFrequencyLabel(current.frecuenciaPago)} -> ${nextInstallments} ${getPaymentFrequencyLabel(nextFrequency)}. ${observacionAdmin || "Correccion administrativa"}`,
+        ]
+          .filter(Boolean)
+          .join("\n");
+
+        const updated = await prisma.credito.update({
+          where: { id: current.id },
+          data: {
+            plazoMeses: nextInstallments,
+            frecuenciaPago: nextFrequency,
+            fechaPrimerPago: nextFirstPayment,
+            fechaProximoPago: nextDueDate,
+            tasaInteresEa: financialPlan.tasaInteresEa,
+            valorInteres: financialPlan.valorInteres,
+            fianzaPorcentaje: financialPlan.fianzaPorcentaje,
+            valorFianza: financialPlan.valorFianza,
+            montoCredito: financialPlan.montoCreditoTotal,
+            valorCuota: financialPlan.valorCuota,
+            observacionAdmin: nextObservation,
+          },
+          include: {
+            usuario: {
+              select: {
+                id: true,
+                nombre: true,
+                usuario: true,
+              },
+            },
+            vendedor: {
+              select: {
+                id: true,
+                nombre: true,
+                documento: true,
+              },
+            },
+            sede: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+          },
+        });
+        const paymentSummary = await loadPaymentSummary(updated.id);
+
+        return NextResponse.json({
+          ok: true,
+          message: `Plan actualizado a ${nextInstallments} cuotas ${getPaymentFrequencyLabel(nextFrequency).toLowerCase()}`,
+          item: serializeCredit(updated, paymentSummary),
+          remote: null,
+        });
+      }
       case "extend-1h":
       case "extend-24h":
       case "extend-48h": {
