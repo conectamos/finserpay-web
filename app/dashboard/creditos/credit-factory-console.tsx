@@ -509,20 +509,40 @@ function equipmentCatalogKey(value: unknown) {
     .toUpperCase();
 }
 
-function dateTime(value: string | null) {
-  if (!value) {
+function parseDisplayDate(value: string | null | undefined) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function dateTime(value: string | null | undefined) {
+  const parsed = parseDisplayDate(value);
+
+  if (!parsed) {
     return "-";
   }
 
-  return new Date(value).toLocaleString("es-CO");
+  return parsed.toLocaleString("es-CO");
 }
 
-function dateOnly(value: string | null) {
-  if (!value) {
+function dateOnly(value: string | null | undefined) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
     return "";
   }
 
-  return new Date(value).toISOString().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+
+  const parsed = parseDisplayDate(normalized);
+  return parsed ? parsed.toISOString().slice(0, 10) : "";
 }
 
 function paymentMethodLabel(value: string) {
@@ -4605,8 +4625,12 @@ export default function CreditFactoryConsole({
         throw new Error(result.data?.error || "No se pudo ajustar el plan");
       }
 
+      if (!result.data?.item) {
+        throw new Error("El servidor no devolvio el credito actualizado");
+      }
+
       upsertCredit(result.data.item);
-      await loadPayments(selectedCredit.id);
+      await loadPayments(result.data.item.id);
       setNotice({
         text: result.data.message,
         tone: "emerald",

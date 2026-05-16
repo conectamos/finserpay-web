@@ -813,6 +813,7 @@ export default async function DashboardPage() {
       ? [
           { href: "/dashboard/reportes", label: "Reportes admin" },
           { href: "/dashboard/cartera", label: "Cartera" },
+          { href: "/dashboard/clientes", label: "Clientes y ajuste plan" },
           { href: "/dashboard/usuarios", label: "Vendedores" },
           { href: "/dashboard/sedes", label: "Sedes" },
           { href: "/dashboard/catalogo-equipos", label: "Catalogo de equipos" },
@@ -1469,10 +1470,11 @@ export default async function DashboardPage() {
               </p>
             </div>
 
-            <div className="relative mt-7 grid gap-3 sm:grid-cols-4">
+            <div className="relative mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <DashboardButton href="/dashboard/creditos?mode=create-client" label="Nuevo credito" tone="orange" />
               <DashboardButton href="/dashboard/abonos" label="Recibir abono" tone="dark" />
               <DashboardButton href="/dashboard/cartera" label="Cartera" tone="green" />
+              <DashboardButton href="/dashboard/clientes" label="Ajustar plan" tone="blue" />
               <DashboardButton href="/dashboard/reportes" label="Ver reportes" tone="light" />
             </div>
           </div>
