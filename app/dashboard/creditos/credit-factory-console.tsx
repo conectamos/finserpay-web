@@ -4805,12 +4805,13 @@ export default function CreditFactoryConsole({
     setClienteDepartamento(credit.clienteDepartamento || "");
     setClienteCiudad(credit.clienteCiudad || "");
     setClienteGenero(credit.clienteGenero || "");
-    setReferenciaFamiliar1Nombre(credit.referenciasFamiliares[0]?.nombre || "");
-    setReferenciaFamiliar1Parentesco(credit.referenciasFamiliares[0]?.parentesco || "");
-    setReferenciaFamiliar1Telefono(credit.referenciasFamiliares[0]?.telefono || "");
-    setReferenciaFamiliar2Nombre(credit.referenciasFamiliares[1]?.nombre || "");
-    setReferenciaFamiliar2Parentesco(credit.referenciasFamiliares[1]?.parentesco || "");
-    setReferenciaFamiliar2Telefono(credit.referenciasFamiliares[1]?.telefono || "");
+    const familyReferences = credit.referenciasFamiliares || [];
+    setReferenciaFamiliar1Nombre(familyReferences[0]?.nombre || "");
+    setReferenciaFamiliar1Parentesco(familyReferences[0]?.parentesco || "");
+    setReferenciaFamiliar1Telefono(familyReferences[0]?.telefono || "");
+    setReferenciaFamiliar2Nombre(familyReferences[1]?.nombre || "");
+    setReferenciaFamiliar2Parentesco(familyReferences[1]?.parentesco || "");
+    setReferenciaFamiliar2Telefono(familyReferences[1]?.telefono || "");
     setWizardStep(1);
   };
 
@@ -8975,7 +8976,7 @@ export default function CreditFactoryConsole({
                   </div>
 
                   <div className="mt-4 grid gap-3 md:grid-cols-2">
-                    {selectedCredit.referenciasFamiliares.length ? (
+                    {selectedCredit.referenciasFamiliares?.length ? (
                       selectedCredit.referenciasFamiliares.map((reference, index) => (
                         <div
                           key={`${reference.nombre}-${index}`}

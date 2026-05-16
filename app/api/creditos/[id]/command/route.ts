@@ -65,6 +65,41 @@ type PaymentSummary = {
   ultimoAbonoAt: Date | null;
 };
 
+function extractFamilyReferences(snapshot: unknown) {
+  if (typeof snapshot !== "object" || snapshot === null) {
+    return [];
+  }
+
+  const root = snapshot as Record<string, unknown>;
+  const cliente =
+    typeof root.cliente === "object" && root.cliente !== null
+      ? (root.cliente as Record<string, unknown>)
+      : null;
+  const references = Array.isArray(cliente?.referenciasFamiliares)
+    ? cliente.referenciasFamiliares
+    : [];
+
+  return references
+    .map((item) => {
+      if (typeof item !== "object" || item === null) {
+        return null;
+      }
+
+      const record = item as Record<string, unknown>;
+
+      return {
+        nombre: typeof record.nombre === "string" ? record.nombre : "",
+        parentesco:
+          typeof record.parentesco === "string" ? record.parentesco : "",
+        telefono: typeof record.telefono === "string" ? record.telefono : "",
+      };
+    })
+    .filter(
+      (item): item is { nombre: string; parentesco: string; telefono: string } =>
+        Boolean(item?.nombre || item?.parentesco || item?.telefono)
+    );
+}
+
 function serializeCredit(item: any, payment?: PaymentSummary) {
   const summary = resolveCreditPaymentSummary({
     montoCredito: item.montoCredito,
@@ -72,16 +107,31 @@ function serializeCredit(item: any, payment?: PaymentSummary) {
     totalAbonado: Number(payment?.totalAbonado || 0),
     abonosCount: Number(payment?.abonosCount || 0),
   });
+  const paymentPlan = buildCreditPaymentPlan({
+    montoCredito: Number(item.montoCredito || 0),
+    valorCuota: Number(item.valorCuota || 0),
+    plazoMeses: Number(item.plazoMeses || 1),
+    frecuenciaPago: item.frecuenciaPago,
+    fechaPrimerPago: item.fechaPrimerPago || item.fechaProximoPago,
+    abonos: summary.totalAbonado > 0 ? [{ valor: summary.totalAbonado }] : [],
+  });
 
   return {
     id: item.id,
     folio: item.folio,
     clienteNombre: item.clienteNombre,
+    clientePrimerNombre: item.clientePrimerNombre,
+    clientePrimerApellido: item.clientePrimerApellido,
+    clienteTipoDocumento: item.clienteTipoDocumento,
     clienteDireccion: item.clienteDireccion,
     clienteDocumento: item.clienteDocumento,
     clienteFechaNacimiento: item.clienteFechaNacimiento?.toISOString() || null,
     clienteFechaExpedicion: item.clienteFechaExpedicion?.toISOString() || null,
     clienteTelefono: item.clienteTelefono,
+    clienteCorreo: item.clienteCorreo,
+    clienteDepartamento: item.clienteDepartamento,
+    clienteCiudad: item.clienteCiudad,
+    clienteGenero: item.clienteGenero,
     imei: item.imei,
     deviceUid: item.deviceUid,
     referenciaEquipo: item.referenciaEquipo,
@@ -120,6 +170,8 @@ function serializeCredit(item: any, payment?: PaymentSummary) {
     contratoAceptadoAt: item.contratoAceptadoAt?.toISOString() || null,
     pagareAceptadoAt: item.pagareAceptadoAt?.toISOString() || null,
     contratoIp: item.contratoIp,
+    contratoFotoDataUrl: item.contratoFotoDataUrl,
+    contratoSelfieDataUrl: item.contratoSelfieDataUrl,
     contratoListo: Boolean(
       item.contratoAceptadoAt &&
         item.contratoFirmaDataUrl &&
@@ -134,10 +186,15 @@ function serializeCredit(item: any, payment?: PaymentSummary) {
     contratoOtpCanal: item.contratoOtpCanal,
     contratoOtpDestino: item.contratoOtpDestino,
     contratoOtpVerificadoAt: item.contratoOtpVerificadoAt?.toISOString() || null,
+    referenciasFamiliares: extractFamilyReferences(item.contratoSnapshot),
     totalAbonado: summary.totalAbonado,
     saldoPendiente: summary.saldoPendiente,
     totalRecaudado: summary.totalRecaudado,
     porcentajeRecaudado: summary.porcentajeRecaudado,
+    estadoPago: paymentPlan.estadoPago,
+    cuotasPagadas: paymentPlan.paidCount,
+    cuotasPendientes: paymentPlan.pendingCount,
+    cuotasEnMora: paymentPlan.overdueCount,
     abonosCount: summary.abonosCount,
     ultimoAbonoAt: payment?.ultimoAbonoAt?.toISOString() || null,
     createdAt: item.createdAt.toISOString(),
