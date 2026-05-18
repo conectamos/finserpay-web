@@ -1,15 +1,22 @@
 package com.finserpay.clientes;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.WebChromeClient;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -18,6 +25,8 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+
+import com.google.firebase.messaging.FirebaseMessaging;
 
 public class MainActivity extends Activity {
     private static final String CLIENT_URL = "https://finserpay.com/clientes";
@@ -74,6 +83,7 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
+        webView.addJavascriptInterface(new FinserAndroidBridge(), "FinserPayAndroid");
         webView.setWebViewClient(new FinserWebViewClient());
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
@@ -83,6 +93,7 @@ public class MainActivity extends Activity {
             }
         });
 
+        setupPushNotifications();
         webView.loadUrl(CLIENT_URL);
     }
 
@@ -98,6 +109,60 @@ public class MainActivity extends Activity {
     private int dp(int value) {
         float density = getResources().getDisplayMetrics().density;
         return Math.round(value * density);
+    }
+
+    private void setupPushNotifications() {
+        createNotificationChannel();
+        requestNotificationPermission();
+
+        try {
+            FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task -> {
+                if (task.isSuccessful() && task.getResult() != null) {
+                    FinserPushRegistry.saveTokenAndSync(this, task.getResult());
+                }
+            });
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+
+        NotificationManager manager =
+                (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null) {
+            return;
+        }
+
+        NotificationChannel channel = new NotificationChannel(
+                getString(R.string.fcm_channel_id),
+                getString(R.string.fcm_channel_name),
+                NotificationManager.IMPORTANCE_HIGH
+        );
+        channel.setDescription(getString(R.string.fcm_channel_description));
+        manager.createNotificationChannel(channel);
+    }
+
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return;
+        }
+
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1001);
+    }
+
+    private class FinserAndroidBridge {
+        @JavascriptInterface
+        public void registerClient(String documento) {
+            FinserPushRegistry.saveDocumentAndSync(MainActivity.this, documento);
+        }
     }
 
     private class FinserWebViewClient extends WebViewClient {

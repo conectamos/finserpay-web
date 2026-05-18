@@ -73,6 +73,14 @@ type ClientNotice = {
   tone: ClientNoticeTone;
 };
 
+declare global {
+  interface Window {
+    FinserPayAndroid?: {
+      registerClient?: (documento: string) => void;
+    };
+  }
+}
+
 const STORAGE_KEY = "finserpay.cliente.documento";
 
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
@@ -94,6 +102,14 @@ function dateLabel(value: string | null | undefined) {
 
 function normalizeDocument(value: string) {
   return value.replace(/\D/g, "");
+}
+
+function registerAndroidClient(documento: string) {
+  try {
+    window.FinserPayAndroid?.registerClient?.(documento);
+  } catch {
+    // Android bridge is optional; web browsers continue normally.
+  }
 }
 
 function normalizePhone(value: string) {
@@ -476,6 +492,7 @@ export default function ClienteConsultaPage() {
       const nextOpenId = preferredOpenId ?? nextItems[0]?.id ?? null;
 
       localStorage.setItem(STORAGE_KEY, normalized);
+      registerAndroidClient(normalized);
       setDocumento(normalized);
       setActiveDocumento(normalized);
       setItems(nextItems);

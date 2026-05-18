@@ -2,4 +2,7 @@
 <resources>
     <string name="app_name">FINSER PAY</string>
     <string name="client_url">https://finserpay.com/clientes</string>
+    <string name="fcm_channel_id">finserpay_alertas</string>
+    <string name="fcm_channel_name">Alertas FINSER PAY</string>
+    <string name="fcm_channel_description">Avisos de cuotas, pagos y estado del equipo.</string>
 </resources>

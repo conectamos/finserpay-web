@@ -16,3 +16,16 @@ El APK se genera desde GitHub Actions en el workflow `Android APK Clientes`.
 4. Descarga el artefacto `finserpay-clientes-debug-apk`.
 
 El archivo generado es de prueba (`debug`). Para publicar en Play Store se debe crear una firma de release.
+
+## Notificaciones push
+
+La app queda preparada para Firebase Cloud Messaging.
+
+1. En Firebase registra una app Android con el paquete `com.finserpay.clientes`.
+2. Descarga `google-services.json` y guardalo como secret de GitHub `GOOGLE_SERVICES_JSON` para que el workflow lo inserte al compilar. Localmente tambien puedes ubicarlo en `android-client/app/google-services.json`.
+3. En Railway configura una de estas opciones:
+   - `FIREBASE_SERVICE_ACCOUNT_JSON` con el JSON completo de la cuenta de servicio.
+   - O `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`, `FCM_PRIVATE_KEY` por separado.
+4. Genera e instala una APK nueva para que el cliente registre su token FCM.
+
+El backend guarda el token cuando el cliente consulta su cedula en `/clientes` desde la app. El workflow `Recordatorios push clientes` envia avisos diarios de cuotas cercanas, cuotas del dia y mora.

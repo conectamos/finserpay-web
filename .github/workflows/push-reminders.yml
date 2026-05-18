@@ -1,0 +1,33 @@
+name: Recordatorios push clientes
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 13 * * *"
+
+jobs:
+  push-reminders:
+    name: Enviar avisos push de cuotas
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Notificar vencimientos y mora
+        env:
+          FINSERPAY_BASE_URL: ${{ secrets.FINSERPAY_BASE_URL }}
+          MORA_SYNC_TOKEN: ${{ secrets.MORA_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          BASE_URL="${FINSERPAY_BASE_URL:-https://finserpay.com}"
+
+          if [ -z "${MORA_SYNC_TOKEN:-}" ]; then
+            echo "Falta configurar el secret MORA_SYNC_TOKEN en GitHub Actions."
+            exit 1
+          fi
+
+          curl --fail-with-body \
+            --request POST \
+            --header "Authorization: Bearer ${MORA_SYNC_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{"dryRun":false}' \
+            "${BASE_URL%/}/api/creditos/push-reminders"
