@@ -196,6 +196,19 @@ function buildPresetMessage(credit: PushCredit, input: ManualPushBody) {
   };
 }
 
+function buildClientPaymentUrl(credit: PushCredit) {
+  const params = new URLSearchParams({
+    credito: String(credit.id),
+    panel: "payments",
+  });
+
+  if (credit.clienteDocumento) {
+    params.set("documento", credit.clienteDocumento);
+  }
+
+  return `https://finserpay.com/clientes?${params.toString()}`;
+}
+
 function baseItem(
   credit: PushCredit,
   action: PushDispatchItem["action"],
@@ -239,7 +252,8 @@ async function dispatchForCredit(
         documento: credit.clienteDocumento,
         folio: credit.folio,
         mode: "manual",
-        url: "https://finserpay.com/clientes",
+        panel: "payments",
+        url: buildClientPaymentUrl(credit),
       },
       title: message.title,
     });

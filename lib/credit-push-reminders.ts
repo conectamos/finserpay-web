@@ -318,6 +318,19 @@ function buildBaseResult(
   };
 }
 
+function buildClientPaymentUrl(credit: ReminderCredit) {
+  const params = new URLSearchParams({
+    credito: String(credit.id),
+    panel: "payments",
+  });
+
+  if (credit.clienteDocumento) {
+    params.set("documento", credit.clienteDocumento);
+  }
+
+  return `https://finserpay.com/clientes?${params.toString()}`;
+}
+
 async function dispatchForToken(
   credit: ReminderCredit,
   token: FcmDeviceTokenRow,
@@ -363,7 +376,8 @@ async function dispatchForToken(
       documento: credit.clienteDocumento,
       dueDate: reminder.dueDate,
       folio: credit.folio,
-      url: "https://finserpay.com/clientes",
+      panel: "payments",
+      url: buildClientPaymentUrl(credit),
     },
     title: reminder.title,
   });

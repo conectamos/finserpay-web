@@ -39,10 +39,10 @@ public class FinserMessagingService extends FirebaseMessagingService {
                 "Tienes una novedad en tu credito."
         );
 
-        showNotification(title, body);
+        showNotification(title, body, data);
     }
 
-    private void showNotification(String title, String body) {
+    private void showNotification(String title, String body, Map<String, String> data) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -53,9 +53,13 @@ public class FinserMessagingService extends FirebaseMessagingService {
 
         Intent intent = new Intent(this, MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        putIfPresent(intent, "url", data.get("url"));
+        putIfPresent(intent, "documento", data.get("documento"));
+        putIfPresent(intent, "credito", data.get("creditoId"));
+        putIfPresent(intent, "panel", data.get("panel"));
         PendingIntent pendingIntent = PendingIntent.getActivity(
                 this,
-                0,
+                (int) System.currentTimeMillis(),
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
@@ -79,6 +83,12 @@ public class FinserMessagingService extends FirebaseMessagingService {
                 (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) {
             manager.notify((int) System.currentTimeMillis(), builder.build());
+        }
+    }
+
+    private void putIfPresent(Intent intent, String key, String value) {
+        if (value != null && !value.trim().isEmpty()) {
+            intent.putExtra(key, value.trim());
         }
     }
 

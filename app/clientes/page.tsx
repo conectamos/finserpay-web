@@ -104,6 +104,24 @@ function normalizeDocument(value: string) {
   return value.replace(/\D/g, "");
 }
 
+function normalizePanel(value: string | null): ExplorerPanel {
+  const normalized = String(value || "").trim().toLowerCase();
+
+  if (["pay", "payment", "payments", "pagar", "wompi"].includes(normalized)) {
+    return "payments";
+  }
+
+  if (["pending", "pendientes", "calendario"].includes(normalized)) {
+    return "pending";
+  }
+
+  if (["history", "historial"].includes(normalized)) {
+    return "history";
+  }
+
+  return null;
+}
+
 function registerAndroidClient(documento: string) {
   try {
     window.FinserPayAndroid?.registerClient?.(documento);
@@ -463,7 +481,8 @@ export default function ClienteConsultaPage() {
   const consultar = useCallback(async (
     rawDocument: string,
     silent = false,
-    preferredCreditId: number | null = null
+    preferredCreditId: number | null = null,
+    preferredPanel: ExplorerPanel = null
   ) => {
     const normalized = normalizeDocument(rawDocument);
 
@@ -497,7 +516,7 @@ export default function ClienteConsultaPage() {
       setActiveDocumento(normalized);
       setItems(nextItems);
       setOpenCreditId(nextOpenId);
-      setActivePanel(null);
+      setActivePanel(preferredPanel);
       setConfirmPaymentCreditId(null);
       setSelectedLimit(
         Object.fromEntries(
@@ -517,6 +536,10 @@ export default function ClienteConsultaPage() {
               tone: "red",
             }
       );
+
+      if (preferredPanel) {
+        window.setTimeout(() => scrollToSection("explora-panel"), 120);
+      }
     } catch (error) {
       setItems([]);
       setOpenCreditId(null);
@@ -537,6 +560,9 @@ export default function ClienteConsultaPage() {
     const wompiReference =
       params.get("wompiReference") || params.get("reference") || "";
     const creditFromUrl = Math.trunc(Number(params.get("credito") || 0)) || null;
+    const panelFromUrl = normalizePanel(
+      params.get("panel") || params.get("focus") || params.get("accion")
+    );
 
     if (wompiReference) {
       setPaymentReturn({
@@ -548,7 +574,7 @@ export default function ClienteConsultaPage() {
 
     if (nextDocument) {
       setDocumento(nextDocument);
-      void consultar(nextDocument, true, creditFromUrl);
+      void consultar(nextDocument, true, creditFromUrl, panelFromUrl);
     }
   }, [consultar]);
 
@@ -712,7 +738,8 @@ export default function ClienteConsultaPage() {
       await consultar(
         targetDocument,
         true,
-        paymentReturn?.creditId ?? openCreditId
+        paymentReturn?.creditId ?? openCreditId,
+        activePanel
       );
       setPaymentReturn((current) =>
         current
@@ -727,6 +754,7 @@ export default function ClienteConsultaPage() {
     }
   }, [
     activeDocumento,
+    activePanel,
     consultar,
     documento,
     openCreditId,

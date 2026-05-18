@@ -48,6 +48,12 @@ public final class FinserPushRegistry {
         syncIfReady(context);
     }
 
+    public static String getSavedDocument(Context context) {
+        SharedPreferences prefs = context.getApplicationContext()
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return normalizeDocument(prefs.getString(KEY_DOCUMENT, ""));
+    }
+
     private static void syncIfReady(Context context) {
         Context appContext = context.getApplicationContext();
         SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);

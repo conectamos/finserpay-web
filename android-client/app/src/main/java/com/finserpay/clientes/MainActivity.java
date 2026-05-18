@@ -94,7 +94,14 @@ public class MainActivity extends Activity {
         });
 
         setupPushNotifications();
-        webView.loadUrl(CLIENT_URL);
+        webView.loadUrl(resolveLaunchUrl(getIntent()));
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        loadUrlFromIntent(intent);
     }
 
     @Override
@@ -109,6 +116,81 @@ public class MainActivity extends Activity {
     private int dp(int value) {
         float density = getResources().getDisplayMetrics().density;
         return Math.round(value * density);
+    }
+
+    private void loadUrlFromIntent(Intent intent) {
+        if (webView == null) {
+            return;
+        }
+
+        webView.loadUrl(resolveLaunchUrl(intent));
+    }
+
+    private String resolveLaunchUrl(Intent intent) {
+        Uri dataUri = intent == null ? null : intent.getData();
+
+        if (isAllowedClientUri(dataUri)) {
+            return dataUri.toString();
+        }
+
+        String urlExtra = intent == null ? "" : intent.getStringExtra("url");
+        Uri urlUri = urlExtra == null || urlExtra.trim().isEmpty()
+                ? null
+                : Uri.parse(urlExtra.trim());
+
+        if (isAllowedClientUri(urlUri)) {
+            return urlUri.toString();
+        }
+
+        String documento = firstNonEmpty(
+                intent == null ? null : intent.getStringExtra("documento"),
+                FinserPushRegistry.getSavedDocument(this)
+        ).replaceAll("\\D", "");
+        String credito = intent == null
+                ? ""
+                : firstNonEmpty(
+                        intent.getStringExtra("credito"),
+                        intent.getStringExtra("creditoId")
+                );
+        String panel = intent == null ? "" : firstNonEmpty(intent.getStringExtra("panel"), "");
+
+        Uri.Builder builder = Uri.parse(CLIENT_URL).buildUpon();
+        if (documento.length() >= 5) {
+            builder.appendQueryParameter("documento", documento);
+        }
+        if (!credito.trim().isEmpty()) {
+            builder.appendQueryParameter("credito", credito.trim());
+        }
+        if (!panel.trim().isEmpty()) {
+            builder.appendQueryParameter("panel", panel.trim());
+        }
+
+        return builder.build().toString();
+    }
+
+    private boolean isAllowedClientUri(Uri uri) {
+        if (uri == null) {
+            return false;
+        }
+
+        String host = uri.getHost();
+        String path = uri.getPath();
+
+        return "https".equalsIgnoreCase(uri.getScheme())
+                && host != null
+                && (host.equals("finserpay.com") || host.endsWith(".finserpay.com"))
+                && path != null
+                && path.startsWith("/clientes");
+    }
+
+    private String firstNonEmpty(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) {
+                return value.trim();
+            }
+        }
+
+        return "";
     }
 
     private void setupPushNotifications() {
