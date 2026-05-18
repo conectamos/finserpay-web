@@ -25,6 +25,7 @@ import {
   unlockEqualityDevice,
 } from "@/lib/equality-zero-touch";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import { isAdminRole } from "@/lib/roles";
 
 export const runtime = "nodejs";
@@ -342,8 +343,7 @@ async function syncMoraAutomation(credit: LoadedCredit, plan: PaymentPlan) {
     const remotePayload = isInMora
       ? await lockEqualityDevice(credit.deviceUid, {
           lockMsgTitle: "Pago vencido",
-          lockMsgContent:
-            "Tu equipo FINSER PAY esta bloqueado por una cuota vencida. Realiza el pago para desbloquearlo.",
+          lockMsgContent: buildMoraLockMessage(credit.clienteDocumento),
         })
       : credit.bloqueoRobo
         ? null

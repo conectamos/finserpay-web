@@ -16,6 +16,7 @@ import {
   resolveCreditState,
   sanitizeText,
 } from "@/lib/credit-factory";
+import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import prisma from "@/lib/prisma";
 
 const DEFAULT_SYNC_LIMIT = 150;
@@ -331,8 +332,7 @@ export async function syncCreditMora(
     const remotePayload = isInMora
       ? await lockEqualityDevice(credit.deviceUid, {
           lockMsgTitle: "Pago vencido",
-          lockMsgContent:
-            "Tu equipo FINSER PAY esta bloqueado por una cuota vencida. Realiza el pago para desbloquearlo.",
+          lockMsgContent: buildMoraLockMessage(credit.clienteDocumento),
         })
       : credit.bloqueoRobo
         ? null
