@@ -643,15 +643,15 @@ export default function ClienteConsultaPage() {
         return;
       }
 
-      if (!result.data.checkoutUrl) {
-        throw new Error(result.data.directError || "Wompi no entrego un enlace de pago");
+      if (result.data.paymentMode === "CHECKOUT_FALLBACK") {
+        throw new Error(
+          result.data.directError ||
+            "No se pudo enviar la solicitud directa a Nequi."
+        );
       }
 
-      if (result.data.directError) {
-        setNotice({
-          text: "Nequi directo no quedo disponible. Te llevamos al checkout seguro de Wompi.",
-          tone: "emerald",
-        });
+      if (!result.data.checkoutUrl) {
+        throw new Error(result.data.directError || "Wompi no entrego un enlace de pago");
       }
 
       window.location.assign(result.data.checkoutUrl);
@@ -1680,8 +1680,8 @@ export default function ClienteConsultaPage() {
                   className="mt-2 min-h-12 w-full rounded-lg border border-[#dde1e8] bg-white px-4 text-base font-black text-[#171b22] outline-none focus:border-[#a7e66f]"
                 />
                 <p className="mt-2 text-xs font-bold leading-5 text-[#737b88]">
-                  Wompi enviara la solicitud a Nequi. El pago queda registrado
-                  cuando el banco lo apruebe.
+                  Wompi enviara una notificacion a la app Nequi. El pago queda
+                  registrado cuando el cliente lo apruebe.
                 </p>
                 <label className="mt-3 grid cursor-pointer grid-cols-[22px_1fr] gap-3 text-xs font-bold leading-5 text-[#535b66]">
                   <input

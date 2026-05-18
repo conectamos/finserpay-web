@@ -268,6 +268,27 @@ export async function POST(req: Request) {
         reference,
       });
     };
+    const buildNequiDirectErrorResponse = async (
+      directError: string,
+      status = 502
+    ) => {
+      await prisma.wompiPaymentIntent.update({
+        where: { id: paymentIntent.id },
+        data: {
+          status: "NEQUI_DIRECT_FAILED",
+          payload: { directError } as Prisma.InputJsonValue,
+        },
+      });
+
+      return NextResponse.json(
+        {
+          error: directError,
+          paymentMode: "NEQUI_DIRECT_ERROR",
+          reference,
+        },
+        { status }
+      );
+    };
 
     if (wantsNequiDirect && isWompiDirectApiConfigured()) {
       try {
@@ -310,12 +331,15 @@ export async function POST(req: Request) {
             ? error.message
             : "No se pudo crear la transaccion Nequi";
         console.error("ERROR CREANDO PAGO NEQUI WOMPI:", error);
-        return buildCheckoutResponse(directError);
+        return buildNequiDirectErrorResponse(directError);
       }
     }
 
     if (wantsNequiDirect && !isWompiDirectApiConfigured()) {
-      return buildCheckoutResponse("Falta configurar WOMPI_PRIVATE_KEY");
+      return buildNequiDirectErrorResponse(
+        "Nequi directo no esta configurado. Falta WOMPI_PRIVATE_KEY en el servidor.",
+        503
+      );
     }
 
     return buildCheckoutResponse();
