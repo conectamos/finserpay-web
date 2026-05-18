@@ -17,10 +17,18 @@ export function getWompiPrivateKey() {
 }
 
 export function getWompiIntegritySecret() {
-  return clean(
-    process.env.WOMPI_INTEGRITY_SECRET ||
-      process.env.WOMPI_INTEGRITY_KEY ||
-      process.env.WOMPI_SIGNATURE_SECRET
+  const candidates = [
+    process.env.WOMPI_INTEGRITY_SECRET,
+    process.env.WOMPI_INTEGRITY_KEY,
+    process.env.WOMPI_SIGNATURE_SECRET,
+  ]
+    .map(clean)
+    .filter(Boolean);
+
+  return (
+    candidates.find((value) => /^(prod|test)_integrity_/i.test(value)) ||
+    candidates[0] ||
+    ""
   );
 }
 
@@ -188,6 +196,20 @@ function extractWompiError(data: unknown, fallback: string) {
   return fallback;
 }
 
+function normalizeWompiApiError(message: string) {
+  const normalized = clean(message);
+
+  if (/signature|firma/i.test(normalized)) {
+    return [
+      "La firma de Wompi es invalida.",
+      "En Railway revisa WOMPI_INTEGRITY_SECRET: debe ser el Secreto de Integridad de Wompi, normalmente empieza por prod_integrity_ o test_integrity_.",
+      "No uses aqui la llave publica, la llave privada ni el secreto de eventos/webhook.",
+    ].join(" ");
+  }
+
+  return normalized || "No se pudo crear la transaccion Nequi en Wompi";
+}
+
 export async function getWompiMerchantAcceptanceTokens() {
   const publicKey = getWompiPublicKey();
 
@@ -292,7 +314,12 @@ export async function createWompiNequiTransaction(options: {
 
   if (!response.ok) {
     throw new Error(
-      extractWompiError(data, "No se pudo crear la transaccion Nequi en Wompi")
+      normalizeWompiApiError(
+        extractWompiError(
+          data,
+          "No se pudo crear la transaccion Nequi en Wompi"
+        )
+      )
     );
   }
 
