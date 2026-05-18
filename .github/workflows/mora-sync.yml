@@ -1,0 +1,33 @@
+name: Sincronizar mora y bloqueos
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "10 5 * * *"
+
+jobs:
+  sync-mora:
+    name: Ejecutar bloqueo automatico por mora
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Sincronizar cartera vencida
+        env:
+          FINSERPAY_BASE_URL: ${{ secrets.FINSERPAY_BASE_URL }}
+          MORA_SYNC_TOKEN: ${{ secrets.MORA_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          BASE_URL="${FINSERPAY_BASE_URL:-https://finserpay.com}"
+
+          if [ -z "${MORA_SYNC_TOKEN:-}" ]; then
+            echo "Falta configurar el secret MORA_SYNC_TOKEN en GitHub Actions."
+            exit 1
+          fi
+
+          curl --fail-with-body \
+            --request POST \
+            --header "Authorization: Bearer ${MORA_SYNC_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{"dryRun":false}' \
+            "${BASE_URL%/}/api/creditos/sync-mora"
