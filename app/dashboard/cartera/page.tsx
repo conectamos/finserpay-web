@@ -2,6 +2,7 @@ import Link from "next/link";
 import prisma from "@/lib/prisma";
 import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import PushMassivePanel from "./push-massive-panel";
 
 export const metadata = {
   title: "Cartera | FINSER PAY",
@@ -321,6 +322,8 @@ export default async function CarteraPage() {
             </div>
           </div>
         </header>
+
+        <PushMassivePanel />
 
         <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <MetricCard label="Invertido" value={money(totalInvertido)} detail={`${activeCredits.length} creditos activos`} />

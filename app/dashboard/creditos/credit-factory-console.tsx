@@ -336,6 +336,21 @@ type CommandResponse = {
   } | null;
 };
 
+type ManualPushPreset = "custom" | "efecty" | "internet" | "mora";
+
+type ManualPushResponse = {
+  ok?: boolean;
+  summary?: {
+    checked: number;
+    failed: number;
+    noToken: number;
+    sent: number;
+    targetCredits: number;
+    wouldSend: number;
+  };
+  error?: string;
+};
+
 type CreditPaymentItem = {
   id: number;
   creditoId: number;
@@ -1753,6 +1768,11 @@ export default function CreditFactoryConsole({
   const [planFrequency, setPlanFrequency] = useState(DEFAULT_PAYMENT_FREQUENCY);
   const [planFirstPaymentDate, setPlanFirstPaymentDate] = useState("");
   const [updatingPlan, setUpdatingPlan] = useState(false);
+  const [manualPushPreset, setManualPushPreset] =
+    useState<ManualPushPreset>("internet");
+  const [manualPushTitle, setManualPushTitle] = useState("FINSER PAY");
+  const [manualPushBody, setManualPushBody] = useState("");
+  const [sendingManualPush, setSendingManualPush] = useState(false);
   const [paymentValue, setPaymentValue] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("EFECTIVO");
   const [paymentObservation, setPaymentObservation] = useState("");
@@ -4699,6 +4719,65 @@ export default function CreditFactoryConsole({
     } finally {
       setUpdatingPlan(false);
       setRunningCommand(null);
+    }
+  };
+
+  const sendManualPush = async () => {
+    if (!selectedCredit) {
+      setNotice({
+        text: "Selecciona un credito antes de enviar push.",
+        tone: "red",
+      });
+      return;
+    }
+
+    if (manualPushPreset === "custom" && !manualPushBody.trim()) {
+      setNotice({
+        text: "Escribe el mensaje personalizado antes de enviarlo.",
+        tone: "red",
+      });
+      return;
+    }
+
+    try {
+      setSendingManualPush(true);
+      setNotice(null);
+
+      const result = await requestJson<ManualPushResponse>(
+        "/api/creditos/push-manual",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            body: manualPushBody,
+            creditoId: selectedCredit.id,
+            mode: "credit",
+            preset: manualPushPreset,
+            title: manualPushTitle,
+          }),
+        }
+      );
+
+      if (!result.ok) {
+        throw new Error(result.data?.error || "No se pudo enviar el push");
+      }
+
+      const summary = result.data?.summary;
+      setNotice({
+        text: summary
+          ? `Push enviado: ${summary.sent}. Sin app: ${summary.noToken}. Fallidos: ${summary.failed}.`
+          : "Push enviado.",
+        tone: summary?.failed ? "red" : summary?.sent ? "emerald" : "amber",
+      });
+    } catch (error) {
+      setNotice({
+        text: error instanceof Error ? error.message : "No se pudo enviar el push",
+        tone: "red",
+      });
+    } finally {
+      setSendingManualPush(false);
     }
   };
 
@@ -10415,6 +10494,69 @@ export default function CreditFactoryConsole({
                 >
                   Descargar Paz y Salvo
                 </button>
+              </div>
+
+              <div className="mt-6 rounded-[24px] border border-[#d9e7ea] bg-white px-5 py-5">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#0f766e]">
+                      Push app clientes
+                    </p>
+                    <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                      Enviar notificacion individual
+                    </h3>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      Llega solo si el cliente ya abrio la APK nueva y tiene token activo.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => void sendManualPush()}
+                    disabled={!selectedCredit || sendingManualPush}
+                    className="rounded-2xl border border-[#145a5a] bg-[#145a5a] px-5 py-3 text-sm font-black text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
+                  >
+                    {sendingManualPush ? "Enviando..." : "Enviar push"}
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-3 lg:grid-cols-[0.7fr_0.9fr_1.4fr]">
+                  <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                    Tipo
+                    <select
+                      value={manualPushPreset}
+                      onChange={(event) =>
+                        setManualPushPreset(event.target.value as ManualPushPreset)
+                      }
+                      className="h-12 rounded-2xl border border-[#ccd7dd] bg-white px-4 text-sm font-semibold text-slate-950 outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+                    >
+                      <option value="internet">Mantener internet</option>
+                      <option value="mora">Cuota vencida</option>
+                      <option value="efecty">Pago EFECTY</option>
+                      <option value="custom">Personalizado</option>
+                    </select>
+                  </label>
+
+                  <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                    Titulo
+                    <input
+                      value={manualPushTitle}
+                      onChange={(event) => setManualPushTitle(event.target.value)}
+                      placeholder="FINSER PAY"
+                      className="h-12 rounded-2xl border border-[#ccd7dd] bg-white px-4 text-sm font-semibold text-slate-950 outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+                    />
+                  </label>
+
+                  <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                    Mensaje personalizado
+                    <input
+                      value={manualPushBody}
+                      onChange={(event) => setManualPushBody(event.target.value)}
+                      placeholder="Solo se usa cuando eliges Personalizado"
+                      className="h-12 rounded-2xl border border-[#ccd7dd] bg-white px-4 text-sm font-semibold text-slate-950 outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+                    />
+                  </label>
+                </div>
               </div>
             </>
           ) : (
