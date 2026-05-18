@@ -3,6 +3,7 @@ import Image from "next/image";
 
 const APK_DOWNLOAD_PATH = "/downloads/finserpay-clientes.apk";
 const QR_DOWNLOAD_PATH = "/downloads/finserpay-clientes-qr.svg";
+const APP_VERSION_LABEL = "Version con notificaciones push";
 
 export const metadata = {
   title: "App Android Clientes | FINSER PAY",
@@ -26,13 +27,16 @@ export default function ClientAppDownloadPage() {
             </div>
 
             <p className="mt-8 text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
-              App Android
+              App Android actualizada
             </p>
             <h1 className="mt-3 max-w-xl text-4xl font-black leading-[1.05] tracking-tight text-[#111318] sm:text-5xl">
               FINSER PAY Clientes
             </h1>
             <p className="mt-4 max-w-xl text-base leading-7 text-[#687080]">
-              Descarga la app para abrir el portal de clientes, consultar cuotas y pagar desde el celular.
+              Descarga la APK nueva para consultar cuotas, pagar desde el celular y recibir avisos de pago.
+            </p>
+            <p className="mt-4 inline-flex rounded-full border border-[#cce7df] bg-white px-4 py-2 text-xs font-black text-[#0f766e]">
+              {APP_VERSION_LABEL}
             </p>
           </div>
 
@@ -42,7 +46,7 @@ export default function ClientAppDownloadPage() {
               download
               className="inline-flex min-h-14 items-center justify-center rounded-2xl border border-[#0f766e] bg-[#0f766e] px-5 text-center text-sm font-black text-white shadow-[0_16px_32px_rgba(15,118,110,0.22)] transition hover:-translate-y-0.5"
             >
-              Descargar APK
+              Descargar APK nueva
             </a>
             <Link
               href="/clientes"
@@ -59,7 +63,7 @@ export default function ClientAppDownloadPage() {
               Codigo QR
             </p>
             <h2 className="mt-3 text-2xl font-black leading-tight text-[#173c38]">
-              Escanea para descargar
+              Escanea para instalar
             </h2>
           </div>
 
@@ -74,7 +78,7 @@ export default function ClientAppDownloadPage() {
           </div>
 
           <p className="rounded-[22px] border border-[#cce7df] bg-white/72 p-4 text-sm font-bold leading-6 text-[#2f625c]">
-            Si Android lo solicita, permite la instalacion desde el navegador para completar la descarga.
+            Si Android lo solicita, permite la instalacion desde el navegador. Si ya tenia la app, esta APK la actualiza.
           </p>
         </aside>
       </section>

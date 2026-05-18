@@ -1023,13 +1023,13 @@ export default async function DashboardPage() {
               </div>
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
-                  App clientes
+                  App clientes actualizada
                 </p>
                 <h2 className="mt-2 text-2xl font-black leading-tight text-[#20242a]">
-                  Instalar al finalizar la venta
+                  Instalar o actualizar al finalizar la venta
                 </h2>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-[#687080]">
-                  El asesor puede escanear este QR desde el celular del cliente o abrir la descarga directa.
+                  Escanea este QR desde el celular del cliente para instalar la APK nueva con notificaciones de pago.
                 </p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <Link
@@ -1037,14 +1037,14 @@ export default async function DashboardPage() {
                     target="_blank"
                     className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-[#0f766e] bg-[#0f766e] px-4 text-center text-sm font-black text-white transition hover:-translate-y-0.5"
                   >
-                    Abrir descarga
+                    Abrir QR y descarga
                   </Link>
                   <a
                     href="/downloads/finserpay-clientes.apk"
                     download
                     className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-[#d7dce2] bg-[#fbfbf7] px-4 text-center text-sm font-black text-[#20242a] transition hover:-translate-y-0.5"
                   >
-                    Descargar APK
+                    Descargar APK nueva
                   </a>
                 </div>
               </div>
