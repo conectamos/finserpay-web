@@ -178,7 +178,7 @@ function buildPresetMessage(credit: PushCredit, input: ManualPushBody) {
 
   if (preset === "mora") {
     return {
-      body: `${name}, tienes una cuota vencida. Mantén datos o WiFi activos y realiza tu pago para normalizar tu equipo.`,
+      body: `${name}, tienes una cuota vencida. Manten datos o WiFi activos y realiza tu pago para normalizar tu equipo.`,
       title: "FINSER PAY: cuota vencida",
     };
   }
@@ -191,8 +191,8 @@ function buildPresetMessage(credit: PushCredit, input: ManualPushBody) {
   }
 
   return {
-    body: `${name}, mantén tu celular conectado a internet para recibir avisos de pago y desbloqueo de FINSER PAY.`,
-    title: "FINSER PAY: mantén internet activo",
+    body: `${name}, manten tu celular conectado a internet para recibir avisos de pago y desbloqueo de FINSER PAY.`,
+    title: "FINSER PAY: manten internet activo",
   };
 }
 
