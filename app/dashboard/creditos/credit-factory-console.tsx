@@ -1761,6 +1761,7 @@ export default function CreditFactoryConsole({
   const [paymentSummary, setPaymentSummary] = useState<CreditPaymentsResponse["credito"] | null>(null);
   const [deliveryValidation, setDeliveryValidation] =
     useState<DeliveryValidationState | null>(null);
+  const [enrollingDelivery, setEnrollingDelivery] = useState(false);
   const [validatingDelivery, setValidatingDelivery] = useState(false);
   const mobileCaptureAppliedRef = useRef<string>("");
   const [cedulaValidation, setCedulaValidation] = useState<CedulaValidationState>({
@@ -4154,13 +4155,13 @@ export default function CreditFactoryConsole({
     });
   };
 
-  const validateDeliveryBeforeFinalize = async () => {
+  const ensureDeliveryReadyToRequest = (actionLabel: string) => {
     if (!imeiValido) {
       setNotice({
-        text: "El IMEI debe tener exactamente 15 numeros antes de validar la entrega.",
+        text: `El IMEI debe tener exactamente 15 numeros antes de ${actionLabel}.`,
         tone: "red",
       });
-      return;
+      return false;
     }
 
     if (
@@ -4171,9 +4172,80 @@ export default function CreditFactoryConsole({
     ) {
       setNotice({
         text:
-          "Completa cliente, equipo, identidad y checklist documental antes de validar la entrega.",
+          `Completa cliente, equipo, identidad y checklist documental antes de ${actionLabel}.`,
         tone: "amber",
       });
+      return false;
+    }
+
+    return true;
+  };
+
+  const requestDeliveryAction = async (action: "enroll" | "query") => {
+    const result = await requestJson<{
+      ok?: boolean;
+      error?: string;
+      remoteStatusCode?: number | null;
+      resultMessage?: string | null;
+      serviceDetails?: string | null;
+      deviceState?: string | null;
+      deliveryStatus?: DeliveryStatus;
+    }>("/api/equality", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action,
+        deviceUid: imeiDigits,
+      }),
+    });
+
+    if (!result.ok) {
+      throw new Error(
+        result.data?.error ||
+          (action === "enroll"
+            ? "No se pudo inscribir el equipo en Zero Touch"
+            : "No se pudo validar la entrega del dispositivo")
+      );
+    }
+
+    return result.data;
+  };
+
+  const enrollDeviceBeforeFinalize = async () => {
+    if (!ensureDeliveryReadyToRequest("inscribir el equipo")) {
+      return;
+    }
+
+    try {
+      setEnrollingDelivery(true);
+      setNotice(null);
+      setDeliveryValidation(null);
+
+      const result = await requestDeliveryAction("enroll");
+
+      setNotice({
+        text:
+          result.resultMessage ||
+          "Inscripcion enviada a Zero Touch. Ahora valida la entrega para confirmar si se puede cerrar.",
+        tone: "emerald",
+      });
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo inscribir el equipo en Zero Touch",
+        tone: "red",
+      });
+    } finally {
+      setEnrollingDelivery(false);
+    }
+  };
+
+  const validateDeliveryBeforeFinalize = async () => {
+    if (!ensureDeliveryReadyToRequest("validar la entrega")) {
       return;
     }
 
@@ -4181,39 +4253,23 @@ export default function CreditFactoryConsole({
       setValidatingDelivery(true);
       setNotice(null);
 
-      const result = await requestJson<{
-        ok?: boolean;
-        remoteStatusCode?: number | null;
-        resultMessage?: string | null;
-        serviceDetails?: string | null;
-        deviceState?: string | null;
-        deliveryStatus?: DeliveryStatus;
-      }>("/api/equality", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: "enroll",
-          deviceUid: imeiDigits,
-        }),
-      });
+      const result = await requestDeliveryAction("query");
 
       const nextValidation: DeliveryValidationState = {
         checkedAt: new Date().toISOString(),
-        deviceState: result.data.deviceState || null,
-        remoteStatusCode: result.data.remoteStatusCode || null,
-        resultMessage: result.data.resultMessage || null,
-        serviceDetails: result.data.serviceDetails || null,
-        status: result.data.deliveryStatus || null,
+        deviceState: result.deviceState || null,
+        remoteStatusCode: result.remoteStatusCode || null,
+        resultMessage: result.resultMessage || null,
+        serviceDetails: result.serviceDetails || null,
+        status: result.deliveryStatus || null,
       };
 
       setDeliveryValidation(nextValidation);
 
-      if (result.data.deliveryStatus?.ready) {
+      if (result.deliveryStatus?.ready) {
         setNotice({
           text:
-            result.data.deliveryStatus.detail ||
+            result.deliveryStatus.detail ||
             "Zero Touch confirmo que el equipo esta 100% entregable.",
           tone: "emerald",
         });
@@ -4222,8 +4278,8 @@ export default function CreditFactoryConsole({
 
       setNotice({
         text:
-          result.data.deliveryStatus?.detail ||
-          result.data.resultMessage ||
+          result.deliveryStatus?.detail ||
+          result.resultMessage ||
           "Zero Touch aun no confirma que el equipo este entregable.",
         tone: "amber",
       });
@@ -7381,7 +7437,7 @@ export default function CreditFactoryConsole({
                       </p>
                       <div className="mt-4 space-y-3 text-sm text-slate-700">
                         <p>
-                          En este ultimo paso el sistema inscribe y consulta Zero Touch. Solo si el dispositivo queda entregable se habilita el cierre del credito.
+                          Primero inscribe el equipo en Zero Touch. Luego valida la entrega para confirmar si el dispositivo ya permite cerrar el credito.
                         </p>
                         <div
                           className={[
@@ -7416,17 +7472,35 @@ export default function CreditFactoryConsole({
                         <div className="flex flex-wrap gap-3">
                           <button
                             type="button"
-                            onClick={() => void validateDeliveryBeforeFinalize()}
+                            onClick={() => void enrollDeviceBeforeFinalize()}
                             disabled={
-                              validatingDelivery || entregaSinVerificacionAutorizada
+                              enrollingDelivery ||
+                              validatingDelivery ||
+                              entregaSinVerificacionAutorizada
                             }
                             className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
                           >
                             {entregaSinVerificacionAutorizada
+                              ? "Inscripcion no requerida"
+                              : enrollingDelivery
+                                ? "Inscribiendo..."
+                                : "Inscribir equipo"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void validateDeliveryBeforeFinalize()}
+                            disabled={
+                              validatingDelivery ||
+                              enrollingDelivery ||
+                              entregaSinVerificacionAutorizada
+                            }
+                            className="rounded-2xl border border-[#145a5a]/25 bg-white px-5 py-3 text-sm font-semibold text-[#145a5a] transition hover:bg-[#e9f7f4] disabled:opacity-70"
+                          >
+                            {entregaSinVerificacionAutorizada
                               ? "Verificacion no requerida"
                               : validatingDelivery
-                              ? "Validando entrega..."
-                              : "Inscribir y validar entrega"}
+                                ? "Validando..."
+                                : "Validar entrega"}
                           </button>
                         </div>
                       </div>
@@ -7515,8 +7589,7 @@ export default function CreditFactoryConsole({
                       </p>
                       <div className="mt-4 space-y-3 text-sm text-slate-700">
                         <p>
-                          En este ultimo paso el sistema inscribe y consulta Zero Touch. Solo si
-                          el dispositivo queda entregable se habilita el cierre del credito.
+                          Primero inscribe el equipo en Zero Touch. Luego valida la entrega para confirmar si el dispositivo ya permite cerrar el credito.
                         </p>
                         <div
                           className={[
@@ -7551,17 +7624,35 @@ export default function CreditFactoryConsole({
                         <div className="flex flex-wrap gap-3">
                           <button
                             type="button"
-                            onClick={() => void validateDeliveryBeforeFinalize()}
+                            onClick={() => void enrollDeviceBeforeFinalize()}
                             disabled={
-                              validatingDelivery || entregaSinVerificacionAutorizada
+                              enrollingDelivery ||
+                              validatingDelivery ||
+                              entregaSinVerificacionAutorizada
                             }
                             className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
                           >
                             {entregaSinVerificacionAutorizada
+                              ? "Inscripcion no requerida"
+                              : enrollingDelivery
+                                ? "Inscribiendo..."
+                                : "Inscribir equipo"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void validateDeliveryBeforeFinalize()}
+                            disabled={
+                              validatingDelivery ||
+                              enrollingDelivery ||
+                              entregaSinVerificacionAutorizada
+                            }
+                            className="rounded-2xl border border-[#145a5a]/25 bg-white px-5 py-3 text-sm font-semibold text-[#145a5a] transition hover:bg-[#e9f7f4] disabled:opacity-70"
+                          >
+                            {entregaSinVerificacionAutorizada
                               ? "Verificacion no requerida"
                               : validatingDelivery
-                              ? "Validando entrega..."
-                              : "Inscribir y validar entrega"}
+                                ? "Validando..."
+                                : "Validar entrega"}
                           </button>
                         </div>
                       </div>
