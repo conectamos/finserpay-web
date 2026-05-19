@@ -27,6 +27,8 @@ const ADMIN_ONLY_DASHBOARD_PREFIXES = [
 
 const PUBLIC_API_PREFIXES = [
   "/api/clientes",
+  "/api/creditos/push-reminders",
+  "/api/creditos/sync-mora",
   "/api/health",
   "/api/login",
   "/api/logout",
