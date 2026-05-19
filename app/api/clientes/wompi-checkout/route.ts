@@ -10,6 +10,7 @@ import {
   isWompiConfigured,
   isWompiDirectApiConfigured,
 } from "@/lib/wompi";
+import { processApprovedWompiPayment } from "@/lib/wompi-payment-processing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -314,6 +315,35 @@ export async function POST(req: Request) {
             payload: transaction as Prisma.InputJsonValue,
           },
         });
+
+        if (status.toUpperCase() === "APPROVED") {
+          await processApprovedWompiPayment(
+            {
+              amount_in_cents: amountInCents,
+              currency: "COP",
+              id: transactionId,
+              payment_method_type:
+                sanitizeText(transaction.payment_method_type) || "NEQUI",
+              reference,
+              status,
+            },
+            {
+              data: {
+                transaction: {
+                  amount_in_cents: amountInCents,
+                  currency: "COP",
+                  id: transactionId,
+                  payment_method_type:
+                    sanitizeText(transaction.payment_method_type) || "NEQUI",
+                  reference,
+                  status,
+                },
+              },
+              event: "transaction.direct_create",
+              timestamp: Date.now(),
+            }
+          );
+        }
 
         return NextResponse.json({
           ok: true,

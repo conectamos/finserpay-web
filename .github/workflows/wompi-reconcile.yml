@@ -1,0 +1,35 @@
+name: Conciliar pagos Wompi
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+jobs:
+  reconcile-wompi:
+    name: Aplicar pagos aprobados pendientes
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Conciliar pagos aprobados
+        env:
+          FINSERPAY_BASE_URL: ${{ secrets.FINSERPAY_BASE_URL }}
+          MORA_SYNC_TOKEN: ${{ secrets.MORA_SYNC_TOKEN }}
+          WOMPI_RECONCILE_TOKEN: ${{ secrets.WOMPI_RECONCILE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          BASE_URL="${FINSERPAY_BASE_URL:-https://finserpay.com}"
+          TOKEN="${WOMPI_RECONCILE_TOKEN:-${MORA_SYNC_TOKEN:-}}"
+
+          if [ -z "${TOKEN}" ]; then
+            echo "Falta configurar WOMPI_RECONCILE_TOKEN o MORA_SYNC_TOKEN en GitHub Actions."
+            exit 1
+          fi
+
+          curl --fail-with-body \
+            --request POST \
+            --header "Authorization: Bearer ${TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{"limit":25}' \
+            "${BASE_URL%/}/api/wompi/reconcile-pending"

@@ -667,7 +667,7 @@ export default function ClienteConsultaPage() {
         });
         setNotice({
           text:
-            "Solicitud enviada a Nequi. Abre la app Nequi, aprueba el pago y luego toca Actualizar estado.",
+            "Solicitud enviada a Nequi. Abre la app Nequi y aprueba el pago; FINSER PAY lo aplicara automaticamente.",
           tone: "emerald",
         });
         setActivePanel("payments");
@@ -805,11 +805,37 @@ export default function ClienteConsultaPage() {
   useEffect(() => {
     if (!paymentReturn?.reference || !activeDocumento) return;
 
-    const timer = window.setTimeout(() => {
-      void refreshPaymentStatus();
-    }, 8000);
+    let stopped = false;
+    let inFlight = false;
+    let attempts = 0;
+    let timer: number | undefined;
 
-    return () => window.clearTimeout(timer);
+    const pollPayment = async () => {
+      if (stopped || inFlight) return;
+
+      attempts += 1;
+      inFlight = true;
+
+      try {
+        await refreshPaymentStatus();
+      } finally {
+        inFlight = false;
+
+        if (!stopped && attempts < 30) {
+          timer = window.setTimeout(pollPayment, attempts < 3 ? 6000 : 12000);
+        }
+      }
+    };
+
+    timer = window.setTimeout(pollPayment, 5000);
+
+    return () => {
+      stopped = true;
+
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+    };
   }, [activeDocumento, paymentReturn?.reference, refreshPaymentStatus]);
 
   const activeCredit = items.find((item) => item.id === openCreditId) || items[0] || null;
@@ -995,8 +1021,8 @@ export default function ClienteConsultaPage() {
                     Pago enviado a validacion
                   </p>
                   <p className="mt-1 text-xs font-bold leading-5 text-[#6d7480]">
-                    Si Wompi ya confirmo el pago, tus cuotas e historial se
-                    actualizaran aqui. Puede tardar unos minutos.
+                    La app esta validando Wompi automaticamente. Cuando el pago
+                    quede aprobado, tus cuotas e historial se actualizaran aqui.
                   </p>
                   <p className="mt-2 truncate text-[11px] font-black uppercase text-[#8a919d]">
                     Ref. {paymentReturn.reference}
@@ -1020,7 +1046,7 @@ export default function ClienteConsultaPage() {
                   disabled={refreshingPayment || loading}
                   className="min-h-10 rounded-lg bg-[#a7e66f] px-3 text-xs font-black text-[#102316] disabled:bg-[#d9dde4] disabled:text-[#7e8490]"
                 >
-                  {refreshingPayment ? "Actualizando" : "Actualizar estado"}
+                  {refreshingPayment ? "Revisando" : "Revisar ahora"}
                 </button>
               </div>
             </section>
