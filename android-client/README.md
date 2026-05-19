@@ -17,6 +17,31 @@ El APK se genera desde GitHub Actions en el workflow `Android APK Clientes`.
 
 El archivo generado es de prueba (`debug`). Para publicar en Play Store se debe crear una firma de release.
 
+## Generar AAB para Play Store
+
+La publicacion en Google Play usa un Android App Bundle (`.aab`) firmado con una llave de subida. La llave y sus claves no deben guardarse en el repositorio.
+
+Variables requeridas para compilar release:
+
+```text
+FINSERPAY_RELEASE_STORE_FILE=Ruta completa del .jks
+FINSERPAY_RELEASE_STORE_PASSWORD=Clave del keystore
+FINSERPAY_RELEASE_KEY_ALIAS=Alias de la llave
+FINSERPAY_RELEASE_KEY_PASSWORD=Clave de la llave
+```
+
+Comando:
+
+```powershell
+gradle :app:bundleRelease
+```
+
+El bundle se genera en:
+
+```text
+app/build/outputs/bundle/release/app-release.aab
+```
+
 ## Notificaciones push
 
 La app queda preparada para Firebase Cloud Messaging.
