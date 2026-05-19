@@ -326,6 +326,43 @@ export async function createWompiNequiTransaction(options: {
   return (data.data || data) as WompiNequiTransaction;
 }
 
+export async function fetchWompiTransaction(transactionId: string) {
+  const publicKey = getWompiPublicKey();
+  const cleanTransactionId = clean(transactionId);
+
+  if (!publicKey) {
+    throw new Error("WOMPI_PUBLIC_KEY no esta configurada");
+  }
+
+  if (!cleanTransactionId) {
+    throw new Error("Transaction ID de Wompi invalido");
+  }
+
+  const response = await fetch(
+    `${getWompiApiBaseUrl()}/transactions/${encodeURIComponent(
+      cleanTransactionId
+    )}`,
+    {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${publicKey}`,
+      },
+    }
+  );
+  const data = (await response.json().catch(() => ({}))) as {
+    data?: WompiNequiTransaction;
+  };
+
+  if (!response.ok) {
+    throw new Error(
+      extractWompiError(data, "No se pudo consultar la transaccion en Wompi")
+    );
+  }
+
+  return (data.data || data) as WompiNequiTransaction;
+}
+
 function getPathValue(source: unknown, path: string) {
   return path.split(".").reduce<unknown>((current, key) => {
     if (typeof current !== "object" || current === null) {

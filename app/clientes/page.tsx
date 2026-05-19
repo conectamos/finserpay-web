@@ -58,6 +58,14 @@ type WompiCheckoutResponse = {
   transactionId?: string | null;
 };
 
+type WompiStatusResponse = {
+  applied?: boolean;
+  alreadyProcessed?: boolean;
+  error?: string;
+  ok?: boolean;
+  status?: string;
+};
+
 type PaymentReturnNotice = {
   reference: string;
   creditId: number | null;
@@ -735,12 +743,44 @@ export default function ClienteConsultaPage() {
 
     try {
       setRefreshingPayment(true);
+      let paymentApplied = false;
+
+      if (paymentReturn?.reference) {
+        const params = new URLSearchParams({
+          documento: targetDocument,
+          reference: paymentReturn.reference,
+        });
+        const statusResult = await requestJson<WompiStatusResponse>(
+          `/api/clientes/wompi-status?${params.toString()}`
+        );
+
+        if (!statusResult.ok) {
+          throw new Error(
+            statusResult.data.error || "No se pudo verificar el pago en Wompi"
+          );
+        }
+
+        paymentApplied = Boolean(
+          statusResult.data.applied || statusResult.data.alreadyProcessed
+        );
+      }
+
       await consultar(
         targetDocument,
         true,
         paymentReturn?.creditId ?? openCreditId,
         activePanel
       );
+
+      if (paymentApplied) {
+        setNotice({
+          text: "Pago aprobado y aplicado. Tus cuotas e historial ya quedaron actualizados.",
+          tone: "emerald",
+        });
+        setPaymentReturn(null);
+        return;
+      }
+
       setPaymentReturn((current) =>
         current
           ? {
@@ -759,6 +799,7 @@ export default function ClienteConsultaPage() {
     documento,
     openCreditId,
     paymentReturn?.creditId,
+    paymentReturn?.reference,
   ]);
 
   useEffect(() => {
