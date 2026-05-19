@@ -337,6 +337,11 @@ export async function sendFcmNotification(
 
   try {
     const accessToken = await getAccessToken();
+    const messageData = normalizeData({
+      ...payload.data,
+      body: payload.body,
+      title: payload.title,
+    });
     const response = await fetch(
       `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(
         config.projectId
@@ -345,17 +350,9 @@ export async function sendFcmNotification(
         body: JSON.stringify({
           message: {
             android: {
-              notification: {
-                channel_id: "finserpay_alertas",
-                click_action: "OPEN_CLIENTES",
-              },
               priority: "HIGH",
             },
-            data: normalizeData(payload.data),
-            notification: {
-              body: payload.body,
-              title: payload.title,
-            },
+            data: messageData,
             token,
           },
         }),
