@@ -10233,10 +10233,10 @@ export default function CreditFactoryConsole({
                         Abono y caja
                       </p>
 
-                      <div className="mt-4 grid gap-3">
+                      <div className="mt-4 grid gap-4">
                         <div>
-                          <label className="mb-2 block text-sm font-semibold text-slate-700">
-                            Abono a aplicar
+                          <label className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                            Abonar un valor distinto a la cuota
                           </label>
                           <input
                             value={currencyInputValue(paymentValue)}
@@ -10246,24 +10246,24 @@ export default function CreditFactoryConsole({
                             inputMode="numeric"
                             placeholder="$ 50.000"
                             disabled={paymentBlockedByAnnulment}
-                            className="w-full rounded-[20px] border border-slate-200 bg-[#fbfcfb] px-4 py-4 text-lg font-black text-slate-950 outline-none transition focus:border-[#116b61] focus:ring-4 focus:ring-emerald-100"
+                            className="w-full rounded-[20px] border border-slate-200 bg-[#fbfcfb] px-4 py-3 text-lg font-black text-slate-950 outline-none transition focus:border-[#116b61] focus:ring-4 focus:ring-emerald-100"
                           />
                         </div>
 
-                        <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Valor recibido
-                        </label>
-                        <input
-                          value={currencyInputValue(receivedPaymentValue)}
-                          onChange={(event) =>
-                            setReceivedPaymentValue(String(event.target.value || "").replace(/\D/g, ""))
-                          }
-                          inputMode="numeric"
-                          placeholder="$ 0"
-                          disabled={paymentBlockedByAnnulment}
-                          className="w-full rounded-[20px] border border-slate-200 bg-[#fbfcfb] px-4 py-4 text-lg font-black text-slate-950 outline-none transition focus:border-[#116b61] focus:ring-4 focus:ring-emerald-100"
-                        />
+                        <div className="rounded-[22px] border border-emerald-100 bg-[linear-gradient(180deg,#ffffff_0%,#f2fffb_100%)] p-3 shadow-[0_12px_26px_rgba(17,107,97,0.08)]">
+                          <label className="mb-2 block text-sm font-black text-[#0f5654]">
+                            Valor recibido
+                          </label>
+                          <input
+                            value={currencyInputValue(receivedPaymentValue)}
+                            onChange={(event) =>
+                              setReceivedPaymentValue(String(event.target.value || "").replace(/\D/g, ""))
+                            }
+                            inputMode="numeric"
+                            placeholder="$ 0"
+                            disabled={paymentBlockedByAnnulment}
+                            className="w-full rounded-[20px] border-2 border-[#18b995] bg-white px-4 py-5 text-2xl font-black text-slate-950 outline-none transition focus:border-[#00a884] focus:ring-4 focus:ring-emerald-100"
+                          />
                         </div>
                       </div>
                       {selectedInstallmentNumbers.length > 0 ? (
