@@ -28,6 +28,8 @@ const moneyFormatter = new Intl.NumberFormat("es-CO", {
   currency: "COP",
   maximumFractionDigits: 0,
 });
+const EFECTY_CONVENIO_FINSER_PAY =
+  process.env.EFECTY_CONVENIO_FINSER_PAY || "113950";
 
 function getPdfFonts() {
   if (existsSync(SYSTEM_FONT_REGULAR) && existsSync(SYSTEM_FONT_BOLD)) {
@@ -82,6 +84,38 @@ function dateLabel(value: Date | string | null | undefined) {
   }
 
   return date.toLocaleDateString("es-CO");
+}
+
+function textOrDash(value: string | null | undefined) {
+  const text = String(value || "").trim();
+  return text || "-";
+}
+
+function drawInfoCard(
+  doc: PDFKit.PDFDocument,
+  fonts: { regular: string; bold: string },
+  x: number,
+  y: number,
+  width: number,
+  label: string,
+  value: string,
+  options?: { accent?: boolean }
+) {
+  doc
+    .save()
+    .roundedRect(x, y, width, 48, 14)
+    .fillAndStroke(options?.accent ? "#ECFDF5" : "#FFFFFF", options?.accent ? "#A7F3D0" : "#E2E8F0")
+    .restore();
+  doc
+    .fillColor(options?.accent ? "#047857" : "#64748B")
+    .font(fonts.bold)
+    .fontSize(7.5)
+    .text(label.toUpperCase(), x + 12, y + 11, { width: width - 24 });
+  doc
+    .fillColor("#0F172A")
+    .font(fonts.bold)
+    .fontSize(10.5)
+    .text(value, x + 12, y + 27, { width: width - 24, lineGap: -1 });
 }
 
 export async function GET(
@@ -169,41 +203,52 @@ export async function GET(
     });
     const bufferPromise = toBuffer(doc);
 
-    doc.save().roundedRect(36, 36, 523, 126, 18).fill("#ECFDF5").restore();
-    doc.save().roundedRect(36, 36, 8, 126, 4).fill("#0F766E").restore();
-    doc.fillColor("#0F766E").font(fonts.bold).fontSize(10).text("FINSER PAY", 58, 54);
-    doc.fillColor("#0F172A").font(fonts.bold).fontSize(25).text("Plan de pagos", 58, 73);
+    const referenciaEfecty = credito.clienteDocumento || credito.folio;
+    const totalCuotas = plan.installments.length;
+
+    doc.save().roundedRect(36, 36, 523, 134, 22).fill("#F0FDF4").restore();
+    doc.save().roundedRect(36, 36, 9, 134, 5).fill("#0F766E").restore();
+    doc.fillColor("#0F766E").font(fonts.bold).fontSize(10).text("FINSER PAY", 62, 55);
+    doc.fillColor("#0F172A").font(fonts.bold).fontSize(27).text("Plan de pagos", 62, 76);
     doc
       .fillColor("#475569")
       .font(fonts.regular)
       .fontSize(10.5)
       .text(
-        `Folio: ${credito.folio}\nCliente: ${credito.clienteNombre}\nDocumento: ${
-          credito.clienteDocumento || "-"
-        }\nEquipo: ${credito.referenciaEquipo || credito.imei}\nSede: ${credito.sede.nombre}`,
-        58,
-        105,
-        { width: 315 }
+        `Folio: ${credito.folio}\nCliente: ${credito.clienteNombre}\nDocumento: ${textOrDash(
+          credito.clienteDocumento
+        )}\nEquipo: ${credito.referenciaEquipo || credito.imei}\nSede: ${credito.sede.nombre}`,
+        62,
+        112,
+        { width: 300, lineGap: 1 }
       );
     doc
       .fillColor(plan.estadoPago === "MORA" ? "#B91C1C" : "#047857")
       .font(fonts.bold)
       .fontSize(12)
-      .text(`Estado: ${plan.estadoPago}`, 420, 64, { width: 105, align: "right" });
+      .text(`Estado: ${plan.estadoPago}`, 397, 58, { width: 132, align: "right" });
     doc
-      .fillColor("#0F172A")
+      .fillColor("#047857")
       .font(fonts.bold)
-      .fontSize(14)
-      .text(money(plan.saldoPendiente), 400, 88, { width: 130, align: "right" });
+      .fontSize(18)
+      .text(EFECTY_CONVENIO_FINSER_PAY, 397, 83, { width: 132, align: "right" });
     doc
       .fillColor("#64748B")
       .font(fonts.regular)
-      .fontSize(9)
-      .text("Saldo pendiente", 400, 106, { width: 130, align: "right" });
+      .fontSize(8.5)
+      .text("Convenio EFECTY", 397, 104, { width: 132, align: "right" });
+    doc
+      .fillColor("#475569")
+      .font(fonts.bold)
+      .fontSize(8.5)
+      .text(`Referencia: ${referenciaEfecty}`, 397, 125, {
+        width: 132,
+        align: "right",
+      });
 
     const summaryRows = [
-      ["Credito", money(Number(credito.montoCredito || 0))],
       ["Valor cuota", money(Number(credito.valorCuota || 0))],
+      ["Cuotas", String(totalCuotas)],
       ["Frecuencia", getPaymentFrequencyLabel(credito.frecuenciaPago)],
       ["Primer pago", dateLabel(credito.fechaPrimerPago)],
       ["Abonado", money(plan.totalPaid)],
@@ -212,17 +257,43 @@ export async function GET(
     const starts = [36, 142, 248, 354, 460];
     summaryRows.forEach(([label, value], index) => {
       const x = starts[index];
-      doc.save().roundedRect(x, 188, 94, 46, 12).fillAndStroke("#FFFFFF", "#E2E8F0").restore();
-      doc.fillColor("#64748B").font(fonts.bold).fontSize(8).text(label, x + 12, 198);
-      doc.fillColor("#0F172A").font(fonts.bold).fontSize(11).text(value, x + 12, 213, {
-        width: 70,
-      });
+      drawInfoCard(doc, fonts, x, 196, 94, label, value, { accent: index === 0 });
     });
 
-    const headers = ["Cuota", "Vence", "Valor", "Abonado", "Saldo", "Estado"];
+    doc
+      .save()
+      .roundedRect(36, 258, 523, 62, 18)
+      .fillAndStroke("#FFFBEB", "#FDE68A")
+      .restore();
+    doc
+      .fillColor("#92400E")
+      .font(fonts.bold)
+      .fontSize(9)
+      .text("PAGO EN EFECTY", 58, 274);
+    doc
+      .fillColor("#0F172A")
+      .font(fonts.bold)
+      .fontSize(11)
+      .text(`Convenio ${EFECTY_CONVENIO_FINSER_PAY}`, 58, 292, { width: 135 });
+    doc
+      .font(fonts.bold)
+      .fontSize(11)
+      .text(`Referencia ${referenciaEfecty}`, 202, 292, { width: 160 });
+    doc
+      .fillColor("#475569")
+      .font(fonts.regular)
+      .fontSize(8.5)
+      .text(
+        "Indica el convenio y la referencia al pagar. Conserva el comprobante para soporte.",
+        378,
+        278,
+        { width: 150, lineGap: 2 }
+      );
+
+    const headers = ["Cuota", "Vence", "Valor", "Abonado", "Pendiente", "Estado"];
     const widths = [44, 86, 92, 92, 92, 82];
     const x0 = 36;
-    let y = 264;
+    let y = 350;
 
     doc.save().roundedRect(x0, y, 523, 26, 10).fill("#0F172A").restore();
     let x = x0 + 12;
@@ -238,6 +309,15 @@ export async function GET(
       if (y > 740) {
         doc.addPage();
         y = 48;
+        doc.save().roundedRect(x0, y, 523, 26, 10).fill("#0F172A").restore();
+        x = x0 + 12;
+        headers.forEach((header, index) => {
+          doc.fillColor("#FFFFFF").font(fonts.bold).fontSize(8.5).text(header, x, y + 9, {
+            width: widths[index] - 8,
+          });
+          x += widths[index];
+        });
+        y += 31;
       }
 
       doc.save().roundedRect(x0, y, 523, 28, 9).fillAndStroke("#FFFFFF", "#E2E8F0").restore();
