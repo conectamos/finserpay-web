@@ -11,7 +11,6 @@ const LEGACY_PAGE_PREFIXES = [
   "/caja",
   "/prestamos",
   "/alertas/prestamos",
-  "/dashboard/financiero",
   "/dashboard/deuda-sedes",
 ];
 

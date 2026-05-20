@@ -237,10 +237,10 @@ export default function DetalleCarteraPage() {
             </Link>
 
             <Link
-              href="/dashboard"
+              href="/dashboard/cartera"
               className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-center text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
             >
-              ← Volver
+              Volver a cartera
             </Link>
           </div>
         </div>
