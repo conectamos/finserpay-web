@@ -5437,18 +5437,41 @@ export default function CreditFactoryConsole({
         paymentsView ? "" : "fp-seller-app",
       ].join(" ")}
     >
-      <div className="mx-auto max-w-7xl">
+      <div className={paymentsView ? "mx-auto max-w-[1180px]" : "mx-auto max-w-7xl"}>
         {paymentsView ? (
-          <section className="rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-4 shadow-sm">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <FinserBrand />
-              <div className="flex flex-wrap gap-2">
+          <section className="overflow-hidden rounded-[28px] border border-[#cfe0dc] bg-[#123331] p-5 text-white shadow-[0_20px_50px_rgba(15,23,42,0.14)]">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <FinserBrand dark />
+                <div className="mt-5 inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-[#a7f3d0]">
+                  Abonos y recaudo
+                </div>
+                <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">
+                  Recaudar cuotas
+                </h1>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-white/72">
+                  Busca el cliente, confirma el credito y recibe el pago desde la sede donde se presente.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 lg:items-end">
                 <Link
                   href="/dashboard"
-                  className="inline-flex min-w-[170px] justify-center rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  className="inline-flex min-w-[170px] justify-center rounded-[16px] border border-white/15 bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-50"
                 >
                   Volver al dashboard
                 </Link>
+                <div className="grid gap-2 text-[11px] font-black uppercase tracking-[0.16em] text-white/74 sm:grid-cols-3 lg:grid-cols-1">
+                  <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1">
+                    {initialSession.sedeNombre}
+                  </span>
+                  <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1">
+                    {canAdmin ? "Admin" : "Supervisor"}
+                  </span>
+                  <span className="rounded-full border border-[#34d399]/30 bg-[#064e3b]/40 px-3 py-1 text-[#bbf7d0]">
+                    Recaudo entre sedes
+                  </span>
+                </div>
               </div>
             </div>
           </section>
@@ -5567,13 +5590,18 @@ export default function CreditFactoryConsole({
         <section
           className={
             paymentsView
-              ? "mt-6 rounded-[24px] border border-[#d9e6ea] bg-white p-5 shadow-sm"
+              ? "mt-5 overflow-hidden rounded-[28px] border border-[#cfe0dc] bg-white p-5 shadow-[0_18px_44px_rgba(15,23,42,0.08)]"
               : deliveryMode
                 ? "fp-surface mt-6 rounded-[28px] p-5"
               : "fp-surface mt-6 rounded-[28px] p-6"
           }
         >
-          <div className="inline-flex rounded-full border fp-kicker px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]">
+          <div
+            className={[
+              "inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]",
+              paymentsView ? "border-emerald-200 bg-emerald-50 text-[#116b61]" : "fp-kicker",
+            ].join(" ")}
+          >
             {deliveryMode
               ? "Validar entrega"
               : adminFactoryAssistMode
@@ -5587,7 +5615,7 @@ export default function CreditFactoryConsole({
             ].join(" ")}
           >
             {paymentsView
-              ? "Busca el cliente para recaudar"
+              ? "Buscar credito"
               : deliveryMode
                 ? "Busca el credito"
                 : adminFactoryAssistMode
@@ -5601,7 +5629,7 @@ export default function CreditFactoryConsole({
             ].join(" ")}
           >
             {paymentsView
-              ? "Busca por cedula, telefono, nombre, folio o IMEI para abrir el recaudo."
+              ? "Cedula, telefono, folio o IMEI."
               : deliveryMode
                 ? "Ingresa cedula o IMEI para saber si el equipo se puede entregar."
                 : adminFactoryAssistMode
@@ -5621,9 +5649,14 @@ export default function CreditFactoryConsole({
               placeholder={
                 deliveryMode || adminFactoryAssistMode
                   ? "Cedula o IMEI"
-                  : "Cedula, telefono, nombre, folio o IMEI"
+                  : paymentsView
+                    ? "Cedula, telefono, folio o IMEI"
+                    : "Cedula, telefono, nombre, folio o IMEI"
               }
-               className="flex-1 rounded-[18px] border border-emerald-950/14 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+               className={[
+                 "flex-1 border bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100",
+                 paymentsView ? "rounded-[20px] border-slate-200 shadow-inner" : "rounded-[18px] border-emerald-950/14",
+               ].join(" ")}
             />
 
             <button
@@ -5638,7 +5671,9 @@ export default function CreditFactoryConsole({
                   ? "Consultar"
                   : adminFactoryAssistMode
                     ? "Buscar caso"
-                    : "Buscar cliente"}
+                    : paymentsView
+                      ? "Buscar"
+                      : "Buscar cliente"}
             </button>
 
             <button
@@ -5647,16 +5682,16 @@ export default function CreditFactoryConsole({
               disabled={(loadingList || loadingDrafts) && !activeSearch}
               className="rounded-[18px] border border-emerald-950/14 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-emerald-50 disabled:opacity-70"
             >
-              Limpiar
+              {paymentsView ? "Nueva busqueda" : "Limpiar"}
             </button>
           </div>
 
           {paymentsView ? (
-            <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="mt-5 rounded-[22px] border border-slate-200 bg-[#f8fbfa] p-4">
               {activeSearch && credits.length > 1 ? (
                 <div className="grid gap-2 md:grid-cols-[1fr_auto] md:items-center">
                   <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                    Coincidencias encontradas
+                    Selecciona el credito
                     <select
                       value={selectedId || ""}
                       onChange={(event) => {
@@ -5680,15 +5715,27 @@ export default function CreditFactoryConsole({
                   </span>
                 </div>
               ) : (
-                <p className="text-xs font-medium text-slate-500">
-                  {activeSearch
-                    ? loadingList
-                      ? "Buscando creditos..."
-                      : credits.length === 1
-                        ? "Credito encontrado. Se abrira la vista de recaudo."
-                        : "No encontramos creditos con ese criterio."
-                    : "Ingresa un dato del cliente o del equipo para iniciar el recaudo."}
-                </p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {[
+                    ["1", activeSearch && loadingList ? "Buscando" : "Buscar"],
+                    ["2", activeSearch && credits.length === 1 ? "Credito listo" : "Confirmar"],
+                    ["3", selectedCredit ? "Recaudar" : "Cobrar"],
+                  ].map(([number, label]) => (
+                    <div
+                      key={number}
+                      className="flex items-center gap-3 rounded-[18px] border border-white bg-white px-4 py-3 shadow-sm"
+                    >
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#116b61] text-xs font-black text-white">
+                        {number}
+                      </span>
+                      <span className="text-sm font-black text-slate-800">
+                        {activeSearch && !loadingList && !credits.length && number === "2"
+                          ? "Sin resultado"
+                          : label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           ) : deliveryMode ? null : (
