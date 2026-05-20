@@ -74,8 +74,10 @@ export async function GET(
 
     const admin = isAdminRole(user.rolNombre);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
+    const supervisor = sellerSession?.tipoPerfil === "SUPERVISOR";
+    const canGlobalLookup = admin || supervisor;
 
-    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
+    if (!admin && !supervisor) {
       return NextResponse.json(
         { error: "Solo supervisor o administrador puede descargar paz y salvo" },
         { status: 403 }
@@ -89,7 +91,7 @@ export async function GET(
       return NextResponse.json({ error: "Credito invalido" }, { status: 400 });
     }
 
-    const sedeScopeIds = admin
+    const sedeScopeIds = canGlobalLookup
       ? []
       : buildSedeScopeIds(user.sedeId, sellerSession?.sedeId);
     const lookupWhere = buildCreditLookupWhere(creditLookup);
@@ -97,7 +99,7 @@ export async function GET(
     const credito = await prisma.credito.findFirst({
       where: {
         ...lookupWhere,
-        ...(admin ? {} : { sedeId: { in: sedeScopeIds } }),
+        ...(canGlobalLookup ? {} : { sedeId: { in: sedeScopeIds } }),
       },
       include: {
         usuario: {

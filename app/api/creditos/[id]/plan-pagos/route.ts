@@ -133,6 +133,8 @@ export async function GET(
 
     const admin = isAdminRole(user.rolNombre);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
+    const supervisor = sellerSession?.tipoPerfil === "SUPERVISOR";
+    const canGlobalLookup = admin || supervisor;
 
     if (!admin && !sellerSession) {
       return NextResponse.json(
@@ -148,7 +150,7 @@ export async function GET(
       return NextResponse.json({ error: "Credito invalido" }, { status: 400 });
     }
 
-    const sedeScopeIds = admin
+    const sedeScopeIds = canGlobalLookup
       ? []
       : buildSedeScopeIds(user.sedeId, sellerSession?.sedeId);
     const lookupWhere = buildCreditLookupWhere(creditLookup);
@@ -156,7 +158,7 @@ export async function GET(
     const credito = await prisma.credito.findFirst({
       where: {
         ...lookupWhere,
-        ...(admin ? {} : { sedeId: { in: sedeScopeIds } }),
+        ...(canGlobalLookup ? {} : { sedeId: { in: sedeScopeIds } }),
       },
       include: {
         sede: {

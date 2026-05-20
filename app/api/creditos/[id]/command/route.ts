@@ -290,8 +290,9 @@ export async function POST(
 
     const admin = isAdminRole(user.rolNombre);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
+    const supervisor = sellerSession?.tipoPerfil === "SUPERVISOR";
 
-    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
+    if (!admin && !supervisor) {
       return NextResponse.json(
         { error: "Solo supervisor o administrador puede ejecutar estos comandos" },
         { status: 403 }
@@ -312,7 +313,7 @@ export async function POST(
 
     const current = await loadCredit(creditId);
 
-    if (!current || (!admin && current.sedeId !== user.sedeId)) {
+    if (!current) {
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
     }
 

@@ -433,6 +433,8 @@ export async function GET(req: Request) {
     const requestedId = parseId(searchParams.get("id"));
     const requestMode = String(searchParams.get("mode") || "").trim().toLowerCase();
     const paymentsMode = requestMode === "payments" || requestMode === "abonos";
+    const supervisor = sellerSession?.tipoPerfil === "SUPERVISOR";
+    const supervisorLookupMode = !admin && supervisor && Boolean(search || requestedId);
 
     if (!admin && !sellerSession) {
       return NextResponse.json(
@@ -457,7 +459,7 @@ export async function GET(req: Request) {
       });
     }
 
-    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR" && !search && !requestedId) {
+    if (!admin && !supervisor && !search && !requestedId) {
       return NextResponse.json({
         canAdmin: false,
         scope: "vendedor",
@@ -467,7 +469,7 @@ export async function GET(req: Request) {
     }
 
     const scopeWhere: Prisma.CreditoWhereInput =
-      admin || paymentsMode ? {} : { sedeId: user.sedeId };
+      admin || paymentsMode || supervisorLookupMode ? {} : { sedeId: user.sedeId };
     const searchOr: Prisma.CreditoWhereInput[] = search
       ? [
           { clienteNombre: { contains: search, mode: "insensitive" } },
@@ -545,7 +547,13 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       canAdmin: admin,
-      scope: admin ? "global" : paymentsMode ? "recaudo-global" : "sede",
+      scope: admin
+        ? "global"
+        : paymentsMode
+          ? "recaudo-global"
+          : supervisorLookupMode
+            ? "supervisor-global"
+            : "sede",
       search,
       items: items.map((item) => serializeCredit(item, paymentMap)),
     });
