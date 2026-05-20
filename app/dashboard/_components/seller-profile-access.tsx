@@ -54,8 +54,8 @@ function ProfileAvatar({
 }) {
   const avatarSrc = getSellerAvatarSrc(seller);
   const dimensions =
-    size === "large" ? "h-36 w-36" : size === "medium" ? "h-24 w-24" : "h-14 w-14";
-  const radius = size === "compact" ? "rounded-[18px]" : "rounded-[32px]";
+    size === "large" ? "h-36 w-36" : size === "medium" ? "h-24 w-24" : "h-16 w-16";
+  const radius = size === "compact" ? "rounded-[22px]" : "rounded-[32px]";
 
   return (
     <div
@@ -547,7 +547,7 @@ export default function SellerProfileAccess({
           </div>
         )}
 
-        <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filteredSellers.map((seller) => {
             const visualKind = resolveSellerVisualKind(seller);
 
@@ -562,26 +562,26 @@ export default function SellerProfileAccess({
                   setAvailableSedes([]);
                   setSelectedSeller(seller);
                 }}
-                className="group relative overflow-hidden rounded-[22px] border border-zinc-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_64%,#eef3f8_100%)] px-3 py-3 text-left shadow-[0_10px_22px_rgba(15,23,42,0.06)] transition duration-200 hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-[0_16px_28px_rgba(15,23,42,0.10)]"
+                className="group relative min-h-[104px] overflow-hidden rounded-[26px] border border-zinc-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_64%,#eef3f8_100%)] px-4 py-4 text-left shadow-[0_12px_26px_rgba(15,23,42,0.07)] transition duration-200 hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-[0_18px_32px_rgba(15,23,42,0.11)]"
               >
-                <div className="pointer-events-none absolute inset-y-3 left-0 w-1 rounded-r-full bg-[linear-gradient(180deg,#12b886,#b7e45c,#ff6b4a)] opacity-70" />
+                <div className="pointer-events-none absolute inset-y-4 left-0 w-1.5 rounded-r-full bg-[linear-gradient(180deg,#12b886,#b7e45c,#ff6b4a)] opacity-70" />
                 <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.9),transparent_36%),radial-gradient(circle_at_bottom_right,rgba(15,23,42,0.05),transparent_34%)]" />
-                <div className="relative flex items-center gap-3">
+                <div className="relative flex min-h-[72px] items-center gap-4">
                   <div className="shrink-0">
                     <ProfileAvatar seller={seller} size="compact" />
                   </div>
 
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-base font-black leading-tight tracking-tight text-slate-950">
+                    <p className="text-lg font-black leading-tight tracking-tight text-slate-950">
                       {seller.nombre}
                     </p>
-                    <p className="mt-1 text-xs font-semibold text-slate-500">
+                    <p className="mt-1.5 text-sm font-semibold text-slate-500">
                       {visualKind === "supervisor" ? "Supervisor" : "Vendedor"}
                     </p>
                   </div>
 
                   <span
-                    className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-slate-950 bg-slate-950 text-sm font-black text-white shadow-[0_10px_20px_rgba(15,23,42,0.12)] transition group-hover:border-emerald-700 group-hover:bg-emerald-700"
+                    className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-slate-950 bg-slate-950 text-base font-black text-white shadow-[0_10px_20px_rgba(15,23,42,0.12)] transition group-hover:border-emerald-700 group-hover:bg-emerald-700"
                     aria-hidden="true"
                   >
                     -&gt;
@@ -592,7 +592,7 @@ export default function SellerProfileAccess({
           })}
 
           {!filteredSellers.length && (
-            <div className="rounded-[30px] border border-dashed border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#f3f6fa_100%)] px-6 py-10 text-sm text-slate-500 sm:col-span-2 xl:col-span-3 2xl:col-span-4">
+            <div className="rounded-[30px] border border-dashed border-zinc-300 bg-[linear-gradient(180deg,#ffffff_0%,#f3f6fa_100%)] px-6 py-10 text-sm text-slate-500 sm:col-span-2 xl:col-span-3">
               No hay perfiles asignados a esta sede para ese filtro.
             </div>
           )}
