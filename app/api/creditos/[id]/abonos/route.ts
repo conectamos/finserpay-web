@@ -639,16 +639,14 @@ export async function POST(
         valor = roundedSelectedTotal;
       }
 
-      if (Math.round(valor) !== roundedSelectedTotal) {
+      if (Math.round(valor) < roundedSelectedTotal) {
         return NextResponse.json(
           {
-            error: `El valor recibido debe ser igual al total de las cuotas seleccionadas (${currency(roundedSelectedTotal)})`,
+            error: `El abono no alcanza para las cuotas seleccionadas (${currency(roundedSelectedTotal)})`,
           },
           { status: 400 }
         );
       }
-
-      valor = selectedTotal;
     }
 
     if (valor <= 0) {

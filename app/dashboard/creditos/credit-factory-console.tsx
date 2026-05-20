@@ -1774,6 +1774,7 @@ export default function CreditFactoryConsole({
   const [manualPushBody, setManualPushBody] = useState("");
   const [sendingManualPush, setSendingManualPush] = useState(false);
   const [paymentValue, setPaymentValue] = useState("");
+  const [receivedPaymentValue, setReceivedPaymentValue] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("EFECTIVO");
   const [paymentObservation, setPaymentObservation] = useState("");
   const [selectedInstallmentNumbers, setSelectedInstallmentNumbers] = useState<string[]>([]);
@@ -2658,6 +2659,45 @@ export default function CreditFactoryConsole({
 
     return sum + Math.max(0, Number(installment?.saldoPendiente || 0));
   }, 0);
+  const selectedInstallmentRoundedTotal = Math.round(selectedInstallmentTotal);
+  const creditPendingRoundedTotal = Math.round(
+    Number(paymentOverview?.saldoPendiente ?? selectedCredit?.saldoPendiente ?? 0)
+  );
+  const paymentAmountToApply = Number(String(paymentValue || "").replace(/\D/g, "") || 0);
+  const receivedPaymentAmount = Number(
+    String(receivedPaymentValue || "").replace(/\D/g, "") || 0
+  );
+  const selectedInstallmentCoverageShortfall =
+    selectedInstallmentNumbers.length > 0
+      ? Math.max(0, selectedInstallmentRoundedTotal - paymentAmountToApply)
+      : 0;
+  const paymentOverCreditAmount =
+    paymentAmountToApply > 0
+      ? Math.max(0, paymentAmountToApply - creditPendingRoundedTotal)
+      : 0;
+  const paymentAdvanceAmount =
+    selectedInstallmentNumbers.length > 0 && selectedInstallmentCoverageShortfall <= 0
+      ? Math.max(
+          0,
+          Math.min(
+            paymentAmountToApply,
+            creditPendingRoundedTotal
+          ) - selectedInstallmentRoundedTotal
+        )
+      : 0;
+  const paymentChangeAmount =
+    paymentAmountToApply > 0
+      ? Math.max(0, receivedPaymentAmount - paymentAmountToApply)
+      : 0;
+  const paymentShortfallAmount =
+    paymentAmountToApply > 0
+      ? Math.max(0, paymentAmountToApply - receivedPaymentAmount)
+      : 0;
+  const paymentSubmitBlocked =
+    paymentAmountToApply <= 0 ||
+    paymentShortfallAmount > 0 ||
+    selectedInstallmentCoverageShortfall > 0 ||
+    paymentOverCreditAmount > 0;
   const selectedOverdueTotal = selectedInstallmentsData.reduce(
     (sum, item) =>
       sum + (item.estaEnMora ? Math.max(0, Number(item.saldoPendiente || 0)) : 0),
@@ -2677,11 +2717,14 @@ export default function CreditFactoryConsole({
   useEffect(() => {
     if (!selectedInstallmentNumbers.length) {
       setPaymentValue("");
+      setReceivedPaymentValue("");
       setPaymentObservation("");
       return;
     }
 
-    setPaymentValue(String(Math.round(selectedInstallmentTotal)));
+    const roundedSelectionTotal = String(Math.round(selectedInstallmentTotal));
+    setPaymentValue(roundedSelectionTotal);
+    setReceivedPaymentValue(roundedSelectionTotal);
     setPaymentObservation(
       selectedInstallmentNumbers.length === 1
         ? `Cuota ${selectedInstallmentNumbers[0]}`
@@ -3518,20 +3561,27 @@ export default function CreditFactoryConsole({
       if (isCreditAnnulled(result.data.credito.estado)) {
         setSelectedInstallmentNumbers([]);
         setPaymentValue("");
+        setReceivedPaymentValue("");
         return;
       }
 
       const nextInstallment = result.data.credito.nextInstallment;
       if (nextInstallment?.saldoPendiente && nextInstallment.saldoPendiente > 0) {
+        const nextInstallmentValue = String(Math.round(nextInstallment.saldoPendiente));
         setSelectedInstallmentNumbers([String(nextInstallment.numero)]);
-        setPaymentValue(String(Math.round(nextInstallment.saldoPendiente)));
+        setPaymentValue(nextInstallmentValue);
+        setReceivedPaymentValue(nextInstallmentValue);
       } else {
         setSelectedInstallmentNumbers([]);
+        setPaymentValue("");
+        setReceivedPaymentValue("");
       }
     } catch (error) {
       setPayments([]);
       setPaymentSummary(null);
       setSelectedInstallmentNumbers([]);
+      setPaymentValue("");
+      setReceivedPaymentValue("");
       setNotice({
         text:
           error instanceof Error
@@ -4564,9 +4614,53 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    if (paymentAmountToApply <= 0) {
+      setNotice({
+        text: "Indica el abono que se va a aplicar al credito.",
+        tone: "red",
+      });
+      return;
+    }
+
+    if (
+      selectedInstallmentNumbers.length > 0 &&
+      selectedInstallmentCoverageShortfall > 0
+    ) {
+      setNotice({
+        text: `El abono no alcanza para las cuotas seleccionadas. Faltan ${currency(selectedInstallmentCoverageShortfall)}.`,
+        tone: "red",
+      });
+      return;
+    }
+
+    if (paymentOverCreditAmount > 0) {
+      setNotice({
+        text: `El abono supera el saldo pendiente. Ajusta el abono a ${currency(creditPendingRoundedTotal)}.`,
+        tone: "red",
+      });
+      return;
+    }
+
+    if (paymentShortfallAmount > 0) {
+      setNotice({
+        text: `El valor recibido esta incompleto. Faltan ${currency(paymentShortfallAmount)}.`,
+        tone: "red",
+      });
+      return;
+    }
+
     try {
       setRegisteringPayment(true);
       setNotice(null);
+      const valueToRegister = String(paymentAmountToApply);
+      const paymentAdvanceObservation =
+        paymentAdvanceAmount > 0
+          ? `Abono adicional a proximas cuotas ${currency(paymentAdvanceAmount)}`
+          : "";
+      const paymentChangeObservation =
+        paymentChangeAmount > 0
+          ? `Recibido ${currency(receivedPaymentAmount)} - devolver ${currency(paymentChangeAmount)}`
+          : "";
 
       const result = await requestJson<RegisterPaymentResponse>(
         `/api/creditos/${selectedCredit.id}/abonos`,
@@ -4577,9 +4671,15 @@ export default function CreditFactoryConsole({
           },
           body: JSON.stringify({
             cuotaNumeros: selectedInstallmentNumbers,
-            valor: paymentValue,
+            valor: valueToRegister,
             metodoPago: paymentMethod,
-            observacion: paymentObservation,
+            observacion: [
+              paymentObservation,
+              paymentAdvanceObservation,
+              paymentChangeObservation,
+            ]
+              .filter(Boolean)
+              .join(" - "),
           }),
         }
       );
@@ -4589,6 +4689,7 @@ export default function CreditFactoryConsole({
       }
 
       setPaymentValue("");
+      setReceivedPaymentValue("");
       setPaymentObservation("");
       setSelectedInstallmentNumbers([]);
       await loadPayments(selectedCredit.id);
@@ -10066,7 +10167,7 @@ export default function CreditFactoryConsole({
                       </h3>
                     </div>
                     <p className="text-sm font-semibold text-slate-500">
-                      Selecciona cuotas y confirma el valor recibido.
+                      Selecciona cuotas, define el abono y confirma el valor recibido.
                     </p>
                   </div>
 
@@ -10091,7 +10192,7 @@ export default function CreditFactoryConsole({
                       </div>
                       <div className="mt-5 rounded-[22px] bg-white px-5 py-4 text-[#082f2b]">
                         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#0f766e]">
-                          Total a recibir
+                          Total seleccionado
                         </p>
                         <p className="mt-1 text-4xl font-black tracking-tight">
                           {currency(selectedInstallmentTotal)}
@@ -10129,24 +10230,95 @@ export default function CreditFactoryConsole({
 
                     <div className="rounded-[26px] border border-slate-200 bg-white px-5 py-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
                       <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
-                        Valor recibido
+                        Abono y caja
                       </p>
 
-                      <div className="mt-4">
+                      <div className="mt-4 grid gap-3">
+                        <div>
+                          <label className="mb-2 block text-sm font-semibold text-slate-700">
+                            Abono a aplicar
+                          </label>
+                          <input
+                            value={currencyInputValue(paymentValue)}
+                            onChange={(event) =>
+                              setPaymentValue(String(event.target.value || "").replace(/\D/g, ""))
+                            }
+                            inputMode="numeric"
+                            placeholder="$ 50.000"
+                            disabled={paymentBlockedByAnnulment}
+                            className="w-full rounded-[20px] border border-slate-200 bg-[#fbfcfb] px-4 py-4 text-lg font-black text-slate-950 outline-none transition focus:border-[#116b61] focus:ring-4 focus:ring-emerald-100"
+                          />
+                        </div>
+
+                        <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Total recibido
+                          Valor recibido
                         </label>
                         <input
-                          value={currencyInputValue(paymentValue)}
+                          value={currencyInputValue(receivedPaymentValue)}
                           onChange={(event) =>
-                            setPaymentValue(String(event.target.value || "").replace(/\D/g, ""))
+                            setReceivedPaymentValue(String(event.target.value || "").replace(/\D/g, ""))
                           }
                           inputMode="numeric"
-                          placeholder="$ 50.000"
+                          placeholder="$ 0"
                           disabled={paymentBlockedByAnnulment}
                           className="w-full rounded-[20px] border border-slate-200 bg-[#fbfcfb] px-4 py-4 text-lg font-black text-slate-950 outline-none transition focus:border-[#116b61] focus:ring-4 focus:ring-emerald-100"
                         />
+                        </div>
                       </div>
+                      {selectedInstallmentNumbers.length > 0 ? (
+                        <div
+                          className={[
+                            "mt-4 rounded-[20px] border px-4 py-3",
+                            selectedInstallmentCoverageShortfall > 0 ||
+                            paymentOverCreditAmount > 0 ||
+                            paymentShortfallAmount > 0
+                              ? "border-red-200 bg-red-50 text-red-800"
+                              : paymentChangeAmount > 0
+                                ? "border-amber-200 bg-amber-50 text-amber-900"
+                                : paymentAdvanceAmount > 0
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                                  : "border-slate-200 bg-slate-50 text-slate-700",
+                          ].join(" ")}
+                        >
+                          <p className="text-[11px] font-black uppercase tracking-[0.16em]">
+                            {paymentOverCreditAmount > 0
+                              ? "Supera saldo pendiente"
+                              : selectedInstallmentCoverageShortfall > 0
+                                ? "Abono insuficiente"
+                                : paymentShortfallAmount > 0
+                                ? "Falta por recibir"
+                                : paymentChangeAmount > 0
+                                  ? "Devolver al cliente"
+                                  : paymentAdvanceAmount > 0
+                                    ? "Abono a proximas cuotas"
+                                    : "Valor exacto"}
+                          </p>
+                          <p className="mt-1 text-2xl font-black">
+                            {paymentOverCreditAmount > 0
+                              ? currency(paymentOverCreditAmount)
+                              : selectedInstallmentCoverageShortfall > 0
+                                ? currency(selectedInstallmentCoverageShortfall)
+                                : paymentShortfallAmount > 0
+                                  ? currency(paymentShortfallAmount)
+                                  : paymentChangeAmount > 0
+                                    ? currency(paymentChangeAmount)
+                                    : paymentAdvanceAmount > 0
+                                      ? currency(paymentAdvanceAmount)
+                                      : "$ 0"}
+                          </p>
+                          {paymentChangeAmount > 0 ? (
+                            <p className="mt-1 text-xs font-semibold">
+                              El cliente entrega {currency(receivedPaymentAmount)} y el abono aplicado es {currency(paymentAmountToApply)}.
+                            </p>
+                          ) : null}
+                          {paymentAdvanceAmount > 0 ? (
+                            <p className="mt-1 text-xs font-semibold">
+                              Despues de cubrir la seleccion, {currency(paymentAdvanceAmount)} se aplica a proximas cuotas.
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div>
@@ -10185,15 +10357,20 @@ export default function CreditFactoryConsole({
                     <button
                       type="button"
                       onClick={() => void registerPayment()}
-                      disabled={registeringPayment || loadingPayments || paymentBlockedByAnnulment}
+                      disabled={
+                        registeringPayment ||
+                        loadingPayments ||
+                        paymentBlockedByAnnulment ||
+                        paymentSubmitBlocked
+                      }
                       className="rounded-[22px] bg-[linear-gradient(135deg,#00a884_0%,#116b61_100%)] px-8 py-4 text-lg font-black text-white shadow-[0_18px_35px_rgba(17,107,97,0.28)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_42px_rgba(17,107,97,0.34)] disabled:translate-y-0 disabled:opacity-70"
                     >
                       {paymentBlockedByAnnulment
                         ? "Credito anulado"
-                        : registeringPayment
-                          ? "Registrando..."
-                          : selectedInstallmentTotal > 0
-                            ? `Pagar ${currency(selectedInstallmentTotal)}`
+                          : registeringPayment
+                            ? "Registrando..."
+                          : paymentAmountToApply > 0
+                            ? `Pagar ${currency(paymentAmountToApply)}`
                             : "Pagar"}
                     </button>
 
@@ -10201,6 +10378,7 @@ export default function CreditFactoryConsole({
                       type="button"
                       onClick={() => {
                         setPaymentValue("");
+                        setReceivedPaymentValue("");
                         setPaymentObservation("");
                         setPaymentMethod("EFECTIVO");
                         setSelectedInstallmentNumbers([]);
