@@ -455,6 +455,13 @@ export async function GET(
       );
     }
 
+    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
+      return NextResponse.json(
+        { error: "Solo el supervisor o administrador puede consultar abonos" },
+        { status: 403 }
+      );
+    }
+
     const credit = await loadCredit(creditId, true, user.sedeId);
 
     if (!credit) {
@@ -563,6 +570,13 @@ export async function POST(
     if (!admin && !sellerSession) {
       return NextResponse.json(
         { error: "Debes abrir primero el perfil del vendedor" },
+        { status: 403 }
+      );
+    }
+
+    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
+      return NextResponse.json(
+        { error: "Solo el supervisor o administrador puede registrar abonos" },
         { status: 403 }
       );
     }

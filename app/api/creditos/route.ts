@@ -441,6 +441,13 @@ export async function GET(req: Request) {
       );
     }
 
+    if (paymentsMode && !admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
+      return NextResponse.json(
+        { error: "Solo el supervisor o administrador puede buscar creditos para recaudo" },
+        { status: 403 }
+      );
+    }
+
     if (paymentsMode && !search && !requestedId) {
       return NextResponse.json({
         canAdmin: admin,
