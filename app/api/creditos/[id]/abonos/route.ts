@@ -455,14 +455,7 @@ export async function GET(
       );
     }
 
-    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
-      return NextResponse.json(
-        { error: "Solo el supervisor o administrador puede consultar abonos" },
-        { status: 403 }
-      );
-    }
-
-    const credit = await loadCredit(creditId, admin, user.sedeId);
+    const credit = await loadCredit(creditId, true, user.sedeId);
 
     if (!credit) {
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
@@ -567,7 +560,14 @@ export async function POST(
       return NextResponse.json({ error: "Credito invalido" }, { status: 400 });
     }
 
-    const credit = await loadCredit(creditId, admin, user.sedeId);
+    if (!admin && !sellerSession) {
+      return NextResponse.json(
+        { error: "Debes abrir primero el perfil del vendedor" },
+        { status: 403 }
+      );
+    }
+
+    const credit = await loadCredit(creditId, true, user.sedeId);
 
     if (!credit) {
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
@@ -577,20 +577,6 @@ export async function POST(
       return NextResponse.json(
         { error: "No se pueden registrar abonos sobre un credito anulado" },
         { status: 400 }
-      );
-    }
-
-    if (!admin && !sellerSession) {
-      return NextResponse.json(
-        { error: "Debes abrir primero el perfil del vendedor" },
-        { status: 403 }
-      );
-    }
-
-    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
-      return NextResponse.json(
-        { error: "Solo el supervisor o administrador puede registrar abonos" },
-        { status: 403 }
       );
     }
 
@@ -686,7 +672,7 @@ export async function POST(
           creditoId: credit.id,
           usuarioId: user.id,
           vendedorId: sellerSession?.id || null,
-          sedeId: credit.sedeId,
+          sedeId: user.sedeId,
           valor,
           metodoPago,
           observacion:
@@ -771,7 +757,7 @@ export async function POST(
             metodoPago,
             observacion,
           }),
-          sedeId: credit.sedeId,
+          sedeId: user.sedeId,
         },
       });
 
@@ -783,7 +769,7 @@ export async function POST(
       Number(credit.montoCredito || 0),
       Number(credit.cuotaInicial || 0)
     );
-    const updatedCredit = await loadCredit(credit.id, admin, user.sedeId);
+    const updatedCredit = await loadCredit(credit.id, true, user.sedeId);
     const plan = await loadPaymentPlan(updatedCredit || credit);
     const automation =
       updatedCredit && plan

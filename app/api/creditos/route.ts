@@ -333,6 +333,11 @@ function parseTake(value: string | null) {
   return Math.max(1, Math.min(50, Math.trunc(numeric)));
 }
 
+function parseId(value: string | null) {
+  const numeric = Number(value || 0);
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
 function extractRequestIp(req: Request) {
   const forwarded = req.headers.get("x-forwarded-for");
 
@@ -425,6 +430,9 @@ export async function GET(req: Request) {
     const sellerSession = admin ? null : await getSellerSessionUser(user);
     const search = sanitizeSearch(searchParams.get("search"));
     const searchDigits = search.replace(/\D/g, "");
+    const requestedId = parseId(searchParams.get("id"));
+    const requestMode = String(searchParams.get("mode") || "").trim().toLowerCase();
+    const paymentsMode = requestMode === "payments" || requestMode === "abonos";
 
     if (!admin && !sellerSession) {
       return NextResponse.json(
@@ -433,7 +441,16 @@ export async function GET(req: Request) {
       );
     }
 
-    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR" && !search) {
+    if (paymentsMode && !search && !requestedId) {
+      return NextResponse.json({
+        canAdmin: admin,
+        scope: admin ? "global" : "recaudo-global",
+        search,
+        items: [],
+      });
+    }
+
+    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR" && !search && !requestedId) {
       return NextResponse.json({
         canAdmin: false,
         scope: "vendedor",
@@ -442,7 +459,8 @@ export async function GET(req: Request) {
       });
     }
 
-    const scopeWhere: Prisma.CreditoWhereInput = admin ? {} : { sedeId: user.sedeId };
+    const scopeWhere: Prisma.CreditoWhereInput =
+      admin || paymentsMode ? {} : { sedeId: user.sedeId };
     const searchOr: Prisma.CreditoWhereInput[] = search
       ? [
           { clienteNombre: { contains: search, mode: "insensitive" } },
@@ -467,16 +485,25 @@ export async function GET(req: Request) {
         { deviceUid: { contains: searchDigits, mode: "insensitive" } }
       );
     }
-    const where: Prisma.CreditoWhereInput = search
+    const where: Prisma.CreditoWhereInput = requestedId
       ? {
           AND: [
             scopeWhere,
             {
-              OR: searchOr,
+              id: requestedId,
             },
           ],
         }
-      : scopeWhere;
+      : search
+        ? {
+            AND: [
+              scopeWhere,
+              {
+                OR: searchOr,
+              },
+            ],
+          }
+        : scopeWhere;
 
     const items = await prisma.credito.findMany({
       where,
@@ -511,7 +538,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       canAdmin: admin,
-      scope: admin ? "global" : "sede",
+      scope: admin ? "global" : paymentsMode ? "recaudo-global" : "sede",
       search,
       items: items.map((item) => serializeCredit(item, paymentMap)),
     });

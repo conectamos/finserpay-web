@@ -2873,7 +2873,6 @@ export default function CreditFactoryConsole({
         ? Boolean(activeSearch) || loadingList
         : false;
   const showCompactSearchSection = paymentsView ? showResultsPanel : showSearchSection;
-  const showPaymentsResultsGrid = paymentsView && showResultsPanel && Boolean(selectedCredit);
   const legalDocumentationStepContent = (
     <>
       <div className="rounded-[24px] border border-[#dbe4ea] bg-[#f8fbfd] px-5 py-5">
@@ -3263,12 +3262,25 @@ export default function CreditFactoryConsole({
         return;
       }
 
+      if (paymentsView && !trimmedSearch && !selectedId) {
+        setActiveSearch("");
+        setCredits([]);
+        setShowPaymentResults(true);
+        return;
+      }
+
       const params = new URLSearchParams({
-        take: "24",
+        take: paymentsView ? "50" : "24",
       });
+
+      if (paymentsView) {
+        params.set("mode", "payments");
+      }
 
       if (trimmedSearch) {
         params.set("search", trimmedSearch);
+      } else if (paymentsView && selectedId) {
+        params.set("id", String(selectedId));
       }
 
       const result = await requestJson<CreditListResponse>(`/api/creditos?${params.toString()}`);
@@ -5589,7 +5601,7 @@ export default function CreditFactoryConsole({
             ].join(" ")}
           >
             {paymentsView
-              ? "Busca por cedula, telefono, nombre, folio o IMEI y selecciona el credito correcto."
+              ? "Busca por cedula, telefono, nombre, folio o IMEI para abrir el recaudo."
               : deliveryMode
                 ? "Ingresa cedula o IMEI para saber si el equipo se puede entregar."
                 : adminFactoryAssistMode
@@ -5640,11 +5652,45 @@ export default function CreditFactoryConsole({
           </div>
 
           {paymentsView ? (
-            <p className="mt-3 text-xs font-medium text-slate-500">
-              {activeSearch
-                ? `Resultados encontrados: ${credits.length}`
-                : `Ultimos resultados disponibles: ${credits.length}`}
-            </p>
+            <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3">
+              {activeSearch && credits.length > 1 ? (
+                <div className="grid gap-2 md:grid-cols-[1fr_auto] md:items-center">
+                  <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Coincidencias encontradas
+                    <select
+                      value={selectedId || ""}
+                      onChange={(event) => {
+                        const nextId = Number(event.target.value || 0);
+                        setSelectedId(Number.isInteger(nextId) && nextId > 0 ? nextId : null);
+                        setShowPaymentResults(!(Number.isInteger(nextId) && nextId > 0));
+                        setPaymentsTab("pay");
+                      }}
+                      className="mt-2 block w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold normal-case tracking-normal text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                    >
+                      <option value="">Elige el credito a recaudar</option>
+                      {credits.map((credit) => (
+                        <option key={credit.id} value={credit.id}>
+                          {credit.clienteNombre} - {credit.clienteDocumento || credit.clienteTelefono || credit.folio} - {credit.referenciaEquipo || credit.imei} - saldo {currency(credit.saldoPendiente)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-bold text-[#116b61]">
+                    {credits.length} resultados
+                  </span>
+                </div>
+              ) : (
+                <p className="text-xs font-medium text-slate-500">
+                  {activeSearch
+                    ? loadingList
+                      ? "Buscando creditos..."
+                      : credits.length === 1
+                        ? "Credito encontrado. Se abrira la vista de recaudo."
+                        : "No encontramos creditos con ese criterio."
+                    : "Ingresa un dato del cliente o del equipo para iniciar el recaudo."}
+                </p>
+              )}
+            </div>
           ) : deliveryMode ? null : (
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
@@ -9552,9 +9598,9 @@ export default function CreditFactoryConsole({
         <section
           className={
             paymentsView
-              ? showPaymentsResultsGrid
-                ? "mt-6 grid gap-6 xl:grid-cols-[0.82fr_1.18fr]"
-                : "mt-6"
+              ? selectedCredit
+                ? "mt-6"
+                : "hidden"
               : lookupMode && showResultsPanel
                 ? deliveryMode
                   ? activeSearch && !selectedCredit
@@ -9568,7 +9614,7 @@ export default function CreditFactoryConsole({
                 : "hidden"
           }
         >
-          {showResultsPanel && (
+          {showResultsPanel && !paymentsView && (
           <div className="rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] p-6 shadow-[0_18px_50px_rgba(15,23,42,0.07)]">
             <div className="flex items-end justify-between gap-4">
               <div>
@@ -9583,7 +9629,7 @@ export default function CreditFactoryConsole({
                 </div>
                 <h2 className="mt-4 text-2xl font-black tracking-tight text-slate-950">
                   {paymentsView
-                    ? "Selecciona el credito correcto"
+                    ? "Credito encontrado"
                     : deliveryMode
                       ? "Resultado de la consulta"
                       : adminFactoryAssistMode

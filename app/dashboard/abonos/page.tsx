@@ -29,13 +29,6 @@ export default async function AbonosPage(props: {
     redirect("/dashboard");
   }
 
-  if (
-    !isAdminRole(session.rolNombre) &&
-    sellerSession?.tipoPerfil !== "SUPERVISOR"
-  ) {
-    redirect("/dashboard");
-  }
-
   const searchParams = await props.searchParams;
   const initialSearch = String(searchParams?.search || "").trim();
   const initialSelectedId = Number(searchParams?.selected || 0);
