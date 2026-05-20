@@ -68,6 +68,16 @@ function parseId(value: string) {
   return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
 }
 
+function parseCreditLookup(value: string) {
+  const decoded = decodeURIComponent(String(value || "")).trim();
+  const id = parseId(decoded);
+
+  return {
+    id,
+    folio: id ? null : decoded,
+  };
+}
+
 function money(value: number) {
   return moneyFormatter.format(Math.round(Number(value || 0)));
 }
@@ -142,14 +152,31 @@ export async function GET(
     }
 
     const params = await context.params;
-    const creditId = parseId(params.id);
+    const creditLookup = parseCreditLookup(params.id);
 
-    if (!creditId) {
+    if (!creditLookup.id && !creditLookup.folio) {
       return NextResponse.json({ error: "Credito invalido" }, { status: 400 });
     }
 
+    const sedeScopeIds = admin
+      ? []
+      : Array.from(
+          new Set(
+            [user.sedeId, sellerSession?.sedeId].filter(
+              (item): item is number =>
+                typeof item === "number" && Number.isInteger(item) && item > 0
+            )
+          )
+        );
+    const lookupWhere = creditLookup.id
+      ? { id: creditLookup.id }
+      : { folio: creditLookup.folio || "" };
+
     const credito = await prisma.credito.findFirst({
-      where: admin ? { id: creditId } : { id: creditId, sedeId: user.sedeId },
+      where: {
+        ...lookupWhere,
+        ...(admin ? {} : { sedeId: { in: sedeScopeIds } }),
+      },
       include: {
         sede: {
           select: {

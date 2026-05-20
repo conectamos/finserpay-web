@@ -4552,7 +4552,10 @@ export default function CreditFactoryConsole({
       }
 
       upsertCredit(result.data.item);
-      window.open(`/api/creditos/${result.data.item.id}/plan-pagos`, "_blank");
+      const planLookup = encodeURIComponent(
+        String(result.data.item.folio || result.data.item.id)
+      );
+      window.open(`/api/creditos/${planLookup}/plan-pagos`, "_blank");
       const closedDraftId = draftId;
 
       if (closedDraftId) {
@@ -4933,7 +4936,8 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    window.open(`/api/creditos/${credit.id}/plan-pagos`, "_blank");
+    const planLookup = encodeURIComponent(String(credit.folio || credit.id));
+    window.open(`/api/creditos/${planLookup}/plan-pagos`, "_blank");
   };
 
   const downloadPaymentReceipt = (payment: CreditPaymentItem) => {
