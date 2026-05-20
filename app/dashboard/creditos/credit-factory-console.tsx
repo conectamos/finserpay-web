@@ -9769,24 +9769,29 @@ export default function CreditFactoryConsole({
           )}
 
           {paymentsView && selectedCredit && (
-          <div className="rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] p-6 shadow-[0_18px_50px_rgba(15,23,42,0.07)]">
+          <div className="rounded-[30px] border border-[#e1d8ca] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
             {selectedCredit ? (
-              <div className="rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div className="rounded-[26px] border border-emerald-100 bg-[linear-gradient(135deg,#f6fffb_0%,#ffffff_62%)] px-5 py-5">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
                       Cliente
                     </p>
-                    <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-950">
+                    <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
                       {selectedCredit.clienteNombre}
                     </h2>
-                    <p className="mt-1 text-sm font-semibold text-slate-700">
-                      CC. {selectedCredit.clienteDocumento || selectedCredit.clienteTelefono || "Sin identificacion"}
-                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
+                        CC. {selectedCredit.clienteDocumento || selectedCredit.clienteTelefono || "Sin identificacion"}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
+                        {paymentOverview?.paidCount || 0} pagas / {paymentOverview?.pendingCount || 0} pendientes
+                      </span>
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="inline-flex rounded-full bg-[#ff7a30] px-4 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
+                    <span className="inline-flex rounded-full bg-[#116b61] px-4 py-1.5 text-[11px] font-black uppercase tracking-[0.12em] text-white">
                       {paymentOverview?.estadoPago === "MORA"
                         ? "Mora"
                         : paymentOverview?.estadoPago === "PAGADO"
@@ -9808,22 +9813,22 @@ export default function CreditFactoryConsole({
                     type="button"
                     onClick={() => setPaymentsTab("pay")}
                     className={[
-                      "rounded-[16px] px-5 py-3.5 text-center text-base font-black transition",
+                      "rounded-[18px] px-5 py-4 text-center text-base font-black transition",
                       paymentsTab === "pay"
-                        ? "bg-[#0f5654] text-white shadow-[0_10px_24px_rgba(15,86,84,0.16)]"
-                        : "border border-[#0f5654] bg-white text-[#0f5654] hover:bg-[#f4fbfb]",
+                        ? "bg-[linear-gradient(135deg,#00a884_0%,#116b61_100%)] text-white shadow-[0_18px_34px_rgba(17,107,97,0.24)]"
+                        : "border border-emerald-200 bg-white text-[#116b61] hover:bg-emerald-50",
                     ].join(" ")}
                   >
-                    Pagar
+                    Pagar cuota
                   </button>
                   <button
                     type="button"
                     onClick={() => focusHistory()}
                     className={[
-                      "rounded-[16px] px-5 py-3.5 text-center text-base font-black transition",
+                      "rounded-[18px] px-5 py-4 text-center text-base font-black transition",
                       paymentsTab === "history"
-                        ? "bg-[#0f5654] text-white shadow-[0_10px_24px_rgba(15,86,84,0.16)]"
-                        : "border border-[#0f5654] bg-white text-[#0f5654] hover:bg-[#f4fbfb]",
+                        ? "bg-slate-950 text-white shadow-[0_14px_28px_rgba(15,23,42,0.18)]"
+                        : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
                     ].join(" ")}
                   >
                     Historial y certificados
@@ -9957,19 +9962,29 @@ export default function CreditFactoryConsole({
                     </p>
                   </div>
                 ) : null}
-                <div className="mt-6 rounded-[24px] border border-[#d9e6ea] bg-white p-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                    Pagar
-                  </p>
+                <div className="mt-5 rounded-[28px] border border-emerald-100 bg-[linear-gradient(180deg,#ffffff_0%,#f8fffc_100%)] p-5 shadow-[0_14px_42px_rgba(15,23,42,0.06)]">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
+                        Recaudo
+                      </p>
+                      <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
+                        Recibir pago
+                      </h3>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-500">
+                      Selecciona cuotas y confirma el valor recibido.
+                    </p>
+                  </div>
 
-                  <div className="mt-4 grid gap-4 md:grid-cols-[1.1fr_0.7fr]">
-                    <div className="rounded-[22px] border border-[#0f5654] bg-[#0f5654] px-5 py-4 text-white shadow-[0_16px_40px_rgba(15,86,84,0.22)]">
+                  <div className="mt-5 grid gap-4 md:grid-cols-[1fr_0.72fr]">
+                    <div className="rounded-[26px] border border-[#0f5654] bg-[linear-gradient(135deg,#0f5654_0%,#11786d_100%)] px-5 py-5 text-white shadow-[0_20px_48px_rgba(15,86,84,0.22)]">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#98ece0]">
                             Cuotas seleccionadas
                           </p>
-                          <p className="mt-2 text-2xl font-black">
+                          <p className="mt-2 text-3xl font-black">
                             {selectedInstallmentNumbers.length
                               ? selectedInstallmentNumbers.join(", ")
                               : "Ninguna"}
@@ -9981,11 +9996,11 @@ export default function CreditFactoryConsole({
                             : "Al dia"}
                         </div>
                       </div>
-                      <div className="mt-4 rounded-[18px] bg-[#111111] px-4 py-3">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8ff0df]">
-                          Total exacto a pagar
+                      <div className="mt-5 rounded-[22px] bg-white px-5 py-4 text-[#082f2b]">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#0f766e]">
+                          Total a recibir
                         </p>
-                        <p className="mt-1 text-2xl font-black">
+                        <p className="mt-1 text-4xl font-black tracking-tight">
                           {currency(selectedInstallmentTotal)}
                         </p>
                       </div>
@@ -10019,14 +10034,14 @@ export default function CreditFactoryConsole({
                       </div>
                     </div>
 
-                    <div className="rounded-[22px] border border-slate-200 bg-white px-4 py-4 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
-                      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                        Registrar pago
+                    <div className="rounded-[26px] border border-slate-200 bg-white px-5 py-5 shadow-[0_12px_24px_rgba(15,23,42,0.05)]">
+                      <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
+                        Valor recibido
                       </p>
 
-                      <div className="mt-3">
+                      <div className="mt-4">
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Valor recibido
+                          Total recibido
                         </label>
                         <input
                           value={currencyInputValue(paymentValue)}
@@ -10036,7 +10051,7 @@ export default function CreditFactoryConsole({
                           inputMode="numeric"
                           placeholder="$ 50.000"
                           disabled={paymentBlockedByAnnulment}
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          className="w-full rounded-[20px] border border-slate-200 bg-[#fbfcfb] px-4 py-4 text-lg font-black text-slate-950 outline-none transition focus:border-[#116b61] focus:ring-4 focus:ring-emerald-100"
                         />
                       </div>
                     </div>
@@ -10049,7 +10064,7 @@ export default function CreditFactoryConsole({
                         value={paymentMethod}
                         onChange={(event) => setPaymentMethod(event.target.value)}
                         disabled={paymentBlockedByAnnulment}
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        className="w-full rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#116b61] focus:ring-4 focus:ring-emerald-100"
                       >
                         <option value="EFECTIVO">Efectivo</option>
                         <option value="TRANSFERENCIA">Transferencia</option>
@@ -10069,7 +10084,7 @@ export default function CreditFactoryConsole({
                       onChange={(event) => setPaymentObservation(event.target.value)}
                       placeholder="Detalle opcional del pago"
                       disabled={paymentBlockedByAnnulment}
-                      className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                      className="w-full rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#116b61] focus:ring-4 focus:ring-emerald-100"
                     />
                   </div>
 
@@ -10078,13 +10093,15 @@ export default function CreditFactoryConsole({
                       type="button"
                       onClick={() => void registerPayment()}
                       disabled={registeringPayment || loadingPayments || paymentBlockedByAnnulment}
-                      className="rounded-[16px] bg-[#6b7280] px-6 py-3.5 text-base font-black text-white transition hover:bg-[#4b5563] disabled:opacity-70"
+                      className="rounded-[22px] bg-[linear-gradient(135deg,#00a884_0%,#116b61_100%)] px-8 py-4 text-lg font-black text-white shadow-[0_18px_35px_rgba(17,107,97,0.28)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_42px_rgba(17,107,97,0.34)] disabled:translate-y-0 disabled:opacity-70"
                     >
                       {paymentBlockedByAnnulment
                         ? "Credito anulado"
                         : registeringPayment
                           ? "Registrando..."
-                          : "Pagar"}
+                          : selectedInstallmentTotal > 0
+                            ? `Pagar ${currency(selectedInstallmentTotal)}`
+                            : "Pagar"}
                     </button>
 
                     <button
