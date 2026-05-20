@@ -59,7 +59,11 @@ function isVentasAccessSede(sede?: { nombre?: string | null; codigo?: string | n
 function isBlockedOperationalSede(sede?: { nombre?: string | null; codigo?: string | null }) {
   const values = [sede?.nombre, sede?.codigo].map(normalizeSedeAccess);
   return values.some(
-    (value) => value === "PP" || value === "PRINCIPAL" || value.includes("PRINCIPAL")
+    (value) =>
+      value === "PP" ||
+      value === "PRINCIPAL" ||
+      value.includes("PRINCIPAL") ||
+      value.includes("RECAUDO")
   );
 }
 

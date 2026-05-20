@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import FinserBrand from "@/app/_components/finser-brand";
 import {
   normalizarAvatarPerfil,
@@ -385,7 +384,6 @@ export default function SellerProfileAccess({
   sedeNombre: string;
   sellers: SellerAccessItem[];
 }) {
-  const router = useRouter();
   const [search, setSearch] = useState("");
   const [selectedSeller, setSelectedSeller] = useState<SellerAccessItem | null>(null);
   const [pin, setPin] = useState("");
@@ -452,8 +450,7 @@ export default function SellerProfileAccess({
       setSelectedSeller(null);
       setSelectingSede(false);
       setAvailableSedes([]);
-      router.replace(data.mustChangePin ? "/dashboard/pin" : "/dashboard");
-      router.refresh();
+      window.location.assign(data.mustChangePin ? "/dashboard/pin" : "/dashboard");
     } catch {
       setMensaje("No se pudo abrir el perfil seleccionado");
     } finally {
