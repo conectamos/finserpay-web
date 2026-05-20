@@ -8,6 +8,11 @@ import prisma from "@/lib/prisma";
 import { resolveCreditPaymentSummary } from "@/lib/credit-factory";
 import { isAdminRole } from "@/lib/roles";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import {
+  buildCreditLookupWhere,
+  buildSedeScopeIds,
+  parseCreditRouteLookup,
+} from "@/lib/credit-route-lookup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,11 +59,6 @@ function toBuffer(doc: PDFKit.PDFDocument) {
   });
 }
 
-function parseId(value: string) {
-  const numeric = Number(value);
-  return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
-}
-
 export async function GET(
   _req: Request,
   context: { params: Promise<{ id: string }> }
@@ -83,14 +83,22 @@ export async function GET(
     }
 
     const params = await context.params;
-    const creditId = parseId(params.id);
+    const creditLookup = parseCreditRouteLookup(params.id);
 
-    if (!creditId) {
+    if (!creditLookup.id && !creditLookup.folio) {
       return NextResponse.json({ error: "Credito invalido" }, { status: 400 });
     }
 
+    const sedeScopeIds = admin
+      ? []
+      : buildSedeScopeIds(user.sedeId, sellerSession?.sedeId);
+    const lookupWhere = buildCreditLookupWhere(creditLookup);
+
     const credito = await prisma.credito.findFirst({
-      where: admin ? { id: creditId } : { id: creditId, sedeId: user.sedeId },
+      where: {
+        ...lookupWhere,
+        ...(admin ? {} : { sedeId: { in: sedeScopeIds } }),
+      },
       include: {
         usuario: {
           select: {

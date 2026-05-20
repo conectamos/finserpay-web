@@ -9,6 +9,11 @@ import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import {
+  buildCreditLookupWhere,
+  buildSedeScopeIds,
+  parseCreditRouteLookup,
+} from "@/lib/credit-route-lookup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -320,23 +325,30 @@ export async function GET(
     }
 
     const params = await context.params;
-    const creditId = parseId(params.id);
+    const creditLookup = parseCreditRouteLookup(params.id);
     const abonoId = parseId(params.abonoId);
 
-    if (!creditId || !abonoId) {
+    if ((!creditLookup.id && !creditLookup.folio) || !abonoId) {
       return NextResponse.json({ error: "Recibo invalido" }, { status: 400 });
     }
+
+    const sedeScopeIds = admin
+      ? []
+      : buildSedeScopeIds(user.sedeId, sellerSession?.sedeId);
+    const lookupWhere = buildCreditLookupWhere(creditLookup);
 
     const abono = await prisma.creditoAbono.findFirst({
       where: admin
         ? {
             id: abonoId,
-            creditoId: creditId,
+            credito: lookupWhere,
           }
         : {
             id: abonoId,
-            creditoId: creditId,
-            sedeId: user.sedeId,
+            credito: {
+              ...lookupWhere,
+              sedeId: { in: sedeScopeIds },
+            },
           },
       include: {
         credito: {
@@ -374,7 +386,7 @@ export async function GET(
 
     const activeAbonos = await prisma.creditoAbono.findMany({
       where: {
-        creditoId: creditId,
+        creditoId: abono.creditoId,
         estado: {
           not: "ANULADO",
         },

@@ -9,6 +9,11 @@ import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import {
+  buildCreditLookupWhere,
+  buildSedeScopeIds,
+  parseCreditRouteLookup,
+} from "@/lib/credit-route-lookup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,21 +66,6 @@ function toBuffer(doc: PDFKit.PDFDocument) {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
   });
-}
-
-function parseId(value: string) {
-  const numeric = Number(value);
-  return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
-}
-
-function parseCreditLookup(value: string) {
-  const decoded = decodeURIComponent(String(value || "")).trim();
-  const id = parseId(decoded);
-
-  return {
-    id,
-    folio: id ? null : decoded,
-  };
 }
 
 function money(value: number) {
@@ -152,7 +142,7 @@ export async function GET(
     }
 
     const params = await context.params;
-    const creditLookup = parseCreditLookup(params.id);
+    const creditLookup = parseCreditRouteLookup(params.id);
 
     if (!creditLookup.id && !creditLookup.folio) {
       return NextResponse.json({ error: "Credito invalido" }, { status: 400 });
@@ -160,17 +150,8 @@ export async function GET(
 
     const sedeScopeIds = admin
       ? []
-      : Array.from(
-          new Set(
-            [user.sedeId, sellerSession?.sedeId].filter(
-              (item): item is number =>
-                typeof item === "number" && Number.isInteger(item) && item > 0
-            )
-          )
-        );
-    const lookupWhere = creditLookup.id
-      ? { id: creditLookup.id }
-      : { folio: creditLookup.folio || "" };
+      : buildSedeScopeIds(user.sedeId, sellerSession?.sedeId);
+    const lookupWhere = buildCreditLookupWhere(creditLookup);
 
     const credito = await prisma.credito.findFirst({
       where: {

@@ -4698,8 +4698,11 @@ export default function CreditFactoryConsole({
       await loadPayments(selectedCredit.id);
       await loadCredits(true, activeSearch);
 
+      const receiptCreditLookup = encodeURIComponent(
+        String(selectedCredit.folio || selectedCredit.id)
+      );
       window.open(
-        `/api/creditos/${selectedCredit.id}/abonos/${result.data.item.id}/recibo`,
+        `/api/creditos/${receiptCreditLookup}/abonos/${result.data.item.id}/recibo`,
         "_blank"
       );
 
@@ -4919,7 +4922,8 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    window.open(`/api/creditos/${credit.id}/paz-y-salvo`, "_blank");
+    const creditLookup = encodeURIComponent(String(credit.folio || credit.id));
+    window.open(`/api/creditos/${creditLookup}/paz-y-salvo`, "_blank");
   };
 
   const downloadPlanPagos = (creditId?: number | null) => {
@@ -4954,7 +4958,8 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    window.open(`/api/creditos/${credit.id}/abonos/${payment.id}/recibo`, "_blank");
+    const creditLookup = encodeURIComponent(String(credit.folio || credit.id));
+    window.open(`/api/creditos/${creditLookup}/abonos/${payment.id}/recibo`, "_blank");
   };
 
   const downloadExpedientePdf = (creditId?: number | null) => {
@@ -4971,7 +4976,8 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    window.open(`/api/creditos/${credit.id}/documentos`, "_blank");
+    const creditLookup = encodeURIComponent(String(credit.folio || credit.id));
+    window.open(`/api/creditos/${creditLookup}/documentos`, "_blank");
   };
 
   const openPaymentsForCredit = (creditId?: number | null) => {
