@@ -7,6 +7,7 @@ const globalForPrisma = globalThis as unknown as {
 
 const REQUIRED_DELEGATES = [
   "rol",
+  "aliado",
   "sede",
   "usuario",
   "vendedor",

@@ -16,12 +16,26 @@ model Rol {
   updatedAt   DateTime  @updatedAt
 }
 
+model Aliado {
+  id        Int      @id @default(autoincrement())
+  nombre    String   @unique
+  codigo    String?  @unique
+  activo    Boolean  @default(true)
+  sedes     Sede[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([activo])
+}
+
 model Sede {
   id                  Int                  @id @default(autoincrement())
   nombre              String               @unique
   codigo              String?              @unique
+  aliadoId            Int?
   activa              Boolean              @default(true)
   clavePanelFinancieroHash String?
+  aliado              Aliado?              @relation(fields: [aliadoId], references: [id])
   usuarios            Usuario[]
   vendedoresAsignados SedeVendedor[]
   creditos            Credito[]
@@ -37,6 +51,8 @@ model Sede {
   gastosCartera       GastoCartera[]
   arqueosDiarios      ArqueoDiario[]
   capturasCredito     CapturaCreditoSession[]
+
+  @@index([aliadoId])
 }
 
 model Usuario {

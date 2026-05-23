@@ -7,6 +7,7 @@ import {
   verifySessionToken,
 } from "@/lib/session";
 import { isAdminRole } from "@/lib/roles";
+import { ensureAliadoSchema } from "@/lib/aliados";
 
 export async function getSessionUser() {
   const cookieStore = await cookies();
@@ -15,6 +16,8 @@ export async function getSessionUser() {
   const session = verifySessionToken(sessionToken);
 
   if (!session) return null;
+
+  await ensureAliadoSchema(prisma);
 
   const user = await prisma.usuario.findUnique({
     where: { id: session.userId },
@@ -36,6 +39,14 @@ export async function getSessionUser() {
         select: {
           id: true,
           nombre: true,
+          aliadoId: true,
+          aliado: {
+            select: {
+              id: true,
+              nombre: true,
+              codigo: true,
+            },
+          },
         },
       },
     },
@@ -61,6 +72,14 @@ export async function getSessionUser() {
         select: {
           id: true,
           nombre: true,
+          aliadoId: true,
+          aliado: {
+            select: {
+              id: true,
+              nombre: true,
+              codigo: true,
+            },
+          },
         },
       })
     : null;
@@ -68,6 +87,10 @@ export async function getSessionUser() {
   const effectiveSedeId = operatingSede?.id ?? user.sedeId;
   const effectiveSedeNombre =
     operatingSede?.nombre ?? user.sede?.nombre ?? `SEDE ${user.sedeId}`;
+  const effectiveAliado =
+    operatingSede?.aliado ?? user.sede?.aliado ?? null;
+  const effectiveAliadoId =
+    operatingSede?.aliadoId ?? user.sede?.aliadoId ?? null;
 
   return {
     id: user.id,
@@ -76,8 +99,14 @@ export async function getSessionUser() {
     activo: user.activo,
     sedeId: effectiveSedeId,
     sedeNombre: effectiveSedeNombre,
+    aliadoId: effectiveAliadoId,
+    aliadoNombre: effectiveAliado?.nombre ?? null,
+    aliadoCodigo: effectiveAliado?.codigo ?? null,
     sedeAccesoId: user.sedeId,
     sedeAccesoNombre: user.sede?.nombre ?? `SEDE ${user.sedeId}`,
+    aliadoAccesoId: user.sede?.aliadoId ?? null,
+    aliadoAccesoNombre: user.sede?.aliado?.nombre ?? null,
+    aliadoAccesoCodigo: user.sede?.aliado?.codigo ?? null,
     rolId: user.rolId,
     rolNombre: user.rol?.nombre ?? "",
   };

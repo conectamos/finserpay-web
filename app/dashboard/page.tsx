@@ -814,6 +814,7 @@ export default async function DashboardPage() {
           { href: "/dashboard/reportes", label: "Reportes admin" },
           { href: "/dashboard/cartera", label: "Cartera" },
           { href: "/dashboard/clientes", label: "Clientes y ajuste plan" },
+          { href: "/dashboard/aliados", label: "Aliados" },
           { href: "/dashboard/usuarios", label: "Vendedores" },
           { href: "/dashboard/sedes", label: "Sedes" },
           { href: "/dashboard/catalogo-equipos", label: "Catalogo de equipos" },
@@ -1335,6 +1336,7 @@ export default async function DashboardPage() {
           label: "Gestionar sedes",
           tone: "primary",
         },
+        { href: "/dashboard/aliados", label: "Gestionar aliados" },
         { href: "/dashboard/usuarios", label: "Gestionar vendedores" },
       ],
     },
@@ -1542,6 +1544,7 @@ export default async function DashboardPage() {
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <DashboardButton href="/dashboard/sedes" label="Sedes" tone="dark" />
               <DashboardButton href="/dashboard/usuarios" label="Usuarios" tone="light" />
+              <DashboardButton href="/dashboard/aliados" label="Aliados" tone="blue" />
               <DashboardButton href="/dashboard/catalogo-equipos" label="Catalogo equipos" tone="green" />
               <DashboardButton href="/dashboard/parametros-credito" label="Parametros credito" tone="orange" />
             </div>

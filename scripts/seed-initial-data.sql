@@ -9,6 +9,15 @@ SET
   "descripcion" = EXCLUDED."descripcion",
   "updatedAt" = NOW();
 
+INSERT INTO "Aliado" ("nombre", "codigo", "activo", "createdAt", "updatedAt")
+VALUES
+  ('CONECTAMOS', 'CONECTAMOS', true, NOW(), NOW())
+ON CONFLICT ("nombre") DO UPDATE
+SET
+  "codigo" = EXCLUDED."codigo",
+  "activo" = EXCLUDED."activo",
+  "updatedAt" = NOW();
+
 INSERT INTO "Sede" ("nombre", "codigo", "activa", "clavePanelFinancieroHash", "createdAt", "updatedAt")
 VALUES
   ('BODEGA PRINCIPAL', 'BODEGA-PRINCIPAL', true, NULL, NOW(), NOW()),
@@ -29,6 +38,12 @@ SET
   "codigo" = EXCLUDED."codigo",
   "activa" = EXCLUDED."activa",
   "updatedAt" = NOW();
+
+UPDATE "Sede"
+SET
+  "aliadoId" = (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS')
+WHERE
+  "aliadoId" IS NULL;
 
 INSERT INTO "Usuario" ("nombre", "usuario", "claveHash", "activo", "rolId", "sedeId", "createdAt", "updatedAt")
 SELECT

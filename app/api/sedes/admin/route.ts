@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
+import { ensureAliadoConectamos } from "@/lib/aliados";
 
 function esAdmin(rolNombre: string) {
   return String(rolNombre || "").trim().toUpperCase() === "ADMIN";
@@ -75,6 +76,13 @@ async function obtenerSedesAdmin() {
       nombre: true,
       codigo: true,
       activa: true,
+      aliado: {
+        select: {
+          id: true,
+          nombre: true,
+          codigo: true,
+        },
+      },
       usuarios: {
         select: {
           id: true,
@@ -107,6 +115,7 @@ async function obtenerSedesAdmin() {
       nombre: sede.nombre,
       codigo: sede.codigo,
       activa: sede.activa,
+      aliado: sede.aliado,
       acceso: acceso
         ? {
             id: acceso.id,
@@ -348,12 +357,15 @@ export async function POST(req: Request) {
     }
 
     await prisma.$transaction(async (tx) => {
+      const aliado = await ensureAliadoConectamos(tx);
+
       if (sedeParaReactivar) {
         await tx.sede.update({
           where: { id: sedeParaReactivar.id },
           data: {
             nombre,
             codigo,
+            aliadoId: aliado.id,
             activa: true,
           },
         });
@@ -397,6 +409,7 @@ export async function POST(req: Request) {
         data: {
           nombre,
           codigo,
+          aliadoId: aliado.id,
           activa: true,
         },
         select: {
