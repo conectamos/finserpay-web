@@ -109,20 +109,41 @@ export default function PushMassivePanel() {
 
   return (
     <section className="mt-4 rounded-[26px] border border-[#cfe4de] bg-white p-4 shadow-[0_14px_36px_rgba(24,32,37,0.05)]">
-      <div className="grid gap-4 xl:grid-cols-[280px_1fr_auto] xl:items-end">
-        <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
-            Push clientes
-          </p>
-          <h2 className="mt-2 text-xl font-black tracking-tight text-[#20242a]">
-            Envio por cartera
-          </h2>
-          <p className="mt-1 text-sm leading-5 text-[#687080]">
-            Previsualiza antes de enviar.
-          </p>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
+              Push clientes
+            </p>
+            <h2 className="mt-2 text-xl font-black tracking-tight text-[#20242a]">
+              Envio por cartera
+            </h2>
+            <p className="mt-1 text-sm leading-5 text-[#687080]">
+              Previsualiza antes de enviar.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <button
+              type="button"
+              onClick={() => void runPush(true)}
+              disabled={running !== null}
+              className="h-11 rounded-2xl border border-[#b9e5d3] bg-white px-4 text-sm font-black text-[#0f766e] transition hover:-translate-y-0.5 disabled:opacity-70"
+            >
+              {running === "preview" ? "Revisando..." : "Previsualizar"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void runPush(false)}
+              disabled={running !== null || !preview}
+              className="h-11 rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 text-sm font-black text-white transition hover:-translate-y-0.5 disabled:opacity-70"
+            >
+              {running === "send" ? "Enviando..." : "Enviar masivo"}
+            </button>
+          </div>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="grid gap-2 text-sm font-semibold text-[#20242a]">
             Grupo
             <select
@@ -171,25 +192,6 @@ export default function PushMassivePanel() {
               className="h-11 rounded-2xl border border-[#d7dce2] bg-white px-4 text-sm font-semibold outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
             />
           </label>
-        </div>
-
-        <div className="flex flex-wrap gap-2 xl:justify-end">
-          <button
-            type="button"
-            onClick={() => void runPush(true)}
-            disabled={running !== null}
-            className="h-11 rounded-2xl border border-[#b9e5d3] bg-white px-4 text-sm font-black text-[#0f766e] transition hover:-translate-y-0.5 disabled:opacity-70"
-          >
-            {running === "preview" ? "Revisando..." : "Previsualizar"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void runPush(false)}
-            disabled={running !== null || !preview}
-            className="h-11 rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 text-sm font-black text-white transition hover:-translate-y-0.5 disabled:opacity-70"
-          >
-            {running === "send" ? "Enviando..." : "Enviar masivo"}
-          </button>
         </div>
       </div>
 
