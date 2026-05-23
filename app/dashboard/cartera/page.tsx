@@ -272,71 +272,61 @@ export default async function CarteraPage() {
     .slice(0, 12);
 
   return (
-    <div className="min-h-screen bg-[#eef2f7] px-4 py-8 text-[#20242a]">
+    <div className="min-h-screen bg-[#eef3f6] px-4 py-6 text-[#182025]">
       <main className="mx-auto max-w-7xl">
-        <header className="overflow-hidden rounded-[34px] border border-[#d7dce2] bg-white px-6 py-6 shadow-[0_20px_60px_rgba(17,19,24,0.08)]">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <header className="overflow-hidden rounded-[28px] border border-[#d8e0e3] bg-white shadow-[0_18px_55px_rgba(24,32,37,0.08)]">
+          <div className="grid gap-6 p-5 lg:grid-cols-[1fr_360px] lg:p-7">
             <div>
-              <div className="inline-flex rounded-full border border-[#cce7df] bg-[#eff8f5] px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
-                Admin cartera
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-[#bfe9dd] bg-[#f0fbf7] px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-[#087061]">
+                  Admin cartera
+                </span>
+                <span className="rounded-full border border-[#dde5e8] bg-[#f7fafb] px-3 py-1 text-xs font-bold text-[#64717b]">
+                  {activeCredits.length} activos
+                </span>
+                <span className="rounded-full border border-[#dde5e8] bg-[#f7fafb] px-3 py-1 text-xs font-bold text-[#64717b]">
+                  {clientsMora} en mora
+                </span>
               </div>
-              <h1 className="mt-4 text-4xl font-black tracking-tight text-[#20242a] md:text-5xl">
+              <h1 className="mt-4 max-w-3xl text-4xl font-black tracking-tight text-[#11161a] md:text-5xl">
                 Salud de cartera
               </h1>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-[#687080]">
-                Lectura global de inversion, cartera por cobrar, ganancias, gastos y mora.
+                Lectura ejecutiva de inversion, cartera por cobrar, utilidad esperada y riesgo de mora.
               </p>
+              <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                <HeroMetric label="Invertido" value={money(totalInvertido)} />
+                <HeroMetric label="Por cobrar" value={money(totalPendiente)} />
+                <HeroMetric label="Ganancias" value={money(totalGanancias)} danger={totalGanancias < 0} />
+              </div>
             </div>
 
-            <div className="flex flex-wrap gap-3">
-              <a
-                href="/api/dashboard/cartera/export"
-                className="rounded-2xl border border-[#b9e5d3] bg-[#ecfdf5] px-5 py-3 text-sm font-black text-[#0f766e] transition hover:-translate-y-0.5"
-              >
-                Descargar Excel
-              </a>
-              <Link
-                href="/dashboard/financiero/cartera"
-                className="rounded-2xl border border-[#b9e5d3] bg-white px-5 py-3 text-sm font-black text-[#0f766e] transition hover:-translate-y-0.5"
-              >
-                Agregar gasto
-              </Link>
-              <Link
-                href="/dashboard/financiero/cartera/detalle"
-                className="rounded-2xl border border-[#d7dce2] bg-white px-5 py-3 text-sm font-black text-[#20242a] transition hover:-translate-y-0.5"
-              >
-                Detalle gastos
-              </Link>
-              <Link
-                href="/dashboard/reportes/creditos"
-                className="rounded-2xl border border-[#d7dce2] bg-white px-5 py-3 text-sm font-black text-[#20242a] transition hover:-translate-y-0.5"
-              >
-                Ver creditos
-              </Link>
-              <Link
-                href="/dashboard"
-                className="rounded-2xl border border-[#111318] bg-[#111318] px-5 py-3 text-sm font-black text-white transition hover:-translate-y-0.5"
-              >
-                Dashboard
-              </Link>
+            <div className="rounded-[24px] border border-[#d8e0e3] bg-[#f8fbfa] p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#087061]">
+                Acciones
+              </p>
+              <div className="mt-4 grid gap-2">
+                <ActionLink href="/api/dashboard/cartera/export" label="Descargar Excel" primary />
+                <ActionLink href="/dashboard/financiero/cartera" label="Agregar gasto" />
+                <ActionLink href="/dashboard/financiero/cartera/detalle" label="Detalle gastos" />
+                <ActionLink href="/dashboard/reportes/creditos" label="Ver creditos" />
+                <ActionLink href="/dashboard" label="Dashboard" dark />
+              </div>
             </div>
           </div>
         </header>
 
-        <PushMassivePanel />
-
-        <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <MetricCard label="Invertido" value={money(totalInvertido)} detail={`${activeCredits.length} creditos activos`} />
-          <MetricCard label="Bolsa de respaldo para mora" value={money(bolsaRespaldoMora)} detail="10% de lo invertido" />
-          <MetricCard label="Cartera por cobrar" value={money(totalPendiente)} detail={`${percent(pctSana)} cartera sana`} />
-          <MetricCard label="Ganancias" value={money(totalGanancias)} detail={`Bruta ${money(totalGananciaBruta)} | Gastos ${money(totalGastosOperacion)} | Mora ${money(totalMora)}`} warning={totalGanancias < 0} />
+        <section className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard label="Bolsa de respaldo" value={money(bolsaRespaldoMora)} detail="10% de lo invertido" tone="mint" />
+          <MetricCard label="Cartera sana" value={percent(pctSana)} detail={`${money(totalSano)} sin mora`} />
           <MetricCard label="Creditos activos" value={String(activeCredits.length)} detail={`${paidCredits.length} creditos pagos`} />
-          <MetricCard label="Clientes en mora" value={String(clientsMora)} detail={`${clientsTemprana} temprana, ${clientsMayor} mayor, ${clientsAvanzada} avanzada`} warning={clientsAvanzada > 0} />
-          <MetricCard label="Cartera en mora" value={money(totalMora)} detail={`${percent(pctMora)} del saldo pendiente`} warning={pctMora > 18} />
+          <MetricCard label="Cartera en mora" value={money(totalMora)} detail={`${percent(pctMora)} del saldo pendiente`} warning={pctMora > 18} tone="risk" />
         </section>
 
+        <PushMassivePanel />
+
         <section className="mt-5 grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className={["rounded-[30px] border p-6 shadow-[0_18px_48px_rgba(17,19,24,0.06)]", health.tone].join(" ")}>
+          <div className={["rounded-[26px] border p-5 shadow-[0_16px_40px_rgba(24,32,37,0.06)]", health.tone].join(" ")}>
             <p className="text-[10px] font-black uppercase tracking-[0.24em] opacity-75">
               Diagnostico
             </p>
@@ -350,7 +340,7 @@ export default async function CarteraPage() {
             </div>
           </div>
 
-          <div className="rounded-[30px] border border-[#d7dce2] bg-white p-6 shadow-[0_18px_48px_rgba(17,19,24,0.06)]">
+          <div className="rounded-[26px] border border-[#d8e0e3] bg-white p-5 shadow-[0_16px_40px_rgba(24,32,37,0.06)]">
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
               Mora por edades
             </p>
@@ -380,7 +370,7 @@ export default async function CarteraPage() {
           </div>
         </section>
 
-        <section className="mt-5 overflow-hidden rounded-[30px] border border-[#d7dce2] bg-white shadow-[0_18px_48px_rgba(17,19,24,0.06)]">
+        <section className="mt-5 overflow-hidden rounded-[26px] border border-[#d8e0e3] bg-white shadow-[0_16px_40px_rgba(24,32,37,0.06)]">
           <div className="flex flex-col gap-2 border-b border-[#d7dce2] px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
@@ -426,7 +416,7 @@ export default async function CarteraPage() {
                       </td>
                       <td className="px-5 py-4 font-black text-[#20242a]">{money(item.saldoPendiente)}</td>
                       <td className="px-5 py-4 text-[#687080]">
-                        {item.nextDueDate ? `${item.nextDueDate} · ${money(item.nextDueValue)}` : "Sin cuota"}
+                        {item.nextDueDate ? `${item.nextDueDate} - ${money(item.nextDueValue)}` : "Sin cuota"}
                       </td>
                     </tr>
                   ))
@@ -446,28 +436,101 @@ export default async function CarteraPage() {
   );
 }
 
+function HeroMetric({
+  label,
+  value,
+  danger = false,
+}: {
+  label: string;
+  value: string;
+  danger?: boolean;
+}) {
+  return (
+    <div className="rounded-[20px] border border-[#d8e0e3] bg-[#fbfdfd] px-4 py-4">
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#64717b]">
+        {label}
+      </p>
+      <p
+        className={[
+          "mt-2 text-2xl font-black tracking-tight",
+          danger ? "text-red-700" : "text-[#11161a]",
+        ].join(" ")}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function ActionLink({
+  href,
+  label,
+  primary = false,
+  dark = false,
+}: {
+  href: string;
+  label: string;
+  primary?: boolean;
+  dark?: boolean;
+}) {
+  const classes = dark
+    ? "border-[#11161a] bg-[#11161a] text-white"
+    : primary
+      ? "border-[#a7dfce] bg-[#eafbf5] text-[#087061]"
+      : "border-[#d8e0e3] bg-white text-[#182025]";
+  const className = [
+    "flex min-h-11 items-center justify-between rounded-2xl border px-4 text-sm font-black transition hover:-translate-y-0.5",
+    classes,
+  ].join(" ");
+
+  if (href.startsWith("/api/")) {
+    return (
+      <a href={href} className={className}>
+        <span>{label}</span>
+        <span aria-hidden="true">{">"}</span>
+      </a>
+    );
+  }
+
+  return (
+    <Link href={href} className={className}>
+      <span>{label}</span>
+      <span aria-hidden="true">{">"}</span>
+    </Link>
+  );
+}
+
 function MetricCard({
   label,
   value,
   detail,
   warning = false,
+  tone = "default",
 }: {
   label: string;
   value: string;
   detail: string;
   warning?: boolean;
+  tone?: "default" | "mint" | "risk";
 }) {
+  const toneClass =
+    tone === "mint"
+      ? "border-[#bfe9dd] bg-[#f2fbf7]"
+      : tone === "risk"
+        ? "border-amber-200 bg-[#fffaf0]"
+        : "border-[#d8e0e3] bg-white";
+
   return (
     <div
       className={[
-        "rounded-[28px] border bg-white p-5 shadow-[0_14px_34px_rgba(17,19,24,0.06)]",
-        warning ? "border-red-200" : "border-[#d7dce2]",
+        "rounded-[22px] border p-4 shadow-[0_12px_30px_rgba(24,32,37,0.05)]",
+        warning ? "border-red-200 bg-red-50" : toneClass,
       ].join(" ")}
     >
       <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#687080]">
         {label}
       </p>
-      <p className="mt-4 text-3xl font-black tracking-tight text-[#20242a]">{value}</p>
+      <p className="mt-3 text-3xl font-black tracking-tight text-[#20242a]">{value}</p>
       <p className="mt-2 text-sm font-semibold text-[#687080]">{detail}</p>
     </div>
   );
@@ -496,7 +559,7 @@ function BucketCard({
   percentValue: number;
 }) {
   return (
-    <div className="rounded-[24px] border border-[#d7dce2] bg-[#f7fbf9] p-4">
+    <div className="rounded-[22px] border border-[#d8e0e3] bg-[#f7fbf9] p-4">
       <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#0f766e]">
         {title}
       </p>
