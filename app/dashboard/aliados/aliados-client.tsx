@@ -1,13 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 type SedeItem = {
   id: number;
   nombre: string;
   codigo: string | null;
-  activa?: boolean;
 };
 
 type AliadoItem = {
@@ -21,29 +20,48 @@ type AliadoItem = {
   totalRecaudos: number;
 };
 
+type NuevaSedeState = {
+  nombre: string;
+  codigo: string;
+  usuario: string;
+  clave: string;
+};
+
 type AliadosPayload = {
   aliados: AliadoItem[];
-  sedesSinAliado: SedeItem[];
 };
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("es-CO").format(value || 0);
 }
 
-function normalizeList(items: SedeItem[]) {
-  return [...items].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+function slugUsuarioSede(valor: string) {
+  return String(valor || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function emptySedeForm(): NuevaSedeState {
+  return {
+    nombre: "",
+    codigo: "",
+    usuario: "",
+    clave: "",
+  };
 }
 
 export default function AliadosClient() {
   const [aliados, setAliados] = useState<AliadoItem[]>([]);
-  const [sedesSinAliado, setSedesSinAliado] = useState<SedeItem[]>([]);
   const [mensaje, setMensaje] = useState("");
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
   const [nombre, setNombre] = useState("");
   const [codigo, setCodigo] = useState("");
-  const [seleccionSedes, setSeleccionSedes] = useState<Record<number, number[]>>({});
+  const [sedesForm, setSedesForm] = useState<Record<number, NuevaSedeState>>({});
 
   const cargarAliados = async () => {
     try {
@@ -60,10 +78,9 @@ export default function AliadosClient() {
 
       const items = Array.isArray(data.aliados) ? data.aliados : [];
       setAliados(items);
-      setSedesSinAliado(Array.isArray(data.sedesSinAliado) ? data.sedesSinAliado : []);
-      setSeleccionSedes(
-        items.reduce((acc: Record<number, number[]>, aliado) => {
-          acc[aliado.id] = aliado.sedes.map((sede) => sede.id);
+      setSedesForm((actual) =>
+        items.reduce((acc: Record<number, NuevaSedeState>, aliado) => {
+          acc[aliado.id] = actual[aliado.id] || emptySedeForm();
           return acc;
         }, {})
       );
@@ -77,22 +94,6 @@ export default function AliadosClient() {
   useEffect(() => {
     void cargarAliados();
   }, []);
-
-  const todasLasSedes = useMemo(() => {
-    const map = new Map<number, SedeItem>();
-
-    aliados.forEach((aliado) => {
-      aliado.sedes.forEach((sede) => {
-        map.set(sede.id, sede);
-      });
-    });
-
-    sedesSinAliado.forEach((sede) => {
-      map.set(sede.id, sede);
-    });
-
-    return normalizeList(Array.from(map.values()));
-  }, [aliados, sedesSinAliado]);
 
   const crearAliado = async () => {
     try {
@@ -128,50 +129,68 @@ export default function AliadosClient() {
     }
   };
 
-  const toggleSede = (aliadoId: number, sedeId: number) => {
-    setSeleccionSedes((actual) => {
-      const actuales = new Set(actual[aliadoId] || []);
+  const actualizarSedeForm = (
+    aliadoId: number,
+    campo: keyof NuevaSedeState,
+    valor: string
+  ) => {
+    setSedesForm((actual) => {
+      const previo = actual[aliadoId] || emptySedeForm();
+      const siguiente = {
+        ...previo,
+        [campo]: valor,
+      };
 
-      if (actuales.has(sedeId)) {
-        actuales.delete(sedeId);
-      } else {
-        actuales.add(sedeId);
+      if (
+        campo === "nombre" &&
+        (!previo.usuario || previo.usuario === slugUsuarioSede(previo.nombre))
+      ) {
+        siguiente.usuario = slugUsuarioSede(valor);
       }
 
       return {
         ...actual,
-        [aliadoId]: Array.from(actuales),
+        [aliadoId]: siguiente,
       };
     });
   };
 
-  const guardarSedes = async (aliado: AliadoItem) => {
+  const crearSede = async (aliado: AliadoItem) => {
+    const form = sedesForm[aliado.id] || emptySedeForm();
+
     try {
       setProcesandoId(aliado.id);
       setMensaje("");
 
-      const res = await fetch("/api/aliados/admin", {
-        method: "PATCH",
+      const res = await fetch("/api/sedes/admin", {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           aliadoId: aliado.id,
-          sedeIds: seleccionSedes[aliado.id] || [],
+          nombre: form.nombre,
+          codigo: form.codigo,
+          usuario: form.usuario,
+          clave: form.clave,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        setMensaje(data.error || "No se pudo guardar el aliado");
+        setMensaje(data.error || "No se pudo crear la sede");
         return;
       }
 
-      setMensaje(data.mensaje || "Aliado actualizado correctamente");
+      setMensaje(`${data.mensaje || "Sede creada correctamente"} para ${aliado.nombre}`);
+      setSedesForm((actual) => ({
+        ...actual,
+        [aliado.id]: emptySedeForm(),
+      }));
       await cargarAliados();
     } catch {
-      setMensaje("Error actualizando aliado");
+      setMensaje("Error creando sede");
     } finally {
       setProcesandoId(null);
     }
@@ -184,13 +203,13 @@ export default function AliadosClient() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.28em] text-emerald-700">
-                Admin aliados
+                Financiera FINSER PAY
               </span>
               <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-5xl">
-                Aliados comerciales
+                Aliados y sedes
               </h1>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-                Agrupa sedes por aliado. FINSER PAY mantiene cartera y control central; cada aliado solo se prepara para ver sus creditos y recaudos por sede.
+                Desde FINSER PAY nacen los aliados. Cada aliado crea y administra sus propias sedes; cartera queda solo en la plataforma central.
               </p>
             </div>
 
@@ -260,7 +279,7 @@ export default function AliadosClient() {
         ) : (
           <section className="grid gap-4 lg:grid-cols-2">
             {aliados.map((aliado) => {
-              const selected = new Set(seleccionSedes[aliado.id] || []);
+              const form = sedesForm[aliado.id] || emptySedeForm();
 
               return (
                 <article
@@ -277,14 +296,6 @@ export default function AliadosClient() {
                         {aliado.activo ? "Activo" : "Inactivo"}
                       </p>
                     </div>
-
-                    <button
-                      onClick={() => guardarSedes(aliado)}
-                      disabled={procesandoId === aliado.id}
-                      className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50"
-                    >
-                      {procesandoId === aliado.id ? "Guardando..." : "Guardar sedes"}
-                    </button>
                   </div>
 
                   <div className="mt-5 grid grid-cols-3 gap-2">
@@ -308,35 +319,81 @@ export default function AliadosClient() {
                     </div>
                   </div>
 
+                  <div className="mt-5 rounded-3xl border border-emerald-100 bg-emerald-50/50 p-4">
+                    <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-700">
+                      Crear sede para {aliado.nombre}
+                    </p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <input
+                        value={form.nombre}
+                        onChange={(event) =>
+                          actualizarSedeForm(aliado.id, "nombre", event.target.value)
+                        }
+                        placeholder="Nombre de sede"
+                        className="rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                      />
+                      <input
+                        value={form.codigo}
+                        onChange={(event) =>
+                          actualizarSedeForm(aliado.id, "codigo", event.target.value)
+                        }
+                        placeholder="Codigo de sede"
+                        className="rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                      />
+                      <input
+                        value={form.usuario}
+                        onChange={(event) =>
+                          actualizarSedeForm(aliado.id, "usuario", event.target.value)
+                        }
+                        placeholder="Usuario de acceso"
+                        className="rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                      />
+                      <input
+                        value={form.clave}
+                        onChange={(event) =>
+                          actualizarSedeForm(aliado.id, "clave", event.target.value)
+                        }
+                        placeholder="Clave inicial"
+                        type="password"
+                        className="rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                      />
+                    </div>
+                    <button
+                      onClick={() => crearSede(aliado)}
+                      disabled={
+                        procesandoId === aliado.id ||
+                        !form.nombre.trim() ||
+                        !form.usuario.trim() ||
+                        !form.clave.trim()
+                      }
+                      className="mt-3 w-full rounded-2xl bg-[#0f766e] px-5 py-3 text-sm font-black text-white transition hover:bg-[#115e59] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {procesandoId === aliado.id ? "Creando..." : "Crear sede"}
+                    </button>
+                  </div>
+
                   <div className="mt-5">
                     <p className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
-                      Sedes del aliado
+                      Sedes actuales
                     </p>
-                    <div className="mt-3 grid max-h-64 gap-2 overflow-auto pr-1 sm:grid-cols-2">
-                      {todasLasSedes.map((sede) => (
-                        <label
-                          key={`${aliado.id}-${sede.id}`}
-                          className={[
-                            "flex items-center gap-3 rounded-2xl border px-3 py-3 text-sm font-bold transition",
-                            selected.has(sede.id)
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-950"
-                              : "border-slate-200 bg-white text-slate-600",
-                          ].join(" ")}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selected.has(sede.id)}
-                            onChange={() => toggleSede(aliado.id, sede.id)}
-                            className="h-4 w-4 accent-emerald-600"
-                          />
-                          <span className="min-w-0">
-                            <span className="block truncate">{sede.nombre}</span>
-                            <span className="block text-[11px] text-slate-400">
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {aliado.sedes.length ? (
+                        aliado.sedes.map((sede) => (
+                          <div
+                            key={sede.id}
+                            className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                          >
+                            <p className="truncate text-sm font-black">{sede.nombre}</p>
+                            <p className="mt-1 text-[11px] font-bold text-slate-400">
                               {sede.codigo || `SEDE-${sede.id}`}
-                            </span>
-                          </span>
-                        </label>
-                      ))}
+                            </p>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="rounded-2xl border border-dashed border-slate-200 px-4 py-4 text-sm font-bold text-slate-500">
+                          Este aliado aun no tiene sedes.
+                        </p>
+                      )}
                     </div>
                   </div>
                 </article>

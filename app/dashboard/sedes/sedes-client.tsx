@@ -18,12 +18,23 @@ type SedeAdminItem = {
   nombre: string;
   codigo: string | null;
   activa: boolean;
+  aliado: {
+    id: number;
+    nombre: string;
+    codigo: string | null;
+  } | null;
   acceso: {
     id: number;
     nombre: string;
     usuario: string;
     activo: boolean;
   } | null;
+};
+
+type AliadoItem = {
+  id: number;
+  nombre: string;
+  codigo: string | null;
 };
 
 function slugUsuarioSede(valor: string) {
@@ -38,6 +49,7 @@ function slugUsuarioSede(valor: string) {
 export default function GestionSedesPage() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [sedes, setSedes] = useState<SedeAdminItem[]>([]);
+  const [aliados, setAliados] = useState<AliadoItem[]>([]);
   const [mensaje, setMensaje] = useState("");
   const [cargando, setCargando] = useState(true);
   const [guardandoNueva, setGuardandoNueva] = useState(false);
@@ -45,6 +57,7 @@ export default function GestionSedesPage() {
 
   const [nuevaSedeNombre, setNuevaSedeNombre] = useState("");
   const [nuevaSedeCodigo, setNuevaSedeCodigo] = useState("");
+  const [nuevoAliadoId, setNuevoAliadoId] = useState("");
   const [nuevoUsuario, setNuevoUsuario] = useState("");
   const [nuevaClave, setNuevaClave] = useState("");
 
@@ -54,6 +67,7 @@ export default function GestionSedesPage() {
       {
         nombre: string;
         codigo: string;
+        aliadoId: string;
         usuario: string;
         clave: string;
       }
@@ -64,13 +78,15 @@ export default function GestionSedesPage() {
 
   const cargarTodo = async () => {
     try {
-      const [resSession, resSedes] = await Promise.all([
+      const [resSession, resSedes, resAliados] = await Promise.all([
         fetch("/api/session", { cache: "no-store" }),
         fetch("/api/sedes/admin", { cache: "no-store" }),
+        fetch("/api/aliados/admin", { cache: "no-store" }),
       ]);
 
       const sessionData = await resSession.json();
       const sedesData = await resSedes.json();
+      const aliadosData = await resAliados.json();
 
       if (resSession.ok) {
         setUser(sessionData);
@@ -81,10 +97,11 @@ export default function GestionSedesPage() {
         setSedes(items);
         setEdiciones(
           items.reduce(
-            (acc: Record<number, { nombre: string; codigo: string; usuario: string; clave: string }>, sede: SedeAdminItem) => {
+            (acc: Record<number, { nombre: string; codigo: string; aliadoId: string; usuario: string; clave: string }>, sede: SedeAdminItem) => {
               acc[sede.id] = {
                 nombre: sede.nombre,
                 codigo: sede.codigo || "",
+                aliadoId: sede.aliado?.id ? String(sede.aliado.id) : "",
                 usuario: sede.acceso?.usuario || "",
                 clave: "",
               };
@@ -95,6 +112,12 @@ export default function GestionSedesPage() {
         );
       } else {
         setMensaje(sedesData.error || "No se pudo cargar la gestion de sedes");
+      }
+
+      if (resAliados.ok) {
+        const items = Array.isArray(aliadosData?.aliados) ? aliadosData.aliados : [];
+        setAliados(items);
+        setNuevoAliadoId((actual) => actual || (items[0]?.id ? String(items[0].id) : ""));
       }
     } catch {
       setMensaje("Error cargando la gestion de sedes");
@@ -115,7 +138,7 @@ export default function GestionSedesPage() {
 
   const actualizarEdicion = (
     sedeId: number,
-    campo: "nombre" | "codigo" | "usuario" | "clave",
+    campo: "nombre" | "codigo" | "aliadoId" | "usuario" | "clave",
     valor: string
   ) => {
     setEdiciones((actual) => ({
@@ -140,6 +163,7 @@ export default function GestionSedesPage() {
         body: JSON.stringify({
           nombre: nuevaSedeNombre,
           codigo: nuevaSedeCodigo,
+          aliadoId: Number(nuevoAliadoId || 0),
           usuario: nuevoUsuario,
           clave: nuevaClave,
         }),
@@ -181,6 +205,7 @@ export default function GestionSedesPage() {
           sedeId,
           nombre: payload?.nombre,
           codigo: payload?.codigo,
+          aliadoId: Number(payload?.aliadoId || 0),
           usuario: payload?.usuario,
           clave: payload?.clave,
         }),
@@ -331,7 +356,7 @@ export default function GestionSedesPage() {
             </div>
           </div>
 
-          <div className="mt-6 grid gap-4 lg:grid-cols-[1.2fr_0.6fr_0.9fr_0.9fr_180px]">
+          <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_0.7fr_0.8fr_0.8fr_0.8fr_160px]">
             <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
               Nombre de sede
               <input
@@ -340,6 +365,21 @@ export default function GestionSedesPage() {
                 placeholder="Ej: Stand PuntoNet"
                 className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               />
+            </label>
+
+            <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+              Aliado
+              <select
+                value={nuevoAliadoId}
+                onChange={(event) => setNuevoAliadoId(event.target.value)}
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+              >
+                {aliados.map((aliado) => (
+                  <option key={aliado.id} value={aliado.id}>
+                    {aliado.nombre}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
@@ -404,6 +444,7 @@ export default function GestionSedesPage() {
               const edicion = ediciones[sede.id] || {
                 nombre: sede.nombre,
                 codigo: sede.codigo || "",
+                aliadoId: sede.aliado?.id ? String(sede.aliado.id) : "",
                 usuario: sede.acceso?.usuario || "",
                 clave: "",
               };
@@ -425,6 +466,9 @@ export default function GestionSedesPage() {
                         {sede.acceso
                           ? `Acceso actual: ${sede.acceso.usuario}`
                           : "Esta sede aun no tiene usuario de acceso."}
+                      </p>
+                      <p className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">
+                        {sede.aliado?.nombre || "Sin aliado"}
                       </p>
                     </div>
 
@@ -460,6 +504,24 @@ export default function GestionSedesPage() {
                         placeholder="Opcional"
                         className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                       />
+                    </label>
+
+                    <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                      Aliado
+                      <select
+                        value={edicion.aliadoId}
+                        onChange={(event) =>
+                          actualizarEdicion(sede.id, "aliadoId", event.target.value)
+                        }
+                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                      >
+                        <option value="">Seleccionar aliado</option>
+                        {aliados.map((aliado) => (
+                          <option key={aliado.id} value={aliado.id}>
+                            {aliado.nombre}
+                          </option>
+                        ))}
+                      </select>
                     </label>
 
                     <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">

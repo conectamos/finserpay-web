@@ -16,20 +16,6 @@ function parseId(value: unknown) {
   return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
 }
 
-function parseIds(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return Array.from(
-    new Set(
-      value
-        .map((item) => Number(item || 0))
-        .filter((item) => Number.isInteger(item) && item > 0)
-    )
-  );
-}
-
 async function requireAdmin() {
   const user = await getSessionUser();
 
@@ -54,65 +40,40 @@ async function requireAdmin() {
 }
 
 async function loadAliadosPayload() {
-  const conectado = await ensureAliadoConectamos(prisma);
+  await ensureAliadoConectamos(prisma);
 
-  await prisma.sede.updateMany({
-    where: {
-      aliadoId: null,
-    },
-    data: {
-      aliadoId: conectado.id,
-    },
-  });
-
-  const [aliados, sedesSinAliado] = await Promise.all([
-    prisma.aliado.findMany({
-      select: {
-        id: true,
-        nombre: true,
-        codigo: true,
-        activo: true,
-        createdAt: true,
-        updatedAt: true,
-        sedes: {
-          where: {
-            activa: true,
-          },
-          select: {
-            id: true,
-            nombre: true,
-            codigo: true,
-            activa: true,
-          },
-          orderBy: {
-            nombre: "asc",
-          },
+  const aliados = await prisma.aliado.findMany({
+    select: {
+      id: true,
+      nombre: true,
+      codigo: true,
+      activo: true,
+      createdAt: true,
+      updatedAt: true,
+      sedes: {
+        where: {
+          activa: true,
         },
-      },
-      orderBy: [
-        {
-          activo: "desc",
+        select: {
+          id: true,
+          nombre: true,
+          codigo: true,
+          activa: true,
         },
-        {
+        orderBy: {
           nombre: "asc",
         },
-      ],
-    }),
-    prisma.sede.findMany({
-      where: {
-        activa: true,
-        aliadoId: null,
       },
-      select: {
-        id: true,
-        nombre: true,
-        codigo: true,
+    },
+    orderBy: [
+      {
+        activo: "desc",
       },
-      orderBy: {
+      {
         nombre: "asc",
       },
-    }),
-  ]);
+    ],
+  });
 
   const aliadosConMetricas = await Promise.all(
     aliados.map(async (aliado) => {
@@ -158,7 +119,6 @@ async function loadAliadosPayload() {
 
   return {
     aliados: aliadosConMetricas,
-    sedesSinAliado,
   };
 }
 
@@ -202,32 +162,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const aliado = await prisma.aliado.create({
+    await prisma.aliado.create({
       data: {
         nombre,
         codigo,
         activo: true,
       },
-      select: {
-        id: true,
-      },
     });
-
-    const sedeIds = parseIds(body.sedeIds);
-
-    if (sedeIds.length > 0) {
-      await prisma.sede.updateMany({
-        where: {
-          id: {
-            in: sedeIds,
-          },
-          activa: true,
-        },
-        data: {
-          aliadoId: aliado.id,
-        },
-      });
-    }
 
     return NextResponse.json({
       ok: true,
@@ -285,8 +226,6 @@ export async function PATCH(req: Request) {
       data.activo = Boolean(body.activo);
     }
 
-    const sedeIds = parseIds(body.sedeIds);
-
     await prisma.$transaction(async (tx) => {
       if (Object.keys(data).length > 0) {
         await tx.aliado.update({
@@ -297,33 +236,6 @@ export async function PATCH(req: Request) {
         });
       }
 
-      if (Array.isArray(body.sedeIds)) {
-        await tx.sede.updateMany({
-          where: {
-            aliadoId,
-            id: {
-              notIn: sedeIds,
-            },
-          },
-          data: {
-            aliadoId: null,
-          },
-        });
-
-        if (sedeIds.length > 0) {
-          await tx.sede.updateMany({
-            where: {
-              id: {
-                in: sedeIds,
-              },
-              activa: true,
-            },
-            data: {
-              aliadoId,
-            },
-          });
-        }
-      }
     });
 
     return NextResponse.json({

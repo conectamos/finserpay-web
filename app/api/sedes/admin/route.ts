@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
-import { ensureAliadoConectamos } from "@/lib/aliados";
 
 function esAdmin(rolNombre: string) {
   return String(rolNombre || "").trim().toUpperCase() === "ADMIN";
@@ -32,6 +31,11 @@ function nombreUsuarioSede(nombreSede: string) {
 
 function mismoId(a?: number | null, b?: number | null) {
   return Number(a || 0) === Number(b || 0);
+}
+
+function parseAliadoId(value: unknown) {
+  const aliadoId = Number(value || 0);
+  return Number.isInteger(aliadoId) && aliadoId > 0 ? aliadoId : null;
 }
 
 async function requireAdmin() {
@@ -64,6 +68,20 @@ async function obtenerRolUsuarioId() {
   });
 
   return rol?.id ?? null;
+}
+
+async function ensureAliadoActivo(aliadoId: number) {
+  const aliado = await prisma.aliado.findFirst({
+    where: {
+      id: aliadoId,
+      activo: true,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return Boolean(aliado);
 }
 
 async function obtenerSedesAdmin() {
@@ -235,6 +253,7 @@ export async function POST(req: Request) {
     const codigo = normalizarCodigoSede(body.codigo);
     const usuarioAcceso = normalizarUsuarioAcceso(body.usuario);
     const clave = String(body.clave || "").trim();
+    const aliadoId = parseAliadoId(body.aliadoId);
 
     if (!nombre) {
       return NextResponse.json(
@@ -253,6 +272,20 @@ export async function POST(req: Request) {
     if (!clave) {
       return NextResponse.json(
         { error: "La clave es obligatoria" },
+        { status: 400 }
+      );
+    }
+
+    if (!aliadoId) {
+      return NextResponse.json(
+        { error: "Debes seleccionar el aliado de esta sede" },
+        { status: 400 }
+      );
+    }
+
+    if (!(await ensureAliadoActivo(aliadoId))) {
+      return NextResponse.json(
+        { error: "Aliado no encontrado o inactivo" },
         { status: 400 }
       );
     }
@@ -357,15 +390,13 @@ export async function POST(req: Request) {
     }
 
     await prisma.$transaction(async (tx) => {
-      const aliado = await ensureAliadoConectamos(tx);
-
       if (sedeParaReactivar) {
         await tx.sede.update({
           where: { id: sedeParaReactivar.id },
           data: {
             nombre,
             codigo,
-            aliadoId: aliado.id,
+            aliadoId,
             activa: true,
           },
         });
@@ -409,7 +440,7 @@ export async function POST(req: Request) {
         data: {
           nombre,
           codigo,
-          aliadoId: aliado.id,
+          aliadoId,
           activa: true,
         },
         select: {
@@ -461,6 +492,7 @@ export async function PATCH(req: Request) {
     const codigo = normalizarCodigoSede(body.codigo);
     const usuarioAcceso = normalizarUsuarioAcceso(body.usuario);
     const clave = String(body.clave || "").trim();
+    const aliadoId = parseAliadoId(body.aliadoId);
 
     if (!Number.isInteger(sedeId) || sedeId <= 0) {
       return NextResponse.json({ error: "Sede invalida" }, { status: 400 });
@@ -469,6 +501,20 @@ export async function PATCH(req: Request) {
     if (!nombre) {
       return NextResponse.json(
         { error: "El nombre de la sede es obligatorio" },
+        { status: 400 }
+      );
+    }
+
+    if ("aliadoId" in body && !aliadoId) {
+      return NextResponse.json(
+        { error: "Debes seleccionar el aliado de esta sede" },
+        { status: 400 }
+      );
+    }
+
+    if (aliadoId && !(await ensureAliadoActivo(aliadoId))) {
+      return NextResponse.json(
+        { error: "Aliado no encontrado o inactivo" },
         { status: 400 }
       );
     }
@@ -585,6 +631,7 @@ export async function PATCH(req: Request) {
         data: {
           nombre,
           codigo,
+          ...(aliadoId ? { aliadoId } : {}),
         },
       });
 
