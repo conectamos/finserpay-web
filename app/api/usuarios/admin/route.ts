@@ -288,10 +288,20 @@ async function ensureSedesExist(sedeIds: number[], aliadoScopeId: number | null)
     },
     select: {
       id: true,
+      aliadoId: true,
     },
   });
 
-  return sedes.length === sedeIds.length;
+  if (sedes.length !== sedeIds.length) {
+    return false;
+  }
+
+  if (!aliadoScopeId) {
+    const aliadoIds = new Set(sedes.map((sede) => sede.aliadoId || 0));
+    return aliadoIds.size === 1 && !aliadoIds.has(0);
+  }
+
+  return true;
 }
 
 async function ensureSedeExists(sedeId: number, aliadoScopeId: number | null) {

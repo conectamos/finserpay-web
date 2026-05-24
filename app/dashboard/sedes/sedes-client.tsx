@@ -70,6 +70,10 @@ function usuarioSugeridoSede(
   return [aliadoSlug, sedeSlug].filter(Boolean).join(".");
 }
 
+function esAliadoFinserPay(codigo: string | null | undefined) {
+  return String(codigo || "").trim().toUpperCase() === "FINSERPAY";
+}
+
 export default function GestionSedesPage() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [sedes, setSedes] = useState<SedeAdminItem[]>([]);
@@ -99,8 +103,18 @@ export default function GestionSedesPage() {
   >({});
 
   const esAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
-  const esAdminCentral = esAdmin && !user?.aliadoAccesoId;
+  const esAdminCentral = esAdmin && esAliadoFinserPay(user?.aliadoAccesoCodigo);
   const aliadoActualNombre = user?.aliadoAccesoNombre || "tu aliado";
+  const aliadoSeleccionado = aliados.find(
+    (aliado) => String(aliado.id) === nuevoAliadoId
+  );
+  const sedesVisibles = useMemo(
+    () =>
+      esAdminCentral && nuevoAliadoId
+        ? sedes.filter((sede) => String(sede.aliado?.id) === nuevoAliadoId)
+        : sedes,
+    [esAdminCentral, nuevoAliadoId, sedes]
+  );
   const aliadoNuevaSede = useMemo(
     () =>
       esAdminCentral
@@ -491,7 +505,7 @@ export default function GestionSedesPage() {
               <button
                 type="button"
                 onClick={() => void crearSede()}
-                disabled={guardandoNueva}
+                disabled={guardandoNueva || (esAdminCentral && !nuevoAliadoId)}
                 className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {guardandoNueva ? "Creando..." : "Crear sede"}
@@ -509,12 +523,14 @@ export default function GestionSedesPage() {
               Sedes registradas
             </h2>
             <p className="mt-2 text-sm text-slate-500">
-              Puedes cambiar nombre, codigo, usuario de acceso y asignar una nueva clave.
+              {esAdminCentral && aliadoSeleccionado
+                ? `Mostrando sedes de ${aliadoSeleccionado.nombre}. Puedes cambiar nombre, codigo, usuario de acceso y asignar una nueva clave.`
+                : "Puedes cambiar nombre, codigo, usuario de acceso y asignar una nueva clave."}
             </p>
           </div>
 
           <div className="mt-6 grid gap-4 xl:grid-cols-2">
-            {sedes.map((sede) => {
+            {sedesVisibles.map((sede) => {
               const edicion = ediciones[sede.id] || {
                 nombre: sede.nombre,
                 codigo: sede.codigo || "",
@@ -657,6 +673,11 @@ export default function GestionSedesPage() {
                 </section>
               );
             })}
+            {!sedesVisibles.length && (
+              <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm text-slate-500 xl:col-span-2">
+                Este aliado aun no tiene sedes registradas.
+              </div>
+            )}
           </div>
         </section>
       </div>

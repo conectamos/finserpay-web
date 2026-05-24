@@ -19,6 +19,9 @@ type SessionUser = {
   usuario: string;
   sedeId: number;
   sedeNombre: string;
+  aliadoAccesoId?: number | null;
+  aliadoAccesoNombre?: string | null;
+  aliadoAccesoCodigo?: string | null;
   rolId: number;
   rolNombre: string;
 };
@@ -27,6 +30,18 @@ type SedeItem = {
   id: number;
   nombre: string;
   activa: boolean;
+  aliado?: {
+    id: number;
+    nombre: string;
+    codigo: string | null;
+  } | null;
+};
+
+type AliadoItem = {
+  id: number;
+  nombre: string;
+  codigo: string | null;
+  activo: boolean;
 };
 
 type SellerItem = {
@@ -59,6 +74,11 @@ type AdminItem = {
   sede: {
     id: number;
     nombre: string;
+    aliado?: {
+      id: number;
+      nombre: string;
+      codigo: string | null;
+    } | null;
   };
   createdAt: string;
   updatedAt: string;
@@ -70,6 +90,10 @@ type AdminUsersResponse = {
   sedes: SedeItem[];
   vendedores: SellerItem[];
   administradores: AdminItem[];
+};
+
+type AliadosResponse = {
+  aliados?: AliadoItem[];
 };
 
 type TipoPerfilFormulario = TipoPerfilVendedor | "ADMINISTRADOR";
@@ -118,6 +142,10 @@ function sanitizePhone(value: string) {
 
 function sanitizeUsername(value: string) {
   return value.replace(/\s+/g, "").toLowerCase();
+}
+
+function esAliadoFinserPay(codigo: string | null | undefined) {
+  return String(codigo || "").trim().toUpperCase() === "FINSERPAY";
 }
 
 function AvatarBadge({
@@ -217,7 +245,9 @@ function SedeTransferBoard({
             ))
           ) : (
             <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
-              Todas las sedes ya quedaron asignadas.
+              {sedes.length
+                ? "Todas las sedes ya quedaron asignadas."
+                : "Este aliado aun no tiene sedes disponibles."}
             </div>
           )}
         </div>
@@ -385,6 +415,7 @@ function AdminProfileButton({
 export default function GestionVendedoresPage() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [sedes, setSedes] = useState<SedeItem[]>([]);
+  const [aliados, setAliados] = useState<AliadoItem[]>([]);
   const [vendedores, setVendedores] = useState<SellerItem[]>([]);
   const [administradores, setAdministradores] = useState<AdminItem[]>([]);
   const [mensaje, setMensaje] = useState("");
@@ -392,6 +423,7 @@ export default function GestionVendedoresPage() {
   const [guardandoNuevo, setGuardandoNuevo] = useState(false);
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
   const [filtroSede, setFiltroSede] = useState("");
+  const [aliadoSeleccionadoId, setAliadoSeleccionadoId] = useState("");
   const [selectedProfile, setSelectedProfile] = useState<SelectedProfile>(null);
 
   const [nuevo, setNuevo] = useState<SellerDraft>({
@@ -410,6 +442,21 @@ export default function GestionVendedoresPage() {
   const [ediciones, setEdiciones] = useState<Record<number, SellerDraft>>({});
 
   const esAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
+  const esAdminCentral = esAdmin && esAliadoFinserPay(user?.aliadoAccesoCodigo);
+  const aliadoSeleccionado = aliados.find(
+    (aliado) => String(aliado.id) === aliadoSeleccionadoId
+  );
+  const sedesDelAliado = useMemo(
+    () =>
+      esAdminCentral && aliadoSeleccionadoId
+        ? sedes.filter((sede) => String(sede.aliado?.id) === aliadoSeleccionadoId)
+        : sedes,
+    [aliadoSeleccionadoId, esAdminCentral, sedes]
+  );
+  const sedesDelAliadoIds = useMemo(
+    () => new Set(sedesDelAliado.map((sede) => sede.id)),
+    [sedesDelAliado]
+  );
 
   const applyData = (data: AdminUsersResponse) => {
     const sellers = Array.isArray(data.vendedores) ? data.vendedores : [];
@@ -445,18 +492,36 @@ export default function GestionVendedoresPage() {
 
   const cargarTodo = async () => {
     try {
-      const [sessionRes, usersRes] = await Promise.all([
+      const [sessionRes, usersRes, aliadosRes] = await Promise.all([
         fetch("/api/session", { cache: "no-store" }),
         fetch("/api/usuarios/admin", { cache: "no-store" }),
+        fetch("/api/aliados/admin", { cache: "no-store" }),
       ]);
 
       const sessionData = await sessionRes.json();
       const usersData = (await usersRes.json()) as AdminUsersResponse & {
         error?: string;
       };
+      const aliadosData = (await aliadosRes.json()) as AliadosResponse & {
+        error?: string;
+      };
 
       if (sessionRes.ok) {
         setUser(sessionData);
+      }
+
+      if (aliadosRes.ok) {
+        const aliadoItems = Array.isArray(aliadosData.aliados)
+          ? aliadosData.aliados
+          : [];
+        setAliados(aliadoItems);
+        setAliadoSeleccionadoId((actual) => {
+          if (actual && aliadoItems.some((aliado) => String(aliado.id) === actual)) {
+            return actual;
+          }
+
+          return aliadoItems[0]?.id ? String(aliadoItems[0].id) : "";
+        });
       }
 
       if (usersRes.ok) {
@@ -475,14 +540,49 @@ export default function GestionVendedoresPage() {
     void cargarTodo();
   }, []);
 
+  useEffect(() => {
+    if (!esAdminCentral) {
+      return;
+    }
+
+    setFiltroSede("");
+    setSelectedProfile(null);
+    setNuevo((current) => ({
+      ...current,
+      sedeIds: [],
+    }));
+  }, [aliadoSeleccionadoId, esAdminCentral]);
+
   const vendedoresFiltrados = useMemo(() => {
+    const base =
+      esAdminCentral && aliadoSeleccionadoId
+        ? vendedores.filter((item) =>
+            item.assignedSedeIds.some((sedeId) => sedesDelAliadoIds.has(sedeId))
+          )
+        : vendedores;
+
     if (!filtroSede) {
-      return vendedores;
+      return base;
     }
 
     const sedeId = Number(filtroSede || 0);
-    return vendedores.filter((item) => item.assignedSedeIds.includes(sedeId));
-  }, [filtroSede, vendedores]);
+    return base.filter((item) => item.assignedSedeIds.includes(sedeId));
+  }, [
+    aliadoSeleccionadoId,
+    esAdminCentral,
+    filtroSede,
+    sedesDelAliadoIds,
+    vendedores,
+  ]);
+  const administradoresFiltrados = useMemo(
+    () =>
+      esAdminCentral && aliadoSeleccionadoId
+        ? administradores.filter(
+            (item) => String(item.sede.aliado?.id) === aliadoSeleccionadoId
+          )
+        : administradores,
+    [administradores, aliadoSeleccionadoId, esAdminCentral]
+  );
   const supervisoresFiltrados = useMemo(
     () => vendedoresFiltrados.filter((item) => item.tipoPerfil === "SUPERVISOR"),
     [vendedoresFiltrados]
@@ -639,6 +739,9 @@ export default function GestionVendedoresPage() {
       setMensaje("");
 
       const draft = ediciones[vendedorId];
+      const sedeIds = esAdminCentral
+        ? draft.sedeIds.filter((sedeId) => sedesDelAliadoIds.has(sedeId))
+        : draft.sedeIds;
 
       const res = await fetch("/api/usuarios/admin", {
         method: "PATCH",
@@ -655,7 +758,7 @@ export default function GestionVendedoresPage() {
           email: draft.email,
           pin: draft.pin,
           activo: draft.activo,
-          sedeIds: draft.sedeIds,
+          sedeIds,
         }),
       });
 
@@ -812,6 +915,23 @@ export default function GestionVendedoresPage() {
           </div>
 
           <div className="mt-6 grid gap-4 lg:grid-cols-2">
+            {esAdminCentral && (
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700 lg:col-span-2">
+                Aliado
+                <select
+                  value={aliadoSeleccionadoId}
+                  onChange={(event) => setAliadoSeleccionadoId(event.target.value)}
+                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                >
+                  {aliados.map((aliado) => (
+                    <option key={aliado.id} value={aliado.id}>
+                      {aliado.nombre}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
             <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
               Nombre completo
               <input
@@ -864,7 +984,7 @@ export default function GestionVendedoresPage() {
                     className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                   >
                     <option value="">Seleccionar sede</option>
-                    {sedes.map((sede) => (
+                    {sedesDelAliado.map((sede) => (
                       <option key={sede.id} value={sede.id}>
                         {sede.nombre}
                       </option>
@@ -962,7 +1082,7 @@ export default function GestionVendedoresPage() {
             </p>
             <div className="mt-4">
               <SedeTransferBoard
-                sedes={sedes}
+                sedes={sedesDelAliado}
                 selectedIds={nuevo.sedeIds}
                 onToggle={toggleNuevoSede}
               />
@@ -974,7 +1094,7 @@ export default function GestionVendedoresPage() {
             <button
               type="button"
               onClick={() => void crearVendedor()}
-              disabled={guardandoNuevo}
+              disabled={guardandoNuevo || (esAdminCentral && !aliadoSeleccionadoId)}
               className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
             >
               {guardandoNuevo ? "Creando..." : "Crear usuario"}
@@ -992,7 +1112,9 @@ export default function GestionVendedoresPage() {
                 Directorio de usuarios
               </h2>
               <p className="mt-2 text-sm text-slate-500">
-                Selecciona un perfil para abrir su informacion y editarlo cuando aplique.
+                {esAdminCentral && aliadoSeleccionado
+                  ? `Mostrando perfiles de ${aliadoSeleccionado.nombre}. Selecciona un perfil para abrir su informacion y editarlo cuando aplique.`
+                  : "Selecciona un perfil para abrir su informacion y editarlo cuando aplique."}
               </p>
             </div>
 
@@ -1002,7 +1124,7 @@ export default function GestionVendedoresPage() {
               className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
             >
               <option value="">Todas las sedes</option>
-              {sedes.map((sede) => (
+              {sedesDelAliado.map((sede) => (
                 <option key={sede.id} value={sede.id}>
                   {sede.nombre}
                 </option>
@@ -1053,10 +1175,10 @@ export default function GestionVendedoresPage() {
 
             <ProfileColumn
               title="Administradores"
-              count={administradores.length}
+              count={administradoresFiltrados.length}
               empty="No hay administradores creados."
             >
-              {administradores.map((admin) => (
+              {administradoresFiltrados.map((admin) => (
                 <AdminProfileButton
                   key={admin.id}
                   admin={admin}
@@ -1289,7 +1411,7 @@ export default function GestionVendedoresPage() {
                     </p>
                     <div className="mt-4">
                       <SedeTransferBoard
-                        sedes={sedes}
+                        sedes={sedesDelAliado}
                         selectedIds={draft.sedeIds}
                         onToggle={(sedeId) => toggleEdicionSede(vendedor.id, sedeId)}
                       />
