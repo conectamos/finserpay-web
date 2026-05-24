@@ -12,6 +12,7 @@ export const ALIADO_FINSER_PAY = {
 
 type AliadoClient = Pick<PrismaClient, "aliado">;
 type AliadoSchemaClient = Pick<PrismaClient, "$executeRawUnsafe">;
+type CentralAdminClient = Pick<PrismaClient, "aliado" | "sede" | "usuario">;
 
 let aliadoSchemaPromise: Promise<void> | null = null;
 
@@ -125,6 +126,45 @@ export async function ensureAliadoFinserPay(prisma: AliadoClient) {
       activo: true,
     },
   });
+}
+
+export async function ensureFinserPayCentralAdmin(prisma: CentralAdminClient) {
+  const aliado = await ensureAliadoFinserPay(prisma);
+
+  const sede = await prisma.sede.upsert({
+    where: {
+      nombre: "ADMIN FINSER PAY",
+    },
+    update: {
+      aliadoId: aliado.id,
+      codigo: "ADMIN-FINSERPAY",
+      activa: true,
+    },
+    create: {
+      nombre: "ADMIN FINSER PAY",
+      codigo: "ADMIN-FINSERPAY",
+      aliadoId: aliado.id,
+      activa: true,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  await prisma.usuario.updateMany({
+    where: {
+      usuario: "admin",
+      rol: {
+        nombre: "ADMIN",
+      },
+    },
+    data: {
+      sedeId: sede.id,
+      activo: true,
+    },
+  });
+
+  return sede;
 }
 
 export function isFinserPayCentralAlly(codigo: string | null | undefined) {

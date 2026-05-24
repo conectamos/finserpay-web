@@ -46,6 +46,32 @@ SET
 WHERE
   "aliadoId" IS NULL;
 
+INSERT INTO "Sede" ("nombre", "codigo", "aliadoId", "activa", "clavePanelFinancieroHash", "createdAt", "updatedAt")
+VALUES (
+  'ADMIN FINSER PAY',
+  'ADMIN-FINSERPAY',
+  (SELECT "id" FROM "Aliado" WHERE "nombre" = 'FINSER PAY'),
+  true,
+  NULL,
+  NOW(),
+  NOW()
+)
+ON CONFLICT ("nombre") DO UPDATE
+SET
+  "codigo" = EXCLUDED."codigo",
+  "aliadoId" = EXCLUDED."aliadoId",
+  "activa" = true,
+  "updatedAt" = NOW();
+
+UPDATE "Usuario"
+SET
+  "sedeId" = (SELECT "id" FROM "Sede" WHERE "nombre" = 'ADMIN FINSER PAY'),
+  "activo" = true,
+  "updatedAt" = NOW()
+WHERE
+  "usuario" = 'admin'
+  AND "rolId" = (SELECT "id" FROM "Rol" WHERE "nombre" = 'ADMIN');
+
 UPDATE "Sede"
 SET
   "aliadoId" = (SELECT "id" FROM "Aliado" WHERE "nombre" = 'FINSER PAY'),

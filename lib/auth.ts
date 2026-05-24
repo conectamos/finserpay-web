@@ -7,7 +7,10 @@ import {
   verifySessionToken,
 } from "@/lib/session";
 import { isAdminRole } from "@/lib/roles";
-import { ensureAliadoSchema } from "@/lib/aliados";
+import {
+  ensureAliadoSchema,
+  ensureFinserPayCentralAdmin,
+} from "@/lib/aliados";
 
 export async function getSessionUser() {
   const cookieStore = await cookies();
@@ -18,6 +21,7 @@ export async function getSessionUser() {
   if (!session) return null;
 
   await ensureAliadoSchema(prisma);
+  await ensureFinserPayCentralAdmin(prisma);
 
   const user = await prisma.usuario.findUnique({
     where: { id: session.userId },
