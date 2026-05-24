@@ -44,6 +44,8 @@ import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { findEquipmentCatalogItem } from "@/lib/equipment-catalog";
 import { isAdminRole } from "@/lib/roles";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
+import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -427,6 +429,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const take = parseTake(searchParams.get("take"));
     const admin = isAdminRole(user.rolNombre);
+    const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
     const search = sanitizeSearch(searchParams.get("search"));
     const searchDigits = search.replace(/\D/g, "");
@@ -453,7 +456,7 @@ export async function GET(req: Request) {
     if (paymentsMode && !search && !requestedId) {
       return NextResponse.json({
         canAdmin: admin,
-        scope: admin ? "global" : "recaudo-global",
+        scope: adminCentral ? "global" : "aliado",
         search,
         items: [],
       });
@@ -469,7 +472,16 @@ export async function GET(req: Request) {
     }
 
     const scopeWhere: Prisma.CreditoWhereInput =
-      admin || paymentsMode || supervisorLookupMode ? {} : { sedeId: user.sedeId };
+      admin || paymentsMode || supervisorLookupMode
+        ? buildCreditAccessWhere({
+            admin,
+            adminCentral,
+            aliadoId: user.aliadoAccesoId,
+            sedeId: user.sedeId,
+            sellerSedeId: sellerSession?.sedeId,
+            supervisor: paymentsMode || supervisorLookupMode,
+          })
+        : { sedeId: user.sedeId };
     const searchOr: Prisma.CreditoWhereInput[] = search
       ? [
           { clienteNombre: { contains: search, mode: "insensitive" } },
@@ -547,12 +559,10 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       canAdmin: admin,
-      scope: admin
+      scope: adminCentral
         ? "global"
-        : paymentsMode
-          ? "recaudo-global"
-          : supervisorLookupMode
-            ? "supervisor-global"
+        : admin || paymentsMode || supervisorLookupMode
+          ? "aliado"
             : "sede",
       search,
       items: items.map((item) => serializeCredit(item, paymentMap)),

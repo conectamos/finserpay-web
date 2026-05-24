@@ -27,6 +27,8 @@ import {
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import { isAdminRole } from "@/lib/roles";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
+import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -153,9 +155,14 @@ function serializePayment(item: PaymentWithRelations) {
   };
 }
 
-async function loadCredit(creditId: number, admin: boolean, sedeId: number) {
+async function loadCredit(
+  creditId: number,
+  accessWhere: Prisma.CreditoWhereInput
+) {
   return prisma.credito.findFirst({
-    where: admin ? { id: creditId } : { id: creditId, sedeId },
+    where: {
+      AND: [{ id: creditId }, accessWhere],
+    },
     select: {
       id: true,
       folio: true,
@@ -440,7 +447,9 @@ export async function GET(
     }
 
     const admin = isAdminRole(user.rolNombre);
+    const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
+    const supervisor = sellerSession?.tipoPerfil === "SUPERVISOR";
     const params = await context.params;
     const creditId = parseId(params.id);
 
@@ -455,14 +464,22 @@ export async function GET(
       );
     }
 
-    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
+    if (!admin && !supervisor) {
       return NextResponse.json(
         { error: "Solo el supervisor o administrador puede consultar abonos" },
         { status: 403 }
       );
     }
 
-    const credit = await loadCredit(creditId, true, user.sedeId);
+    const creditAccessWhere = buildCreditAccessWhere({
+      admin,
+      adminCentral,
+      aliadoId: user.aliadoAccesoId,
+      sedeId: user.sedeId,
+      sellerSedeId: sellerSession?.sedeId,
+      supervisor,
+    });
+    const credit = await loadCredit(creditId, creditAccessWhere);
 
     if (!credit) {
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
@@ -559,7 +576,9 @@ export async function POST(
     }
 
     const admin = isAdminRole(user.rolNombre);
+    const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
+    const supervisor = sellerSession?.tipoPerfil === "SUPERVISOR";
     const params = await context.params;
     const creditId = parseId(params.id);
 
@@ -574,14 +593,22 @@ export async function POST(
       );
     }
 
-    if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
+    if (!admin && !supervisor) {
       return NextResponse.json(
         { error: "Solo el supervisor o administrador puede registrar abonos" },
         { status: 403 }
       );
     }
 
-    const credit = await loadCredit(creditId, true, user.sedeId);
+    const creditAccessWhere = buildCreditAccessWhere({
+      admin,
+      adminCentral,
+      aliadoId: user.aliadoAccesoId,
+      sedeId: user.sedeId,
+      sellerSedeId: sellerSession?.sedeId,
+      supervisor,
+    });
+    const credit = await loadCredit(creditId, creditAccessWhere);
 
     if (!credit) {
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
@@ -781,7 +808,7 @@ export async function POST(
       Number(credit.montoCredito || 0),
       Number(credit.cuotaInicial || 0)
     );
-    const updatedCredit = await loadCredit(credit.id, true, user.sedeId);
+    const updatedCredit = await loadCredit(credit.id, creditAccessWhere);
     const plan = await loadPaymentPlan(updatedCredit || credit);
     const automation =
       updatedCredit && plan

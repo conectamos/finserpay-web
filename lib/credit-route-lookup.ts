@@ -1,3 +1,5 @@
+import type { Prisma } from "@/app/generated/prisma/client";
+
 export type CreditRouteLookup = {
   id: number | null;
   folio: string | null;
@@ -33,4 +35,42 @@ export function buildSedeScopeIds(
       )
     )
   );
+}
+
+function normalizePositiveId(value: number | string | null | undefined) {
+  const numeric = Number(value || 0);
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
+export function buildCreditAccessWhere(options: {
+  admin?: boolean;
+  adminCentral?: boolean;
+  aliadoId?: number | string | null;
+  sedeId?: number | null;
+  sellerSedeId?: number | null;
+  supervisor?: boolean;
+}): Prisma.CreditoWhereInput {
+  if (options.adminCentral) {
+    return {};
+  }
+
+  const aliadoId = normalizePositiveId(options.aliadoId);
+
+  if ((options.admin || options.supervisor) && aliadoId) {
+    return {
+      sede: {
+        aliadoId,
+      },
+    };
+  }
+
+  const sedeScopeIds = buildSedeScopeIds(options.sedeId, options.sellerSedeId);
+
+  return sedeScopeIds.length
+    ? {
+        sedeId: {
+          in: sedeScopeIds,
+        },
+      }
+    : { id: -1 };
 }

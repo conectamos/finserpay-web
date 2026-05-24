@@ -9,10 +9,11 @@ import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
 import {
+  buildCreditAccessWhere,
   buildCreditLookupWhere,
-  buildSedeScopeIds,
   parseCreditRouteLookup,
 } from "@/lib/credit-route-lookup";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -325,9 +326,9 @@ export async function GET(
     }
 
     const admin = isAdminRole(user.rolNombre);
+    const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
     const supervisor = sellerSession?.tipoPerfil === "SUPERVISOR";
-    const canGlobalLookup = admin || supervisor;
 
     if (!admin && !supervisor) {
       return NextResponse.json(
@@ -343,15 +344,19 @@ export async function GET(
       return NextResponse.json({ error: "Credito invalido" }, { status: 400 });
     }
 
-    const sedeScopeIds = canGlobalLookup
-      ? []
-      : buildSedeScopeIds(user.sedeId, sellerSession?.sedeId);
     const lookupWhere = buildCreditLookupWhere(creditLookup);
+    const accessWhere = buildCreditAccessWhere({
+      admin,
+      adminCentral,
+      aliadoId: user.aliadoAccesoId,
+      sedeId: user.sedeId,
+      sellerSedeId: sellerSession?.sedeId,
+      supervisor,
+    });
 
     const credito = await prisma.credito.findFirst({
       where: {
-        ...lookupWhere,
-        ...(canGlobalLookup ? {} : { sedeId: { in: sedeScopeIds } }),
+        AND: [lookupWhere, accessWhere],
       },
       include: {
         usuario: {

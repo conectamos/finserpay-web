@@ -346,11 +346,7 @@ export async function POST(
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
     }
 
-    if (
-      admin &&
-      !adminCentral &&
-      current.sede.aliadoId !== Number(user.aliadoAccesoId || 0)
-    ) {
+    if (!adminCentral && current.sede.aliadoId !== Number(user.aliadoAccesoId || 0)) {
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
     }
 
