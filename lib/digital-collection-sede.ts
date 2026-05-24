@@ -1,13 +1,18 @@
 import prisma from "@/lib/prisma";
+import { ensureAliadoFinserPay, ensureAliadoSchema } from "@/lib/aliados";
 
 export const DIGITAL_COLLECTION_SEDE_CODE = "RECAUDO_DIGITAL";
 export const DIGITAL_COLLECTION_SEDE_NAME = "RECAUDO DIGITAL FINSER PAY";
 export const DIGITAL_COLLECTION_CAJA_CONCEPT = "ABONO CREDITO RECAUDO DIGITAL";
 
 export async function ensureDigitalCollectionSede() {
+  await ensureAliadoSchema(prisma);
+  const aliadoFinser = await ensureAliadoFinserPay(prisma);
+
   const byCode = await prisma.sede.findUnique({
     where: { codigo: DIGITAL_COLLECTION_SEDE_CODE },
     select: {
+      aliadoId: true,
       activa: true,
       codigo: true,
       id: true,
@@ -18,12 +23,14 @@ export async function ensureDigitalCollectionSede() {
   if (byCode) {
     if (
       byCode.nombre !== DIGITAL_COLLECTION_SEDE_NAME ||
-      !byCode.activa
+      !byCode.activa ||
+      byCode.aliadoId !== aliadoFinser.id
     ) {
       return prisma.sede.update({
         where: { id: byCode.id },
         data: {
           activa: true,
+          aliadoId: aliadoFinser.id,
           nombre: DIGITAL_COLLECTION_SEDE_NAME,
         },
         select: {
@@ -44,6 +51,7 @@ export async function ensureDigitalCollectionSede() {
   const byName = await prisma.sede.findUnique({
     where: { nombre: DIGITAL_COLLECTION_SEDE_NAME },
     select: {
+      aliadoId: true,
       activa: true,
       codigo: true,
       id: true,
@@ -52,11 +60,16 @@ export async function ensureDigitalCollectionSede() {
   });
 
   if (byName) {
-    if (byName.codigo !== DIGITAL_COLLECTION_SEDE_CODE || !byName.activa) {
+    if (
+      byName.codigo !== DIGITAL_COLLECTION_SEDE_CODE ||
+      !byName.activa ||
+      byName.aliadoId !== aliadoFinser.id
+    ) {
       return prisma.sede.update({
         where: { id: byName.id },
         data: {
           activa: true,
+          aliadoId: aliadoFinser.id,
           codigo: DIGITAL_COLLECTION_SEDE_CODE,
         },
         select: {
@@ -78,6 +91,7 @@ export async function ensureDigitalCollectionSede() {
     return await prisma.sede.create({
       data: {
         activa: true,
+        aliadoId: aliadoFinser.id,
         codigo: DIGITAL_COLLECTION_SEDE_CODE,
         nombre: DIGITAL_COLLECTION_SEDE_NAME,
       },

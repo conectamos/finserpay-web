@@ -3,9 +3,12 @@ import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import {
   ensureAliadoConectamos,
+  ensureAliadoFinserPay,
+  isFinserPayCentralAlly,
   normalizeAllyCode,
   normalizeAllyName,
 } from "@/lib/aliados";
+import { ensureDigitalCollectionSede } from "@/lib/digital-collection-sede";
 
 function esAdmin(rolNombre: string) {
   return String(rolNombre || "").trim().toUpperCase() === "ADMIN";
@@ -40,13 +43,21 @@ async function requireAdmin() {
 }
 
 function getAliadoScope(user: Awaited<ReturnType<typeof getSessionUser>>) {
+  if (isFinserPayCentralAlly(user?.aliadoAccesoCodigo)) {
+    return null;
+  }
+
   const aliadoId = Number(user?.aliadoAccesoId || 0);
 
   return Number.isInteger(aliadoId) && aliadoId > 0 ? aliadoId : null;
 }
 
 async function loadAliadosPayload(aliadoScopeId: number | null) {
-  await ensureAliadoConectamos(prisma);
+  await Promise.all([
+    ensureAliadoFinserPay(prisma),
+    ensureAliadoConectamos(prisma),
+    ensureDigitalCollectionSede(),
+  ]);
 
   const aliados = await prisma.aliado.findMany({
     where: {

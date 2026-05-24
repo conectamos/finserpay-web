@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 
 function esAdmin(rolNombre: string) {
   return String(rolNombre || "").trim().toUpperCase() === "ADMIN";
@@ -62,6 +63,10 @@ async function requireAdmin() {
 }
 
 function getAliadoScope(user: Awaited<ReturnType<typeof getSessionUser>>) {
+  if (isFinserPayCentralAlly(user?.aliadoAccesoCodigo)) {
+    return null;
+  }
+
   const aliadoId = Number(user?.aliadoAccesoId || 0);
 
   return Number.isInteger(aliadoId) && aliadoId > 0 ? aliadoId : null;

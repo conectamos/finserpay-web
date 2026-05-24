@@ -5,6 +5,11 @@ export const ALIADO_CONECTAMOS = {
   codigo: "CONECTAMOS",
 } as const;
 
+export const ALIADO_FINSER_PAY = {
+  nombre: "FINSER PAY",
+  codigo: "FINSERPAY",
+} as const;
+
 type AliadoClient = Pick<PrismaClient, "aliado">;
 type AliadoSchemaClient = Pick<PrismaClient, "$executeRawUnsafe">;
 
@@ -97,6 +102,33 @@ export async function ensureAliadoConectamos(prisma: AliadoClient) {
       activo: true,
     },
   });
+}
+
+export async function ensureAliadoFinserPay(prisma: AliadoClient) {
+  return prisma.aliado.upsert({
+    where: {
+      nombre: ALIADO_FINSER_PAY.nombre,
+    },
+    update: {
+      codigo: ALIADO_FINSER_PAY.codigo,
+      activo: true,
+    },
+    create: {
+      nombre: ALIADO_FINSER_PAY.nombre,
+      codigo: ALIADO_FINSER_PAY.codigo,
+      activo: true,
+    },
+    select: {
+      id: true,
+      nombre: true,
+      codigo: true,
+      activo: true,
+    },
+  });
+}
+
+export function isFinserPayCentralAlly(codigo: string | null | undefined) {
+  return String(codigo || "").trim().toUpperCase() === ALIADO_FINSER_PAY.codigo;
 }
 
 export function normalizeAllyName(value: unknown) {

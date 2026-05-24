@@ -7,6 +7,7 @@ import {
   normalizarAvatarPerfil,
   normalizarTipoPerfilVendedor,
 } from "@/lib/profile-avatars";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { ensureVendorProfileVisualColumns } from "@/lib/vendor-profile-schema";
 import { ensureUserProfileVisualColumns } from "@/lib/user-profile-schema";
 
@@ -93,6 +94,10 @@ async function requireAdmin() {
 }
 
 function getAliadoScope(user: Awaited<ReturnType<typeof getSessionUser>>) {
+  if (isFinserPayCentralAlly(user?.aliadoAccesoCodigo)) {
+    return null;
+  }
+
   const aliadoId = Number(user?.aliadoAccesoId || 0);
 
   return Number.isInteger(aliadoId) && aliadoId > 0 ? aliadoId : null;

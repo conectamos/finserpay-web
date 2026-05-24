@@ -11,6 +11,7 @@ SET
 
 INSERT INTO "Aliado" ("nombre", "codigo", "activo", "createdAt", "updatedAt")
 VALUES
+  ('FINSER PAY', 'FINSERPAY', true, NOW(), NOW()),
   ('CONECTAMOS', 'CONECTAMOS', true, NOW(), NOW())
 ON CONFLICT ("nombre") DO UPDATE
 SET
@@ -44,6 +45,17 @@ SET
   "aliadoId" = (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS')
 WHERE
   "aliadoId" IS NULL;
+
+UPDATE "Sede"
+SET
+  "aliadoId" = (SELECT "id" FROM "Aliado" WHERE "nombre" = 'FINSER PAY'),
+  "nombre" = 'RECAUDO DIGITAL FINSER PAY',
+  "codigo" = 'RECAUDO_DIGITAL',
+  "activa" = true,
+  "updatedAt" = NOW()
+WHERE
+  "codigo" = 'RECAUDO_DIGITAL'
+  OR "nombre" = 'RECAUDO DIGITAL FINSER PAY';
 
 INSERT INTO "Usuario" ("nombre", "usuario", "claveHash", "activo", "rolId", "sedeId", "createdAt", "updatedAt")
 SELECT
