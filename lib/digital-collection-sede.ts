@@ -9,8 +9,11 @@ export async function ensureDigitalCollectionSede() {
   await ensureAliadoSchema(prisma);
   const aliadoFinser = await ensureAliadoFinserPay(prisma);
 
-  const byCode = await prisma.sede.findUnique({
-    where: { codigo: DIGITAL_COLLECTION_SEDE_CODE },
+  const byCode = await prisma.sede.findFirst({
+    where: {
+      aliadoId: aliadoFinser.id,
+      codigo: DIGITAL_COLLECTION_SEDE_CODE,
+    },
     select: {
       aliadoId: true,
       activa: true,
@@ -48,8 +51,11 @@ export async function ensureDigitalCollectionSede() {
     };
   }
 
-  const byName = await prisma.sede.findUnique({
-    where: { nombre: DIGITAL_COLLECTION_SEDE_NAME },
+  const byName = await prisma.sede.findFirst({
+    where: {
+      aliadoId: aliadoFinser.id,
+      nombre: DIGITAL_COLLECTION_SEDE_NAME,
+    },
     select: {
       aliadoId: true,
       activa: true,

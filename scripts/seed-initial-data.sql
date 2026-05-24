@@ -19,32 +19,67 @@ SET
   "activo" = EXCLUDED."activo",
   "updatedAt" = NOW();
 
-INSERT INTO "Sede" ("nombre", "codigo", "activa", "clavePanelFinancieroHash", "createdAt", "updatedAt")
+ALTER TABLE "Sede" DROP CONSTRAINT IF EXISTS "Sede_nombre_key";
+ALTER TABLE "Sede" DROP CONSTRAINT IF EXISTS "Sede_codigo_key";
+DROP INDEX IF EXISTS "Sede_nombre_key";
+DROP INDEX IF EXISTS "Sede_codigo_key";
+
+CREATE UNIQUE INDEX IF NOT EXISTS "Sede_aliadoId_nombre_key"
+  ON "Sede" ("aliadoId", "nombre");
+
+CREATE UNIQUE INDEX IF NOT EXISTS "Sede_aliadoId_codigo_key"
+  ON "Sede" ("aliadoId", "codigo");
+
+INSERT INTO "Sede" ("nombre", "codigo", "aliadoId", "activa", "clavePanelFinancieroHash", "createdAt", "updatedAt")
 VALUES
-  ('BODEGA PRINCIPAL', 'BODEGA-PRINCIPAL', true, NULL, NOW(), NOW()),
-  ('SEDE 1', 'SEDE-1', true, NULL, NOW(), NOW()),
-  ('SEDE 2', 'SEDE-2', true, NULL, NOW(), NOW()),
-  ('SEDE 3', 'SEDE-3', true, NULL, NOW(), NOW()),
-  ('SEDE 4', 'SEDE-4', true, NULL, NOW(), NOW()),
-  ('SEDE 5', 'SEDE-5', true, NULL, NOW(), NOW()),
-  ('SEDE 6', 'SEDE-6', true, NULL, NOW(), NOW()),
-  ('SEDE 7', 'SEDE-7', true, NULL, NOW(), NOW()),
-  ('ONLINE', 'ONLINE', true, NULL, NOW(), NOW()),
-  ('TROPAS', 'TROPAS', true, NULL, NOW(), NOW()),
-  ('Stand PuntoNet', 'STAND-PUNTONET', true, NULL, NOW(), NOW()),
-  ('Stand Monky', 'STAND-MONKY', true, NULL, NOW(), NOW()),
-  ('Stand Solutions', 'STAND-SOLUTIONS', true, NULL, NOW(), NOW())
-ON CONFLICT ("nombre") DO UPDATE
+  ('BODEGA PRINCIPAL', 'BODEGA-PRINCIPAL', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('SEDE 1', 'SEDE-1', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('SEDE 2', 'SEDE-2', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('SEDE 3', 'SEDE-3', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('SEDE 4', 'SEDE-4', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('SEDE 5', 'SEDE-5', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('SEDE 6', 'SEDE-6', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('SEDE 7', 'SEDE-7', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('ONLINE', 'ONLINE', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('TROPAS', 'TROPAS', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('Stand PuntoNet', 'STAND-PUNTONET', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('Stand Monky', 'STAND-MONKY', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW()),
+  ('Stand Solutions', 'STAND-SOLUTIONS', (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS'), true, NULL, NOW(), NOW())
+ON CONFLICT ("aliadoId", "nombre") DO UPDATE
 SET
   "codigo" = EXCLUDED."codigo",
+  "aliadoId" = EXCLUDED."aliadoId",
   "activa" = EXCLUDED."activa",
   "updatedAt" = NOW();
 
 UPDATE "Sede"
 SET
+  "aliadoId" = (SELECT "id" FROM "Aliado" WHERE "nombre" = 'FINSER PAY'),
+  "codigo" = 'ADMIN-FINSERPAY',
+  "activa" = true,
+  "updatedAt" = NOW()
+WHERE
+  "nombre" = 'ADMIN FINSER PAY'
+  OR "codigo" = 'ADMIN-FINSERPAY';
+
+UPDATE "Sede"
+SET
+  "aliadoId" = (SELECT "id" FROM "Aliado" WHERE "nombre" = 'FINSER PAY'),
+  "nombre" = 'RECAUDO DIGITAL FINSER PAY',
+  "codigo" = 'RECAUDO_DIGITAL',
+  "activa" = true,
+  "updatedAt" = NOW()
+WHERE
+  "codigo" = 'RECAUDO_DIGITAL'
+  OR "nombre" = 'RECAUDO DIGITAL FINSER PAY';
+
+UPDATE "Sede"
+SET
   "aliadoId" = (SELECT "id" FROM "Aliado" WHERE "nombre" = 'CONECTAMOS')
 WHERE
-  "aliadoId" IS NULL;
+  "aliadoId" IS NULL
+  AND COALESCE("nombre", '') NOT IN ('ADMIN FINSER PAY', 'RECAUDO DIGITAL FINSER PAY')
+  AND COALESCE("codigo", '') NOT IN ('ADMIN-FINSERPAY', 'RECAUDO_DIGITAL');
 
 INSERT INTO "Sede" ("nombre", "codigo", "aliadoId", "activa", "clavePanelFinancieroHash", "createdAt", "updatedAt")
 VALUES (
@@ -56,7 +91,7 @@ VALUES (
   NOW(),
   NOW()
 )
-ON CONFLICT ("nombre") DO UPDATE
+ON CONFLICT ("aliadoId", "nombre") DO UPDATE
 SET
   "codigo" = EXCLUDED."codigo",
   "aliadoId" = EXCLUDED."aliadoId",
@@ -71,17 +106,6 @@ SET
 WHERE
   "usuario" = 'admin'
   AND "rolId" = (SELECT "id" FROM "Rol" WHERE "nombre" = 'ADMIN');
-
-UPDATE "Sede"
-SET
-  "aliadoId" = (SELECT "id" FROM "Aliado" WHERE "nombre" = 'FINSER PAY'),
-  "nombre" = 'RECAUDO DIGITAL FINSER PAY',
-  "codigo" = 'RECAUDO_DIGITAL',
-  "activa" = true,
-  "updatedAt" = NOW()
-WHERE
-  "codigo" = 'RECAUDO_DIGITAL'
-  OR "nombre" = 'RECAUDO DIGITAL FINSER PAY';
 
 INSERT INTO "Usuario" ("nombre", "usuario", "claveHash", "activo", "rolId", "sedeId", "createdAt", "updatedAt")
 SELECT

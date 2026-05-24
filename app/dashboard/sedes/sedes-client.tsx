@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type SessionUser = {
   id: number;
@@ -11,6 +11,7 @@ type SessionUser = {
   sedeNombre: string;
   aliadoAccesoId?: number | null;
   aliadoAccesoNombre?: string | null;
+  aliadoAccesoCodigo?: string | null;
   rolId: number;
   rolNombre: string;
 };
@@ -48,6 +49,27 @@ function slugUsuarioSede(valor: string) {
     .trim();
 }
 
+function normalizarUsuarioLogin(valor: string) {
+  return String(valor || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9.]+/g, "")
+    .replace(/\.+/g, ".")
+    .replace(/^\.+|\.+$/g, "")
+    .trim();
+}
+
+function usuarioSugeridoSede(
+  aliado: { codigo?: string | null; nombre?: string | null },
+  sedeNombre: string
+) {
+  const aliadoSlug = slugUsuarioSede(aliado.codigo || aliado.nombre || "");
+  const sedeSlug = slugUsuarioSede(sedeNombre);
+
+  return [aliadoSlug, sedeSlug].filter(Boolean).join(".");
+}
+
 export default function GestionSedesPage() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [sedes, setSedes] = useState<SedeAdminItem[]>([]);
@@ -79,6 +101,22 @@ export default function GestionSedesPage() {
   const esAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
   const esAdminCentral = esAdmin && !user?.aliadoAccesoId;
   const aliadoActualNombre = user?.aliadoAccesoNombre || "tu aliado";
+  const aliadoNuevaSede = useMemo(
+    () =>
+      esAdminCentral
+        ? aliados.find((aliado) => String(aliado.id) === nuevoAliadoId) || null
+        : {
+            codigo: user?.aliadoAccesoCodigo || null,
+            nombre: user?.aliadoAccesoNombre || null,
+          },
+    [
+      aliados,
+      esAdminCentral,
+      nuevoAliadoId,
+      user?.aliadoAccesoCodigo,
+      user?.aliadoAccesoNombre,
+    ]
+  );
 
   const cargarTodo = async () => {
     try {
@@ -135,10 +173,22 @@ export default function GestionSedesPage() {
   }, []);
 
   useEffect(() => {
-    if (!nuevoUsuario || nuevoUsuario === slugUsuarioSede(nuevaSedeNombre)) {
-      setNuevoUsuario(slugUsuarioSede(nuevaSedeNombre));
+    const sugerido = aliadoNuevaSede
+      ? usuarioSugeridoSede(aliadoNuevaSede, nuevaSedeNombre)
+      : slugUsuarioSede(nuevaSedeNombre);
+    const sugeridosAliados = aliados.map((aliado) =>
+      usuarioSugeridoSede(aliado, nuevaSedeNombre)
+    );
+    const sugeridoPlano = slugUsuarioSede(nuevaSedeNombre);
+
+    if (
+      !nuevoUsuario ||
+      nuevoUsuario === sugeridoPlano ||
+      sugeridosAliados.includes(nuevoUsuario)
+    ) {
+      setNuevoUsuario(sugerido);
     }
-  }, [nuevaSedeNombre, nuevoUsuario]);
+  }, [aliadoNuevaSede, aliados, nuevaSedeNombre, nuevoUsuario]);
 
   const actualizarEdicion = (
     sedeId: number,
@@ -416,8 +466,12 @@ export default function GestionSedesPage() {
               Usuario de acceso
               <input
                 value={nuevoUsuario}
-                onChange={(event) => setNuevoUsuario(slugUsuarioSede(event.target.value))}
-                placeholder="sede8"
+                onChange={(event) => setNuevoUsuario(normalizarUsuarioLogin(event.target.value))}
+                placeholder={
+                  aliadoNuevaSede
+                    ? usuarioSugeridoSede(aliadoNuevaSede, "principal")
+                    : "aliado.principal"
+                }
                 className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               />
             </label>
@@ -554,7 +608,7 @@ export default function GestionSedesPage() {
                           actualizarEdicion(
                             sede.id,
                             "usuario",
-                            slugUsuarioSede(event.target.value)
+                            normalizarUsuarioLogin(event.target.value)
                           )
                         }
                         placeholder="usuario de login"

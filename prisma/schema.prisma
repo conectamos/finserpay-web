@@ -30,8 +30,8 @@ model Aliado {
 
 model Sede {
   id                  Int                  @id @default(autoincrement())
-  nombre              String               @unique
-  codigo              String?              @unique
+  nombre              String
+  codigo              String?
   aliadoId            Int?
   activa              Boolean              @default(true)
   clavePanelFinancieroHash String?
@@ -53,6 +53,8 @@ model Sede {
   capturasCredito     CapturaCreditoSession[]
 
   @@index([aliadoId])
+  @@unique([aliadoId, nombre])
+  @@unique([aliadoId, codigo])
 }
 
 model Usuario {

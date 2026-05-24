@@ -49,6 +49,24 @@ function slugUsuarioSede(valor: string) {
     .trim();
 }
 
+function normalizarUsuarioLogin(valor: string) {
+  return String(valor || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9.]+/g, "")
+    .replace(/\.+/g, ".")
+    .replace(/^\.+|\.+$/g, "")
+    .trim();
+}
+
+function usuarioSugeridoSede(aliado: Pick<AliadoItem, "codigo" | "nombre">, sedeNombre: string) {
+  const aliadoSlug = slugUsuarioSede(aliado.codigo || aliado.nombre);
+  const sedeSlug = slugUsuarioSede(sedeNombre);
+
+  return [aliadoSlug, sedeSlug].filter(Boolean).join(".");
+}
+
 function emptySedeForm(): NuevaSedeState {
   return {
     nombre: "",
@@ -152,9 +170,17 @@ export default function AliadosClient() {
 
       if (
         campo === "nombre" &&
-        (!previo.usuario || previo.usuario === slugUsuarioSede(previo.nombre))
+        (!previo.usuario ||
+          previo.usuario === usuarioSugeridoSede(
+            aliados.find((aliado) => aliado.id === aliadoId) || {
+              codigo: "",
+              nombre: "",
+            },
+            previo.nombre
+          ))
       ) {
-        siguiente.usuario = slugUsuarioSede(valor);
+        const aliado = aliados.find((item) => item.id === aliadoId);
+        siguiente.usuario = aliado ? usuarioSugeridoSede(aliado, valor) : slugUsuarioSede(valor);
       }
 
       return {
@@ -450,9 +476,13 @@ export default function AliadosClient() {
                       <input
                         value={form.usuario}
                         onChange={(event) =>
-                          actualizarSedeForm(aliado.id, "usuario", event.target.value)
+                          actualizarSedeForm(
+                            aliado.id,
+                            "usuario",
+                            normalizarUsuarioLogin(event.target.value)
+                          )
                         }
-                        placeholder="Usuario de acceso"
+                        placeholder={`${slugUsuarioSede(aliado.codigo || aliado.nombre)}.principal`}
                         className="rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
                       />
                       <input

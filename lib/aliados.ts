@@ -11,6 +11,7 @@ export const ALIADO_FINSER_PAY = {
 } as const;
 
 type AliadoClient = Pick<PrismaClient, "aliado">;
+type AliadoBootstrapClient = Pick<PrismaClient, "aliado" | "sede">;
 type AliadoSchemaClient = Pick<PrismaClient, "$executeRawUnsafe">;
 type CentralAdminClient = Pick<PrismaClient, "aliado" | "sede" | "usuario">;
 
@@ -69,6 +70,32 @@ async function runAliadoSchemaSetup(prisma: AliadoSchemaClient) {
     CREATE INDEX IF NOT EXISTS "Sede_aliadoId_idx"
       ON "Sede" ("aliadoId")
   `);
+
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "Sede" DROP CONSTRAINT IF EXISTS "Sede_nombre_key"
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "Sede" DROP CONSTRAINT IF EXISTS "Sede_codigo_key"
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    DROP INDEX IF EXISTS "Sede_nombre_key"
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    DROP INDEX IF EXISTS "Sede_codigo_key"
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    CREATE UNIQUE INDEX IF NOT EXISTS "Sede_aliadoId_nombre_key"
+      ON "Sede" ("aliadoId", "nombre")
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    CREATE UNIQUE INDEX IF NOT EXISTS "Sede_aliadoId_codigo_key"
+      ON "Sede" ("aliadoId", "codigo")
+  `);
 }
 
 export async function ensureAliadoSchema(prisma: AliadoSchemaClient) {
@@ -82,8 +109,8 @@ export async function ensureAliadoSchema(prisma: AliadoSchemaClient) {
   await aliadoSchemaPromise;
 }
 
-export async function ensureAliadoConectamos(prisma: AliadoClient) {
-  return prisma.aliado.upsert({
+export async function ensureAliadoConectamos(prisma: AliadoBootstrapClient) {
+  const aliado = await prisma.aliado.upsert({
     where: {
       nombre: ALIADO_CONECTAMOS.nombre,
     },
@@ -103,6 +130,24 @@ export async function ensureAliadoConectamos(prisma: AliadoClient) {
       activo: true,
     },
   });
+
+  await prisma.sede.updateMany({
+    where: {
+      aliadoId: null,
+      nombre: {
+        notIn: ["ADMIN FINSER PAY", "RECAUDO DIGITAL FINSER PAY"],
+      },
+      OR: [
+        { codigo: null },
+        { codigo: { notIn: ["ADMIN-FINSERPAY", "RECAUDO_DIGITAL"] } },
+      ],
+    },
+    data: {
+      aliadoId: aliado.id,
+    },
+  });
+
+  return aliado;
 }
 
 export async function ensureAliadoFinserPay(prisma: AliadoClient) {
@@ -131,25 +176,47 @@ export async function ensureAliadoFinserPay(prisma: AliadoClient) {
 export async function ensureFinserPayCentralAdmin(prisma: CentralAdminClient) {
   const aliado = await ensureAliadoFinserPay(prisma);
 
-  const sede = await prisma.sede.upsert({
+  const existing = await prisma.sede.findFirst({
     where: {
-      nombre: "ADMIN FINSER PAY",
-    },
-    update: {
-      aliadoId: aliado.id,
-      codigo: "ADMIN-FINSERPAY",
-      activa: true,
-    },
-    create: {
-      nombre: "ADMIN FINSER PAY",
-      codigo: "ADMIN-FINSERPAY",
-      aliadoId: aliado.id,
-      activa: true,
+      OR: [
+        { nombre: "ADMIN FINSER PAY" },
+        { codigo: "ADMIN-FINSERPAY" },
+      ],
     },
     select: {
       id: true,
     },
+    orderBy: {
+      id: "asc",
+    },
   });
+
+  const sede = existing
+    ? await prisma.sede.update({
+        where: {
+          id: existing.id,
+        },
+        data: {
+          aliadoId: aliado.id,
+          codigo: "ADMIN-FINSERPAY",
+          nombre: "ADMIN FINSER PAY",
+          activa: true,
+        },
+        select: {
+          id: true,
+        },
+      })
+    : await prisma.sede.create({
+        data: {
+          nombre: "ADMIN FINSER PAY",
+          codigo: "ADMIN-FINSERPAY",
+          aliadoId: aliado.id,
+          activa: true,
+        },
+        select: {
+          id: true,
+        },
+      });
 
   await prisma.usuario.updateMany({
     where: {

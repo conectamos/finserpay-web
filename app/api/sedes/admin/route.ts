@@ -22,7 +22,9 @@ function normalizarUsuarioAcceso(valor: unknown) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "")
+    .replace(/[^a-z0-9.]+/g, "")
+    .replace(/\.+/g, ".")
+    .replace(/^\.+|\.+$/g, "")
     .trim();
 }
 
@@ -332,8 +334,11 @@ export async function POST(req: Request) {
     }
 
     const [sedePorNombre, sedePorCodigo, usuarioExistente] = await Promise.all([
-      prisma.sede.findUnique({
-        where: { nombre },
+      prisma.sede.findFirst({
+        where: {
+          aliadoId,
+          nombre,
+        },
         select: {
           id: true,
           nombre: true,
@@ -342,8 +347,11 @@ export async function POST(req: Request) {
         },
       }),
       codigo
-        ? prisma.sede.findUnique({
-            where: { codigo },
+        ? prisma.sede.findFirst({
+            where: {
+              aliadoId,
+              codigo,
+            },
             select: {
               id: true,
               nombre: true,
@@ -363,6 +371,7 @@ export async function POST(req: Request) {
               id: true,
               nombre: true,
               codigo: true,
+              aliadoId: true,
               activa: true,
             },
           },
@@ -372,14 +381,14 @@ export async function POST(req: Request) {
 
     if (sedePorNombre?.activa) {
       return NextResponse.json(
-        { error: "Ya existe una sede con ese nombre" },
+        { error: "Este aliado ya tiene una sede con ese nombre" },
         { status: 400 }
       );
     }
 
     if (sedePorCodigo?.activa) {
       return NextResponse.json(
-        { error: "Ese codigo de sede ya existe" },
+        { error: "Este aliado ya tiene una sede con ese codigo" },
         { status: 400 }
       );
     }
@@ -405,7 +414,8 @@ export async function POST(req: Request) {
           ? sedePorCodigo
           : usuarioExistente &&
               !usuarioExistente.activo &&
-              !usuarioExistente.sede.activa
+              !usuarioExistente.sede.activa &&
+              mismoId(usuarioExistente.sede.aliadoId, aliadoId)
             ? usuarioExistente.sede
             : null;
 
@@ -590,6 +600,8 @@ export async function PATCH(req: Request) {
       );
     }
 
+    const aliadoDestinoId = aliadoId || sedeActual.aliadoId;
+
     const accesoExistente = sedeActual.usuarios.find(
       (usuario) => String(usuario.rol?.nombre || "").toUpperCase() === "USUARIO"
     );
@@ -610,6 +622,7 @@ export async function PATCH(req: Request) {
 
     const otraSedeMismoNombre = await prisma.sede.findFirst({
       where: {
+        aliadoId: aliadoDestinoId,
         nombre,
         id: { not: sedeId },
       },
@@ -618,7 +631,7 @@ export async function PATCH(req: Request) {
 
     if (otraSedeMismoNombre) {
       return NextResponse.json(
-        { error: "Ya existe otra sede con ese nombre" },
+        { error: "Este aliado ya tiene otra sede con ese nombre" },
         { status: 400 }
       );
     }
@@ -626,6 +639,7 @@ export async function PATCH(req: Request) {
     if (codigo) {
       const otraSedeMismoCodigo = await prisma.sede.findFirst({
         where: {
+          aliadoId: aliadoDestinoId,
           codigo,
           id: { not: sedeId },
         },
@@ -634,7 +648,7 @@ export async function PATCH(req: Request) {
 
       if (otraSedeMismoCodigo) {
         return NextResponse.json(
-          { error: "Ya existe otra sede con ese codigo" },
+          { error: "Este aliado ya tiene otra sede con ese codigo" },
           { status: 400 }
         );
       }
