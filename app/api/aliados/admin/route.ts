@@ -137,12 +137,20 @@ async function loadAliadosPayload(aliadoScopeId: number | null) {
     })
   );
 
+  const sistemaCentral =
+    aliadosConMetricas.find((aliado) => isFinserPayCentralAlly(aliado.codigo)) ||
+    null;
+  const aliadosComerciales = aliadosConMetricas.filter(
+    (aliado) => !isFinserPayCentralAlly(aliado.codigo)
+  );
+
   return {
     scope: {
       central: !aliadoScopeId,
       aliadoId: aliadoScopeId,
     },
-    aliados: aliadosConMetricas,
+    sistemaCentral: aliadoScopeId ? null : sistemaCentral,
+    aliados: aliadosComerciales,
   };
 }
 

@@ -32,6 +32,7 @@ type AliadosPayload = {
     central: boolean;
     aliadoId: number | null;
   };
+  sistemaCentral?: AliadoItem | null;
   aliados: AliadoItem[];
 };
 
@@ -58,6 +59,7 @@ function emptySedeForm(): NuevaSedeState {
 }
 
 export default function AliadosClient() {
+  const [sistemaCentral, setSistemaCentral] = useState<AliadoItem | null>(null);
   const [aliados, setAliados] = useState<AliadoItem[]>([]);
   const [mensaje, setMensaje] = useState("");
   const [cargando, setCargando] = useState(true);
@@ -82,6 +84,7 @@ export default function AliadosClient() {
       }
 
       const items = Array.isArray(data.aliados) ? data.aliados : [];
+      setSistemaCentral(data.sistemaCentral || null);
       setAliados(items);
       setEsCentral(Boolean(data.scope?.central));
       setSedesForm((actual) =>
@@ -209,13 +212,13 @@ export default function AliadosClient() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.28em] text-emerald-700">
-                Financiera FINSER PAY
+                Sistema central
               </span>
               <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-5xl">
                 Aliados y sedes
               </h1>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-                Desde FINSER PAY nacen los aliados. Cada aliado crea y administra sus propias sedes; cartera queda solo en la plataforma central.
+                FINSER PAY opera como plataforma central. Debajo se crean aliados comerciales, y cada aliado administra solo sus propias sedes, vendedores, creditos y recaudos.
               </p>
             </div>
 
@@ -236,12 +239,97 @@ export default function AliadosClient() {
           </div>
         </header>
 
+        {sistemaCentral ? (
+          <section className="rounded-[24px] border border-emerald-200 bg-[#f6fffb] p-5 shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.28em] text-emerald-700">
+                  Sistema central
+                </p>
+                <h2 className="mt-2 text-2xl font-black sm:text-3xl">
+                  FINSER PAY
+                </h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                  Aqui quedan las funciones internas de la financiera: cartera, recaudo digital, administracion global y control de aliados.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href="/dashboard/cartera"
+                  className="rounded-xl border border-emerald-200 bg-white px-4 py-3 text-sm font-black text-emerald-800 transition hover:bg-emerald-50"
+                >
+                  Cartera central
+                </Link>
+                <Link
+                  href="/dashboard/sedes"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 transition hover:border-slate-300"
+                >
+                  Ver sedes
+                </Link>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
+                  Sedes internas
+                </p>
+                <p className="mt-2 text-2xl font-black">
+                  {formatNumber(sistemaCentral.totalSedes)}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
+                  Creditos globales
+                </p>
+                <p className="mt-2 text-2xl font-black">
+                  {formatNumber(sistemaCentral.totalCreditos)}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
+                  Recaudos centralizados
+                </p>
+                <p className="mt-2 text-2xl font-black">
+                  {formatNumber(sistemaCentral.totalRecaudos)}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
+                Sedes del sistema
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {sistemaCentral.sedes.length ? (
+                  sistemaCentral.sedes.map((sede) => (
+                    <div
+                      key={sede.id}
+                      className="rounded-2xl border border-emerald-100 bg-white px-4 py-3"
+                    >
+                      <p className="truncate text-sm font-black">{sede.nombre}</p>
+                      <p className="mt-1 text-[11px] font-bold text-slate-400">
+                        {sede.codigo || `SEDE-${sede.id}`}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="rounded-2xl border border-dashed border-emerald-200 bg-white px-4 py-4 text-sm font-bold text-slate-500">
+                    No hay sedes internas configuradas.
+                  </p>
+                )}
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         {esCentral ? (
           <section className="rounded-[24px] border border-emerald-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
             <div className="grid gap-3 lg:grid-cols-[1fr_220px_160px] lg:items-end">
               <label className="block">
                 <span className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
-                  Nuevo aliado
+                  Nuevo aliado comercial
                 </span>
                 <input
                   value={nombre}
@@ -285,8 +373,19 @@ export default function AliadosClient() {
             Cargando aliados...
           </section>
         ) : (
-          <section className="grid gap-4 lg:grid-cols-2">
-            {aliados.map((aliado) => {
+          <section className="space-y-4">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-slate-500">
+                Aliados comerciales
+              </p>
+              <h2 className="mt-2 text-2xl font-black">
+                Sedes de aliados
+              </h2>
+            </div>
+
+            {aliados.length ? (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {aliados.map((aliado) => {
               const form = sedesForm[aliado.id] || emptySedeForm();
 
               return (
@@ -406,7 +505,13 @@ export default function AliadosClient() {
                   </div>
                 </article>
               );
-            })}
+                })}
+              </div>
+            ) : (
+              <div className="rounded-[24px] border border-dashed border-slate-300 bg-white p-6 text-sm font-bold text-slate-500">
+                Aun no hay aliados comerciales creados.
+              </div>
+            )}
           </section>
         )}
       </div>
