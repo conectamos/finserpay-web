@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireAdminOrSupervisorDashboardAccess } from "@/lib/dashboard-access";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 
 const reportCards = [
   {
@@ -35,7 +36,9 @@ export const metadata = {
 };
 
 export default async function ReportesAdminPage() {
-  const { admin } = await requireAdminOrSupervisorDashboardAccess();
+  const { admin, session } = await requireAdminOrSupervisorDashboardAccess();
+  const adminCentral = admin && isFinserPayCentralAlly(session.aliadoAccesoCodigo);
+  const aliadoNombre = session.aliadoAccesoNombre || "tu aliado";
 
   return (
     <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
@@ -50,7 +53,9 @@ export default async function ReportesAdminPage() {
                 Centro de reportes
               </h1>
               <p className="mt-3 text-sm leading-6 text-slate-200 md:text-base">
-                Desde aqui controlas creditos, abonos, vendedores y sedes del flujo nuevo de FINSER PAY.
+                {adminCentral
+                  ? "Desde aqui controlas creditos, abonos, vendedores y sedes del flujo nuevo de FINSER PAY."
+                  : `Desde aqui revisas creditos, abonos, vendedores y sedes de ${aliadoNombre}.`}
               </p>
             </div>
 
@@ -65,7 +70,17 @@ export default async function ReportesAdminPage() {
 
         <section className="mt-8 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
           {reportCards
-            .filter((card) => admin || !["/dashboard/sedes", "/dashboard/usuarios"].includes(card.href))
+            .filter((card) => {
+              if (!admin) {
+                return !["/dashboard/sedes", "/dashboard/usuarios", "/dashboard/cartera"].includes(card.href);
+              }
+
+              if (!adminCentral) {
+                return card.href !== "/dashboard/cartera";
+              }
+
+              return true;
+            })
             .map((card) => (
             <Link
               key={card.href}

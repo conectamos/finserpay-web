@@ -1,4 +1,4 @@
-import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
+import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import EqualityZeroTouchConsole from "./equality-zero-touch-console";
 
 export const metadata = {
@@ -7,7 +7,7 @@ export const metadata = {
 };
 
 export default async function EqualityPage() {
-  const { session } = await requireAdminDashboardAccess();
+  const { session } = await requireCentralAdminDashboardAccess();
 
   return (
     <EqualityZeroTouchConsole

@@ -5,6 +5,7 @@ import { getSessionUser } from "@/lib/auth";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { isAdminRole } from "@/lib/roles";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { obtenerAvatarPerfilSrc } from "@/lib/profile-avatars";
 import { ensureVendorProfileVisualColumns } from "@/lib/vendor-profile-schema";
 import LogoutButton from "./_components/logout-button";
@@ -709,6 +710,12 @@ export default async function DashboardPage() {
   const rolUsuario = usuario?.rol?.nombre ?? "USUARIO";
   const sedeAccesoLabel = usuario?.sede?.nombre ?? "GLOBAL";
   const admin = isAdminRole(rolUsuario);
+  const adminCentral = admin && isFinserPayCentralAlly(session.aliadoAccesoCodigo);
+  const adminAliado = admin && !adminCentral;
+  const aliadoPanelNombre = session.aliadoAccesoNombre || "Aliado";
+  const aliadoScopeId = Number(session.aliadoAccesoId || 0);
+  const aliadoStatsScopeId =
+    Number.isInteger(aliadoScopeId) && aliadoScopeId > 0 ? aliadoScopeId : -1;
   if (!admin) {
     await ensureVendorProfileVisualColumns();
   }
@@ -753,11 +760,13 @@ export default async function DashboardPage() {
   const sellerSearchHref = sellerIsSupervisor
     ? "/dashboard/clientes"
     : "/dashboard/creditos";
-  const saludo = admin
+  const saludo = adminCentral
     ? `Bienvenido, ${nombreUsuario}. Este proyecto quedo enfocado en fabrica de creditos e integraciones remotas.`
-    : sellerIsSupervisor
-      ? `Bienvenido, ${nombreVisible}. Desde aqui supervisas creditos, recaudo y seguimiento de la sede.`
-      : `Bienvenido, ${nombreVisible}. Desde aqui generas creditos, inscribes equipos y validas si se pueden entregar.`;
+    : adminAliado
+      ? `Bienvenido, ${nombreUsuario}. Gestionas sedes, usuarios, creditos y recaudos de ${aliadoPanelNombre}.`
+      : sellerIsSupervisor
+        ? `Bienvenido, ${nombreVisible}. Desde aqui supervisas creditos, recaudo y seguimiento de la sede.`
+        : `Bienvenido, ${nombreVisible}. Desde aqui generas creditos, inscribes equipos y validas si se pueden entregar.`;
   if (admin) {
     await ensureCreditAbonoAuditColumns();
   }
@@ -766,6 +775,13 @@ export default async function DashboardPage() {
     ? await Promise.all([
         prisma.credito.count({
           where: {
+            ...(adminAliado
+              ? {
+                  sede: {
+                    aliadoId: aliadoStatsScopeId,
+                  },
+                }
+              : {}),
             estado: {
               not: "ANULADO",
             },
@@ -773,11 +789,25 @@ export default async function DashboardPage() {
         }),
         prisma.credito.count({
           where: {
+            ...(adminAliado
+              ? {
+                  sede: {
+                    aliadoId: aliadoStatsScopeId,
+                  },
+                }
+              : {}),
             estado: "ANULADO",
           },
         }),
         prisma.creditoAbono.count({
           where: {
+            ...(adminAliado
+              ? {
+                  sede: {
+                    aliadoId: aliadoStatsScopeId,
+                  },
+                }
+              : {}),
             estado: {
               not: "ANULADO",
             },
@@ -785,6 +815,13 @@ export default async function DashboardPage() {
         }),
         prisma.creditoAbono.count({
           where: {
+            ...(adminAliado
+              ? {
+                  sede: {
+                    aliadoId: aliadoStatsScopeId,
+                  },
+                }
+              : {}),
             estado: "ANULADO",
           },
         }),
@@ -812,15 +849,19 @@ export default async function DashboardPage() {
     ...(admin
       ? [
           { href: "/dashboard/reportes", label: "Reportes admin" },
-          { href: "/dashboard/cartera", label: "Cartera" },
-          { href: "/dashboard/clientes", label: "Clientes y ajuste plan" },
-          { href: "/dashboard/aliados", label: "Aliados" },
           { href: "/dashboard/usuarios", label: "Vendedores" },
           { href: "/dashboard/sedes", label: "Sedes" },
-          { href: "/dashboard/catalogo-equipos", label: "Catalogo de equipos" },
-          { href: "/dashboard/parametros-credito", label: "Parametros de credito" },
-          { href: "/dashboard/integraciones", label: "Centro de integraciones" },
-          { href: "/dashboard/equality", label: "Equality Zero Touch" },
+          ...(adminCentral
+            ? [
+                { href: "/dashboard/cartera", label: "Cartera" },
+                { href: "/dashboard/clientes", label: "Clientes y ajuste plan" },
+                { href: "/dashboard/aliados", label: "Aliados" },
+                { href: "/dashboard/catalogo-equipos", label: "Catalogo de equipos" },
+                { href: "/dashboard/parametros-credito", label: "Parametros de credito" },
+                { href: "/dashboard/integraciones", label: "Centro de integraciones" },
+                { href: "/dashboard/equality", label: "Equality Zero Touch" },
+              ]
+            : []),
         ]
       : []),
   ];
@@ -1445,10 +1486,10 @@ export default async function DashboardPage() {
             <div className="hidden h-10 w-px bg-[#d7dce2] sm:block" />
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#6d5a22]">
-                Panel admin
+                {adminCentral ? "Panel central" : "Panel aliado"}
               </p>
               <p className="mt-1 text-sm font-bold text-[#687080]">
-                {sedeLabel} - {rolUsuario}
+                {adminCentral ? sedeLabel : aliadoPanelNombre} - {rolUsuario}
               </p>
             </div>
           </div>
@@ -1468,15 +1509,21 @@ export default async function DashboardPage() {
                 Hola, {nombreUsuario.split(" ")[0] || nombreUsuario}. Elige una accion.
               </h1>
               <p className="mt-4 max-w-xl text-sm leading-6 text-[#687080]">
-                Menos panel, mas operacion: ventas, recaudo, reportes y gestion desde accesos claros.
+                {adminCentral
+                  ? "Menos panel, mas operacion: ventas, recaudo, reportes y gestion desde accesos claros."
+                  : `Gestiona sedes, usuarios, ventas, recaudo y reportes de ${aliadoPanelNombre}.`}
               </p>
             </div>
 
             <div className="relative mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <DashboardButton href="/dashboard/creditos?mode=create-client" label="Nuevo credito" tone="orange" />
               <DashboardButton href="/dashboard/abonos" label="Recibir abono" tone="dark" />
-              <DashboardButton href="/dashboard/cartera" label="Cartera" tone="green" />
-              <DashboardButton href="/dashboard/clientes" label="Ajustar plan" tone="blue" />
+              {adminCentral && (
+                <DashboardButton href="/dashboard/cartera" label="Cartera" tone="green" />
+              )}
+              {adminCentral && (
+                <DashboardButton href="/dashboard/clientes" label="Ajustar plan" tone="blue" />
+              )}
               <DashboardButton href="/dashboard/reportes" label="Ver reportes" tone="light" />
             </div>
           </div>
@@ -1533,20 +1580,26 @@ export default async function DashboardPage() {
                   Gestion
                 </p>
                 <h2 className="mt-3 text-3xl font-black tracking-tight text-[#20242a]">
-                  Administracion
+                  {adminCentral ? "Administracion" : "Administracion del aliado"}
                 </h2>
               </div>
               <span className="h-3 w-3 rounded-full bg-[#0f766e] shadow-[0_0_0_8px_rgba(15,118,110,0.12)]" />
             </div>
             <p className="mt-3 text-sm leading-6 text-[#687080]">
-              Sedes, usuarios, catalogo y parametros del credito quedan juntos.
+              {adminCentral
+                ? "Sedes, usuarios, catalogo y parametros del credito quedan juntos."
+                : `Sedes y usuarios de ${aliadoPanelNombre}. Los parametros centrales quedan reservados para FINSER PAY.`}
             </p>
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <DashboardButton href="/dashboard/sedes" label="Sedes" tone="dark" />
               <DashboardButton href="/dashboard/usuarios" label="Usuarios" tone="light" />
-              <DashboardButton href="/dashboard/aliados" label="Aliados" tone="blue" />
-              <DashboardButton href="/dashboard/catalogo-equipos" label="Catalogo equipos" tone="green" />
-              <DashboardButton href="/dashboard/parametros-credito" label="Parametros credito" tone="orange" />
+              {adminCentral && (
+                <>
+                  <DashboardButton href="/dashboard/aliados" label="Aliados" tone="blue" />
+                  <DashboardButton href="/dashboard/catalogo-equipos" label="Catalogo equipos" tone="green" />
+                  <DashboardButton href="/dashboard/parametros-credito" label="Parametros credito" tone="orange" />
+                </>
+              )}
             </div>
           </div>
 
@@ -1567,14 +1620,16 @@ export default async function DashboardPage() {
               icon="payments"
               tone="green"
             />
-            <DashboardTile
-              href="/dashboard/cartera"
-              eyebrow="Salud cartera"
-              title="Cartera"
-              description="Mora, pagos y riesgo financiero."
-              icon="credit"
-              tone="light"
-            />
+            {adminCentral && (
+              <DashboardTile
+                href="/dashboard/cartera"
+                eyebrow="Salud cartera"
+                title="Cartera"
+                description="Mora, pagos y riesgo financiero."
+                icon="credit"
+                tone="light"
+              />
+            )}
           </div>
         </section>
 
@@ -1595,14 +1650,16 @@ export default async function DashboardPage() {
             icon="search"
             tone="danger"
           />
-          <DashboardTile
-            href="/dashboard/integraciones"
-            eyebrow="Zero Touch"
-            title="Integraciones"
-            description="Trustonic, Equality y estado remoto."
-            icon="clients"
-            tone="light"
-          />
+          {adminCentral && (
+            <DashboardTile
+              href="/dashboard/integraciones"
+              eyebrow="Zero Touch"
+              title="Integraciones"
+              description="Trustonic, Equality y estado remoto."
+              icon="clients"
+              tone="light"
+            />
+          )}
         </section>
       </main>
     </div>

@@ -1,4 +1,4 @@
-import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
+import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import AliadosClient from "./aliados-client";
 
 export const metadata = {
@@ -7,7 +7,7 @@ export const metadata = {
 };
 
 export default async function AliadosPage() {
-  await requireAdminDashboardAccess();
+  await requireCentralAdminDashboardAccess();
 
   return <AliadosClient />;
 }

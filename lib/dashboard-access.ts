@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isAdminRole } from "@/lib/roles";
 
 export async function getDashboardAccess() {
@@ -36,6 +37,16 @@ export async function requireAdminDashboardAccess() {
   const access = await requireDashboardAccess();
 
   if (!access.admin) {
+    redirect("/dashboard");
+  }
+
+  return access;
+}
+
+export async function requireCentralAdminDashboardAccess() {
+  const access = await requireAdminDashboardAccess();
+
+  if (!isFinserPayCentralAlly(access.session.aliadoAccesoCodigo)) {
     redirect("/dashboard");
   }
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import prisma from "@/lib/prisma";
-import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
+import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import PushMassivePanel from "./push-massive-panel";
 
@@ -87,7 +87,7 @@ function ratio(part: number, total: number) {
 }
 
 export default async function CarteraPage() {
-  await requireAdminDashboardAccess();
+  await requireCentralAdminDashboardAccess();
 
   const today = new Date();
   const [creditos, gastosOperacion] = await Promise.all([

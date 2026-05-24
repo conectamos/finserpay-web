@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { resolveCreditPaymentSummary, sanitizeSearch } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 
@@ -59,6 +60,10 @@ export async function GET(req: Request) {
     await ensureCreditAbonoAuditColumns();
 
     const admin = isAdminRole(user.rolNombre);
+    const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
+    const aliadoScopeId = Number(user.aliadoAccesoId || 0);
+    const aliadoReportScopeId =
+      Number.isInteger(aliadoScopeId) && aliadoScopeId > 0 ? aliadoScopeId : -1;
     const sellerSession = admin ? null : await getSellerSessionUser(user);
 
     if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
@@ -98,6 +103,13 @@ export async function GET(req: Request) {
     }
 
     const creditWhere: Prisma.CreditoWhereInput = {
+      ...(admin && !adminCentral
+        ? {
+            sede: {
+              aliadoId: aliadoReportScopeId,
+            },
+          }
+        : {}),
       ...(sedeId ? { sedeId } : {}),
       ...(search
         ? {
@@ -123,7 +135,6 @@ export async function GET(req: Request) {
     const creditIds = credits.map((item) => item.id);
     const activeCredits = credits.filter((item) => item.estado !== "ANULADO");
     const activeCreditIds = activeCredits.map((item) => item.id);
-    const creditMap = new Map(credits.map((item) => [item.id, item]));
 
     const abonosWhere: Prisma.CreditoAbonoWhereInput = {
       ...(creditIds.length

@@ -1,4 +1,4 @@
-import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
+import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import CreditParametersConsole from "./credit-parameters-console";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +9,7 @@ export const metadata = {
 };
 
 export default async function ParametrosCreditoPage() {
-  await requireAdminDashboardAccess();
+  await requireCentralAdminDashboardAccess();
 
   return <CreditParametersConsole />;
 }

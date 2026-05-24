@@ -5,6 +5,7 @@ import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { getSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,6 +41,8 @@ export async function PATCH(
       );
     }
 
+    const adminCentral = isFinserPayCentralAlly(user.aliadoAccesoCodigo);
+
     await ensureCreditAbonoAuditColumns();
 
     const params = await context.params;
@@ -73,12 +76,27 @@ export async function PATCH(
               fechaPrimerPago: true,
               fechaProximoPago: true,
               sedeId: true,
+              sede: {
+                select: {
+                  aliadoId: true,
+                },
+              },
             },
           },
         },
       });
 
       if (!abono) {
+        return {
+          status: 404 as const,
+          body: { error: "Recaudo no encontrado" },
+        };
+      }
+
+      if (
+        !adminCentral &&
+        abono.credito.sede.aliadoId !== Number(user.aliadoAccesoId || 0)
+      ) {
         return {
           status: 404 as const,
           body: { error: "Recaudo no encontrado" },

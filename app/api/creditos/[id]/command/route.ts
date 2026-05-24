@@ -34,6 +34,7 @@ import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import { isAdminRole } from "@/lib/roles";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,6 +65,32 @@ type PaymentSummary = {
   totalAbonado: number;
   ultimoAbonoAt: Date | null;
 };
+
+type SerializedCreditSource = Prisma.CreditoGetPayload<{
+  include: {
+    usuario: {
+      select: {
+        id: true;
+        nombre: true;
+        usuario: true;
+      };
+    };
+    vendedor: {
+      select: {
+        id: true;
+        nombre: true;
+        documento: true;
+      };
+    };
+    sede: {
+      select: {
+        id: true;
+        nombre: true;
+        aliadoId: true;
+      };
+    };
+  };
+}>;
 
 function extractFamilyReferences(snapshot: unknown) {
   if (typeof snapshot !== "object" || snapshot === null) {
@@ -100,7 +127,7 @@ function extractFamilyReferences(snapshot: unknown) {
     );
 }
 
-function serializeCredit(item: any, payment?: PaymentSummary) {
+function serializeCredit(item: SerializedCreditSource, payment?: PaymentSummary) {
   const summary = resolveCreditPaymentSummary({
     montoCredito: item.montoCredito,
     cuotaInicial: item.cuotaInicial,
@@ -240,6 +267,7 @@ async function loadCredit(id: number) {
         select: {
           id: true,
           nombre: true,
+          aliadoId: true,
         },
       },
     },
@@ -289,6 +317,7 @@ export async function POST(
     }
 
     const admin = isAdminRole(user.rolNombre);
+    const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
     const supervisor = sellerSession?.tipoPerfil === "SUPERVISOR";
 
@@ -314,6 +343,14 @@ export async function POST(
     const current = await loadCredit(creditId);
 
     if (!current) {
+      return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
+    }
+
+    if (
+      admin &&
+      !adminCentral &&
+      current.sede.aliadoId !== Number(user.aliadoAccesoId || 0)
+    ) {
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
     }
 
@@ -494,6 +531,7 @@ export async function POST(
               select: {
                 id: true,
                 nombre: true,
+                aliadoId: true,
               },
             },
           },
@@ -588,6 +626,7 @@ export async function POST(
               select: {
                 id: true,
                 nombre: true,
+                aliadoId: true,
               },
             },
           },
@@ -696,6 +735,7 @@ export async function POST(
           select: {
             id: true,
             nombre: true,
+            aliadoId: true,
           },
         },
       },
