@@ -46,6 +46,7 @@ type SessionUser = {
   activo: boolean;
   sedeId: number;
   sedeNombre: string;
+  aliadoAccesoCodigo?: string | null;
   rolId: number;
   rolNombre: string;
 };
@@ -1621,6 +1622,10 @@ function EvidenceCaptureCard({
   );
 }
 
+function esAliadoFinserPay(codigo: string | null | undefined) {
+  return String(codigo || "").trim().toUpperCase() === "FINSERPAY";
+}
+
 export default function CreditFactoryConsole({
   initialSession,
   initialSeller = null,
@@ -1639,6 +1644,8 @@ export default function CreditFactoryConsole({
   entryMode?: "default" | "create-client" | "delivery" | "simulator";
 }) {
   const canAdmin = String(initialSession.rolNombre || "").toUpperCase() === "ADMIN";
+  const canSeeInternalPricing =
+    canAdmin && esAliadoFinserPay(initialSession.aliadoAccesoCodigo);
   const canSupervisor = !canAdmin && initialSeller?.tipoPerfil === "SUPERVISOR";
   const canViewSavedCredits = canAdmin || canSupervisor;
   const paymentsView = view === "payments";
@@ -6915,7 +6922,9 @@ export default function CreditFactoryConsole({
                             </option>
                             {equipmentModelOptions.map((item) => (
                               <option key={item.id} value={item.id}>
-                                {item.modelo} - base {currency(item.precioBaseVenta)}
+                                {canSeeInternalPricing
+                                  ? `${item.modelo} - base ${currency(item.precioBaseVenta)}`
+                                  : item.modelo}
                               </option>
                             ))}
                           </select>
@@ -6970,12 +6979,18 @@ export default function CreditFactoryConsole({
                           placeholder="$ 850.000"
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                         />
-                        <p className="mt-2 text-xs font-medium text-slate-500">
-                          {precioBaseVentaCatalogo > 0
-                            ? `Base del modelo: ${currency(precioBaseVentaCatalogo)}. Excedente a inicial: ${currency(excedentePrecioBase)}.`
-                            : `Base maxima sin catalogo: ${currency(MAX_DEVICE_FINANCING_BASE)}.`}
-                          {` Inicial base: ${initialPaymentPercentage}%.`}
-                        </p>
+                        {canSeeInternalPricing ? (
+                          <p className="mt-2 text-xs font-medium text-slate-500">
+                            {precioBaseVentaCatalogo > 0
+                              ? `Base del modelo: ${currency(precioBaseVentaCatalogo)}. Excedente a inicial: ${currency(excedentePrecioBase)}.`
+                              : `Base maxima sin catalogo: ${currency(MAX_DEVICE_FINANCING_BASE)}.`}
+                            {` Inicial base: ${initialPaymentPercentage}%.`}
+                          </p>
+                        ) : (
+                          <p className="mt-2 text-xs font-medium text-slate-500">
+                            Ingresa el valor de venta acordado con el cliente.
+                          </p>
+                        )}
                       </div>
 
                       <div>
@@ -7082,17 +7097,19 @@ export default function CreditFactoryConsole({
                             Minimo {currency(cuotaInicialMinimaNumero)}.
                           </p>
                         </div>
-                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Valor credito
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {currency(saldoBaseFinanciado)}
-                          </p>
-                          <p className="mt-1 text-xs font-medium text-slate-500">
-                            Valor equipo - inicial.
-                          </p>
-                        </div>
+                        {canSeeInternalPricing ? (
+                          <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                              Valor credito
+                            </p>
+                            <p className="mt-2 text-2xl font-black text-slate-950">
+                              {currency(saldoBaseFinanciado)}
+                            </p>
+                            <p className="mt-1 text-xs font-medium text-slate-500">
+                              Valor equipo - inicial.
+                            </p>
+                          </div>
+                        ) : null}
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                             Plazo
@@ -7104,17 +7121,19 @@ export default function CreditFactoryConsole({
                             cuotas
                           </p>
                         </div>
-                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Total a pagar
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {currency(saldoFinanciado)}
-                          </p>
-                          <p className="mt-1 text-xs font-medium text-slate-500">
-                            Valor final distribuido en cuotas.
-                          </p>
-                        </div>
+                        {canSeeInternalPricing ? (
+                          <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                              Total a pagar
+                            </p>
+                            <p className="mt-2 text-xl font-black text-slate-950">
+                              {currency(saldoFinanciado)}
+                            </p>
+                            <p className="mt-1 text-xs font-medium text-slate-500">
+                              Valor final distribuido en cuotas.
+                            </p>
+                          </div>
+                        ) : null}
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                             Frecuencia
@@ -7709,7 +7728,9 @@ export default function CreditFactoryConsole({
                         <p><span className="font-semibold text-slate-950">Documento:</span> {clienteDocumento || "-"}</p>
                         <p><span className="font-semibold text-slate-950">Equipo:</span> {referenciaEquipo || "-"}</p>
                         <p><span className="font-semibold text-slate-950">IMEI:</span> {imei || "-"}</p>
-                        <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
+                        {canSeeInternalPricing ? (
+                          <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
+                        ) : null}
                         <p><span className="font-semibold text-slate-950">Valor cuota:</span> {currency(valorCuota)}</p>
                       </div>
                     </div>
@@ -7861,7 +7882,9 @@ export default function CreditFactoryConsole({
                         <p><span className="font-semibold text-slate-950">Documento:</span> {clienteDocumento || "-"}</p>
                         <p><span className="font-semibold text-slate-950">Equipo:</span> {referenciaEquipo || "-"}</p>
                         <p><span className="font-semibold text-slate-950">IMEI:</span> {imei || "-"}</p>
-                        <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
+                        {canSeeInternalPricing ? (
+                          <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
+                        ) : null}
                         <p><span className="font-semibold text-slate-950">Valor cuota:</span> {currency(valorCuota)}</p>
                       </div>
                     </div>
@@ -7988,14 +8011,16 @@ export default function CreditFactoryConsole({
 
                     <div className="rounded-[24px] border border-[#e2d6c5] bg-white px-5 py-5">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Resumen financiero
+                        {canSeeInternalPricing ? "Resumen financiero" : "Resumen comercial"}
                       </p>
                       <div className="mt-4 space-y-2 text-sm text-slate-700">
                         <p><span className="font-semibold text-slate-950">Equipo:</span> {referenciaEquipo || "-"}</p>
                         <p><span className="font-semibold text-slate-950">IMEI:</span> {imei || "-"}</p>
                         <p><span className="font-semibold text-slate-950">Total equipo:</span> {currency(valorTotalEquipoNumero)}</p>
                         <p><span className="font-semibold text-slate-950">Inicial:</span> {currency(cuotaInicialNumero)}</p>
-                        <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
+                        {canSeeInternalPricing ? (
+                          <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
+                        ) : null}
                         <p><span className="font-semibold text-slate-950">Valor cuota:</span> {currency(valorCuota)}</p>
                       </div>
                     </div>
@@ -8485,9 +8510,15 @@ export default function CreditFactoryConsole({
                   placeholder="$ 850.000"
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 />
-                <p className="mt-2 text-xs font-medium text-slate-500">
-                  Base financiable maxima: {currency(MAX_DEVICE_FINANCING_BASE)}. El excedente se cobra en la inicial.
-                </p>
+                {canSeeInternalPricing ? (
+                  <p className="mt-2 text-xs font-medium text-slate-500">
+                    Base financiable maxima: {currency(MAX_DEVICE_FINANCING_BASE)}. El excedente se cobra en la inicial.
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs font-medium text-slate-500">
+                    Ingresa el valor de venta acordado con el cliente.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -8561,15 +8592,17 @@ export default function CreditFactoryConsole({
               </div>
             </div>
 
-            <div className="mt-6 grid gap-3 md:grid-cols-3">
-              <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Saldo financiado
-                </p>
-                <p className="mt-2 text-2xl font-black text-slate-950">
-                  {currency(saldoFinanciado)}
-                </p>
-              </div>
+            <div className={["mt-6 grid gap-3", canSeeInternalPricing ? "md:grid-cols-3" : "md:grid-cols-2"].join(" ")}>
+              {canSeeInternalPricing ? (
+                <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Saldo financiado
+                  </p>
+                  <p className="mt-2 text-xl font-black text-slate-950">
+                    {currency(saldoFinanciado)}
+                  </p>
+                </div>
+              ) : null}
 
               <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
