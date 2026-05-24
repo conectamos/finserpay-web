@@ -61,6 +61,12 @@ async function requireAdmin() {
   return { ok: true as const, user };
 }
 
+function getAliadoScope(user: Awaited<ReturnType<typeof getSessionUser>>) {
+  const aliadoId = Number(user?.aliadoAccesoId || 0);
+
+  return Number.isInteger(aliadoId) && aliadoId > 0 ? aliadoId : null;
+}
+
 async function obtenerRolUsuarioId() {
   const rol = await prisma.rol.findUnique({
     where: { nombre: "USUARIO" },
@@ -84,10 +90,11 @@ async function ensureAliadoActivo(aliadoId: number) {
   return Boolean(aliado);
 }
 
-async function obtenerSedesAdmin() {
+async function obtenerSedesAdmin(aliadoScopeId: number | null) {
   const sedes = await prisma.sede.findMany({
     where: {
       activa: true,
+      ...(aliadoScopeId ? { aliadoId: aliadoScopeId } : {}),
     },
     select: {
       id: true,
@@ -170,13 +177,22 @@ export async function DELETE(req: Request) {
 
     const sede = await prisma.sede.findUnique({
       where: { id: sedeId },
-      select: { id: true },
+      select: { id: true, aliadoId: true },
     });
 
     if (!sede) {
       return NextResponse.json(
         { error: "Sede no encontrada" },
         { status: 404 }
+      );
+    }
+
+    const aliadoScopeId = getAliadoScope(session.user);
+
+    if (aliadoScopeId && sede.aliadoId !== aliadoScopeId) {
+      return NextResponse.json(
+        { error: "No puedes eliminar sedes de otro aliado" },
+        { status: 403 }
       );
     }
 
@@ -204,7 +220,7 @@ export async function DELETE(req: Request) {
       });
     });
 
-    const sedes = await obtenerSedesAdmin();
+    const sedes = await obtenerSedesAdmin(aliadoScopeId);
 
     return NextResponse.json({
       ok: true,
@@ -228,9 +244,19 @@ export async function GET() {
       return session.response;
     }
 
-    const sedes = await obtenerSedesAdmin();
+    const aliadoScopeId = getAliadoScope(session.user);
+    const sedes = await obtenerSedesAdmin(aliadoScopeId);
 
-    return NextResponse.json({ ok: true, sedes });
+    return NextResponse.json({
+      ok: true,
+      scope: {
+        central: !aliadoScopeId,
+        aliadoId: aliadoScopeId,
+        aliadoNombre: session.user.aliadoAccesoNombre,
+        aliadoCodigo: session.user.aliadoAccesoCodigo,
+      },
+      sedes,
+    });
   } catch (error) {
     console.error("ERROR GET ADMIN SEDES:", error);
     return NextResponse.json(
@@ -253,7 +279,8 @@ export async function POST(req: Request) {
     const codigo = normalizarCodigoSede(body.codigo);
     const usuarioAcceso = normalizarUsuarioAcceso(body.usuario);
     const clave = String(body.clave || "").trim();
-    const aliadoId = parseAliadoId(body.aliadoId);
+    const aliadoScopeId = getAliadoScope(session.user);
+    const aliadoId = aliadoScopeId || parseAliadoId(body.aliadoId);
 
     if (!nombre) {
       return NextResponse.json(
@@ -460,7 +487,7 @@ export async function POST(req: Request) {
       });
     });
 
-    const sedes = await obtenerSedesAdmin();
+    const sedes = await obtenerSedesAdmin(aliadoScopeId);
 
     return NextResponse.json({
       ok: true,
@@ -492,7 +519,8 @@ export async function PATCH(req: Request) {
     const codigo = normalizarCodigoSede(body.codigo);
     const usuarioAcceso = normalizarUsuarioAcceso(body.usuario);
     const clave = String(body.clave || "").trim();
-    const aliadoId = parseAliadoId(body.aliadoId);
+    const aliadoScopeId = getAliadoScope(session.user);
+    const aliadoId = aliadoScopeId || parseAliadoId(body.aliadoId);
 
     if (!Number.isInteger(sedeId) || sedeId <= 0) {
       return NextResponse.json({ error: "Sede invalida" }, { status: 400 });
@@ -505,7 +533,7 @@ export async function PATCH(req: Request) {
       );
     }
 
-    if ("aliadoId" in body && !aliadoId) {
+    if (!aliadoScopeId && "aliadoId" in body && !aliadoId) {
       return NextResponse.json(
         { error: "Debes seleccionar el aliado de esta sede" },
         { status: 400 }
@@ -525,6 +553,7 @@ export async function PATCH(req: Request) {
         id: true,
         nombre: true,
         codigo: true,
+        aliadoId: true,
         usuarios: {
           select: {
             id: true,
@@ -546,6 +575,13 @@ export async function PATCH(req: Request) {
       return NextResponse.json(
         { error: "Sede no encontrada" },
         { status: 404 }
+      );
+    }
+
+    if (aliadoScopeId && sedeActual.aliadoId !== aliadoScopeId) {
+      return NextResponse.json(
+        { error: "No puedes editar sedes de otro aliado" },
+        { status: 403 }
       );
     }
 
@@ -631,7 +667,7 @@ export async function PATCH(req: Request) {
         data: {
           nombre,
           codigo,
-          ...(aliadoId ? { aliadoId } : {}),
+          ...(!aliadoScopeId && aliadoId ? { aliadoId } : {}),
         },
       });
 
@@ -658,7 +694,7 @@ export async function PATCH(req: Request) {
       }
     });
 
-    const sedes = await obtenerSedesAdmin();
+    const sedes = await obtenerSedesAdmin(aliadoScopeId);
 
     return NextResponse.json({
       ok: true,

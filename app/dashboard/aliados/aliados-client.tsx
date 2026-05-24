@@ -28,6 +28,10 @@ type NuevaSedeState = {
 };
 
 type AliadosPayload = {
+  scope?: {
+    central: boolean;
+    aliadoId: number | null;
+  };
   aliados: AliadoItem[];
 };
 
@@ -62,6 +66,7 @@ export default function AliadosClient() {
   const [nombre, setNombre] = useState("");
   const [codigo, setCodigo] = useState("");
   const [sedesForm, setSedesForm] = useState<Record<number, NuevaSedeState>>({});
+  const [esCentral, setEsCentral] = useState(true);
 
   const cargarAliados = async () => {
     try {
@@ -78,6 +83,7 @@ export default function AliadosClient() {
 
       const items = Array.isArray(data.aliados) ? data.aliados : [];
       setAliados(items);
+      setEsCentral(Boolean(data.scope?.central));
       setSedesForm((actual) =>
         items.reduce((acc: Record<number, NuevaSedeState>, aliado) => {
           acc[aliado.id] = actual[aliado.id] || emptySedeForm();
@@ -230,47 +236,49 @@ export default function AliadosClient() {
           </div>
         </header>
 
-        <section className="rounded-[24px] border border-emerald-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
-          <div className="grid gap-3 lg:grid-cols-[1fr_220px_160px] lg:items-end">
-            <label className="block">
-              <span className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
-                Nuevo aliado
-              </span>
-              <input
-                value={nombre}
-                onChange={(event) => setNombre(event.target.value)}
-                placeholder="Ej: PUNTO CELULAR"
-                className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none transition focus:border-emerald-400"
-              />
-            </label>
+        {esCentral ? (
+          <section className="rounded-[24px] border border-emerald-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
+            <div className="grid gap-3 lg:grid-cols-[1fr_220px_160px] lg:items-end">
+              <label className="block">
+                <span className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
+                  Nuevo aliado
+                </span>
+                <input
+                  value={nombre}
+                  onChange={(event) => setNombre(event.target.value)}
+                  placeholder="Ej: PUNTO CELULAR"
+                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none transition focus:border-emerald-400"
+                />
+              </label>
 
-            <label className="block">
-              <span className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
-                Codigo
-              </span>
-              <input
-                value={codigo}
-                onChange={(event) => setCodigo(event.target.value)}
-                placeholder="PUNTO-CELULAR"
-                className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none transition focus:border-emerald-400"
-              />
-            </label>
+              <label className="block">
+                <span className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
+                  Codigo
+                </span>
+                <input
+                  value={codigo}
+                  onChange={(event) => setCodigo(event.target.value)}
+                  placeholder="PUNTO-CELULAR"
+                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none transition focus:border-emerald-400"
+                />
+              </label>
 
-            <button
-              onClick={crearAliado}
-              disabled={guardando || !nombre.trim()}
-              className="rounded-2xl bg-[#101318] px-5 py-3 text-sm font-black text-white transition hover:bg-[#1f2630] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {guardando ? "Guardando..." : "Crear aliado"}
-            </button>
-          </div>
+              <button
+                onClick={crearAliado}
+                disabled={guardando || !nombre.trim()}
+                className="rounded-2xl bg-[#101318] px-5 py-3 text-sm font-black text-white transition hover:bg-[#1f2630] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {guardando ? "Guardando..." : "Crear aliado"}
+              </button>
+            </div>
+          </section>
+        ) : null}
 
-          {mensaje ? (
-            <p className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">
-              {mensaje}
-            </p>
-          ) : null}
-        </section>
+        {mensaje ? (
+          <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">
+            {mensaje}
+          </p>
+        ) : null}
 
         {cargando ? (
           <section className="rounded-[24px] border border-slate-200 bg-white p-6 text-sm font-bold text-slate-500">

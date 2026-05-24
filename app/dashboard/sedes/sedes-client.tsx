@@ -9,6 +9,8 @@ type SessionUser = {
   usuario: string;
   sedeId: number;
   sedeNombre: string;
+  aliadoAccesoId?: number | null;
+  aliadoAccesoNombre?: string | null;
   rolId: number;
   rolNombre: string;
 };
@@ -75,6 +77,8 @@ export default function GestionSedesPage() {
   >({});
 
   const esAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
+  const esAdminCentral = esAdmin && !user?.aliadoAccesoId;
+  const aliadoActualNombre = user?.aliadoAccesoNombre || "tu aliado";
 
   const cargarTodo = async () => {
     try {
@@ -356,7 +360,14 @@ export default function GestionSedesPage() {
             </div>
           </div>
 
-          <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_0.7fr_0.8fr_0.8fr_0.8fr_160px]">
+          <div
+            className={[
+              "mt-6 grid gap-4",
+              esAdminCentral
+                ? "lg:grid-cols-[1fr_0.7fr_0.8fr_0.8fr_0.8fr_160px]"
+                : "lg:grid-cols-[1.2fr_0.8fr_0.9fr_0.9fr_160px]",
+            ].join(" ")}
+          >
             <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
               Nombre de sede
               <input
@@ -367,20 +378,29 @@ export default function GestionSedesPage() {
               />
             </label>
 
-            <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-              Aliado
-              <select
-                value={nuevoAliadoId}
-                onChange={(event) => setNuevoAliadoId(event.target.value)}
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-              >
-                {aliados.map((aliado) => (
-                  <option key={aliado.id} value={aliado.id}>
-                    {aliado.nombre}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {esAdminCentral ? (
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                Aliado
+                <select
+                  value={nuevoAliadoId}
+                  onChange={(event) => setNuevoAliadoId(event.target.value)}
+                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                >
+                  {aliados.map((aliado) => (
+                    <option key={aliado.id} value={aliado.id}>
+                      {aliado.nombre}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-900">
+                <span className="block text-[11px] uppercase tracking-[0.2em] text-emerald-700">
+                  Aliado
+                </span>
+                {aliadoActualNombre}
+              </div>
+            )}
 
             <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
               Codigo
@@ -506,23 +526,25 @@ export default function GestionSedesPage() {
                       />
                     </label>
 
-                    <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-                      Aliado
-                      <select
-                        value={edicion.aliadoId}
-                        onChange={(event) =>
-                          actualizarEdicion(sede.id, "aliadoId", event.target.value)
-                        }
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                      >
-                        <option value="">Seleccionar aliado</option>
-                        {aliados.map((aliado) => (
-                          <option key={aliado.id} value={aliado.id}>
-                            {aliado.nombre}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    {esAdminCentral ? (
+                      <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                        Aliado
+                        <select
+                          value={edicion.aliadoId}
+                          onChange={(event) =>
+                            actualizarEdicion(sede.id, "aliadoId", event.target.value)
+                          }
+                          className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        >
+                          <option value="">Seleccionar aliado</option>
+                          {aliados.map((aliado) => (
+                            <option key={aliado.id} value={aliado.id}>
+                              {aliado.nombre}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
 
                     <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
                       Usuario de acceso

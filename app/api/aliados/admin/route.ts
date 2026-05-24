@@ -39,10 +39,19 @@ async function requireAdmin() {
   return { ok: true as const, user };
 }
 
-async function loadAliadosPayload() {
+function getAliadoScope(user: Awaited<ReturnType<typeof getSessionUser>>) {
+  const aliadoId = Number(user?.aliadoAccesoId || 0);
+
+  return Number.isInteger(aliadoId) && aliadoId > 0 ? aliadoId : null;
+}
+
+async function loadAliadosPayload(aliadoScopeId: number | null) {
   await ensureAliadoConectamos(prisma);
 
   const aliados = await prisma.aliado.findMany({
+    where: {
+      ...(aliadoScopeId ? { id: aliadoScopeId } : {}),
+    },
     select: {
       id: true,
       nombre: true,
@@ -118,6 +127,10 @@ async function loadAliadosPayload() {
   );
 
   return {
+    scope: {
+      central: !aliadoScopeId,
+      aliadoId: aliadoScopeId,
+    },
     aliados: aliadosConMetricas,
   };
 }
@@ -130,9 +143,11 @@ export async function GET() {
       return session.response;
     }
 
+    const aliadoScopeId = getAliadoScope(session.user);
+
     return NextResponse.json({
       ok: true,
-      ...(await loadAliadosPayload()),
+      ...(await loadAliadosPayload(aliadoScopeId)),
     });
   } catch (error) {
     console.error("ERROR GET ADMIN ALIADOS:", error);
@@ -149,6 +164,13 @@ export async function POST(req: Request) {
 
     if (!session.ok) {
       return session.response;
+    }
+
+    if (getAliadoScope(session.user)) {
+      return NextResponse.json(
+        { error: "Solo FINSER PAY central puede crear aliados" },
+        { status: 403 }
+      );
     }
 
     const body = (await req.json()) as Record<string, unknown>;
@@ -173,7 +195,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       mensaje: "Aliado creado correctamente",
-      ...(await loadAliadosPayload()),
+      ...(await loadAliadosPayload(null)),
     });
   } catch (error) {
     console.error("ERROR POST ADMIN ALIADOS:", error);
@@ -192,11 +214,19 @@ export async function PATCH(req: Request) {
       return session.response;
     }
 
+    const aliadoScopeId = getAliadoScope(session.user);
     const body = (await req.json()) as Record<string, unknown>;
     const aliadoId = parseId(body.aliadoId);
 
     if (!aliadoId) {
       return NextResponse.json({ error: "Aliado invalido" }, { status: 400 });
+    }
+
+    if (aliadoScopeId && aliadoId !== aliadoScopeId) {
+      return NextResponse.json(
+        { error: "No puedes editar otro aliado" },
+        { status: 403 }
+      );
     }
 
     const data: {
@@ -226,22 +256,19 @@ export async function PATCH(req: Request) {
       data.activo = Boolean(body.activo);
     }
 
-    await prisma.$transaction(async (tx) => {
-      if (Object.keys(data).length > 0) {
-        await tx.aliado.update({
-          where: {
-            id: aliadoId,
-          },
-          data,
-        });
-      }
-
-    });
+    if (Object.keys(data).length > 0) {
+      await prisma.aliado.update({
+        where: {
+          id: aliadoId,
+        },
+        data,
+      });
+    }
 
     return NextResponse.json({
       ok: true,
       mensaje: "Aliado actualizado correctamente",
-      ...(await loadAliadosPayload()),
+      ...(await loadAliadosPayload(aliadoScopeId)),
     });
   } catch (error) {
     console.error("ERROR PATCH ADMIN ALIADOS:", error);

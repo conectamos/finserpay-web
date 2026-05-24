@@ -92,7 +92,13 @@ async function requireAdmin() {
   };
 }
 
-async function loadAdminSellersPayload() {
+function getAliadoScope(user: Awaited<ReturnType<typeof getSessionUser>>) {
+  const aliadoId = Number(user?.aliadoAccesoId || 0);
+
+  return Number.isInteger(aliadoId) && aliadoId > 0 ? aliadoId : null;
+}
+
+async function loadAdminSellersPayload(aliadoScopeId: number | null) {
   await Promise.all([
     ensureVendorProfileVisualColumns(),
     ensureUserProfileVisualColumns(),
@@ -102,11 +108,19 @@ async function loadAdminSellersPayload() {
     prisma.sede.findMany({
       where: {
         activa: true,
+        ...(aliadoScopeId ? { aliadoId: aliadoScopeId } : {}),
       },
       select: {
         id: true,
         nombre: true,
         activa: true,
+        aliado: {
+          select: {
+            id: true,
+            nombre: true,
+            codigo: true,
+          },
+        },
       },
       orderBy: {
         nombre: "asc",
@@ -115,11 +129,30 @@ async function loadAdminSellersPayload() {
     prisma.vendedor.findMany({
       where: {
         activo: true,
+        ...(aliadoScopeId
+          ? {
+              asignaciones: {
+                some: {
+                  activo: true,
+                  sede: {
+                    aliadoId: aliadoScopeId,
+                  },
+                },
+              },
+            }
+          : {}),
       },
       include: {
         asignaciones: {
           where: {
             activo: true,
+            ...(aliadoScopeId
+              ? {
+                  sede: {
+                    aliadoId: aliadoScopeId,
+                  },
+                }
+              : {}),
           },
           select: {
             sede: {
@@ -150,6 +183,13 @@ async function loadAdminSellersPayload() {
         rol: {
           nombre: "ADMIN",
         },
+        ...(aliadoScopeId
+          ? {
+              sede: {
+                aliadoId: aliadoScopeId,
+              },
+            }
+          : {}),
       },
       select: {
         id: true,
@@ -163,6 +203,13 @@ async function loadAdminSellersPayload() {
           select: {
             id: true,
             nombre: true,
+            aliado: {
+              select: {
+                id: true,
+                nombre: true,
+                codigo: true,
+              },
+            },
           },
         },
         rol: {
@@ -183,6 +230,10 @@ async function loadAdminSellersPayload() {
   ]);
 
   return {
+    scope: {
+      central: !aliadoScopeId,
+      aliadoId: aliadoScopeId,
+    },
     sedes,
     administradores: administradores.map((item) => ({
       id: item.id,
@@ -221,13 +272,14 @@ async function loadAdminSellersPayload() {
   };
 }
 
-async function ensureSedesExist(sedeIds: number[]) {
+async function ensureSedesExist(sedeIds: number[], aliadoScopeId: number | null) {
   const sedes = await prisma.sede.findMany({
     where: {
       id: {
         in: sedeIds,
       },
       activa: true,
+      ...(aliadoScopeId ? { aliadoId: aliadoScopeId } : {}),
     },
     select: {
       id: true,
@@ -237,11 +289,12 @@ async function ensureSedesExist(sedeIds: number[]) {
   return sedes.length === sedeIds.length;
 }
 
-async function ensureSedeExists(sedeId: number) {
+async function ensureSedeExists(sedeId: number, aliadoScopeId: number | null) {
   const sede = await prisma.sede.findFirst({
     where: {
       id: sedeId,
       activa: true,
+      ...(aliadoScopeId ? { aliadoId: aliadoScopeId } : {}),
     },
     select: {
       id: true,
@@ -259,9 +312,11 @@ export async function GET() {
       return session.response;
     }
 
+    const aliadoScopeId = getAliadoScope(session.user);
+
     return NextResponse.json({
       ok: true,
-      ...(await loadAdminSellersPayload()),
+      ...(await loadAdminSellersPayload(aliadoScopeId)),
     });
   } catch (error) {
     console.error("ERROR LISTANDO VENDEDORES:", error);
@@ -281,6 +336,7 @@ export async function POST(req: Request) {
     }
 
     await ensureVendorProfileVisualColumns();
+    const aliadoScopeId = getAliadoScope(session.user);
 
     const body = (await req.json()) as Record<string, unknown>;
     const nombre = normalizeText(body.nombre);
@@ -328,7 +384,7 @@ export async function POST(req: Request) {
         );
       }
 
-      if (!sedeId || !(await ensureSedeExists(sedeId))) {
+      if (!sedeId || !(await ensureSedeExists(sedeId, aliadoScopeId))) {
         return NextResponse.json(
           { error: "Debes seleccionar una sede base activa" },
           { status: 400 }
@@ -374,7 +430,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ok: true,
         mensaje: "Administrador creado correctamente",
-        ...(await loadAdminSellersPayload()),
+        ...(await loadAdminSellersPayload(aliadoScopeId)),
       });
     }
 
@@ -399,7 +455,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!(await ensureSedesExist(sedeIds))) {
+    if (!(await ensureSedesExist(sedeIds, aliadoScopeId))) {
       return NextResponse.json(
         { error: "Alguna de las sedes seleccionadas no existe o esta inactiva" },
         { status: 404 }
@@ -445,7 +501,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       mensaje: "Usuario creado correctamente",
-      ...(await loadAdminSellersPayload()),
+      ...(await loadAdminSellersPayload(aliadoScopeId)),
     });
   } catch (error) {
     console.error("ERROR CREANDO VENDEDOR:", error);
@@ -465,6 +521,7 @@ export async function PATCH(req: Request) {
     }
 
     await ensureVendorProfileVisualColumns();
+    const aliadoScopeId = getAliadoScope(session.user);
 
     const body = (await req.json()) as Record<string, unknown>;
     const vendedorId = parseSellerId(body.vendedorId);
@@ -506,7 +563,7 @@ export async function PATCH(req: Request) {
       );
     }
 
-    const seller = await prisma.vendedor.findUnique({
+    const seller = await prisma.vendedor.findFirst({
       where: { id: vendedorId },
       select: {
         id: true,
@@ -520,7 +577,29 @@ export async function PATCH(req: Request) {
       );
     }
 
-    if (!(await ensureSedesExist(sedeIds))) {
+    const sellerEnAlcance = aliadoScopeId
+      ? await prisma.sedeVendedor.findFirst({
+          where: {
+            vendedorId,
+            activo: true,
+            sede: {
+              aliadoId: aliadoScopeId,
+            },
+          },
+          select: {
+            vendedorId: true,
+          },
+        })
+      : true;
+
+    if (!sellerEnAlcance) {
+      return NextResponse.json(
+        { error: "No puedes editar usuarios de otro aliado" },
+        { status: 403 }
+      );
+    }
+
+    if (!(await ensureSedesExist(sedeIds, aliadoScopeId))) {
       return NextResponse.json(
         { error: "Alguna de las sedes seleccionadas no existe o esta inactiva" },
         { status: 404 }
@@ -587,7 +666,7 @@ export async function PATCH(req: Request) {
       mensaje: pin
         ? "Usuario actualizado y PIN reiniciado correctamente"
         : "Usuario actualizado correctamente",
-      ...(await loadAdminSellersPayload()),
+      ...(await loadAdminSellersPayload(aliadoScopeId)),
     });
   } catch (error) {
     console.error("ERROR ACTUALIZANDO VENDEDOR:", error);
@@ -608,6 +687,7 @@ export async function DELETE(req: Request) {
 
     const body = (await req.json()) as Record<string, unknown>;
     const vendedorId = parseSellerId(body.vendedorId);
+    const aliadoScopeId = getAliadoScope(session.user);
 
     if (!vendedorId) {
       return NextResponse.json(
@@ -616,8 +696,22 @@ export async function DELETE(req: Request) {
       );
     }
 
-    const seller = await prisma.vendedor.findUnique({
-      where: { id: vendedorId },
+    const seller = await prisma.vendedor.findFirst({
+      where: {
+        id: vendedorId,
+        ...(aliadoScopeId
+          ? {
+              asignaciones: {
+                some: {
+                  activo: true,
+                  sede: {
+                    aliadoId: aliadoScopeId,
+                  },
+                },
+              },
+            }
+          : {}),
+      },
       select: {
         id: true,
       },
@@ -640,7 +734,16 @@ export async function DELETE(req: Request) {
       });
 
       await tx.sedeVendedor.updateMany({
-        where: { vendedorId },
+        where: {
+          vendedorId,
+          ...(aliadoScopeId
+            ? {
+                sede: {
+                  aliadoId: aliadoScopeId,
+                },
+              }
+            : {}),
+        },
         data: { activo: false },
       });
     });
@@ -648,7 +751,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({
       ok: true,
       mensaje: "Usuario eliminado correctamente",
-      ...(await loadAdminSellersPayload()),
+      ...(await loadAdminSellersPayload(aliadoScopeId)),
     });
   } catch (error) {
     console.error("ERROR ELIMINANDO VENDEDOR:", error);
