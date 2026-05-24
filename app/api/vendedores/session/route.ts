@@ -14,6 +14,7 @@ import {
   createSellerSessionToken,
   getSessionCookieOptions,
 } from "@/lib/session";
+import { ALIADO_FINSER_PAY, isFinserPayCentralAlly } from "@/lib/aliados";
 
 function serializeSeller(item: {
   id: number;
@@ -75,13 +76,25 @@ function serializeSede(item: { id: number; nombre: string; codigo: string | null
   };
 }
 
-async function getOperationalSedes(accessSedeId: number) {
+async function getOperationalSedes(
+  accessSedeId: number,
+  aliadoScopeId: number | null
+) {
   const sedes = await prisma.sede.findMany({
     where: {
       activa: true,
       NOT: {
         id: accessSedeId,
       },
+      ...(aliadoScopeId
+        ? { aliadoId: aliadoScopeId }
+        : {
+            aliado: {
+              codigo: {
+                not: ALIADO_FINSER_PAY.codigo,
+              },
+            },
+          }),
     },
     select: {
       id: true,
@@ -175,6 +188,13 @@ export async function POST(req: Request) {
 
     await ensureVendorProfileVisualColumns();
     const accessSedeId = user.sedeAccesoId ?? user.sedeId;
+    const isCentralUser = isFinserPayCentralAlly(user.aliadoAccesoCodigo);
+    const aliadoScopeId = isCentralUser
+      ? null
+      : Number.isInteger(Number(user.aliadoAccesoId || 0)) &&
+          Number(user.aliadoAccesoId || 0) > 0
+        ? Number(user.aliadoAccesoId)
+        : -1;
 
     const body = (await req.json()) as Record<string, unknown>;
     const vendedorId = Number(body.vendedorId || 0);
@@ -262,7 +282,7 @@ export async function POST(req: Request) {
       : accessSedeId;
 
     if (isVentasAccess && !operationalSedeId) {
-      const sedes = await getOperationalSedes(accessSedeId);
+      const sedes = await getOperationalSedes(accessSedeId, aliadoScopeId);
 
       if (!sedes.length) {
         return NextResponse.json(
@@ -284,6 +304,15 @@ export async function POST(req: Request) {
       where: {
         id: operationalSedeId,
         activa: true,
+        ...(aliadoScopeId
+          ? { aliadoId: aliadoScopeId }
+          : {
+              aliado: {
+                codigo: {
+                  not: ALIADO_FINSER_PAY.codigo,
+                },
+              },
+            }),
       },
       select: {
         id: true,

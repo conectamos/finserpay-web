@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
+import { ALIADO_FINSER_PAY, isFinserPayCentralAlly } from "@/lib/aliados";
 import { isAdminRole } from "@/lib/roles";
 
 export async function GET() {
@@ -14,8 +15,28 @@ export async function GET() {
       );
     }
 
+    const isAdmin = isAdminRole(user.rolNombre);
+    const isCentralAdmin = isAdmin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
+    const aliadoScopeId = Number(user.aliadoAccesoId || 0);
+
     const sedes = await prisma.sede.findMany({
-      where: isAdminRole(user.rolNombre) ? {} : { id: user.sedeId },
+      where: isAdmin
+        ? isCentralAdmin
+          ? {}
+          : {
+              aliadoId:
+                Number.isInteger(aliadoScopeId) && aliadoScopeId > 0
+                  ? aliadoScopeId
+                  : -1,
+            }
+        : {
+            id: user.sedeId,
+            aliado: {
+              codigo: {
+                not: ALIADO_FINSER_PAY.codigo,
+              },
+            },
+          },
       select: {
         id: true,
         nombre: true,
