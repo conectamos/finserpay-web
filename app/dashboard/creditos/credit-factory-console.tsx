@@ -3268,11 +3268,17 @@ export default function CreditFactoryConsole({
   };
 
   const applyEquipmentCatalogItem = (item: EquipmentCatalogItem) => {
+    const previousCatalogBase = selectedEquipmentCatalogItem?.precioBaseVenta || 0;
+    const currentEquipmentValue = Number(valorEquipoTotal || 0);
+
     setEquipoMarca(item.marca);
     setEquipoModelo(item.modelo);
 
-    if (!valorEquipoTotal || Number(valorEquipoTotal) <= 0) {
-      setValorEquipoTotal(String(Math.round(item.precioBaseVenta)));
+    if (
+      previousCatalogBase > 0 &&
+      currentEquipmentValue === Math.round(previousCatalogBase)
+    ) {
+      setValorEquipoTotal("");
     }
   };
 
@@ -6988,7 +6994,7 @@ export default function CreditFactoryConsole({
                           </p>
                         ) : (
                           <p className="mt-2 text-xs font-medium text-slate-500">
-                            Ingresa el valor de venta acordado con el cliente.
+                            Ingresa manualmente el valor de venta acordado con el cliente.
                           </p>
                         )}
                       </div>
@@ -8516,7 +8522,7 @@ export default function CreditFactoryConsole({
                   </p>
                 ) : (
                   <p className="mt-2 text-xs font-medium text-slate-500">
-                    Ingresa el valor de venta acordado con el cliente.
+                    Ingresa manualmente el valor de venta acordado con el cliente.
                   </p>
                 )}
               </div>
