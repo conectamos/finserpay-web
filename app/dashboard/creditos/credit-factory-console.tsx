@@ -2378,7 +2378,7 @@ export default function CreditFactoryConsole({
             <li>Datos personales basicos (nombre, cedula, telefono, direccion)</li>
             <li>Datos financieros y crediticios</li>
             <li>Informacion de contacto</li>
-            <li>Datos biometricos (fotografia, selfie, video si aplica)</li>
+            <li>Datos biometricos (fotografia, selfie y firma)</li>
             <li>Datos tecnicos (direccion IP, dispositivo, geolocalizacion)</li>
           </ul>
         </div>
@@ -2581,7 +2581,6 @@ export default function CreditFactoryConsole({
     Boolean(contratoFotoDataUrl) &&
     Boolean(contratoCedulaFrenteDataUrl) &&
     Boolean(contratoCedulaRespaldoDataUrl) &&
-    Boolean(contratoVideoAprobacionDataUrl) &&
     Boolean(contratoFirmaDataUrl);
   const contractEvidenceReady = identityEvidenceReady;
   const stepContratoReady = identityEvidenceReady;
@@ -2892,7 +2891,6 @@ export default function CreditFactoryConsole({
       { label: "Selfie", ready: Boolean(contratoFotoDataUrl) },
       { label: "Cedula frente", ready: Boolean(contratoCedulaFrenteDataUrl) },
       { label: "Cedula respaldo", ready: Boolean(contratoCedulaRespaldoDataUrl) },
-      { label: "Video", ready: Boolean(contratoVideoAprobacionDataUrl) },
       { label: "Firma", ready: Boolean(contratoFirmaDataUrl) },
     ],
     4: [
@@ -3942,7 +3940,7 @@ export default function CreditFactoryConsole({
       setMobileCaptureSession(result.data.session);
       setNotice({
         text:
-          "QR listo. Abre el enlace desde el celular para tomar selfie, cédula y video.",
+          "QR listo. Abre el enlace desde el celular para tomar selfie y cédula.",
         tone: "emerald",
       });
     } catch (error) {
@@ -4055,7 +4053,7 @@ export default function CreditFactoryConsole({
     if (wizardStep === 3 && !stepContratoReady) {
       setNotice({
         text:
-          "Completa selfie, cedula por ambos lados, video y firma antes de avanzar a los contratos.",
+          "Completa selfie, cedula por ambos lados y firma antes de avanzar a los contratos.",
         tone: "amber",
       });
       return;
@@ -4123,7 +4121,7 @@ export default function CreditFactoryConsole({
       if (!identityEvidenceReady) {
         setNotice({
           text:
-            "Completa selfie, cedula por ambos lados, video de aprobacion y firma antes de pasar a los contratos.",
+            "Completa selfie, cedula por ambos lados y firma antes de pasar a los contratos.",
           tone: "amber",
         });
         return;
@@ -4544,13 +4542,6 @@ export default function CreditFactoryConsole({
             contratoCedulaRespaldoAudit?.capturedAt || null,
           contratoCedulaRespaldoSource:
             contratoCedulaRespaldoAudit?.source || null,
-          contratoVideoAprobacionDataUrl,
-          contratoVideoAprobacionCapturedAt:
-            contratoVideoAprobacionAudit?.capturedAt || null,
-          contratoVideoAprobacionSource:
-            contratoVideoAprobacionAudit?.source || null,
-          contratoVideoAprobacionDurationSeconds:
-            contratoVideoAprobacionAudit?.durationSeconds || null,
           contratoOtpCanal: "",
           contratoOtpDestino: "",
           contratoOtpVerificadoAt: null,
@@ -7173,7 +7164,7 @@ export default function CreditFactoryConsole({
                         Identidad del cliente
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Aqui capturas selfie, cedula por ambos lados, video corto y firma para continuar con los contratos.
+                        Aqui capturas selfie, cedula por ambos lados y firma para continuar con los contratos.
                       </p>
                     </div>
                     <div
@@ -7198,7 +7189,7 @@ export default function CreditFactoryConsole({
                           Escanea un QR y toma la cédula desde el teléfono
                         </h4>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
-                          Si la cámara del computador no logra leer bien la cédula, genera este QR y abre el flujo móvil. La selfie, la cédula por ambos lados y el video se cargarán automáticamente en esta venta.
+                          Si la cámara del computador no logra leer bien la cédula, genera este QR y abre el flujo móvil. La selfie y la cédula por ambos lados se cargarán automáticamente en esta venta.
                         </p>
 
                         <div className="mt-4 flex flex-wrap gap-3">
@@ -7239,10 +7230,6 @@ export default function CreditFactoryConsole({
                               {
                                 label: "Cédula respaldo",
                                 ready: mobileCaptureSession.evidence.cedulaRespaldoReady,
-                              },
-                              {
-                                label: "Video",
-                                ready: mobileCaptureSession.evidence.videoReady,
                               },
                             ].map((item) => (
                               <div
@@ -7380,32 +7367,6 @@ export default function CreditFactoryConsole({
                         />
                       </div>
 
-                      <VideoEvidenceCard
-                        title="Video corto de aprobacion"
-                        description='Graba el video donde el cliente diga: "YO [NOMBRE] APRUEBO LA COMPRA CON FINSERPAY".'
-                        metaLabel={
-                          contratoVideoAprobacionAudit
-                            ? `Capturado: ${evidenceAuditTime(
-                                contratoVideoAprobacionAudit.capturedAt
-                              )} | Origen: ${
-                                contratoVideoAprobacionAudit.source === "camera"
-                                  ? "Camara"
-                                  : "Archivo"
-                              }${
-                                contratoVideoAprobacionAudit.durationSeconds
-                                  ? ` | Duracion: ${contratoVideoAprobacionAudit.durationSeconds}s`
-                                  : ""
-                              } | IP: se registra al finalizar`
-                            : undefined
-                        }
-                        value={contratoVideoAprobacionDataUrl}
-                        onOpenCamera={() => setCameraSlot("video-aprobacion")}
-                        onRemove={() => {
-                          setContratoVideoAprobacionDataUrl("");
-                          setContratoVideoAprobacionAudit(null);
-                        }}
-                        onFileChange={(event) => void captureApprovalVideo(event)}
-                      />
                     </div>
 
                     <div className="space-y-4">
@@ -7497,7 +7458,6 @@ export default function CreditFactoryConsole({
                                 Boolean(contratoCedulaFrenteDataUrl) &&
                                 Boolean(contratoCedulaRespaldoDataUrl),
                             },
-                            { label: "Video", ready: Boolean(contratoVideoAprobacionDataUrl) },
                             { label: "Firma", ready: Boolean(contratoFirmaDataUrl) },
                           ].map(({ label, ready }) => (
                             <div
@@ -7620,21 +7580,6 @@ export default function CreditFactoryConsole({
                             </p>
                           </div>
 
-                          <div className="rounded-[18px] border border-slate-200 bg-white p-3 sm:col-span-2">
-                            <VideoEvidencePreview
-                              value={contratoVideoAprobacionDataUrl}
-                              emptyLabel="Video pendiente"
-                              heightClassName="h-48"
-                            />
-                            <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-500">
-                              <span>
-                                Video:{" "}
-                                {contratoVideoAprobacionAudit?.durationSeconds
-                                  ? `${contratoVideoAprobacionAudit.durationSeconds}s`
-                                  : "Pendiente"}
-                              </span>
-                            </div>
-                          </div>
                         </div>
                       </div>
 

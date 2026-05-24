@@ -1021,7 +1021,6 @@ export default function MobileCaptureClient({
       session.evidence.selfieReady,
       session.evidence.cedulaFrenteReady,
       session.evidence.cedulaRespaldoReady,
-      session.evidence.videoReady,
     ].filter(Boolean).length;
   }, [session]);
 
@@ -1063,7 +1062,7 @@ export default function MobileCaptureClient({
                   Toma las evidencias desde el celular
                 </h1>
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
-                  Captura selfie, cédula por ambos lados y el video de aprobación.
+                  Captura selfie y cédula por ambos lados.
                   Cada evidencia se sincroniza automáticamente con la venta abierta
                   en la plataforma.
                 </p>
@@ -1081,7 +1080,7 @@ export default function MobileCaptureClient({
               <p className="mt-1 text-xs text-slate-300">
                 Expira: {session?.expiresAt ? new Date(session.expiresAt).toLocaleString("es-CO") : "-"}
               </p>
-              <p className="mt-3 text-2xl font-black">{completedCount}/4</p>
+              <p className="mt-3 text-2xl font-black">{completedCount}/3</p>
               <p className="text-xs uppercase tracking-[0.18em] text-slate-300">
                 Evidencias sincronizadas
               </p>
@@ -1199,37 +1198,13 @@ export default function MobileCaptureClient({
                 onOpenDocumentCamera={() => setDocumentCameraSlot("cedula-respaldo")}
               />
 
-              <CaptureCard
-                token={token}
-                uploadKind="video-aprobacion"
-                title="Video de aprobacion"
-                description='Graba un video de hasta 7 segundos diciendo: "Yo [nombre] apruebo la compra con FINSER PAY".'
-                cameraCaptureMode="user"
-                preview={
-                  localPreviews["video-aprobacion"] ||
-                  session?.evidence.videoAprobacionDataUrl ||
-                  null
-                }
-                previewAlt="Video de aprobacion"
-                meta={
-                  session?.evidence.videoReady
-                    ? `Ultimo video: ${auditTime(session.evidence.videoAprobacionCapturedAt)}${
-                        session.evidence.videoAprobacionDuration
-                          ? ` | ${session.evidence.videoAprobacionDuration}s`
-                          : ""
-                      }`
-                    : undefined
-                }
-                uploading={uploadingKey === "video-aprobacion"}
-                onCameraChange={(event) => void handleVideoCapture(event)}
-              />
             </section>
 
             <section className="rounded-[28px] border border-[#d9dfeb] bg-white px-6 py-6 shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                 Como sigue
               </p>
-              <div className="mt-4 grid gap-3 md:grid-cols-4">
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
                 {[
                   { label: "Selfie", ready: session?.evidence.selfieReady },
                   {
@@ -1240,7 +1215,6 @@ export default function MobileCaptureClient({
                     label: "Cedula respaldo",
                     ready: session?.evidence.cedulaRespaldoReady,
                   },
-                  { label: "Video", ready: session?.evidence.videoReady },
                 ].map((item) => (
                   <div
                     key={item.label}
@@ -1256,7 +1230,7 @@ export default function MobileCaptureClient({
               </div>
               <p className="mt-4 text-sm leading-6 text-slate-600">
                 Cuando termines, vuelve al computador. La plataforma cargará las
-                evidencias automáticamente y podrás seguir con OTP, firma y contratos.
+                evidencias automáticamente y podrás seguir con firma y contratos.
               </p>
             </section>
           </>

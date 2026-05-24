@@ -69,8 +69,7 @@ export function resolveCaptureSessionState(session: {
   const completed =
     Boolean(session.selfieDataUrl) &&
     Boolean(session.cedulaFrenteDataUrl) &&
-    Boolean(session.cedulaRespaldoDataUrl) &&
-    Boolean(session.videoAprobacionDataUrl);
+    Boolean(session.cedulaRespaldoDataUrl);
 
   if (completed) {
     return "COMPLETA";

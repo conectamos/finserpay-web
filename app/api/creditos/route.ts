@@ -597,7 +597,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error:
-            "Las evidencias del credito llegaron incompletas. Intenta finalizar de nuevo para reenviar las fotos, firma y video.",
+            "Las evidencias del credito llegaron incompletas. Intenta finalizar de nuevo para reenviar las fotos y firma.",
         },
         { status: 413 }
       );
@@ -1031,13 +1031,6 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!contratoVideoAprobacionDataUrl) {
-      return NextResponse.json(
-        { error: "Debes registrar el video de aprobacion del cliente" },
-        { status: 400 }
-      );
-    }
-
     if (!contratoFirmaDataUrl) {
       return NextResponse.json(
         { error: "Debes capturar la firma digital del cliente" },
@@ -1244,7 +1237,6 @@ export async function POST(req: Request) {
             "Fotografia",
             "Cedula frente",
             "Cedula respaldo",
-            "Video de aprobacion",
             "Firma digital",
           ],
           email: clienteCorreo,
