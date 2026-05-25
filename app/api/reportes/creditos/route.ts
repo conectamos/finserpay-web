@@ -121,6 +121,13 @@ export async function GET(req: Request) {
     const search = sanitizeSearch(searchParams.get("search"));
     const searchDigits = search.replace(/\D/g, "");
     const sedeId = admin ? parsePositiveInt(searchParams.get("sedeId")) : user.sedeId;
+    const requestedAliadoId = admin ? parsePositiveInt(searchParams.get("aliadoId")) : null;
+    const selectedAliadoId =
+      admin && adminCentral
+        ? requestedAliadoId
+        : admin
+          ? aliadoReportScopeId
+          : null;
     const from = parseDate(searchParams.get("from"));
     const to = parseDate(searchParams.get("to"), true);
     const searchConditions: Prisma.CreditoWhereInput[] = search
@@ -134,6 +141,8 @@ export async function GET(req: Request) {
           { equipoMarca: { contains: search, mode: "insensitive" } },
           { equipoModelo: { contains: search, mode: "insensitive" } },
           { sede: { nombre: { contains: search, mode: "insensitive" } } },
+          { sede: { aliado: { is: { nombre: { contains: search, mode: "insensitive" } } } } },
+          { sede: { aliado: { is: { codigo: { contains: search, mode: "insensitive" } } } } },
           { usuario: { nombre: { contains: search, mode: "insensitive" } } },
           { vendedor: { nombre: { contains: search, mode: "insensitive" } } },
         ]
@@ -149,10 +158,10 @@ export async function GET(req: Request) {
     }
 
     const where: Prisma.CreditoWhereInput = {
-      ...(admin && !adminCentral
+      ...(admin && selectedAliadoId
         ? {
             sede: {
-              aliadoId: aliadoReportScopeId,
+              aliadoId: selectedAliadoId,
             },
           }
         : {}),
@@ -193,6 +202,14 @@ export async function GET(req: Request) {
           select: {
             id: true,
             nombre: true,
+            aliadoId: true,
+            aliado: {
+              select: {
+                id: true,
+                nombre: true,
+                codigo: true,
+              },
+            },
           },
         },
       },
@@ -307,6 +324,7 @@ export async function GET(req: Request) {
       filters: {
         search,
         sedeId,
+        aliadoId: selectedAliadoId,
         from: from?.toISOString() || null,
         to: to?.toISOString() || null,
       },

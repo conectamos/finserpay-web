@@ -16,6 +16,18 @@ type SessionUser = {
 type SedeItem = {
   id: number;
   nombre: string;
+  aliadoId?: number | null;
+  aliado?: {
+    id: number;
+    nombre: string;
+    codigo: string | null;
+  } | null;
+};
+
+type AliadoItem = {
+  id: number;
+  nombre: string;
+  codigo: string | null;
 };
 
 type CreditReportItem = {
@@ -51,6 +63,12 @@ type CreditReportItem = {
   sede: {
     id: number;
     nombre: string;
+    aliadoId?: number | null;
+    aliado?: {
+      id: number;
+      nombre: string;
+      codigo: string | null;
+    } | null;
   };
 };
 
@@ -108,6 +126,7 @@ function exportCreditsToExcel(items: CreditReportItem[]) {
     "Cliente",
     "Referencia",
     "IMEI",
+    "Aliado",
     "Sede",
     "Vendedor",
     "Inicial",
@@ -120,6 +139,7 @@ function exportCreditsToExcel(items: CreditReportItem[]) {
     item.clienteNombre,
     item.referenciaEquipo || [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" "),
     item.imei,
+    item.sede.aliado?.nombre || "",
     item.sede.nombre,
     item.usuario.nombre,
     item.cuotaInicial,
@@ -175,6 +195,7 @@ function SummaryCard({
 export default function ReporteCreditosPage() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [sedes, setSedes] = useState<SedeItem[]>([]);
+  const [aliados, setAliados] = useState<AliadoItem[]>([]);
   const [items, setItems] = useState<CreditReportItem[]>([]);
   const [summary, setSummary] = useState<CreditReportResponse["summary"] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -184,17 +205,23 @@ export default function ReporteCreditosPage() {
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [aliadoId, setAliadoId] = useState("");
   const [sedeId, setSedeId] = useState("");
   const isAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
+  const sedesFiltradas = aliadoId
+    ? sedes.filter((sede) => String(sede.aliadoId || "") === aliadoId)
+    : sedes;
 
   const loadContext = async () => {
-    const [sessionRes, sedesRes] = await Promise.all([
+    const [sessionRes, sedesRes, aliadosRes] = await Promise.all([
       fetch("/api/session", { cache: "no-store" }),
       fetch("/api/sedes", { cache: "no-store" }),
+      fetch("/api/aliados/admin", { cache: "no-store" }),
     ]);
 
     const sessionData = await sessionRes.json();
     const sedesData = await sedesRes.json();
+    const aliadosData = await aliadosRes.json();
 
     if (sessionRes.ok) {
       setUser(sessionData);
@@ -202,6 +229,10 @@ export default function ReporteCreditosPage() {
 
     if (sedesRes.ok) {
       setSedes(Array.isArray(sedesData) ? sedesData : []);
+    }
+
+    if (aliadosRes.ok) {
+      setAliados(Array.isArray(aliadosData.aliados) ? aliadosData.aliados : []);
     }
   };
 
@@ -215,6 +246,7 @@ export default function ReporteCreditosPage() {
       if (search.trim()) params.set("search", search.trim());
       if (from) params.set("from", from);
       if (to) params.set("to", to);
+      if (aliadoId) params.set("aliadoId", aliadoId);
       if (sedeId) params.set("sedeId", sedeId);
 
       const res = await fetch(`/api/reportes/creditos?${params.toString()}`, {
@@ -364,7 +396,7 @@ export default function ReporteCreditosPage() {
         </section>
 
         <section className="mt-6 rounded-[30px] bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr_0.7fr_170px_170px]">
+          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr_0.85fr_0.85fr_150px_150px]">
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -387,18 +419,36 @@ export default function ReporteCreditosPage() {
             />
 
             {isAdmin ? (
-              <select
-                value={sedeId}
-                onChange={(event) => setSedeId(event.target.value)}
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-              >
-                <option value="">Todas las sedes</option>
-                {sedes.map((sede) => (
-                  <option key={sede.id} value={sede.id}>
-                    {sede.nombre}
-                  </option>
-                ))}
-              </select>
+              <>
+                <select
+                  value={aliadoId}
+                  onChange={(event) => {
+                    setAliadoId(event.target.value);
+                    setSedeId("");
+                  }}
+                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="">Todos los aliados</option>
+                  {aliados.map((aliado) => (
+                    <option key={aliado.id} value={aliado.id}>
+                      {aliado.nombre}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={sedeId}
+                  onChange={(event) => setSedeId(event.target.value)}
+                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="">Todas las sedes</option>
+                  {sedesFiltradas.map((sede) => (
+                    <option key={sede.id} value={sede.id}>
+                      {sede.nombre}
+                    </option>
+                  ))}
+                </select>
+              </>
             ) : (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
                 {user?.sedeNombre || sedes[0]?.nombre || "Sede asignada"}
@@ -438,6 +488,7 @@ export default function ReporteCreditosPage() {
                   <th className="px-4 py-3 text-left font-semibold">Cliente</th>
                   <th className="px-4 py-3 text-left font-semibold">Referencia</th>
                   <th className="px-4 py-3 text-left font-semibold">IMEI</th>
+                  <th className="px-4 py-3 text-left font-semibold">Aliado</th>
                   <th className="px-4 py-3 text-left font-semibold">Sede</th>
                   <th className="px-4 py-3 text-left font-semibold">Vendedor</th>
                   <th className="px-4 py-3 text-left font-semibold">Inicial dada</th>
@@ -460,6 +511,7 @@ export default function ReporteCreditosPage() {
                         "-"}
                     </td>
                     <td className="px-4 py-3">{item.imei || "-"}</td>
+                    <td className="px-4 py-3">{item.sede.aliado?.nombre || "-"}</td>
                     <td className="px-4 py-3">{item.sede.nombre}</td>
                     <td className="px-4 py-3">{item.usuario.nombre}</td>
                     <td className="px-4 py-3">{formatMoney(item.cuotaInicial)}</td>
@@ -481,7 +533,7 @@ export default function ReporteCreditosPage() {
                 ))}
                 {!loading && items.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
                       No hay creditos para los filtros seleccionados.
                     </td>
                   </tr>

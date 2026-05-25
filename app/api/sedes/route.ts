@@ -40,6 +40,14 @@ export async function GET() {
       select: {
         id: true,
         nombre: true,
+        aliadoId: true,
+        aliado: {
+          select: {
+            id: true,
+            nombre: true,
+            codigo: true,
+          },
+        },
       },
       orderBy: {
         id: "asc",
