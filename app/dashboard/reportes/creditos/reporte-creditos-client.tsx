@@ -333,8 +333,8 @@ export default function ReporteCreditosPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
-      <div className="mx-auto max-w-7xl">
+    <div className="min-h-screen bg-[#eef2f7] px-3 py-6 lg:px-6 lg:py-8">
+      <div className="mx-auto w-full max-w-[1680px]">
         <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="inline-flex rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#145a5a]">
@@ -395,8 +395,8 @@ export default function ReporteCreditosPage() {
           />
         </section>
 
-        <section className="mt-6 rounded-[30px] bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr_0.85fr_0.85fr_150px_150px]">
+        <section className="mt-6 rounded-[30px] bg-white p-4 shadow-sm ring-1 ring-slate-200 lg:p-6">
+          <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-[minmax(260px,1.45fr)_150px_150px_minmax(175px,0.8fr)_minmax(175px,0.85fr)_150px_150px]">
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -480,50 +480,63 @@ export default function ReporteCreditosPage() {
           )}
 
           <div className="mt-6 overflow-x-auto rounded-[24px] border border-slate-200">
-            <table className="min-w-full text-sm">
+            <table className="w-full min-w-[1320px] table-fixed text-[12px] xl:text-[13px]">
+              <colgroup>
+                <col className="w-[7%]" />
+                <col className="w-[10%]" />
+                <col className="w-[11%]" />
+                <col className="w-[10%]" />
+                <col className="w-[11%]" />
+                <col className="w-[9%]" />
+                <col className="w-[7%]" />
+                <col className="w-[9%]" />
+                <col className="w-[8%]" />
+                <col className="w-[9%]" />
+                <col className="w-[9%]" />
+              </colgroup>
               <thead className="bg-[#111318] text-white">
                 <tr>
-                  <th className="px-4 py-3 text-left font-semibold">Fecha</th>
-                  <th className="px-4 py-3 text-left font-semibold">Folio</th>
-                  <th className="px-4 py-3 text-left font-semibold">Cliente</th>
-                  <th className="px-4 py-3 text-left font-semibold">Referencia</th>
-                  <th className="px-4 py-3 text-left font-semibold">IMEI</th>
-                  <th className="px-4 py-3 text-left font-semibold">Aliado</th>
-                  <th className="px-4 py-3 text-left font-semibold">Sede</th>
-                  <th className="px-4 py-3 text-left font-semibold">Vendedor</th>
-                  <th className="px-4 py-3 text-left font-semibold">Inicial dada</th>
-                  <th className="px-4 py-3 text-left font-semibold">Credito autorizado</th>
-                  <th className="px-4 py-3 text-left font-semibold">Estado</th>
+                  <th className="px-3 py-3 text-left font-semibold">Fecha</th>
+                  <th className="px-3 py-3 text-left font-semibold">Folio</th>
+                  <th className="px-3 py-3 text-left font-semibold">Cliente</th>
+                  <th className="px-3 py-3 text-left font-semibold">Referencia</th>
+                  <th className="px-3 py-3 text-left font-semibold">IMEI</th>
+                  <th className="px-3 py-3 text-left font-semibold">Aliado</th>
+                  <th className="px-3 py-3 text-left font-semibold">Sede</th>
+                  <th className="px-3 py-3 text-left font-semibold">Vendedor</th>
+                  <th className="px-3 py-3 text-left font-semibold">Inicial dada</th>
+                  <th className="px-3 py-3 text-left font-semibold">Credito autorizado</th>
+                  <th className="px-3 py-3 text-left font-semibold">Estado</th>
                 </tr>
               </thead>
               <tbody className="bg-white">
                 {items.map((item) => (
                   <tr key={item.id} className="border-t border-slate-100">
-                    <td className="px-4 py-3">{formatDate(item.fechaCredito)}</td>
-                    <td className="px-4 py-3 font-semibold text-slate-950">{item.folio}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3 align-top whitespace-nowrap">{formatDate(item.fechaCredito)}</td>
+                    <td className="break-all px-3 py-3 align-top font-semibold text-slate-950">{item.folio}</td>
+                    <td className="px-3 py-3 align-top">
                       <div className="font-semibold text-slate-950">{item.clienteNombre}</div>
                       <div className="text-xs text-slate-500">{item.clienteDocumento || "-"}</div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="break-words px-3 py-3 align-top">
                       {item.referenciaEquipo ||
                         [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" ") ||
                         "-"}
                     </td>
-                    <td className="px-4 py-3">{item.imei || "-"}</td>
-                    <td className="px-4 py-3">{item.sede.aliado?.nombre || "-"}</td>
-                    <td className="px-4 py-3">{item.sede.nombre}</td>
-                    <td className="px-4 py-3">{item.usuario.nombre}</td>
-                    <td className="px-4 py-3">{formatMoney(item.cuotaInicial)}</td>
-                    <td className="px-4 py-3">{formatMoney(item.creditoAutorizado)}</td>
-                    <td className="px-4 py-3">
+                    <td className="break-all px-3 py-3 align-top">{item.imei || "-"}</td>
+                    <td className="break-words px-3 py-3 align-top">{item.sede.aliado?.nombre || "-"}</td>
+                    <td className="break-words px-3 py-3 align-top">{item.sede.nombre}</td>
+                    <td className="break-words px-3 py-3 align-top">{item.usuario.nombre}</td>
+                    <td className="px-3 py-3 align-top whitespace-nowrap">{formatMoney(item.cuotaInicial)}</td>
+                    <td className="px-3 py-3 align-top whitespace-nowrap">{formatMoney(item.creditoAutorizado)}</td>
+                    <td className="px-3 py-3 align-top">
                       <div className="font-semibold text-slate-950">{item.estado}</div>
                       {isAdmin && item.estado !== "ANULADO" && (
                         <button
                           type="button"
                           onClick={() => void annulCredit(item)}
                           disabled={annullingId === item.id}
-                          className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="mt-2 inline-flex max-w-full items-center justify-center rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           {annullingId === item.id ? "Anulando..." : "Anular"}
                         </button>

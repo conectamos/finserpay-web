@@ -375,8 +375,8 @@ export default function ReporteAbonosPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
-      <div className="mx-auto max-w-7xl">
+    <div className="min-h-screen bg-[#eef2f7] px-3 py-6 lg:px-6 lg:py-8">
+      <div className="mx-auto w-full max-w-[1680px]">
         <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="inline-flex rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#145a5a]">
@@ -427,8 +427,8 @@ export default function ReporteAbonosPage() {
           />
         </section>
 
-        <section className="mt-6 rounded-[30px] bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr_0.85fr_0.85fr_150px_150px]">
+        <section className="mt-6 rounded-[30px] bg-white p-4 shadow-sm ring-1 ring-slate-200 lg:p-6">
+          <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-[minmax(260px,1.45fr)_150px_150px_minmax(175px,0.8fr)_minmax(175px,0.85fr)_150px_150px]">
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -511,8 +511,8 @@ export default function ReporteAbonosPage() {
             </div>
           )}
 
-          <div className="mt-6 grid gap-4 xl:grid-cols-[0.95fr_1.35fr]">
-            <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4">
+          <div className="mt-6 grid gap-4">
+            <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4 lg:max-w-3xl">
               <h2 className="text-lg font-black tracking-tight text-slate-950">
                 Recaudo dia a dia
               </h2>
@@ -547,19 +547,31 @@ export default function ReporteAbonosPage() {
             </div>
 
             <div className="overflow-x-auto rounded-[24px] border border-slate-200 bg-white">
-              <table className="min-w-full text-sm">
+              <table className="w-full min-w-[1320px] table-fixed text-[12px] xl:text-[13px]">
+                <colgroup>
+                  <col className="w-[11%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
+                </colgroup>
                 <thead className="bg-[#111318] text-white">
                   <tr>
-                    <th className="px-4 py-3 text-left font-semibold">Fecha</th>
-                    <th className="px-4 py-3 text-left font-semibold">Cliente</th>
-                    <th className="px-4 py-3 text-left font-semibold">Folio</th>
-                    <th className="px-4 py-3 text-left font-semibold">Aliado</th>
-                    <th className="px-4 py-3 text-left font-semibold">Sede</th>
-                    <th className="px-4 py-3 text-left font-semibold">Vendedor</th>
-                    <th className="px-4 py-3 text-left font-semibold">Metodo</th>
-                    <th className="px-4 py-3 text-left font-semibold">Valor</th>
-                    <th className="px-4 py-3 text-left font-semibold">Estado</th>
-                    <th className="px-4 py-3 text-left font-semibold">Accion</th>
+                    <th className="px-3 py-3 text-left font-semibold">Fecha</th>
+                    <th className="px-3 py-3 text-left font-semibold">Cliente</th>
+                    <th className="px-3 py-3 text-left font-semibold">Folio</th>
+                    <th className="px-3 py-3 text-left font-semibold">Aliado</th>
+                    <th className="px-3 py-3 text-left font-semibold">Sede</th>
+                    <th className="px-3 py-3 text-left font-semibold">Vendedor</th>
+                    <th className="px-3 py-3 text-left font-semibold">Metodo</th>
+                    <th className="px-3 py-3 text-left font-semibold">Valor</th>
+                    <th className="px-3 py-3 text-left font-semibold">Estado</th>
+                    <th className="px-3 py-3 text-left font-semibold">Accion</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -574,18 +586,18 @@ export default function ReporteAbonosPage() {
                           isAnnulled ? "bg-rose-50/60 text-slate-500" : "",
                         ].join(" ")}
                       >
-                        <td className="px-4 py-3">{formatDateTime(item.fechaAbono)}</td>
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-3 align-top">{formatDateTime(item.fechaAbono)}</td>
+                        <td className="px-3 py-3 align-top">
                           <div className="font-semibold text-slate-950">{item.credito.clienteNombre}</div>
                           <div className="text-xs text-slate-500">
                             {item.credito.clienteDocumento || "-"}
                           </div>
                         </td>
-                        <td className="px-4 py-3 font-semibold text-slate-950">{item.credito.folio}</td>
-                        <td className="px-4 py-3">
+                        <td className="break-all px-3 py-3 align-top font-semibold text-slate-950">{item.credito.folio}</td>
+                        <td className="break-words px-3 py-3 align-top">
                           {item.credito.sede?.aliado?.nombre || item.sede.aliado?.nombre || "-"}
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="break-words px-3 py-3 align-top">
                           <div>{item.credito.sede?.nombre || item.sede.nombre}</div>
                           {item.credito.sede?.nombre &&
                             item.credito.sede.nombre !== item.sede.nombre && (
@@ -594,10 +606,10 @@ export default function ReporteAbonosPage() {
                               </div>
                             )}
                         </td>
-                        <td className="px-4 py-3">{item.usuario.nombre}</td>
-                        <td className="px-4 py-3">{item.metodoPago}</td>
-                        <td className="px-4 py-3">{formatMoney(item.valor)}</td>
-                        <td className="px-4 py-3">
+                        <td className="break-words px-3 py-3 align-top">{item.usuario.nombre}</td>
+                        <td className="break-words px-3 py-3 align-top">{item.metodoPago}</td>
+                        <td className="px-3 py-3 align-top whitespace-nowrap">{formatMoney(item.valor)}</td>
+                        <td className="px-3 py-3 align-top">
                           <span
                             className={[
                               "inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em]",
@@ -610,18 +622,18 @@ export default function ReporteAbonosPage() {
                           </span>
                           {isAnnulled && (
                             <div className="mt-1 max-w-[180px] text-[11px] text-rose-700">
-                              {item.anulacionMotivo || "Sin motivo"} ·{" "}
+                              {item.anulacionMotivo || "Sin motivo"} -{" "}
                               {formatDateTime(item.anuladoAt)}
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-3 align-top">
                           {isAdmin && !isAnnulled ? (
                             <button
                               type="button"
                               onClick={() => void annulPayment(item)}
                               disabled={annullingId === item.id}
-                              className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="inline-flex max-w-full items-center justify-center rounded-xl border border-rose-200 bg-white px-3 py-2 text-[11px] font-black text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {annullingId === item.id ? "Anulando..." : "Anular"}
                             </button>
