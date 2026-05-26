@@ -7094,19 +7094,17 @@ export default function CreditFactoryConsole({
                             Minimo {currency(cuotaInicialMinimaNumero)}.
                           </p>
                         </div>
-                        {canSeeInternalPricing ? (
-                          <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                              Valor credito
-                            </p>
-                            <p className="mt-2 text-2xl font-black text-slate-950">
-                              {currency(saldoBaseFinanciado)}
-                            </p>
-                            <p className="mt-1 text-xs font-medium text-slate-500">
-                              Valor equipo - inicial.
-                            </p>
-                          </div>
-                        ) : null}
+                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                            Valor credito
+                          </p>
+                          <p className="mt-2 text-2xl font-black text-slate-950">
+                            {currency(saldoBaseFinanciado)}
+                          </p>
+                          <p className="mt-1 text-xs font-medium text-slate-500">
+                            Valor equipo - inicial.
+                          </p>
+                        </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                             Plazo
