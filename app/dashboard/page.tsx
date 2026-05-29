@@ -12,6 +12,10 @@ import LogoutButton from "./_components/logout-button";
 import FinserBrand from "../_components/finser-brand";
 import SellerProfileAccess from "./_components/seller-profile-access";
 
+const CLIENT_APP_PLAY_STORE_URL =
+  "https://play.google.com/store/apps/details?id=com.finserpay.clientes";
+const CLIENT_APP_QR_PATH = "/downloads/finserpay-clientes-qr.svg";
+
 type NavItem = {
   href: string;
   label: string;
@@ -1056,7 +1060,7 @@ export default async function DashboardPage() {
             <div className="grid gap-5 md:grid-cols-[168px_1fr] md:items-center">
               <div className="rounded-[26px] border border-[#cce7df] bg-[#eff8f5] p-3">
                 <Image
-                  src="/downloads/finserpay-clientes-qr.svg"
+                  src={CLIENT_APP_QR_PATH}
                   alt="QR descarga app FINSER PAY Clientes"
                   width={720}
                   height={720}
@@ -1071,22 +1075,24 @@ export default async function DashboardPage() {
                   Instalar o actualizar al finalizar la venta
                 </h2>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-[#687080]">
-                  Escanea este QR desde el celular del cliente para instalar la APK nueva con notificaciones de pago.
+                  Escanea este QR desde el celular del cliente para instalar o actualizar desde Google Play con notificaciones de pago.
                 </p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <Link
-                    href="/app"
+                  <a
+                    href={CLIENT_APP_PLAY_STORE_URL}
                     target="_blank"
+                    rel="noopener noreferrer"
                     className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-[#0f766e] bg-[#0f766e] px-4 text-center text-sm font-black text-white transition hover:-translate-y-0.5"
                   >
-                    Abrir QR y descarga
-                  </Link>
+                    Abrir Google Play
+                  </a>
                   <a
-                    href="/downloads/finserpay-clientes.apk"
-                    download
+                    href={CLIENT_APP_PLAY_STORE_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-[#d7dce2] bg-[#fbfbf7] px-4 text-center text-sm font-black text-[#20242a] transition hover:-translate-y-0.5"
                   >
-                    Descargar APK nueva
+                    Instalar desde Play Store
                   </a>
                 </div>
               </div>

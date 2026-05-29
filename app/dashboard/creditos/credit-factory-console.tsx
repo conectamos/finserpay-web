@@ -10786,7 +10786,7 @@ export default function CreditFactoryConsole({
                       Enviar notificacion individual
                     </h3>
                     <p className="mt-1 text-sm leading-6 text-slate-500">
-                      Llega solo si el cliente ya abrio la APK nueva y tiene token activo.
+                      Llega solo si el cliente ya abrio la app nueva y tiene token activo.
                     </p>
                   </div>
 
