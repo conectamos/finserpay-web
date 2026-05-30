@@ -69,6 +69,10 @@ function resolveAutomaticWompiPaymentMethod(value: unknown) {
   return method === "NEQUI" ? "NEQUI" : "WOMPI";
 }
 
+function resolveStaleProcessingCutoff() {
+  return new Date(Date.now() - 5 * 60 * 1000);
+}
+
 async function syncMoraAfterWompiPayment(creditId: number) {
   await ensureCreditAbonoAuditColumns();
 
@@ -242,6 +246,18 @@ export async function processApprovedWompiPayment(
     where: {
       id: intent.id,
       processedAbonoId: null,
+      OR: [
+        {
+          status: {
+            not: "PROCESSING_APPROVED",
+          },
+        },
+        {
+          updatedAt: {
+            lt: resolveStaleProcessingCutoff(),
+          },
+        },
+      ],
     },
     data: {
       status: "PROCESSING_APPROVED",
@@ -266,7 +282,10 @@ export async function processApprovedWompiPayment(
       alreadyProcessed: Boolean(current?.processedAbonoId),
       applied: false,
       intentId: intent.id,
-      status: current?.status || "UPDATED",
+      reason: current?.processedAbonoId
+        ? undefined
+        : "PAYMENT_ALREADY_BEING_PROCESSED",
+      status: current?.status || "PROCESSING_APPROVED",
     };
   }
 
@@ -275,6 +294,44 @@ export async function processApprovedWompiPayment(
   const paymentMethod = resolveAutomaticWompiPaymentMethod(
     transaction.payment_method_type || intent.paymentMethodType
   );
+  const existingReferencePayment = await prisma.creditoAbono.findFirst({
+    where: {
+      creditoId: intent.creditoId,
+      estado: {
+        not: "ANULADO",
+      },
+      observacion: {
+        contains: intent.reference,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (existingReferencePayment) {
+    await prisma.wompiPaymentIntent.update({
+      where: { id: intent.id },
+      data: {
+        status: "APPROVED",
+        transactionId: transaction.id || intent.transactionId,
+        paymentMethodType:
+          transaction.payment_method_type || intent.paymentMethodType,
+        processedAbonoId: existingReferencePayment.id,
+        payload: payload as Prisma.InputJsonValue,
+        processedAt: new Date(),
+      },
+    });
+
+    return {
+      abonoId: existingReferencePayment.id,
+      alreadyProcessed: true,
+      applied: false,
+      intentId: intent.id,
+      status: "APPROVED",
+    };
+  }
+
   const abono = await prisma.$transaction(async (tx) => {
     const created = await tx.creditoAbono.create({
       data: {

@@ -25,8 +25,11 @@ export async function POST(req: Request) {
         await processApprovedWompiPayment(transaction, payload);
       } else {
         await prisma.wompiPaymentIntent
-          .update({
-            where: { reference: transaction.reference },
+          .updateMany({
+            where: {
+              reference: transaction.reference,
+              processedAbonoId: null,
+            },
             data: {
               status: transaction.status || "UPDATED",
               transactionId: transaction.id || null,
