@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import {
+  EARLY_PAYOFF_PAYMENT_TYPE,
+  buildEarlyPayoffIntentMeta,
+  calculateCreditEarlyPayoff,
+} from "@/lib/credit-early-payoff";
 import { sanitizeSearch, sanitizeText, toNumber } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import prisma from "@/lib/prisma";
@@ -22,6 +27,7 @@ type CheckoutBody = {
   documento?: string;
   nequiPhone?: string;
   paymentMethod?: string;
+  paymentMode?: string;
 };
 
 function parseInstallmentNumbers(value: CheckoutBody["cuotaNumeros"]) {
@@ -43,10 +49,10 @@ function buildAbsoluteUrl(req: Request, path: string) {
   return new URL(path, origin).toString();
 }
 
-function generateWompiReference(creditId: number, cuotas: number[]) {
+function generateWompiReference(creditId: number, label: string) {
   const timestamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
   const suffix = Math.random().toString(36).slice(2, 7).toUpperCase();
-  return `FP-${creditId}-C${cuotas.join("-")}-${timestamp}-${suffix}`.slice(0, 120);
+  return `FP-${creditId}-${label}-${timestamp}-${suffix}`.slice(0, 120);
 }
 
 function normalizePhone(value: unknown) {
@@ -79,6 +85,9 @@ export async function POST(req: Request) {
     const documento = sanitizeSearch(body.documento).replace(/\D/g, "");
     const cuotaNumeros = parseInstallmentNumbers(body.cuotaNumeros);
     const paymentMethod = sanitizeText(body.paymentMethod).toUpperCase();
+    const paymentMode = sanitizeText(body.paymentMode).toUpperCase();
+    const wantsEarlyPayoff =
+      paymentMode === "PAYOFF" || paymentMode === EARLY_PAYOFF_PAYMENT_TYPE;
     const wantsNequiDirect = paymentMethod === "NEQUI";
     const nequiPhone = normalizePhone(body.nequiPhone);
 
@@ -89,7 +98,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!cuotaNumeros.length) {
+    if (!wantsEarlyPayoff && !cuotaNumeros.length) {
       return NextResponse.json(
         { error: "Selecciona al menos una cuota para pagar" },
         { status: 400 }
@@ -129,7 +138,10 @@ export async function POST(req: Request) {
         clienteDocumento: true,
         clienteCorreo: true,
         clienteTelefono: true,
+        saldoBaseFinanciado: true,
         montoCredito: true,
+        valorInteres: true,
+        valorFianza: true,
         valorCuota: true,
         plazoMeses: true,
         frecuenciaPago: true,
@@ -170,42 +182,77 @@ export async function POST(req: Request) {
         fechaAbono: item.fechaAbono,
       })),
     });
-    const payableNumbers = plan.installments
-      .filter((item) => item.saldoPendiente > 0)
-      .map((item) => item.numero);
-    const maxSelected = Math.max(...cuotaNumeros);
-    const expectedNumbers = payableNumbers.filter((item) => item <= maxSelected);
-    const exactSelection =
-      expectedNumbers.length === cuotaNumeros.length &&
-      expectedNumbers.every((item, index) => item === cuotaNumeros[index]);
+    let amount = 0;
+    let intentCuotaNumeros: Prisma.InputJsonValue =
+      cuotaNumeros as Prisma.InputJsonValue;
+    let referenceLabel = `C${cuotaNumeros.join("-")}`;
 
-    if (!exactSelection) {
-      return NextResponse.json(
-        {
-          error:
-            "Debes pagar las cuotas pendientes en orden. Si eliges una cuota posterior, tambien se pagan las anteriores.",
-        },
-        { status: 400 }
+    if (wantsEarlyPayoff) {
+      const earlyPayoff = calculateCreditEarlyPayoff({
+        saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
+        montoCredito: Number(credit.montoCredito || 0),
+        valorInteres: Number(credit.valorInteres || 0),
+        valorFianza: Number(credit.valorFianza || 0),
+        valorCuota: Number(credit.valorCuota || 0),
+        plazoMeses: Number(credit.plazoMeses || 1),
+        frecuenciaPago: credit.frecuenciaPago,
+        fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+        abonos: credit.abonos.map((item) => ({
+          valor: Number(item.valor || 0),
+          fechaAbono: item.fechaAbono,
+        })),
+      });
+
+      if (!earlyPayoff.eligible) {
+        return NextResponse.json(
+          { error: earlyPayoff.reason || "No se puede liquidar este credito hoy" },
+          { status: 400 }
+        );
+      }
+
+      amount = earlyPayoff.capitalPendiente;
+      intentCuotaNumeros = buildEarlyPayoffIntentMeta(
+        earlyPayoff
+      ) as Prisma.InputJsonValue;
+      referenceLabel = "LIQUIDACION";
+    } else {
+      const payableNumbers = plan.installments
+        .filter((item) => item.saldoPendiente > 0)
+        .map((item) => item.numero);
+      const maxSelected = Math.max(...cuotaNumeros);
+      const expectedNumbers = payableNumbers.filter((item) => item <= maxSelected);
+      const exactSelection =
+        expectedNumbers.length === cuotaNumeros.length &&
+        expectedNumbers.every((item, index) => item === cuotaNumeros[index]);
+
+      if (!exactSelection) {
+        return NextResponse.json(
+          {
+            error:
+              "Debes pagar las cuotas pendientes en orden. Si eliges una cuota posterior, tambien se pagan las anteriores.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const selectedInstallments = plan.installments.filter((item) =>
+        cuotaNumeros.includes(item.numero)
+      );
+      amount = selectedInstallments.reduce(
+        (sum, item) => sum + Math.max(0, Number(item.saldoPendiente || 0)),
+        0
       );
     }
-
-    const selectedInstallments = plan.installments.filter((item) =>
-      cuotaNumeros.includes(item.numero)
-    );
-    const amount = selectedInstallments.reduce(
-      (sum, item) => sum + Math.max(0, Number(item.saldoPendiente || 0)),
-      0
-    );
     const amountInCents = Math.round(amount * 100);
 
     if (amountInCents <= 0) {
       return NextResponse.json(
-        { error: "Las cuotas seleccionadas no tienen saldo pendiente" },
+        { error: "El pago seleccionado no tiene saldo pendiente" },
         { status: 400 }
       );
     }
 
-    const reference = generateWompiReference(credit.id, cuotaNumeros);
+    const reference = generateWompiReference(credit.id, referenceLabel);
     const redirectUrl = buildAbsoluteUrl(
       req,
       `/clientes?credito=${credit.id}&wompiReference=${encodeURIComponent(reference)}`
@@ -221,7 +268,7 @@ export async function POST(req: Request) {
       data: {
         reference,
         creditoId: credit.id,
-        cuotaNumeros: cuotaNumeros as Prisma.InputJsonValue,
+        cuotaNumeros: intentCuotaNumeros,
         amount,
         amountInCents,
         currency: "COP",

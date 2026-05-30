@@ -14,6 +14,11 @@ import {
 } from "@/lib/credit-factory";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import {
+  EARLY_PAYOFF_PAYMENT_TYPE,
+  buildEarlyPayoffObservation,
+  calculateCreditEarlyPayoff,
+} from "@/lib/credit-early-payoff";
+import {
   getEqualityDeviceMeta,
   getPayloadSummary,
 } from "@/lib/equality-device-meta";
@@ -36,8 +41,10 @@ export const dynamic = "force-dynamic";
 type CreditPaymentBody = {
   cuotaNumero?: number | string | null;
   cuotaNumeros?: Array<number | string> | string | null;
+  liquidacionAnticipada?: boolean;
   metodoPago?: string;
   observacion?: string;
+  tipoAbono?: string;
   valor?: number | string;
 };
 
@@ -169,8 +176,11 @@ async function loadCredit(
       clienteNombre: true,
       clienteDocumento: true,
       clienteTelefono: true,
+      saldoBaseFinanciado: true,
       montoCredito: true,
       cuotaInicial: true,
+      valorInteres: true,
+      valorFianza: true,
       valorCuota: true,
       plazoMeses: true,
       frecuenciaPago: true,
@@ -190,6 +200,7 @@ async function loadCredit(
       bloqueoMora: true,
       bloqueoMoraAt: true,
       pazYSalvoEmitidoAt: true,
+      observacionAdmin: true,
       sedeId: true,
     },
   });
@@ -387,8 +398,11 @@ async function syncMoraAutomation(credit: LoadedCredit, plan: PaymentPlan) {
         clienteNombre: true,
         clienteDocumento: true,
         clienteTelefono: true,
+        saldoBaseFinanciado: true,
         montoCredito: true,
         cuotaInicial: true,
+        valorInteres: true,
+        valorFianza: true,
         valorCuota: true,
         plazoMeses: true,
         frecuenciaPago: true,
@@ -408,6 +422,7 @@ async function syncMoraAutomation(credit: LoadedCredit, plan: PaymentPlan) {
         bloqueoMora: true,
         bloqueoMoraAt: true,
         pazYSalvoEmitidoAt: true,
+        observacionAdmin: true,
         sedeId: true,
       },
     });
@@ -523,6 +538,23 @@ export async function GET(
       Number(credit.cuotaInicial || 0)
     );
     const plan = await loadPaymentPlan(credit);
+    const activePaymentItems = items.filter(
+      (item) => String(item.estado || "ACTIVO").toUpperCase() !== "ANULADO"
+    );
+    const earlyPayoff = calculateCreditEarlyPayoff({
+      saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
+      montoCredito: Number(credit.montoCredito || 0),
+      valorInteres: Number(credit.valorInteres || 0),
+      valorFianza: Number(credit.valorFianza || 0),
+      valorCuota: Number(credit.valorCuota || 0),
+      plazoMeses: Number(credit.plazoMeses || 1),
+      frecuenciaPago: credit.frecuenciaPago,
+      fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+      abonos: activePaymentItems.map((item) => ({
+        valor: Number(item.valor || 0),
+        fechaAbono: item.fechaAbono,
+      })),
+    });
     const automation = plan
       ? await syncMoraAutomation(credit, plan)
       : {
@@ -550,6 +582,13 @@ export async function GET(
         paidCount: plan?.paidCount || 0,
         pendingCount: plan?.pendingCount || 0,
         plan: plan?.installments || [],
+        liquidacionAnticipada: {
+          disponible: earlyPayoff.eligible,
+          motivo: earlyPayoff.reason,
+          capitalPendiente: earlyPayoff.capitalPendiente,
+          condonacion: earlyPayoff.interesFianzaCondonado,
+          saldoObligacion: earlyPayoff.saldoObligacion,
+        },
       },
       automation: serializeAutomationResult(automation),
       items: items.map(serializePayment),
@@ -625,14 +664,60 @@ export async function POST(
     let valor = parseMoneyValue(body.valor);
     const metodoPago = normalizePaymentMethod(body.metodoPago);
     const observacion = sanitizeText(body.observacion);
+    const earlyPayoffRequested =
+      Boolean(body.liquidacionAnticipada) ||
+      sanitizeText(body.tipoAbono).toUpperCase() === EARLY_PAYOFF_PAYMENT_TYPE;
     const cuotaNumeros = parseInstallmentNumbers(body.cuotaNumeros);
     const cuotaNumero = Math.trunc(toNumber(body.cuotaNumero));
-    const selectedNumbers = cuotaNumeros.length
+    let selectedNumbers = cuotaNumeros.length
       ? cuotaNumeros
       : cuotaNumero > 0
         ? [cuotaNumero]
         : [];
     const currentPlan = await loadPaymentPlan(credit);
+    let earlyPayoff = null as ReturnType<typeof calculateCreditEarlyPayoff> | null;
+
+    if (earlyPayoffRequested) {
+      const currentAbonos = await prisma.creditoAbono.findMany({
+        where: {
+          creditoId: credit.id,
+          estado: {
+            not: "ANULADO",
+          },
+        },
+        select: {
+          valor: true,
+          fechaAbono: true,
+        },
+        orderBy: {
+          fechaAbono: "asc",
+        },
+      });
+      earlyPayoff = calculateCreditEarlyPayoff({
+        saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
+        montoCredito: Number(credit.montoCredito || 0),
+        valorInteres: Number(credit.valorInteres || 0),
+        valorFianza: Number(credit.valorFianza || 0),
+        valorCuota: Number(credit.valorCuota || 0),
+        plazoMeses: Number(credit.plazoMeses || 1),
+        frecuenciaPago: credit.frecuenciaPago,
+        fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+        abonos: currentAbonos.map((item) => ({
+          valor: Number(item.valor || 0),
+          fechaAbono: item.fechaAbono,
+        })),
+      });
+
+      if (!earlyPayoff.eligible) {
+        return NextResponse.json(
+          { error: earlyPayoff.reason || "No se puede liquidar este credito hoy" },
+          { status: 400 }
+        );
+      }
+
+      valor = earlyPayoff.capitalPendiente;
+      selectedNumbers = [];
+    }
     const selectedInstallments = selectedNumbers
       .map(
         (numero) =>
@@ -706,6 +791,69 @@ export async function POST(
     }
 
     const payment = await prisma.$transaction(async (tx) => {
+      const earlyPayoffInTx = earlyPayoffRequested
+        ? calculateCreditEarlyPayoff({
+            saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
+            montoCredito: Number(credit.montoCredito || 0),
+            valorInteres: Number(credit.valorInteres || 0),
+            valorFianza: Number(credit.valorFianza || 0),
+            valorCuota: Number(credit.valorCuota || 0),
+            plazoMeses: Number(credit.plazoMeses || 1),
+            frecuenciaPago: credit.frecuenciaPago,
+            fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+            abonos: (
+              await tx.creditoAbono.findMany({
+                where: {
+                  creditoId: credit.id,
+                  estado: {
+                    not: "ANULADO",
+                  },
+                },
+                select: {
+                  valor: true,
+                  fechaAbono: true,
+                },
+                orderBy: {
+                  fechaAbono: "asc",
+                },
+              })
+            ).map((item) => ({
+              valor: Number(item.valor || 0),
+              fechaAbono: item.fechaAbono,
+            })),
+          })
+        : null;
+
+      if (earlyPayoffInTx && !earlyPayoffInTx.eligible) {
+        throw new Error(
+          earlyPayoffInTx.reason || "La liquidacion anticipada ya no aplica."
+        );
+      }
+
+      if (
+        earlyPayoffInTx &&
+        Math.round(earlyPayoffInTx.capitalPendiente) !== Math.round(valor)
+      ) {
+        throw new Error("El valor de liquidacion cambio. Consulta de nuevo el credito.");
+      }
+
+      const abonoObservation =
+        earlyPayoffInTx
+          ? [
+              buildEarlyPayoffObservation(earlyPayoffInTx),
+              observacion,
+            ]
+              .filter(Boolean)
+              .join(" - ")
+          : [
+              selectedInstallments.length
+                ? `Cuotas ${selectedInstallments.map((item) => item.numero).join(", ")}`
+                : "",
+              observacion,
+            ]
+              .filter(Boolean)
+              .join(" - ") || null;
+
       const created = await tx.creditoAbono.create({
         data: {
           creditoId: credit.id,
@@ -714,15 +862,7 @@ export async function POST(
           sedeId: user.sedeId,
           valor,
           metodoPago,
-          observacion:
-            [
-              selectedInstallments.length
-                ? `Cuotas ${selectedInstallments.map((item) => item.numero).join(", ")}`
-                : "",
-              observacion,
-            ]
-              .filter(Boolean)
-              .join(" - ") || null,
+          observacion: abonoObservation,
         },
         include: {
           usuario: {
@@ -763,25 +903,40 @@ export async function POST(
           fechaAbono: "asc",
         },
       });
-      const txPlan = buildCreditPaymentPlan({
-        montoCredito: Number(credit.montoCredito || 0),
-        valorCuota: Number(credit.valorCuota || 0),
-        plazoMeses: Number(credit.plazoMeses || 1),
-        frecuenciaPago: credit.frecuenciaPago,
-        fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
-        abonos: txAbonos.map((item) => ({
-          valor: Number(item.valor || 0),
-          fechaAbono: item.fechaAbono,
-        })),
-      });
+      const txPlan = earlyPayoffInTx
+        ? null
+        : buildCreditPaymentPlan({
+            montoCredito: Number(credit.montoCredito || 0),
+            valorCuota: Number(credit.valorCuota || 0),
+            plazoMeses: Number(credit.plazoMeses || 1),
+            frecuenciaPago: credit.frecuenciaPago,
+            fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+            abonos: txAbonos.map((item) => ({
+              valor: Number(item.valor || 0),
+              fechaAbono: item.fechaAbono,
+            })),
+          });
 
       await tx.credito.update({
         where: { id: credit.id },
-        data: {
-          fechaProximoPago: txPlan.nextInstallment?.fechaVencimiento
-            ? new Date(`${txPlan.nextInstallment.fechaVencimiento}T12:00:00.000Z`)
-            : credit.fechaProximoPago,
-        },
+        data: earlyPayoffInTx
+          ? {
+              fechaProximoPago: null,
+              montoCredito: earlyPayoffInTx.montoCreditoLiquidado,
+              observacionAdmin: [
+                credit.observacionAdmin,
+                `Liquidacion anticipada manual. Condonado intereses/fianza ${earlyPayoffInTx.interesFianzaCondonado}.`,
+              ]
+                .filter(Boolean)
+                .join("\n"),
+              valorFianza: earlyPayoffInTx.valorFianzaReconocida,
+              valorInteres: earlyPayoffInTx.valorInteresReconocido,
+            }
+          : {
+              fechaProximoPago: txPlan?.nextInstallment?.fechaVencimiento
+                ? new Date(`${txPlan.nextInstallment.fechaVencimiento}T12:00:00.000Z`)
+                : credit.fechaProximoPago,
+            },
       });
 
       await tx.cajaMovimiento.create({
@@ -794,7 +949,7 @@ export async function POST(
             creditoFolio: credit.folio,
             clienteNombre: credit.clienteNombre,
             metodoPago,
-            observacion,
+            observacion: abonoObservation || observacion,
           }),
           sedeId: user.sedeId,
         },
@@ -803,12 +958,12 @@ export async function POST(
       return created;
     });
 
+    const updatedCredit = await loadCredit(credit.id, creditAccessWhere);
     const summary = await loadPaymentSummary(
       credit.id,
-      Number(credit.montoCredito || 0),
-      Number(credit.cuotaInicial || 0)
+      Number((updatedCredit || credit).montoCredito || 0),
+      Number((updatedCredit || credit).cuotaInicial || 0)
     );
-    const updatedCredit = await loadCredit(credit.id, creditAccessWhere);
     const plan = await loadPaymentPlan(updatedCredit || credit);
     const automation =
       updatedCredit && plan

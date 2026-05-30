@@ -28,6 +28,13 @@ type ClientCredit = {
   sedeNombre: string;
   estadoPago: "PAGADO" | "AL_DIA" | "MORA";
   saldoPendiente: number;
+  liquidacionAnticipada?: {
+    capitalPendiente: number;
+    condonacion: number;
+    disponible: boolean;
+    motivo?: string | null;
+    saldoObligacion: number;
+  };
   saldoDisponible?: number;
   totalPagado: number;
   cuotas: ClientInstallment[];
@@ -73,6 +80,7 @@ type PaymentReturnNotice = {
 };
 
 type ExplorerPanel = "payments" | "pending" | "history" | null;
+type ClientPaymentMode = "INSTALLMENTS" | "PAYOFF";
 type ClientNoticeTone = "red" | "green" | "blue" | "gray";
 
 type ClientNotice = {
@@ -477,6 +485,8 @@ export default function ClienteConsultaPage() {
   const [confirmPaymentCreditId, setConfirmPaymentCreditId] = useState<number | null>(
     null
   );
+  const [confirmPaymentMode, setConfirmPaymentMode] =
+    useState<ClientPaymentMode>("INSTALLMENTS");
   const [nequiPhone, setNequiPhone] = useState("");
   const [acceptWompiTerms, setAcceptWompiTerms] = useState(false);
   const [paymentReturn, setPaymentReturn] = useState<PaymentReturnNotice | null>(null);
@@ -598,8 +608,21 @@ export default function ClienteConsultaPage() {
     }));
   };
 
-  const openWompiConfirm = (credit: ClientCredit) => {
-    if (!cuotasSeleccionadas(credit).length) {
+  const openWompiConfirm = (
+    credit: ClientCredit,
+    mode: ClientPaymentMode = "INSTALLMENTS"
+  ) => {
+    if (mode === "PAYOFF" && !credit.liquidacionAnticipada?.disponible) {
+      setNotice({
+        text:
+          credit.liquidacionAnticipada?.motivo ||
+          "Pagar hoy solo esta disponible cuando el credito esta al dia.",
+        tone: "red",
+      });
+      return;
+    }
+
+    if (mode === "INSTALLMENTS" && !cuotasSeleccionadas(credit).length) {
       setNotice({ text: "Selecciona una cuota para pagar.", tone: "red" });
       return;
     }
@@ -612,14 +635,16 @@ export default function ClienteConsultaPage() {
 
     setAcceptWompiTerms(false);
     setNotice(null);
+    setConfirmPaymentMode(mode);
     setConfirmPaymentCreditId(credit.id);
   };
 
   const payWithWompi = async (credit: ClientCredit) => {
     const cuotaNumeros = cuotasSeleccionadas(credit).map((item) => item.numero);
+    const paymentMode = confirmPaymentMode;
     const cleanNequiPhone = formatNequiPhone(nequiPhone);
 
-    if (!cuotaNumeros.length) {
+    if (paymentMode === "INSTALLMENTS" && !cuotaNumeros.length) {
       setNotice({ text: "Selecciona una cuota para pagar.", tone: "red" });
       return;
     }
@@ -647,10 +672,12 @@ export default function ClienteConsultaPage() {
           body: JSON.stringify({
             acceptWompiTerms,
             creditoId: credit.id,
-            cuotaNumeros,
+            cuotaNumeros: paymentMode === "PAYOFF" ? [] : cuotaNumeros,
             documento: credit.clienteDocumento || activeDocumento || documento,
             nequiPhone: cleanNequiPhone,
             paymentMethod: "NEQUI",
+            paymentMode:
+              paymentMode === "PAYOFF" ? "LIQUIDACION_ANTICIPADA" : "CUOTAS",
           }),
         }
       );
@@ -665,6 +692,7 @@ export default function ClienteConsultaPage() {
           creditId: credit.id,
           checkedAt: null,
         });
+        setConfirmPaymentMode("INSTALLMENTS");
         setNotice({
           text:
             "Solicitud enviada a Nequi. Abre la app Nequi y aprueba el pago; FINSER PAY lo aplicara automaticamente.",
@@ -711,6 +739,7 @@ export default function ClienteConsultaPage() {
     setOpenCreditId(null);
     setActivePanel(null);
     setConfirmPaymentCreditId(null);
+    setConfirmPaymentMode("INSTALLMENTS");
     setAcceptWompiTerms(false);
     setNequiPhone("");
     setPaymentReturn(null);
@@ -720,11 +749,13 @@ export default function ClienteConsultaPage() {
   const returnHome = () => {
     setActivePanel(null);
     setConfirmPaymentCreditId(null);
+    setConfirmPaymentMode("INSTALLMENTS");
     scrollToSection("cliente-dashboard");
   };
 
   const openPanel = (panel: Exclude<ExplorerPanel, null>) => {
     setConfirmPaymentCreditId(null);
+    setConfirmPaymentMode("INSTALLMENTS");
     setActivePanel(panel);
     window.setTimeout(() => scrollToSection("explora-panel"), 80);
   };
@@ -733,6 +764,7 @@ export default function ClienteConsultaPage() {
     setOpenCreditId(creditId);
     setActivePanel(null);
     setConfirmPaymentCreditId(null);
+    setConfirmPaymentMode("INSTALLMENTS");
     window.setTimeout(() => scrollToSection("cliente-dashboard"), 40);
   };
 
@@ -877,10 +909,20 @@ export default function ClienteConsultaPage() {
   const confirmCredit =
     items.find((item) => item.id === confirmPaymentCreditId) || null;
   const confirmInstallments = confirmCredit ? cuotasSeleccionadas(confirmCredit) : [];
-  const confirmAmount = installmentsAmount(confirmInstallments);
-  const confirmPaymentLabel = installmentsRangeLabel(confirmInstallments);
+  const confirmPayoff =
+    confirmPaymentMode === "PAYOFF" ? confirmCredit?.liquidacionAnticipada : null;
+  const confirmAmount =
+    confirmPaymentMode === "PAYOFF"
+      ? Number(confirmPayoff?.capitalPendiente || 0)
+      : installmentsAmount(confirmInstallments);
+  const confirmPaymentLabel =
+    confirmPaymentMode === "PAYOFF"
+      ? "Liquidacion anticipada"
+      : installmentsRangeLabel(confirmInstallments);
   const confirmPaymentReference =
     confirmCredit?.clienteDocumento || activeDocumento || documento;
+  const activePayoff = activeCredit?.liquidacionAnticipada || null;
+  const canPayToday = Boolean(activePayoff?.disponible);
 
   if (!items.length) {
     return (
@@ -1076,21 +1118,38 @@ export default function ClienteConsultaPage() {
                   </span>
                 </div>
 
-                <div className="mt-5 grid grid-cols-[1fr_auto] items-end gap-4">
+                <div className="mt-5 grid gap-4">
                   <div>
                     <p className="text-xs font-bold text-white/55">Fecha limite</p>
                     <p className="mt-1 text-lg font-black">
                       {nextInstallment ? dateLabel(nextInstallment.fechaVencimiento) : "-"}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => openWompiConfirm(activeCredit)}
-                    disabled={!payable.length || payingCreditId === activeCredit.id}
-                    className="rounded-lg bg-[#a7e66f] px-5 py-3 text-sm font-black text-[#102316] shadow-[0_12px_24px_rgba(111,194,70,0.25)] disabled:bg-white/20 disabled:text-white/45"
+                  <div
+                    className={[
+                      "grid gap-2",
+                      canPayToday ? "grid-cols-2" : "grid-cols-1",
+                    ].join(" ")}
                   >
-                    {payingCreditId === activeCredit.id ? "Abriendo" : "Pagar"}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => openWompiConfirm(activeCredit)}
+                      disabled={!payable.length || payingCreditId === activeCredit.id}
+                      className="rounded-lg bg-[#a7e66f] px-4 py-3 text-sm font-black text-[#102316] shadow-[0_12px_24px_rgba(111,194,70,0.25)] disabled:bg-white/20 disabled:text-white/45"
+                    >
+                      {payingCreditId === activeCredit.id ? "Abriendo" : "Pagar cuota"}
+                    </button>
+                    {canPayToday ? (
+                      <button
+                        type="button"
+                        onClick={() => openWompiConfirm(activeCredit, "PAYOFF")}
+                        disabled={payingCreditId === activeCredit.id}
+                        className="rounded-lg border border-white/18 bg-white px-4 py-3 text-sm font-black text-[#111317] shadow-[0_12px_24px_rgba(255,255,255,0.08)] disabled:bg-white/20 disabled:text-white/45"
+                      >
+                        Pagar hoy
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="mt-5">
@@ -1525,6 +1584,39 @@ export default function ClienteConsultaPage() {
                           ) : null}
                         </div>
 
+                        {canPayToday && activePayoff ? (
+                          <div className="rounded-lg border border-[#cceec0] bg-[#f7fff2] p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-xs font-black uppercase text-[#4f8735]">
+                                  Pagar hoy
+                                </p>
+                                <p className="mt-1 text-3xl font-black leading-none text-[#171b22]">
+                                  {money(activePayoff.capitalPendiente)}
+                                </p>
+                                <p className="mt-2 text-sm font-bold text-[#67706b]">
+                                  Liquida el capital pendiente y cierra el credito.
+                                </p>
+                              </div>
+                              {activePayoff.condonacion > 0 ? (
+                                <span className="shrink-0 rounded-md bg-white px-2 py-1 text-xs font-black text-[#4f8735]">
+                                  Ahorro {money(activePayoff.condonacion)}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="mt-4">
+                              <PrimaryButton
+                                disabled={payingCreditId === activeCredit.id}
+                                onClick={() => openWompiConfirm(activeCredit, "PAYOFF")}
+                              >
+                                {payingCreditId === activeCredit.id
+                                  ? "Abriendo Wompi..."
+                                  : `Pagar hoy ${money(activePayoff.capitalPendiente)}`}
+                              </PrimaryButton>
+                            </div>
+                          </div>
+                        ) : null}
+
                         <div className="rounded-lg border border-[#edf0f4] bg-[#fffdf1] p-4">
                           <EfectyLogo />
                           <div className="mt-4 grid grid-cols-2 gap-3">
@@ -1714,7 +1806,10 @@ export default function ClienteConsultaPage() {
                 <button
                   type="button"
                   aria-label="Cancelar pago"
-                  onClick={() => setConfirmPaymentCreditId(null)}
+                  onClick={() => {
+                    setConfirmPaymentCreditId(null);
+                    setConfirmPaymentMode("INSTALLMENTS");
+                  }}
                   className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[#dde1e8] bg-white text-lg font-black text-[#535b66]"
                 >
                   x
@@ -1731,6 +1826,11 @@ export default function ClienteConsultaPage() {
                 <p className="mt-2 text-sm font-bold text-[#67706b]">
                   {confirmPaymentLabel}
                 </p>
+                {confirmPaymentMode === "PAYOFF" && confirmPayoff?.condonacion ? (
+                  <p className="mt-2 text-xs font-black uppercase text-[#4f8735]">
+                    Se condona {money(confirmPayoff.condonacion)} en intereses y fianza.
+                  </p>
+                ) : null}
               </div>
 
               <div className="mt-4 grid gap-3 text-sm">
@@ -1810,6 +1910,7 @@ export default function ClienteConsultaPage() {
                   type="button"
                   onClick={() => {
                     setConfirmPaymentCreditId(null);
+                    setConfirmPaymentMode("INSTALLMENTS");
                     setNotice(null);
                   }}
                   className="min-h-12 rounded-lg border border-[#dde1e8] bg-white px-3 text-sm font-black text-[#414854]"

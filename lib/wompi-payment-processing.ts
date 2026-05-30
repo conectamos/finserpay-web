@@ -1,6 +1,11 @@
 import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import {
+  buildEarlyPayoffObservation,
+  calculateCreditEarlyPayoff,
+  isEarlyPayoffIntentMeta,
+} from "@/lib/credit-early-payoff";
+import {
   creditCajaDescription,
   resolveCreditState,
 } from "@/lib/credit-factory";
@@ -192,12 +197,16 @@ export async function processApprovedWompiPayment(
           id: true,
           folio: true,
           clienteNombre: true,
+          saldoBaseFinanciado: true,
           montoCredito: true,
+          valorInteres: true,
+          valorFianza: true,
           valorCuota: true,
           plazoMeses: true,
           frecuenciaPago: true,
           fechaPrimerPago: true,
           fechaProximoPago: true,
+          observacionAdmin: true,
           usuarioId: true,
           sedeId: true,
         },
@@ -290,6 +299,7 @@ export async function processApprovedWompiPayment(
   }
 
   const cuotas = parseCuotaNumeros(intent.cuotaNumeros);
+  const earlyPayoffIntent = isEarlyPayoffIntentMeta(intent.cuotaNumeros);
   const digitalSede = await ensureDigitalCollectionSede();
   const paymentMethod = resolveAutomaticWompiPaymentMethod(
     transaction.payment_method_type || intent.paymentMethodType
@@ -333,6 +343,65 @@ export async function processApprovedWompiPayment(
   }
 
   const abono = await prisma.$transaction(async (tx) => {
+    const previousAbonos = earlyPayoffIntent
+      ? await tx.creditoAbono.findMany({
+          where: {
+            creditoId: intent.creditoId,
+            estado: {
+              not: "ANULADO",
+            },
+          },
+          select: {
+            valor: true,
+            fechaAbono: true,
+          },
+          orderBy: {
+            fechaAbono: "asc",
+          },
+        })
+      : [];
+    const earlyPayoff = earlyPayoffIntent
+      ? calculateCreditEarlyPayoff({
+          saldoBaseFinanciado: Number(intent.credito.saldoBaseFinanciado || 0),
+          montoCredito: Number(intent.credito.montoCredito || 0),
+          valorInteres: Number(intent.credito.valorInteres || 0),
+          valorFianza: Number(intent.credito.valorFianza || 0),
+          valorCuota: Number(intent.credito.valorCuota || 0),
+          plazoMeses: Number(intent.credito.plazoMeses || 1),
+          frecuenciaPago: intent.credito.frecuenciaPago,
+          fechaPrimerPago:
+            intent.credito.fechaPrimerPago || intent.credito.fechaProximoPago,
+          abonos: previousAbonos.map((item) => ({
+            valor: Number(item.valor || 0),
+            fechaAbono: item.fechaAbono,
+          })),
+        })
+      : null;
+
+    if (earlyPayoff && !earlyPayoff.eligible) {
+      throw new Error(earlyPayoff.reason || "La liquidacion anticipada ya no aplica.");
+    }
+
+    if (
+      earlyPayoff &&
+      Math.round(earlyPayoff.capitalPendiente * 100) !== intent.amountInCents
+    ) {
+      throw new Error("El valor de liquidacion cambio. Genera un nuevo pago.");
+    }
+
+    const paymentObservation = earlyPayoff
+      ? [
+          `Pago ${paymentMethod} automatico ${intent.reference}`,
+          buildEarlyPayoffObservation(earlyPayoff),
+          `Recaudo digital ${digitalSede.nombre}`,
+          `Sede credito ${intent.credito.sedeId}`,
+        ].join(" - ")
+      : [
+          `Pago ${paymentMethod} automatico ${intent.reference}`,
+          `Cuotas ${cuotas.join(", ")}`,
+          `Recaudo digital ${digitalSede.nombre}`,
+          `Sede credito ${intent.credito.sedeId}`,
+        ].join(" - ");
     const created = await tx.creditoAbono.create({
       data: {
         creditoId: intent.creditoId,
@@ -340,12 +409,7 @@ export async function processApprovedWompiPayment(
         sedeId: digitalSede.id,
         valor: intent.amount,
         metodoPago: paymentMethod,
-        observacion: [
-          `Pago ${paymentMethod} automatico ${intent.reference}`,
-          `Cuotas ${cuotas.join(", ")}`,
-          `Recaudo digital ${digitalSede.nombre}`,
-          `Sede credito ${intent.credito.sedeId}`,
-        ].join(" - "),
+        observacion: paymentObservation,
       },
     });
 
@@ -364,26 +428,41 @@ export async function processApprovedWompiPayment(
         fechaAbono: "asc",
       },
     });
-    const plan = buildCreditPaymentPlan({
-      montoCredito: Number(intent.credito.montoCredito || 0),
-      valorCuota: Number(intent.credito.valorCuota || 0),
-      plazoMeses: Number(intent.credito.plazoMeses || 1),
-      frecuenciaPago: intent.credito.frecuenciaPago,
-      fechaPrimerPago:
-        intent.credito.fechaPrimerPago || intent.credito.fechaProximoPago,
-      abonos: abonos.map((item) => ({
-        valor: Number(item.valor || 0),
-        fechaAbono: item.fechaAbono,
-      })),
-    });
+    const plan = earlyPayoff
+      ? null
+      : buildCreditPaymentPlan({
+          montoCredito: Number(intent.credito.montoCredito || 0),
+          valorCuota: Number(intent.credito.valorCuota || 0),
+          plazoMeses: Number(intent.credito.plazoMeses || 1),
+          frecuenciaPago: intent.credito.frecuenciaPago,
+          fechaPrimerPago:
+            intent.credito.fechaPrimerPago || intent.credito.fechaProximoPago,
+          abonos: abonos.map((item) => ({
+            valor: Number(item.valor || 0),
+            fechaAbono: item.fechaAbono,
+          })),
+        });
 
     await tx.credito.update({
       where: { id: intent.creditoId },
-      data: {
-        fechaProximoPago: plan.nextInstallment?.fechaVencimiento
-          ? new Date(`${plan.nextInstallment.fechaVencimiento}T12:00:00.000Z`)
-          : intent.credito.fechaProximoPago,
-      },
+      data: earlyPayoff
+        ? {
+            fechaProximoPago: null,
+            montoCredito: earlyPayoff.montoCreditoLiquidado,
+            observacionAdmin: [
+              intent.credito.observacionAdmin,
+              `Liquidacion anticipada Wompi ${intent.reference}. Condonado intereses/fianza ${earlyPayoff.interesFianzaCondonado}.`,
+            ]
+              .filter(Boolean)
+              .join("\n"),
+            valorFianza: earlyPayoff.valorFianzaReconocida,
+            valorInteres: earlyPayoff.valorInteresReconocido,
+          }
+        : {
+            fechaProximoPago: plan?.nextInstallment?.fechaVencimiento
+              ? new Date(`${plan.nextInstallment.fechaVencimiento}T12:00:00.000Z`)
+              : intent.credito.fechaProximoPago,
+          },
     });
 
     await tx.cajaMovimiento.create({

@@ -33,6 +33,7 @@ import {
   type EqualityDeliveryStatus,
 } from "@/lib/equality-device-meta";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { calculateCreditEarlyPayoff } from "@/lib/credit-early-payoff";
 import {
   activateEqualityFinancingService,
   isEqualityApiError,
@@ -167,6 +168,33 @@ type PaymentAggregate = {
   ultimoAbonoAt: Date | null;
 };
 
+const creditListInclude = {
+  usuario: {
+    select: {
+      id: true,
+      nombre: true,
+      usuario: true,
+    },
+  },
+  vendedor: {
+    select: {
+      id: true,
+      nombre: true,
+      documento: true,
+    },
+  },
+  sede: {
+    select: {
+      id: true,
+      nombre: true,
+    },
+  },
+} satisfies Prisma.CreditoInclude;
+
+type CreditListItem = Prisma.CreditoGetPayload<{
+  include: typeof creditListInclude;
+}>;
+
 function extractFamilyReferences(snapshot: unknown) {
   if (typeof snapshot !== "object" || snapshot === null) {
     return [];
@@ -202,7 +230,10 @@ function extractFamilyReferences(snapshot: unknown) {
     );
 }
 
-function serializeCredit(item: any, paymentMap?: Map<number, PaymentAggregate>) {
+function serializeCredit(
+  item: CreditListItem,
+  paymentMap?: Map<number, PaymentAggregate>
+) {
   const payment = paymentMap?.get(item.id) || {
     abonosCount: 0,
     totalAbonado: 0,
@@ -216,6 +247,17 @@ function serializeCredit(item: any, paymentMap?: Map<number, PaymentAggregate>) 
   });
   const paymentPlan = buildCreditPaymentPlan({
     montoCredito: Number(item.montoCredito || 0),
+    valorCuota: Number(item.valorCuota || 0),
+    plazoMeses: Number(item.plazoMeses || 1),
+    frecuenciaPago: item.frecuenciaPago,
+    fechaPrimerPago: item.fechaPrimerPago || item.fechaProximoPago,
+    abonos: payment.totalAbonado > 0 ? [{ valor: payment.totalAbonado }] : [],
+  });
+  const earlyPayoff = calculateCreditEarlyPayoff({
+    saldoBaseFinanciado: Number(item.saldoBaseFinanciado || 0),
+    montoCredito: Number(item.montoCredito || 0),
+    valorInteres: Number(item.valorInteres || 0),
+    valorFianza: Number(item.valorFianza || 0),
     valorCuota: Number(item.valorCuota || 0),
     plazoMeses: Number(item.plazoMeses || 1),
     frecuenciaPago: item.frecuenciaPago,
@@ -299,6 +341,13 @@ function serializeCredit(item: any, paymentMap?: Map<number, PaymentAggregate>) 
     totalRecaudado: paymentSummary.totalRecaudado,
     porcentajeRecaudado: paymentSummary.porcentajeRecaudado,
     estadoPago: paymentPlan.estadoPago,
+    liquidacionAnticipada: {
+      disponible: earlyPayoff.eligible,
+      motivo: earlyPayoff.reason,
+      capitalPendiente: earlyPayoff.capitalPendiente,
+      condonacion: earlyPayoff.interesFianzaCondonado,
+      saldoObligacion: earlyPayoff.saldoObligacion,
+    },
     cuotasPagadas: paymentPlan.paidCount,
     cuotasPendientes: paymentPlan.pendingCount,
     cuotasEnMora: paymentPlan.overdueCount,
@@ -397,7 +446,10 @@ async function buildPaymentSummaryMap(creditIds: number[]) {
   return map;
 }
 
-function getCreditPendingBalance(item: any, payment?: PaymentAggregate) {
+function getCreditPendingBalance(
+  item: Pick<CreditListItem, "cuotaInicial" | "montoCredito">,
+  payment?: PaymentAggregate
+) {
   return resolveCreditPaymentSummary({
     montoCredito: item.montoCredito,
     cuotaInicial: item.cuotaInicial,
@@ -528,28 +580,7 @@ export async function GET(req: Request) {
 
     const items = await prisma.credito.findMany({
       where,
-      include: {
-        usuario: {
-          select: {
-            id: true,
-            nombre: true,
-            usuario: true,
-          },
-        },
-        vendedor: {
-          select: {
-            id: true,
-            nombre: true,
-            documento: true,
-          },
-        },
-        sede: {
-          select: {
-            id: true,
-            nombre: true,
-          },
-        },
-      },
+      include: creditListInclude,
       orderBy: {
         createdAt: "desc",
       },
@@ -1416,28 +1447,7 @@ export async function POST(req: Request) {
         vendedorId: sellerSession?.id || null,
         sedeId: user.sedeId,
       },
-      include: {
-        usuario: {
-          select: {
-            id: true,
-            nombre: true,
-            usuario: true,
-          },
-        },
-        vendedor: {
-          select: {
-            id: true,
-            nombre: true,
-            documento: true,
-          },
-        },
-        sede: {
-          select: {
-            id: true,
-            nombre: true,
-          },
-        },
-      },
+      include: creditListInclude,
     });
 
     return NextResponse.json({

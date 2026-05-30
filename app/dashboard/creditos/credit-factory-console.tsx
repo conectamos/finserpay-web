@@ -215,6 +215,7 @@ type CreditItem = {
   cuotasPagadas?: number;
   cuotasPendientes?: number;
   cuotasEnMora?: number;
+  liquidacionAnticipada?: EarlyPayoffSummary;
   abonosCount: number;
   ultimoAbonoAt: string | null;
   createdAt: string;
@@ -384,6 +385,14 @@ type PaymentPlanInstallment = {
   estaEnMora?: boolean;
 };
 
+type EarlyPayoffSummary = {
+  capitalPendiente: number;
+  condonacion: number;
+  disponible: boolean;
+  motivo?: string | null;
+  saldoObligacion: number;
+};
+
 type CreditPaymentsResponse = {
   ok: boolean;
   credito: {
@@ -407,6 +416,7 @@ type CreditPaymentsResponse = {
     paidCount?: number;
     pendingCount?: number;
     plan?: PaymentPlanInstallment[];
+    liquidacionAnticipada?: EarlyPayoffSummary;
     abonosCount: number;
     ultimoAbonoAt: string | null;
   };
@@ -428,12 +438,14 @@ type RegisterPaymentResponse = {
     paidCount?: number;
     pendingCount?: number;
     plan?: PaymentPlanInstallment[];
+    liquidacionAnticipada?: EarlyPayoffSummary;
     abonosCount: number;
     ultimoAbonoAt: string | null;
   };
 };
 
 type NoticeTone = "amber" | "emerald" | "red" | "slate";
+type PaymentRegisterMode = "INSTALLMENTS" | "PAYOFF";
 
 type Notice = {
   text: string;
@@ -1784,6 +1796,8 @@ export default function CreditFactoryConsole({
   const [receivedPaymentValue, setReceivedPaymentValue] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("EFECTIVO");
   const [paymentObservation, setPaymentObservation] = useState("");
+  const [paymentRegisterMode, setPaymentRegisterMode] =
+    useState<PaymentRegisterMode>("INSTALLMENTS");
   const [selectedInstallmentNumbers, setSelectedInstallmentNumbers] = useState<string[]>([]);
   const [payments, setPayments] = useState<CreditPaymentItem[]>([]);
   const [paymentSummary, setPaymentSummary] = useState<CreditPaymentsResponse["credito"] | null>(null);
@@ -2644,10 +2658,17 @@ export default function CreditFactoryConsole({
           paidCount: selectedCredit.cuotasPagadas || 0,
           pendingCount: selectedCredit.cuotasPendientes || 0,
           plan: [],
+          liquidacionAnticipada: selectedCredit.liquidacionAnticipada,
           abonosCount: selectedCredit.abonosCount,
           ultimoAbonoAt: selectedCredit.ultimoAbonoAt,
         }
       : null);
+  const earlyPayoffSummary =
+    paymentOverview?.liquidacionAnticipada ||
+    selectedCredit?.liquidacionAnticipada ||
+    null;
+  const earlyPayoffAvailable = Boolean(earlyPayoffSummary?.disponible);
+  const isEarlyPayoffMode = paymentRegisterMode === "PAYOFF";
   const payableInstallments = (paymentOverview?.plan || []).filter(
     (item) => item.saldoPendiente > 0
   );
@@ -2669,6 +2690,12 @@ export default function CreditFactoryConsole({
   const creditPendingRoundedTotal = Math.round(
     Number(paymentOverview?.saldoPendiente ?? selectedCredit?.saldoPendiente ?? 0)
   );
+  const earlyPayoffRoundedTotal = Math.round(
+    Number(earlyPayoffSummary?.capitalPendiente || 0)
+  );
+  const paymentTargetRoundedTotal = isEarlyPayoffMode
+    ? earlyPayoffRoundedTotal
+    : creditPendingRoundedTotal;
   const paymentAmountToApply = Number(String(paymentValue || "").replace(/\D/g, "") || 0);
   const receivedPaymentAmount = Number(
     String(receivedPaymentValue || "").replace(/\D/g, "") || 0
@@ -2679,7 +2706,7 @@ export default function CreditFactoryConsole({
       : 0;
   const paymentOverCreditAmount =
     paymentAmountToApply > 0
-      ? Math.max(0, paymentAmountToApply - creditPendingRoundedTotal)
+      ? Math.max(0, paymentAmountToApply - paymentTargetRoundedTotal)
       : 0;
   const paymentAdvanceAmount =
     selectedInstallmentNumbers.length > 0 && selectedInstallmentCoverageShortfall <= 0
@@ -2701,6 +2728,7 @@ export default function CreditFactoryConsole({
       : 0;
   const paymentSubmitBlocked =
     paymentAmountToApply <= 0 ||
+    (isEarlyPayoffMode && !earlyPayoffAvailable) ||
     paymentShortfallAmount > 0 ||
     selectedInstallmentCoverageShortfall > 0 ||
     paymentOverCreditAmount > 0;
@@ -2710,6 +2738,10 @@ export default function CreditFactoryConsole({
     0
   );
   const updateSelectedInstallments = (numero: number, checked: boolean) => {
+    if (paymentRegisterMode !== "INSTALLMENTS") {
+      setPaymentRegisterMode("INSTALLMENTS");
+    }
+
     const orderedNumbers = payableInstallments.map((item) => item.numero);
     const nextNumbers = checked
       ? orderedNumbers.filter((item) => item <= numero)
@@ -2720,7 +2752,31 @@ export default function CreditFactoryConsole({
     setSelectedInstallmentNumbers(nextNumbers.map(String));
   };
 
+  const selectEarlyPayoffPayment = () => {
+    if (!earlyPayoffSummary?.disponible) {
+      setNotice({
+        text:
+          earlyPayoffSummary?.motivo ||
+          "La liquidacion anticipada solo aplica cuando el credito esta al dia.",
+        tone: "red",
+      });
+      return;
+    }
+
+    const payoffValue = String(Math.round(earlyPayoffSummary.capitalPendiente || 0));
+    setPaymentRegisterMode("PAYOFF");
+    setSelectedInstallmentNumbers([]);
+    setPaymentValue(payoffValue);
+    setReceivedPaymentValue(payoffValue);
+    setPaymentObservation("Liquidacion anticipada");
+    setNotice(null);
+  };
+
   useEffect(() => {
+    if (paymentRegisterMode === "PAYOFF") {
+      return;
+    }
+
     if (!selectedInstallmentNumbers.length) {
       setPaymentValue("");
       setReceivedPaymentValue("");
@@ -2736,7 +2792,7 @@ export default function CreditFactoryConsole({
         ? `Cuota ${selectedInstallmentNumbers[0]}`
         : `Cuotas ${selectedInstallmentNumbers.join(", ")}`
     );
-  }, [selectedInstallmentNumbers, selectedInstallmentTotal]);
+  }, [paymentRegisterMode, selectedInstallmentNumbers, selectedInstallmentTotal]);
 
   const evidenceAuditTime = (value: string | null | undefined) =>
     value ? new Date(value).toLocaleString("es-CO") : "Pendiente";
@@ -3533,11 +3589,13 @@ export default function CreditFactoryConsole({
     if (!selectedCredit) {
       setShowPaymentResults(true);
       setPaymentsTab("pay");
+      setPaymentRegisterMode("INSTALLMENTS");
       return;
     }
 
     setShowPaymentResults(false);
     setPaymentsTab("pay");
+    setPaymentRegisterMode("INSTALLMENTS");
   }, [paymentsView, selectedCredit?.id]);
 
   useEffect(() => {
@@ -3569,6 +3627,7 @@ export default function CreditFactoryConsole({
 
       setPayments(result.data.items);
       setPaymentSummary(result.data.credito);
+      setPaymentRegisterMode("INSTALLMENTS");
       if (isCreditAnnulled(result.data.credito.estado)) {
         setSelectedInstallmentNumbers([]);
         setPaymentValue("");
@@ -3590,6 +3649,7 @@ export default function CreditFactoryConsole({
     } catch (error) {
       setPayments([]);
       setPaymentSummary(null);
+      setPaymentRegisterMode("INSTALLMENTS");
       setSelectedInstallmentNumbers([]);
       setPaymentValue("");
       setReceivedPaymentValue("");
@@ -4629,6 +4689,16 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    if (isEarlyPayoffMode && !earlyPayoffAvailable) {
+      setNotice({
+        text:
+          earlyPayoffSummary?.motivo ||
+          "La liquidacion anticipada solo aplica cuando el credito esta al dia.",
+        tone: "red",
+      });
+      return;
+    }
+
     if (
       selectedInstallmentNumbers.length > 0 &&
       selectedInstallmentCoverageShortfall > 0
@@ -4642,7 +4712,7 @@ export default function CreditFactoryConsole({
 
     if (paymentOverCreditAmount > 0) {
       setNotice({
-        text: `El abono supera el saldo pendiente. Ajusta el abono a ${currency(creditPendingRoundedTotal)}.`,
+        text: `El abono supera el valor permitido. Ajusta el abono a ${currency(paymentTargetRoundedTotal)}.`,
         tone: "red",
       });
       return;
@@ -4659,9 +4729,11 @@ export default function CreditFactoryConsole({
     try {
       setRegisteringPayment(true);
       setNotice(null);
-      const valueToRegister = String(paymentAmountToApply);
+      const valueToRegister = String(
+        isEarlyPayoffMode ? earlyPayoffRoundedTotal : paymentAmountToApply
+      );
       const paymentAdvanceObservation =
-        paymentAdvanceAmount > 0
+        !isEarlyPayoffMode && paymentAdvanceAmount > 0
           ? `Abono adicional a proximas cuotas ${currency(paymentAdvanceAmount)}`
           : "";
       const paymentChangeObservation =
@@ -4677,7 +4749,9 @@ export default function CreditFactoryConsole({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            cuotaNumeros: selectedInstallmentNumbers,
+            cuotaNumeros: isEarlyPayoffMode ? [] : selectedInstallmentNumbers,
+            liquidacionAnticipada: isEarlyPayoffMode,
+            tipoAbono: isEarlyPayoffMode ? "LIQUIDACION_ANTICIPADA" : "CUOTAS",
             valor: valueToRegister,
             metodoPago: paymentMethod,
             observacion: [
@@ -4698,6 +4772,7 @@ export default function CreditFactoryConsole({
       setPaymentValue("");
       setReceivedPaymentValue("");
       setPaymentObservation("");
+      setPaymentRegisterMode("INSTALLMENTS");
       setSelectedInstallmentNumbers([]);
       await loadPayments(selectedCredit.id);
       await loadCredits(true, activeSearch);
@@ -10159,8 +10234,48 @@ export default function CreditFactoryConsole({
                       </h3>
                     </div>
                     <p className="text-sm font-semibold text-slate-500">
-                      Selecciona cuotas, define el abono y confirma el valor recibido.
+                      {isEarlyPayoffMode
+                        ? "Confirma el capital a liquidar y el valor recibido."
+                        : "Selecciona cuotas, define el abono y confirma el valor recibido."}
                     </p>
+                  </div>
+
+                  <div className="mt-5 rounded-[24px] border border-emerald-100 bg-white px-5 py-4 shadow-[0_12px_28px_rgba(17,107,97,0.06)]">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">
+                          Liquidacion anticipada
+                        </p>
+                        <h4 className="mt-1 text-xl font-black text-slate-950">
+                          Pagar hoy
+                        </h4>
+                        <p className="mt-1 text-sm font-semibold text-slate-500">
+                          {earlyPayoffAvailable
+                            ? `Capital a recoger: ${currency(earlyPayoffRoundedTotal)}. Se condona ${currency(Number(earlyPayoffSummary?.condonacion || 0))}.`
+                            : earlyPayoffSummary?.motivo ||
+                              "Disponible solo cuando el credito esta al dia."}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={selectEarlyPayoffPayment}
+                        disabled={
+                          registeringPayment ||
+                          loadingPayments ||
+                          paymentBlockedByAnnulment ||
+                          !earlyPayoffAvailable
+                        }
+                        className={[
+                          "rounded-[20px] px-5 py-3 text-sm font-black transition",
+                          isEarlyPayoffMode
+                            ? "bg-slate-950 text-white"
+                            : "border border-emerald-200 bg-emerald-50 text-[#116b61] hover:bg-emerald-100",
+                          "disabled:cursor-not-allowed disabled:opacity-60",
+                        ].join(" ")}
+                      >
+                        {isEarlyPayoffMode ? "Seleccionado" : "Liquidar hoy"}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="mt-5 grid gap-4 md:grid-cols-[1fr_0.72fr]">
@@ -10168,35 +10283,53 @@ export default function CreditFactoryConsole({
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#98ece0]">
-                            Cuotas seleccionadas
+                            {isEarlyPayoffMode ? "Modalidad" : "Cuotas seleccionadas"}
                           </p>
                           <p className="mt-2 text-3xl font-black">
-                            {selectedInstallmentNumbers.length
-                              ? selectedInstallmentNumbers.join(", ")
-                              : "Ninguna"}
+                            {isEarlyPayoffMode
+                              ? "Pagar hoy"
+                              : selectedInstallmentNumbers.length
+                                ? selectedInstallmentNumbers.join(", ")
+                                : "Ninguna"}
                           </p>
                         </div>
                         <div className="rounded-full bg-[#ff7a30] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
-                          {selectedInstallmentsData.some((item) => item.estaEnMora)
+                          {isEarlyPayoffMode
+                            ? "Capital"
+                            : selectedInstallmentsData.some((item) => item.estaEnMora)
                             ? "Con mora"
                             : "Al dia"}
                         </div>
                       </div>
                       <div className="mt-5 rounded-[22px] bg-white px-5 py-4 text-[#082f2b]">
                         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#0f766e]">
-                          Total seleccionado
+                          {isEarlyPayoffMode ? "Capital a liquidar" : "Total seleccionado"}
                         </p>
                         <p className="mt-1 text-4xl font-black tracking-tight">
-                          {currency(selectedInstallmentTotal)}
+                          {currency(
+                            isEarlyPayoffMode
+                              ? earlyPayoffRoundedTotal
+                              : selectedInstallmentTotal
+                          )}
                         </p>
                       </div>
+                      {isEarlyPayoffMode && earlyPayoffSummary ? (
+                        <p className="mt-3 text-xs font-semibold text-[#d5fff7]">
+                          Saldo anterior {currency(earlyPayoffSummary.saldoObligacion)}.
+                          Condonacion: {currency(earlyPayoffSummary.condonacion)}.
+                        </p>
+                      ) : null}
                       {selectedOverdueTotal > 0 ? (
                         <p className="mt-3 text-xs font-semibold text-[#ffd5bd]">
                           Mora dentro de la seleccion: {currency(selectedOverdueTotal)}
                         </p>
                       ) : null}
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {selectedInstallmentsData.length ? (
+                        {isEarlyPayoffMode ? (
+                          <span className="text-xs font-semibold text-[#c6e8e3]">
+                            Este recaudo cierra la obligacion cobrando solo capital.
+                          </span>
+                        ) : selectedInstallmentsData.length ? (
                           selectedInstallmentsData.map((item) => (
                             <span
                               key={item.numero}
@@ -10237,7 +10370,7 @@ export default function CreditFactoryConsole({
                             }
                             inputMode="numeric"
                             placeholder="$ 50.000"
-                            disabled={paymentBlockedByAnnulment}
+                            disabled={paymentBlockedByAnnulment || isEarlyPayoffMode}
                             className="w-full rounded-[20px] border border-slate-200 bg-[#fbfcfb] px-4 py-3 text-lg font-black text-slate-950 outline-none transition focus:border-[#116b61] focus:ring-4 focus:ring-emerald-100"
                           />
                         </div>
@@ -10258,7 +10391,7 @@ export default function CreditFactoryConsole({
                           />
                         </div>
                       </div>
-                      {selectedInstallmentNumbers.length > 0 ? (
+                      {selectedInstallmentNumbers.length > 0 || isEarlyPayoffMode ? (
                         <div
                           className={[
                             "mt-4 rounded-[20px] border px-4 py-3",
@@ -10274,7 +10407,9 @@ export default function CreditFactoryConsole({
                           ].join(" ")}
                         >
                           <p className="text-[11px] font-black uppercase tracking-[0.16em]">
-                            {paymentOverCreditAmount > 0
+                            {isEarlyPayoffMode && paymentChangeAmount <= 0 && paymentOverCreditAmount <= 0
+                              ? "Liquidacion lista"
+                              : paymentOverCreditAmount > 0
                               ? "Supera saldo pendiente"
                               : selectedInstallmentCoverageShortfall > 0
                                 ? "Abono insuficiente"
@@ -10287,7 +10422,9 @@ export default function CreditFactoryConsole({
                                     : "Valor exacto"}
                           </p>
                           <p className="mt-1 text-2xl font-black">
-                            {paymentOverCreditAmount > 0
+                            {isEarlyPayoffMode && paymentChangeAmount <= 0 && paymentOverCreditAmount <= 0
+                              ? currency(earlyPayoffRoundedTotal)
+                              : paymentOverCreditAmount > 0
                               ? currency(paymentOverCreditAmount)
                               : selectedInstallmentCoverageShortfall > 0
                                 ? currency(selectedInstallmentCoverageShortfall)
@@ -10302,6 +10439,11 @@ export default function CreditFactoryConsole({
                           {paymentChangeAmount > 0 ? (
                             <p className="mt-1 text-xs font-semibold">
                               El cliente entrega {currency(receivedPaymentAmount)} y el abono aplicado es {currency(paymentAmountToApply)}.
+                            </p>
+                          ) : null}
+                          {isEarlyPayoffMode && paymentChangeAmount <= 0 ? (
+                            <p className="mt-1 text-xs font-semibold">
+                              Se aplicara el capital pendiente y el sistema cerrara el credito.
                             </p>
                           ) : null}
                           {paymentAdvanceAmount > 0 ? (
@@ -10361,6 +10503,8 @@ export default function CreditFactoryConsole({
                         ? "Credito anulado"
                           : registeringPayment
                             ? "Registrando..."
+                          : isEarlyPayoffMode
+                            ? `Liquidar ${currency(earlyPayoffRoundedTotal)}`
                           : paymentAmountToApply > 0
                             ? `Pagar ${currency(paymentAmountToApply)}`
                             : "Pagar"}
@@ -10373,6 +10517,7 @@ export default function CreditFactoryConsole({
                         setReceivedPaymentValue("");
                         setPaymentObservation("");
                         setPaymentMethod("EFECTIVO");
+                        setPaymentRegisterMode("INSTALLMENTS");
                         setSelectedInstallmentNumbers([]);
                       }}
                       disabled={registeringPayment}
@@ -10428,7 +10573,8 @@ export default function CreditFactoryConsole({
                                   disabled={
                                     item.saldoPendiente <= 0 ||
                                     registeringPayment ||
-                                    paymentBlockedByAnnulment
+                                    paymentBlockedByAnnulment ||
+                                    isEarlyPayoffMode
                                   }
                                   onChange={(event) =>
                                     updateSelectedInstallments(

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { calculateCreditEarlyPayoff } from "@/lib/credit-early-payoff";
 import { sanitizeSearch } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import prisma from "@/lib/prisma";
@@ -39,7 +40,10 @@ export async function GET(req: Request) {
         equipoModelo: true,
         imei: true,
         deviceUid: true,
+        saldoBaseFinanciado: true,
         montoCredito: true,
+        valorInteres: true,
+        valorFianza: true,
         valorCuota: true,
         plazoMeses: true,
         frecuenciaPago: true,
@@ -86,6 +90,20 @@ export async function GET(req: Request) {
           fechaAbono: item.fechaAbono,
         })),
       });
+      const earlyPayoff = calculateCreditEarlyPayoff({
+        saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
+        montoCredito: Number(credit.montoCredito || 0),
+        valorInteres: Number(credit.valorInteres || 0),
+        valorFianza: Number(credit.valorFianza || 0),
+        valorCuota: Number(credit.valorCuota || 0),
+        plazoMeses: Number(credit.plazoMeses || 1),
+        frecuenciaPago: credit.frecuenciaPago,
+        fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+        abonos: credit.abonos.map((item) => ({
+          valor: Number(item.valor || 0),
+          fechaAbono: item.fechaAbono,
+        })),
+      });
 
       return {
         id: credit.id,
@@ -104,6 +122,13 @@ export async function GET(req: Request) {
         sedeNombre: credit.sede.nombre,
         estadoPago: plan.estadoPago,
         saldoPendiente: plan.saldoPendiente,
+        liquidacionAnticipada: {
+          disponible: earlyPayoff.eligible,
+          motivo: earlyPayoff.reason,
+          capitalPendiente: earlyPayoff.capitalPendiente,
+          condonacion: earlyPayoff.interesFianzaCondonado,
+          saldoObligacion: earlyPayoff.saldoObligacion,
+        },
         saldoDisponible: plan.totalPaid,
         totalPagado: plan.totalPaid,
         cuotas: plan.installments,
