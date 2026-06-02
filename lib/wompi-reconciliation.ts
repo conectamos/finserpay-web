@@ -1,7 +1,10 @@
 import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { sanitizeText } from "@/lib/credit-factory";
-import { fetchWompiTransaction } from "@/lib/wompi";
+import {
+  fetchWompiTransaction,
+  fetchWompiTransactionsByReference,
+} from "@/lib/wompi";
 import {
   processApprovedWompiPayment,
   type WompiPaymentEventPayload,
@@ -34,6 +37,23 @@ function buildStatusPayload(transaction: WompiPaymentTransaction) {
   } satisfies WompiPaymentEventPayload;
 }
 
+function selectTransactionByReference(
+  transactions: WompiPaymentTransaction[],
+  reference: string
+) {
+  const exactMatches = transactions.filter(
+    (transaction) => sanitizeText(transaction.reference) === reference
+  );
+
+  return (
+    exactMatches.find(
+      (transaction) => normalizeStatus(transaction.status) === "APPROVED"
+    ) ||
+    exactMatches.find((transaction) => sanitizeText(transaction.id)) ||
+    null
+  );
+}
+
 export async function reconcileWompiIntent(
   intent: WompiIntentSnapshot
 ): Promise<WompiReconciliationResult> {
@@ -49,20 +69,24 @@ export async function reconcileWompiIntent(
     };
   }
 
-  if (!intent.transactionId) {
+  const transaction = intent.transactionId
+    ? ((await fetchWompiTransaction(intent.transactionId)) as WompiPaymentTransaction)
+    : selectTransactionByReference(
+        await fetchWompiTransactionsByReference(intent.reference),
+        intent.reference
+      );
+
+  if (!transaction) {
     return {
       applied: false,
       intentId: intent.id,
-      reason: "NO_TRANSACTION_ID",
+      reason: "NO_WOMPI_TRANSACTION",
       reference: intent.reference,
       status: intent.status,
       transactionId: null,
     };
   }
 
-  const transaction = (await fetchWompiTransaction(
-    intent.transactionId
-  )) as WompiPaymentTransaction;
   const transactionReference = sanitizeText(transaction.reference);
 
   if (transactionReference !== intent.reference) {
@@ -72,7 +96,7 @@ export async function reconcileWompiIntent(
       reason: "REFERENCE_MISMATCH",
       reference: intent.reference,
       status: "REFERENCE_MISMATCH",
-      transactionId: intent.transactionId,
+      transactionId: intent.transactionId || sanitizeText(transaction.id) || null,
     };
   }
 
@@ -106,7 +130,7 @@ export async function reconcileWompiIntent(
     intentId: intent.id,
     reference: intent.reference,
     status: transactionStatus || "UPDATED",
-    transactionId: intent.transactionId,
+    transactionId: intent.transactionId || sanitizeText(transaction.id) || null,
   };
 }
 
@@ -137,12 +161,23 @@ export async function reconcileWompiIntentForClient(options: {
 
 export async function reconcilePendingWompiPayments(limit = 25) {
   const safeLimit = Math.min(Math.max(Math.trunc(limit) || 25, 1), 50);
+  const checkoutFallbackCutoff = new Date(Date.now() - 1000 * 60 * 60 * 24 * 14);
   const intents = await prisma.wompiPaymentIntent.findMany({
     where: {
       processedAbonoId: null,
-      transactionId: {
-        not: null,
-      },
+      OR: [
+        {
+          transactionId: {
+            not: null,
+          },
+        },
+        {
+          createdAt: {
+            gte: checkoutFallbackCutoff,
+          },
+          transactionId: null,
+        },
+      ],
       status: {
         notIn: ["APPROVED", "AMOUNT_MISMATCH", "DECLINED", "ERROR", "VOIDED"],
       },
@@ -155,7 +190,7 @@ export async function reconcilePendingWompiPayments(limit = 25) {
       transactionId: true,
     },
     orderBy: {
-      createdAt: "asc",
+      createdAt: "desc",
     },
     take: safeLimit,
   });

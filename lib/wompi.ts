@@ -159,6 +159,8 @@ type WompiApiError = {
 };
 
 export type WompiNequiTransaction = {
+  amount_in_cents?: number | null;
+  currency?: string | null;
   id?: string;
   reference?: string;
   status?: string;
@@ -361,6 +363,45 @@ export async function fetchWompiTransaction(transactionId: string) {
   }
 
   return (data.data || data) as WompiNequiTransaction;
+}
+
+type WompiTransactionsListResponse = {
+  data?: WompiNequiTransaction[];
+};
+
+export async function fetchWompiTransactionsByReference(reference: string) {
+  const token = getWompiPrivateKey() || getWompiPublicKey();
+  const cleanReference = clean(reference);
+
+  if (!token) {
+    throw new Error("WOMPI_PUBLIC_KEY no esta configurada");
+  }
+
+  if (!cleanReference) {
+    throw new Error("Referencia de Wompi invalida");
+  }
+
+  const url = new URL(`${getWompiApiBaseUrl()}/transactions`);
+  url.searchParams.set("reference", cleanReference);
+
+  const response = await fetch(url.toString(), {
+    cache: "no-store",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = (await response.json().catch(() => ({}))) as
+    | WompiTransactionsListResponse
+    | WompiNequiTransaction[];
+
+  if (!response.ok) {
+    throw new Error(
+      extractWompiError(data, "No se pudo consultar la referencia en Wompi")
+    );
+  }
+
+  return Array.isArray(data) ? data : data.data || [];
 }
 
 function getPathValue(source: unknown, path: string) {
