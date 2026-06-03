@@ -86,6 +86,30 @@ function ratio(part: number, total: number) {
   return total > 0 ? (part / total) * 100 : 0;
 }
 
+function firstFamilyReferencePhone(snapshot: unknown) {
+  if (typeof snapshot !== "object" || snapshot === null) {
+    return "";
+  }
+
+  const root = snapshot as Record<string, unknown>;
+  const cliente =
+    typeof root.cliente === "object" && root.cliente !== null
+      ? (root.cliente as Record<string, unknown>)
+      : null;
+  const references = Array.isArray(cliente?.referenciasFamiliares)
+    ? cliente.referenciasFamiliares
+    : [];
+  const first = references[0];
+
+  if (typeof first !== "object" || first === null) {
+    return "";
+  }
+
+  const record = first as Record<string, unknown>;
+
+  return typeof record.telefono === "string" ? record.telefono : "";
+}
+
 export default async function CarteraPage() {
   await requireCentralAdminDashboardAccess();
 
@@ -165,6 +189,7 @@ export default async function CarteraPage() {
         clienteNombre: credito.clienteNombre,
         clienteDocumento: credito.clienteDocumento || "",
         clienteTelefono: credito.clienteTelefono || "",
+        primeraReferenciaTelefono: firstFamilyReferencePhone(credito.contratoSnapshot),
         referencia:
           credito.referenciaEquipo ||
           [credito.equipoMarca, credito.equipoModelo].filter(Boolean).join(" ") ||
@@ -409,6 +434,9 @@ export default async function CarteraPage() {
                         <p className="text-xs text-[#687080]">{item.clienteDocumento || "Sin documento"}</p>
                         <p className="text-xs font-semibold text-[#0f766e]">
                           {item.clienteTelefono || "Sin celular"}
+                        </p>
+                        <p className="text-xs text-[#687080]">
+                          Ref. 1: {item.primeraReferenciaTelefono || "Sin referencia"}
                         </p>
                       </td>
                       <td className="px-5 py-4 font-semibold text-[#20242a]">{item.imei}</td>
