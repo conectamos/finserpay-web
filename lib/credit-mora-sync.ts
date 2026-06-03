@@ -19,7 +19,7 @@ import {
 import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import prisma from "@/lib/prisma";
 
-const DEFAULT_SYNC_LIMIT = 150;
+const DEFAULT_SYNC_LIMIT = 500;
 
 type MoraSyncCredit = {
   id: number;
@@ -283,7 +283,7 @@ export async function syncCreditMora(
     return buildResult(credit, "SKIPPED", "Credito con paz y salvo emitido.", plan);
   }
 
-  if (plan.estadoPago === "PAGADO") {
+  if (plan.estadoPago === "PAGADO" && !credit.bloqueoMora) {
     return buildResult(credit, "SKIPPED", "Credito sin saldo pendiente.", plan);
   }
 
@@ -461,9 +461,17 @@ export async function syncAllCreditMora(
         },
       },
     },
-    orderBy: {
-      id: "asc",
-    },
+    orderBy: [
+      {
+        bloqueoMora: "desc",
+      },
+      {
+        fechaProximoPago: "asc",
+      },
+      {
+        id: "asc",
+      },
+    ],
     take: limit,
   });
   const items: MoraSyncResult[] = [];
