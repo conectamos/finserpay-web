@@ -161,6 +161,7 @@ export default async function CarteraPage() {
       return {
         id: credito.id,
         folio: credito.folio,
+        imei: credito.imei || credito.deviceUid || "Sin IMEI",
         clienteNombre: credito.clienteNombre,
         clienteDocumento: credito.clienteDocumento || "",
         referencia:
@@ -390,7 +391,7 @@ export default async function CarteraPage() {
               <thead className="bg-[#111318] text-white">
                 <tr>
                   <th className="px-5 py-4 font-black">Cliente</th>
-                  <th className="px-5 py-4 font-black">Folio</th>
+                  <th className="px-5 py-4 font-black">IMEI</th>
                   <th className="px-5 py-4 font-black">Referencia</th>
                   <th className="px-5 py-4 font-black">Sede</th>
                   <th className="px-5 py-4 font-black">Mora</th>
@@ -406,7 +407,7 @@ export default async function CarteraPage() {
                         <p className="font-black text-[#20242a]">{item.clienteNombre}</p>
                         <p className="text-xs text-[#687080]">{item.clienteDocumento || "Sin documento"}</p>
                       </td>
-                      <td className="px-5 py-4 font-semibold text-[#20242a]">{item.folio}</td>
+                      <td className="px-5 py-4 font-semibold text-[#20242a]">{item.imei}</td>
                       <td className="px-5 py-4 text-[#687080]">{item.referencia}</td>
                       <td className="px-5 py-4 text-[#687080]">{item.sede}</td>
                       <td className="px-5 py-4">
