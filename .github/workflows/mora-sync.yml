@@ -3,7 +3,8 @@ name: Sincronizar mora y bloqueos
 on:
   workflow_dispatch:
   schedule:
-    # GitHub usa UTC. 01:00 UTC equivale a 8:00 p. m. en Colombia.
+    # GitHub usa UTC. 01:00 UTC equivale a 8:00 p. m. en Colombia
+    # del dia anterior en UTC; es decir, el mismo dia local del vencimiento.
     - cron: "0 1 * * *"
 
 jobs:
