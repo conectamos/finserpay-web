@@ -1,0 +1,37 @@
+name: Conciliar recaudos Efecty
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub usa UTC. 04:30 UTC equivale a 11:30 p. m. en Colombia.
+    # Se ejecuta despues del cierre diario de reportes de Efecty.
+    - cron: "30 4 * * *"
+
+jobs:
+  sync-efecty:
+    name: Descargar TXT y aplicar recaudos
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Conciliar recaudos Efecty
+        env:
+          FINSERPAY_BASE_URL: ${{ secrets.FINSERPAY_BASE_URL }}
+          EFECTY_SYNC_TOKEN: ${{ secrets.EFECTY_SYNC_TOKEN }}
+          MORA_SYNC_TOKEN: ${{ secrets.MORA_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          BASE_URL="${FINSERPAY_BASE_URL:-https://finserpay.com}"
+          TOKEN="${EFECTY_SYNC_TOKEN:-${MORA_SYNC_TOKEN:-}}"
+
+          if [ -z "${TOKEN}" ]; then
+            echo "Falta configurar EFECTY_SYNC_TOKEN o MORA_SYNC_TOKEN en GitHub Actions."
+            exit 1
+          fi
+
+          curl --fail-with-body \
+            --request POST \
+            --header "Authorization: Bearer ${TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{"dryRun":false,"limitFiles":10}' \
+            "${BASE_URL%/}/api/efecty/sync"
