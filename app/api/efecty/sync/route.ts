@@ -8,7 +8,9 @@ export const dynamic = "force-dynamic";
 
 type SyncBody = {
   dryRun?: boolean | string;
+  fileDate?: string;
   filenames?: string[];
+  includePreviousFiles?: boolean | string;
   limitFiles?: number | string;
 };
 
@@ -122,6 +124,8 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const result = await syncEfectyRecaudosFromSftp({
       dryRun: true,
+      fileDate: searchParams.get("fileDate"),
+      includePreviousFiles: parseBoolean(searchParams.get("includePreviousFiles"), false),
       limitFiles: normalizeLimit(searchParams.get("limitFiles")),
     });
 
@@ -141,7 +145,12 @@ export async function POST(req: Request) {
     const body = await readBody(req);
     const result = await syncEfectyRecaudosFromSftp({
       dryRun: parseBoolean(searchParams.get("dryRun") ?? body.dryRun, false),
+      fileDate: searchParams.get("fileDate") ?? body.fileDate,
       filenames: Array.isArray(body.filenames) ? body.filenames : undefined,
+      includePreviousFiles: parseBoolean(
+        searchParams.get("includePreviousFiles") ?? body.includePreviousFiles,
+        false
+      ),
       limitFiles: normalizeLimit(searchParams.get("limitFiles") ?? body.limitFiles),
     });
 

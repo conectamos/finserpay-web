@@ -15,6 +15,7 @@ import prisma from "@/lib/prisma";
 const DEFAULT_REMOTE_DIR = "/Salida";
 const DEFAULT_VALID_COMPANIES = ["FINSERPAY"];
 const DEFAULT_FILE_LIMIT = 10;
+const BOGOTA_TIME_ZONE = "America/Bogota";
 
 type EfectyLine = {
   company: string;
@@ -37,7 +38,9 @@ type EfectyImportRow = {
 
 type EfectySyncOptions = {
   dryRun?: boolean;
+  fileDate?: string | null;
   filenames?: string[];
+  includePreviousFiles?: boolean;
   limitFiles?: number;
 };
 
@@ -82,6 +85,28 @@ function normalizeToken(value: unknown) {
 
 function normalizeDigits(value: unknown) {
   return String(value || "").replace(/\D/g, "");
+}
+
+function getBogotaCompactDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: BOGOTA_TIME_ZONE,
+    year: "numeric",
+  }).formatToParts(date);
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return `${byType.year}${byType.month}${byType.day}`;
+}
+
+function normalizeFileDate(value: unknown) {
+  const digits = normalizeDigits(value);
+
+  return digits.length === 8 ? digits : "";
+}
+
+function filenameMatchesDate(filename: string, dateKey: string) {
+  return new RegExp(`(?:^|_)${dateKey}(?:_|\\.)`).test(filename);
 }
 
 function normalizeCompany(value: unknown) {
@@ -856,12 +881,17 @@ export async function syncEfectyRecaudosFromSftp(options: EfectySyncOptions = {}
   try {
     const listing = await sftp.list(config.remoteDir);
     const requestedNames = new Set((options.filenames || []).filter(Boolean));
+    const targetDate =
+      requestedNames.size || options.includePreviousFiles
+        ? ""
+        : normalizeFileDate(options.fileDate) || getBogotaCompactDateKey();
     const filenames = listing
       .map((item) => item.name)
       .filter((name) => /\.txt$/i.test(name))
       .filter((name) =>
         requestedNames.size ? requestedNames.has(name) : /^RECAUDO_EFECTIVO/i.test(name)
       )
+      .filter((name) => (targetDate ? filenameMatchesDate(name, targetDate) : true))
       .sort()
       .slice(-limitFiles);
     const files: EfectyFileResult[] = [];
@@ -886,6 +916,16 @@ export async function syncEfectyRecaudosFromSftp(options: EfectySyncOptions = {}
       ok: lines.every((line) => line.action !== "ERROR"),
       dryRun: Boolean(options.dryRun),
       generatedAt: new Date().toISOString(),
+      selection: {
+        mode: requestedNames.size
+          ? "filenames"
+          : options.includePreviousFiles
+            ? "latest"
+            : "today",
+        remoteDir: config.remoteDir,
+        selectedFiles: filenames,
+        targetDate: targetDate || null,
+      },
       summary: {
         applied: lines.filter((line) => line.action === "APLICADO").length,
         duplicated: lines.filter((line) => line.action === "DUPLICADO").length,
