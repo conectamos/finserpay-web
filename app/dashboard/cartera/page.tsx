@@ -164,6 +164,7 @@ export default async function CarteraPage() {
         imei: credito.imei || credito.deviceUid || "Sin IMEI",
         clienteNombre: credito.clienteNombre,
         clienteDocumento: credito.clienteDocumento || "",
+        clienteTelefono: credito.clienteTelefono || "",
         referencia:
           credito.referenciaEquipo ||
           [credito.equipoMarca, credito.equipoModelo].filter(Boolean).join(" ") ||
@@ -406,6 +407,9 @@ export default async function CarteraPage() {
                       <td className="px-5 py-4">
                         <p className="font-black text-[#20242a]">{item.clienteNombre}</p>
                         <p className="text-xs text-[#687080]">{item.clienteDocumento || "Sin documento"}</p>
+                        <p className="text-xs font-semibold text-[#0f766e]">
+                          {item.clienteTelefono || "Sin celular"}
+                        </p>
                       </td>
                       <td className="px-5 py-4 font-semibold text-[#20242a]">{item.imei}</td>
                       <td className="px-5 py-4 text-[#687080]">{item.referencia}</td>
