@@ -3,9 +3,14 @@ name: Conciliar recaudos Efecty
 on:
   workflow_dispatch:
   schedule:
-    # GitHub usa UTC. 04:15 UTC equivale a 11:15 p. m. en Colombia.
-    # Se ejecuta despues del cierre diario de reportes de Efecty y antes del bloqueo por mora.
-    - cron: "15 4 * * *"
+    # GitHub usa UTC. 04:15, 04:25, 04:35 y 04:45 UTC equivalen a
+    # 11:15, 11:25, 11:35 y 11:45 p. m. en Colombia.
+    # Se reintenta porque GitHub puede retrasar o saltar corridas programadas.
+    - cron: "15,25,35,45 4 * * *"
+
+concurrency:
+  group: efecty-sync
+  cancel-in-progress: false
 
 jobs:
   sync-efecty:
@@ -33,5 +38,5 @@ jobs:
             --request POST \
             --header "Authorization: Bearer ${TOKEN}" \
             --header "Content-Type: application/json" \
-            --data '{"dryRun":false,"limitFiles":10}' \
+            --data '{"dryRun":false,"limitFiles":10,"includePreviousFiles":false}' \
             "${BASE_URL%/}/api/efecty/sync"
