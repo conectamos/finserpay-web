@@ -2,8 +2,13 @@ name: Conciliar recaudos Efecty
 
 on:
   workflow_dispatch:
+    inputs:
+      file_date:
+        description: "Fecha del TXT a procesar en formato YYYYMMDD. Dejalo vacio para usar el dia actual."
+        required: false
+        type: string
 
-# Programado ahora en Railway Cron. Este workflow queda como respaldo manual.
+# Programado ahora en Railway. Este workflow queda como respaldo manual.
 
 concurrency:
   group: efecty-sync
@@ -25,15 +30,26 @@ jobs:
 
           BASE_URL="${FINSERPAY_BASE_URL:-https://finserpay.com}"
           TOKEN="${EFECTY_SYNC_TOKEN:-${MORA_SYNC_TOKEN:-}}"
+          FILE_DATE="${{ github.event.inputs.file_date || '' }}"
 
           if [ -z "${TOKEN}" ]; then
             echo "Falta configurar EFECTY_SYNC_TOKEN o MORA_SYNC_TOKEN en GitHub Actions."
             exit 1
           fi
 
+          if [ -n "${FILE_DATE}" ] && ! echo "${FILE_DATE}" | grep -Eq '^[0-9]{8}$'; then
+            echo "file_date debe tener formato YYYYMMDD, por ejemplo 20260604."
+            exit 1
+          fi
+
+          BODY='{"dryRun":false,"limitFiles":10,"includePreviousFiles":false}'
+          if [ -n "${FILE_DATE}" ]; then
+            BODY="{\"dryRun\":false,\"limitFiles\":10,\"includePreviousFiles\":false,\"fileDate\":\"${FILE_DATE}\"}"
+          fi
+
           curl --fail-with-body \
             --request POST \
             --header "Authorization: Bearer ${TOKEN}" \
             --header "Content-Type: application/json" \
-            --data '{"dryRun":false,"limitFiles":10,"includePreviousFiles":false}' \
+            --data "${BODY}" \
             "${BASE_URL%/}/api/efecty/sync"
