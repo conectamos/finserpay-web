@@ -148,31 +148,31 @@ Cada vez que hagas cambios:
 npm run db:push
 ```
 
-## Cron jobs en Railway
+## Procesos automaticos nocturnos
 
-Los procesos automaticos nocturnos no deben depender de GitHub Actions. Crea servicios Cron separados en Railway apuntando al mismo repositorio:
+El servicio principal de Railway ejecuta automaticamente los procesos nocturnos cuando levanta el servidor:
 
-### Efecty
+- Efecty: 11:15 p. m., 11:25 p. m., 11:35 p. m. y 11:45 p. m. hora Colombia.
+- Mora y bloqueos: 11:55 p. m. hora Colombia.
 
-- Start Command: `npm run cron:efecty`
-- Cron Schedule: `15,25,35,45 4 * * *`
-- Hora Colombia: 11:15 p. m., 11:25 p. m., 11:35 p. m. y 11:45 p. m.
-- Variables necesarias:
-  - `FINSERPAY_BASE_URL=https://finserpay.com`
-  - `EFECTY_SYNC_TOKEN`
+No necesitas crear servicios Cron adicionales en Railway. Solo confirma que el servicio web tenga configuradas las variables normales de produccion, incluyendo:
 
-Este cron descarga y aplica solo el TXT del dia actual. No procesa archivos anteriores salvo que el endpoint se ejecute manualmente con otro parametro.
+- `EFECTY_SFTP_HOST`
+- `EFECTY_SFTP_PORT`
+- `EFECTY_SFTP_REMOTE_DIR`
+- `EFECTY_SFTP_USERNAME`
+- `EFECTY_SFTP_PASSWORD` o `EFECTY_SFTP_PRIVATE_KEY`
+- `EFECTY_VALID_COMPANIES`
+- `EQUALITY_HBM_ACCESS_TOKEN`
+- `EQUALITY_HBM_BASE_URL`
 
-### Mora y bloqueos
+Si algun dia necesitas apagar temporalmente la programacion interna, agrega:
 
-- Start Command: `npm run cron:mora`
-- Cron Schedule: `55 4 * * *`
-- Hora Colombia: 11:55 p. m.
-- Variables necesarias:
-  - `FINSERPAY_BASE_URL=https://finserpay.com`
-  - `MORA_SYNC_TOKEN`
+```bash
+FINSERPAY_INTERNAL_CRON=false
+```
 
-Este cron corre despues de Efecty para que primero entren los recaudos y luego se bloqueen solo los clientes que sigan en mora.
+Los workflows de GitHub quedan solo como respaldo manual.
 
 ## Recomendacion importante
 
