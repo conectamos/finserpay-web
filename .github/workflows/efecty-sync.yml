@@ -2,11 +2,8 @@ name: Conciliar recaudos Efecty
 
 on:
   workflow_dispatch:
-  schedule:
-    # GitHub usa UTC. 04:15, 04:25, 04:35 y 04:45 UTC equivalen a
-    # 11:15, 11:25, 11:35 y 11:45 p. m. en Colombia.
-    # Se reintenta porque GitHub puede retrasar o saltar corridas programadas.
-    - cron: "15,25,35,45 4 * * *"
+
+# Programado ahora en Railway Cron. Este workflow queda como respaldo manual.
 
 concurrency:
   group: efecty-sync

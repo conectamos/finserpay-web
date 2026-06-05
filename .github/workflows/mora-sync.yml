@@ -2,10 +2,8 @@ name: Sincronizar mora y bloqueos
 
 on:
   workflow_dispatch:
-  schedule:
-    # GitHub usa UTC. 04:55 UTC equivale a 11:55 p. m. en Colombia.
-    # Se ejecuta despues de los intentos nocturnos de conciliacion Efecty.
-    - cron: "55 4 * * *"
+
+# Programado ahora en Railway Cron. Este workflow queda como respaldo manual.
 
 concurrency:
   group: mora-sync

@@ -148,6 +148,32 @@ Cada vez que hagas cambios:
 npm run db:push
 ```
 
+## Cron jobs en Railway
+
+Los procesos automaticos nocturnos no deben depender de GitHub Actions. Crea servicios Cron separados en Railway apuntando al mismo repositorio:
+
+### Efecty
+
+- Start Command: `npm run cron:efecty`
+- Cron Schedule: `15,25,35,45 4 * * *`
+- Hora Colombia: 11:15 p. m., 11:25 p. m., 11:35 p. m. y 11:45 p. m.
+- Variables necesarias:
+  - `FINSERPAY_BASE_URL=https://finserpay.com`
+  - `EFECTY_SYNC_TOKEN`
+
+Este cron descarga y aplica solo el TXT del dia actual. No procesa archivos anteriores salvo que el endpoint se ejecute manualmente con otro parametro.
+
+### Mora y bloqueos
+
+- Start Command: `npm run cron:mora`
+- Cron Schedule: `55 4 * * *`
+- Hora Colombia: 11:55 p. m.
+- Variables necesarias:
+  - `FINSERPAY_BASE_URL=https://finserpay.com`
+  - `MORA_SYNC_TOKEN`
+
+Este cron corre despues de Efecty para que primero entren los recaudos y luego se bloqueen solo los clientes que sigan en mora.
+
 ## Recomendacion importante
 
 Antes de abrir la app a todas las sedes:
