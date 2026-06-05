@@ -153,7 +153,7 @@ npm run db:push
 El servicio principal de Railway ejecuta automaticamente los procesos nocturnos cuando levanta el servidor:
 
 - Efecty: 11:15 p. m., 11:25 p. m., 11:35 p. m. y 11:45 p. m. hora Colombia.
-- Mora y bloqueos: 11:55 p. m. hora Colombia.
+- Mora y bloqueos: 11:30 p. m. hora Colombia.
 
 No necesitas crear servicios Cron adicionales en Railway. Solo confirma que el servicio web tenga configuradas las variables normales de produccion, incluyendo:
 

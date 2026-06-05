@@ -4,7 +4,7 @@ import { syncEfectyRecaudosFromSftp } from "@/lib/efecty-recaudos";
 const BOGOTA_TIME_ZONE = "America/Bogota";
 const CHECK_INTERVAL_MS = 30_000;
 const EFECTY_TIMES = new Set(["23:15", "23:25", "23:35", "23:45"]);
-const MORA_TIMES = new Set(["23:55"]);
+const MORA_TIMES = new Set(["23:30"]);
 
 type InternalCronState = {
   completed: Set<string>;
@@ -166,7 +166,7 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: Efecty 23:15/23:25/23:35/23:45, mora 23:55, hora Colombia.",
+    "Programacion interna activa: Efecty 23:15/23:25/23:35/23:45, mora 23:30, hora Colombia.",
   );
 
   void tick();
