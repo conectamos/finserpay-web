@@ -321,13 +321,6 @@ export async function POST(
     const sellerSession = admin ? null : await getSellerSessionUser(user);
     const supervisor = sellerSession?.tipoPerfil === "SUPERVISOR";
 
-    if (!admin && !supervisor) {
-      return NextResponse.json(
-        { error: "Solo supervisor o administrador puede ejecutar estos comandos" },
-        { status: 403 }
-      );
-    }
-
     const params = await context.params;
     const creditId = parseId(params.id);
 
@@ -350,7 +343,19 @@ export async function POST(
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
     }
 
-    if (!admin && !SUPERVISOR_COMMANDS.includes(command)) {
+    const sellerCanConsultOwnCredit =
+      Boolean(sellerSession) &&
+      command === "consult-device" &&
+      [sellerSession?.sedeId, sellerSession?.accesoSedeId].includes(current.sede.id);
+
+    if (!admin && !supervisor && !sellerCanConsultOwnCredit) {
+      return NextResponse.json(
+        { error: "Solo supervisor o administrador puede ejecutar estos comandos" },
+        { status: 403 }
+      );
+    }
+
+    if (!admin && !sellerCanConsultOwnCredit && !SUPERVISOR_COMMANDS.includes(command)) {
       return NextResponse.json(
         { error: "El supervisor solo puede consultar, bloquear o desbloquear el equipo" },
         { status: 403 }

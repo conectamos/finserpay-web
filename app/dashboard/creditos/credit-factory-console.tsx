@@ -1808,6 +1808,10 @@ export default function CreditFactoryConsole({
   const [firmaSeguroSubmitting, setFirmaSeguroSubmitting] = useState(false);
   const [firmaSeguroRefreshing, setFirmaSeguroRefreshing] = useState(false);
   const [firmaSeguroOnCreate, setFirmaSeguroOnCreate] = useState(false);
+  const [firmaSeguroCreatedCredit, setFirmaSeguroCreatedCredit] =
+    useState<CreditItem | null>(null);
+  const [firmaSeguroSentCreditId, setFirmaSeguroSentCreditId] =
+    useState<number | null>(null);
   const [paymentValue, setPaymentValue] = useState("");
   const [receivedPaymentValue, setReceivedPaymentValue] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("EFECTIVO");
@@ -2623,10 +2627,14 @@ export default function CreditFactoryConsole({
     plazoMesesNumero > 0;
   const contratoListo = stepClienteReady && stepContratoReady && stepEquipoReady;
   const stepDocumentosReady =
-    contratoAceptado &&
-    pagareAceptado &&
-    cartaAceptada &&
-    autorizacionDatosAceptada;
+    Boolean(
+      firmaSeguroCreatedCredit &&
+        firmaSeguroSentCreditId === firmaSeguroCreatedCredit.id
+    ) ||
+    (contratoAceptado &&
+      pagareAceptado &&
+      cartaAceptada &&
+      autorizacionDatosAceptada);
   const entregaSinVerificacionAutorizada = Boolean(
     creditDocumentException?.permiteEntregaSinVerificacion
   );
@@ -4156,7 +4164,7 @@ export default function CreditFactoryConsole({
     if (wizardStep === 4 && !stepDocumentosReady) {
       setNotice({
         text:
-          "Marca la aceptacion del contrato, pagare, carta de instrucciones y autorizacion de datos antes de pasar a la validacion del equipo.",
+          "Envia primero el expediente por FirmaSeguro antes de pasar a la validacion del equipo.",
         tone: "amber",
       });
       return;
@@ -4230,7 +4238,7 @@ export default function CreditFactoryConsole({
     if (wizardStep === 4 && !stepDocumentosReady) {
       setNotice({
         text:
-          "Completa el checklist documental antes de pasar a la validacion del equipo.",
+          "Envia primero el expediente por FirmaSeguro antes de pasar a la validacion del equipo.",
         tone: "amber",
       });
       return;
@@ -4341,7 +4349,7 @@ export default function CreditFactoryConsole({
     ) {
       setNotice({
         text:
-          `Completa cliente, equipo, identidad y checklist documental antes de ${actionLabel}.`,
+          `Completa cliente, equipo, identidad y envia FirmaSeguro antes de ${actionLabel}.`,
         tone: "amber",
       });
       return false;
@@ -4531,6 +4539,8 @@ export default function CreditFactoryConsole({
     setCartaAceptada(false);
     setAutorizacionDatosAceptada(false);
     setFirmaSeguroOnCreate(false);
+    setFirmaSeguroCreatedCredit(null);
+    setFirmaSeguroSentCreditId(null);
     setDeliveryValidation(null);
     setCameraSlot(null);
     setMobileCaptureSession(null);
@@ -4574,15 +4584,32 @@ export default function CreditFactoryConsole({
   };
 
   const createCredit = async (
-    options: { sendToFirmaSeguro?: boolean } = {}
+    options: {
+      allowPendingDelivery?: boolean;
+      firmaSeguroPasoContratos?: boolean;
+      sendToFirmaSeguro?: boolean;
+      stayInWizard?: boolean;
+    } = {}
   ) => {
-    if (!ventaLista) {
+    const acceptsByFirmaSeguro = Boolean(options.firmaSeguroPasoContratos);
+    const documentsReadyForCreate = acceptsByFirmaSeguro || stepDocumentosReady;
+    const deliveryReadyForCreate =
+      Boolean(options.allowPendingDelivery) || deliveryRequirementReady;
+    const readyToCreate =
+      stepClienteReady &&
+      stepEquipoReady &&
+      stepContratoReady &&
+      documentsReadyForCreate &&
+      deliveryReadyForCreate;
+
+    if (!readyToCreate) {
       setNotice({
-        text:
-          "Completa el flujo de cliente, equipo, identidad, contratos y valida el equipo antes de finalizar la venta.",
+        text: acceptsByFirmaSeguro
+          ? "Completa cliente, equipo e identidad antes de enviar el expediente a FirmaSeguro."
+          : "Completa el flujo de cliente, equipo, identidad, contratos y valida el equipo antes de finalizar la venta.",
         tone: "red",
       });
-      return;
+      return null;
     }
 
     try {
@@ -4626,7 +4653,8 @@ export default function CreditFactoryConsole({
           tasaInteresEa: financialPlan.tasaInteresEa,
           fianzaPorcentaje: financialPlan.fianzaPorcentaje,
           fechaPrimerPago,
-          contratoAceptado,
+          firmaSeguroPasoContratos: acceptsByFirmaSeguro,
+          contratoAceptado: acceptsByFirmaSeguro || contratoAceptado,
           contratoFirmaDataUrl,
           contratoFotoDataUrl,
           contratoSelfieDataUrl: contratoFotoDataUrl,
@@ -4644,9 +4672,10 @@ export default function CreditFactoryConsole({
           contratoOtpCanal: "",
           contratoOtpDestino: "",
           contratoOtpVerificadoAt: null,
-          pagareAceptado,
-          cartaAceptada,
-          autorizacionDatosAceptada,
+          pagareAceptado: acceptsByFirmaSeguro || pagareAceptado,
+          cartaAceptada: acceptsByFirmaSeguro || cartaAceptada,
+          autorizacionDatosAceptada:
+            acceptsByFirmaSeguro || autorizacionDatosAceptada,
         }),
       });
 
@@ -4656,13 +4685,15 @@ export default function CreditFactoryConsole({
 
       const createdCredit = result.data.item;
       upsertCredit(createdCredit);
-      const planLookup = encodeURIComponent(
-        String(createdCredit.folio || createdCredit.id)
-      );
-      window.open(`/api/creditos/${planLookup}/plan-pagos`, "_blank");
+      if (!options.stayInWizard) {
+        const planLookup = encodeURIComponent(
+          String(createdCredit.folio || createdCredit.id)
+        );
+        window.open(`/api/creditos/${planLookup}/plan-pagos`, "_blank");
+      }
       const closedDraftId = draftId;
 
-      if (closedDraftId) {
+      if (closedDraftId && !options.stayInWizard) {
         await requestJson<CreditDraftSingleResponse>("/api/creditos/borradores", {
           method: "PATCH",
           headers: {
@@ -4703,6 +4734,41 @@ export default function CreditFactoryConsole({
         }
       }
 
+      if (options.stayInWizard) {
+        setFirmaSeguroCreatedCredit(createdCredit);
+        setFirmaSeguroSentCreditId(
+          firmaSeguroNotice && firmaSeguroNotice.tone !== "amber"
+            ? createdCredit.id
+            : null
+        );
+
+        if (firmaSeguroNotice) {
+          setNotice(firmaSeguroNotice);
+
+          if (firmaSeguroNotice.tone !== "amber") {
+            setWizardStep(5);
+          }
+        } else if (result.data.warning) {
+          setNotice({
+            text: result.data.warning,
+            tone: "amber",
+          });
+        } else {
+          setNotice({
+            text:
+              result.data.deliveryStatus?.detail ||
+              "Credito creado para FirmaSeguro. Valida la entrega antes de cerrar.",
+            tone: result.data.deliveryStatus?.ready ? "emerald" : "amber",
+          });
+
+          if (result.data.deliveryStatus?.ready) {
+            setWizardStep(5);
+          }
+        }
+
+        return createdCredit;
+      }
+
       resetForm();
 
       if (firmaSeguroNotice) {
@@ -4727,39 +4793,145 @@ export default function CreditFactoryConsole({
       }
 
       window.location.assign("/app");
+      return createdCredit;
     } catch (error) {
       setNotice({
         text: error instanceof Error ? error.message : "No se pudo crear el credito",
         tone: "red",
       });
+      return null;
     } finally {
       setCreating(false);
     }
   };
 
   const handleFirmaSeguroStepReady = async () => {
-    if (!stepDocumentosReady) {
+    if (!contratoListo) {
       setNotice({
         text:
-          "Marca contrato, pagare, carta de instrucciones y autorizacion de datos antes de enviar a FirmaSeguro.",
+          "Completa cliente, equipo e identidad antes de enviar el expediente a FirmaSeguro.",
         tone: "amber",
       });
       return;
     }
 
-    setFirmaSeguroOnCreate(true);
-
-    if (deliveryRequirementReady) {
-      await createCredit({ sendToFirmaSeguro: true });
+    if (firmaSeguroCreatedCredit) {
+      try {
+        setFirmaSeguroSubmitting(true);
+        setNotice(null);
+        const signature = await submitFirmaSeguroCredit(firmaSeguroCreatedCredit);
+        const uuid = signature.process?.processUuid;
+        setFirmaSeguroSentCreditId(firmaSeguroCreatedCredit.id);
+        setNotice({
+          text: uuid
+            ? `${firmaSeguroCreatedCredit.folio} reenviado a FirmaSeguro. Proceso: ${uuid}.`
+            : signature.message ||
+              `${firmaSeguroCreatedCredit.folio} reenviado a FirmaSeguro.`,
+          tone: "emerald",
+        });
+        setWizardStep(5);
+      } catch (error) {
+        setNotice({
+          text:
+            "No se pudo enviar a FirmaSeguro: " +
+            (error instanceof Error ? error.message : "error desconocido"),
+          tone: "red",
+        });
+      } finally {
+        setFirmaSeguroSubmitting(false);
+      }
       return;
     }
 
-    setNotice({
-      text:
-        "FirmaSeguro quedo listo para envio. Valida el equipo y al finalizar el credito se enviara automaticamente.",
-      tone: "emerald",
+    await createCredit({
+      allowPendingDelivery: true,
+      firmaSeguroPasoContratos: true,
+      sendToFirmaSeguro: true,
+      stayInWizard: true,
     });
-    await advanceToStep(5);
+  };
+
+  const finalizeFirmaSeguroDelivery = async () => {
+    if (!firmaSeguroCreatedCredit) {
+      await createCredit({ sendToFirmaSeguro: firmaSeguroOnCreate });
+      return;
+    }
+
+    if (firmaSeguroSentCreditId !== firmaSeguroCreatedCredit.id) {
+      setNotice({
+        text:
+          "Envia primero el expediente por FirmaSeguro antes de finalizar la entrega.",
+        tone: "amber",
+      });
+      return;
+    }
+
+    if (!deliveryRequirementReady) {
+      setNotice({
+        text:
+          "Valida primero la entrega con Zero Touch antes de finalizar este credito.",
+        tone: "amber",
+      });
+      return;
+    }
+
+    try {
+      setCreating(true);
+      setNotice(null);
+
+      const result = await requestJson<CommandResponse>(
+        `/api/creditos/${firmaSeguroCreatedCredit.id}/command`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ command: "consult-device" }),
+        }
+      );
+
+      if (!result.ok) {
+        throw new Error(
+          result.data?.message ||
+            result.data?.remote?.resultMessage ||
+            "No se pudo cerrar la validacion de entrega"
+        );
+      }
+
+      if (result.data?.item) {
+        upsertCredit(result.data.item);
+      }
+
+      const closedDraftId = draftId;
+
+      if (closedDraftId) {
+        await requestJson<CreditDraftSingleResponse>("/api/creditos/borradores", {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ id: closedDraftId, estado: "CERRADO" }),
+        }).catch(() => null);
+      }
+
+      const folio = result.data?.item?.folio || firmaSeguroCreatedCredit.folio;
+      resetForm();
+      setNotice({
+        text: `${folio} quedo enviado a FirmaSeguro y con entrega validada.`,
+        tone: "emerald",
+      });
+      window.location.assign("/app");
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo finalizar la entrega",
+        tone: "red",
+      });
+    } finally {
+      setCreating(false);
+    }
   };
 
   const registerPayment = async () => {
@@ -7717,25 +7889,154 @@ export default function CreditFactoryConsole({
                         Paso 4
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        Contratos y aceptacion
+                        FirmaSeguro
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Aqui revisas el contrato, el pagaré, la carta de instrucciones y la autorizacion de datos. Tambien ves anexadas las capturas del paso 3.
+                        Envia el contrato, pagare, carta de instrucciones, autorizacion de datos y evidencias al WhatsApp registrado del cliente.
                       </p>
                     </div>
                     <div
                       className={[
                         "inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
-                        stepDocumentosReady
+                        firmaSeguroCreatedCredit &&
+                        firmaSeguroSentCreditId === firmaSeguroCreatedCredit.id
                           ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                           : "border-amber-200 bg-amber-50 text-amber-700",
                       ].join(" ")}
                     >
-                      {stepDocumentosReady ? "Documentos listos" : "Checklist pendiente"}
+                      {creating || firmaSeguroSubmitting
+                        ? "Enviando"
+                        : firmaSeguroCreatedCredit &&
+                            firmaSeguroSentCreditId === firmaSeguroCreatedCredit.id
+                          ? "Enviado a FirmaSeguro"
+                          : firmaSeguroCreatedCredit
+                            ? "Reintentar envio"
+                          : "Pendiente envio"}
                     </div>
                   </div>
 
-                  <div className="mt-6 grid gap-4 xl:grid-cols-[0.88fr_1.12fr]">
+                  <div className="mt-6 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+                    <div className="rounded-[24px] border border-emerald-200 bg-[#f2fbf7] px-5 py-5">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#0f766e]">
+                            FirmaSeguro
+                          </p>
+                          <h4 className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                            Envio digital por WhatsApp
+                          </h4>
+                          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
+                            Se creara el expediente del credito y FirmaSeguro enviara el enlace de firma al WhatsApp registrado del cliente.
+                          </p>
+                        </div>
+                        {firmaSeguroCreatedCredit ? (
+                          <div
+                            className={[
+                              "rounded-2xl border bg-white px-4 py-3 text-xs font-semibold",
+                              firmaSeguroSentCreditId === firmaSeguroCreatedCredit.id
+                                ? "border-emerald-200 text-emerald-700"
+                                : "border-amber-200 text-amber-700",
+                            ].join(" ")}
+                          >
+                            Folio {firmaSeguroCreatedCredit.folio}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                        {[
+                          ["Cliente", clienteNombre || "-"],
+                          ["WhatsApp", clienteTelefono || "-"],
+                          ["Documento", clienteDocumento || "-"],
+                          ["Equipo", referenciaEquipo || "-"],
+                          ["IMEI", imei || "-"],
+                          ["Valor cuota", currency(valorCuota)],
+                        ].map(([label, value]) => (
+                          <div
+                            key={label}
+                            className="rounded-2xl border border-emerald-100 bg-white/80 px-4 py-3"
+                          >
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                              {label}
+                            </p>
+                            <p className="mt-1 text-sm font-black text-slate-950">
+                              {value}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-5 grid gap-3 md:grid-cols-3">
+                        {[
+                          { label: "Cliente", ready: stepClienteReady },
+                          { label: "Equipo", ready: stepEquipoReady },
+                          { label: "Identidad", ready: stepContratoReady },
+                        ].map(({ label, ready }) => (
+                          <div
+                            key={label}
+                            className={[
+                              "rounded-2xl border px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em]",
+                              ready
+                                ? "border-emerald-200 bg-white text-emerald-700"
+                                : "border-amber-200 bg-amber-50 text-amber-700",
+                            ].join(" ")}
+                          >
+                            {label}: {ready ? "OK" : "Pendiente"}
+                          </div>
+                        ))}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleFirmaSeguroStepReady()}
+                        disabled={
+                          (!contratoListo && !firmaSeguroCreatedCredit) ||
+                          creating ||
+                          firmaSeguroSubmitting
+                        }
+                        className="mt-5 w-full rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
+                      >
+                        {creating || firmaSeguroSubmitting
+                          ? "Enviando a FirmaSeguro..."
+                          : firmaSeguroCreatedCredit
+                            ? "Reenviar FirmaSeguro"
+                            : "Enviar FirmaSeguro por WhatsApp"}
+                      </button>
+
+                      {!contratoListo && !firmaSeguroCreatedCredit ? (
+                        <p className="mt-3 text-xs font-medium leading-5 text-amber-700">
+                          Completa cliente, equipo e identidad para enviar el expediente.
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="rounded-[24px] border border-[#d9e7ea] bg-[#f8fbfd] px-5 py-5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
+                        Documentos incluidos
+                      </p>
+                      <div className="mt-4 space-y-3 text-sm font-semibold text-slate-700">
+                        {[
+                          "Contrato principal",
+                          "Pagare",
+                          "Carta de instrucciones",
+                          "Autorizacion de datos",
+                          "Evidencias del paso 3",
+                        ].map((item) => (
+                          <div
+                            key={item}
+                            className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                          >
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-5 rounded-[20px] border border-dashed border-emerald-200 bg-white px-4 py-4 text-sm leading-6 text-slate-600">
+                        El cliente firma desde FirmaSeguro. Luego validas la entrega del equipo en el paso 5.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="hidden">
                     <div className="space-y-4">
                       <div className="rounded-[24px] border border-[#d9e7ea] bg-[#f8fbfd] px-5 py-5">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -7911,7 +8212,7 @@ export default function CreditFactoryConsole({
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {entregaSinVerificacionAutorizada
                           ? "Esta cedula tiene autorizacion administrativa para cerrar la entrega sin validar el dispositivo."
-                          : "El cierre queda reservado para validar la entregabilidad del dispositivo con Zero Touch antes de crear el credito."}
+                          : "El cierre queda reservado para validar la entregabilidad del dispositivo con Zero Touch antes de cerrar la entrega."}
                       </p>
                     </div>
                     <div
@@ -8550,19 +8851,25 @@ export default function CreditFactoryConsole({
                 {wizardStep === 5 && (
                   <button
                     type="button"
-                    onClick={() =>
-                      void createCredit({ sendToFirmaSeguro: firmaSeguroOnCreate })
+                    onClick={() => void finalizeFirmaSeguroDelivery()}
+                    disabled={
+                      creating ||
+                      firmaSeguroSubmitting ||
+                      (firmaSeguroCreatedCredit ? !deliveryRequirementReady : !ventaLista)
                     }
-                    disabled={creating || firmaSeguroSubmitting || !ventaLista}
                     className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"
                   >
                     {creating || firmaSeguroSubmitting
-                      ? firmaSeguroOnCreate
-                        ? "Finalizando y enviando..."
-                        : "Finalizando credito..."
-                      : firmaSeguroOnCreate
-                        ? "Finalizar y enviar FirmaSeguro"
-                        : "Finalizar credito"}
+                      ? firmaSeguroCreatedCredit
+                        ? "Finalizando entrega..."
+                        : firmaSeguroOnCreate
+                          ? "Finalizando y enviando..."
+                          : "Finalizando credito..."
+                      : firmaSeguroCreatedCredit
+                        ? "Finalizar entrega"
+                        : firmaSeguroOnCreate
+                          ? "Finalizar y enviar FirmaSeguro"
+                          : "Finalizar credito"}
                   </button>
                 )}
 

@@ -153,6 +153,7 @@ type CreditCreateBody = {
   fianzaPorcentaje?: number | string;
   fechaPrimerPago?: string;
   frecuenciaPago?: string;
+  firmaSeguroPasoContratos?: boolean;
   imei?: string;
   montoCredito?: number | string;
   pagareAceptado?: boolean;
@@ -706,7 +707,9 @@ export async function POST(req: Request) {
       frecuenciaPago,
       fechaCredito
     );
-    const contratoAceptado = Boolean(body.contratoAceptado);
+    const firmaSeguroPasoContratos = Boolean(body.firmaSeguroPasoContratos);
+    const contratoAceptado =
+      Boolean(body.contratoAceptado) || firmaSeguroPasoContratos;
     const contratoFirmaDataUrl = sanitizeImageDataUrl(body.contratoFirmaDataUrl);
     const contratoFotoDataUrl = sanitizeImageDataUrl(
       body.contratoSelfieDataUrl || body.contratoFotoDataUrl
@@ -728,9 +731,12 @@ export async function POST(req: Request) {
       0,
       Math.round(toNumber(body.contratoVideoAprobacionDurationSeconds))
     );
-    const pagareAceptado = Boolean(body.pagareAceptado);
-    const cartaAceptada = Boolean(body.cartaAceptada);
-    const autorizacionDatosAceptada = Boolean(body.autorizacionDatosAceptada);
+    const pagareAceptado =
+      Boolean(body.pagareAceptado) || firmaSeguroPasoContratos;
+    const cartaAceptada =
+      Boolean(body.cartaAceptada) || firmaSeguroPasoContratos;
+    const autorizacionDatosAceptada =
+      Boolean(body.autorizacionDatosAceptada) || firmaSeguroPasoContratos;
     const montoCreditoInput = toNumber(body.montoCredito);
     const saldoBaseFinanciado = calculateFinancedBalance(valorEquipoTotalInput, cuotaInicial);
     const financialPlan = calculateCreditCharges({
@@ -1092,7 +1098,8 @@ export async function POST(req: Request) {
 
     const allowPendingDeliveryClose =
       ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION ||
-      documentCanSkipDeliveryVerification;
+      documentCanSkipDeliveryVerification ||
+      firmaSeguroPasoContratos;
 
     if (!isEqualityConfigured() && !allowPendingDeliveryClose) {
       return NextResponse.json(
@@ -1185,6 +1192,8 @@ export async function POST(req: Request) {
       administrativeDeliveryStatus || equalityMeta?.deliveryStatus || null;
     const pendingDeliveryWarning = administrativeDeliveryStatus
       ? "Credito creado con excepcion administrativa: entrega permitida sin verificar dispositivo."
+      : firmaSeguroPasoContratos && !equalityMeta?.deliveryStatus?.ready
+        ? "Credito creado y enviado a FirmaSeguro. La validacion final de entrega queda pendiente."
       : ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION &&
           !equalityMeta?.deliveryStatus?.ready
         ? "Credito creado en modo prueba: la validacion final de entrega quedo pendiente."
@@ -1256,6 +1265,8 @@ export async function POST(req: Request) {
       firma: {
         fechaHora: contratoAceptadoAt.toISOString(),
         ip: contratoIp,
+        proveedorDigital: firmaSeguroPasoContratos ? "FirmaSeguro" : null,
+        canalProveedorDigital: firmaSeguroPasoContratos ? "WHATSAPP" : null,
       },
       evidencia: {
         selfieRegistrada: Boolean(contratoSelfieDataUrl),
