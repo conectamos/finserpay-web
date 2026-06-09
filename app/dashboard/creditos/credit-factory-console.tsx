@@ -353,6 +353,19 @@ type ManualPushResponse = {
   error?: string;
 };
 
+type FirmaSeguroResponse = {
+  ok?: boolean;
+  message?: string;
+  error?: string;
+  documentUrl?: string | null;
+  process?: {
+    processUuid?: string | null;
+    status?: string | null;
+    hasSignedDocument?: boolean;
+    lastError?: string | null;
+  } | null;
+};
+
 type CreditPaymentItem = {
   id: number;
   creditoId: number;
@@ -1792,6 +1805,8 @@ export default function CreditFactoryConsole({
   const [manualPushTitle, setManualPushTitle] = useState("FINSER PAY");
   const [manualPushBody, setManualPushBody] = useState("");
   const [sendingManualPush, setSendingManualPush] = useState(false);
+  const [firmaSeguroSubmitting, setFirmaSeguroSubmitting] = useState(false);
+  const [firmaSeguroRefreshing, setFirmaSeguroRefreshing] = useState(false);
   const [paymentValue, setPaymentValue] = useState("");
   const [receivedPaymentValue, setReceivedPaymentValue] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("EFECTIVO");
@@ -5057,6 +5072,117 @@ export default function CreditFactoryConsole({
 
     const creditLookup = encodeURIComponent(String(credit.folio || credit.id));
     window.open(`/api/creditos/${creditLookup}/documentos`, "_blank");
+  };
+
+  const sendFirmaSeguroSignature = async (creditId?: number | null) => {
+    const credit =
+      typeof creditId === "number"
+        ? credits.find((item) => item.id === creditId) || null
+        : selectedCredit;
+
+    if (!credit) {
+      setNotice({
+        text: "Selecciona un credito antes de enviarlo a FirmaSeguro.",
+        tone: "red",
+      });
+      return;
+    }
+
+    try {
+      setFirmaSeguroSubmitting(true);
+      setNotice(null);
+
+      const creditLookup = encodeURIComponent(String(credit.folio || credit.id));
+      const result = await requestJson<FirmaSeguroResponse>(
+        `/api/creditos/${creditLookup}/firma-seguro`,
+        {
+          method: "POST",
+        }
+      );
+
+      if (!result.ok || !result.data?.ok) {
+        throw new Error(
+          result.data?.error || "No se pudo enviar el expediente a FirmaSeguro"
+        );
+      }
+
+      const uuid = result.data.process?.processUuid;
+      setNotice({
+        text: uuid
+          ? `Expediente enviado a FirmaSeguro. Proceso: ${uuid}.`
+          : result.data.message || "Expediente enviado a FirmaSeguro.",
+        tone: "emerald",
+      });
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo enviar el expediente a FirmaSeguro",
+        tone: "red",
+      });
+    } finally {
+      setFirmaSeguroSubmitting(false);
+    }
+  };
+
+  const openFirmaSeguroSignedDocument = async (creditId?: number | null) => {
+    const credit =
+      typeof creditId === "number"
+        ? credits.find((item) => item.id === creditId) || null
+        : selectedCredit;
+
+    if (!credit) {
+      setNotice({
+        text: "Selecciona un credito antes de consultar FirmaSeguro.",
+        tone: "red",
+      });
+      return;
+    }
+
+    try {
+      setFirmaSeguroRefreshing(true);
+      setNotice(null);
+
+      const creditLookup = encodeURIComponent(String(credit.folio || credit.id));
+      const result = await requestJson<FirmaSeguroResponse>(
+        `/api/creditos/${creditLookup}/firma-seguro?refresh=1`
+      );
+
+      if (!result.ok || !result.data?.ok) {
+        throw new Error(
+          result.data?.error || "No se pudo consultar el estado de FirmaSeguro"
+        );
+      }
+
+      if (result.data.documentUrl || result.data.process?.hasSignedDocument) {
+        window.open(
+          result.data.documentUrl ||
+            `/api/creditos/${creditLookup}/firma-seguro/documento`,
+          "_blank"
+        );
+        return;
+      }
+
+      const processStatus = result.data.process?.status || "pendiente";
+      const lastError = result.data.process?.lastError;
+      setNotice({
+        text: result.data.process
+          ? `FirmaSeguro aun no tiene PDF firmado. Estado: ${processStatus}${lastError ? `. Ultimo error: ${lastError}` : ""}.`
+          : "Este credito aun no se ha enviado a FirmaSeguro.",
+        tone: result.data.process ? "amber" : "slate",
+      });
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo consultar el estado de FirmaSeguro",
+        tone: "red",
+      });
+    } finally {
+      setFirmaSeguroRefreshing(false);
+    }
   };
 
   const openPaymentsForCredit = (creditId?: number | null) => {
@@ -9340,6 +9466,22 @@ export default function CreditFactoryConsole({
                         </button>
                         <button
                           type="button"
+                          onClick={() => void sendFirmaSeguroSignature()}
+                          disabled={!selectedCredit || firmaSeguroSubmitting}
+                          className="rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
+                        >
+                          {firmaSeguroSubmitting ? "Enviando..." : "Enviar a FirmaSeguro"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void openFirmaSeguroSignedDocument()}
+                          disabled={!selectedCredit || firmaSeguroRefreshing}
+                          className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                        >
+                          {firmaSeguroRefreshing ? "Consultando..." : "Ver FirmaSeguro"}
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => downloadPlanPagos()}
                           disabled={!selectedCredit}
                           className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
@@ -9639,6 +9781,22 @@ export default function CreditFactoryConsole({
                           className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
                           Ver documentos firmados
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void sendFirmaSeguroSignature()}
+                          disabled={firmaSeguroSubmitting}
+                          className="rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
+                        >
+                          {firmaSeguroSubmitting ? "Enviando..." : "Enviar a FirmaSeguro"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void openFirmaSeguroSignedDocument()}
+                          disabled={firmaSeguroRefreshing}
+                          className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                        >
+                          {firmaSeguroRefreshing ? "Consultando..." : "Ver FirmaSeguro"}
                         </button>
                         <button
                           type="button"
@@ -10646,6 +10804,36 @@ export default function CreditFactoryConsole({
                         className="flex w-full items-center justify-between rounded-[18px] border border-slate-300 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                       >
                         <span>Contrato y documentos firmados</span>
+                        <span className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                          PDF
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void sendFirmaSeguroSignature()}
+                        disabled={firmaSeguroSubmitting}
+                        className="flex w-full items-center justify-between rounded-[18px] border border-[#145a5a] bg-[#145a5a] px-4 py-3 text-left text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        <span>
+                          {firmaSeguroSubmitting
+                            ? "Enviando a FirmaSeguro"
+                            : "Enviar expediente a FirmaSeguro"}
+                        </span>
+                        <span className="text-xs uppercase tracking-[0.14em] text-white/70">
+                          OTP
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void openFirmaSeguroSignedDocument()}
+                        disabled={firmaSeguroRefreshing}
+                        className="flex w-full items-center justify-between rounded-[18px] border border-slate-300 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        <span>
+                          {firmaSeguroRefreshing
+                            ? "Consultando FirmaSeguro"
+                            : "Ver PDF firmado en FirmaSeguro"}
+                        </span>
                         <span className="text-xs uppercase tracking-[0.14em] text-slate-400">
                           PDF
                         </span>
