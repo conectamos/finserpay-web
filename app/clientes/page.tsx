@@ -1826,11 +1826,6 @@ export default function ClienteConsultaPage() {
                 <p className="mt-2 text-sm font-bold text-[#67706b]">
                   {confirmPaymentLabel}
                 </p>
-                {confirmPaymentMode === "PAYOFF" && confirmPayoff?.condonacion ? (
-                  <p className="mt-2 text-xs font-black uppercase text-[#4f8735]">
-                    Se condona {money(confirmPayoff.condonacion)} en intereses y fianza.
-                  </p>
-                ) : null}
               </div>
 
               <div className="mt-4 grid gap-3 text-sm">
