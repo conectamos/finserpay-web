@@ -1807,6 +1807,7 @@ export default function CreditFactoryConsole({
   const [sendingManualPush, setSendingManualPush] = useState(false);
   const [firmaSeguroSubmitting, setFirmaSeguroSubmitting] = useState(false);
   const [firmaSeguroRefreshing, setFirmaSeguroRefreshing] = useState(false);
+  const [firmaSeguroOnCreate, setFirmaSeguroOnCreate] = useState(false);
   const [paymentValue, setPaymentValue] = useState("");
   const [receivedPaymentValue, setReceivedPaymentValue] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("EFECTIVO");
@@ -4529,6 +4530,7 @@ export default function CreditFactoryConsole({
     setPagareAceptado(false);
     setCartaAceptada(false);
     setAutorizacionDatosAceptada(false);
+    setFirmaSeguroOnCreate(false);
     setDeliveryValidation(null);
     setCameraSlot(null);
     setMobileCaptureSession(null);
@@ -4551,7 +4553,29 @@ export default function CreditFactoryConsole({
     setSelectedId(item.id);
   };
 
-  const createCredit = async () => {
+  const submitFirmaSeguroCredit = async (
+    credit: Pick<CreditItem, "id" | "folio">
+  ) => {
+    const creditLookup = encodeURIComponent(String(credit.folio || credit.id));
+    const result = await requestJson<FirmaSeguroResponse>(
+      `/api/creditos/${creditLookup}/firma-seguro`,
+      {
+        method: "POST",
+      }
+    );
+
+    if (!result.ok || !result.data?.ok) {
+      throw new Error(
+        result.data?.error || "No se pudo enviar el expediente a FirmaSeguro"
+      );
+    }
+
+    return result.data;
+  };
+
+  const createCredit = async (
+    options: { sendToFirmaSeguro?: boolean } = {}
+  ) => {
     if (!ventaLista) {
       setNotice({
         text:
@@ -4630,9 +4654,10 @@ export default function CreditFactoryConsole({
         throw new Error(result.data?.error || "No se pudo crear el credito");
       }
 
-      upsertCredit(result.data.item);
+      const createdCredit = result.data.item;
+      upsertCredit(createdCredit);
       const planLookup = encodeURIComponent(
-        String(result.data.item.folio || result.data.item.id)
+        String(createdCredit.folio || createdCredit.id)
       );
       window.open(`/api/creditos/${planLookup}/plan-pagos`, "_blank");
       const closedDraftId = draftId;
@@ -4647,11 +4672,44 @@ export default function CreditFactoryConsole({
         }).catch(() => null);
       }
 
+      const shouldSendFirmaSeguro =
+        Boolean(options.sendToFirmaSeguro) || firmaSeguroOnCreate;
+      let firmaSeguroNotice: Notice | null = null;
+
+      if (shouldSendFirmaSeguro) {
+        setFirmaSeguroSubmitting(true);
+        try {
+          const signature = await submitFirmaSeguroCredit(createdCredit);
+          const uuid = signature.process?.processUuid;
+          firmaSeguroNotice = {
+            text: uuid
+              ? `${createdCredit.folio} quedo creado y enviado a FirmaSeguro. Proceso: ${uuid}.`
+              : signature.message ||
+                `${createdCredit.folio} quedo creado y enviado a FirmaSeguro.`,
+            tone: "emerald",
+          };
+        } catch (signatureError) {
+          firmaSeguroNotice = {
+            text:
+              `${createdCredit.folio} quedo creado, pero no se pudo enviar a FirmaSeguro: ` +
+              (signatureError instanceof Error
+                ? signatureError.message
+                : "error desconocido"),
+            tone: "amber",
+          };
+        } finally {
+          setFirmaSeguroSubmitting(false);
+          setFirmaSeguroOnCreate(false);
+        }
+      }
+
       resetForm();
 
-      if (result.data.deliveryStatus?.ready) {
+      if (firmaSeguroNotice) {
+        setNotice(firmaSeguroNotice);
+      } else if (result.data.deliveryStatus?.ready) {
         setNotice({
-          text: `${result.data.item.folio} quedo inscrito y 100% entregable.`,
+          text: `${createdCredit.folio} quedo inscrito y 100% entregable.`,
           tone: "emerald",
         });
       } else if (result.data.warning) {
@@ -4677,6 +4735,31 @@ export default function CreditFactoryConsole({
     } finally {
       setCreating(false);
     }
+  };
+
+  const handleFirmaSeguroStepReady = async () => {
+    if (!stepDocumentosReady) {
+      setNotice({
+        text:
+          "Marca contrato, pagare, carta de instrucciones y autorizacion de datos antes de enviar a FirmaSeguro.",
+        tone: "amber",
+      });
+      return;
+    }
+
+    setFirmaSeguroOnCreate(true);
+
+    if (deliveryRequirementReady) {
+      await createCredit({ sendToFirmaSeguro: true });
+      return;
+    }
+
+    setNotice({
+      text:
+        "FirmaSeguro quedo listo para envio. Valida el equipo y al finalizar el credito se enviara automaticamente.",
+      tone: "emerald",
+    });
+    await advanceToStep(5);
   };
 
   const registerPayment = async () => {
@@ -5072,58 +5155,6 @@ export default function CreditFactoryConsole({
 
     const creditLookup = encodeURIComponent(String(credit.folio || credit.id));
     window.open(`/api/creditos/${creditLookup}/documentos`, "_blank");
-  };
-
-  const sendFirmaSeguroSignature = async (creditId?: number | null) => {
-    const credit =
-      typeof creditId === "number"
-        ? credits.find((item) => item.id === creditId) || null
-        : selectedCredit;
-
-    if (!credit) {
-      setNotice({
-        text: "Selecciona un credito antes de enviarlo a FirmaSeguro.",
-        tone: "red",
-      });
-      return;
-    }
-
-    try {
-      setFirmaSeguroSubmitting(true);
-      setNotice(null);
-
-      const creditLookup = encodeURIComponent(String(credit.folio || credit.id));
-      const result = await requestJson<FirmaSeguroResponse>(
-        `/api/creditos/${creditLookup}/firma-seguro`,
-        {
-          method: "POST",
-        }
-      );
-
-      if (!result.ok || !result.data?.ok) {
-        throw new Error(
-          result.data?.error || "No se pudo enviar el expediente a FirmaSeguro"
-        );
-      }
-
-      const uuid = result.data.process?.processUuid;
-      setNotice({
-        text: uuid
-          ? `Expediente enviado a FirmaSeguro. Proceso: ${uuid}.`
-          : result.data.message || "Expediente enviado a FirmaSeguro.",
-        tone: "emerald",
-      });
-    } catch (error) {
-      setNotice({
-        text:
-          error instanceof Error
-            ? error.message
-            : "No se pudo enviar el expediente a FirmaSeguro",
-        tone: "red",
-      });
-    } finally {
-      setFirmaSeguroSubmitting(false);
-    }
   };
 
   const openFirmaSeguroSignedDocument = async (creditId?: number | null) => {
@@ -7830,6 +7861,33 @@ export default function CreditFactoryConsole({
                           ))}
                         </div>
                       </div>
+
+                      <div className="rounded-[24px] border border-emerald-200 bg-[#f2fbf7] px-5 py-5">
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#0f766e]">
+                              FirmaSeguro
+                            </p>
+                            <h4 className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                              Expediente digital
+                            </h4>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void handleFirmaSeguroStepReady()}
+                            disabled={
+                              !stepDocumentosReady ||
+                              creating ||
+                              firmaSeguroSubmitting
+                            }
+                            className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:cursor-not-allowed disabled:opacity-70"
+                          >
+                            {firmaSeguroOnCreate
+                              ? "FirmaSeguro listo"
+                              : "Listo, enviar FirmaSeguro"}
+                          </button>
+                        </div>
+                      </div>
                     </div>
 
                     <div className="space-y-4">
@@ -8492,11 +8550,19 @@ export default function CreditFactoryConsole({
                 {wizardStep === 5 && (
                   <button
                     type="button"
-                    onClick={() => void createCredit()}
-                    disabled={creating || !ventaLista}
+                    onClick={() =>
+                      void createCredit({ sendToFirmaSeguro: firmaSeguroOnCreate })
+                    }
+                    disabled={creating || firmaSeguroSubmitting || !ventaLista}
                     className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"
                   >
-                    {creating ? "Finalizando credito..." : "Finalizar credito"}
+                    {creating || firmaSeguroSubmitting
+                      ? firmaSeguroOnCreate
+                        ? "Finalizando y enviando..."
+                        : "Finalizando credito..."
+                      : firmaSeguroOnCreate
+                        ? "Finalizar y enviar FirmaSeguro"
+                        : "Finalizar credito"}
                   </button>
                 )}
 
@@ -9466,14 +9532,6 @@ export default function CreditFactoryConsole({
                         </button>
                         <button
                           type="button"
-                          onClick={() => void sendFirmaSeguroSignature()}
-                          disabled={!selectedCredit || firmaSeguroSubmitting}
-                          className="rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
-                        >
-                          {firmaSeguroSubmitting ? "Enviando..." : "Enviar a FirmaSeguro"}
-                        </button>
-                        <button
-                          type="button"
                           onClick={() => void openFirmaSeguroSignedDocument()}
                           disabled={!selectedCredit || firmaSeguroRefreshing}
                           className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
@@ -9781,14 +9839,6 @@ export default function CreditFactoryConsole({
                           className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
                           Ver documentos firmados
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void sendFirmaSeguroSignature()}
-                          disabled={firmaSeguroSubmitting}
-                          className="rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
-                        >
-                          {firmaSeguroSubmitting ? "Enviando..." : "Enviar a FirmaSeguro"}
                         </button>
                         <button
                           type="button"
@@ -10806,21 +10856,6 @@ export default function CreditFactoryConsole({
                         <span>Contrato y documentos firmados</span>
                         <span className="text-xs uppercase tracking-[0.14em] text-slate-400">
                           PDF
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void sendFirmaSeguroSignature()}
-                        disabled={firmaSeguroSubmitting}
-                        className="flex w-full items-center justify-between rounded-[18px] border border-[#145a5a] bg-[#145a5a] px-4 py-3 text-left text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        <span>
-                          {firmaSeguroSubmitting
-                            ? "Enviando a FirmaSeguro"
-                            : "Enviar expediente a FirmaSeguro"}
-                        </span>
-                        <span className="text-xs uppercase tracking-[0.14em] text-white/70">
-                          OTP
                         </span>
                       </button>
                       <button
