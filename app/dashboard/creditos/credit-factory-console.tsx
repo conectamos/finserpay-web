@@ -8839,10 +8839,15 @@ export default function CreditFactoryConsole({
                 {wizardStep < 5 && (
                   <button
                     type="button"
+                    disabled={
+                      creating ||
+                      firmaSeguroSubmitting ||
+                      (wizardStep === 4 && !stepDocumentosReady)
+                    }
                     onClick={() => {
                       void advanceToStep(wizardStep + 1);
                     }}
-                    className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01]"
+                    className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     Siguiente paso
                   </button>

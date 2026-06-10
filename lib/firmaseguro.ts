@@ -134,6 +134,40 @@ async function parseResponse(response: Response) {
   }
 }
 
+function stripHtml(value: string) {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getFirmaSeguroErrorMessage(status: number, payload: unknown) {
+  if ([502, 503, 504].includes(status)) {
+    return "FirmaSeguro no esta disponible temporalmente. Reintenta el envio en unos minutos.";
+  }
+
+  if (typeof payload === "string") {
+    const cleaned = stripHtml(payload);
+    return cleaned || "FirmaSeguro rechazo la solicitud";
+  }
+
+  if (typeof payload === "object" && payload) {
+    const record = payload as JsonObject;
+    const message = String(
+      record.message ||
+        record.error ||
+        record.title ||
+        "FirmaSeguro rechazo la solicitud"
+    );
+
+    return stripHtml(message) || "FirmaSeguro rechazo la solicitud";
+  }
+
+  return "FirmaSeguro rechazo la solicitud";
+}
+
 async function firmaSeguroRequest<T>(
   path: string,
   options: RequestOptions = {}
@@ -162,17 +196,7 @@ async function firmaSeguroRequest<T>(
   const payload = await parseResponse(response);
 
   if (!response.ok) {
-    const message =
-      typeof payload === "string"
-        ? payload
-        : typeof payload === "object" && payload
-          ? String(
-              (payload as JsonObject).message ||
-                (payload as JsonObject).error ||
-                (payload as JsonObject).title ||
-                "FirmaSeguro rechazo la solicitud"
-            )
-          : "FirmaSeguro rechazo la solicitud";
+    const message = getFirmaSeguroErrorMessage(response.status, payload);
     throw new FirmaSeguroApiError(message, response.status, payload);
   }
 
