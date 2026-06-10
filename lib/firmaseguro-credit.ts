@@ -205,7 +205,7 @@ function cleanText(value: string | null | undefined) {
 
 function cleanName(value: string | null | undefined) {
   return cleanText(value)
-    .replace(/[^\p{L}\s'-]/gu, " ")
+    .replace(/[^\p{L}\s]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -265,7 +265,11 @@ function redactBase64Payload(value: unknown): unknown {
 }
 
 function getFirmaSeguroTags(credito: FirmaSeguroCredit) {
-  return ["FINSERPAY", `credito:${credito.folio}`, `cedula:${credito.clienteDocumento || "-"}`];
+  return [
+    { empresa: "FINSERPAY" },
+    { credito: credito.folio },
+    { cedula: credito.clienteDocumento || "-" },
+  ];
 }
 
 function buildFirmaSeguroMessage(credito: FirmaSeguroCredit) {
@@ -277,6 +281,11 @@ function buildFirmaSeguroMessage(credito: FirmaSeguroCredit) {
   ].join(" ");
 }
 
+function getSignerEmail(person: PersonPayload) {
+  const config = getFirmaSeguroConfig();
+  return person.email || normalizeEmail(config.email) || "firmas@finserpay.com";
+}
+
 function buildCreateFullByCompanyPayload(
   credito: FirmaSeguroCredit,
   person: PersonPayload,
@@ -285,6 +294,8 @@ function buildCreateFullByCompanyPayload(
 ) {
   const config = getFirmaSeguroConfig();
   const fileName = `finserpay-${credito.folio}.pdf`;
+  const signerEmail = getSignerEmail(person);
+  const sendByEmail = Boolean(person.email);
 
   return {
     process: {
@@ -297,7 +308,7 @@ function buildCreateFullByCompanyPayload(
       language: "es",
       is_hand_written: true,
       is_photographic: false,
-      isSendByEmail: Boolean(person.email),
+      isSendByEmail: sendByEmail,
       isSendByWhatsApp: true,
       deadline_days: config.deadlineDays,
       callback: callbackUrl,
@@ -314,7 +325,7 @@ function buildCreateFullByCompanyPayload(
         authentication_method_id: config.authMethodId,
         indicative: "57",
         number: person.phone,
-        email: person.email,
+        email: signerEmail,
         first_name: person.firstName,
         second_name: person.secondName,
         first_last_name: person.firstLastName,
@@ -342,6 +353,8 @@ function buildCreateFullPayload(
 ) {
   const config = getFirmaSeguroConfig();
   const fileName = `finserpay-${credito.folio}.pdf`;
+  const signerEmail = getSignerEmail(person);
+  const sendByEmail = Boolean(person.email);
 
   return {
     processTypeId: config.processTypeId,
@@ -350,7 +363,7 @@ function buildCreateFullPayload(
     isInOrder: false,
     tags: getFirmaSeguroTags(credito),
     isRead: true,
-    isSendByEmail: Boolean(person.email),
+    isSendByEmail: sendByEmail,
     isSendByWhatsApp: true,
     language: "es",
     isHandWritten: true,
@@ -370,7 +383,7 @@ function buildCreateFullPayload(
             indicative: "57",
             number: person.phone,
           },
-          email: person.email,
+          email: signerEmail,
           person: {
             firstName: person.firstName,
             secondName: person.secondName,
@@ -384,13 +397,11 @@ function buildCreateFullPayload(
         signatory_type: "Firmante",
       },
     ],
-    documents: [
-      {
-        fileName,
-        documentTypeId: 1,
-        base64String: pdfBase64,
-      },
-    ],
+    documents: {
+      fileName,
+      documentTypeId: 1,
+      base64String: pdfBase64,
+    },
     documentsOnlyRead: [],
   };
 }

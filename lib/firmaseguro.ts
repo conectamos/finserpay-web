@@ -143,6 +143,39 @@ function stripHtml(value: string) {
     .trim();
 }
 
+function collectValidationMessages(value: unknown, prefix = ""): string[] {
+  if (typeof value === "string") {
+    const cleaned = stripHtml(value);
+    return cleaned ? [prefix ? `${prefix}: ${cleaned}` : cleaned] : [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => collectValidationMessages(item, prefix))
+      .filter(Boolean);
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return [];
+  }
+
+  const record = value as JsonObject;
+  const messages: string[] = [];
+
+  for (const [key, item] of Object.entries(record)) {
+    const field = prefix ? `${prefix}.${key}` : key;
+    if (key.toLowerCase() === "errors" && typeof item === "object" && item) {
+      messages.push(...collectValidationMessages(item, ""));
+      continue;
+    }
+    if (Array.isArray(item)) {
+      messages.push(...collectValidationMessages(item, field));
+    }
+  }
+
+  return messages;
+}
+
 function getFirmaSeguroErrorMessage(status: number, payload: unknown) {
   if ([502, 503, 504].includes(status)) {
     return "FirmaSeguro no esta disponible temporalmente. Reintenta el envio en unos minutos.";
@@ -155,14 +188,28 @@ function getFirmaSeguroErrorMessage(status: number, payload: unknown) {
 
   if (typeof payload === "object" && payload) {
     const record = payload as JsonObject;
-    const message = String(
-      record.message ||
-        record.error ||
-        record.title ||
-        "FirmaSeguro rechazo la solicitud"
+    const message = stripHtml(
+      String(
+        record.message ||
+          record.error ||
+          record.title ||
+          "FirmaSeguro rechazo la solicitud"
+      )
+    );
+    const details = collectValidationMessages(record.errors || record.Errors);
+    const uniqueDetails = Array.from(
+      new Set(
+        details
+          .map((item) => stripHtml(item))
+          .filter((item) => item && item !== message)
+      )
     );
 
-    return stripHtml(message) || "FirmaSeguro rechazo la solicitud";
+    if (uniqueDetails.length > 0) {
+      return `${message}: ${uniqueDetails.slice(0, 6).join("; ")}`;
+    }
+
+    return message || "FirmaSeguro rechazo la solicitud";
   }
 
   return "FirmaSeguro rechazo la solicitud";
