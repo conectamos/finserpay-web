@@ -800,6 +800,13 @@ export async function firmaSeguroGetProcessStatus(token: string, uuid: string) {
   );
 }
 
+export async function firmaSeguroGetBalanceByNit(token: string, nit: string) {
+  return firmaSeguroRequest<unknown>(
+    `/api/v2/Balance/balance-by-nit/${encodeURIComponent(nit)}`,
+    { token }
+  );
+}
+
 export async function firmaSeguroGetSignaturesStatus(token: string, uuid: string) {
   return firmaSeguroRequest<unknown>(
     `/api/v2/Signature/get-signatures-status/${encodeURIComponent(uuid)}`,

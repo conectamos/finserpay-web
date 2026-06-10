@@ -26,6 +26,26 @@ type EqualitySummary = {
   remoteStatusCode: number | null;
 };
 
+type FirmaSeguroDiagnostic = {
+  configured: boolean;
+  authorized?: boolean;
+  providerStatus?: number | null;
+  baseHost: string;
+  authMode: string;
+  authSource?: string;
+  tokenShape?: string;
+  accessTokenConfigured: boolean;
+  emailConfigured: boolean;
+  passwordConfigured: boolean;
+  nitConfigured: boolean;
+  nit: string | null;
+  useCompanyEndpoint: boolean;
+  callbackConfigured: boolean;
+  balanceChecked?: boolean;
+  balanceOk?: boolean;
+  balanceMessage?: string;
+};
+
 type ApiResult<T> = {
   ok: boolean;
   status: number | null;
@@ -86,7 +106,7 @@ async function fetchJson<T>(url: string): Promise<ApiResult<T>> {
         ok: false,
         status: response.status,
         latencyMs,
-        data: null,
+        data: data as T,
         error:
           (data &&
             typeof data === "object" &&
@@ -163,6 +183,50 @@ function resolveZeroTouchStatus(
   };
 }
 
+function resolveFirmaSeguroStatus(
+  result?: ApiResult<FirmaSeguroDiagnostic> | null
+): StatusMeta {
+  if (!result) {
+    return {
+      label: "Sin probar",
+      tone: "slate",
+      detail: "Ejecuta una prueba para validar el token guardado en Railway.",
+    };
+  }
+
+  if (!result.ok) {
+    return {
+      label: result.status === 401 ? "Token rechazado" : "Requiere revision",
+      tone: "red",
+      detail: result.error || "FirmaSeguro no autorizo la prueba.",
+    };
+  }
+
+  if (!result.data?.configured) {
+    return {
+      label: "Falta configurar",
+      tone: "amber",
+      detail: "Falta token, usuario o clave de FirmaSeguro.",
+    };
+  }
+
+  if (result.data.authorized) {
+    return {
+      label: "Autorizado",
+      tone: "emerald",
+      detail: result.data.balanceChecked
+        ? "El token respondio contra FirmaSeguro."
+        : "El token es valido, pero falta NIT para consultar balance.",
+    };
+  }
+
+  return {
+    label: "No autorizado",
+    tone: "red",
+    detail: "FirmaSeguro rechazo la autenticacion.",
+  };
+}
+
 function statusClasses(tone: StatusTone) {
   switch (tone) {
     case "emerald":
@@ -205,6 +269,9 @@ export default function IntegrationsHub({
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  const [firmaSeguroResult, setFirmaSeguroResult] =
+    useState<ApiResult<FirmaSeguroDiagnostic> | null>(null);
+  const [firmaSeguroLoading, setFirmaSeguroLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
   const requestRef = useRef<Promise<void> | null>(null);
 
@@ -255,6 +322,20 @@ export default function IntegrationsHub({
     }
   }, []);
 
+  const runFirmaSeguroDiagnostic = useCallback(async () => {
+    setFirmaSeguroLoading(true);
+    setMessage("");
+
+    try {
+      const result = await fetchJson<FirmaSeguroDiagnostic>(
+        "/api/firma-seguro/diagnostico"
+      );
+      setFirmaSeguroResult(result);
+    } finally {
+      setFirmaSeguroLoading(false);
+    }
+  }, []);
+
   useLiveRefresh(
     async () => {
       await loadSnapshot("automatico");
@@ -268,6 +349,8 @@ export default function IntegrationsHub({
 
   const status = resolveZeroTouchStatus(snapshot?.equality);
   const canAdmin = String(initialSession.rolNombre || "").toUpperCase() === "ADMIN";
+  const firmaSeguroStatus = resolveFirmaSeguroStatus(firmaSeguroResult);
+  const firmaSeguroDiagnostic = firmaSeguroResult?.data;
   const busy = loading || isPending;
 
   return (
@@ -327,6 +410,79 @@ export default function IntegrationsHub({
               </p>
             </div>
           </div>
+
+          {canAdmin && (
+            <div className="mt-5 rounded-[26px] border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                    FirmaSeguro
+                  </p>
+                  <div
+                    className={[
+                      "mt-3 inline-flex rounded-full border px-3 py-1 text-xs font-black",
+                      statusClasses(firmaSeguroStatus.tone),
+                    ].join(" ")}
+                  >
+                    {firmaSeguroStatus.label}
+                  </div>
+                  <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+                    {firmaSeguroStatus.detail}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void runFirmaSeguroDiagnostic()}
+                  disabled={firmaSeguroLoading}
+                  className="rounded-2xl bg-[#116b61] px-5 py-3 text-sm font-black text-white transition hover:bg-[#0d5750] disabled:opacity-70"
+                >
+                  {firmaSeguroLoading ? "Probando..." : "Probar token"}
+                </button>
+              </div>
+
+              {firmaSeguroDiagnostic && (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                      Host
+                    </p>
+                    <p className="mt-1 break-all text-sm font-black text-slate-800">
+                      {firmaSeguroDiagnostic.baseHost || "Sin host"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                      Auth
+                    </p>
+                    <p className="mt-1 text-sm font-black text-slate-800">
+                      {firmaSeguroDiagnostic.authSource ||
+                        firmaSeguroDiagnostic.authMode ||
+                        "Sin lectura"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                      NIT
+                    </p>
+                    <p className="mt-1 text-sm font-black text-slate-800">
+                      {firmaSeguroDiagnostic.nit || "No configurado"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                      Respuesta
+                    </p>
+                    <p className="mt-1 text-sm font-black text-slate-800">
+                      {firmaSeguroResult?.status
+                        ? `HTTP ${firmaSeguroResult.status}`
+                        : "Sin prueba"}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         {message && (
