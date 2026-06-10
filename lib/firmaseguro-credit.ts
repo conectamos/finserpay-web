@@ -513,7 +513,11 @@ async function runWithFirmaSeguroAuth<T>(
     const canRefreshToken =
       config.accessToken && config.email && config.password;
 
-    if (!isFirmaSeguroUnauthorizedError(error) || !canRefreshToken) {
+    if (
+      (!isFirmaSeguroUnauthorizedError(error) &&
+        !isFirmaSeguroPermissionError(error)) ||
+      !canRefreshToken
+    ) {
       throw error;
     }
 

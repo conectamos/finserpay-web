@@ -559,16 +559,16 @@ export async function firmaSeguroSignIn(
   options: { ignoreAccessToken?: boolean } = {}
 ) {
   const config = getFirmaSeguroConfig();
-  if (config.accessToken && !options.ignoreAccessToken) {
-    return {
-      token: config.accessToken,
-      payload: {
-        source: "FIRMASEGURO_ACCESS_TOKEN",
-      },
-    };
-  }
-
   if (!config.email || !config.password) {
+    if (config.accessToken && !options.ignoreAccessToken) {
+      return {
+        token: config.accessToken,
+        payload: {
+          source: "FIRMASEGURO_ACCESS_TOKEN",
+        },
+      };
+    }
+
     throw new FirmaSeguroApiError(
       "Falta configurar FIRMASEGURO_ACCESS_TOKEN o FIRMASEGURO_EMAIL y FIRMASEGURO_PASSWORD",
       500,
@@ -576,24 +576,41 @@ export async function firmaSeguroSignIn(
     );
   }
 
-  const payload = await firmaSeguroRequest<unknown>("/api/v2/Auth/SignIn", {
-    method: "POST",
-    body: {
-      email: config.email,
-      password: config.password,
-    },
-  });
-  const token = extractFirmaSeguroToken(payload);
+  try {
+    const payload = await firmaSeguroRequest<unknown>("/api/v2/Auth/SignIn", {
+      method: "POST",
+      body: {
+        email: config.email,
+        password: config.password,
+      },
+    });
+    const token = extractFirmaSeguroToken(payload);
 
-  if (!token) {
-    throw new FirmaSeguroApiError(
-      "FirmaSeguro no retorno token de autenticacion",
-      500,
-      payload
-    );
+    if (!token) {
+      throw new FirmaSeguroApiError(
+        "FirmaSeguro no retorno token de autenticacion",
+        500,
+        payload
+      );
+    }
+
+    return { token, payload };
+  } catch (error) {
+    if (!config.accessToken || options.ignoreAccessToken) {
+      throw error;
+    }
+
+    return {
+      token: config.accessToken,
+      payload: {
+        source: "FIRMASEGURO_ACCESS_TOKEN",
+        signInWarning:
+          error instanceof Error
+            ? error.message
+            : "No se pudo iniciar sesion en FirmaSeguro",
+      },
+    };
   }
-
-  return { token, payload };
 }
 
 export async function firmaSeguroCreateFull(token: string, payload: unknown) {
