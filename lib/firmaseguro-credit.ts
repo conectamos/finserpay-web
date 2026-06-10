@@ -22,6 +22,7 @@ import {
   isFirmaSeguroCompletedStatus,
   isFirmaSeguroConfigured,
   isFirmaSeguroPermissionError,
+  isFirmaSeguroUnauthorizedError,
 } from "@/lib/firmaseguro";
 import {
   buildFirmaSeguroCreditPdf,
@@ -497,6 +498,34 @@ export async function markCreditoFirmaSeguroCompleted(
   });
 }
 
+async function runWithFirmaSeguroAuth<T>(
+  operation: (token: string) => Promise<T>
+) {
+  let auth = await firmaSeguroSignIn();
+
+  try {
+    return {
+      auth,
+      result: await operation(auth.token),
+    };
+  } catch (error) {
+    const config = getFirmaSeguroConfig();
+    const canRefreshToken =
+      config.accessToken && config.email && config.password;
+
+    if (!isFirmaSeguroUnauthorizedError(error) || !canRefreshToken) {
+      throw error;
+    }
+
+    auth = await firmaSeguroSignIn({ ignoreAccessToken: true });
+
+    return {
+      auth,
+      result: await operation(auth.token),
+    };
+  }
+}
+
 async function createFirmaSeguroProcess(
   credito: FirmaSeguroCredit,
   options: {
@@ -546,31 +575,34 @@ async function createFirmaSeguroProcess(
     ? buildCreateFullByCompanyPayload(credito, person, pdfBase64, callbackUrl)
     : buildCreateFullPayload(credito, person, pdfBase64, callbackUrl);
   let endpoint = config.nit ? "create-full-by-company" : "create-full";
-  const { token, payload: authPayload } = await firmaSeguroSignIn();
-  let createPayload: unknown;
 
-  try {
-    createPayload =
-      endpoint === "create-full-by-company"
+  const submitCreateRequest = async (token: string) => {
+    try {
+      return endpoint === "create-full-by-company"
         ? await firmaSeguroCreateFullByCompany(token, requestPayload)
         : await firmaSeguroCreateFull(token, requestPayload);
-  } catch (error) {
-    if (
-      endpoint !== "create-full-by-company" ||
-      !isFirmaSeguroPermissionError(error)
-    ) {
-      throw error;
-    }
+    } catch (error) {
+      if (
+        endpoint !== "create-full-by-company" ||
+        !isFirmaSeguroPermissionError(error)
+      ) {
+        throw error;
+      }
 
-    requestPayload = buildCreateFullPayload(
-      credito,
-      person,
-      pdfBase64,
-      callbackUrl
-    );
-    endpoint = "create-full";
-    createPayload = await firmaSeguroCreateFull(token, requestPayload);
-  }
+      requestPayload = buildCreateFullPayload(
+        credito,
+        person,
+        pdfBase64,
+        callbackUrl
+      );
+      endpoint = "create-full";
+      return firmaSeguroCreateFull(token, requestPayload);
+    }
+  };
+
+  const { auth, result: createPayload } =
+    await runWithFirmaSeguroAuth(submitCreateRequest);
+  const authPayload = auth.payload;
   const processUuid = extractFirmaSeguroUuid(createPayload);
 
   if (!processUuid) {
@@ -643,9 +675,36 @@ export async function refreshFirmaSeguroProcess(
   process: FirmaSeguroProcessRow,
   options: { credito?: FirmaSeguroCredit | null } = {}
 ) {
-  const { token } = await firmaSeguroSignIn();
-  const statusPayload = await firmaSeguroGetProcessStatus(token, process.processUuid);
-  let signaturesPayload: unknown = null;
+  const { result: refreshPayload } = await runWithFirmaSeguroAuth(
+    async (token) => {
+      const statusPayload = await firmaSeguroGetProcessStatus(
+        token,
+        process.processUuid
+      );
+      let signaturesPayload: unknown = null;
+
+      try {
+        signaturesPayload = await firmaSeguroGetSignaturesStatus(
+          token,
+          process.processUuid
+        );
+      } catch (error) {
+        if (isFirmaSeguroUnauthorizedError(error)) {
+          throw error;
+        }
+
+        signaturesPayload = {
+          warning:
+            error instanceof Error
+              ? error.message
+              : "No se pudo consultar estado de firmantes",
+        };
+      }
+
+      return { statusPayload, signaturesPayload };
+    }
+  );
+  const { statusPayload, signaturesPayload } = refreshPayload;
   let documentsPayload: unknown = null;
   let signedDocumentBase64 = process.signedDocumentBase64;
   let signedDocumentFileName = process.signedDocumentFileName;
@@ -653,20 +712,6 @@ export async function refreshFirmaSeguroProcess(
     extractFirmaSeguroStatus(statusPayload) ||
     extractFirmaSeguroStatus(process.statusPayload) ||
     process.status;
-
-  try {
-    signaturesPayload = await firmaSeguroGetSignaturesStatus(
-      token,
-      process.processUuid
-    );
-  } catch (error) {
-    signaturesPayload = {
-      warning:
-        error instanceof Error
-          ? error.message
-          : "No se pudo consultar estado de firmantes",
-    };
-  }
 
   const completed =
     isFirmaSeguroCompletedStatus(status) ||

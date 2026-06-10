@@ -56,6 +56,10 @@ export function isFirmaSeguroPermissionError(error: unknown) {
   );
 }
 
+export function isFirmaSeguroUnauthorizedError(error: unknown) {
+  return error instanceof FirmaSeguroApiError && error.status === 401;
+}
+
 function readEnv(name: string) {
   const value = process.env[name];
   return typeof value === "string" && value.trim() ? value.trim() : "";
@@ -551,9 +555,11 @@ export function extractFirmaSeguroSignedDocument(payload: unknown) {
   };
 }
 
-export async function firmaSeguroSignIn() {
+export async function firmaSeguroSignIn(
+  options: { ignoreAccessToken?: boolean } = {}
+) {
   const config = getFirmaSeguroConfig();
-  if (config.accessToken) {
+  if (config.accessToken && !options.ignoreAccessToken) {
     return {
       token: config.accessToken,
       payload: {
