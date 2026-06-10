@@ -506,6 +506,12 @@ async function runWithFirmaSeguroAuth<T>(
   operation: (token: string) => Promise<T>
 ) {
   let auth = await firmaSeguroSignIn();
+  const authSource =
+    typeof auth.payload === "object" &&
+    auth.payload !== null &&
+    !Array.isArray(auth.payload)
+      ? String((auth.payload as Record<string, unknown>).source || "")
+      : "";
 
   try {
     return {
@@ -514,7 +520,13 @@ async function runWithFirmaSeguroAuth<T>(
     };
   } catch (error) {
     const config = getFirmaSeguroConfig();
-    const canRefreshToken = Boolean(config.email && config.password);
+    const canRefreshToken = Boolean(
+      config.email &&
+        config.password &&
+        config.authMode !== "token" &&
+        config.authMode !== "access_token" &&
+        authSource !== "FIRMASEGURO_ACCESS_TOKEN"
+    );
 
     if (
       (!isFirmaSeguroUnauthorizedError(error) &&
