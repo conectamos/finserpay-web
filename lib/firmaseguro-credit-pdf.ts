@@ -264,7 +264,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     compress: true,
     font: fonts.regular,
     info: {
-      Title: `FirmaSeguro ${credito.folio}`,
+      Title: `Paquete documental FINSER PAY ${credito.folio}`,
       Author: "FINSER PAY",
     },
   });
@@ -283,7 +283,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     .font(fonts.bold)
     .fontSize(24)
     .fillColor("#0F172A")
-    .text("Expediente para firma electronica", 66, 78, { width: 430 });
+    .text("Paquete documental unico", 66, 78, { width: 430 });
   doc
     .font(fonts.regular)
     .fontSize(10)
@@ -297,6 +297,13 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     );
 
   doc.y = 194;
+  sectionTitle(doc, "Documento unico para FirmaSeguro", fonts);
+  paragraph(
+    doc,
+    "Este PDF consolida en un solo archivo el contrato de financiacion, pagare, carta de instrucciones, autorizaciones de datos, fianza, control tecnologico y evidencias del credito. La firma electronica del cliente aplica sobre el paquete documental completo.",
+    fonts
+  );
+
   sectionTitle(doc, "Ficha del credito", fonts);
   keyValueGrid(
     doc,
@@ -383,7 +390,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   sectionTitle(doc, "Aceptacion electronica", fonts);
   paragraph(
     doc,
-    "El deudor acepta que la firma electronica realizada por medio de FirmaSeguro, con autenticacion OTP y evidencias del proceso, tiene validez para acreditar su aceptacion del contrato, pagare, carta de instrucciones, fianza y autorizaciones incluidas en este expediente.",
+    "El deudor acepta que la firma electronica realizada por medio de FirmaSeguro, con autenticacion OTP y evidencias del proceso, tiene validez para acreditar su aceptacion del paquete documental unico, incluyendo contrato, pagare, carta de instrucciones, fianza, control tecnologico, tratamiento de datos y demas autorizaciones incluidas en este expediente.",
     fonts
   );
   signatureBlock(doc, "Firma del deudor", deudor, fonts);

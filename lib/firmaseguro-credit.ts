@@ -281,9 +281,9 @@ function getFirmaSeguroTags(credito: FirmaSeguroCredit) {
 function buildFirmaSeguroMessage(credito: FirmaSeguroCredit) {
   return [
     `Hola ${credito.clienteNombre}.`,
-    "FINSER PAY solicita tu firma electronica para los documentos de tu credito.",
+    "FINSER PAY solicita tu firma electronica para el paquete documental unico de tu credito.",
     `Folio: ${credito.folio}.`,
-    "Por favor revisa el documento completo y confirma la firma solo si estas de acuerdo.",
+    "Por favor revisa el PDF completo y confirma la firma solo si estas de acuerdo.",
   ].join(" ");
 }
 
@@ -304,7 +304,7 @@ function buildCreateFullByCompanyPayload(
   callbackUrl: string
 ) {
   const config = getFirmaSeguroConfig();
-  const fileName = `finserpay-${credito.folio}.pdf`;
+  const fileName = `paquete-finserpay-${credito.folio}.pdf`;
   const signerEmail = getSignerEmail(person);
   const sendByEmail = Boolean(person.email);
 
@@ -363,7 +363,7 @@ function buildCreateFullPayload(
   callbackUrl: string
 ) {
   const config = getFirmaSeguroConfig();
-  const fileName = `finserpay-${credito.folio}.pdf`;
+  const fileName = `paquete-finserpay-${credito.folio}.pdf`;
   const signerEmail = getSignerEmail(person);
   const sendByEmail = Boolean(person.email);
 

@@ -7897,7 +7897,7 @@ export default function CreditFactoryConsole({
                         FirmaSeguro
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Envia el contrato, pagare, carta de instrucciones, autorizacion de datos y evidencias al WhatsApp registrado del cliente.
+                        Envia un solo PDF consolidado al WhatsApp registrado del cliente.
                       </p>
                     </div>
                     <div
@@ -7929,7 +7929,7 @@ export default function CreditFactoryConsole({
                             Envio digital por WhatsApp
                           </h4>
                           <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
-                            Se creara un expediente de borrador. El credito solo se inscribe cuando FirmaSeguro reporte firma exitosa y valides la entrega.
+                            Se creara un expediente de borrador con un paquete documental unico. El credito solo se inscribe cuando FirmaSeguro reporte firma exitosa y valides la entrega.
                           </p>
                         </div>
                         {firmaSeguroDraftFolio ? (
@@ -8036,15 +8036,23 @@ export default function CreditFactoryConsole({
 
                     <div className="rounded-[24px] border border-[#d9e7ea] bg-[#f8fbfd] px-5 py-5">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                        Documentos incluidos
+                        Paquete documental unico
                       </p>
+                      <div className="mt-4 rounded-2xl border border-emerald-200 bg-white px-4 py-4">
+                        <p className="text-sm font-black text-slate-950">
+                          1 PDF para firmar
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-slate-600">
+                          FirmaSeguro recibira un solo archivo con todos los soportes integrados.
+                        </p>
+                      </div>
                       <div className="mt-4 space-y-3 text-sm font-semibold text-slate-700">
                         {[
-                          "Contrato principal",
-                          "Pagare",
-                          "Carta de instrucciones",
-                          "Autorizacion de datos",
-                          "Evidencias del paso 3",
+                          "Contrato principal integrado",
+                          "Pagare integrado",
+                          "Carta de instrucciones integrada",
+                          "Autorizacion de datos integrada",
+                          "Evidencias del paso 3 integradas",
                         ].map((item) => (
                           <div
                             key={item}
