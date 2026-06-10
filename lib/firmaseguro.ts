@@ -89,6 +89,103 @@ function readOptionalBooleanEnv(name: string) {
   return null;
 }
 
+function findTokenCandidate(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const token = findTokenCandidate(item);
+      if (token) {
+        return token;
+      }
+    }
+
+    return "";
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return "";
+  }
+
+  const tokenKeys = new Set([
+    "token",
+    "access_token",
+    "accessToken",
+    "jwt",
+    "bearer",
+  ]);
+  const record = value as JsonObject;
+
+  for (const [key, item] of Object.entries(record)) {
+    if (tokenKeys.has(key) && typeof item === "string" && item.trim()) {
+      return item.trim();
+    }
+  }
+
+  for (const item of Object.values(record)) {
+    const token = findTokenCandidate(item);
+    if (token) {
+      return token;
+    }
+  }
+
+  return "";
+}
+
+function unwrapEnvValue(value: string) {
+  let cleaned = value.trim();
+  const quotePairs: Array<[string, string]> = [
+    ['"', '"'],
+    ["'", "'"],
+    ["`", "`"],
+  ];
+
+  let changed = true;
+  while (changed && cleaned.length >= 2) {
+    changed = false;
+    for (const [open, close] of quotePairs) {
+      if (cleaned.startsWith(open) && cleaned.endsWith(close)) {
+        cleaned = cleaned.slice(1, -1).trim();
+        changed = true;
+      }
+    }
+  }
+
+  return cleaned;
+}
+
+function normalizeAccessTokenEnv(value: string) {
+  let cleaned = unwrapEnvValue(value);
+  if (!cleaned) {
+    return "";
+  }
+
+  cleaned = cleaned.replace(/^Authorization\s*:\s*/i, "").trim();
+  cleaned = unwrapEnvValue(cleaned);
+
+  if (cleaned.startsWith("{") || cleaned.startsWith("[")) {
+    try {
+      const token = findTokenCandidate(JSON.parse(cleaned));
+      if (token && token !== cleaned) {
+        return normalizeAccessTokenEnv(token);
+      }
+    } catch {
+      // Keep the original value; FirmaSeguro will reject it if it is not a token.
+    }
+  }
+
+  const jwtMatch = cleaned.match(
+    /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/
+  );
+  if (jwtMatch) {
+    return jwtMatch[0];
+  }
+
+  return cleaned;
+}
+
 function normalizeBaseUrl(value: string) {
   const cleaned = value.trim().replace(/\/+$/, "");
   if (!cleaned) {
@@ -128,7 +225,7 @@ export function getFirmaSeguroConfig(): FirmaSeguroConfig {
 
   return {
     baseUrl: normalizeBaseUrl(readEnv("FIRMASEGURO_BASE_URL")),
-    accessToken: readEnv("FIRMASEGURO_ACCESS_TOKEN"),
+    accessToken: normalizeAccessTokenEnv(readEnv("FIRMASEGURO_ACCESS_TOKEN")),
     email: readEnv("FIRMASEGURO_EMAIL"),
     password: readEnv("FIRMASEGURO_PASSWORD"),
     authMode: readEnv("FIRMASEGURO_AUTH_MODE").toLowerCase() || "auto",
@@ -246,6 +343,10 @@ function collectValidationMessages(value: unknown, prefix = ""): string[] {
 function getFirmaSeguroErrorMessage(status: number, payload: unknown) {
   if ([502, 503, 504].includes(status)) {
     return "FirmaSeguro no esta disponible temporalmente. Reintenta el envio en unos minutos.";
+  }
+
+  if (status === 401) {
+    return "FirmaSeguro no autorizo la solicitud. Verifica que FIRMASEGURO_ACCESS_TOKEN sea un token API vigente y con permiso para crear procesos.";
   }
 
   if (typeof payload === "string") {
