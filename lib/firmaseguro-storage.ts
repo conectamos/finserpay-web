@@ -2,7 +2,10 @@ import prisma from "@/lib/prisma";
 
 export type FirmaSeguroProcessRow = {
   id: number;
-  creditoId: number;
+  creditoId: number | null;
+  draftId: number | null;
+  draftFolio: string | null;
+  draftPayload: unknown;
   processUuid: string;
   status: string;
   requestPayload: unknown;
@@ -19,7 +22,10 @@ export type FirmaSeguroProcessRow = {
 };
 
 type UpsertInput = {
-  creditoId: number;
+  creditoId?: number | null;
+  draftId?: number | null;
+  draftFolio?: string | null;
+  draftPayload?: unknown;
   processUuid: string;
   status?: string | null;
   requestPayload?: unknown;
@@ -54,7 +60,10 @@ async function runFirmaSeguroSchemaSetup() {
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS "FirmaSeguroProcess" (
       "id" SERIAL PRIMARY KEY,
-      "creditoId" INTEGER NOT NULL,
+      "creditoId" INTEGER,
+      "draftId" INTEGER,
+      "draftFolio" TEXT,
+      "draftPayload" JSONB,
       "processUuid" TEXT NOT NULL,
       "status" TEXT NOT NULL DEFAULT 'CREATED',
       "requestPayload" JSONB,
@@ -69,6 +78,18 @@ async function runFirmaSeguroSchemaSetup() {
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "completedAt" TIMESTAMP(3)
     )
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "FirmaSeguroProcess"
+      ALTER COLUMN "creditoId" DROP NOT NULL
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "FirmaSeguroProcess"
+      ADD COLUMN IF NOT EXISTS "draftId" INTEGER,
+      ADD COLUMN IF NOT EXISTS "draftFolio" TEXT,
+      ADD COLUMN IF NOT EXISTS "draftPayload" JSONB
   `);
 
   await prisma.$executeRawUnsafe(`
@@ -99,6 +120,11 @@ async function runFirmaSeguroSchemaSetup() {
   `);
 
   await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "FirmaSeguroProcess_draftId_createdAt_idx"
+      ON "FirmaSeguroProcess" ("draftId", "createdAt" DESC)
+  `);
+
+  await prisma.$executeRawUnsafe(`
     CREATE INDEX IF NOT EXISTS "FirmaSeguroProcess_status_idx"
       ON "FirmaSeguroProcess" ("status")
   `);
@@ -122,6 +148,9 @@ export async function upsertFirmaSeguroProcess(input: UpsertInput) {
     `
       INSERT INTO "FirmaSeguroProcess" (
         "creditoId",
+        "draftId",
+        "draftFolio",
+        "draftPayload",
         "processUuid",
         "status",
         "requestPayload",
@@ -137,19 +166,25 @@ export async function upsertFirmaSeguroProcess(input: UpsertInput) {
       VALUES (
         $1,
         $2,
-        COALESCE($3, 'CREATED'),
+        $3,
         $4::jsonb,
-        $5::jsonb,
-        $6::jsonb,
+        $5,
+        COALESCE($6, 'CREATED'),
         $7::jsonb,
         $8::jsonb,
-        $9,
-        $10,
-        $11,
-        $12
+        $9::jsonb,
+        $10::jsonb,
+        $11::jsonb,
+        $12,
+        $13,
+        $14,
+        $15
       )
       ON CONFLICT ("processUuid") DO UPDATE SET
-        "creditoId" = EXCLUDED."creditoId",
+        "creditoId" = COALESCE(EXCLUDED."creditoId", "FirmaSeguroProcess"."creditoId"),
+        "draftId" = COALESCE(EXCLUDED."draftId", "FirmaSeguroProcess"."draftId"),
+        "draftFolio" = COALESCE(EXCLUDED."draftFolio", "FirmaSeguroProcess"."draftFolio"),
+        "draftPayload" = COALESCE(EXCLUDED."draftPayload", "FirmaSeguroProcess"."draftPayload"),
         "status" = EXCLUDED."status",
         "requestPayload" = COALESCE(EXCLUDED."requestPayload", "FirmaSeguroProcess"."requestPayload"),
         "createPayload" = COALESCE(EXCLUDED."createPayload", "FirmaSeguroProcess"."createPayload"),
@@ -163,7 +198,10 @@ export async function upsertFirmaSeguroProcess(input: UpsertInput) {
         "updatedAt" = CURRENT_TIMESTAMP
       RETURNING *
     `,
-    input.creditoId,
+    input.creditoId || null,
+    input.draftId || null,
+    input.draftFolio || null,
+    jsonValue(input.draftPayload),
     input.processUuid,
     input.status || null,
     jsonValue(input.requestPayload),
@@ -175,6 +213,28 @@ export async function upsertFirmaSeguroProcess(input: UpsertInput) {
     input.signedDocumentFileName || null,
     input.lastError || null,
     input.completedAt || null
+  );
+
+  return rows[0] || null;
+}
+
+export async function linkFirmaSeguroProcessToCredit(
+  processUuid: string,
+  creditoId: number
+) {
+  await ensureFirmaSeguroSchema();
+
+  const rows = await prisma.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
+    `
+      UPDATE "FirmaSeguroProcess"
+      SET
+        "creditoId" = $2,
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "processUuid" = $1
+      RETURNING *
+    `,
+    processUuid,
+    creditoId
   );
 
   return rows[0] || null;
@@ -192,6 +252,23 @@ export async function getLatestFirmaSeguroProcessByCredit(creditoId: number) {
       LIMIT 1
     `,
     creditoId
+  );
+
+  return rows[0] || null;
+}
+
+export async function getLatestFirmaSeguroProcessByDraft(draftId: number) {
+  await ensureFirmaSeguroSchema();
+
+  const rows = await prisma.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
+    `
+      SELECT *
+      FROM "FirmaSeguroProcess"
+      WHERE "draftId" = $1
+      ORDER BY "createdAt" DESC, "id" DESC
+      LIMIT 1
+    `,
+    draftId
   );
 
   return rows[0] || null;

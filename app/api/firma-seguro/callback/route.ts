@@ -73,7 +73,7 @@ export async function POST(request: Request) {
       ? await refreshFirmaSeguroProcess(updated)
       : await refreshFirmaSeguroProcess(current);
 
-    if (refreshed?.completedAt) {
+    if (refreshed?.completedAt && refreshed.creditoId) {
       await markCreditoFirmaSeguroCompleted(refreshed.creditoId, {
         processUuid: refreshed.processUuid,
         status: refreshed.status,

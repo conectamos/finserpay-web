@@ -47,6 +47,12 @@ import { findEquipmentCatalogItem } from "@/lib/equipment-catalog";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
+import { getFirmaSeguroProcessByUuid } from "@/lib/firmaseguro-storage";
+import {
+  linkFirmaSeguroProcessForCredit,
+  markCreditoFirmaSeguroCompleted,
+  refreshFirmaSeguroProcess,
+} from "@/lib/firmaseguro-credit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -154,6 +160,7 @@ type CreditCreateBody = {
   fechaPrimerPago?: string;
   frecuenciaPago?: string;
   firmaSeguroPasoContratos?: boolean;
+  firmaSeguroProcessUuid?: string;
   imei?: string;
   montoCredito?: number | string;
   pagareAceptado?: boolean;
@@ -708,6 +715,65 @@ export async function POST(req: Request) {
       fechaCredito
     );
     const firmaSeguroPasoContratos = Boolean(body.firmaSeguroPasoContratos);
+    const firmaSeguroProcessUuid = sanitizeText(body.firmaSeguroProcessUuid);
+    let firmaSeguroProcess:
+      | Awaited<ReturnType<typeof getFirmaSeguroProcessByUuid>>
+      | null = null;
+
+    if (firmaSeguroPasoContratos) {
+      if (!firmaSeguroProcessUuid) {
+        return NextResponse.json(
+          {
+            error:
+              "Debes enviar primero el expediente a FirmaSeguro antes de finalizar el credito.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const storedFirmaSeguroProcess =
+        await getFirmaSeguroProcessByUuid(firmaSeguroProcessUuid);
+
+      if (!storedFirmaSeguroProcess) {
+        return NextResponse.json(
+          { error: "No se encontro el proceso de FirmaSeguro para este credito." },
+          { status: 404 }
+        );
+      }
+
+      if (storedFirmaSeguroProcess.creditoId) {
+        return NextResponse.json(
+          {
+            error:
+              "Este proceso de FirmaSeguro ya fue usado para crear otro credito.",
+          },
+          { status: 409 }
+        );
+      }
+
+      const storedProcessCompleted = Boolean(
+        storedFirmaSeguroProcess.completedAt ||
+          storedFirmaSeguroProcess.signedDocumentBase64
+      );
+
+      firmaSeguroProcess = storedProcessCompleted
+        ? storedFirmaSeguroProcess
+        : await refreshFirmaSeguroProcess(storedFirmaSeguroProcess);
+
+      if (
+        !firmaSeguroProcess?.completedAt &&
+        !firmaSeguroProcess?.signedDocumentBase64
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "FirmaSeguro aun no reporta firma exitosa. Actualiza el estado antes de finalizar el credito.",
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const contratoAceptado =
       Boolean(body.contratoAceptado) || firmaSeguroPasoContratos;
     const contratoFirmaDataUrl = sanitizeImageDataUrl(body.contratoFirmaDataUrl);
@@ -759,7 +825,25 @@ export async function POST(req: Request) {
       financialPlan.valorCuota > 0
         ? financialPlan.valorCuota
         : calculateInstallmentValue(montoCredito, plazoMeses);
-    const folio = generateCreditFolio();
+    const firmaSeguroDraftFolio = firmaSeguroProcess?.draftFolio
+      ? sanitizeText(firmaSeguroProcess.draftFolio)
+      : "";
+    const folio = firmaSeguroDraftFolio || generateCreditFolio();
+    const existingCreditWithFolio = await prisma.credito.findUnique({
+      where: { folio },
+      select: { id: true },
+    });
+
+    if (existingCreditWithFolio) {
+      return NextResponse.json(
+        {
+          error:
+            "Este expediente ya fue usado para crear un credito. Actualiza la busqueda antes de continuar.",
+        },
+        { status: 409 }
+      );
+    }
+
     const pagareNumero = generatePagareNumber(folio);
     const referenciaPago = generatePaymentReference(folio, clienteDocumento);
     const contratoAceptadoAt = new Date();
@@ -1068,7 +1152,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!contratoFirmaDataUrl) {
+    if (!contratoFirmaDataUrl && !firmaSeguroPasoContratos) {
       return NextResponse.json(
         { error: "Debes capturar la firma digital del cliente" },
         { status: 400 }
@@ -1098,8 +1182,7 @@ export async function POST(req: Request) {
 
     const allowPendingDeliveryClose =
       ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION ||
-      documentCanSkipDeliveryVerification ||
-      firmaSeguroPasoContratos;
+      documentCanSkipDeliveryVerification;
 
     if (!isEqualityConfigured() && !allowPendingDeliveryClose) {
       return NextResponse.json(
@@ -1192,8 +1275,6 @@ export async function POST(req: Request) {
       administrativeDeliveryStatus || equalityMeta?.deliveryStatus || null;
     const pendingDeliveryWarning = administrativeDeliveryStatus
       ? "Credito creado con excepcion administrativa: entrega permitida sin verificar dispositivo."
-      : firmaSeguroPasoContratos && !equalityMeta?.deliveryStatus?.ready
-        ? "Credito creado y enviado a FirmaSeguro. La validacion final de entrega queda pendiente."
       : ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION &&
           !equalityMeta?.deliveryStatus?.ready
         ? "Credito creado en modo prueba: la validacion final de entrega quedo pendiente."
@@ -1267,6 +1348,12 @@ export async function POST(req: Request) {
         ip: contratoIp,
         proveedorDigital: firmaSeguroPasoContratos ? "FirmaSeguro" : null,
         canalProveedorDigital: firmaSeguroPasoContratos ? "WHATSAPP" : null,
+        procesoUuid: firmaSeguroProcess?.processUuid || null,
+        firmadoAtProveedor:
+          firmaSeguroProcess?.completedAt instanceof Date
+            ? firmaSeguroProcess.completedAt.toISOString()
+            : firmaSeguroProcess?.completedAt || null,
+        documentoFirmado: firmaSeguroProcess?.signedDocumentFileName || null,
       },
       evidencia: {
         selfieRegistrada: Boolean(contratoSelfieDataUrl),
@@ -1397,7 +1484,7 @@ export async function POST(req: Request) {
       clausulas: CONTRACT_CLAUSE_LABELS,
     };
 
-    const created = await prisma.credito.create({
+    let created = await prisma.credito.create({
       data: {
         folio,
         clienteDireccion: clienteDireccion || null,
@@ -1460,6 +1547,25 @@ export async function POST(req: Request) {
       },
       include: creditListInclude,
     });
+
+    if (firmaSeguroProcess) {
+      await linkFirmaSeguroProcessForCredit(firmaSeguroProcess.processUuid, created.id);
+      await markCreditoFirmaSeguroCompleted(created.id, {
+        processUuid: firmaSeguroProcess.processUuid,
+        status: firmaSeguroProcess.status,
+        signedDocumentFileName: firmaSeguroProcess.signedDocumentFileName,
+        completedAt: firmaSeguroProcess.completedAt || new Date(),
+      });
+
+      const linkedCredit = await prisma.credito.findUnique({
+        where: { id: created.id },
+        include: creditListInclude,
+      });
+
+      if (linkedCredit) {
+        created = linkedCredit;
+      }
+    }
 
     return NextResponse.json({
       ok: true,

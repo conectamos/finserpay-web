@@ -1,31 +1,48 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
-import type { Prisma } from "@/app/generated/prisma/client";
 import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
 
-type CreditForFirmaSeguroPdf = Prisma.CreditoGetPayload<{
-  include: {
-    usuario: {
-      select: {
-        nombre: true;
-        usuario: true;
-      };
-    };
-    vendedor: {
-      select: {
-        nombre: true;
-        documento: true;
-      };
-    };
-    sede: {
-      select: {
-        nombre: true;
-        codigo: true;
-      };
-    };
+export type CreditForFirmaSeguroPdf = {
+  folio: string;
+  contratoSnapshot?: unknown;
+  clienteTipoDocumento?: string | null;
+  clienteNombre: string;
+  clientePrimerNombre?: string | null;
+  clientePrimerApellido?: string | null;
+  clienteDocumento?: string | null;
+  clienteTelefono?: string | null;
+  clienteCorreo?: string | null;
+  referenciaEquipo?: string | null;
+  equipoMarca?: string | null;
+  equipoModelo?: string | null;
+  imei?: string | null;
+  deviceUid?: string | null;
+  valorEquipoTotal?: number | null;
+  montoCredito?: number | null;
+  cuotaInicial?: number | null;
+  valorCuota?: number | null;
+  plazoMeses?: number | null;
+  frecuenciaPago?: string | null;
+  fechaPrimerPago?: Date | string | null;
+  referenciaPago?: string | null;
+  valorFianza?: number | null;
+  usuario: {
+    nombre: string;
+    usuario?: string | null;
   };
-}>;
+  vendedor?: {
+    nombre?: string | null;
+    documento?: string | null;
+    telefono?: string | null;
+    email?: string | null;
+  } | null;
+  sede: {
+    nombre: string;
+    codigo?: string | null;
+    aliadoId?: number | null;
+  };
+};
 
 const windowsFontDir = path.join(process.env.WINDIR || "C:\\Windows", "Fonts");
 const SYSTEM_FONT_REGULAR = path.join(windowsFontDir, "arial.ttf");

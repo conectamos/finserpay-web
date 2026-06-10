@@ -22,10 +22,15 @@ import {
   isFirmaSeguroCompletedStatus,
   isFirmaSeguroConfigured,
 } from "@/lib/firmaseguro";
-import { buildFirmaSeguroCreditPdf } from "@/lib/firmaseguro-credit-pdf";
+import {
+  buildFirmaSeguroCreditPdf,
+  type CreditForFirmaSeguroPdf,
+} from "@/lib/firmaseguro-credit-pdf";
 import {
   getFirmaSeguroProcessByUuid,
   getLatestFirmaSeguroProcessByCredit,
+  getLatestFirmaSeguroProcessByDraft,
+  linkFirmaSeguroProcessToCredit,
   type FirmaSeguroProcessRow,
   updateFirmaSeguroProcess,
   upsertFirmaSeguroProcess,
@@ -34,7 +39,7 @@ import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 
-type FirmaSeguroCredit = Prisma.CreditoGetPayload<{
+type StoredFirmaSeguroCredit = Prisma.CreditoGetPayload<{
   include: {
     usuario: {
       select: {
@@ -63,10 +68,14 @@ type FirmaSeguroCredit = Prisma.CreditoGetPayload<{
   };
 }>;
 
+type FirmaSeguroCredit = CreditForFirmaSeguroPdf & {
+  id?: number | null;
+};
+
 type AuthorizedCreditResult =
   | {
       ok: true;
-      credito: FirmaSeguroCredit;
+      credito: StoredFirmaSeguroCredit;
     }
   | {
       ok: false;
@@ -92,6 +101,8 @@ export function serializeFirmaSeguroProcess(row: FirmaSeguroProcessRow | null) {
   return {
     id: row.id,
     creditoId: row.creditoId,
+    draftId: row.draftId,
+    draftFolio: row.draftFolio,
     processUuid: row.processUuid,
     status: row.status,
     hasSignedDocument: Boolean(row.signedDocumentBase64),
@@ -471,7 +482,15 @@ export async function markCreditoFirmaSeguroCompleted(
   });
 }
 
-export async function createFirmaSeguroProcessForCredit(credito: FirmaSeguroCredit) {
+async function createFirmaSeguroProcess(
+  credito: FirmaSeguroCredit,
+  options: {
+    creditoId?: number | null;
+    draftId?: number | null;
+    draftFolio?: string | null;
+    draftPayload?: unknown;
+  } = {}
+) {
   if (!isFirmaSeguroConfigured()) {
     throw new FirmaSeguroApiError(
       "Falta configurar FIRMASEGURO_ACCESS_TOKEN o FIRMASEGURO_EMAIL y FIRMASEGURO_PASSWORD",
@@ -480,7 +499,7 @@ export async function createFirmaSeguroProcessForCredit(credito: FirmaSeguroCred
     );
   }
 
-  const callbackUrl = buildFirmaSeguroCallbackUrl(credito.id);
+  const callbackUrl = buildFirmaSeguroCallbackUrl(options.creditoId || undefined);
   if (!callbackUrl) {
     throw new FirmaSeguroApiError(
       "Falta configurar NEXT_PUBLIC_APP_URL, APP_URL o FIRMASEGURO_CALLBACK_URL",
@@ -527,7 +546,10 @@ export async function createFirmaSeguroProcessForCredit(credito: FirmaSeguroCred
 
   const status = extractFirmaSeguroStatus(createPayload) || "CREATED";
   const row = await upsertFirmaSeguroProcess({
-    creditoId: credito.id,
+    creditoId: options.creditoId || null,
+    draftId: options.draftId || null,
+    draftFolio: options.draftFolio || null,
+    draftPayload: options.draftPayload,
     processUuid,
     status,
     requestPayload: redactBase64Payload({
@@ -537,22 +559,47 @@ export async function createFirmaSeguroProcessForCredit(credito: FirmaSeguroCred
     createPayload,
   });
 
-  const snapshot = mergeFirmaSeguroSnapshot(credito.contratoSnapshot, {
-    uuid: processUuid,
-    estado: status,
-    creadoAt: new Date().toISOString(),
-    proveedor: "FirmaSeguro",
-    auth: redactBase64Payload(authPayload),
-  });
+  if (options.creditoId) {
+    const snapshot = mergeFirmaSeguroSnapshot(credito.contratoSnapshot, {
+      uuid: processUuid,
+      estado: status,
+      creadoAt: new Date().toISOString(),
+      proveedor: "FirmaSeguro",
+      auth: redactBase64Payload(authPayload),
+    });
 
-  await prisma.credito.update({
-    where: { id: credito.id },
-    data: {
-      contratoSnapshot: snapshot as Prisma.InputJsonValue,
-    },
-  });
+    await prisma.credito.update({
+      where: { id: options.creditoId },
+      data: {
+        contratoSnapshot: snapshot as Prisma.InputJsonValue,
+      },
+    });
+  }
 
   return row;
+}
+
+export async function createFirmaSeguroProcessForCredit(
+  credito: StoredFirmaSeguroCredit
+) {
+  return createFirmaSeguroProcess(credito, {
+    creditoId: credito.id,
+  });
+}
+
+export async function createFirmaSeguroProcessForDraft(
+  credito: FirmaSeguroCredit,
+  options: {
+    draftId: number;
+    draftFolio: string;
+    draftPayload?: unknown;
+  }
+) {
+  return createFirmaSeguroProcess(credito, {
+    draftId: options.draftId,
+    draftFolio: options.draftFolio,
+    draftPayload: options.draftPayload,
+  });
 }
 
 export async function refreshFirmaSeguroProcess(
@@ -619,7 +666,7 @@ export async function refreshFirmaSeguroProcess(
     completedAt,
   });
 
-  if (updated && completed) {
+  if (updated && completed && updated.creditoId) {
     await markCreditoFirmaSeguroCompleted(updated.creditoId, {
       processUuid: updated.processUuid,
       status: updated.status,
@@ -633,6 +680,17 @@ export async function refreshFirmaSeguroProcess(
 
 export async function getLatestFirmaSeguroProcessForCredit(creditoId: number) {
   return getLatestFirmaSeguroProcessByCredit(creditoId);
+}
+
+export async function getLatestFirmaSeguroProcessForDraft(draftId: number) {
+  return getLatestFirmaSeguroProcessByDraft(draftId);
+}
+
+export async function linkFirmaSeguroProcessForCredit(
+  processUuid: string,
+  creditoId: number
+) {
+  return linkFirmaSeguroProcessToCredit(processUuid, creditoId);
 }
 
 export async function getFirmaSeguroProcessForCallback(processUuid: string) {
