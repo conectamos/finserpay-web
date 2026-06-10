@@ -263,6 +263,41 @@ function getFirmaSeguroErrorMessage(status: number, payload: unknown) {
   return "FirmaSeguro rechazo la solicitud";
 }
 
+function withRequestContext(message: string, status: number, path: string) {
+  if (message !== "FirmaSeguro rechazo la solicitud") {
+    return message;
+  }
+
+  return `${message} (HTTP ${status} en ${path})`;
+}
+
+function sanitizeDiagnosticPayload(value: unknown): unknown {
+  if (typeof value === "string") {
+    const cleaned = stripHtml(value);
+    return cleaned.length > 500 ? `${cleaned.slice(0, 500)}...` : cleaned;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((item) => sanitizeDiagnosticPayload(item));
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+
+  const sanitized: JsonObject = {};
+  for (const [key, item] of Object.entries(value as JsonObject)) {
+    if (/base64|token|password|authorization|document/i.test(key)) {
+      sanitized[key] = "[redacted]";
+      continue;
+    }
+
+    sanitized[key] = sanitizeDiagnosticPayload(item);
+  }
+
+  return sanitized;
+}
+
 function buildAuthorizationHeader(token: string, raw = false) {
   const cleaned = token.trim();
   if (!cleaned) {
@@ -321,7 +356,7 @@ async function firmaSeguroRequest<T>(
     ? buildAuthorizationHeader(options.token)
     : "";
 
-  async function execute(authorizationHeader: string) {
+  async function execute(authorizationHeader: string, authorizationMode: string) {
     const headers = { ...baseHeaders };
     if (authorizationHeader) {
       headers.Authorization = authorizationHeader;
@@ -334,10 +369,25 @@ async function firmaSeguroRequest<T>(
       cache: "no-store",
     });
     const payload = await parseResponse(response);
-    return { response, payload };
+    return { response, payload, authorizationMode };
   }
 
-  let { response, payload } = await execute(authorization);
+  const attempts: Array<{
+    authorizationMode: string;
+    status: number;
+    ok: boolean;
+    payload: unknown;
+  }> = [];
+  let { response, payload, authorizationMode } = await execute(
+    authorization,
+    options.token ? "bearer" : "none"
+  );
+  attempts.push({
+    authorizationMode,
+    status: response.status,
+    ok: response.ok,
+    payload: sanitizeDiagnosticPayload(payload),
+  });
 
   if (!response.ok) {
     let message = getFirmaSeguroErrorMessage(response.status, payload);
@@ -350,9 +400,19 @@ async function firmaSeguroRequest<T>(
         authorization
       )
     ) {
-      const retry = await execute(buildAuthorizationHeader(options.token, true));
+      const retry = await execute(
+        buildAuthorizationHeader(options.token, true),
+        "raw"
+      );
       response = retry.response;
       payload = retry.payload;
+      authorizationMode = retry.authorizationMode;
+      attempts.push({
+        authorizationMode,
+        status: response.status,
+        ok: response.ok,
+        payload: sanitizeDiagnosticPayload(payload),
+      });
       message = getFirmaSeguroErrorMessage(response.status, payload);
     }
 
@@ -360,7 +420,17 @@ async function firmaSeguroRequest<T>(
       return payload as T;
     }
 
-    throw new FirmaSeguroApiError(message, response.status, payload);
+    const contextualMessage = withRequestContext(message, response.status, path);
+    const detail = {
+      path,
+      method,
+      status: response.status,
+      authorizationMode,
+      payload: sanitizeDiagnosticPayload(payload),
+      attempts,
+    };
+    console.error("[FirmaSeguro] request failed", detail);
+    throw new FirmaSeguroApiError(contextualMessage, response.status, detail);
   }
 
   return payload as T;
