@@ -253,6 +253,10 @@ function splitClientName(credito: FirmaSeguroCredit): PersonPayload {
 function redactBase64Payload(value: unknown): unknown {
   return JSON.parse(
     JSON.stringify(value, (key, item) => {
+      if (/token|password|authorization/i.test(key)) {
+        return "[redacted]";
+      }
+
       if (
         typeof item === "string" &&
         /base64|string|document/i.test(key) &&
@@ -510,8 +514,7 @@ async function runWithFirmaSeguroAuth<T>(
     };
   } catch (error) {
     const config = getFirmaSeguroConfig();
-    const canRefreshToken =
-      config.accessToken && config.email && config.password;
+    const canRefreshToken = Boolean(config.email && config.password);
 
     if (
       (!isFirmaSeguroUnauthorizedError(error) &&
@@ -575,10 +578,11 @@ async function createFirmaSeguroProcess(
   const config = getFirmaSeguroConfig();
   const pdf = await buildFirmaSeguroCreditPdf(credito);
   const pdfBase64 = pdf.toString("base64");
-  let requestPayload = config.nit
+  const useCompanyEndpoint = Boolean(config.nit && config.useCompanyEndpoint);
+  let requestPayload = useCompanyEndpoint
     ? buildCreateFullByCompanyPayload(credito, person, pdfBase64, callbackUrl)
     : buildCreateFullPayload(credito, person, pdfBase64, callbackUrl);
-  let endpoint = config.nit ? "create-full-by-company" : "create-full";
+  let endpoint = useCompanyEndpoint ? "create-full-by-company" : "create-full";
 
   const submitCreateRequest = async (token: string) => {
     try {

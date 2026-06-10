@@ -6,6 +6,7 @@ export type FirmaSeguroConfig = {
   email: string;
   password: string;
   nit: string | null;
+  useCompanyEndpoint: boolean;
   processTypeId: number;
   signatureMethodId: number;
   authMethodId: number;
@@ -70,6 +71,15 @@ function readNumberEnv(name: string, fallback: number) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
 }
 
+function readBooleanEnv(name: string, fallback = false) {
+  const value = readEnv(name).toLowerCase();
+  if (!value) {
+    return fallback;
+  }
+
+  return ["1", "true", "yes", "si", "on"].includes(value);
+}
+
 function normalizeBaseUrl(value: string) {
   const cleaned = value.trim().replace(/\/+$/, "");
   if (!cleaned) {
@@ -109,6 +119,7 @@ export function getFirmaSeguroConfig(): FirmaSeguroConfig {
     email: readEnv("FIRMASEGURO_EMAIL"),
     password: readEnv("FIRMASEGURO_PASSWORD"),
     nit: readEnv("FIRMASEGURO_NIT") || null,
+    useCompanyEndpoint: readBooleanEnv("FIRMASEGURO_USE_COMPANY_ENDPOINT"),
     processTypeId: readNumberEnv("FIRMASEGURO_PROCESS_TYPE_ID", 3),
     signatureMethodId: readNumberEnv("FIRMASEGURO_SIGNATURE_METHOD_ID", 2),
     authMethodId: readNumberEnv("FIRMASEGURO_AUTH_METHOD_ID", 4),
@@ -268,7 +279,7 @@ function getFirmaSeguroErrorMessage(status: number, payload: unknown) {
 }
 
 function withRequestContext(message: string, status: number, path: string) {
-  if (message !== "FirmaSeguro rechazo la solicitud") {
+  if (message.includes(path) || message.includes(`HTTP ${status}`)) {
     return message;
   }
 
@@ -559,24 +570,7 @@ export async function firmaSeguroSignIn(
   options: { ignoreAccessToken?: boolean } = {}
 ) {
   const config = getFirmaSeguroConfig();
-  if (!config.email || !config.password) {
-    if (config.accessToken && !options.ignoreAccessToken) {
-      return {
-        token: config.accessToken,
-        payload: {
-          source: "FIRMASEGURO_ACCESS_TOKEN",
-        },
-      };
-    }
-
-    throw new FirmaSeguroApiError(
-      "Falta configurar FIRMASEGURO_ACCESS_TOKEN o FIRMASEGURO_EMAIL y FIRMASEGURO_PASSWORD",
-      500,
-      null
-    );
-  }
-
-  try {
+  if (config.email && config.password) {
     const payload = await firmaSeguroRequest<unknown>("/api/v2/Auth/SignIn", {
       method: "POST",
       body: {
@@ -594,23 +588,28 @@ export async function firmaSeguroSignIn(
       );
     }
 
-    return { token, payload };
-  } catch (error) {
-    if (!config.accessToken || options.ignoreAccessToken) {
-      throw error;
-    }
+    return {
+      token,
+      payload: {
+        source: "FIRMASEGURO_EMAIL_PASSWORD",
+      },
+    };
+  }
 
+  if (config.accessToken && !options.ignoreAccessToken) {
     return {
       token: config.accessToken,
       payload: {
         source: "FIRMASEGURO_ACCESS_TOKEN",
-        signInWarning:
-          error instanceof Error
-            ? error.message
-            : "No se pudo iniciar sesion en FirmaSeguro",
       },
     };
   }
+
+  throw new FirmaSeguroApiError(
+    "Falta configurar FIRMASEGURO_ACCESS_TOKEN o FIRMASEGURO_EMAIL y FIRMASEGURO_PASSWORD",
+    500,
+    null
+  );
 }
 
 export async function firmaSeguroCreateFull(token: string, payload: unknown) {
