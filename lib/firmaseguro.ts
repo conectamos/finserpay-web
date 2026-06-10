@@ -602,6 +602,10 @@ export async function firmaSeguroSignIn(
     );
   }
 
+  if (config.accessToken && !options.ignoreAccessToken && !emailOnly) {
+    return buildAccessTokenAuthPayload(config.accessToken);
+  }
+
   if (config.email && config.password) {
     try {
       const payload = await firmaSeguroRequest<unknown>("/api/v2/Auth/SignIn", {
