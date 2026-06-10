@@ -35,6 +35,27 @@ export class FirmaSeguroApiError extends Error {
   }
 }
 
+export function isFirmaSeguroPermissionError(error: unknown) {
+  if (!(error instanceof FirmaSeguroApiError)) {
+    return false;
+  }
+
+  const raw = [
+    error.message,
+    typeof error.detail === "string" ? error.detail : "",
+  ].join(" ");
+  const normalized = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  return (
+    normalized.includes("no tiene permitido") ||
+    normalized.includes("not allowed") ||
+    normalized.includes("forbidden")
+  );
+}
+
 function readEnv(name: string) {
   const value = process.env[name];
   return typeof value === "string" && value.trim() ? value.trim() : "";

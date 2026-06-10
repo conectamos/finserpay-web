@@ -21,6 +21,7 @@ import {
   getFirmaSeguroConfig,
   isFirmaSeguroCompletedStatus,
   isFirmaSeguroConfigured,
+  isFirmaSeguroPermissionError,
 } from "@/lib/firmaseguro";
 import {
   buildFirmaSeguroCreditPdf,
@@ -541,13 +542,35 @@ async function createFirmaSeguroProcess(
   const config = getFirmaSeguroConfig();
   const pdf = await buildFirmaSeguroCreditPdf(credito);
   const pdfBase64 = pdf.toString("base64");
-  const requestPayload = config.nit
+  let requestPayload = config.nit
     ? buildCreateFullByCompanyPayload(credito, person, pdfBase64, callbackUrl)
     : buildCreateFullPayload(credito, person, pdfBase64, callbackUrl);
+  let endpoint = config.nit ? "create-full-by-company" : "create-full";
   const { token, payload: authPayload } = await firmaSeguroSignIn();
-  const createPayload = config.nit
-    ? await firmaSeguroCreateFullByCompany(token, requestPayload)
-    : await firmaSeguroCreateFull(token, requestPayload);
+  let createPayload: unknown;
+
+  try {
+    createPayload =
+      endpoint === "create-full-by-company"
+        ? await firmaSeguroCreateFullByCompany(token, requestPayload)
+        : await firmaSeguroCreateFull(token, requestPayload);
+  } catch (error) {
+    if (
+      endpoint !== "create-full-by-company" ||
+      !isFirmaSeguroPermissionError(error)
+    ) {
+      throw error;
+    }
+
+    requestPayload = buildCreateFullPayload(
+      credito,
+      person,
+      pdfBase64,
+      callbackUrl
+    );
+    endpoint = "create-full";
+    createPayload = await firmaSeguroCreateFull(token, requestPayload);
+  }
   const processUuid = extractFirmaSeguroUuid(createPayload);
 
   if (!processUuid) {
@@ -567,7 +590,7 @@ async function createFirmaSeguroProcess(
     processUuid,
     status,
     requestPayload: redactBase64Payload({
-      endpoint: config.nit ? "create-full-by-company" : "create-full",
+      endpoint,
       payload: requestPayload,
     }),
     createPayload,
