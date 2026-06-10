@@ -164,11 +164,28 @@ function collectValidationMessages(value: unknown, prefix = ""): string[] {
 
   for (const [key, item] of Object.entries(record)) {
     const field = prefix ? `${prefix}.${key}` : key;
+    const diagnosticKey =
+      /error|message|detail|exception|description|descripcion|validation|validacion/i.test(
+        key
+      );
+    const sensitiveKey = /base64|token|password|authorization|document/i.test(key);
+
     if (key.toLowerCase() === "errors" && typeof item === "object" && item) {
       messages.push(...collectValidationMessages(item, ""));
       continue;
     }
+    if (typeof item === "string" && diagnosticKey && !sensitiveKey) {
+      const cleaned = stripHtml(item);
+      if (cleaned && cleaned.length <= 500) {
+        messages.push(prefix ? `${field}: ${cleaned}` : cleaned);
+      }
+      continue;
+    }
     if (Array.isArray(item)) {
+      messages.push(...collectValidationMessages(item, field));
+      continue;
+    }
+    if (typeof item === "object" && item !== null && !sensitiveKey) {
       messages.push(...collectValidationMessages(item, field));
     }
   }
@@ -196,7 +213,17 @@ function getFirmaSeguroErrorMessage(status: number, payload: unknown) {
           "FirmaSeguro rechazo la solicitud"
       )
     );
-    const details = collectValidationMessages(record.errors || record.Errors);
+    const details = collectValidationMessages(
+      record.errors ||
+        record.Errors ||
+        record.details ||
+        record.Details ||
+        record.detail ||
+        record.Detail ||
+        record.data ||
+        record.Data ||
+        record
+    );
     const uniqueDetails = Array.from(
       new Set(
         details

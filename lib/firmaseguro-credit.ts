@@ -286,6 +286,11 @@ function getSignerEmail(person: PersonPayload) {
   return person.email || normalizeEmail(config.email) || "firmas@finserpay.com";
 }
 
+function optionalText(value: string | null | undefined) {
+  const cleaned = cleanText(value);
+  return cleaned || undefined;
+}
+
 function buildCreateFullByCompanyPayload(
   credito: FirmaSeguroCredit,
   person: PersonPayload,
@@ -327,9 +332,9 @@ function buildCreateFullByCompanyPayload(
         number: person.phone,
         email: signerEmail,
         first_name: person.firstName,
-        second_name: person.secondName,
+        second_name: optionalText(person.secondName),
         first_last_name: person.firstLastName,
-        second_last_name: person.secondLastName,
+        second_last_name: optionalText(person.secondLastName),
         identification: person.document,
         identification_type_id: config.identificationTypeId,
         type_person_id: config.typePersonId,
@@ -386,9 +391,7 @@ function buildCreateFullPayload(
           email: signerEmail,
           person: {
             firstName: person.firstName,
-            secondName: person.secondName,
             firstLastName: person.firstLastName,
-            secondLastName: person.secondLastName,
             identification: person.document,
             identificationTypeId: config.identificationTypeId,
             typePersonId: config.typePersonId,
