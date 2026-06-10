@@ -604,7 +604,7 @@ async function createFirmaSeguroProcess(
     } catch (error) {
       const canTryCompanyEndpoint =
         endpoint === "create-full" &&
-        Boolean(config.nit) &&
+        Boolean(config.nit && config.useCompanyEndpoint) &&
         (isFirmaSeguroPermissionError(error) ||
           isFirmaSeguroUnauthorizedError(error));
 
@@ -620,7 +620,9 @@ async function createFirmaSeguroProcess(
       }
 
       const canTryDefaultEndpoint =
-        endpoint === "create-full-by-company" && isFirmaSeguroPermissionError(error);
+        endpoint === "create-full-by-company" &&
+        (isFirmaSeguroPermissionError(error) ||
+          isFirmaSeguroUnauthorizedError(error));
 
       if (!canTryDefaultEndpoint) {
         throw error;

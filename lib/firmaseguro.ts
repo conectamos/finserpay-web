@@ -133,7 +133,7 @@ export function getFirmaSeguroConfig(): FirmaSeguroConfig {
     password: readEnv("FIRMASEGURO_PASSWORD"),
     authMode: readEnv("FIRMASEGURO_AUTH_MODE").toLowerCase() || "auto",
     nit,
-    useCompanyEndpoint: explicitCompanyEndpoint ?? Boolean(nit),
+    useCompanyEndpoint: explicitCompanyEndpoint ?? false,
     processTypeId: readNumberEnv("FIRMASEGURO_PROCESS_TYPE_ID", 3),
     signatureMethodId: readNumberEnv("FIRMASEGURO_SIGNATURE_METHOD_ID", 2),
     authMethodId: readNumberEnv("FIRMASEGURO_AUTH_METHOD_ID", 4),
