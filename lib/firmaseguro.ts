@@ -263,35 +263,103 @@ function getFirmaSeguroErrorMessage(status: number, payload: unknown) {
   return "FirmaSeguro rechazo la solicitud";
 }
 
+function buildAuthorizationHeader(token: string, raw = false) {
+  const cleaned = token.trim();
+  if (!cleaned) {
+    return "";
+  }
+
+  if (raw || /^Bearer\s+/i.test(cleaned)) {
+    return cleaned;
+  }
+
+  return `Bearer ${cleaned}`;
+}
+
+function shouldRetryWithRawAuthorization(
+  status: number,
+  message: string,
+  token: string,
+  authorization: string
+) {
+  if (!token || /^Bearer\s+/i.test(token.trim()) || authorization === token) {
+    return false;
+  }
+
+  const normalized = message
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  return (
+    status === 401 ||
+    status === 403 ||
+    normalized.includes("no tiene permitido") ||
+    normalized.includes("not allowed") ||
+    normalized.includes("forbidden")
+  );
+}
+
 async function firmaSeguroRequest<T>(
   path: string,
   options: RequestOptions = {}
 ): Promise<T> {
   const config = getFirmaSeguroConfig();
-  const headers: Record<string, string> = {
+  const baseHeaders: Record<string, string> = {
     Accept: "application/json",
   };
 
   let body: BodyInit | undefined;
   if (options.body !== undefined) {
-    headers["Content-Type"] = "application/json";
+    baseHeaders["Content-Type"] = "application/json";
     body = JSON.stringify(options.body);
   }
 
-  if (options.token) {
-    headers.Authorization = `Bearer ${options.token}`;
+  const requestUrl = `${config.baseUrl}${path}`;
+  const method = options.method || "GET";
+  const authorization = options.token
+    ? buildAuthorizationHeader(options.token)
+    : "";
+
+  async function execute(authorizationHeader: string) {
+    const headers = { ...baseHeaders };
+    if (authorizationHeader) {
+      headers.Authorization = authorizationHeader;
+    }
+
+    const response = await fetch(requestUrl, {
+      method,
+      headers,
+      body,
+      cache: "no-store",
+    });
+    const payload = await parseResponse(response);
+    return { response, payload };
   }
 
-  const response = await fetch(`${config.baseUrl}${path}`, {
-    method: options.method || "GET",
-    headers,
-    body,
-    cache: "no-store",
-  });
-  const payload = await parseResponse(response);
+  let { response, payload } = await execute(authorization);
 
   if (!response.ok) {
-    const message = getFirmaSeguroErrorMessage(response.status, payload);
+    let message = getFirmaSeguroErrorMessage(response.status, payload);
+    if (
+      options.token &&
+      shouldRetryWithRawAuthorization(
+        response.status,
+        message,
+        options.token,
+        authorization
+      )
+    ) {
+      const retry = await execute(buildAuthorizationHeader(options.token, true));
+      response = retry.response;
+      payload = retry.payload;
+      message = getFirmaSeguroErrorMessage(response.status, payload);
+    }
+
+    if (response.ok) {
+      return payload as T;
+    }
+
     throw new FirmaSeguroApiError(message, response.status, payload);
   }
 
