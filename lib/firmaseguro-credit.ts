@@ -506,12 +506,6 @@ async function runWithFirmaSeguroAuth<T>(
   operation: (token: string) => Promise<T>
 ) {
   let auth = await firmaSeguroSignIn();
-  const authSource =
-    typeof auth.payload === "object" &&
-    auth.payload !== null &&
-    !Array.isArray(auth.payload)
-      ? String((auth.payload as Record<string, unknown>).source || "")
-      : "";
 
   try {
     return {
@@ -524,8 +518,7 @@ async function runWithFirmaSeguroAuth<T>(
       config.email &&
         config.password &&
         config.authMode !== "token" &&
-        config.authMode !== "access_token" &&
-        authSource !== "FIRMASEGURO_ACCESS_TOKEN"
+        config.authMode !== "access_token"
     );
 
     if (
@@ -602,10 +595,27 @@ async function createFirmaSeguroProcess(
         ? await firmaSeguroCreateFullByCompany(token, requestPayload)
         : await firmaSeguroCreateFull(token, requestPayload);
     } catch (error) {
-      if (
-        endpoint !== "create-full-by-company" ||
-        !isFirmaSeguroPermissionError(error)
-      ) {
+      const canTryCompanyEndpoint =
+        endpoint === "create-full" &&
+        Boolean(config.nit) &&
+        (isFirmaSeguroPermissionError(error) ||
+          isFirmaSeguroUnauthorizedError(error));
+
+      if (canTryCompanyEndpoint) {
+        requestPayload = buildCreateFullByCompanyPayload(
+          credito,
+          person,
+          pdfBase64,
+          callbackUrl
+        );
+        endpoint = "create-full-by-company";
+        return firmaSeguroCreateFullByCompany(token, requestPayload);
+      }
+
+      const canTryDefaultEndpoint =
+        endpoint === "create-full-by-company" && isFirmaSeguroPermissionError(error);
+
+      if (!canTryDefaultEndpoint) {
         throw error;
       }
 

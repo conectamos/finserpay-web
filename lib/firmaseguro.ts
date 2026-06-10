@@ -72,13 +72,21 @@ function readNumberEnv(name: string, fallback: number) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
 }
 
-function readBooleanEnv(name: string, fallback = false) {
+function readOptionalBooleanEnv(name: string) {
   const value = readEnv(name).toLowerCase();
   if (!value) {
-    return fallback;
+    return null;
   }
 
-  return ["1", "true", "yes", "si", "on"].includes(value);
+  if (["1", "true", "yes", "si", "on"].includes(value)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(value)) {
+    return false;
+  }
+
+  return null;
 }
 
 function normalizeBaseUrl(value: string) {
@@ -113,6 +121,10 @@ export function getFirmaSeguroConfig(): FirmaSeguroConfig {
   const callbackUrl =
     explicitCallback ||
     (publicBaseUrl ? `${publicBaseUrl}/api/firma-seguro/callback` : "");
+  const nit = readEnv("FIRMASEGURO_NIT") || null;
+  const explicitCompanyEndpoint = readOptionalBooleanEnv(
+    "FIRMASEGURO_USE_COMPANY_ENDPOINT"
+  );
 
   return {
     baseUrl: normalizeBaseUrl(readEnv("FIRMASEGURO_BASE_URL")),
@@ -120,8 +132,8 @@ export function getFirmaSeguroConfig(): FirmaSeguroConfig {
     email: readEnv("FIRMASEGURO_EMAIL"),
     password: readEnv("FIRMASEGURO_PASSWORD"),
     authMode: readEnv("FIRMASEGURO_AUTH_MODE").toLowerCase() || "auto",
-    nit: readEnv("FIRMASEGURO_NIT") || null,
-    useCompanyEndpoint: readBooleanEnv("FIRMASEGURO_USE_COMPANY_ENDPOINT"),
+    nit,
+    useCompanyEndpoint: explicitCompanyEndpoint ?? Boolean(nit),
     processTypeId: readNumberEnv("FIRMASEGURO_PROCESS_TYPE_ID", 3),
     signatureMethodId: readNumberEnv("FIRMASEGURO_SIGNATURE_METHOD_ID", 2),
     authMethodId: readNumberEnv("FIRMASEGURO_AUTH_METHOD_ID", 4),
@@ -600,10 +612,6 @@ export async function firmaSeguroSignIn(
       500,
       null
     );
-  }
-
-  if (config.accessToken && !options.ignoreAccessToken && !emailOnly) {
-    return buildAccessTokenAuthPayload(config.accessToken);
   }
 
   if (config.email && config.password) {
