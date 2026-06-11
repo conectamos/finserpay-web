@@ -155,12 +155,34 @@ function valueOrDash(value: string | number | null | undefined) {
   return cleaned || "-";
 }
 
+function pageLeft(doc: PDFKit.PDFDocument) {
+  return doc.page.margins.left;
+}
+
+function pageRight(doc: PDFKit.PDFDocument) {
+  return doc.page.width - doc.page.margins.right;
+}
+
+function pageBottom(doc: PDFKit.PDFDocument) {
+  return doc.page.height - doc.page.margins.bottom;
+}
+
+function contentWidth(doc: PDFKit.PDFDocument) {
+  return doc.page.width - doc.page.margins.left - doc.page.margins.right;
+}
+
+function resetFlow(doc: PDFKit.PDFDocument) {
+  doc.x = pageLeft(doc);
+}
+
 function ensureSpace(doc: PDFKit.PDFDocument, height: number) {
-  if (doc.y + height <= doc.page.height - doc.page.margins.bottom) {
+  if (doc.y + height <= pageBottom(doc)) {
+    resetFlow(doc);
     return;
   }
 
   doc.addPage();
+  resetFlow(doc);
 }
 
 function documentTitle(
@@ -170,23 +192,29 @@ function documentTitle(
   fonts: { regular: string; bold: string }
 ) {
   doc.addPage();
+  const x = pageLeft(doc);
+  const width = contentWidth(doc);
+  const y = doc.page.margins.top;
+
   doc
     .font(fonts.bold)
     .fontSize(8)
     .fillColor("#0F766E")
-    .text(label.toUpperCase(), 42, 42, { width: 511 });
+    .text(label.toUpperCase(), x, y, { width });
   doc
     .font(fonts.bold)
-    .fontSize(16)
+    .fontSize(15)
     .fillColor("#0F172A")
-    .text(title.toUpperCase(), 42, 60, { width: 511, lineGap: 2 });
+    .text(title.toUpperCase(), x, y + 18, { width, lineGap: 2 });
+  const lineY = doc.y + 10;
   doc
     .strokeColor("#D1FAE5")
     .lineWidth(1)
-    .moveTo(42, doc.y + 8)
-    .lineTo(553, doc.y + 8)
+    .moveTo(x, lineY)
+    .lineTo(pageRight(doc), lineY)
     .stroke();
-  doc.y += 24;
+  doc.y = lineY + 22;
+  resetFlow(doc);
 }
 
 function bulletParagraph(
@@ -194,7 +222,36 @@ function bulletParagraph(
   items: string[],
   fonts: { regular: string; bold: string }
 ) {
-  paragraph(doc, items.map((item) => `- ${item}`).join("\n"), fonts);
+  const x = pageLeft(doc);
+  const width = contentWidth(doc);
+
+  items.forEach((item) => {
+    doc.font(fonts.regular).fontSize(9.6);
+    const textWidth = width - 18;
+    const height = doc.heightOfString(item, {
+      width: textWidth,
+      lineGap: 3,
+    });
+
+    ensureSpace(doc, Math.max(18, height) + 6);
+    const y = doc.y;
+    doc.font(fonts.bold).fontSize(9.6).fillColor("#0F766E").text("-", x, y, {
+      width: 10,
+    });
+    doc
+      .font(fonts.regular)
+      .fontSize(9.6)
+      .fillColor("#1F2937")
+      .text(item, x + 18, y, {
+        width: textWidth,
+        lineGap: 3,
+      });
+    doc.y = y + Math.max(18, height) + 6;
+    resetFlow(doc);
+  });
+
+  doc.moveDown(0.3);
+  resetFlow(doc);
 }
 
 function dataUrlToImageBuffer(value: string | null | undefined) {
@@ -224,15 +281,15 @@ function photoEvidenceBlock(
   const cedulaRespaldo = dataUrlToImageBuffer(
     credito.contratoCedulaRespaldoDataUrl
   );
-  const boxHeight = 150;
+  const boxHeight = 184;
 
   ensureSpace(doc, boxHeight + 12);
-  const x = doc.page.margins.left;
+  const x = pageLeft(doc);
   const y = doc.y;
-  const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const width = contentWidth(doc);
   doc
     .save()
-    .roundedRect(x, y, width, boxHeight, 12)
+    .roundedRect(x, y, width, boxHeight, 14)
     .fill("#F8FAFC")
     .restore();
   doc
@@ -246,21 +303,24 @@ function photoEvidenceBlock(
     { label: "Cedula frente", buffer: cedulaFrente },
     { label: "Cedula respaldo", buffer: cedulaRespaldo },
   ];
-  const slotWidth = 154;
+  const gap = 12;
+  const slotWidth = (width - 28 - gap * 2) / 3;
 
   imageSlots.forEach((slot, index) => {
-    const slotX = x + 14 + index * (slotWidth + 12);
-    const slotY = y + 34;
+    const slotX = x + 14 + index * (slotWidth + gap);
+    const slotY = y + 40;
     doc
       .save()
-      .roundedRect(slotX, slotY, slotWidth, 92, 10)
+      .roundedRect(slotX, slotY, slotWidth, 112, 10)
       .fill("#FFFFFF")
+      .strokeColor("#E2E8F0")
+      .stroke()
       .restore();
 
     if (slot.buffer) {
       try {
         doc.image(slot.buffer, slotX + 8, slotY + 8, {
-          fit: [slotWidth - 16, 72],
+          fit: [slotWidth - 16, 92],
           align: "center",
           valign: "center",
         });
@@ -269,7 +329,7 @@ function photoEvidenceBlock(
           .font(fonts.regular)
           .fontSize(8)
           .fillColor("#94A3B8")
-          .text("Imagen no disponible", slotX + 10, slotY + 36, {
+          .text("Imagen no disponible", slotX + 10, slotY + 48, {
             width: slotWidth - 20,
             align: "center",
           });
@@ -279,7 +339,7 @@ function photoEvidenceBlock(
         .font(fonts.regular)
         .fontSize(8)
         .fillColor("#94A3B8")
-        .text("[ PENDIENTE ]", slotX + 10, slotY + 36, {
+        .text("[ PENDIENTE ]", slotX + 10, slotY + 48, {
           width: slotWidth - 20,
           align: "center",
         });
@@ -289,13 +349,14 @@ function photoEvidenceBlock(
       .font(fonts.bold)
       .fontSize(7)
       .fillColor("#475569")
-      .text(slot.label.toUpperCase(), slotX + 8, slotY + 102, {
+      .text(slot.label.toUpperCase(), slotX + 8, slotY + 124, {
         width: slotWidth - 16,
         align: "center",
       });
   });
 
   doc.y = y + boxHeight + 8;
+  resetFlow(doc);
 }
 
 function addElectronicSignatureClause(
@@ -326,20 +387,22 @@ function sectionTitle(
   fonts: { regular: string; bold: string }
 ) {
   ensureSpace(doc, 58);
+  resetFlow(doc);
   doc.moveDown(0.8);
   doc
     .font(fonts.bold)
-    .fontSize(12)
+    .fontSize(11)
     .fillColor("#0F766E")
-    .text(title.toUpperCase());
+    .text(title.toUpperCase(), pageLeft(doc), doc.y, { width: contentWidth(doc) });
   doc.moveDown(0.35);
   doc
     .strokeColor("#D1FAE5")
     .lineWidth(1)
-    .moveTo(doc.page.margins.left, doc.y)
-    .lineTo(doc.page.width - doc.page.margins.right, doc.y)
+    .moveTo(pageLeft(doc), doc.y)
+    .lineTo(pageRight(doc), doc.y)
     .stroke();
   doc.moveDown(0.7);
+  resetFlow(doc);
 }
 
 function paragraph(
@@ -347,16 +410,30 @@ function paragraph(
   text: string,
   fonts: { regular: string; bold: string }
 ) {
-  ensureSpace(doc, 50);
+  const width = contentWidth(doc);
+  const x = pageLeft(doc);
   doc
     .font(fonts.regular)
-    .fontSize(9.3)
+    .fontSize(10)
+    .fillColor("#1F2937");
+  const height = doc.heightOfString(text, {
+    width,
+    align: "justify",
+    lineGap: 4,
+  });
+
+  ensureSpace(doc, Math.min(Math.max(height + 10, 42), pageBottom(doc) - doc.page.margins.top));
+  doc
+    .font(fonts.regular)
+    .fontSize(10)
     .fillColor("#1F2937")
-    .text(text, {
+    .text(text, x, doc.y, {
+      width,
       align: "justify",
-      lineGap: 3,
+      lineGap: 4,
     });
   doc.moveDown(0.45);
+  resetFlow(doc);
 }
 
 function keyValueGrid(
@@ -364,44 +441,67 @@ function keyValueGrid(
   items: Array<{ label: string; value: string }>,
   fonts: { regular: string; bold: string }
 ) {
-  const startX = doc.page.margins.left;
-  const colWidth = 250;
-  const rowHeight = 48;
+  const x = pageLeft(doc);
+  const width = contentWidth(doc);
+  const labelWidth = 132;
+  const valueWidth = width - labelWidth;
 
   items.forEach((item, index) => {
-    const col = index % 2;
-    if (col === 0) {
-      ensureSpace(doc, rowHeight + 10);
-    }
+    const value = item.value || "-";
+    doc.font(fonts.bold).fontSize(7.8);
+    const labelHeight = doc.heightOfString(item.label.toUpperCase(), {
+      width: labelWidth - 18,
+      lineGap: 2,
+    });
+    doc.font(fonts.regular).fontSize(9.4);
+    const valueHeight = doc.heightOfString(value, {
+      width: valueWidth - 18,
+      lineGap: 2,
+    });
+    const rowHeight = Math.max(32, Math.ceil(Math.max(labelHeight, valueHeight) + 16));
 
-    const x = startX + col * (colWidth + 14);
+    ensureSpace(doc, rowHeight + 2);
     const y = doc.y;
     doc
       .save()
-      .roundedRect(x, y, colWidth, rowHeight, 10)
-      .fill("#F8FAFC")
+      .rect(x, y, width, rowHeight)
+      .fill(index % 2 === 0 ? "#FFFFFF" : "#F8FAFC")
       .restore();
+    doc.save().rect(x, y, labelWidth, rowHeight).fill("#F1F5F9").restore();
+    doc
+      .strokeColor("#E2E8F0")
+      .lineWidth(0.7)
+      .rect(x, y, width, rowHeight)
+      .stroke();
+    doc
+      .strokeColor("#E2E8F0")
+      .moveTo(x + labelWidth, y)
+      .lineTo(x + labelWidth, y + rowHeight)
+      .stroke();
+
     doc
       .font(fonts.bold)
-      .fontSize(7.5)
+      .fontSize(7.8)
       .fillColor("#64748B")
-      .text(item.label.toUpperCase(), x + 12, y + 10, {
-        width: colWidth - 24,
+      .text(item.label.toUpperCase(), x + 10, y + 10, {
+        width: labelWidth - 18,
+        lineGap: 2,
       });
     doc
       .font(fonts.bold)
-      .fontSize(10.5)
+      .fontSize(9.4)
       .fillColor("#0F172A")
-      .text(item.value || "-", x + 12, y + 24, {
-        width: colWidth - 24,
-        height: 18,
-        ellipsis: true,
+      .text(value, x + labelWidth + 10, y + 9, {
+        width: valueWidth - 18,
+        lineGap: 2,
       });
 
-    if (col === 1 || index === items.length - 1) {
-      doc.y = y + rowHeight + 10;
-    }
+    doc.y = y + rowHeight;
+    resetFlow(doc);
   });
+
+  doc.moveDown(0.8);
+  resetFlow(doc);
 }
 
 function signatureBlock(
@@ -410,14 +510,15 @@ function signatureBlock(
   value: string,
   fonts: { regular: string; bold: string }
 ) {
-  ensureSpace(doc, 116);
-  const x = doc.page.margins.left;
+  const boxHeight = 154;
+  ensureSpace(doc, boxHeight + 22);
+  const x = pageLeft(doc);
   const y = doc.y + 12;
-  const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const width = contentWidth(doc);
 
   doc
     .save()
-    .roundedRect(x, y, width, 92, 12)
+    .roundedRect(x, y, width, boxHeight, 12)
     .strokeColor("#CBD5E1")
     .stroke()
     .restore();
@@ -427,21 +528,27 @@ function signatureBlock(
     .fillColor("#64748B")
     .text(label.toUpperCase(), x + 14, y + 12);
   doc
-    .font(fonts.regular)
-    .fontSize(9)
-    .fillColor("#334155")
-    .text(value, x + 14, y + 30, { width: width - 28 });
+    .font(fonts.bold)
+    .fontSize(10)
+    .fillColor("#0F766E")
+    .text("Firma electronica certificada por FirmaSeguro", x + 14, y + 36, {
+      width: width - 28,
+    });
   doc
     .moveTo(x + 14, y + 68)
     .lineTo(x + width - 14, y + 68)
     .strokeColor("#94A3B8")
     .stroke();
   doc
-    .font(fonts.bold)
-    .fontSize(8)
-    .fillColor("#475569")
-    .text("Firma electronica certificada por FirmaSeguro", x + 14, y + 74);
-  doc.y = y + 106;
+    .font(fonts.regular)
+    .fontSize(8.8)
+    .fillColor("#334155")
+    .text(value, x + 14, y + 82, {
+      width: width - 28,
+      lineGap: 2,
+    });
+  doc.y = y + boxHeight + 14;
+  resetFlow(doc);
 }
 
 function getSnapshotRecord(snapshot: unknown, key: string) {
@@ -461,12 +568,50 @@ function getPagareNumber(credito: CreditForFirmaSeguroPdf) {
   return typeof numero === "string" && numero.trim() ? numero.trim() : credito.folio;
 }
 
+function addDocumentFooters(
+  doc: PDFKit.PDFDocument,
+  fonts: { regular: string; bold: string },
+  folio: string
+) {
+  const range = doc.bufferedPageRange();
+
+  for (let index = range.start; index < range.start + range.count; index += 1) {
+    doc.switchToPage(index);
+    const y = pageBottom(doc) + 18;
+    doc
+      .strokeColor("#E2E8F0")
+      .lineWidth(0.6)
+      .moveTo(pageLeft(doc), y - 8)
+      .lineTo(pageRight(doc), y - 8)
+      .stroke();
+    doc
+      .font(fonts.regular)
+      .fontSize(7.5)
+      .fillColor("#64748B")
+      .text(`FINSER PAY S.A.S. - Paquete documental ${folio}`, pageLeft(doc), y, {
+        width: contentWidth(doc) / 2,
+      });
+    doc
+      .font(fonts.regular)
+      .fontSize(7.5)
+      .fillColor("#64748B")
+      .text(`Pagina ${index - range.start + 1} de ${range.count}`, pageLeft(doc), y, {
+        width: contentWidth(doc),
+        align: "right",
+      });
+  }
+
+  doc.switchToPage(range.start + range.count - 1);
+  resetFlow(doc);
+}
+
 export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf) {
   const fonts = getPdfFonts();
   const doc = new PDFDocument({
     size: "A4",
-    margin: 42,
+    margin: 54,
     compress: true,
+    bufferPages: true,
     font: fonts.regular,
     info: {
       Title: `Paquete documental FINSER PAY ${credito.folio}`,
@@ -488,28 +633,38 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   const modelo = valueOrDash(credito.equipoModelo || equipo);
   const saldoFinanciado = credito.montoCredito || 0;
   const firmaDigital = "Firma electronica certificada por FirmaSeguro";
+  const coverX = pageLeft(doc);
+  const coverY = doc.page.margins.top;
+  const coverWidth = contentWidth(doc);
 
-  doc.save().roundedRect(42, 42, 511, 126, 22).fill("#F8FAFC").restore();
-  doc.save().roundedRect(42, 42, 8, 126, 4).fill("#111827").restore();
-  doc.font(fonts.bold).fontSize(10).fillColor("#0F766E").text("FINSER PAY", 66, 58);
+  doc.save().roundedRect(coverX, coverY, coverWidth, 136, 18).fill("#F8FAFC").restore();
+  doc.save().roundedRect(coverX, coverY, 8, 136, 4).fill("#111827").restore();
+  doc
+    .font(fonts.bold)
+    .fontSize(10)
+    .fillColor("#0F766E")
+    .text("FINSER PAY", coverX + 24, coverY + 16);
   doc
     .font(fonts.bold)
     .fontSize(24)
     .fillColor("#0F172A")
-    .text("Paquete legal FirmaSeguro", 66, 78, { width: 430 });
+    .text("Paquete legal FirmaSeguro", coverX + 24, coverY + 38, {
+      width: coverWidth - 48,
+    });
   doc
     .font(fonts.regular)
-    .fontSize(10)
+    .fontSize(9.4)
     .fillColor("#475569")
     .text(
       `Folio: ${credito.folio}\nCliente: ${credito.clienteNombre}\nDocumento: ${
         credito.clienteDocumento || "-"
       }\nSede: ${credito.sede.nombre}\nAsesor: ${asesor}`,
-      66,
-      116
+      coverX + 24,
+      coverY + 78,
+      { width: coverWidth - 48, lineGap: 2 }
     );
 
-  doc.y = 194;
+  doc.y = coverY + 166;
   sectionTitle(doc, "Orden de firma", fonts);
   paragraph(
     doc,
@@ -920,6 +1075,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     fonts
   );
 
+  addDocumentFooters(doc, fonts, credito.folio);
   doc.end();
   return bufferPromise;
 }
