@@ -213,6 +213,15 @@ function cleanName(value: string | null | undefined) {
     .trim();
 }
 
+function ensureProviderName(value: string | null | undefined, fallback: string) {
+  const cleaned = cleanName(value).slice(0, 50).trim();
+  if (cleaned.length >= 2) {
+    return cleaned;
+  }
+
+  return fallback;
+}
+
 function normalizeEmail(value: string | null | undefined) {
   const email = cleanText(value).toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
@@ -232,13 +241,17 @@ function normalizePhone(value: string | null | undefined) {
 
 function splitClientName(credito: FirmaSeguroCredit): PersonPayload {
   const nameParts = cleanName(credito.clienteNombre).split(" ").filter(Boolean);
-  const firstName =
-    cleanName(credito.clientePrimerNombre) || nameParts[0] || "Cliente";
-  const firstLastName =
+  const firstName = ensureProviderName(
+    cleanName(credito.clientePrimerNombre) || nameParts[0] || "Cliente",
+    "Cliente"
+  );
+  const firstLastName = ensureProviderName(
     cleanName(credito.clientePrimerApellido) ||
     nameParts.slice(1).join(" ") ||
     nameParts[0] ||
-    "Finser";
+    "Finser",
+    "Finser"
+  );
 
   return {
     firstName,
@@ -316,8 +329,12 @@ function getFirmaSeguroDelivery(person: PersonPayload) {
   const sendByWhatsApp = Boolean(
     person.phone && (forceWhatsapp || (!forceEmail && !sendByEmail))
   );
-  const notifyByEmail = Boolean(config.notifyByEmail && signerEmail);
-  const notifyByWhatsApp = Boolean(config.notifyByWhatsApp && person.phone);
+  const notifyByEmail = Boolean(
+    config.notifyByEmail && signerEmail && sendByEmail
+  );
+  const notifyByWhatsApp = Boolean(
+    config.notifyByWhatsApp && person.phone && sendByWhatsApp
+  );
   const emailAuthMethodId =
     getOptionalEnvNumber("FIRMASEGURO_EMAIL_AUTH_METHOD_ID") ||
     config.authMethodId;
@@ -527,13 +544,36 @@ function isFirmaSeguroBalanceError(error: unknown) {
   );
 }
 
+function needsFirmaSeguroConfigContext(error: unknown) {
+  if (!(error instanceof FirmaSeguroApiError)) {
+    return false;
+  }
+
+  if (isFirmaSeguroBalanceError(error)) {
+    return true;
+  }
+
+  const raw = [
+    error.message,
+    typeof error.detail === "string" ? error.detail : "",
+    JSON.stringify(error.detail || {}),
+  ].join(" ");
+  const normalized = raw.toLowerCase();
+
+  return (
+    normalized.includes("value cannot be null") ||
+    normalized.includes("parameter 'input'") ||
+    normalized.includes('parameter "input"')
+  );
+}
+
 function addFirmaSeguroConfigContext(
   error: unknown,
   config: ReturnType<typeof getFirmaSeguroConfig>,
   endpoint: string,
   delivery?: ReturnType<typeof getFirmaSeguroDelivery>
 ) {
-  if (!(error instanceof FirmaSeguroApiError) || !isFirmaSeguroBalanceError(error)) {
+  if (!(error instanceof FirmaSeguroApiError) || !needsFirmaSeguroConfigContext(error)) {
     return error;
   }
 
@@ -613,7 +653,6 @@ function buildCreateFullByCompanyPayload(
       document_type_id: 1,
       base64_string: pdfBase64,
     },
-    documentsOnlyRead: [],
   };
 }
 
@@ -675,7 +714,6 @@ function buildCreateFullPayload(
       documentTypeId: 1,
       base64String: pdfBase64,
     },
-    documentsOnlyRead: [],
   };
 }
 
