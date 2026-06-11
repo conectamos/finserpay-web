@@ -310,7 +310,9 @@ function getFirmaSeguroDelivery(person: PersonPayload) {
   const forceWhatsapp = ["whatsapp", "otp_whatsapp", "otp-whatsapp"].includes(channel);
   const forceEmail = ["email", "otp_email", "otp-email"].includes(channel);
   const sendByEmail = Boolean(signerEmail && (forceEmail || !forceWhatsapp));
-  const sendByWhatsApp = Boolean(!sendByEmail && person.phone);
+  const sendByWhatsApp = Boolean(
+    person.phone && (forceWhatsapp || (!forceEmail && !sendByEmail))
+  );
   const emailAuthMethodId =
     getOptionalEnvNumber("FIRMASEGURO_EMAIL_AUTH_METHOD_ID") ||
     config.authMethodId;
@@ -328,8 +330,10 @@ function optionalText(value: string | null | undefined) {
   return cleaned || undefined;
 }
 
-function getCreditPackageBalanceTypeId() {
-  return 2;
+function getCreditPackageBalanceTypeId(
+  config: ReturnType<typeof getFirmaSeguroConfig>
+) {
+  return config.balanceTypeId;
 }
 
 function isFirmaSeguroBalanceError(error: unknown) {
@@ -357,15 +361,17 @@ function isFirmaSeguroBalanceError(error: unknown) {
 function addFirmaSeguroConfigContext(
   error: unknown,
   config: ReturnType<typeof getFirmaSeguroConfig>,
-  endpoint: string
+  endpoint: string,
+  delivery?: ReturnType<typeof getFirmaSeguroDelivery>
 ) {
   if (!(error instanceof FirmaSeguroApiError) || !isFirmaSeguroBalanceError(error)) {
     return error;
   }
 
-  const balanceTypeId = getCreditPackageBalanceTypeId();
+  const balanceTypeId = getCreditPackageBalanceTypeId(config);
+  const authMethodId = delivery?.authMethodId ?? config.authMethodId;
   return new FirmaSeguroApiError(
-    `${error.message}. Configuracion enviada: signatureMethodId=${config.signatureMethodId}, authMethodId=${config.authMethodId}, balanceTypeId=${balanceTypeId}`,
+    `${error.message}. Configuracion enviada: signatureMethodId=${config.signatureMethodId}, authMethodId=${authMethodId}, balanceTypeId=${balanceTypeId}, email=${delivery?.sendByEmail ? "si" : "no"}, whatsapp=${delivery?.sendByWhatsApp ? "si" : "no"}`,
     error.status,
     {
       ...(typeof error.detail === "object" && error.detail
@@ -374,8 +380,10 @@ function addFirmaSeguroConfigContext(
       endpoint,
       firmaSeguroConfig: {
         signatureMethodId: config.signatureMethodId,
-        authMethodId: config.authMethodId,
+        authMethodId,
         balanceTypeId,
+        sendByEmail: delivery?.sendByEmail ?? false,
+        sendByWhatsApp: delivery?.sendByWhatsApp ?? false,
       },
     }
   );
@@ -395,7 +403,7 @@ function buildCreateFullByCompanyPayload(
     process: {
       process_type_id: config.processTypeId,
       signature_method_id: config.signatureMethodId,
-      balance_type_id: getCreditPackageBalanceTypeId(),
+      balance_type_id: getCreditPackageBalanceTypeId(config),
       is_in_order: false,
       tags: getFirmaSeguroTags(credito),
       is_read: true,
@@ -418,8 +426,8 @@ function buildCreateFullByCompanyPayload(
         rol: "DEUDOR",
         authentication_method_id: delivery.authMethodId,
         indicative: "57",
-        number: person.phone || undefined,
-        email: delivery.signerEmail,
+        ...(person.phone ? { number: person.phone } : {}),
+        ...(delivery.signerEmail ? { email: delivery.signerEmail } : {}),
         first_name: person.firstName,
         second_name: optionalText(person.secondName),
         first_last_name: person.firstLastName,
@@ -464,7 +472,7 @@ function buildCreateFullPayload(
     callback: callbackUrl,
     subjectEmail: `Firma documentos FINSER PAY ${credito.folio}`,
     messageEmail: buildFirmaSeguroMessage(credito),
-    balanceTypeId: getCreditPackageBalanceTypeId(),
+    balanceTypeId: getCreditPackageBalanceTypeId(config),
     signatures: [
       {
         order: 1,
@@ -472,13 +480,15 @@ function buildCreateFullPayload(
         authenticationMethodId: delivery.authMethodId,
         signerSignatureMethodId: config.signatureMethodId,
         contactInformation: {
-          phone: person.phone
+          ...(person.phone
             ? {
-                indicative: "57",
-                number: person.phone,
+                phone: {
+                  indicative: "57",
+                  number: person.phone,
+                },
               }
-            : undefined,
-          email: delivery.signerEmail,
+            : {}),
+          ...(delivery.signerEmail ? { email: delivery.signerEmail } : {}),
           person: {
             firstName: person.firstName,
             firstLastName: person.firstLastName,
@@ -665,8 +675,13 @@ async function createFirmaSeguroProcess(
   }
   const delivery = getFirmaSeguroDelivery(person);
   if (!delivery.sendByEmail && !delivery.sendByWhatsApp) {
+    const message = cleanText(process.env.FIRMASEGURO_DELIVERY_CHANNEL)
+      .toLowerCase()
+      .includes("email")
+      ? "El credito no tiene correo valido del cliente para enviar OTP Email"
+      : "El credito no tiene correo ni telefono valido del cliente para enviar OTP";
     throw new FirmaSeguroApiError(
-      "El credito no tiene correo ni telefono valido del cliente para enviar OTP",
+      message,
       400,
       null
     );
@@ -739,7 +754,7 @@ async function createFirmaSeguroProcess(
     auth = response.auth;
     createPayload = response.result;
   } catch (error) {
-    throw addFirmaSeguroConfigContext(error, config, endpoint);
+    throw addFirmaSeguroConfigContext(error, config, endpoint, delivery);
   }
   const authPayload = auth.payload;
   const processUuid = extractFirmaSeguroUuid(createPayload);
