@@ -553,6 +553,14 @@ function needsFirmaSeguroConfigContext(error: unknown) {
     return true;
   }
 
+  return isFirmaSeguroInputError(error);
+}
+
+function isFirmaSeguroInputError(error: unknown) {
+  if (!(error instanceof FirmaSeguroApiError)) {
+    return false;
+  }
+
   const raw = [
     error.message,
     typeof error.detail === "string" ? error.detail : "",
@@ -624,8 +632,12 @@ function buildCreateFullByCompanyPayload(
       isSendByWhatsApp: delivery.notifyByWhatsApp,
       deadline_days: config.deadlineDays,
       callback: callbackUrl,
-      subject_email: `Firma documentos FINSER PAY ${credito.folio}`,
-      message_email: buildFirmaSeguroMessage(credito),
+      ...(delivery.notifyByEmail
+        ? {
+            subject_email: `Firma documentos FINSER PAY ${credito.folio}`,
+            message_email: buildFirmaSeguroMessage(credito),
+          }
+        : {}),
       process_name: `Credito FINSER PAY ${credito.folio}`,
       nit: config.nit,
       email_user: config.email,
@@ -679,15 +691,18 @@ function buildCreateFullPayload(
     isHandWritten: config.handwrittenEvidence,
     isPhotographic: config.photographicEvidence,
     callback: callbackUrl,
-    subjectEmail: `Firma documentos FINSER PAY ${credito.folio}`,
-    messageEmail: buildFirmaSeguroMessage(credito),
+    ...(delivery.notifyByEmail
+      ? {
+          subjectEmail: `Firma documentos FINSER PAY ${credito.folio}`,
+          messageEmail: buildFirmaSeguroMessage(credito),
+        }
+      : {}),
     balanceTypeId: getCreditPackageBalanceTypeId(config),
     signatures: [
       {
         order: 1,
         rol: "DEUDOR",
         authenticationMethodId: delivery.authMethodId,
-        signerSignatureMethodId: config.signatureMethodId,
         contactInformation: {
           ...(person.phone
             ? {
@@ -922,8 +937,9 @@ async function createFirmaSeguroProcess(
     } catch (error) {
       const canTryCompanyEndpoint =
         endpoint === "create-full" &&
-        Boolean(config.nit && config.useCompanyEndpoint) &&
-        (isFirmaSeguroPermissionError(error) ||
+        Boolean(config.nit) &&
+        (isFirmaSeguroInputError(error) ||
+          isFirmaSeguroPermissionError(error) ||
           isFirmaSeguroUnauthorizedError(error));
 
       if (canTryCompanyEndpoint) {
