@@ -14,6 +14,7 @@ import {
   firmaSeguroCreateFull,
   firmaSeguroCreateFullByCompany,
   FirmaSeguroApiError,
+  firmaSeguroGetAuthenticationTypes,
   firmaSeguroGetDocumentsByUuid,
   firmaSeguroGetProcessStatus,
   firmaSeguroGetSignaturesStatus,
@@ -322,6 +323,7 @@ function getFirmaSeguroDelivery(person: PersonPayload) {
     sendByEmail,
     sendByWhatsApp,
     authMethodId: sendByEmail ? emailAuthMethodId : config.authMethodId,
+    authMethodSource: sendByEmail ? "email-env" : "default",
   };
 }
 
@@ -334,6 +336,113 @@ function getCreditPackageBalanceTypeId(
   config: ReturnType<typeof getFirmaSeguroConfig>
 ) {
   return config.balanceTypeId;
+}
+
+function normalizeProviderText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function getProviderObjectId(record: Record<string, unknown>) {
+  const keys = [
+    "id",
+    "Id",
+    "ID",
+    "authenticationMethodId",
+    "AuthenticationMethodId",
+    "authentication_method_id",
+    "autenticationTypeId",
+    "AutenticationTypeId",
+    "autentication_type_id",
+  ];
+
+  for (const key of keys) {
+    const numeric = Number(record[key]);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric;
+    }
+  }
+
+  return null;
+}
+
+function getProviderObjectText(record: Record<string, unknown>) {
+  return Object.entries(record)
+    .filter(([key, value]) => {
+      if (typeof value !== "string") {
+        return false;
+      }
+      return /name|nombre|description|descripcion|method|metodo|type|tipo/i.test(
+        key
+      );
+    })
+    .map(([, value]) => value)
+    .join(" ");
+}
+
+function findEmailAuthMethodId(value: unknown): number | null {
+  const candidates: Array<{ id: number; score: number }> = [];
+
+  function visit(item: unknown) {
+    if (Array.isArray(item)) {
+      item.forEach(visit);
+      return;
+    }
+
+    if (typeof item !== "object" || item === null) {
+      return;
+    }
+
+    const record = item as Record<string, unknown>;
+    const id = getProviderObjectId(record);
+    const text = normalizeProviderText(getProviderObjectText(record));
+    const isEmail = text.includes("email") || text.includes("correo");
+    const isOtherOtp =
+      text.includes("whatsapp") ||
+      text.includes("sms") ||
+      text.includes("llamada") ||
+      text.includes("call");
+
+    if (id && isEmail && !isOtherOtp) {
+      candidates.push({
+        id,
+        score: text.includes("otp") ? 2 : 1,
+      });
+    }
+
+    Object.values(record).forEach(visit);
+  }
+
+  visit(value);
+  candidates.sort((a, b) => b.score - a.score || a.id - b.id);
+  return candidates[0]?.id ?? null;
+}
+
+async function resolveFirmaSeguroDeliveryAuth(
+  token: string,
+  delivery: ReturnType<typeof getFirmaSeguroDelivery>
+): Promise<ReturnType<typeof getFirmaSeguroDelivery>> {
+  if (!delivery.sendByEmail) {
+    return delivery;
+  }
+
+  try {
+    const authenticationTypes = await firmaSeguroGetAuthenticationTypes(token);
+    const emailAuthMethodId = findEmailAuthMethodId(authenticationTypes);
+    if (!emailAuthMethodId) {
+      return delivery;
+    }
+
+    return {
+      ...delivery,
+      authMethodId: emailAuthMethodId,
+      authMethodSource: "provider-email-catalog",
+    };
+  } catch {
+    return delivery;
+  }
 }
 
 function isFirmaSeguroBalanceError(error: unknown) {
@@ -371,7 +480,7 @@ function addFirmaSeguroConfigContext(
   const balanceTypeId = getCreditPackageBalanceTypeId(config);
   const authMethodId = delivery?.authMethodId ?? config.authMethodId;
   return new FirmaSeguroApiError(
-    `${error.message}. Configuracion enviada: signatureMethodId=${config.signatureMethodId}, authMethodId=${authMethodId}, balanceTypeId=${balanceTypeId}, email=${delivery?.sendByEmail ? "si" : "no"}, whatsapp=${delivery?.sendByWhatsApp ? "si" : "no"}`,
+    `${error.message}. Configuracion enviada: signatureMethodId=${config.signatureMethodId}, authMethodId=${authMethodId}, balanceTypeId=${balanceTypeId}, email=${delivery?.sendByEmail ? "si" : "no"}, whatsapp=${delivery?.sendByWhatsApp ? "si" : "no"}, authSource=${delivery?.authMethodSource || "config"}`,
     error.status,
     {
       ...(typeof error.detail === "object" && error.detail
@@ -384,6 +493,7 @@ function addFirmaSeguroConfigContext(
         balanceTypeId,
         sendByEmail: delivery?.sendByEmail ?? false,
         sendByWhatsApp: delivery?.sendByWhatsApp ?? false,
+        authMethodSource: delivery?.authMethodSource,
       },
     }
   );
@@ -673,7 +783,7 @@ async function createFirmaSeguroProcess(
       null
     );
   }
-  const delivery = getFirmaSeguroDelivery(person);
+  let delivery = getFirmaSeguroDelivery(person);
   if (!delivery.sendByEmail && !delivery.sendByWhatsApp) {
     const message = cleanText(process.env.FIRMASEGURO_DELIVERY_CHANNEL)
       .toLowerCase()
@@ -691,18 +801,22 @@ async function createFirmaSeguroProcess(
   const pdf = await buildFirmaSeguroCreditPdf(credito);
   const pdfBase64 = pdf.toString("base64");
   const useCompanyEndpoint = Boolean(config.nit && config.useCompanyEndpoint);
-  let requestPayload = useCompanyEndpoint
-    ? buildCreateFullByCompanyPayload(
-        credito,
-        person,
-        pdfBase64,
-        callbackUrl,
-        delivery
-      )
-    : buildCreateFullPayload(credito, person, pdfBase64, callbackUrl, delivery);
+  let requestPayload: unknown = null;
   let endpoint = useCompanyEndpoint ? "create-full-by-company" : "create-full";
 
   const submitCreateRequest = async (token: string) => {
+    delivery = await resolveFirmaSeguroDeliveryAuth(token, delivery);
+    requestPayload =
+      endpoint === "create-full-by-company"
+        ? buildCreateFullByCompanyPayload(
+            credito,
+            person,
+            pdfBase64,
+            callbackUrl,
+            delivery
+          )
+        : buildCreateFullPayload(credito, person, pdfBase64, callbackUrl, delivery);
+
     try {
       return endpoint === "create-full-by-company"
         ? await firmaSeguroCreateFullByCompany(token, requestPayload)
