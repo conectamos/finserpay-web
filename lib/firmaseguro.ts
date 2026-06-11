@@ -15,6 +15,10 @@ export type FirmaSeguroConfig = {
   identificationTypeId: number;
   typePersonId: number;
   deadlineDays: number;
+  handwrittenEvidence: boolean;
+  photographicEvidence: boolean;
+  notifyByEmail: boolean;
+  notifyByWhatsApp: boolean;
   callbackUrl: string | null;
   callbackSecret: string | null;
 };
@@ -238,6 +242,14 @@ export function getFirmaSeguroConfig(): FirmaSeguroConfig {
     identificationTypeId: readNumberEnv("FIRMASEGURO_IDENTIFICATION_TYPE_ID", 1),
     typePersonId: readNumberEnv("FIRMASEGURO_TYPE_PERSON_ID", 1),
     deadlineDays: readNumberEnv("FIRMASEGURO_DEADLINE_DAYS", 5),
+    handwrittenEvidence:
+      readOptionalBooleanEnv("FIRMASEGURO_EVIDENCE_HANDWRITTEN") ?? true,
+    photographicEvidence:
+      readOptionalBooleanEnv("FIRMASEGURO_EVIDENCE_PHOTOGRAPHIC") ?? true,
+    notifyByEmail:
+      readOptionalBooleanEnv("FIRMASEGURO_NOTIFY_EMAIL") ?? true,
+    notifyByWhatsApp:
+      readOptionalBooleanEnv("FIRMASEGURO_NOTIFY_WHATSAPP") ?? false,
     callbackUrl: callbackUrl || null,
     callbackSecret: readEnv("FIRMASEGURO_CALLBACK_SECRET") || null,
   };

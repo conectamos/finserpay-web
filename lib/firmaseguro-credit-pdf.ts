@@ -654,50 +654,12 @@ function getPagareNumber(credito: CreditForFirmaSeguroPdf) {
   return typeof numero === "string" && numero.trim() ? numero.trim() : credito.folio;
 }
 
-function addDocumentFooters(
-  doc: PDFKit.PDFDocument,
-  fonts: { regular: string; bold: string },
-  folio: string
-) {
-  const range = doc.bufferedPageRange();
-
-  for (let index = range.start; index < range.start + range.count; index += 1) {
-    doc.switchToPage(index);
-    const y = pageBottom(doc) + 18;
-    doc
-      .strokeColor("#E2E8F0")
-      .lineWidth(0.6)
-      .moveTo(pageLeft(doc), y - 8)
-      .lineTo(pageRight(doc), y - 8)
-      .stroke();
-    doc
-      .font(fonts.regular)
-      .fontSize(7.5)
-      .fillColor("#64748B")
-      .text(`FINSER PAY S.A.S. - Paquete documental ${folio}`, pageLeft(doc), y, {
-        width: contentWidth(doc) / 2,
-      });
-    doc
-      .font(fonts.regular)
-      .fontSize(7.5)
-      .fillColor("#64748B")
-      .text(`Pagina ${index - range.start + 1} de ${range.count}`, pageLeft(doc), y, {
-        width: contentWidth(doc),
-        align: "right",
-      });
-  }
-
-  doc.switchToPage(range.start + range.count - 1);
-  resetFlow(doc);
-}
-
 export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf) {
   const fonts = getPdfFonts();
   const doc = new PDFDocument({
     size: "A4",
     margin: 54,
     compress: true,
-    bufferPages: true,
     font: fonts.regular,
     info: {
       Title: `Paquete documental FINSER PAY ${credito.folio}`,
@@ -1178,7 +1140,6 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     fonts
   );
 
-  addDocumentFooters(doc, fonts, credito.folio);
   doc.end();
   return bufferPromise;
 }

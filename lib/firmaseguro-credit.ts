@@ -314,6 +314,8 @@ function getFirmaSeguroDelivery(person: PersonPayload) {
   const sendByWhatsApp = Boolean(
     person.phone && (forceWhatsapp || (!forceEmail && !sendByEmail))
   );
+  const notifyByEmail = Boolean(config.notifyByEmail && signerEmail);
+  const notifyByWhatsApp = Boolean(config.notifyByWhatsApp && person.phone);
   const emailAuthMethodId =
     getOptionalEnvNumber("FIRMASEGURO_EMAIL_AUTH_METHOD_ID") ||
     config.authMethodId;
@@ -322,6 +324,8 @@ function getFirmaSeguroDelivery(person: PersonPayload) {
     signerEmail,
     sendByEmail,
     sendByWhatsApp,
+    notifyByEmail,
+    notifyByWhatsApp,
     authMethodId: sendByEmail ? emailAuthMethodId : config.authMethodId,
     authMethodSource: sendByEmail ? "email-env" : "default",
   };
@@ -518,10 +522,10 @@ function buildCreateFullByCompanyPayload(
       tags: getFirmaSeguroTags(credito),
       is_read: true,
       language: "es",
-      is_hand_written: true,
-      is_photographic: false,
-      isSendByEmail: delivery.sendByEmail,
-      isSendByWhatsApp: delivery.sendByWhatsApp,
+      is_hand_written: config.handwrittenEvidence,
+      is_photographic: config.photographicEvidence,
+      isSendByEmail: delivery.notifyByEmail,
+      isSendByWhatsApp: delivery.notifyByWhatsApp,
       deadline_days: config.deadlineDays,
       callback: callbackUrl,
       subject_email: `Firma documentos FINSER PAY ${credito.folio}`,
@@ -574,11 +578,11 @@ function buildCreateFullPayload(
     isInOrder: false,
     tags: getFirmaSeguroTags(credito),
     isRead: true,
-    isSendByEmail: delivery.sendByEmail,
-    isSendByWhatsApp: delivery.sendByWhatsApp,
+    isSendByEmail: delivery.notifyByEmail,
+    isSendByWhatsApp: delivery.notifyByWhatsApp,
     language: "es",
-    isHandWritten: true,
-    isPhotographic: false,
+    isHandWritten: config.handwrittenEvidence,
+    isPhotographic: config.photographicEvidence,
     callback: callbackUrl,
     subjectEmail: `Firma documentos FINSER PAY ${credito.folio}`,
     messageEmail: buildFirmaSeguroMessage(credito),
