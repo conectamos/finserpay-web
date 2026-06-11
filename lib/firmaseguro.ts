@@ -249,7 +249,7 @@ export function getFirmaSeguroConfig(): FirmaSeguroConfig {
     notifyByEmail:
       readOptionalBooleanEnv("FIRMASEGURO_NOTIFY_EMAIL") ?? true,
     notifyByWhatsApp:
-      readOptionalBooleanEnv("FIRMASEGURO_NOTIFY_WHATSAPP") ?? false,
+      readOptionalBooleanEnv("FIRMASEGURO_NOTIFY_WHATSAPP") ?? true,
     callbackUrl: callbackUrl || null,
     callbackSecret: readEnv("FIRMASEGURO_CALLBACK_SECRET") || null,
   };

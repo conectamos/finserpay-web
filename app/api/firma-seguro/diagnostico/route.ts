@@ -78,6 +78,11 @@ function getDiagnosticBase() {
     signatureMethodId: config.signatureMethodId,
     authMethodId: config.authMethodId,
     balanceTypeId: config.balanceTypeId,
+    deliveryChannel: process.env.FIRMASEGURO_DELIVERY_CHANNEL || "whatsapp",
+    handwrittenEvidence: config.handwrittenEvidence,
+    photographicEvidence: config.photographicEvidence,
+    notifyByEmail: config.notifyByEmail,
+    notifyByWhatsApp: config.notifyByWhatsApp,
   };
 }
 

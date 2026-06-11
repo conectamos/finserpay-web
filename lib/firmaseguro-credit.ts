@@ -307,7 +307,9 @@ function getOptionalEnvNumber(name: string) {
 function getFirmaSeguroDelivery(person: PersonPayload) {
   const config = getFirmaSeguroConfig();
   const signerEmail = getSignerEmail(person);
-  const channel = cleanText(process.env.FIRMASEGURO_DELIVERY_CHANNEL).toLowerCase();
+  const channel =
+    cleanText(process.env.FIRMASEGURO_DELIVERY_CHANNEL).toLowerCase() ||
+    "whatsapp";
   const forceWhatsapp = ["whatsapp", "otp_whatsapp", "otp-whatsapp"].includes(channel);
   const forceEmail = ["email", "otp_email", "otp-email"].includes(channel);
   const sendByEmail = Boolean(signerEmail && (forceEmail || !forceWhatsapp));
@@ -319,6 +321,15 @@ function getFirmaSeguroDelivery(person: PersonPayload) {
   const emailAuthMethodId =
     getOptionalEnvNumber("FIRMASEGURO_EMAIL_AUTH_METHOD_ID") ||
     config.authMethodId;
+  const whatsappAuthMethodId =
+    getOptionalEnvNumber("FIRMASEGURO_WHATSAPP_AUTH_METHOD_ID") ||
+    config.authMethodId;
+  const authMethodId = sendByEmail ? emailAuthMethodId : whatsappAuthMethodId;
+  const authMethodSource = sendByEmail
+    ? "email-env"
+    : sendByWhatsApp
+      ? "whatsapp-env"
+      : "default";
 
   return {
     signerEmail,
@@ -326,8 +337,8 @@ function getFirmaSeguroDelivery(person: PersonPayload) {
     sendByWhatsApp,
     notifyByEmail,
     notifyByWhatsApp,
-    authMethodId: sendByEmail ? emailAuthMethodId : config.authMethodId,
-    authMethodSource: sendByEmail ? "email-env" : "default",
+    authMethodId,
+    authMethodSource,
   };
 }
 
@@ -386,7 +397,12 @@ function getProviderObjectText(record: Record<string, unknown>) {
     .join(" ");
 }
 
-function findEmailAuthMethodId(value: unknown): number | null {
+type AuthenticationMethodPreference = "email" | "whatsapp";
+
+function findAuthenticationMethodId(
+  value: unknown,
+  preference: AuthenticationMethodPreference
+): number | null {
   const candidates: Array<{ id: number; score: number }> = [];
 
   function visit(item: unknown) {
@@ -403,16 +419,39 @@ function findEmailAuthMethodId(value: unknown): number | null {
     const id = getProviderObjectId(record);
     const text = normalizeProviderText(getProviderObjectText(record));
     const isEmail = text.includes("email") || text.includes("correo");
-    const isOtherOtp =
+    const isWhatsapp =
       text.includes("whatsapp") ||
-      text.includes("sms") ||
+      text.includes("whats app");
+    const isSms = text.includes("sms");
+    const isCall =
       text.includes("llamada") ||
-      text.includes("call");
+      text.includes("call") ||
+      text.includes("telefono");
+    const isOtherOtp =
+      (preference === "email" && (isWhatsapp || isSms || isCall)) ||
+      (preference === "whatsapp" && (isEmail || isSms || isCall));
+    const isPreferred =
+      preference === "email" ? isEmail : isWhatsapp;
 
-    if (id && isEmail && !isOtherOtp) {
+    if (id && isPreferred && !isOtherOtp) {
+      candidates.push({
+        id,
+        score: (text.includes("otp") ? 4 : 1) + (text.includes("certificada") ? 1 : 0),
+      });
+    } else if (id && isPreferred) {
       candidates.push({
         id,
         score: text.includes("otp") ? 2 : 1,
+      });
+    } else if (
+      id &&
+      preference === "whatsapp" &&
+      text.includes("documentos") &&
+      text.includes("otp")
+    ) {
+      candidates.push({
+        id,
+        score: 1,
       });
     }
 
@@ -424,25 +463,42 @@ function findEmailAuthMethodId(value: unknown): number | null {
   return candidates[0]?.id ?? null;
 }
 
+function findEmailAuthMethodId(value: unknown): number | null {
+  return findAuthenticationMethodId(value, "email");
+}
+
+function findWhatsappAuthMethodId(value: unknown): number | null {
+  return findAuthenticationMethodId(value, "whatsapp");
+}
+
 async function resolveFirmaSeguroDeliveryAuth(
   token: string,
   delivery: ReturnType<typeof getFirmaSeguroDelivery>
 ): Promise<ReturnType<typeof getFirmaSeguroDelivery>> {
-  if (!delivery.sendByEmail) {
+  const target = delivery.sendByEmail
+    ? "email"
+    : delivery.sendByWhatsApp
+      ? "whatsapp"
+      : null;
+
+  if (!target) {
     return delivery;
   }
 
   try {
     const authenticationTypes = await firmaSeguroGetAuthenticationTypes(token);
-    const emailAuthMethodId = findEmailAuthMethodId(authenticationTypes);
-    if (!emailAuthMethodId) {
+    const authMethodId =
+      target === "email"
+        ? findEmailAuthMethodId(authenticationTypes)
+        : findWhatsappAuthMethodId(authenticationTypes);
+    if (!authMethodId) {
       return delivery;
     }
 
     return {
       ...delivery,
-      authMethodId: emailAuthMethodId,
-      authMethodSource: "provider-email-catalog",
+      authMethodId,
+      authMethodSource: `provider-${target}-catalog`,
     };
   } catch {
     return delivery;
