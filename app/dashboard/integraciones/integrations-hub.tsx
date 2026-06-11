@@ -41,9 +41,21 @@ type FirmaSeguroDiagnostic = {
   nit: string | null;
   useCompanyEndpoint: boolean;
   callbackConfigured: boolean;
+  processTypeId?: number;
+  signatureMethodId?: number;
+  authMethodId?: number;
+  balanceTypeId?: number;
   balanceChecked?: boolean;
   balanceOk?: boolean;
   balanceMessage?: string;
+  balance?: unknown;
+  balanceError?: unknown;
+  signatureTypesOk?: boolean;
+  signatureTypes?: unknown;
+  signatureTypesError?: unknown;
+  authenticationTypesOk?: boolean;
+  authenticationTypes?: unknown;
+  authenticationTypesError?: unknown;
 };
 
 type ApiResult<T> = {
@@ -82,6 +94,22 @@ function formatTime(value?: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function formatDiagnosticPayload(value: unknown) {
+  if (value === undefined || value === null || value === "") {
+    return "Sin lectura";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "No se pudo mostrar la respuesta";
+  }
 }
 
 async function fetchJson<T>(url: string): Promise<ApiResult<T>> {
@@ -442,42 +470,115 @@ export default function IntegrationsHub({
               </div>
 
               {firmaSeguroDiagnostic && (
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <div className="rounded-2xl border border-white bg-white px-4 py-3">
-                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                      Host
-                    </p>
-                    <p className="mt-1 break-all text-sm font-black text-slate-800">
-                      {firmaSeguroDiagnostic.baseHost || "Sin host"}
-                    </p>
+                <div className="mt-4 space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                        Host
+                      </p>
+                      <p className="mt-1 break-all text-sm font-black text-slate-800">
+                        {firmaSeguroDiagnostic.baseHost || "Sin host"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                        Auth
+                      </p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {firmaSeguroDiagnostic.authSource ||
+                          firmaSeguroDiagnostic.authMode ||
+                          "Sin lectura"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                        NIT
+                      </p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {firmaSeguroDiagnostic.nit || "No configurado"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                        Respuesta
+                      </p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {firmaSeguroResult?.status
+                          ? `HTTP ${firmaSeguroResult.status}`
+                          : "Sin prueba"}
+                      </p>
+                    </div>
                   </div>
-                  <div className="rounded-2xl border border-white bg-white px-4 py-3">
-                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                      Auth
-                    </p>
-                    <p className="mt-1 text-sm font-black text-slate-800">
-                      {firmaSeguroDiagnostic.authSource ||
-                        firmaSeguroDiagnostic.authMode ||
-                        "Sin lectura"}
-                    </p>
+
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                        Proceso
+                      </p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {firmaSeguroDiagnostic.processTypeId ?? "Sin ID"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                        Firma
+                      </p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {firmaSeguroDiagnostic.signatureMethodId ?? "Sin ID"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                        Autenticacion
+                      </p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {firmaSeguroDiagnostic.authMethodId ?? "Sin ID"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white bg-white px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                        Balance type
+                      </p>
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {firmaSeguroDiagnostic.balanceTypeId ?? "Sin ID"}
+                      </p>
+                    </div>
                   </div>
-                  <div className="rounded-2xl border border-white bg-white px-4 py-3">
-                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                      NIT
-                    </p>
-                    <p className="mt-1 text-sm font-black text-slate-800">
-                      {firmaSeguroDiagnostic.nit || "No configurado"}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-white bg-white px-4 py-3">
-                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                      Respuesta
-                    </p>
-                    <p className="mt-1 text-sm font-black text-slate-800">
-                      {firmaSeguroResult?.status
-                        ? `HTTP ${firmaSeguroResult.status}`
-                        : "Sin prueba"}
-                    </p>
+
+                  <div className="grid gap-3 lg:grid-cols-3">
+                    {[
+                      {
+                        label: "Balance",
+                        value:
+                          firmaSeguroDiagnostic.balance ??
+                          firmaSeguroDiagnostic.balanceError ??
+                          firmaSeguroDiagnostic.balanceMessage,
+                      },
+                      {
+                        label: "Tipos de firma",
+                        value:
+                          firmaSeguroDiagnostic.signatureTypes ??
+                          firmaSeguroDiagnostic.signatureTypesError,
+                      },
+                      {
+                        label: "Tipos autenticacion",
+                        value:
+                          firmaSeguroDiagnostic.authenticationTypes ??
+                          firmaSeguroDiagnostic.authenticationTypesError,
+                      },
+                    ].map((item) => (
+                      <div
+                        key={item.label}
+                        className="rounded-2xl border border-white bg-white px-4 py-3"
+                      >
+                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                          {item.label}
+                        </p>
+                        <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">
+                          {formatDiagnosticPayload(item.value)}
+                        </pre>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

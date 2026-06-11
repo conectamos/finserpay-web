@@ -289,7 +289,13 @@ function buildFirmaSeguroMessage(credito: FirmaSeguroCredit) {
 
 function getSignerEmail(person: PersonPayload) {
   const config = getFirmaSeguroConfig();
-  return person.email || normalizeEmail(config.email) || "firmas@finserpay.com";
+  const senderEmail = normalizeEmail(config.email);
+
+  if (person.email && person.email !== senderEmail) {
+    return person.email;
+  }
+
+  return null;
 }
 
 function optionalText(value: string | null | undefined) {
@@ -306,7 +312,7 @@ function buildCreateFullByCompanyPayload(
   const config = getFirmaSeguroConfig();
   const fileName = `paquete-finserpay-${credito.folio}.pdf`;
   const signerEmail = getSignerEmail(person);
-  const sendByEmail = Boolean(person.email);
+  const sendByEmail = Boolean(signerEmail);
 
   return {
     process: {
@@ -365,7 +371,7 @@ function buildCreateFullPayload(
   const config = getFirmaSeguroConfig();
   const fileName = `paquete-finserpay-${credito.folio}.pdf`;
   const signerEmail = getSignerEmail(person);
-  const sendByEmail = Boolean(person.email);
+  const sendByEmail = Boolean(signerEmail);
 
   return {
     processTypeId: config.processTypeId,

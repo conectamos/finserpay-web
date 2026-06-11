@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import {
   FirmaSeguroApiError,
+  firmaSeguroGetAuthenticationTypes,
   firmaSeguroGetBalanceByNit,
+  firmaSeguroGetSignatureTypes,
   firmaSeguroSignIn,
   getFirmaSeguroConfig,
   isFirmaSeguroConfigured,
@@ -72,6 +74,27 @@ function getDiagnosticBase() {
     nit: config.nit,
     useCompanyEndpoint: config.useCompanyEndpoint,
     callbackConfigured: Boolean(config.callbackUrl),
+    processTypeId: config.processTypeId,
+    signatureMethodId: config.signatureMethodId,
+    authMethodId: config.authMethodId,
+    balanceTypeId: config.balanceTypeId,
+  };
+}
+
+function providerReadError(error: unknown) {
+  if (error instanceof FirmaSeguroApiError) {
+    return {
+      error: error.message,
+      providerStatus: error.status,
+      detail: sanitizePayload(error.detail),
+    };
+  }
+
+  return {
+    error:
+      error instanceof Error
+        ? error.message
+        : "No se pudo consultar FirmaSeguro",
   };
 }
 
@@ -106,6 +129,33 @@ export async function GET() {
         ? (auth.payload as JsonObject)
         : {};
 
+    const [signatureTypesResult, authenticationTypesResult] =
+      await Promise.allSettled([
+        firmaSeguroGetSignatureTypes(auth.token),
+        firmaSeguroGetAuthenticationTypes(auth.token),
+      ]);
+
+    const providerCatalog = {
+      signatureTypesOk: signatureTypesResult.status === "fulfilled",
+      signatureTypes:
+        signatureTypesResult.status === "fulfilled"
+          ? sanitizePayload(signatureTypesResult.value)
+          : undefined,
+      signatureTypesError:
+        signatureTypesResult.status === "rejected"
+          ? providerReadError(signatureTypesResult.reason)
+          : undefined,
+      authenticationTypesOk: authenticationTypesResult.status === "fulfilled",
+      authenticationTypes:
+        authenticationTypesResult.status === "fulfilled"
+          ? sanitizePayload(authenticationTypesResult.value)
+          : undefined,
+      authenticationTypesError:
+        authenticationTypesResult.status === "rejected"
+          ? providerReadError(authenticationTypesResult.reason)
+          : undefined,
+    };
+
     if (!diagnostic.nit) {
       return NextResponse.json({
         ok: true,
@@ -115,10 +165,14 @@ export async function GET() {
         tokenShape: getTokenShape(auth.token),
         balanceChecked: false,
         balanceMessage: "FIRMASEGURO_NIT no esta configurado.",
+        ...providerCatalog,
       });
     }
 
-    const balance = await firmaSeguroGetBalanceByNit(auth.token, diagnostic.nit);
+    const balanceResult = await Promise.allSettled([
+      firmaSeguroGetBalanceByNit(auth.token, diagnostic.nit),
+    ]);
+    const balanceRead = balanceResult[0];
 
     return NextResponse.json({
       ok: true,
@@ -127,8 +181,16 @@ export async function GET() {
       authSource: String(authPayload.source || "desconocido"),
       tokenShape: getTokenShape(auth.token),
       balanceChecked: true,
-      balanceOk: true,
-      balance: sanitizePayload(balance),
+      balanceOk: balanceRead.status === "fulfilled",
+      balance:
+        balanceRead.status === "fulfilled"
+          ? sanitizePayload(balanceRead.value)
+          : undefined,
+      balanceError:
+        balanceRead.status === "rejected"
+          ? providerReadError(balanceRead.reason)
+          : undefined,
+      ...providerCatalog,
     });
   } catch (error) {
     const diagnostic = getDiagnosticBase();

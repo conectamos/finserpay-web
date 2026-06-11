@@ -234,7 +234,7 @@ export function getFirmaSeguroConfig(): FirmaSeguroConfig {
     processTypeId: readNumberEnv("FIRMASEGURO_PROCESS_TYPE_ID", 3),
     signatureMethodId: readNumberEnv("FIRMASEGURO_SIGNATURE_METHOD_ID", 2),
     authMethodId: readNumberEnv("FIRMASEGURO_AUTH_METHOD_ID", 4),
-    balanceTypeId: readNumberEnv("FIRMASEGURO_BALANCE_TYPE_ID", 1),
+    balanceTypeId: readNumberEnv("FIRMASEGURO_BALANCE_TYPE_ID", 2),
     identificationTypeId: readNumberEnv("FIRMASEGURO_IDENTIFICATION_TYPE_ID", 1),
     typePersonId: readNumberEnv("FIRMASEGURO_TYPE_PERSON_ID", 1),
     deadlineDays: readNumberEnv("FIRMASEGURO_DEADLINE_DAYS", 5),
@@ -805,6 +805,16 @@ export async function firmaSeguroGetBalanceByNit(token: string, nit: string) {
     `/api/v2/Balance/balance-by-nit/${encodeURIComponent(nit)}`,
     { token }
   );
+}
+
+export async function firmaSeguroGetSignatureTypes(token: string) {
+  return firmaSeguroRequest<unknown>("/api/v2/SignatureTypes/All", { token });
+}
+
+export async function firmaSeguroGetAuthenticationTypes(token: string) {
+  return firmaSeguroRequest<unknown>("/api/v2/AutenticationTypes/All", {
+    token,
+  });
 }
 
 export async function firmaSeguroGetSignaturesStatus(token: string, uuid: string) {
