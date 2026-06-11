@@ -303,6 +303,59 @@ function optionalText(value: string | null | undefined) {
   return cleaned || undefined;
 }
 
+function getCreditPackageBalanceTypeId() {
+  return 2;
+}
+
+function isFirmaSeguroBalanceError(error: unknown) {
+  if (!(error instanceof FirmaSeguroApiError)) {
+    return false;
+  }
+
+  const raw = [
+    error.message,
+    typeof error.detail === "string" ? error.detail : "",
+    JSON.stringify(error.detail || {}),
+  ].join(" ");
+  const normalized = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  return (
+    normalized.includes("saldo suficiente") ||
+    normalized.includes("saldo insuficiente") ||
+    normalized.includes("insufficient balance")
+  );
+}
+
+function addFirmaSeguroConfigContext(
+  error: unknown,
+  config: ReturnType<typeof getFirmaSeguroConfig>,
+  endpoint: string
+) {
+  if (!(error instanceof FirmaSeguroApiError) || !isFirmaSeguroBalanceError(error)) {
+    return error;
+  }
+
+  const balanceTypeId = getCreditPackageBalanceTypeId();
+  return new FirmaSeguroApiError(
+    `${error.message}. Configuracion enviada: signatureMethodId=${config.signatureMethodId}, authMethodId=${config.authMethodId}, balanceTypeId=${balanceTypeId}`,
+    error.status,
+    {
+      ...(typeof error.detail === "object" && error.detail
+        ? (error.detail as Record<string, unknown>)
+        : { originalDetail: error.detail }),
+      endpoint,
+      firmaSeguroConfig: {
+        signatureMethodId: config.signatureMethodId,
+        authMethodId: config.authMethodId,
+        balanceTypeId,
+      },
+    }
+  );
+}
+
 function buildCreateFullByCompanyPayload(
   credito: FirmaSeguroCredit,
   person: PersonPayload,
@@ -318,7 +371,7 @@ function buildCreateFullByCompanyPayload(
     process: {
       process_type_id: config.processTypeId,
       signature_method_id: config.signatureMethodId,
-      balance_type_id: config.balanceTypeId,
+      balance_type_id: getCreditPackageBalanceTypeId(),
       is_in_order: false,
       tags: getFirmaSeguroTags(credito),
       is_read: true,
@@ -388,7 +441,7 @@ function buildCreateFullPayload(
     callback: callbackUrl,
     subjectEmail: `Firma documentos FINSER PAY ${credito.folio}`,
     messageEmail: buildFirmaSeguroMessage(credito),
-    balanceTypeId: config.balanceTypeId,
+    balanceTypeId: getCreditPackageBalanceTypeId(),
     signatures: [
       {
         order: 1,
@@ -645,8 +698,15 @@ async function createFirmaSeguroProcess(
     }
   };
 
-  const { auth, result: createPayload } =
-    await runWithFirmaSeguroAuth(submitCreateRequest);
+  let auth: Awaited<ReturnType<typeof firmaSeguroSignIn>>;
+  let createPayload: unknown;
+  try {
+    const response = await runWithFirmaSeguroAuth(submitCreateRequest);
+    auth = response.auth;
+    createPayload = response.result;
+  } catch (error) {
+    throw addFirmaSeguroConfigContext(error, config, endpoint);
+  }
   const authPayload = auth.payload;
   const processUuid = extractFirmaSeguroUuid(createPayload);
 
