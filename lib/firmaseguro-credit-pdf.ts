@@ -504,6 +504,92 @@ function keyValueGrid(
   resetFlow(doc);
 }
 
+function caseSummaryBlock(
+  doc: PDFKit.PDFDocument,
+  sections: Array<{
+    title: string;
+    rows: Array<{ label: string; value: string }>;
+  }>,
+  fonts: { regular: string; bold: string }
+) {
+  const x = pageLeft(doc);
+  const width = contentWidth(doc);
+  const labelWidth = 126;
+
+  sections.forEach((section) => {
+    ensureSpace(doc, 36);
+    const titleY = doc.y;
+    doc
+      .save()
+      .rect(x, titleY, width, 24)
+      .fill("#ECFDF5")
+      .restore();
+    doc
+      .strokeColor("#A7F3D0")
+      .lineWidth(0.7)
+      .rect(x, titleY, width, 24)
+      .stroke();
+    doc
+      .font(fonts.bold)
+      .fontSize(8)
+      .fillColor("#0F766E")
+      .text(section.title.toUpperCase(), x + 10, titleY + 8, {
+        width: width - 20,
+      });
+    doc.y = titleY + 24;
+
+    section.rows.forEach((row, rowIndex) => {
+      const value = row.value || "-";
+      doc.font(fonts.regular).fontSize(9.3);
+      const valueHeight = doc.heightOfString(value, {
+        width: width - labelWidth - 24,
+        lineGap: 2,
+      });
+      const rowHeight = Math.max(30, Math.ceil(valueHeight + 15));
+      ensureSpace(doc, rowHeight + 2);
+
+      const y = doc.y;
+      doc
+        .save()
+        .rect(x, y, width, rowHeight)
+        .fill(rowIndex % 2 === 0 ? "#FFFFFF" : "#F8FAFC")
+        .restore();
+      doc
+        .strokeColor("#E2E8F0")
+        .lineWidth(0.6)
+        .rect(x, y, width, rowHeight)
+        .stroke();
+      doc
+        .strokeColor("#E2E8F0")
+        .moveTo(x + labelWidth, y)
+        .lineTo(x + labelWidth, y + rowHeight)
+        .stroke();
+      doc
+        .font(fonts.bold)
+        .fontSize(7.4)
+        .fillColor("#64748B")
+        .text(row.label.toUpperCase(), x + 10, y + 10, {
+          width: labelWidth - 18,
+          lineGap: 2,
+        });
+      doc
+        .font(fonts.bold)
+        .fontSize(9.3)
+        .fillColor("#0F172A")
+        .text(value, x + labelWidth + 10, y + 9, {
+          width: width - labelWidth - 20,
+          lineGap: 2,
+        });
+
+      doc.y = y + rowHeight;
+      resetFlow(doc);
+    });
+
+    doc.moveDown(0.7);
+    resetFlow(doc);
+  });
+}
+
 function signatureBlock(
   doc: PDFKit.PDFDocument,
   label: string,
@@ -673,24 +759,41 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   );
 
   sectionTitle(doc, "Ficha del expediente", fonts);
-  keyValueGrid(
+  caseSummaryBlock(
     doc,
     [
-      { label: "Cliente", value: credito.clienteNombre },
-      { label: "Documento", value: `${tipoDocumento} ${credito.clienteDocumento || "-"}` },
-      { label: "Telefono", value: credito.clienteTelefono || "-" },
-      { label: "Correo", value: credito.clienteCorreo || "-" },
-      { label: "Direccion", value: credito.clienteDireccion || "-" },
-      { label: "Equipo", value: equipo },
-      { label: "IMEI", value: credito.imei || credito.deviceUid || "-" },
-      { label: "Valor equipo", value: formatCurrency(credito.valorEquipoTotal) },
-      { label: "Saldo financiado", value: formatCurrency(saldoFinanciado) },
-      { label: "Cuota inicial", value: formatCurrency(credito.cuotaInicial) },
-      { label: "Valor cuota", value: formatCurrency(credito.valorCuota) },
-      { label: "Plazo", value: `${credito.plazoMeses || "-"} cuotas` },
-      { label: "Frecuencia", value: getPaymentFrequencyLabel(credito.frecuenciaPago) },
-      { label: "Primer pago", value: formatDate(credito.fechaPrimerPago) },
-      { label: "Referencia pago", value: credito.referenciaPago || credito.clienteDocumento || "-" },
+      {
+        title: "Datos del cliente",
+        rows: [
+          { label: "Nombre", value: credito.clienteNombre },
+          { label: "Documento", value: `${tipoDocumento} ${credito.clienteDocumento || "-"}` },
+          { label: "Telefono", value: credito.clienteTelefono || "-" },
+          { label: "Correo", value: credito.clienteCorreo || "-" },
+          { label: "Direccion", value: credito.clienteDireccion || "-" },
+        ],
+      },
+      {
+        title: "Equipo financiado",
+        rows: [
+          { label: "Referencia", value: equipo },
+          { label: "IMEI", value: credito.imei || credito.deviceUid || "-" },
+          { label: "Marca", value: marca },
+          { label: "Modelo", value: modelo },
+        ],
+      },
+      {
+        title: "Condiciones del credito",
+        rows: [
+          { label: "Valor equipo", value: formatCurrency(credito.valorEquipoTotal) },
+          { label: "Cuota inicial", value: formatCurrency(credito.cuotaInicial) },
+          { label: "Saldo financiado", value: formatCurrency(saldoFinanciado) },
+          { label: "Valor cuota", value: formatCurrency(credito.valorCuota) },
+          { label: "Plazo", value: `${credito.plazoMeses || "-"} cuotas` },
+          { label: "Frecuencia", value: getPaymentFrequencyLabel(credito.frecuenciaPago) },
+          { label: "Primer pago", value: formatDate(credito.fechaPrimerPago) },
+          { label: "Referencia pago", value: credito.referenciaPago || credito.clienteDocumento || "-" },
+        ],
+      },
     ],
     fonts
   );
