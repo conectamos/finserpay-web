@@ -2044,6 +2044,22 @@ export default function CreditFactoryConsole({
       fianzaPorcentaje: financialPlan.fianzaPorcentaje,
       fechaPrimerPago,
       contratoAceptado,
+      contratoFotoDataUrl,
+      contratoSelfieDataUrl: contratoFotoDataUrl,
+      contratoSelfieCapturedAt: contratoFotoAudit?.capturedAt || null,
+      contratoSelfieSource: contratoFotoAudit?.source || null,
+      contratoFotoCapturedAt: contratoFotoAudit?.capturedAt || null,
+      contratoFotoSource: contratoFotoAudit?.source || null,
+      contratoCedulaFrenteDataUrl,
+      cedulaFrenteDataUrl: contratoCedulaFrenteDataUrl,
+      contratoCedulaFrenteCapturedAt:
+        contratoCedulaFrenteAudit?.capturedAt || null,
+      contratoCedulaFrenteSource: contratoCedulaFrenteAudit?.source || null,
+      contratoCedulaRespaldoDataUrl,
+      cedulaRespaldoDataUrl: contratoCedulaRespaldoDataUrl,
+      contratoCedulaRespaldoCapturedAt:
+        contratoCedulaRespaldoAudit?.capturedAt || null,
+      contratoCedulaRespaldoSource: contratoCedulaRespaldoAudit?.source || null,
       pagareAceptado,
       cartaAceptada,
       autorizacionDatosAceptada,
@@ -2065,6 +2081,15 @@ export default function CreditFactoryConsole({
       clienteTelefono,
       clienteTipoDocumento,
       contratoAceptado,
+      contratoCedulaFrenteAudit?.capturedAt,
+      contratoCedulaFrenteAudit?.source,
+      contratoCedulaFrenteDataUrl,
+      contratoCedulaRespaldoAudit?.capturedAt,
+      contratoCedulaRespaldoAudit?.source,
+      contratoCedulaRespaldoDataUrl,
+      contratoFotoAudit?.capturedAt,
+      contratoFotoAudit?.source,
+      contratoFotoDataUrl,
       creditSettings.frecuenciaPago,
       cuotaInicial,
       equipoMarca,
@@ -5519,6 +5544,60 @@ export default function CreditFactoryConsole({
     setFianzaPorcentaje(value("fianzaPorcentaje") || fianzaPorcentaje);
     setFechaPrimerPago(value("fechaPrimerPago") || fechaPrimerPago);
     setContratoAceptado(checked("contratoAceptado"));
+    setContratoFotoDataUrl(
+      value("contratoSelfieDataUrl") || value("contratoFotoDataUrl")
+    );
+    setContratoFotoAudit(
+      value("contratoSelfieCapturedAt") ||
+        value("contratoFotoCapturedAt") ||
+        value("contratoSelfieSource") ||
+        value("contratoFotoSource")
+        ? {
+            capturedAt:
+              value("contratoSelfieCapturedAt") ||
+              value("contratoFotoCapturedAt") ||
+              new Date().toISOString(),
+            source:
+              (value("contratoSelfieSource") || value("contratoFotoSource")) ===
+              "upload"
+                ? "upload"
+                : "camera",
+          }
+        : null
+    );
+    setContratoCedulaFrenteDataUrl(
+      value("contratoCedulaFrenteDataUrl") || value("cedulaFrenteDataUrl")
+    );
+    setContratoCedulaFrenteAudit(
+      value("contratoCedulaFrenteCapturedAt") ||
+        value("contratoCedulaFrenteSource")
+        ? {
+            capturedAt:
+              value("contratoCedulaFrenteCapturedAt") || new Date().toISOString(),
+            source:
+              value("contratoCedulaFrenteSource") === "upload"
+                ? "upload"
+                : "camera",
+          }
+        : null
+    );
+    setContratoCedulaRespaldoDataUrl(
+      value("contratoCedulaRespaldoDataUrl") || value("cedulaRespaldoDataUrl")
+    );
+    setContratoCedulaRespaldoAudit(
+      value("contratoCedulaRespaldoCapturedAt") ||
+        value("contratoCedulaRespaldoSource")
+        ? {
+            capturedAt:
+              value("contratoCedulaRespaldoCapturedAt") ||
+              new Date().toISOString(),
+            source:
+              value("contratoCedulaRespaldoSource") === "upload"
+                ? "upload"
+                : "camera",
+          }
+        : null
+    );
     setPagareAceptado(checked("pagareAceptado"));
     setCartaAceptada(checked("cartaAceptada"));
     setAutorizacionDatosAceptada(checked("autorizacionDatosAceptada"));
