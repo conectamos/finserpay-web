@@ -305,11 +305,25 @@ function getSignerEmail(person: PersonPayload) {
   const config = getFirmaSeguroConfig();
   const senderEmail = normalizeEmail(config.email);
 
-  if (person.email && person.email !== senderEmail) {
+  if (!person.email) {
+    return null;
+  }
+
+  if (person.email !== senderEmail) {
     return person.email;
   }
 
-  return null;
+  const [localPart, domain] = person.email.split("@");
+  if (!localPart || !domain || !/^(gmail|googlemail)\.com$/i.test(domain)) {
+    return null;
+  }
+
+  const aliasSeed =
+    person.document.replace(/\D/g, "") ||
+    person.phone.replace(/\D/g, "") ||
+    "firmante";
+  const normalizedLocal = localPart.replace(/\+.*/, "");
+  return `${normalizedLocal}+finserpay-${aliasSeed}@${domain}`;
 }
 
 function getOptionalEnvNumber(name: string) {
@@ -325,15 +339,15 @@ function getFirmaSeguroDelivery(person: PersonPayload) {
     "whatsapp";
   const forceWhatsapp = ["whatsapp", "otp_whatsapp", "otp-whatsapp"].includes(channel);
   const forceEmail = ["email", "otp_email", "otp-email"].includes(channel);
-  const sendByEmail = Boolean(signerEmail && (forceEmail || !forceWhatsapp));
+  const sendByEmail = Boolean(signerEmail && forceEmail);
   const sendByWhatsApp = Boolean(
     person.phone && (forceWhatsapp || (!forceEmail && !sendByEmail))
   );
   const notifyByEmail = Boolean(
-    config.notifyByEmail && signerEmail && sendByEmail
+    config.notifyByEmail && signerEmail
   );
   const notifyByWhatsApp = Boolean(
-    config.notifyByWhatsApp && person.phone && sendByWhatsApp
+    config.notifyByWhatsApp && person.phone
   );
   const emailAuthMethodId =
     getOptionalEnvNumber("FIRMASEGURO_EMAIL_AUTH_METHOD_ID") ||
@@ -588,7 +602,7 @@ function addFirmaSeguroConfigContext(
   const balanceTypeId = getCreditPackageBalanceTypeId(config);
   const authMethodId = delivery?.authMethodId ?? config.authMethodId;
   return new FirmaSeguroApiError(
-    `${error.message}. Configuracion enviada: signatureMethodId=${config.signatureMethodId}, authMethodId=${authMethodId}, balanceTypeId=${balanceTypeId}, email=${delivery?.sendByEmail ? "si" : "no"}, whatsapp=${delivery?.sendByWhatsApp ? "si" : "no"}, authSource=${delivery?.authMethodSource || "config"}`,
+    `${error.message}. Configuracion enviada: signatureMethodId=${config.signatureMethodId}, authMethodId=${authMethodId}, balanceTypeId=${balanceTypeId}, email=${delivery?.notifyByEmail ? "si" : "no"}, whatsapp=${delivery?.notifyByWhatsApp ? "si" : "no"}, authSource=${delivery?.authMethodSource || "config"}`,
     error.status,
     {
       ...(typeof error.detail === "object" && error.detail
@@ -599,8 +613,8 @@ function addFirmaSeguroConfigContext(
         signatureMethodId: config.signatureMethodId,
         authMethodId,
         balanceTypeId,
-        sendByEmail: delivery?.sendByEmail ?? false,
-        sendByWhatsApp: delivery?.sendByWhatsApp ?? false,
+        sendByEmail: delivery?.notifyByEmail ?? false,
+        sendByWhatsApp: delivery?.notifyByWhatsApp ?? false,
         authMethodSource: delivery?.authMethodSource,
       },
     }
@@ -645,7 +659,7 @@ function buildCreateFullByCompanyPayload(
     signers: [
       {
         order: 1,
-        rol: "DEUDOR",
+        rol: "Firmante",
         authentication_method_id: delivery.authMethodId,
         indicative: "57",
         ...(person.phone ? { number: person.phone } : {}),
@@ -701,7 +715,7 @@ function buildCreateFullPayload(
     signatures: [
       {
         order: 1,
-        rol: "DEUDOR",
+        rol: "Firmante",
         authenticationMethodId: delivery.authMethodId,
         contactInformation: {
           ...(person.phone
@@ -896,6 +910,7 @@ async function createFirmaSeguroProcess(
       null
     );
   }
+  const config = getFirmaSeguroConfig();
   let delivery = getFirmaSeguroDelivery(person);
   if (!delivery.sendByEmail && !delivery.sendByWhatsApp) {
     const message = cleanText(process.env.FIRMASEGURO_DELIVERY_CHANNEL)
@@ -910,7 +925,14 @@ async function createFirmaSeguroProcess(
     );
   }
 
-  const config = getFirmaSeguroConfig();
+  if (config.notifyByEmail && !delivery.signerEmail) {
+    throw new FirmaSeguroApiError(
+      "FirmaSeguro requiere correo del firmante para crear el proceso. Usa un correo valido del cliente y diferente al remitente de FirmaSeguro.",
+      400,
+      null
+    );
+  }
+
   const pdf = await buildFirmaSeguroCreditPdf(credito);
   const pdfBase64 = pdf.toString("base64");
   const useCompanyEndpoint = Boolean(config.nit && config.useCompanyEndpoint);
