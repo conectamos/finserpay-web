@@ -8,7 +8,12 @@ import { isAdminRole } from "@/lib/roles";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_DRAFT_PAYLOAD_BYTES = 700_000;
+const MAX_DRAFT_PAYLOAD_BYTES = 12_000_000;
+const PRUNED_DRAFT_MEDIA_FIELDS = new Set([
+  "contratoFirmaDataUrl",
+  "firmaDataUrl",
+  "contratoVideoAprobacionDataUrl",
+]);
 
 type SaveDraftBody = {
   id?: unknown;
@@ -72,15 +77,31 @@ function parseTake(value: unknown) {
   return Math.max(1, Math.min(30, Number.isFinite(parsed) ? parsed : 12));
 }
 
+function pruneDraftPayload(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(pruneDraftPayload);
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !PRUNED_DRAFT_MEDIA_FIELDS.has(key))
+      .map(([key, item]) => [key, pruneDraftPayload(item)])
+  );
+}
+
 function normalizePayload(value: unknown): DraftPayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
   }
 
-  const json = JSON.stringify(value);
+  const json = JSON.stringify(pruneDraftPayload(value));
 
   if (Buffer.byteLength(json, "utf8") > MAX_DRAFT_PAYLOAD_BYTES) {
-    throw new Error("El borrador es demasiado grande para guardarlo automaticamente");
+    throw new Error("Las evidencias del borrador son demasiado grandes para guardarlas automaticamente");
   }
 
   return JSON.parse(json) as DraftPayload;
