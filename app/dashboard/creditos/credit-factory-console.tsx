@@ -7897,7 +7897,7 @@ export default function CreditFactoryConsole({
                         FirmaSeguro
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Envia un solo PDF consolidado al WhatsApp registrado del cliente.
+                        Envia un PDF legal consolidado por el canal habilitado en FirmaSeguro.
                       </p>
                     </div>
                     <div
@@ -7926,10 +7926,10 @@ export default function CreditFactoryConsole({
                             FirmaSeguro
                           </p>
                           <h4 className="mt-2 text-xl font-black tracking-tight text-slate-950">
-                            Envio digital por WhatsApp
+                            Envio digital certificado
                           </h4>
                           <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
-                            Se creara un expediente de borrador con un paquete documental unico. El credito solo se inscribe cuando FirmaSeguro reporte firma exitosa y valides la entrega.
+                            Se creara un expediente de borrador con los documentos legales. El credito solo se inscribe cuando FirmaSeguro reporte firma exitosa y valides la entrega.
                           </p>
                         </div>
                         {firmaSeguroDraftFolio ? (
@@ -7949,7 +7949,7 @@ export default function CreditFactoryConsole({
                       <div className="mt-5 grid gap-3 sm:grid-cols-2">
                         {[
                           ["Cliente", clienteNombre || "-"],
-                          ["WhatsApp", clienteTelefono || "-"],
+                          ["Contacto", clienteCorreo || clienteTelefono || "-"],
                           ["Documento", clienteDocumento || "-"],
                           ["Equipo", referenciaEquipo || "-"],
                           ["IMEI", imei || "-"],
@@ -8003,7 +8003,7 @@ export default function CreditFactoryConsole({
                           ? "Enviando a FirmaSeguro..."
                           : firmaSeguroProcessSent
                             ? "Reenviar FirmaSeguro"
-                            : "Enviar FirmaSeguro por WhatsApp"}
+                            : "Enviar a FirmaSeguro"}
                       </button>
 
                       {firmaSeguroProcessSent ? (
@@ -8048,10 +8048,10 @@ export default function CreditFactoryConsole({
                       </div>
                       <div className="mt-4 space-y-3 text-sm font-semibold text-slate-700">
                         {[
-                          "Contrato principal integrado",
+                          "Autorizacion de datos integrada",
+                          "Contrato de financiacion integrado",
                           "Pagare integrado",
                           "Carta de instrucciones integrada",
-                          "Autorizacion de datos integrada",
                           "Evidencias del paso 3 integradas",
                         ].map((item) => (
                           <div

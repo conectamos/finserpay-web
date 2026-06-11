@@ -14,6 +14,7 @@ import {
   normalizeCreditInstallments,
   normalizePaymentFrequency,
   sanitizeDeviceValue,
+  sanitizeImageDataUrl,
   sanitizeText,
   toNumber,
 } from "@/lib/credit-factory";
@@ -180,8 +181,18 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
   const clienteDocumento = sanitizeText(payload.clienteDocumento);
   const clienteTelefono = sanitizeText(payload.clienteTelefono);
   const clienteCorreo = sanitizeText(payload.clienteCorreo);
+  const clienteDireccion = sanitizeText(payload.clienteDireccion);
   const equipoMarca = sanitizeText(payload.equipoMarca);
   const equipoModelo = sanitizeText(payload.equipoModelo);
+  const contratoFotoDataUrl = sanitizeImageDataUrl(
+    payload.contratoSelfieDataUrl || payload.contratoFotoDataUrl
+  );
+  const contratoCedulaFrenteDataUrl = sanitizeImageDataUrl(
+    payload.contratoCedulaFrenteDataUrl || payload.cedulaFrenteDataUrl
+  );
+  const contratoCedulaRespaldoDataUrl = sanitizeImageDataUrl(
+    payload.contratoCedulaRespaldoDataUrl || payload.cedulaRespaldoDataUrl
+  );
   const referenciaEquipo =
     sanitizeText(payload.referenciaEquipo) ||
     [equipoMarca, equipoModelo].filter(Boolean).join(" ");
@@ -251,6 +262,7 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
     clienteDocumento,
     clienteTelefono,
     clienteCorreo,
+    clienteDireccion,
     referenciaEquipo,
     equipoMarca,
     equipoModelo,
@@ -263,8 +275,14 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
     plazoMeses,
     frecuenciaPago,
     fechaPrimerPago,
+    fechaCredito,
     referenciaPago,
     valorFianza: financialPlan.valorFianza,
+    contratoIp: sanitizeText(payload.contratoIp) || null,
+    contratoFotoDataUrl,
+    contratoSelfieDataUrl: contratoFotoDataUrl,
+    contratoCedulaFrenteDataUrl,
+    contratoCedulaRespaldoDataUrl,
     usuario: {
       nombre: row.usuarioNombre || "Usuario FINSER PAY",
       usuario: row.usuarioLogin || null,

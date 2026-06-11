@@ -281,7 +281,7 @@ function getFirmaSeguroTags(credito: FirmaSeguroCredit) {
 function buildFirmaSeguroMessage(credito: FirmaSeguroCredit) {
   return [
     `Hola ${credito.clienteNombre}.`,
-    "FINSER PAY solicita tu firma electronica para el paquete documental unico de tu credito.",
+    "FINSER PAY solicita tu firma electronica para la autorizacion de datos, contrato, pagare y carta de instrucciones de tu credito.",
     `Folio: ${credito.folio}.`,
     "Por favor revisa el PDF completo y confirma la firma solo si estas de acuerdo.",
   ].join(" ");
@@ -296,6 +296,31 @@ function getSignerEmail(person: PersonPayload) {
   }
 
   return null;
+}
+
+function getOptionalEnvNumber(name: string) {
+  const parsed = Number(process.env[name] || 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getFirmaSeguroDelivery(person: PersonPayload) {
+  const config = getFirmaSeguroConfig();
+  const signerEmail = getSignerEmail(person);
+  const channel = cleanText(process.env.FIRMASEGURO_DELIVERY_CHANNEL).toLowerCase();
+  const forceWhatsapp = ["whatsapp", "otp_whatsapp", "otp-whatsapp"].includes(channel);
+  const forceEmail = ["email", "otp_email", "otp-email"].includes(channel);
+  const sendByEmail = Boolean(signerEmail && (forceEmail || !forceWhatsapp));
+  const sendByWhatsApp = Boolean(!sendByEmail && person.phone);
+  const emailAuthMethodId =
+    getOptionalEnvNumber("FIRMASEGURO_EMAIL_AUTH_METHOD_ID") ||
+    config.authMethodId;
+
+  return {
+    signerEmail,
+    sendByEmail,
+    sendByWhatsApp,
+    authMethodId: sendByEmail ? emailAuthMethodId : config.authMethodId,
+  };
 }
 
 function optionalText(value: string | null | undefined) {
@@ -360,12 +385,11 @@ function buildCreateFullByCompanyPayload(
   credito: FirmaSeguroCredit,
   person: PersonPayload,
   pdfBase64: string,
-  callbackUrl: string
+  callbackUrl: string,
+  delivery: ReturnType<typeof getFirmaSeguroDelivery>
 ) {
   const config = getFirmaSeguroConfig();
   const fileName = `paquete-finserpay-${credito.folio}.pdf`;
-  const signerEmail = getSignerEmail(person);
-  const sendByEmail = Boolean(signerEmail);
 
   return {
     process: {
@@ -378,8 +402,8 @@ function buildCreateFullByCompanyPayload(
       language: "es",
       is_hand_written: true,
       is_photographic: false,
-      isSendByEmail: sendByEmail,
-      isSendByWhatsApp: true,
+      isSendByEmail: delivery.sendByEmail,
+      isSendByWhatsApp: delivery.sendByWhatsApp,
       deadline_days: config.deadlineDays,
       callback: callbackUrl,
       subject_email: `Firma documentos FINSER PAY ${credito.folio}`,
@@ -392,10 +416,10 @@ function buildCreateFullByCompanyPayload(
       {
         order: 1,
         rol: "DEUDOR",
-        authentication_method_id: config.authMethodId,
+        authentication_method_id: delivery.authMethodId,
         indicative: "57",
-        number: person.phone,
-        email: signerEmail,
+        number: person.phone || undefined,
+        email: delivery.signerEmail,
         first_name: person.firstName,
         second_name: optionalText(person.secondName),
         first_last_name: person.firstLastName,
@@ -419,12 +443,11 @@ function buildCreateFullPayload(
   credito: FirmaSeguroCredit,
   person: PersonPayload,
   pdfBase64: string,
-  callbackUrl: string
+  callbackUrl: string,
+  delivery: ReturnType<typeof getFirmaSeguroDelivery>
 ) {
   const config = getFirmaSeguroConfig();
   const fileName = `paquete-finserpay-${credito.folio}.pdf`;
-  const signerEmail = getSignerEmail(person);
-  const sendByEmail = Boolean(signerEmail);
 
   return {
     processTypeId: config.processTypeId,
@@ -433,8 +456,8 @@ function buildCreateFullPayload(
     isInOrder: false,
     tags: getFirmaSeguroTags(credito),
     isRead: true,
-    isSendByEmail: sendByEmail,
-    isSendByWhatsApp: true,
+    isSendByEmail: delivery.sendByEmail,
+    isSendByWhatsApp: delivery.sendByWhatsApp,
     language: "es",
     isHandWritten: true,
     isPhotographic: false,
@@ -446,14 +469,16 @@ function buildCreateFullPayload(
       {
         order: 1,
         rol: "DEUDOR",
-        authenticationMethodId: config.authMethodId,
+        authenticationMethodId: delivery.authMethodId,
         signerSignatureMethodId: config.signatureMethodId,
         contactInformation: {
-          phone: {
-            indicative: "57",
-            number: person.phone,
-          },
-          email: signerEmail,
+          phone: person.phone
+            ? {
+                indicative: "57",
+                number: person.phone,
+              }
+            : undefined,
+          email: delivery.signerEmail,
           person: {
             firstName: person.firstName,
             firstLastName: person.firstLastName,
@@ -638,9 +663,10 @@ async function createFirmaSeguroProcess(
       null
     );
   }
-  if (!person.phone) {
+  const delivery = getFirmaSeguroDelivery(person);
+  if (!delivery.sendByEmail && !delivery.sendByWhatsApp) {
     throw new FirmaSeguroApiError(
-      "El credito no tiene telefono valido del cliente para enviar OTP",
+      "El credito no tiene correo ni telefono valido del cliente para enviar OTP",
       400,
       null
     );
@@ -651,8 +677,14 @@ async function createFirmaSeguroProcess(
   const pdfBase64 = pdf.toString("base64");
   const useCompanyEndpoint = Boolean(config.nit && config.useCompanyEndpoint);
   let requestPayload = useCompanyEndpoint
-    ? buildCreateFullByCompanyPayload(credito, person, pdfBase64, callbackUrl)
-    : buildCreateFullPayload(credito, person, pdfBase64, callbackUrl);
+    ? buildCreateFullByCompanyPayload(
+        credito,
+        person,
+        pdfBase64,
+        callbackUrl,
+        delivery
+      )
+    : buildCreateFullPayload(credito, person, pdfBase64, callbackUrl, delivery);
   let endpoint = useCompanyEndpoint ? "create-full-by-company" : "create-full";
 
   const submitCreateRequest = async (token: string) => {
@@ -672,7 +704,8 @@ async function createFirmaSeguroProcess(
           credito,
           person,
           pdfBase64,
-          callbackUrl
+          callbackUrl,
+          delivery
         );
         endpoint = "create-full-by-company";
         return firmaSeguroCreateFullByCompany(token, requestPayload);
@@ -691,7 +724,8 @@ async function createFirmaSeguroProcess(
         credito,
         person,
         pdfBase64,
-        callbackUrl
+        callbackUrl,
+        delivery
       );
       endpoint = "create-full";
       return firmaSeguroCreateFull(token, requestPayload);
