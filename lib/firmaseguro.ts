@@ -191,7 +191,7 @@ function normalizeAccessTokenEnv(value: string) {
 }
 
 function normalizeBaseUrl(value: string) {
-  const cleaned = value.trim().replace(/\/+$/, "");
+  const cleaned = value.trim().replace(/\/+$/, "").replace(/\/api$/i, "");
   if (!cleaned) {
     return "https://demo.firmaseguro.co";
   }
