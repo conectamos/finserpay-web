@@ -2646,8 +2646,7 @@ export default function CreditFactoryConsole({
   const identityEvidenceReady =
     Boolean(contratoFotoDataUrl) &&
     Boolean(contratoCedulaFrenteDataUrl) &&
-    Boolean(contratoCedulaRespaldoDataUrl) &&
-    Boolean(contratoFirmaDataUrl);
+    Boolean(contratoCedulaRespaldoDataUrl);
   const contractEvidenceReady = identityEvidenceReady;
   const stepContratoReady = identityEvidenceReady;
   const stepEquipoReady =
@@ -3006,7 +3005,6 @@ export default function CreditFactoryConsole({
       { label: "Selfie", ready: Boolean(contratoFotoDataUrl) },
       { label: "Cedula frente", ready: Boolean(contratoCedulaFrenteDataUrl) },
       { label: "Cedula respaldo", ready: Boolean(contratoCedulaRespaldoDataUrl) },
-      { label: "Firma", ready: Boolean(contratoFirmaDataUrl) },
     ],
     4: [
       { label: "Contrato", ready: contratoAceptado },
@@ -6985,53 +6983,6 @@ export default function CreditFactoryConsole({
                     </div>
 
                     <div className="space-y-4">
-                      <div className="rounded-[24px] border border-[#e2d6c5] bg-white px-4 py-4">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                              Firma digital
-                            </p>
-                            <p className="mt-2 text-sm leading-6 text-slate-600">
-                              Pidele al cliente que firme directamente en la pantalla.
-                            </p>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setContratoFirmaDataUrl("");
-                              setSignaturePadKey((current) => current + 1);
-                            }}
-                            className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                          >
-                            Limpiar firma
-                          </button>
-                        </div>
-
-                        <div className="mt-4">
-                          <SignaturePad
-                            padKey={signaturePadKey}
-                            onChange={setContratoFirmaDataUrl}
-                          />
-                        </div>
-
-                        <div className="mt-4 flex items-start gap-3 rounded-[20px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-3">
-                          <input
-                            id="contrato-aceptado-wizard"
-                            type="checkbox"
-                            checked={contratoAceptado}
-                            onChange={(event) => setContratoAceptado(event.target.checked)}
-                            className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-950 focus:ring-slate-300"
-                          />
-                          <label
-                            htmlFor="contrato-aceptado-wizard"
-                            className="text-sm leading-6 text-slate-700"
-                          >
-                            Confirmo lectura y aceptacion del contrato, con captura de selfie, cedula y firma.
-                          </label>
-                        </div>
-                      </div>
-
                       <div className="hidden rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-4 py-4">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                           OTP por WhatsApp
@@ -7856,37 +7807,6 @@ export default function CreditFactoryConsole({
                     </div>
 
                     <div className="space-y-4">
-                      <div className="rounded-[24px] border border-[#e2d6c5] bg-white px-4 py-4">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                              Firma digital
-                            </p>
-                            <p className="mt-2 text-sm leading-6 text-slate-600">
-                              Pidele al cliente que firme directamente en la pantalla.
-                            </p>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setContratoFirmaDataUrl("");
-                              setSignaturePadKey((current) => current + 1);
-                            }}
-                            className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                          >
-                            Limpiar firma
-                          </button>
-                        </div>
-
-                        <div className="mt-4">
-                          <SignaturePad
-                            padKey={signaturePadKey}
-                            onChange={setContratoFirmaDataUrl}
-                          />
-                        </div>
-                      </div>
-
                       <div className="hidden rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-4 py-4">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                           OTP por WhatsApp
@@ -7944,7 +7864,6 @@ export default function CreditFactoryConsole({
                                 Boolean(contratoCedulaFrenteDataUrl) &&
                                 Boolean(contratoCedulaRespaldoDataUrl),
                             },
-                            { label: "Firma", ready: Boolean(contratoFirmaDataUrl) },
                           ].map(({ label, ready }) => (
                             <div
                               key={label}
@@ -9265,10 +9184,10 @@ export default function CreditFactoryConsole({
                     Contrato digital
                   </div>
                   <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                    Firma el contrato antes de crear el credito
+                    Completa la evidencia antes de crear el credito
                   </h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    El contrato se llena con los datos de este formulario. Debes tomar la foto de aceptacion y capturar la firma digital del cliente.
+                    El contrato se llena con los datos de este formulario. La firma se gestiona en FirmaSeguro.
                   </p>
                 </div>
 
@@ -9331,72 +9250,6 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
 
-                  <div className="rounded-[24px] border border-[#e2d6c5] bg-white px-4 py-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          Firma digital
-                        </p>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                          Pidele al cliente que firme sobre el recuadro.
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setContratoFirmaDataUrl("");
-                          setSignaturePadKey((current) => current + 1);
-                        }}
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                      >
-                        Limpiar firma
-                      </button>
-                    </div>
-
-                    <div className="mt-4">
-                      <SignaturePad
-                        padKey={signaturePadKey}
-                        onChange={setContratoFirmaDataUrl}
-                      />
-                    </div>
-
-                    <div className="mt-4 flex items-start gap-3 rounded-[20px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-3">
-                      <input
-                        id="contrato-aceptado"
-                        type="checkbox"
-                        checked={contratoAceptado}
-                        onChange={(event) => setContratoAceptado(event.target.checked)}
-                        className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-950 focus:ring-slate-300"
-                      />
-                      <label
-                        htmlFor="contrato-aceptado"
-                        className="text-sm leading-6 text-slate-700"
-                      >
-                        Confirmo que el cliente leyo, acepto el contrato y autorizo la captura de foto y firma digital.
-                      </label>
-                    </div>
-
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-[18px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-3">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          Fecha y hora de firma
-                        </p>
-                        <p className="mt-2 text-sm font-semibold text-slate-900">
-                          {documentDateTimeLabel}
-                        </p>
-                      </div>
-
-                      <div className="rounded-[18px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-3">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          IP del dispositivo
-                        </p>
-                        <p className="mt-2 text-sm font-semibold text-slate-900">
-                          Se registra automaticamente al guardar
-                        </p>
-                      </div>
-                    </div>
-                  </div>
                 </div>
 
                 {contractPreviewNode}
