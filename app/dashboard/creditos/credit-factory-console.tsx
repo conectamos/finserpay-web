@@ -3231,6 +3231,8 @@ export default function CreditFactoryConsole({
   const activeMissingRequirements = activeRequirements.filter((item) => !item.ready);
   const showResultsPanel = paymentsView
     ? !selectedCredit || showPaymentResults
+    : clientLookupMode
+      ? false
     : lookupMode
       ? true
       : adminFactoryAssistMode
@@ -6352,30 +6354,16 @@ export default function CreditFactoryConsole({
                   </div>
                 </div>
 
-                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-end">
-                  <div>
-                    <p className="text-sm font-black uppercase tracking-[0.18em] text-[#145a5a]">
-                      Clientes y expedientes
-                    </p>
-                    <h1 className="mt-3 max-w-2xl text-5xl font-black leading-[0.96] tracking-normal text-slate-950 sm:text-6xl">
-                      Buscar cliente
-                    </h1>
-                    <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600">
-                      Ubica al cliente, confirma el credito activo y abre su expediente sin entrar al flujo de venta.
-                    </p>
-                  </div>
-
-                  <div className="border-l border-[#bfd3ce] pl-4">
-                    <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
-                      Vista actual
-                    </p>
-                    <p className="mt-2 text-lg font-black text-slate-950">
-                      Expediente por busqueda
-                    </p>
-                    <p className="mt-1 text-sm leading-6 text-slate-500">
-                      Perfil: {accessProfileLabel}. Alcance: {accessScopeLabel}.
-                    </p>
-                  </div>
+                <div className="max-w-3xl">
+                  <p className="text-sm font-black uppercase tracking-[0.18em] text-[#145a5a]">
+                    Clientes y expedientes
+                  </p>
+                  <h1 className="mt-3 max-w-2xl text-4xl font-black leading-[1.02] tracking-normal text-slate-950 sm:text-5xl">
+                    Buscar cliente
+                  </h1>
+                  <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600">
+                    Ubica al cliente, confirma el credito activo y abre su expediente sin entrar al flujo de venta.
+                  </p>
                 </div>
               </div>
             ) : (
@@ -6592,6 +6580,42 @@ export default function CreditFactoryConsole({
               {paymentsView ? "Nueva busqueda" : "Limpiar"}
             </button>
           </div>
+
+          {clientLookupMode && activeSearch && !selectedCredit && !loadingList ? (
+            <div className="mt-4 border-t border-slate-200 pt-3">
+              {!credits.length ? (
+                <p className="text-sm text-slate-500">
+                  No encontramos clientes o creditos con ese criterio.
+                </p>
+              ) : (
+                <div className="divide-y divide-slate-200">
+                  {credits.map((credit) => (
+                    <button
+                      key={`lookup-inline-${credit.id}`}
+                      type="button"
+                      onClick={() => openLookupCredit(credit.id)}
+                      className="grid w-full gap-2 py-3 text-left transition hover:text-[#145a5a] md:grid-cols-[1.3fr_1fr_auto] md:items-center"
+                    >
+                      <span>
+                        <span className="block text-sm font-black text-slate-950">
+                          {credit.clienteNombre}
+                        </span>
+                        <span className="mt-0.5 block text-xs font-semibold text-slate-500">
+                          {credit.folio} | {credit.clienteDocumento || credit.clienteTelefono || "Sin dato principal"}
+                        </span>
+                      </span>
+                      <span className="text-sm font-semibold text-slate-600">
+                        {credit.referenciaEquipo || credit.imei || "Sin equipo"}
+                      </span>
+                      <span className="text-sm font-black text-slate-950">
+                        {currency(credit.saldoPendiente)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
 
           {paymentsView ? (
             <div className="mt-5 rounded-[22px] border border-slate-200 bg-[#f8fbfa] p-4">
@@ -9772,6 +9796,7 @@ export default function CreditFactoryConsole({
                 ? "fp-client-lookup-result"
                 : "rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] shadow-[0_18px_50px_rgba(15,23,42,0.07)]",
               deliveryMode ? "p-5" : clientLookupMode ? "" : "p-6",
+              clientLookupMode && !selectedCredit ? "hidden" : "",
               createClientMode || simulatorMode || (deliveryMode && !selectedCredit) ? "hidden" : "",
             ].join(" ")}
           >
