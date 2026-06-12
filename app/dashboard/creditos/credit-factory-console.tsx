@@ -5573,7 +5573,7 @@ export default function CreditFactoryConsole({
     window.open(`/api/creditos/${creditLookup}/abonos/${payment.id}/recibo`, "_blank");
   };
 
-  const downloadExpedientePdf = (creditId?: number | null) => {
+  const downloadExpedientePdf = async (creditId?: number | null) => {
     const credit =
       typeof creditId === "number"
         ? credits.find((item) => item.id === creditId) || null
@@ -5588,7 +5588,59 @@ export default function CreditFactoryConsole({
     }
 
     const creditLookup = encodeURIComponent(String(credit.folio || credit.id));
-    window.open(`/api/creditos/${creditLookup}/documentos`, "_blank");
+
+    try {
+      setFirmaSeguroRefreshing(true);
+      setNotice(null);
+
+      const result = await requestJson<FirmaSeguroResponse>(
+        `/api/creditos/${creditLookup}/firma-seguro?refresh=1`
+      );
+
+      if (!result.ok || !result.data?.ok) {
+        throw new Error(
+          result.data?.error || "No se pudo consultar el expediente firmado"
+        );
+      }
+
+      if (result.data.documentUrl || result.data.process?.hasSignedDocument) {
+        window.open(
+          result.data.documentUrl ||
+            `/api/creditos/${creditLookup}/firma-seguro/documento?refresh=1`,
+          "_blank"
+        );
+        return;
+      }
+
+      const process = result.data.process || null;
+      const processStatus = process?.status || "pendiente";
+      const lastError = process?.lastError;
+
+      setNotice({
+        text: process
+          ? isFirmaSeguroSuccessfulProcess(process)
+            ? `FirmaSeguro reporto firma exitosa, pero el expediente firmado aun no esta disponible para descargar. ${
+                lastError ? `Detalle: ${lastError}. ` : ""
+              }Estado: ${processStatus}.`
+            : `El expediente PDF final solo queda disponible cuando FirmaSeguro reporte firma exitosa. Estado: ${processStatus}${lastError ? `. Ultimo error: ${lastError}` : ""}.`
+          : "Este credito aun no tiene expediente enviado a FirmaSeguro.",
+        tone: process
+          ? isFirmaSeguroSuccessfulProcess(process)
+            ? "amber"
+            : "slate"
+          : "amber",
+      });
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo consultar el expediente firmado",
+        tone: "red",
+      });
+    } finally {
+      setFirmaSeguroRefreshing(false);
+    }
   };
 
   const openFirmaSeguroSignedDocument = async (creditId?: number | null) => {
@@ -5636,13 +5688,13 @@ export default function CreditFactoryConsole({
       setNotice({
         text: process
           ? signedWithoutPdf
-            ? `FirmaSeguro reporto firma exitosa. ${
+            ? `FirmaSeguro reporto firma exitosa, pero el expediente firmado aun no esta disponible para descargar. ${
                 lastError ||
-                "El PDF firmado aun no esta descargado en FINSER PAY; intenta consultar de nuevo en unos minutos."
+                "FirmaSeguro no devolvio el PDF firmado en esta consulta."
               } Estado: ${processStatus}.`
             : `FirmaSeguro aun no reporta firma exitosa. Estado: ${processStatus}${lastError ? `. Ultimo error: ${lastError}` : ""}.`
           : "Este credito aun no se ha enviado a FirmaSeguro.",
-        tone: process ? (signedWithoutPdf ? "emerald" : "amber") : "slate",
+        tone: process ? "amber" : "slate",
       });
     } catch (error) {
       setNotice({
