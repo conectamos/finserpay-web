@@ -281,7 +281,31 @@ export function buildFirmaSeguroCallbackUrl(creditoId?: number) {
 }
 
 async function parseResponse(response: Response) {
-  const text = await response.text();
+  const contentType = response.headers.get("content-type") || "";
+  const buffer = Buffer.from(await response.arrayBuffer());
+
+  if (!buffer.length) {
+    return null;
+  }
+
+  const looksLikePdf = buffer.subarray(0, 4).toString("ascii") === "%PDF";
+  if (/application\/pdf|application\/octet-stream/i.test(contentType) || looksLikePdf) {
+    if (looksLikePdf) {
+      const disposition = response.headers.get("content-disposition") || "";
+      const fileNameMatch =
+        disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
+        disposition.match(/filename="?([^";]+)"?/i);
+
+      return {
+        pdfBase64: buffer.toString("base64"),
+        fileName: fileNameMatch?.[1]
+          ? decodeURIComponent(fileNameMatch[1].trim())
+          : "",
+      };
+    }
+  }
+
+  const text = buffer.toString("utf8");
   if (!text) {
     return null;
   }
@@ -483,7 +507,7 @@ async function firmaSeguroRequest<T>(
 ): Promise<T> {
   const config = getFirmaSeguroConfig();
   const baseHeaders: Record<string, string> = {
-    Accept: "application/json",
+    Accept: "application/json,application/pdf,application/octet-stream,text/plain,*/*",
   };
 
   let body: BodyInit | undefined;
