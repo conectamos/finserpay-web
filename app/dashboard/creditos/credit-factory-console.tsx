@@ -764,6 +764,32 @@ function InfoTile({
   );
 }
 
+function DetailRow({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: ReactNode;
+  detail?: ReactNode;
+}) {
+  return (
+    <div className="border-b border-slate-200 py-3 last:border-b-0">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+        {label}
+      </p>
+      <div className="mt-1 break-words text-sm font-black leading-snug text-slate-950">
+        {value}
+      </div>
+      {detail ? (
+        <div className="mt-1 break-words text-xs leading-5 text-slate-500">
+          {detail}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 async function requestJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, {
     cache: "no-store",
@@ -6254,11 +6280,14 @@ export default function CreditFactoryConsole({
           </section>
         ) : (
           <section
-            className={[
-              "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white shadow-sm",
-              lookupMode ? "px-5 py-4 sm:px-5" : "px-5 py-5 sm:px-6",
-              simulatorMode || deliveryMode ? "fp-tool-hero" : "",
-            ].join(" ")}
+            className={
+              lookupMode
+                ? "border-b border-slate-200 bg-transparent py-4"
+                : [
+                    "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6",
+                    simulatorMode || deliveryMode ? "fp-tool-hero" : "",
+                  ].join(" ")
+            }
           >
             {simulatorMode || deliveryMode ? (
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -6297,14 +6326,11 @@ export default function CreditFactoryConsole({
               >
                 <div className={lookupMode ? "max-w-2xl" : "max-w-3xl"}>
                   <FinserBrand compact={lookupMode} showTagline={!lookupMode} />
-                  <div
-                    className={[
-                      "mt-4 inline-flex rounded-full border border-[#c7dbe0] bg-[#f7fbfa] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#145a5a]",
-                      lookupMode ? "hidden" : "",
-                    ].join(" ")}
-                  >
-                    {heroEyebrow}
-                  </div>
+                  {!lookupMode ? (
+                    <div className="mt-4 inline-flex rounded-full border border-[#c7dbe0] bg-[#f7fbfa] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#145a5a]">
+                      {heroEyebrow}
+                    </div>
+                  ) : null}
                   <h1
                     className={
                       lookupMode
@@ -6399,23 +6425,24 @@ export default function CreditFactoryConsole({
               : deliveryMode
                 ? "fp-surface mt-6 rounded-[28px] p-5"
               : lookupMode
-                ? "mt-4 rounded-[22px] border border-[#dbe5ec] bg-white p-4 shadow-sm"
+                ? "border-b border-slate-200 py-4"
               : "fp-surface mt-6 rounded-[28px] p-6"
           }
         >
-          <div
-            className={[
-              "inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]",
-              paymentsView ? "border-emerald-200 bg-emerald-50 text-[#116b61]" : "fp-kicker",
-              lookupMode ? "hidden" : "",
-            ].join(" ")}
-          >
-            {deliveryMode
-              ? "Validar entrega"
-              : adminFactoryAssistMode
-                ? "Asistencia admin"
-                : "Buscar cliente"}
-          </div>
+          {!lookupMode ? (
+            <div
+              className={[
+                "inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]",
+                paymentsView ? "border-emerald-200 bg-emerald-50 text-[#116b61]" : "fp-kicker",
+              ].join(" ")}
+            >
+              {deliveryMode
+                ? "Validar entrega"
+                : adminFactoryAssistMode
+                  ? "Asistencia admin"
+                  : "Buscar cliente"}
+            </div>
+          ) : null}
           <h2
             className={[
               "font-black tracking-tight text-slate-950",
@@ -9672,9 +9699,9 @@ export default function CreditFactoryConsole({
             ref={lookupMode ? selectedCreditPanelRef : null}
             className={[
               lookupMode && !deliveryMode
-                ? "rounded-[22px] border border-[#dbe5ec] bg-white shadow-sm"
+                ? "border-b border-slate-200 bg-transparent"
                 : "rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] shadow-[0_18px_50px_rgba(15,23,42,0.07)]",
-              deliveryMode ? "p-5" : lookupMode ? "p-4" : "p-6",
+              deliveryMode ? "p-5" : lookupMode ? "py-4" : "p-6",
               createClientMode || simulatorMode || (deliveryMode && !selectedCredit) ? "hidden" : "",
             ].join(" ")}
           >
@@ -9707,7 +9734,7 @@ export default function CreditFactoryConsole({
               <div className={lookupMode && !deliveryMode ? "mt-4 space-y-3" : "mt-6 space-y-4"}>
                 {lookupMode && !deliveryMode && (
                   <>
-                    <div className="rounded-[20px] border border-slate-200 bg-white px-4 py-4">
+                    <div className="border-y border-slate-200 py-4">
                       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
                           <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#d9e4eb] bg-[linear-gradient(180deg,#f8fafc_0%,#e8eef5_100%)] text-2xl font-black text-slate-950">
@@ -9796,7 +9823,7 @@ export default function CreditFactoryConsole({
                         </div>
                       </div>
 
-                      <div className="mt-4 grid overflow-hidden rounded-[16px] border border-slate-200 bg-slate-50/60 sm:grid-cols-4">
+                      <div className="mt-4 grid border-y border-slate-200 sm:grid-cols-4">
                         <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
                           <p className="text-[11px] font-semibold uppercase text-slate-500">Saldo</p>
                           <p className="mt-1 break-words text-base font-black text-slate-950">{currency(clientPendingTotal)}</p>
@@ -9823,7 +9850,7 @@ export default function CreditFactoryConsole({
                 )}
 
                 {lookupMode && !showLookupDetail ? (
-                  <div className="flex flex-col gap-3 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-col gap-3 border-t border-slate-200 py-3 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-sm text-slate-600">
                       El detalle completo queda contraido para mantener esta vista limpia.
                     </p>
@@ -9834,6 +9861,322 @@ export default function CreditFactoryConsole({
                     >
                       Cambiar credito
                     </button>
+                  </div>
+                ) : lookupMode && !deliveryMode ? (
+                  <div ref={lookupDetailPanelRef} className="space-y-6 border-t border-slate-200 pt-5">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          Expediente operativo
+                        </p>
+                        <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                          {selectedCredit.deliverableReady ? "Listo para entregar" : "No entregar todavia"}
+                        </h3>
+                        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                          {selectedCredit.deliverableLabel ||
+                            "Aun no hay una verificacion comercial disponible."}
+                          {selectedCredit.equalityState
+                            ? ` Estado remoto: ${selectedCredit.equalityState}.`
+                            : ""}
+                        </p>
+                        <p className="mt-2 text-xs font-semibold text-slate-500">
+                          Ultima revision: {dateTime(selectedCredit.equalityLastCheckAt)} | {selectedCreditLockStatus} | Ventana: {dateTime(selectedCredit.graceUntil)}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 lg:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setShowLookupDetail(false)}
+                          className="rounded-[14px] border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                        >
+                          Ocultar detalle
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowSearchResults(true)}
+                          className="rounded-[14px] border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                        >
+                          Cambiar credito
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadExpedientePdf()}
+                          disabled={!selectedCredit}
+                          className="rounded-[14px] border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                        >
+                          Expediente PDF
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadPlanPagos()}
+                          disabled={!selectedCredit}
+                          className="rounded-[14px] border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                        >
+                          Plan de pagos
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadPazYSalvo()}
+                          disabled={!selectedCredit || selectedCredit.saldoPendiente > 0}
+                          className="rounded-[14px] border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                        >
+                          Paz y salvo
+                        </button>
+                        {canAdmin || canSupervisor ? (
+                          <button
+                            type="button"
+                            onClick={() => void runCommand("toggle-stolen-lock")}
+                            disabled={!selectedCredit || runningCommand !== null}
+                            className="rounded-[14px] border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                          >
+                            {selectedCredit.bloqueoRobo ? "Desbloquear" : "Bloquear"}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-x-8 gap-y-6 lg:grid-cols-3">
+                      <section>
+                        <h4 className="text-sm font-black uppercase tracking-[0.14em] text-slate-700">
+                          Credito
+                        </h4>
+                        <div className="mt-2 border-y border-slate-200">
+                          <DetailRow
+                            label="Folio y estado"
+                            value={selectedCredit.folio}
+                            detail={`${selectedCredit.estado} | ${selectedCreditPaymentStatusLabel}`}
+                          />
+                          <DetailRow
+                            label="Responsable"
+                            value={selectedCreditAdvisorLabel}
+                            detail={`Sede: ${selectedCredit.sede.nombre}`}
+                          />
+                          <DetailRow
+                            label="Equipo"
+                            value={selectedCreditEquipmentLabel}
+                            detail={`IMEI: ${selectedCredit.imei || selectedCredit.deviceUid || "-"}`}
+                          />
+                          <DetailRow
+                            label="Referencia pago"
+                            value={selectedCredit.referenciaPago || "-"}
+                            detail="Dato para recaudo y conciliacion"
+                          />
+                        </div>
+                      </section>
+
+                      <section>
+                        <h4 className="text-sm font-black uppercase tracking-[0.14em] text-slate-700">
+                          Cliente
+                        </h4>
+                        <div className="mt-2 border-y border-slate-200">
+                          <DetailRow
+                            label="Documento"
+                            value={selectedCreditDocumentLabel}
+                            detail={`Expedido: ${dateTime(selectedCredit.clienteFechaExpedicion)}`}
+                          />
+                          <DetailRow
+                            label="Telefono y correo"
+                            value={selectedCredit.clienteTelefono || "-"}
+                            detail={selectedCredit.clienteCorreo || "Sin correo"}
+                          />
+                          <DetailRow
+                            label="Nacimiento"
+                            value={dateTime(selectedCredit.clienteFechaNacimiento)}
+                            detail={`Genero: ${humanizeConstant(selectedCredit.clienteGenero)}`}
+                          />
+                          <DetailRow
+                            label="Ubicacion"
+                            value={
+                              [selectedCredit.clienteCiudad, selectedCredit.clienteDepartamento]
+                                .filter(Boolean)
+                                .join(", ") || "-"
+                            }
+                            detail={selectedCredit.clienteDireccion || "Sin direccion"}
+                          />
+                        </div>
+                      </section>
+
+                      <section>
+                        <h4 className="text-sm font-black uppercase tracking-[0.14em] text-slate-700">
+                          Cartera
+                        </h4>
+                        <div className="mt-2 border-y border-slate-200">
+                          <DetailRow
+                            label="Saldo pendiente"
+                            value={currency(selectedCredit.saldoPendiente)}
+                            detail={selectedCreditPaymentProgress}
+                          />
+                          <DetailRow
+                            label="Monto y cuota"
+                            value={currency(selectedCredit.montoCredito)}
+                            detail={`Cuota: ${currency(selectedCredit.valorCuota)} | ${selectedCredit.plazoMeses || "-"} cuotas`}
+                          />
+                          <DetailRow
+                            label="Proximo pago"
+                            value={dateTime(selectedCredit.fechaProximoPago)}
+                            detail={`Primer pago: ${dateTime(selectedCredit.fechaPrimerPago)}`}
+                          />
+                          <DetailRow
+                            label="Recaudo"
+                            value={formatPercent(selectedCredit.porcentajeRecaudado)}
+                            detail={`${selectedCredit.abonosCount} abono(s) | Ultimo: ${dateTime(selectedCredit.ultimoAbonoAt)}`}
+                          />
+                        </div>
+                      </section>
+                    </div>
+
+                    <div className="grid gap-x-8 gap-y-6 border-t border-slate-200 pt-5 lg:grid-cols-2">
+                      <section>
+                        <h4 className="text-sm font-black uppercase tracking-[0.14em] text-slate-700">
+                          Firma y documentos
+                        </h4>
+                        <div className="mt-2 border-y border-slate-200">
+                          <DetailRow
+                            label="Auditoria"
+                            value={selectedCreditDocumentsStatus}
+                            detail={selectedCreditCreatedLabel}
+                          />
+                          <DetailRow
+                            label="Evidencia"
+                            value={selectedCredit.contratoListo ? "Completa" : "Pendiente"}
+                            detail={selectedCreditEvidenceStatus}
+                          />
+                          <DetailRow
+                            label="OTP contrato"
+                            value={selectedCredit.contratoOtpVerificadoAt ? "Verificado" : "Pendiente"}
+                            detail={
+                              [
+                                selectedCredit.contratoOtpCanal,
+                                selectedCredit.contratoOtpDestino,
+                              ]
+                                .filter(Boolean)
+                                .join(" | ") || "Sin canal registrado"
+                            }
+                          />
+                          <DetailRow
+                            label="Firma"
+                            value={selectedCreditDocumentsStatus}
+                            detail={`Contrato: ${dateTime(selectedCredit.contratoAceptadoAt)} | Pagare: ${dateTime(selectedCredit.pagareAceptadoAt)}`}
+                          />
+                        </div>
+                      </section>
+
+                      <section>
+                        <h4 className="text-sm font-black uppercase tracking-[0.14em] text-slate-700">
+                          Referencias
+                        </h4>
+                        <div className="mt-2 border-y border-slate-200">
+                          {selectedCredit.referenciasFamiliares?.length ? (
+                            selectedCredit.referenciasFamiliares.map((reference, index) => (
+                              <DetailRow
+                                key={`${reference.nombre}-${index}`}
+                                label={`Referencia familiar ${index + 1}`}
+                                value={reference.nombre}
+                                detail={`${reference.parentesco} | ${reference.telefono}`}
+                              />
+                            ))
+                          ) : (
+                            <p className="py-3 text-sm text-slate-500">
+                              Este credito no tiene referencias familiares visibles.
+                            </p>
+                          )}
+                        </div>
+                      </section>
+                    </div>
+
+                    {sameClientCredits.length > 1 ? (
+                      <section className="border-t border-slate-200 pt-5">
+                        <h4 className="text-sm font-black uppercase tracking-[0.14em] text-slate-700">
+                          Historial dentro de tu alcance
+                        </h4>
+                        <div className="mt-2 divide-y divide-slate-200 border-y border-slate-200">
+                          {sameClientCredits.map((credit) => (
+                            <div
+                              key={`history-flat-${credit.id}`}
+                              className="grid gap-2 py-3 text-sm md:grid-cols-[1.2fr_1fr_1fr_auto] md:items-center"
+                            >
+                              <div>
+                                <p className="font-black text-slate-950">{credit.folio}</p>
+                                <p className="text-xs text-slate-500">{credit.estado}</p>
+                              </div>
+                              <p className="text-slate-600">{credit.referenciaEquipo || credit.imei}</p>
+                              <p className="font-semibold text-slate-700">{currency(credit.saldoPendiente)}</p>
+                              <button
+                                type="button"
+                                onClick={() => openLookupDetail(credit.id)}
+                                className="rounded-[14px] border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                              >
+                                Abrir
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {canAdmin ? (
+                      <section className="border-t border-slate-200 pt-5">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+                          <div className="lg:w-56">
+                            <p className="text-sm font-black uppercase tracking-[0.14em] text-slate-700">
+                              Ajuste admin
+                            </p>
+                            <p className="mt-1 text-xs leading-5 text-slate-500">
+                              Corregir plan de pagos.
+                            </p>
+                          </div>
+                          <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                            Cuotas
+                            <select
+                              value={planInstallments}
+                              onChange={(event) => setPlanInstallments(event.target.value)}
+                              className="h-11 rounded-[14px] border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+                            >
+                              {Array.from(
+                                { length: MAX_CREDIT_INSTALLMENTS },
+                                (_, index) => String(index + 1)
+                              ).map((option) => (
+                                <option key={`lookup-plan-${option}`} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                            Frecuencia
+                            <select
+                              value={planFrequency}
+                              onChange={(event) => setPlanFrequency(event.target.value)}
+                              className="h-11 rounded-[14px] border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+                            >
+                              {PAYMENT_FREQUENCY_OPTIONS.map((option) => (
+                                <option key={`lookup-${option.value}`} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                            Primer pago
+                            <input
+                              type="date"
+                              value={planFirstPaymentDate}
+                              onChange={(event) => setPlanFirstPaymentDate(event.target.value)}
+                              className="h-11 rounded-[14px] border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => void updateCreditPlan()}
+                            disabled={updatingPlan || runningCommand !== null}
+                            className="h-11 rounded-[14px] border border-[#145a5a] bg-[#145a5a] px-4 text-sm font-black text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
+                          >
+                            {updatingPlan ? "Guardando..." : "Guardar plan"}
+                          </button>
+                        </div>
+                      </section>
+                    ) : null}
                   </div>
                 ) : (
                   <div ref={lookupMode ? lookupDetailPanelRef : null} className="space-y-4">
