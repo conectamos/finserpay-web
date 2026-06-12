@@ -1812,6 +1812,7 @@ export default function CreditFactoryConsole({
   const deliveryMode = !paymentsView && !lookupView && entryMode === "delivery";
   const simulatorMode = !paymentsView && !lookupView && entryMode === "simulator";
   const lookupMode = (lookupView && canViewSavedCredits) || deliveryMode;
+  const clientLookupMode = lookupView && canViewSavedCredits;
   const adminFactoryAssistMode = canAdmin && createClientMode;
   const canSearchCreditsInCurrentView = paymentsView || lookupMode || adminFactoryAssistMode;
   const canAdminMoveFreelyInFactory = canAdmin && !paymentsView && !lookupMode;
@@ -6237,10 +6238,18 @@ export default function CreditFactoryConsole({
     <div
       className={[
         "fp-shell min-h-screen px-4 py-6 text-slate-950",
-        paymentsView ? "" : "fp-seller-app",
+        paymentsView ? "" : clientLookupMode ? "fp-client-lookup" : "fp-seller-app",
       ].join(" ")}
     >
-      <div className={paymentsView ? "mx-auto max-w-[1180px]" : "mx-auto max-w-7xl"}>
+      <div
+        className={
+          paymentsView
+            ? "mx-auto max-w-[1180px]"
+            : clientLookupMode
+              ? "mx-auto max-w-[1060px]"
+              : "mx-auto max-w-7xl"
+        }
+      >
         {paymentsView ? (
           <section className="overflow-hidden rounded-[28px] border border-[#cfe0dc] bg-[#123331] p-5 text-white shadow-[0_20px_50px_rgba(15,23,42,0.14)]">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -6281,8 +6290,8 @@ export default function CreditFactoryConsole({
         ) : (
           <section
             className={
-              lookupMode
-                ? "border-b border-slate-200 bg-transparent py-4"
+              clientLookupMode
+                ? "fp-client-lookup-hero"
                 : [
                     "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6",
                     simulatorMode || deliveryMode ? "fp-tool-hero" : "",
@@ -6314,6 +6323,59 @@ export default function CreditFactoryConsole({
                   >
                     Volver
                   </Link>
+                </div>
+              </div>
+            ) : clientLookupMode ? (
+              <div className="space-y-8">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <FinserBrand compact showTagline={false} />
+
+                  <div className="flex flex-col gap-2 sm:items-end">
+                    <div className="flex flex-wrap gap-2">
+                      <Link
+                        href="/dashboard"
+                        className="inline-flex justify-center rounded-full border border-slate-300 bg-white/86 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[#145a5a] hover:text-[#145a5a]"
+                      >
+                        Dashboard
+                      </Link>
+                      <Link
+                        href="/dashboard/abonos"
+                        className="inline-flex justify-center rounded-full border border-[#b8d8d6] bg-white/86 px-4 py-2 text-sm font-semibold text-[#145a5a] transition hover:border-[#145a5a] hover:bg-white"
+                      >
+                        Ir a abonos
+                      </Link>
+                    </div>
+                    <p className="text-xs font-semibold text-slate-500 sm:text-right">
+                      {initialSession.sedeNombre} | {initialSession.rolNombre} | {accessProfileLabel}
+                      {initialSeller ? ` | ${initialSeller.nombre}` : ""}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-end">
+                  <div>
+                    <p className="text-sm font-black uppercase tracking-[0.18em] text-[#145a5a]">
+                      Clientes y expedientes
+                    </p>
+                    <h1 className="mt-3 max-w-2xl text-5xl font-black leading-[0.96] tracking-normal text-slate-950 sm:text-6xl">
+                      Buscar cliente
+                    </h1>
+                    <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600">
+                      Ubica al cliente, confirma el credito activo y abre su expediente sin entrar al flujo de venta.
+                    </p>
+                  </div>
+
+                  <div className="border-l border-[#bfd3ce] pl-4">
+                    <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
+                      Vista actual
+                    </p>
+                    <p className="mt-2 text-lg font-black text-slate-950">
+                      Expediente por busqueda
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      Perfil: {accessProfileLabel}. Alcance: {accessScopeLabel}.
+                    </p>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -6424,12 +6486,12 @@ export default function CreditFactoryConsole({
               ? "mt-5 overflow-hidden rounded-[28px] border border-[#cfe0dc] bg-white p-5 shadow-[0_18px_44px_rgba(15,23,42,0.08)]"
               : deliveryMode
                 ? "fp-surface mt-6 rounded-[28px] p-5"
-              : lookupMode
-                ? "border-b border-slate-200 py-4"
+              : clientLookupMode
+                ? "fp-client-lookup-search"
               : "fp-surface mt-6 rounded-[28px] p-6"
           }
         >
-          {!lookupMode ? (
+          {!clientLookupMode ? (
             <div
               className={[
                 "inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]",
@@ -6446,7 +6508,7 @@ export default function CreditFactoryConsole({
           <h2
             className={[
               "font-black tracking-tight text-slate-950",
-              paymentsView ? "mt-3 text-2xl" : lookupMode ? "text-xl" : "mt-4 text-3xl",
+              paymentsView ? "mt-3 text-2xl" : clientLookupMode ? "text-sm uppercase tracking-[0.16em] text-[#145a5a]" : "mt-4 text-3xl",
             ].join(" ")}
           >
             {paymentsView
@@ -6455,14 +6517,14 @@ export default function CreditFactoryConsole({
                 ? "Busca el credito"
                 : adminFactoryAssistMode
                   ? "Busca un caso para apoyar"
-                : lookupMode
-                  ? "Busca por cliente, credito o equipo"
+                : clientLookupMode
+                  ? "Buscar expediente"
                 : "Encuentra al cliente y su credito"}
           </h2>
           <p
             className={[
               "max-w-3xl text-sm leading-6 text-slate-600",
-              paymentsView || lookupMode ? "mt-1" : "mt-3",
+              paymentsView || clientLookupMode ? "mt-1" : "mt-3",
             ].join(" ")}
           >
             {paymentsView
@@ -6474,7 +6536,15 @@ export default function CreditFactoryConsole({
                 : searchDescription}
           </p>
 
-          <div className={deliveryMode ? "mt-5 flex flex-col gap-3 lg:flex-row" : lookupMode ? "mt-4 flex flex-col gap-3 lg:flex-row" : "mt-6 flex flex-col gap-3 lg:flex-row"}>
+          <div
+            className={
+              deliveryMode
+                ? "mt-5 flex flex-col gap-3 lg:flex-row"
+                : clientLookupMode
+                  ? "fp-client-lookup-command mt-4 flex flex-col gap-2 lg:flex-row"
+                : "mt-6 flex flex-col gap-3 lg:flex-row"
+            }
+          >
             <input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
@@ -6492,7 +6562,7 @@ export default function CreditFactoryConsole({
               }
                className={[
                  "flex-1 border bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100",
-                 paymentsView ? "rounded-[20px] border-slate-200 shadow-inner" : lookupMode ? "rounded-[14px] border-slate-200" : "rounded-[18px] border-emerald-950/14",
+                 paymentsView ? "rounded-[20px] border-slate-200 shadow-inner" : clientLookupMode ? "rounded-[18px] border-transparent bg-transparent focus:border-transparent focus:ring-0" : "rounded-[18px] border-emerald-950/14",
                ].join(" ")}
             />
 
@@ -6500,7 +6570,7 @@ export default function CreditFactoryConsole({
               type="button"
               onClick={() => void searchCredits()}
               disabled={loadingList || loadingDrafts}
-              className={lookupMode ? "rounded-[14px] bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70" : "fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"}
+              className={clientLookupMode ? "rounded-[16px] bg-[#145a5a] px-6 py-3 text-sm font-black text-white transition hover:bg-[#0f4a4a] disabled:opacity-70" : "fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"}
             >
               {loadingList || loadingDrafts
                 ? "Buscando..."
@@ -6517,7 +6587,7 @@ export default function CreditFactoryConsole({
               type="button"
               onClick={() => void clearSearch()}
               disabled={(loadingList || loadingDrafts) && !activeSearch}
-              className={lookupMode ? "rounded-[14px] border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-70" : "rounded-[18px] border border-emerald-950/14 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-emerald-50 disabled:opacity-70"}
+              className={clientLookupMode ? "rounded-[16px] border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-70" : "rounded-[18px] border border-emerald-950/14 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-emerald-50 disabled:opacity-70"}
             >
               {paymentsView ? "Nueva busqueda" : "Limpiar"}
             </button>
@@ -6575,7 +6645,7 @@ export default function CreditFactoryConsole({
                 </div>
               )}
             </div>
-          ) : deliveryMode || lookupMode ? null : (
+          ) : deliveryMode || clientLookupMode ? null : (
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                 Alcance: {accessScopeLabel}
@@ -9698,21 +9768,21 @@ export default function CreditFactoryConsole({
           <div
             ref={lookupMode ? selectedCreditPanelRef : null}
             className={[
-              lookupMode && !deliveryMode
-                ? "border-b border-slate-200 bg-transparent"
+              clientLookupMode
+                ? "fp-client-lookup-result"
                 : "rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] shadow-[0_18px_50px_rgba(15,23,42,0.07)]",
-              deliveryMode ? "p-5" : lookupMode ? "py-4" : "p-6",
+              deliveryMode ? "p-5" : clientLookupMode ? "" : "p-6",
               createClientMode || simulatorMode || (deliveryMode && !selectedCredit) ? "hidden" : "",
             ].join(" ")}
           >
-            <div className={lookupMode && !deliveryMode ? "hidden" : "inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600"}>
+            <div className={clientLookupMode ? "hidden" : "inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600"}>
               {deliveryMode ? "Validacion de entrega" : lookupMode ? "Expediente del cliente" : "Entrega"}
             </div>
-            <h2 className={deliveryMode ? "mt-3 text-2xl font-black tracking-tight text-slate-950" : lookupMode ? "text-xl font-black tracking-tight text-slate-950" : "mt-4 text-3xl font-black tracking-tight text-slate-950"}>
+            <h2 className={deliveryMode ? "mt-3 text-2xl font-black tracking-tight text-slate-950" : clientLookupMode ? "text-sm font-black uppercase tracking-[0.16em] text-[#145a5a]" : "mt-4 text-3xl font-black tracking-tight text-slate-950"}>
               {deliveryMode
                 ? "Resultado de consulta"
-                : lookupMode
-                  ? "Cliente encontrado"
+                : clientLookupMode
+                  ? "Resultado"
                   : "Validacion operativa"}
             </h2>
 
@@ -9731,13 +9801,13 @@ export default function CreditFactoryConsole({
                     : "Genera o selecciona un credito para ver si el equipo ya se puede entregar."}
               </div>
             ) : (
-              <div className={lookupMode && !deliveryMode ? "mt-4 space-y-3" : "mt-6 space-y-4"}>
-                {lookupMode && !deliveryMode && (
+              <div className={clientLookupMode ? "mt-5 space-y-4" : "mt-6 space-y-4"}>
+                {clientLookupMode && (
                   <>
-                    <div className="border-y border-slate-200 py-4">
+                    <div className="fp-client-lookup-person">
                       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
-                          <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#d9e4eb] bg-[linear-gradient(180deg,#f8fafc_0%,#e8eef5_100%)] text-2xl font-black text-slate-950">
+                          <div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-[22px] border border-[#d9e4eb] bg-[linear-gradient(180deg,#f8fafc_0%,#e8eef5_100%)] text-2xl font-black text-slate-950">
                             {selectedCredit.contratoSelfieDataUrl ||
                             selectedCredit.contratoFotoDataUrl ? (
                               <img
@@ -9763,7 +9833,7 @@ export default function CreditFactoryConsole({
 
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="break-words text-2xl font-black leading-tight text-slate-950">
+                              <h3 className="break-words text-3xl font-black leading-tight tracking-normal text-slate-950">
                                 {selectedCredit.clienteNombre}
                               </h3>
                               <span
@@ -9823,7 +9893,7 @@ export default function CreditFactoryConsole({
                         </div>
                       </div>
 
-                      <div className="mt-4 grid border-y border-slate-200 sm:grid-cols-4">
+                      <div className="mt-5 grid overflow-hidden rounded-[22px] border border-slate-200 bg-[#fbfcfb] sm:grid-cols-4">
                         <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
                           <p className="text-[11px] font-semibold uppercase text-slate-500">Saldo</p>
                           <p className="mt-1 break-words text-base font-black text-slate-950">{currency(clientPendingTotal)}</p>
