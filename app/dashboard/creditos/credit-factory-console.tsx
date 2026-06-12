@@ -9803,13 +9803,11 @@ export default function CreditFactoryConsole({
             <div className={clientLookupMode ? "hidden" : "inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600"}>
               {deliveryMode ? "Validacion de entrega" : lookupMode ? "Expediente del cliente" : "Entrega"}
             </div>
-            <h2 className={deliveryMode ? "mt-3 text-2xl font-black tracking-tight text-slate-950" : clientLookupMode ? "text-sm font-black uppercase tracking-[0.16em] text-[#145a5a]" : "mt-4 text-3xl font-black tracking-tight text-slate-950"}>
-              {deliveryMode
-                ? "Resultado de consulta"
-                : clientLookupMode
-                  ? "Resultado"
-                  : "Validacion operativa"}
-            </h2>
+            {!clientLookupMode ? (
+              <h2 className={deliveryMode ? "mt-3 text-2xl font-black tracking-tight text-slate-950" : "mt-4 text-3xl font-black tracking-tight text-slate-950"}>
+                {deliveryMode ? "Resultado de consulta" : "Validacion operativa"}
+              </h2>
+            ) : null}
 
             {!selectedCredit ? (
               <div className="mt-6 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
@@ -9829,10 +9827,10 @@ export default function CreditFactoryConsole({
               <div className={clientLookupMode ? "mt-5 space-y-4" : "mt-6 space-y-4"}>
                 {clientLookupMode && (
                   <>
-                    <div className="fp-client-lookup-person">
+                    <div className="fp-client-dossier-hero">
                       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
-                          <div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-[22px] border border-[#d9e4eb] bg-[linear-gradient(180deg,#f8fafc_0%,#e8eef5_100%)] text-2xl font-black text-slate-950">
+                          <div className="fp-client-dossier-photo flex h-[82px] w-[82px] shrink-0 items-center justify-center overflow-hidden rounded-[24px] border text-2xl font-black">
                             {selectedCredit.contratoSelfieDataUrl ||
                             selectedCredit.contratoFotoDataUrl ? (
                               <img
@@ -9858,34 +9856,29 @@ export default function CreditFactoryConsole({
 
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="break-words text-3xl font-black leading-tight tracking-normal text-slate-950">
+                              <h3 className="break-words text-3xl font-black leading-tight tracking-normal text-white sm:text-4xl">
                                 {selectedCredit.clienteNombre}
                               </h3>
-                              <span
-                                className={[
-                                  "inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]",
-                                  stateBadgeClasses(selectedCredit.estado),
-                                ].join(" ")}
-                              >
+                              <span className="fp-client-dossier-status">
                                 {clientPrimaryStatus}
                               </span>
                             </div>
-                            <p className="mt-2 break-words text-base text-slate-700">
+                            <p className="mt-3 break-words text-base text-white/82">
                               Documento:{" "}
-                              <span className="font-semibold text-slate-950">
+                              <span className="font-semibold text-white">
                                 {selectedCreditDocumentLabel}
                               </span>
                             </p>
-                            <p className="mt-1 break-words text-sm text-slate-500">
+                            <p className="mt-1 break-words text-sm text-white/64">
                               {selectedCreditContactLine}
                             </p>
-                            <p className="mt-2 break-words text-xs font-semibold text-slate-500">
+                            <p className="mt-3 break-words text-xs font-semibold uppercase tracking-[0.12em] text-white/56">
                               {accessProfileLabel} | {accessScopeLabel} | {selectedCredit.sede.nombre} | Asesor: {selectedCreditAdvisorLabel}
                             </p>
                           </div>
                         </div>
 
-                        <div className="flex w-full flex-wrap gap-2 xl:max-w-xl xl:justify-end">
+                        <div className="fp-client-dossier-actions flex w-full flex-wrap gap-2 xl:max-w-xl xl:justify-end">
                           <button
                             type="button"
                             onClick={() => openPaymentsForCredit()}
@@ -9898,7 +9891,7 @@ export default function CreditFactoryConsole({
                             onClick={() => openLookupDetail(selectedCredit.id)}
                             className="rounded-[14px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                           >
-                            Ver expediente
+                            Expediente
                           </button>
                           <button
                             type="button"
@@ -9918,7 +9911,7 @@ export default function CreditFactoryConsole({
                         </div>
                       </div>
 
-                      <div className="mt-5 grid overflow-hidden rounded-[22px] border border-slate-200 bg-[#fbfcfb] sm:grid-cols-4">
+                      <div className="fp-client-dossier-summary mt-6 grid sm:grid-cols-4">
                         <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
                           <p className="text-[11px] font-semibold uppercase text-slate-500">Saldo</p>
                           <p className="mt-1 break-words text-base font-black text-slate-950">{currency(clientPendingTotal)}</p>
@@ -9958,13 +9951,13 @@ export default function CreditFactoryConsole({
                     </button>
                   </div>
                 ) : lookupMode && !deliveryMode ? (
-                  <div ref={lookupDetailPanelRef} className="space-y-6 border-t border-slate-200 pt-5">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div ref={lookupDetailPanelRef} className="fp-client-dossier-detail space-y-6">
+                    <div className="fp-client-dossier-statusbar flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#145a5a]">
                           Expediente operativo
                         </p>
-                        <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">
+                        <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
                           {selectedCredit.deliverableReady ? "Listo para entregar" : "No entregar todavia"}
                         </h3>
                         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
@@ -9979,7 +9972,7 @@ export default function CreditFactoryConsole({
                         </p>
                       </div>
 
-                      <div className="flex flex-wrap gap-2 lg:justify-end">
+                      <div className="fp-client-detail-actions flex flex-wrap gap-2 lg:justify-end">
                         <button
                           type="button"
                           onClick={() => setShowLookupDetail(false)}
