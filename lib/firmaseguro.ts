@@ -660,6 +660,10 @@ export function isFirmaSeguroCompletedStatus(status: string | null | undefined) 
     "FIRMADO",
     "APROBADO",
     "APROBADA",
+    "EXITOSO",
+    "EXITOSA",
+    "SUCCESS",
+    "SUCCESSFUL",
   ].some((item) => normalized.includes(item));
 }
 

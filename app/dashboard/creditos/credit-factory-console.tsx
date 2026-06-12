@@ -393,6 +393,37 @@ type FirmaSeguroResponse = {
 
 type FirmaSeguroProcess = NonNullable<FirmaSeguroResponse["process"]>;
 
+function isFirmaSeguroSuccessfulProcess(process?: FirmaSeguroProcess | null) {
+  if (!process) {
+    return false;
+  }
+
+  const normalized = String(process.status || "")
+    .trim()
+    .toUpperCase();
+
+  return Boolean(
+    process.completedAt ||
+      process.hasSignedDocument ||
+      [
+        "COMPLETED",
+        "COMPLETE",
+        "COMPLETADO",
+        "FINALIZED",
+        "FINALIZADO",
+        "FINISHED",
+        "SIGNED",
+        "FIRMADO",
+        "APROBADO",
+        "APROBADA",
+        "EXITOSO",
+        "EXITOSA",
+        "SUCCESS",
+        "SUCCESSFUL",
+      ].some((item) => normalized.includes(item))
+  );
+}
+
 type CreditPaymentItem = {
   id: number;
   creditoId: number;
@@ -5598,13 +5629,17 @@ export default function CreditFactoryConsole({
         return;
       }
 
-      const processStatus = result.data.process?.status || "pendiente";
+      const process = result.data.process || null;
+      const processStatus = process?.status || "pendiente";
       const lastError = result.data.process?.lastError;
+      const signedWithoutPdf = isFirmaSeguroSuccessfulProcess(process);
       setNotice({
-        text: result.data.process
-          ? `FirmaSeguro aun no tiene PDF firmado. Estado: ${processStatus}${lastError ? `. Ultimo error: ${lastError}` : ""}.`
+        text: process
+          ? signedWithoutPdf
+            ? `FirmaSeguro reporto firma exitosa. El PDF firmado aun no esta descargado en FINSER PAY; intenta consultar de nuevo en unos minutos. Estado: ${processStatus}.`
+            : `FirmaSeguro aun no reporta firma exitosa. Estado: ${processStatus}${lastError ? `. Ultimo error: ${lastError}` : ""}.`
           : "Este credito aun no se ha enviado a FirmaSeguro.",
-        tone: result.data.process ? "amber" : "slate",
+        tone: process ? (signedWithoutPdf ? "emerald" : "amber") : "slate",
       });
     } catch (error) {
       setNotice({
