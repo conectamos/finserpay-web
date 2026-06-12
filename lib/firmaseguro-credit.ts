@@ -15,6 +15,7 @@ import {
   firmaSeguroCreateFullByCompany,
   FirmaSeguroApiError,
   firmaSeguroGetAuthenticationTypes,
+  firmaSeguroGetDocumentByUuid,
   firmaSeguroGetDocumentsByUuid,
   firmaSeguroGetProcessStatus,
   firmaSeguroGetSignaturesStatus,
@@ -1169,6 +1170,7 @@ export async function refreshFirmaSeguroProcess(
   let documentsPayload: unknown = null;
   let signedDocumentBase64 = process.signedDocumentBase64;
   let signedDocumentFileName = process.signedDocumentFileName;
+  const documentAttempts: unknown[] = [];
   const status =
     extractFirmaSeguroStatus(statusPayload) ||
     extractFirmaSeguroStatus(process.statusPayload) ||
@@ -1181,18 +1183,78 @@ export async function refreshFirmaSeguroProcess(
   let documentDownloadError: string | null = null;
 
   if (completed) {
+    const trySignedDocumentPayload = async (
+      source: string,
+      fetchPayload: () => Promise<unknown>
+    ) => {
+      try {
+        const payload = await fetchPayload();
+        const info = extractFirmaSeguroSignedDocument(payload);
+        documentAttempts.push({
+          source,
+          foundBase64: Boolean(info.base64),
+          foundUrl: Boolean(info.url),
+          fileName: info.fileName || null,
+          payload: redactBase64Payload(payload),
+        });
+        return { payload, info };
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "No se pudo consultar documento firmado";
+        documentAttempts.push({ source, warning: message });
+        return null;
+      }
+    };
+
     try {
-      documentsPayload = await firmaSeguroGetDocumentsByUuid(process.processUuid);
-      let documentInfo = extractFirmaSeguroSignedDocument(documentsPayload);
+      let documentResult = await trySignedDocumentPayload(
+        "Document/ByUUID public",
+        () => firmaSeguroGetDocumentsByUuid(process.processUuid)
+      );
+      let documentInfo = documentResult?.info || {
+        base64: "",
+        fileName: "",
+        url: "",
+      };
 
       if (!documentInfo.base64 && !documentInfo.url) {
-        const { result: authenticatedDocumentsPayload } =
-          await runWithFirmaSeguroAuth((token) =>
-            firmaSeguroGetDocumentsByUuid(process.processUuid, token)
-          );
-        documentsPayload = authenticatedDocumentsPayload;
-        documentInfo = extractFirmaSeguroSignedDocument(documentsPayload);
+        documentResult = await trySignedDocumentPayload(
+          "Document/ByUUID autenticado",
+          async () => {
+            const { result } = await runWithFirmaSeguroAuth((token) =>
+              firmaSeguroGetDocumentsByUuid(process.processUuid, token)
+            );
+            return result;
+          }
+        );
+        documentInfo = documentResult?.info || documentInfo;
       }
+
+      if (!documentInfo.base64 && !documentInfo.url) {
+        documentResult = await trySignedDocumentPayload(
+          "Document individual public",
+          () => firmaSeguroGetDocumentByUuid(process.processUuid)
+        );
+        documentInfo = documentResult?.info || documentInfo;
+      }
+
+      if (!documentInfo.base64 && !documentInfo.url) {
+        documentResult = await trySignedDocumentPayload(
+          "Document individual autenticado",
+          async () => {
+            const { result } = await runWithFirmaSeguroAuth((token) =>
+              firmaSeguroGetDocumentByUuid(process.processUuid, token)
+            );
+            return result;
+          }
+        );
+        documentInfo = documentResult?.info || documentInfo;
+      }
+
+      documentsPayload =
+        documentResult?.payload || { attempts: documentAttempts };
 
       if (!documentInfo.base64 && documentInfo.url) {
         const downloadedDocument = await downloadFirmaSeguroSignedDocument(
@@ -1216,7 +1278,7 @@ export async function refreshFirmaSeguroProcess(
 
       if (!signedDocumentBase64) {
         documentDownloadError =
-          "FirmaSeguro reporto firma exitosa, pero no devolvio el PDF firmado en la consulta de documentos.";
+          "FirmaSeguro reporto firma exitosa, pero no devolvio el PDF firmado en las consultas de documentos.";
       }
     } catch (error) {
       documentDownloadError =
@@ -1233,7 +1295,11 @@ export async function refreshFirmaSeguroProcess(
     status,
     statusPayload,
     signaturesPayload,
-    documentsPayload: redactBase64Payload(documentsPayload),
+    documentsPayload: redactBase64Payload(
+      documentAttempts.length
+        ? { selected: documentsPayload, attempts: documentAttempts }
+        : documentsPayload
+    ),
     signedDocumentBase64,
     signedDocumentFileName,
     lastError: documentDownloadError,

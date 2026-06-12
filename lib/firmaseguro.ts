@@ -940,6 +940,13 @@ export async function firmaSeguroGetDocumentsByUuid(uuid: string, token?: string
   );
 }
 
+export async function firmaSeguroGetDocumentByUuid(uuid: string, token?: string) {
+  return firmaSeguroRequest<unknown>(
+    `/api/v2/Document/${encodeURIComponent(uuid)}`,
+    token ? { token } : {}
+  );
+}
+
 export async function firmaSeguroChangeDocument(
   token: string,
   payload: { uuid: string; fileName?: string; base64String: string }
