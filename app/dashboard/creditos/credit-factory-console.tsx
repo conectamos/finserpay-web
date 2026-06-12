@@ -764,49 +764,6 @@ function InfoTile({
   );
 }
 
-function ActionTile({
-  eyebrow,
-  title,
-  detail,
-  onClick,
-  disabled,
-  primary = false,
-}: {
-  eyebrow: string;
-  title: string;
-  detail: string;
-  onClick: () => void;
-  disabled?: boolean;
-  primary?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={[
-        "rounded-[22px] border px-5 py-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60",
-        primary
-          ? "border-[#145a5a] bg-[#145a5a] text-white shadow-[0_16px_32px_rgba(20,90,90,0.18)] hover:bg-[#0f4a4a]"
-          : "border-slate-300 bg-white text-slate-900 hover:bg-slate-50",
-      ].join(" ")}
-    >
-      <p
-        className={[
-          "text-[11px] font-semibold uppercase",
-          primary ? "text-white/75" : "text-slate-500",
-        ].join(" ")}
-      >
-        {eyebrow}
-      </p>
-      <p className="mt-2 text-xl font-black leading-tight">{title}</p>
-      <p className={["mt-1 text-sm leading-5", primary ? "text-white/80" : "text-slate-600"].join(" ")}>
-        {detail}
-      </p>
-    </button>
-  );
-}
-
 async function requestJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, {
     cache: "no-store",
@@ -3121,7 +3078,7 @@ export default function CreditFactoryConsole({
     : simulatorMode
       ? "Simula equipo, inicial y cuotas"
     : lookupMode
-      ? "Busca el cliente y abre su expediente"
+      ? "Buscar cliente"
     : createClientMode
       ? `Hola ${initialSeller?.nombre?.split(" ")[0] || "asesor"}, iniciemos una venta`
       : "Genera, inscribe y valida entrega";
@@ -3132,7 +3089,7 @@ export default function CreditFactoryConsole({
     : simulatorMode
       ? "Selecciona marca, modelo, precio e inicial para revisar cuotas antes de iniciar la venta."
     : lookupMode
-      ? "Busca por cedula, folio, telefono, IMEI o nombre y revisa solo la ficha del credito seleccionado, sin mezclar formularios de venta."
+      ? "Consulta por cedula, telefono, folio, IMEI o nombre y abre el expediente del credito seleccionado."
     : createClientMode
       ? "Captura cliente, equipo, evidencias, firma y entrega desde un recorrido simple."
       : "Genera el credito, inscribe el equipo y confirma si el dispositivo se puede entregar.";
@@ -3141,7 +3098,7 @@ export default function CreditFactoryConsole({
     : deliveryMode
       ? "Escribe la cedula del cliente o el IMEI del equipo. Al consultar se mostrara si el credito ya esta en estado entregable."
     : lookupMode
-      ? "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid. Si hay varias coincidencias, primero eliges una y luego solo se muestra ese cliente."
+      ? "Cedula, telefono, nombre, folio o IMEI."
       : "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid para ubicar creditos existentes y revisar su estado sin salir de la fabrica.";
   const factorySteps = [
     {
@@ -6298,7 +6255,8 @@ export default function CreditFactoryConsole({
         ) : (
           <section
             className={[
-              "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6",
+              "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white shadow-sm",
+              lookupMode ? "px-5 py-4 sm:px-5" : "px-5 py-5 sm:px-6",
               simulatorMode || deliveryMode ? "fp-tool-hero" : "",
             ].join(" ")}
           >
@@ -6330,16 +6288,33 @@ export default function CreditFactoryConsole({
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                <div className="max-w-3xl">
-                  <FinserBrand />
-                  <div className="mt-4 inline-flex rounded-full border border-[#c7dbe0] bg-[#f7fbfa] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#145a5a]">
+              <div
+                className={
+                  lookupMode
+                    ? "flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"
+                    : "flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between"
+                }
+              >
+                <div className={lookupMode ? "max-w-2xl" : "max-w-3xl"}>
+                  <FinserBrand compact={lookupMode} showTagline={!lookupMode} />
+                  <div
+                    className={[
+                      "mt-4 inline-flex rounded-full border border-[#c7dbe0] bg-[#f7fbfa] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#145a5a]",
+                      lookupMode ? "hidden" : "",
+                    ].join(" ")}
+                  >
                     {heroEyebrow}
                   </div>
-                  <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">
+                  <h1
+                    className={
+                      lookupMode
+                        ? "mt-3 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl"
+                        : "mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl"
+                    }
+                  >
                     {heroTitle}
                   </h1>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                  <p className={lookupMode ? "mt-1 max-w-xl text-sm leading-6 text-slate-500" : "mt-2 max-w-2xl text-sm leading-6 text-slate-600"}>
                     {heroDescription}
                   </p>
                 </div>
@@ -6348,18 +6323,19 @@ export default function CreditFactoryConsole({
                   <div className="flex flex-wrap gap-2">
                     <Link
                       href="/dashboard"
-                      className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      className={lookupMode ? "inline-flex justify-center rounded-[14px] border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50" : "inline-flex min-w-[160px] justify-center rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"}
                     >
-                      Volver al dashboard
+                      {lookupMode ? "Dashboard" : "Volver al dashboard"}
                     </Link>
-                    {canViewSavedCredits && (
-                      <>
+                    {canViewSavedCredits && !lookupMode ? (
                         <Link
                           href="/dashboard/integraciones"
                           className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
                         >
                           Ver integraciones
                         </Link>
+                    ) : null}
+                    {canViewSavedCredits && (
                         <Link
                           href={
                             paymentsView
@@ -6368,14 +6344,19 @@ export default function CreditFactoryConsole({
                                 ? "/dashboard/abonos"
                                 : "/dashboard/abonos"
                           }
-                          className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
+                          className={lookupMode ? "inline-flex justify-center rounded-[14px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]" : "inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"}
                         >
                           {paymentsView ? "Ir a crear cliente" : "Ir a abonos"}
                         </Link>
-                      </>
                     )}
                   </div>
 
+                  {lookupMode ? (
+                    <p className="max-w-xl text-xs font-semibold text-slate-500 lg:text-right">
+                      {initialSession.sedeNombre} | {initialSession.rolNombre} | {accessProfileLabel}
+                      {initialSeller ? ` | ${initialSeller.nombre}` : ""}
+                    </p>
+                  ) : (
                   <div className="flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                     <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
                       {initialSession.sedeNombre}
@@ -6392,6 +6373,7 @@ export default function CreditFactoryConsole({
                       </span>
                     ) : null}
                   </div>
+                  )}
                 </div>
               </div>
             )}
@@ -6416,6 +6398,8 @@ export default function CreditFactoryConsole({
               ? "mt-5 overflow-hidden rounded-[28px] border border-[#cfe0dc] bg-white p-5 shadow-[0_18px_44px_rgba(15,23,42,0.08)]"
               : deliveryMode
                 ? "fp-surface mt-6 rounded-[28px] p-5"
+              : lookupMode
+                ? "mt-4 rounded-[22px] border border-[#dbe5ec] bg-white p-4 shadow-sm"
               : "fp-surface mt-6 rounded-[28px] p-6"
           }
         >
@@ -6423,6 +6407,7 @@ export default function CreditFactoryConsole({
             className={[
               "inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]",
               paymentsView ? "border-emerald-200 bg-emerald-50 text-[#116b61]" : "fp-kicker",
+              lookupMode ? "hidden" : "",
             ].join(" ")}
           >
             {deliveryMode
@@ -6434,7 +6419,7 @@ export default function CreditFactoryConsole({
           <h2
             className={[
               "font-black tracking-tight text-slate-950",
-              paymentsView ? "mt-3 text-2xl" : "mt-4 text-3xl",
+              paymentsView ? "mt-3 text-2xl" : lookupMode ? "text-xl" : "mt-4 text-3xl",
             ].join(" ")}
           >
             {paymentsView
@@ -6443,12 +6428,14 @@ export default function CreditFactoryConsole({
                 ? "Busca el credito"
                 : adminFactoryAssistMode
                   ? "Busca un caso para apoyar"
+                : lookupMode
+                  ? "Busca por cliente, credito o equipo"
                 : "Encuentra al cliente y su credito"}
           </h2>
           <p
             className={[
               "max-w-3xl text-sm leading-6 text-slate-600",
-              paymentsView ? "mt-2" : "mt-3",
+              paymentsView || lookupMode ? "mt-1" : "mt-3",
             ].join(" ")}
           >
             {paymentsView
@@ -6460,7 +6447,7 @@ export default function CreditFactoryConsole({
                 : searchDescription}
           </p>
 
-          <div className={deliveryMode ? "mt-5 flex flex-col gap-3 lg:flex-row" : "mt-6 flex flex-col gap-3 lg:flex-row"}>
+          <div className={deliveryMode ? "mt-5 flex flex-col gap-3 lg:flex-row" : lookupMode ? "mt-4 flex flex-col gap-3 lg:flex-row" : "mt-6 flex flex-col gap-3 lg:flex-row"}>
             <input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
@@ -6478,7 +6465,7 @@ export default function CreditFactoryConsole({
               }
                className={[
                  "flex-1 border bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100",
-                 paymentsView ? "rounded-[20px] border-slate-200 shadow-inner" : "rounded-[18px] border-emerald-950/14",
+                 paymentsView ? "rounded-[20px] border-slate-200 shadow-inner" : lookupMode ? "rounded-[14px] border-slate-200" : "rounded-[18px] border-emerald-950/14",
                ].join(" ")}
             />
 
@@ -6486,7 +6473,7 @@ export default function CreditFactoryConsole({
               type="button"
               onClick={() => void searchCredits()}
               disabled={loadingList || loadingDrafts}
-              className="fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"
+              className={lookupMode ? "rounded-[14px] bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70" : "fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"}
             >
               {loadingList || loadingDrafts
                 ? "Buscando..."
@@ -6503,7 +6490,7 @@ export default function CreditFactoryConsole({
               type="button"
               onClick={() => void clearSearch()}
               disabled={(loadingList || loadingDrafts) && !activeSearch}
-              className="rounded-[18px] border border-emerald-950/14 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-emerald-50 disabled:opacity-70"
+              className={lookupMode ? "rounded-[14px] border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-70" : "rounded-[18px] border border-emerald-950/14 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-emerald-50 disabled:opacity-70"}
             >
               {paymentsView ? "Nueva busqueda" : "Limpiar"}
             </button>
@@ -6561,7 +6548,7 @@ export default function CreditFactoryConsole({
                 </div>
               )}
             </div>
-          ) : deliveryMode ? null : (
+          ) : deliveryMode || lookupMode ? null : (
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                 Alcance: {accessScopeLabel}
@@ -9684,19 +9671,21 @@ export default function CreditFactoryConsole({
           <div
             ref={lookupMode ? selectedCreditPanelRef : null}
             className={[
-              "rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] shadow-[0_18px_50px_rgba(15,23,42,0.07)]",
-              deliveryMode ? "p-5" : "p-6",
+              lookupMode && !deliveryMode
+                ? "rounded-[22px] border border-[#dbe5ec] bg-white shadow-sm"
+                : "rounded-[30px] border border-[#e7ddcd] bg-[linear-gradient(180deg,#ffffff_0%,#fbf8f2_100%)] shadow-[0_18px_50px_rgba(15,23,42,0.07)]",
+              deliveryMode ? "p-5" : lookupMode ? "p-4" : "p-6",
               createClientMode || simulatorMode || (deliveryMode && !selectedCredit) ? "hidden" : "",
             ].join(" ")}
           >
-            <div className="inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
+            <div className={lookupMode && !deliveryMode ? "hidden" : "inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600"}>
               {deliveryMode ? "Validacion de entrega" : lookupMode ? "Expediente del cliente" : "Entrega"}
             </div>
-            <h2 className={deliveryMode ? "mt-3 text-2xl font-black tracking-tight text-slate-950" : "mt-4 text-3xl font-black tracking-tight text-slate-950"}>
+            <h2 className={deliveryMode ? "mt-3 text-2xl font-black tracking-tight text-slate-950" : lookupMode ? "text-xl font-black tracking-tight text-slate-950" : "mt-4 text-3xl font-black tracking-tight text-slate-950"}>
               {deliveryMode
                 ? "Resultado de consulta"
                 : lookupMode
-                  ? "Cliente y expediente seleccionado"
+                  ? "Cliente encontrado"
                   : "Validacion operativa"}
             </h2>
 
@@ -9715,13 +9704,13 @@ export default function CreditFactoryConsole({
                     : "Genera o selecciona un credito para ver si el equipo ya se puede entregar."}
               </div>
             ) : (
-              <div className="mt-6 space-y-4">
+              <div className={lookupMode && !deliveryMode ? "mt-4 space-y-3" : "mt-6 space-y-4"}>
                 {lookupMode && !deliveryMode && (
                   <>
-                    <div className="rounded-[28px] border border-[#dbe5ec] bg-white px-5 py-5 shadow-sm">
-                      <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-                        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
-                          <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#d9e4eb] bg-[linear-gradient(180deg,#f8fafc_0%,#e8eef5_100%)] text-3xl font-black text-slate-950 shadow-[0_12px_28px_rgba(15,23,42,0.08)]">
+                    <div className="rounded-[20px] border border-slate-200 bg-white px-4 py-4">
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
+                          <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#d9e4eb] bg-[linear-gradient(180deg,#f8fafc_0%,#e8eef5_100%)] text-2xl font-black text-slate-950">
                             {selectedCredit.contratoSelfieDataUrl ||
                             selectedCredit.contratoFotoDataUrl ? (
                               <img
@@ -9747,12 +9736,12 @@ export default function CreditFactoryConsole({
 
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="break-words text-3xl font-black leading-tight text-slate-950">
+                              <h3 className="break-words text-2xl font-black leading-tight text-slate-950">
                                 {selectedCredit.clienteNombre}
                               </h3>
                               <span
                                 className={[
-                                  "inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em]",
+                                  "inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]",
                                   stateBadgeClasses(selectedCredit.estado),
                                 ].join(" ")}
                               >
@@ -9768,109 +9757,83 @@ export default function CreditFactoryConsole({
                             <p className="mt-1 break-words text-sm text-slate-500">
                               {selectedCreditContactLine}
                             </p>
-                            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
-                              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
-                                {accessProfileLabel}
-                              </span>
-                              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
-                                {accessScopeLabel}
-                              </span>
-                              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
-                                {selectedCredit.sede.nombre}
-                              </span>
-                              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
-                                Asesor: {selectedCreditAdvisorLabel}
-                              </span>
-                            </div>
+                            <p className="mt-2 break-words text-xs font-semibold text-slate-500">
+                              {accessProfileLabel} | {accessScopeLabel} | {selectedCredit.sede.nombre} | Asesor: {selectedCreditAdvisorLabel}
+                            </p>
                           </div>
                         </div>
 
-                        <div className="grid w-full gap-3 sm:grid-cols-2 xl:max-w-2xl">
-                          <ActionTile
-                            eyebrow="Recaudo"
-                            title="Abrir abonos"
-                            detail="Lleva este credito a la vista de pagos con el cliente seleccionado."
+                        <div className="flex w-full flex-wrap gap-2 xl:max-w-xl xl:justify-end">
+                          <button
+                            type="button"
                             onClick={() => openPaymentsForCredit()}
-                            primary
-                          />
-                          <ActionTile
-                            eyebrow="Detalle"
-                            title="Ver expediente"
-                            detail="Muestra cliente, equipo, cartera, documentos y controles permitidos."
+                            className="rounded-[14px] border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a]"
+                          >
+                            Abrir abonos
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => openLookupDetail(selectedCredit.id)}
-                          />
-                          <ActionTile
-                            eyebrow="FirmaSeguro"
-                            title={firmaSeguroRefreshing ? "Consultando..." : "PDF firmado"}
-                            detail="Consulta el documento firmado sin rehacer el envio."
+                            className="rounded-[14px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            Ver expediente
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => void openFirmaSeguroSignedDocument()}
                             disabled={firmaSeguroRefreshing}
-                          />
-                          <ActionTile
-                            eyebrow="Nueva venta"
-                            title="Prefill cliente"
-                            detail="Inicia otro credito usando los datos personales de este expediente."
+                            className="rounded-[14px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                          >
+                            {firmaSeguroRefreshing ? "Consultando..." : "PDF firmado"}
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => createNewSaleFromClient()}
-                          />
+                            className="rounded-[14px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            Nueva venta
+                          </button>
                         </div>
                       </div>
 
-                      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                        <InfoTile
-                          label="Saldo cliente"
-                          value={currency(clientPendingTotal)}
-                          detail={`${sameClientCredits.length} credito(s) dentro de tu alcance`}
-                          tone={clientPendingTotal > 0 ? "amber" : "emerald"}
-                        />
-                        <InfoTile
-                          label="Credito actual"
-                          value={selectedCredit.folio}
-                          detail={`${selectedCredit.estado} | ${selectedCreditPaymentStatusLabel}`}
-                          tone="white"
-                        />
-                        <InfoTile
-                          label="Equipo"
-                          value={selectedCreditEquipmentLabel}
-                          detail={`IMEI: ${selectedCredit.imei || selectedCredit.deviceUid || "-"}`}
-                          tone="sky"
-                        />
-                        <InfoTile
-                          label="Documentos"
-                          value={selectedCreditDocumentsStatus}
-                          detail={`${clientDocumentsCount} paquete(s) firmados visibles`}
-                          tone={selectedCredit.contratoListo ? "emerald" : "amber"}
-                        />
+                      <div className="mt-4 grid overflow-hidden rounded-[16px] border border-slate-200 bg-slate-50/60 sm:grid-cols-4">
+                        <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
+                          <p className="text-[11px] font-semibold uppercase text-slate-500">Saldo</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{currency(clientPendingTotal)}</p>
+                          <p className="mt-1 text-xs text-slate-500">{sameClientCredits.length} credito(s)</p>
+                        </div>
+                        <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
+                          <p className="text-[11px] font-semibold uppercase text-slate-500">Credito</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCredit.folio}</p>
+                          <p className="mt-1 text-xs text-slate-500">{selectedCreditPaymentStatusLabel}</p>
+                        </div>
+                        <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
+                          <p className="text-[11px] font-semibold uppercase text-slate-500">Equipo</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCreditEquipmentLabel}</p>
+                          <p className="mt-1 text-xs text-slate-500">IMEI: {selectedCredit.imei || selectedCredit.deviceUid || "-"}</p>
+                        </div>
+                        <div className="px-4 py-3">
+                          <p className="text-[11px] font-semibold uppercase text-slate-500">Documentos</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCreditDocumentsStatus}</p>
+                          <p className="mt-1 text-xs text-slate-500">{clientDocumentsCount} paquete(s)</p>
+                        </div>
                       </div>
                     </div>
                   </>
                 )}
 
                 {lookupMode && !showLookupDetail ? (
-                  <div className="rounded-[24px] border border-[#dbe5ec] bg-white px-5 py-5 shadow-sm">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                      <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          Detalle del credito
-                        </p>
-                        <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-                          Abre el detalle completo cuando lo necesites
-                        </h3>
-                        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-                          El resumen superior ya muestra lo esencial. El detalle agrega validacion de entrega,
-                          datos personales, referencias, documentos, cartera y controles permitidos por tu perfil.
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setShowSearchResults(true)}
-                          className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                        >
-                          Cambiar credito
-                        </button>
-                      </div>
-                    </div>
+                  <div className="flex flex-col gap-3 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm text-slate-600">
+                      El detalle completo queda contraido para mantener esta vista limpia.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowSearchResults(true)}
+                      className="rounded-[14px] border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      Cambiar credito
+                    </button>
                   </div>
                 ) : (
                   <div ref={lookupMode ? lookupDetailPanelRef : null} className="space-y-4">
