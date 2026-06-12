@@ -1521,9 +1521,10 @@ export default async function DashboardPage() {
               </p>
             </div>
 
-            <div className="relative mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="relative mt-7 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <DashboardButton href="/dashboard/creditos?mode=create-client" label="Nuevo credito" tone="orange" />
               <DashboardButton href="/dashboard/abonos" label="Recibir abono" tone="dark" />
+              <DashboardButton href="/dashboard/clientes" label="Buscar cliente" tone="green" />
               {adminCentral && (
                 <DashboardButton href="/dashboard/cartera" label="Cartera" tone="green" />
               )}
