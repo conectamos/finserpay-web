@@ -10,6 +10,7 @@ import {
   useState,
   type ChangeEvent,
   type PointerEvent,
+  type ReactNode,
 } from "react";
 import FinserBrand from "@/app/_components/finser-brand";
 import {
@@ -46,6 +47,13 @@ type SessionUser = {
   activo: boolean;
   sedeId: number;
   sedeNombre: string;
+  aliadoId?: number | null;
+  aliadoNombre?: string | null;
+  aliadoCodigo?: string | null;
+  sedeAccesoId?: number | null;
+  sedeAccesoNombre?: string | null;
+  aliadoAccesoId?: number | null;
+  aliadoAccesoNombre?: string | null;
   aliadoAccesoCodigo?: string | null;
   rolId: number;
   rolNombre: string;
@@ -59,6 +67,10 @@ type SellerSessionProfile = {
   email: string | null;
   debeCambiarPin: boolean;
   tipoPerfil: "VENDEDOR" | "SUPERVISOR";
+  accesoSedeId?: number;
+  accesoSedeNombre?: string;
+  sedeId?: number;
+  sedeNombre?: string;
 } | null;
 
 type FamilyReference = {
@@ -225,6 +237,11 @@ type CreditItem = {
     nombre: string;
     usuario: string;
   };
+  vendedor?: {
+    id: number;
+    nombre: string;
+    documento: string | null;
+  } | null;
   sede: {
     id: number;
     nombre: string;
@@ -596,6 +613,26 @@ function dateOnly(value: string | null | undefined) {
   return parsed ? parsed.toISOString().slice(0, 10) : "";
 }
 
+function valueOrDash(value: unknown) {
+  const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
+  return normalized || "-";
+}
+
+function humanizeConstant(value: unknown) {
+  const normalized = valueOrDash(value);
+
+  if (normalized === "-") {
+    return normalized;
+  }
+
+  return normalized.replace(/_/g, " ");
+}
+
+function formatPercent(value: number | null | undefined) {
+  const numeric = Number(value || 0);
+  return `${Math.max(0, Math.min(100, Math.round(numeric)))}%`;
+}
+
 function paymentMethodLabel(value: string) {
   const normalized = String(value || "").trim().toUpperCase();
 
@@ -665,6 +702,109 @@ function stateBadgeClasses(estado: string) {
 
 function isCreditAnnulled(estado: string | null | undefined) {
   return String(estado || "").trim().toUpperCase() === "ANULADO";
+}
+
+type TileTone = "slate" | "emerald" | "amber" | "sky" | "red" | "white";
+
+function tileClasses(tone: TileTone) {
+  switch (tone) {
+    case "emerald":
+      return "border-emerald-200 bg-emerald-50 text-emerald-950";
+    case "amber":
+      return "border-amber-200 bg-amber-50 text-amber-950";
+    case "sky":
+      return "border-sky-200 bg-sky-50 text-sky-950";
+    case "red":
+      return "border-red-200 bg-red-50 text-red-950";
+    case "white":
+      return "border-[#dbe5ec] bg-white text-slate-950";
+    default:
+      return "border-slate-200 bg-slate-50 text-slate-950";
+  }
+}
+
+function tileLabelClasses(tone: TileTone) {
+  switch (tone) {
+    case "emerald":
+      return "text-emerald-700";
+    case "amber":
+      return "text-amber-700";
+    case "sky":
+      return "text-sky-700";
+    case "red":
+      return "text-red-700";
+    default:
+      return "text-slate-500";
+  }
+}
+
+function InfoTile({
+  label,
+  value,
+  detail,
+  tone = "slate",
+}: {
+  label: string;
+  value: ReactNode;
+  detail?: ReactNode;
+  tone?: TileTone;
+}) {
+  return (
+    <div className={["rounded-2xl border px-4 py-4", tileClasses(tone)].join(" ")}>
+      <p className={["text-[11px] font-semibold uppercase", tileLabelClasses(tone)].join(" ")}>
+        {label}
+      </p>
+      <div className="mt-2 break-words text-lg font-black leading-snug">{value}</div>
+      {detail ? (
+        <div className="mt-1 break-words text-sm font-medium text-slate-600">
+          {detail}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ActionTile({
+  eyebrow,
+  title,
+  detail,
+  onClick,
+  disabled,
+  primary = false,
+}: {
+  eyebrow: string;
+  title: string;
+  detail: string;
+  onClick: () => void;
+  disabled?: boolean;
+  primary?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "rounded-[22px] border px-5 py-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60",
+        primary
+          ? "border-[#145a5a] bg-[#145a5a] text-white shadow-[0_16px_32px_rgba(20,90,90,0.18)] hover:bg-[#0f4a4a]"
+          : "border-slate-300 bg-white text-slate-900 hover:bg-slate-50",
+      ].join(" ")}
+    >
+      <p
+        className={[
+          "text-[11px] font-semibold uppercase",
+          primary ? "text-white/75" : "text-slate-500",
+        ].join(" ")}
+      >
+        {eyebrow}
+      </p>
+      <p className="mt-2 text-xl font-black leading-tight">{title}</p>
+      <p className={["mt-1 text-sm leading-5", primary ? "text-white/80" : "text-slate-600"].join(" ")}>
+        {detail}
+      </p>
+    </button>
+  );
 }
 
 async function requestJson<T>(url: string, init?: RequestInit) {
@@ -1911,6 +2051,85 @@ export default function CreditFactoryConsole({
       : selectedCredit?.pazYSalvoEmitidoAt
         ? "Paz y salvo"
         : selectedCredit?.estado || "Activo";
+  const accessProfileLabel = canSeeInternalPricing
+    ? "Admin central"
+    : canAdmin
+      ? "Admin aliado"
+      : canSupervisor
+        ? "Supervisor de sede"
+        : initialSeller
+          ? "Vendedor"
+          : "Sede";
+  const accessScopeLabel = canSeeInternalPricing
+    ? "Global: todos los aliados"
+    : canAdmin
+      ? `Aliado ${initialSession.aliadoAccesoNombre || initialSession.aliadoNombre || initialSession.sedeNombre}`
+      : canSupervisor
+        ? `Sede ${initialSeller?.sedeNombre || initialSession.sedeNombre}`
+        : initialSeller
+          ? `Sede ${initialSeller.sedeNombre}`
+          : `Sede ${initialSession.sedeNombre}`;
+  const selectedCreditDocumentLabel = selectedCredit
+    ? `${humanizeConstant(selectedCredit.clienteTipoDocumento || "CC")} ${
+        selectedCredit.clienteDocumento || "Sin documento"
+      }`
+    : "-";
+  const selectedCreditContactLine = selectedCredit
+    ? [
+        selectedCredit.clienteTelefono || "Sin telefono",
+        selectedCredit.clienteCorreo || "Sin correo",
+      ].join(" | ")
+    : "-";
+  const selectedCreditLocationLine = selectedCredit
+    ? [
+        selectedCredit.clienteDireccion,
+        selectedCredit.clienteCiudad,
+        selectedCredit.clienteDepartamento,
+      ]
+        .filter(Boolean)
+        .join(" | ") || "-"
+    : "-";
+  const selectedCreditEquipmentLabel = selectedCredit
+    ? selectedCredit.referenciaEquipo ||
+      [selectedCredit.equipoMarca, selectedCredit.equipoModelo].filter(Boolean).join(" ") ||
+      "Equipo sin referencia"
+    : "-";
+  const selectedCreditAdvisorLabel = selectedCredit
+    ? selectedCredit.vendedor?.nombre || selectedCredit.usuario.nombre
+    : "-";
+  const selectedCreditPaymentStatusLabel =
+    selectedCredit?.estadoPago === "MORA"
+      ? "En mora"
+      : selectedCredit?.estadoPago === "PAGADO"
+        ? "Pagado"
+        : "Al dia";
+  const selectedCreditDocumentsStatus = selectedCredit?.contratoListo
+    ? "Expediente completo"
+    : selectedCredit?.contratoAceptadoAt || selectedCredit?.pagareAceptadoAt
+      ? "Expediente parcial"
+      : "Sin firma completa";
+  const selectedCreditEvidenceStatus = selectedCredit
+    ? [
+        selectedCredit.contratoSelfieLista ? "Selfie lista" : "Selfie pendiente",
+        selectedCredit.contratoCedulaLista ? "Cedula lista" : "Cedula pendiente",
+        selectedCredit.contratoOtpVerificadoAt ? "OTP verificado" : "OTP pendiente",
+      ].join(" | ")
+    : "-";
+  const selectedCreditLockStatus = selectedCredit?.bloqueoRobo
+    ? "Bloqueo por robo activo"
+    : selectedCredit?.bloqueoMora
+      ? "Bloqueo por mora activo"
+      : "Sin bloqueo manual activo";
+  const selectedCreditPaymentProgress = selectedCredit
+    ? `${selectedCredit.cuotasPagadas || 0} pagas / ${
+        selectedCredit.cuotasPendientes || 0
+      } pendientes / ${selectedCredit.cuotasEnMora || 0} en mora`
+    : "-";
+  const selectedCreditCreatedLabel = selectedCredit
+    ? `Creado ${dateTime(selectedCredit.createdAt)} | Actualizado ${dateTime(
+        selectedCredit.updatedAt
+      )}`
+    : "-";
   const valorTotalEquipoNumero = Math.max(0, Number(valorEquipoTotal || 0));
   const activeEquipmentCatalog = useMemo(
     () => equipmentCatalog.filter((item) => item.activo),
@@ -3489,8 +3708,8 @@ export default function CreditFactoryConsole({
       }
 
       if (lookupMode) {
-        setShowSearchResults(true);
-        setShowLookupDetail(deliveryMode && nextSelectedId !== null);
+        setShowSearchResults(nextSelectedId === null);
+        setShowLookupDetail(nextSelectedId !== null);
         if (nextSelectedId !== null) {
           focusSelectedCreditPanel();
         }
@@ -6164,6 +6383,9 @@ export default function CreditFactoryConsole({
                     <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
                       {initialSession.rolNombre}
                     </span>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                      {accessProfileLabel}
+                    </span>
                     {initialSeller ? (
                       <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
                         {initialSeller.nombre}
@@ -6342,7 +6564,7 @@ export default function CreditFactoryConsole({
           ) : deliveryMode ? null : (
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                Alcance: {canAdmin ? "Global" : `Sede ${initialSession.sedeNombre}`}
+                Alcance: {accessScopeLabel}
               </span>
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                 Resultados: {credits.length + (adminFactoryAssistMode ? draftSearchResults.length : 0)}
@@ -9497,9 +9719,9 @@ export default function CreditFactoryConsole({
                 {lookupMode && !deliveryMode && (
                   <>
                     <div className="rounded-[28px] border border-[#dbe5ec] bg-white px-5 py-5 shadow-sm">
-                      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border border-[#d9e4eb] bg-[linear-gradient(180deg,#f8fafc_0%,#e8eef5_100%)] text-3xl font-black text-slate-950 shadow-[0_12px_28px_rgba(15,23,42,0.08)]">
+                      <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
+                          <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#d9e4eb] bg-[linear-gradient(180deg,#f8fafc_0%,#e8eef5_100%)] text-3xl font-black text-slate-950 shadow-[0_12px_28px_rgba(15,23,42,0.08)]">
                             {selectedCredit.contratoSelfieDataUrl ||
                             selectedCredit.contratoFotoDataUrl ? (
                               <img
@@ -9523,9 +9745,9 @@ export default function CreditFactoryConsole({
                             )}
                           </div>
 
-                          <div>
+                          <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="text-3xl font-black tracking-tight text-slate-950">
+                              <h3 className="break-words text-3xl font-black leading-tight text-slate-950">
                                 {selectedCredit.clienteNombre}
                               </h3>
                               <span
@@ -9537,103 +9759,87 @@ export default function CreditFactoryConsole({
                                 {clientPrimaryStatus}
                               </span>
                             </div>
-                            <p className="mt-2 text-base text-slate-700">
-                              Documento de ID:{" "}
+                            <p className="mt-2 break-words text-base text-slate-700">
+                              Documento:{" "}
                               <span className="font-semibold text-slate-950">
-                                {selectedCredit.clienteTipoDocumento || "CC."}{" "}
-                                {selectedCredit.clienteDocumento || "Sin documento"}
+                                {selectedCreditDocumentLabel}
                               </span>
                             </p>
-                            <p className="mt-1 text-sm text-slate-500">
-                              {selectedCredit.clienteTelefono || "-"} {selectedCredit.clienteCorreo ? `| ${selectedCredit.clienteCorreo}` : ""}
+                            <p className="mt-1 break-words text-sm text-slate-500">
+                              {selectedCreditContactLine}
                             </p>
+                            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+                              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                                {accessProfileLabel}
+                              </span>
+                              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                                {accessScopeLabel}
+                              </span>
+                              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                                {selectedCredit.sede.nombre}
+                              </span>
+                              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                                Asesor: {selectedCreditAdvisorLabel}
+                              </span>
+                            </div>
                           </div>
                         </div>
 
-                        <div className="grid gap-3 sm:grid-cols-3">
-                          <button
-                            type="button"
+                        <div className="grid w-full gap-3 sm:grid-cols-2 xl:max-w-2xl">
+                          <ActionTile
+                            eyebrow="Recaudo"
+                            title="Abrir abonos"
+                            detail="Lleva este credito a la vista de pagos con el cliente seleccionado."
                             onClick={() => openPaymentsForCredit()}
-                            className="rounded-[22px] border border-[#145a5a] bg-[#145a5a] px-5 py-4 text-left text-white shadow-[0_16px_32px_rgba(20,90,90,0.18)] transition hover:bg-[#0f4a4a]"
-                          >
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/75">
-                              Pagar
-                            </p>
-                            <p className="mt-2 text-xl font-black">Abrir recaudo</p>
-                            <p className="mt-1 text-sm text-white/80">
-                              Se abre abonos con este cliente listo para cobrar.
-                            </p>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={focusHistory}
-                            className="rounded-[22px] border border-slate-300 bg-[#fcfaf6] px-5 py-4 text-left text-slate-900 transition hover:bg-white"
-                          >
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                              Historial
-                            </p>
-                            <p className="mt-2 text-xl font-black">Historial y documentos</p>
-                            <p className="mt-1 text-sm text-slate-600">
-                              Revisa creditos previos y descarga expediente PDF.
-                            </p>
-                          </button>
-
-                          <button
-                            type="button"
+                            primary
+                          />
+                          <ActionTile
+                            eyebrow="Detalle"
+                            title="Ver expediente"
+                            detail="Muestra cliente, equipo, cartera, documentos y controles permitidos."
                             onClick={() => openLookupDetail(selectedCredit.id)}
-                            className="rounded-[22px] border border-slate-300 bg-white px-5 py-4 text-left text-slate-900 transition hover:bg-slate-50"
-                          >
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                              Ver detalle
-                            </p>
-                            <p className="mt-2 text-xl font-black">Abrir expediente</p>
-                            <p className="mt-1 text-sm text-slate-600">
-                              Muestra veredicto, datos del cliente y resumen del credito.
-                            </p>
-                          </button>
+                          />
+                          <ActionTile
+                            eyebrow="FirmaSeguro"
+                            title={firmaSeguroRefreshing ? "Consultando..." : "PDF firmado"}
+                            detail="Consulta el documento firmado sin rehacer el envio."
+                            onClick={() => void openFirmaSeguroSignedDocument()}
+                            disabled={firmaSeguroRefreshing}
+                          />
+                          <ActionTile
+                            eyebrow="Nueva venta"
+                            title="Prefill cliente"
+                            detail="Inicia otro credito usando los datos personales de este expediente."
+                            onClick={() => createNewSaleFromClient()}
+                          />
                         </div>
                       </div>
 
                       <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                        <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Creditos del cliente
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {sameClientCredits.length}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Inicial acumulada
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {currency(clientInitialTotal)}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Abonos en cuotas
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {currency(clientPaymentsTotal)}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Documentos firmados
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {clientDocumentsCount}
-                          </p>
-                          <p className="mt-1 text-sm text-slate-500">
-                            Pendiente total: {currency(clientPendingTotal)}
-                          </p>
-                        </div>
+                        <InfoTile
+                          label="Saldo cliente"
+                          value={currency(clientPendingTotal)}
+                          detail={`${sameClientCredits.length} credito(s) dentro de tu alcance`}
+                          tone={clientPendingTotal > 0 ? "amber" : "emerald"}
+                        />
+                        <InfoTile
+                          label="Credito actual"
+                          value={selectedCredit.folio}
+                          detail={`${selectedCredit.estado} | ${selectedCreditPaymentStatusLabel}`}
+                          tone="white"
+                        />
+                        <InfoTile
+                          label="Equipo"
+                          value={selectedCreditEquipmentLabel}
+                          detail={`IMEI: ${selectedCredit.imei || selectedCredit.deviceUid || "-"}`}
+                          tone="sky"
+                        />
+                        <InfoTile
+                          label="Documentos"
+                          value={selectedCreditDocumentsStatus}
+                          detail={`${clientDocumentsCount} paquete(s) firmados visibles`}
+                          tone={selectedCredit.contratoListo ? "emerald" : "amber"}
+                        />
                       </div>
                     </div>
                   </>
@@ -9647,13 +9853,11 @@ export default function CreditFactoryConsole({
                           Detalle del credito
                         </p>
                         <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-                          El expediente queda oculto hasta abrirlo
+                          Abre el detalle completo cuando lo necesites
                         </h3>
                         <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-                          Usa el boton <span className="font-semibold text-slate-950">Ver detalle</span> dentro de{" "}
-                          <span className="font-semibold text-slate-950">Creditos y documentos</span> para revisar el
-                          veredicto de entrega, la ficha completa del cliente, las referencias familiares y el resumen
-                          financiero del credito seleccionado.
+                          El resumen superior ya muestra lo esencial. El detalle agrega validacion de entrega,
+                          datos personales, referencias, documentos, cartera y controles permitidos por tu perfil.
                         </p>
                       </div>
 
@@ -9676,70 +9880,71 @@ export default function CreditFactoryConsole({
                     deliveryClasses(selectedCredit.deliverableReady),
                   ].join(" ")}
                 >
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em]">
-                    Veredicto para vendedor
-                  </p>
-                  <p className="mt-2 text-2xl font-black tracking-tight">
-                    {selectedCredit.deliverableReady
-                      ? "Si, lo puedes entregar"
-                      : "No lo entregues aun"}
-                  </p>
-                  <p className="mt-3 text-sm leading-6">
-                    {selectedCredit.deliverableLabel ||
-                      "Aun no hay una verificacion comercial disponible."}
-                    {selectedCredit.equalityState
-                      ? ` Estado remoto: ${selectedCredit.equalityState}.`
-                      : ""}
-                  </p>
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase">
+                        Estado operativo y entrega
+                      </p>
+                      <p className="mt-2 text-2xl font-black leading-tight">
+                        {selectedCredit.deliverableReady
+                          ? "Listo para entregar"
+                          : "No entregar todavia"}
+                      </p>
+                      <p className="mt-3 max-w-3xl text-sm leading-6">
+                        {selectedCredit.deliverableLabel ||
+                          "Aun no hay una verificacion comercial disponible."}
+                        {selectedCredit.equalityState
+                          ? ` Estado remoto: ${selectedCredit.equalityState}.`
+                          : ""}
+                      </p>
+                    </div>
+
+                    <div className="grid gap-2 text-sm font-semibold lg:min-w-[260px]">
+                      <span>Ultima revision: {dateTime(selectedCredit.equalityLastCheckAt)}</span>
+                      <span>{selectedCreditLockStatus}</span>
+                      <span>Ventana: {dateTime(selectedCredit.graceUntil)}</span>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-2xl border border-[#e6dece] bg-white px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Folio
-                    </p>
-                    <p className="mt-2 text-xl font-black text-slate-950">
-                      {selectedCredit.folio}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-[#e6dece] bg-white px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Estado
-                    </p>
-                    <span
-                      className={[
-                        "mt-2 inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em]",
-                        stateBadgeClasses(selectedCredit.estado),
-                      ].join(" ")}
-                    >
-                      {selectedCredit.estado}
-                    </span>
-                  </div>
-
-                  <div className="rounded-2xl border border-[#e6dece] bg-white px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Cliente
-                    </p>
-                    <p className="mt-2 text-base font-black text-slate-950">
-                      {selectedCredit?.clienteNombre}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {selectedCredit.clienteDocumento || "Sin documento"}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-[#e6dece] bg-white px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Equipo
-                    </p>
-                    <p className="mt-2 text-base font-black text-slate-950">
-                      {selectedCredit.referenciaEquipo || "Sin referencia"}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      IMEI: {selectedCredit.imei}
-                    </p>
-                  </div>
+                  <InfoTile
+                    label="Folio y estado"
+                    value={selectedCredit.folio}
+                    detail={
+                      <span
+                        className={[
+                          "inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase",
+                          stateBadgeClasses(selectedCredit.estado),
+                        ].join(" ")}
+                      >
+                        {selectedCredit.estado}
+                      </span>
+                    }
+                    tone="white"
+                  />
+                  <InfoTile
+                    label="Responsable"
+                    value={selectedCreditAdvisorLabel}
+                    detail={`Sede: ${selectedCredit.sede.nombre}`}
+                    tone="slate"
+                  />
+                  <InfoTile
+                    label="Equipo financiado"
+                    value={selectedCreditEquipmentLabel}
+                    detail={`Marca/modelo: ${
+                      [selectedCredit.equipoMarca, selectedCredit.equipoModelo]
+                        .filter(Boolean)
+                        .join(" ") || "-"
+                    } | IMEI: ${selectedCredit.imei || selectedCredit.deviceUid || "-"}`}
+                    tone="sky"
+                  />
+                  <InfoTile
+                    label="Auditoria"
+                    value={selectedCreditDocumentsStatus}
+                    detail={selectedCreditCreatedLabel}
+                    tone={selectedCredit.contratoListo ? "emerald" : "amber"}
+                  />
                 </div>
 
                 <div
@@ -9754,7 +9959,7 @@ export default function CreditFactoryConsole({
                         Ficha del cliente
                       </p>
                       <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">
-                        Informacion personal y expediente
+                        Datos personales, contacto y referencias
                       </h3>
                     </div>
 
@@ -9780,43 +9985,19 @@ export default function CreditFactoryConsole({
                         )}
                         <button
                           type="button"
-                          onClick={() => openPaymentsForCredit()}
-                          disabled={!selectedCredit}
-                          className="rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
-                        >
-                          Realizar abono
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => createNewSaleFromClient()}
-                          disabled={!selectedCredit}
-                          className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
-                        >
-                          Nueva venta con este cliente
-                        </button>
-                        <button
-                          type="button"
                           onClick={() => downloadExpedientePdf()}
                           disabled={!selectedCredit}
                           className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
                         >
-                          Ver documentos firmados
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void openFirmaSeguroSignedDocument()}
-                          disabled={!selectedCredit || firmaSeguroRefreshing}
-                          className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
-                        >
-                          {firmaSeguroRefreshing ? "Consultando..." : "Ver FirmaSeguro"}
+                          Expediente PDF
                         </button>
                         <button
                           type="button"
                           onClick={() => downloadPlanPagos()}
                           disabled={!selectedCredit}
                           className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
-                        >
-                          Plan de pagos
+                          >
+                            Plan de pagos
                         </button>
                         <button
                           type="button"
@@ -9826,56 +10007,80 @@ export default function CreditFactoryConsole({
                         >
                           Emitir paz y salvo
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => void runCommand("toggle-stolen-lock")}
-                          disabled={!selectedCredit || runningCommand !== null}
-                          className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
-                        >
-                          {selectedCredit?.bloqueoRobo ? "Desbloquear dispositivo" : "Bloquear dispositivo"}
-                        </button>
+                        {canAdmin || canSupervisor ? (
+                          <button
+                            type="button"
+                            onClick={() => void runCommand("toggle-stolen-lock")}
+                            disabled={!selectedCredit || runningCommand !== null}
+                            className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                          >
+                            {selectedCredit?.bloqueoRobo ? "Desbloquear dispositivo" : "Bloquear dispositivo"}
+                          </button>
+                        ) : null}
                       </div>
                     )}
                   </div>
 
                   <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Fecha nacimiento
-                      </p>
-                      <p className="mt-2 text-sm font-bold text-slate-950">
-                        {dateTime(selectedCredit.clienteFechaNacimiento)}
-                      </p>
-                    </div>
-
-                    <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Fecha expedicion
-                      </p>
-                      <p className="mt-2 text-sm font-bold text-slate-950">
-                        {dateTime(selectedCredit.clienteFechaExpedicion)}
-                      </p>
-                    </div>
-
-                    <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Correo
-                      </p>
-                      <p className="mt-2 text-sm font-bold text-slate-950">
-                        {selectedCredit.clienteCorreo || "-"}
-                      </p>
-                    </div>
-
-                    <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Ubicacion
-                      </p>
-                      <p className="mt-2 text-sm font-bold text-slate-950">
-                        {[selectedCredit.clienteCiudad, selectedCredit.clienteDepartamento]
+                    <InfoTile
+                      label="Documento"
+                      value={selectedCreditDocumentLabel}
+                      detail={`Expedido: ${dateTime(selectedCredit.clienteFechaExpedicion)}`}
+                      tone="white"
+                    />
+                    <InfoTile
+                      label="Telefono"
+                      value={selectedCredit.clienteTelefono || "-"}
+                      detail={selectedCredit.clienteCorreo || "Sin correo"}
+                      tone="white"
+                    />
+                    <InfoTile
+                      label="Nacimiento"
+                      value={dateTime(selectedCredit.clienteFechaNacimiento)}
+                      detail={`Genero: ${humanizeConstant(selectedCredit.clienteGenero)}`}
+                      tone="slate"
+                    />
+                    <InfoTile
+                      label="Ubicacion"
+                      value={
+                        [selectedCredit.clienteCiudad, selectedCredit.clienteDepartamento]
                           .filter(Boolean)
-                          .join(", ") || "-"}
-                      </p>
-                    </div>
+                          .join(", ") || "-"
+                      }
+                      detail={selectedCredit.clienteDireccion || "Sin direccion"}
+                      tone="slate"
+                    />
+                    <InfoTile
+                      label="Evidencia"
+                      value={selectedCredit.contratoListo ? "Completa" : "Pendiente"}
+                      detail={selectedCreditEvidenceStatus}
+                      tone={selectedCredit.contratoListo ? "emerald" : "amber"}
+                    />
+                    <InfoTile
+                      label="OTP contrato"
+                      value={selectedCredit.contratoOtpVerificadoAt ? "Verificado" : "Pendiente"}
+                      detail={[
+                        selectedCredit.contratoOtpCanal,
+                        selectedCredit.contratoOtpDestino,
+                      ]
+                        .filter(Boolean)
+                        .join(" | ") || "Sin canal registrado"}
+                      tone={selectedCredit.contratoOtpVerificadoAt ? "emerald" : "slate"}
+                    />
+                    <InfoTile
+                      label="Firma"
+                      value={selectedCreditDocumentsStatus}
+                      detail={`Contrato: ${dateTime(selectedCredit.contratoAceptadoAt)} | Pagare: ${dateTime(
+                        selectedCredit.pagareAceptadoAt
+                      )}`}
+                      tone={selectedCredit.contratoListo ? "emerald" : "amber"}
+                    />
+                    <InfoTile
+                      label="IP firma"
+                      value={selectedCredit.contratoIp || "-"}
+                      detail={selectedCreditCreatedLabel}
+                      tone="slate"
+                    />
                   </div>
 
                   <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -9906,109 +10111,94 @@ export default function CreditFactoryConsole({
 
                 <div
                   className={[
-                    "grid gap-3 md:grid-cols-2",
+                    "grid gap-3 md:grid-cols-2 xl:grid-cols-4",
                     deliveryMode ? "hidden" : "",
                   ].join(" ")}
                 >
-                  <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Referencia de pago
-                    </p>
-                    <p className="mt-2 text-sm font-bold text-slate-950">
-                      {selectedCredit.referenciaPago || "-"}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Monto
-                    </p>
-                    <p className="mt-2 text-sm font-bold text-slate-950">
-                      {currency(selectedCredit.montoCredito)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Proximo pago
-                    </p>
-                    <p className="mt-2 text-sm font-bold text-slate-950">
-                      {dateTime(selectedCredit.fechaProximoPago)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Ultima verificacion
-                    </p>
-                    <p className="mt-2 text-sm font-bold text-slate-950">
-                      {dateTime(selectedCredit.equalityLastCheckAt)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Ventana temporal
-                    </p>
-                    <p className="mt-2 text-sm font-bold text-slate-950">
-                      {dateTime(selectedCredit.graceUntil)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Garantia
-                    </p>
-                    <p className="mt-2 text-sm font-bold text-slate-950">
-                      {dateTime(selectedCredit.warrantyUntil)}
-                    </p>
-                  </div>
+                  <InfoTile
+                    label="Referencia pago"
+                    value={selectedCredit.referenciaPago || "-"}
+                    detail="Dato para recaudo y conciliacion"
+                    tone="white"
+                  />
+                  <InfoTile
+                    label="Monto credito"
+                    value={currency(selectedCredit.montoCredito)}
+                    detail={`Valor equipo: ${currency(selectedCredit.valorEquipoTotal)}`}
+                    tone="white"
+                  />
+                  <InfoTile
+                    label="Cuota"
+                    value={currency(selectedCredit.valorCuota)}
+                    detail={`${selectedCredit.plazoMeses || "-"} cuotas | ${getPaymentFrequencyLabel(
+                      selectedCredit.frecuenciaPago
+                    )}`}
+                    tone="sky"
+                  />
+                  <InfoTile
+                    label="Proximo pago"
+                    value={dateTime(selectedCredit.fechaProximoPago)}
+                    detail={`Primer pago: ${dateTime(selectedCredit.fechaPrimerPago)}`}
+                    tone="amber"
+                  />
+                  <InfoTile
+                    label="Base financiada"
+                    value={currency(selectedCredit.saldoBaseFinanciado)}
+                    detail={`Interes: ${currency(selectedCredit.valorInteres)}`}
+                    tone="slate"
+                  />
+                  <InfoTile
+                    label="Fianza"
+                    value={currency(selectedCredit.valorFianza)}
+                    detail={`Porcentaje: ${formatPercent(selectedCredit.fianzaPorcentaje)}`}
+                    tone="slate"
+                  />
+                  <InfoTile
+                    label="Revision remota"
+                    value={dateTime(selectedCredit.equalityLastCheckAt)}
+                    detail={`Servicio: ${selectedCredit.equalityService || "-"}`}
+                    tone="slate"
+                  />
+                  <InfoTile
+                    label="Garantia"
+                    value={dateTime(selectedCredit.warrantyUntil)}
+                    detail={`Ventana temporal: ${dateTime(selectedCredit.graceUntil)}`}
+                    tone="slate"
+                  />
                 </div>
 
                 <div
                   className={[
-                    "grid gap-3 md:grid-cols-2",
+                    "grid gap-3 md:grid-cols-2 xl:grid-cols-4",
                     deliveryMode ? "hidden" : "",
                   ].join(" ")}
                 >
-                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
-                      Inicial
-                    </p>
-                    <p className="mt-2 text-lg font-black text-emerald-900">
-                      {currency(selectedCredit.cuotaInicial)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
-                      Saldo pendiente
-                    </p>
-                    <p className="mt-2 text-lg font-black text-amber-900">
-                      {currency(selectedCredit.saldoPendiente)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                      Abonos recibidos
-                    </p>
-                    <p className="mt-2 text-lg font-black text-sky-900">
-                      {currency(selectedCredit.totalAbonado)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Abonos registrados
-                    </p>
-                    <p className="mt-2 text-lg font-black text-slate-950">
-                      {selectedCredit.abonosCount}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Total en cuotas: {currency(selectedCredit.totalAbonado)}
-                    </p>
-                  </div>
+                  <InfoTile
+                    label="Cuota inicial"
+                    value={currency(selectedCredit.cuotaInicial)}
+                    detail={`Inicial acumulada cliente: ${currency(clientInitialTotal)}`}
+                    tone="emerald"
+                  />
+                  <InfoTile
+                    label="Saldo pendiente"
+                    value={currency(selectedCredit.saldoPendiente)}
+                    detail={selectedCreditPaymentProgress}
+                    tone={selectedCredit.saldoPendiente > 0 ? "amber" : "emerald"}
+                  />
+                  <InfoTile
+                    label="Abonos recibidos"
+                    value={currency(selectedCredit.totalAbonado)}
+                    detail={`Acumulado cliente: ${currency(clientPaymentsTotal)}`}
+                    tone="sky"
+                  />
+                  <InfoTile
+                    label="Recaudo"
+                    value={formatPercent(selectedCredit.porcentajeRecaudado)}
+                    detail={`${selectedCredit.abonosCount} abono(s) | Ultimo: ${dateTime(
+                      selectedCredit.ultimoAbonoAt
+                    )}`}
+                    tone="slate"
+                  />
                 </div>
 
                 {canAdmin && !deliveryMode ? (
@@ -10093,8 +10283,11 @@ export default function CreditFactoryConsole({
                           Historial del cliente
                         </p>
                         <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-                          Creditos y documentos
+                          Creditos, documentos y acciones
                         </h3>
+                        <p className="mt-2 text-sm leading-6 text-slate-600">
+                          Se muestran los creditos del mismo documento, telefono o nombre que estan dentro de tu alcance.
+                        </p>
                       </div>
 
                       <div className="flex flex-wrap gap-2">
@@ -10103,14 +10296,14 @@ export default function CreditFactoryConsole({
                           onClick={() => openPaymentsForCredit()}
                           className="rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a]"
                         >
-                          Realizar abono
+                          Abrir abonos
                         </button>
                         <button
                           type="button"
                           onClick={() => downloadExpedientePdf()}
                           className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
-                          Ver documentos firmados
+                          Expediente PDF
                         </button>
                         <button
                           type="button"
@@ -10178,6 +10371,17 @@ export default function CreditFactoryConsole({
                               >
                                 Equipo: {credit.referenciaEquipo || credit.imei}
                               </p>
+                              <p
+                                className={[
+                                  "mt-1 text-sm",
+                                  credit.id === selectedCredit.id
+                                    ? "text-slate-300"
+                                    : "text-slate-600",
+                                ].join(" ")}
+                              >
+                                Sede: {credit.sede.nombre} | Asesor:{" "}
+                                {credit.vendedor?.nombre || credit.usuario.nombre}
+                              </p>
                             </div>
 
                             <div className="grid gap-2 text-sm xl:text-right">
@@ -10189,6 +10393,12 @@ export default function CreditFactoryConsole({
                               </p>
                               <p className={credit.id === selectedCredit.id ? "text-slate-300" : "text-slate-600"}>
                                 Pendiente: <span className="font-bold">{currency(credit.saldoPendiente)}</span>
+                              </p>
+                              <p className={credit.id === selectedCredit.id ? "text-slate-300" : "text-slate-600"}>
+                                Proximo pago: <span className="font-bold">{dateTime(credit.fechaProximoPago)}</span>
+                              </p>
+                              <p className={credit.id === selectedCredit.id ? "text-slate-300" : "text-slate-600"}>
+                                Docs: <span className="font-bold">{credit.contratoListo ? "Completos" : "Pendientes"}</span>
                               </p>
                             </div>
                           </div>
@@ -10204,7 +10414,7 @@ export default function CreditFactoryConsole({
                                   : "border border-[#145a5a] bg-[#145a5a] text-white hover:bg-[#0f4a4a]",
                               ].join(" ")}
                             >
-                              Realizar abono
+                              Abono
                             </button>
                             <button
                               type="button"
@@ -10240,7 +10450,20 @@ export default function CreditFactoryConsole({
                                   : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
                               ].join(" ")}
                             >
-                              Ver documentos firmados
+                              Expediente PDF
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void openFirmaSeguroSignedDocument(credit.id)}
+                              disabled={firmaSeguroRefreshing}
+                              className={[
+                                "rounded-2xl border px-4 py-2.5 text-sm font-semibold transition",
+                                credit.id === selectedCredit.id
+                                  ? "border-white/15 bg-white/10 text-white hover:bg-white/16 disabled:opacity-40"
+                                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50",
+                              ].join(" ")}
+                            >
+                              FirmaSeguro
                             </button>
                             <button
                               type="button"
