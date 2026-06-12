@@ -5623,7 +5623,7 @@ export default function CreditFactoryConsole({
       if (result.data.documentUrl || result.data.process?.hasSignedDocument) {
         window.open(
           result.data.documentUrl ||
-            `/api/creditos/${creditLookup}/firma-seguro/documento`,
+            `/api/creditos/${creditLookup}/firma-seguro/documento?refresh=1`,
           "_blank"
         );
         return;

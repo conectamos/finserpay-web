@@ -66,7 +66,7 @@ export async function GET(
       ok: true,
       process: serializeFirmaSeguroProcess(process),
       documentUrl: process?.signedDocumentBase64
-        ? `/api/creditos/${authorized.credito.id}/firma-seguro/documento`
+        ? `/api/creditos/${authorized.credito.id}/firma-seguro/documento?refresh=1`
         : null,
     });
   } catch (error) {

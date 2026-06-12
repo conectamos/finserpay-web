@@ -51,6 +51,7 @@ export async function GET(
           ok: false,
           error: "El documento firmado aun no esta disponible",
           status: process?.status || current.status,
+          lastError: process?.lastError || current.lastError || null,
         },
         { status: 409 }
       );
