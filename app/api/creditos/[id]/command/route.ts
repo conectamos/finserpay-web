@@ -32,6 +32,7 @@ import {
 } from "@/lib/equality-zero-touch";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
@@ -52,6 +53,7 @@ const SUPERVISOR_COMMANDS: CreditAdminCommand[] = [
   "consult-device",
   "payment-reference",
   "toggle-stolen-lock",
+  "toggle-mora-lock",
   "remove-lock",
 ];
 
@@ -418,6 +420,20 @@ export async function POST(
           adminMessage = "Bloqueo por robo aplicado";
         }
         break;
+      case "toggle-mora-lock":
+        if (current.bloqueoMora) {
+          remotePayload = await unlockEqualityDevice(current.deviceUid);
+          remoteQuery = await queryEqualityDevices(current.deviceUid);
+          adminMessage = "Bloqueo por mora retirado";
+        } else {
+          remotePayload = await lockEqualityDevice(current.deviceUid, {
+            lockMsgTitle: "Pago vencido",
+            lockMsgContent: buildMoraLockMessage(current.clienteDocumento),
+          });
+          remoteQuery = await queryEqualityDevices(current.deviceUid);
+          adminMessage = "Bloqueo por mora aplicado";
+        }
+        break;
       case "update-due-date":
         if (!fechaProximoPago) {
           return NextResponse.json(
@@ -684,7 +700,12 @@ export async function POST(
               : command === "remove-lock"
                 ? false
                 : reloaded.bloqueoRobo,
-          bloqueoMora: reloaded.bloqueoMora,
+          bloqueoMora:
+            command === "toggle-mora-lock"
+              ? !current.bloqueoMora
+              : command === "remove-lock"
+                ? false
+                : reloaded.bloqueoMora,
           deliverable: effectiveDeliveryStatus,
           pazYSalvoEmitidoAt: reloaded.pazYSalvoEmitidoAt,
         }),
@@ -715,6 +736,20 @@ export async function POST(
             : command === "remove-lock"
               ? null
               : reloaded.bloqueoRoboAt,
+        bloqueoMora:
+          command === "toggle-mora-lock"
+            ? !current.bloqueoMora
+            : command === "remove-lock"
+              ? false
+              : reloaded.bloqueoMora,
+        bloqueoMoraAt:
+          command === "toggle-mora-lock"
+            ? current.bloqueoMora
+              ? null
+              : new Date()
+            : command === "remove-lock"
+              ? null
+              : reloaded.bloqueoMoraAt,
         observacionAdmin: observacionAdmin || reloaded.observacionAdmin,
       },
       include: {

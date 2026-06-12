@@ -503,6 +503,7 @@ type CreditAdminCommand =
   | "consult-device"
   | "payment-reference"
   | "toggle-stolen-lock"
+  | "toggle-mora-lock"
   | "update-due-date"
   | "update-plan"
   | "extend-1h"
@@ -2091,6 +2092,13 @@ export default function CreditFactoryConsole({
     : selectedCredit?.bloqueoMora
       ? "Bloqueo por mora activo"
       : "Sin bloqueo manual activo";
+  const selectedCreditLockCommand: CreditAdminCommand =
+    selectedCredit?.bloqueoRobo ? "toggle-stolen-lock" : "toggle-mora-lock";
+  const selectedCreditLockButtonLabel = selectedCredit?.bloqueoRobo
+    ? "Desbloquear robo"
+    : selectedCredit?.bloqueoMora
+      ? "Desbloquear mora"
+      : "Bloquear mora";
   const selectedCreditPaymentProgress = selectedCredit
     ? `${selectedCredit.cuotasPagadas || 0} pagas / ${
         selectedCredit.cuotasPendientes || 0
@@ -9957,10 +9965,10 @@ export default function CreditFactoryConsole({
                         {canAdmin || canSupervisor ? (
                           <button
                             type="button"
-                            onClick={() => void runCommand("toggle-stolen-lock")}
+                            onClick={() => void runCommand(selectedCreditLockCommand)}
                             disabled={!selectedCredit || runningCommand !== null}
                           >
-                            {selectedCredit.bloqueoRobo ? "Desbloquear" : "Bloquear"}
+                            {selectedCreditLockButtonLabel}
                           </button>
                         ) : null}
                         <button
@@ -10061,11 +10069,11 @@ export default function CreditFactoryConsole({
                         {canAdmin || canSupervisor ? (
                           <button
                             type="button"
-                            onClick={() => void runCommand("toggle-stolen-lock")}
+                            onClick={() => void runCommand(selectedCreditLockCommand)}
                             disabled={!selectedCredit || runningCommand !== null}
                             className="rounded-[14px] border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
                           >
-                            {selectedCredit.bloqueoRobo ? "Desbloquear" : "Bloquear"}
+                            {selectedCreditLockButtonLabel}
                           </button>
                         ) : null}
                       </div>
@@ -10451,11 +10459,11 @@ export default function CreditFactoryConsole({
                         {canAdmin || canSupervisor ? (
                           <button
                             type="button"
-                            onClick={() => void runCommand("toggle-stolen-lock")}
+                            onClick={() => void runCommand(selectedCreditLockCommand)}
                             disabled={!selectedCredit || runningCommand !== null}
                             className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
                           >
-                            {selectedCredit?.bloqueoRobo ? "Desbloquear dispositivo" : "Bloquear dispositivo"}
+                            {selectedCreditLockButtonLabel}
                           </button>
                         ) : null}
                       </div>
@@ -10934,13 +10942,11 @@ export default function CreditFactoryConsole({
                             {credit.id === selectedCredit.id ? (
                               <button
                                 type="button"
-                                onClick={() => void runCommand("toggle-stolen-lock")}
+                                onClick={() => void runCommand(selectedCreditLockCommand)}
                                 disabled={runningCommand !== null}
                                 className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/16 disabled:opacity-50"
                               >
-                                {selectedCredit.bloqueoRobo
-                                  ? "Desbloquear dispositivo"
-                                  : "Bloquear dispositivo"}
+                                {selectedCreditLockButtonLabel}
                               </button>
                             ) : null}
                           </div>

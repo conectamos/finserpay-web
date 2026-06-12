@@ -4,6 +4,7 @@ export type CreditAdminCommand =
   | "consult-device"
   | "payment-reference"
   | "toggle-stolen-lock"
+  | "toggle-mora-lock"
   | "update-due-date"
   | "update-plan"
   | "extend-1h"
