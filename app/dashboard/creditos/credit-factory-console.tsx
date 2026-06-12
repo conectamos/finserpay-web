@@ -9832,8 +9832,8 @@ export default function CreditFactoryConsole({
                   <>
                     <div className="fp-client-dossier-hero">
                       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
-                        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
-                          <div className="fp-client-dossier-photo flex h-[92px] w-[92px] shrink-0 items-center justify-center overflow-hidden rounded-[28px] border text-2xl font-black">
+                        <div className="grid min-w-0 gap-5 md:grid-cols-[172px_minmax(0,1fr)] md:items-center">
+                          <div className="fp-client-dossier-photo mx-auto flex h-[156px] w-[156px] shrink-0 items-center justify-center overflow-hidden rounded-[34px] border text-4xl font-black md:mx-0 md:h-[172px] md:w-[172px]">
                             {selectedCredit.contratoSelfieDataUrl ||
                             selectedCredit.contratoFotoDataUrl ? (
                               <img
@@ -9862,7 +9862,7 @@ export default function CreditFactoryConsole({
                               Abrir abonos
                             </p>
                             <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="mt-2 break-words text-3xl font-black leading-tight tracking-normal text-slate-950 sm:text-4xl">
+                              <h3 className="mt-2 max-w-3xl break-words text-3xl font-black leading-tight tracking-normal text-slate-950 sm:text-4xl">
                                 {selectedCredit.clienteNombre}
                               </h3>
                               <span className="fp-client-dossier-status">
