@@ -406,14 +406,14 @@ body {
 
 .fp-shell.fp-client-lookup {
   background:
-    radial-gradient(circle at 12% 0%, rgba(20, 90, 90, 0.08), transparent 30%),
-    radial-gradient(circle at 88% 12%, rgba(191, 164, 106, 0.1), transparent 28%),
-    linear-gradient(180deg, #f8faf7 0%, #eef3ee 100%);
+    radial-gradient(circle at 14% 0%, rgba(17, 19, 24, 0.045), transparent 32%),
+    radial-gradient(circle at 88% 8%, rgba(191, 164, 106, 0.11), transparent 30%),
+    linear-gradient(180deg, #fbfaf6 0%, #f4f2eb 54%, #efede6 100%);
   color: #111827;
 }
 
 .fp-client-lookup > .mx-auto {
-  max-width: 1060px;
+  max-width: 1040px;
 }
 
 .fp-client-lookup-hero {
@@ -427,15 +427,15 @@ body {
 
 .fp-client-lookup-search {
   margin-top: 4px;
-  border: 1px solid rgba(20, 90, 90, 0.12);
+  border: 1px solid rgba(17, 19, 24, 0.12);
   border-radius: 28px;
-  background: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.9);
   padding: 18px;
-  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.07);
+  box-shadow: 0 18px 44px rgba(17, 19, 24, 0.06);
 }
 
 .fp-client-lookup-command {
-  border: 1px solid rgba(20, 90, 90, 0.14);
+  border: 1px solid rgba(17, 19, 24, 0.12);
   border-radius: 22px;
   background: #ffffff;
   padding: 6px;
@@ -444,12 +444,12 @@ body {
 
 .fp-client-lookup-result {
   margin-top: 22px;
-  border: 1px solid rgba(20, 90, 90, 0.12);
-  border-radius: 32px;
+  border: 1px solid rgba(17, 19, 24, 0.1);
+  border-radius: 30px;
   background: #ffffff;
   overflow: hidden;
   padding: 0;
-  box-shadow: 0 28px 76px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 26px 70px rgba(17, 19, 24, 0.1);
 }
 
 .fp-client-lookup-person {
@@ -465,10 +465,9 @@ body {
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(circle at 8% 0%, rgba(52, 211, 153, 0.2), transparent 34%),
-    radial-gradient(circle at 92% 18%, rgba(191, 164, 106, 0.2), transparent 28%),
-    linear-gradient(135deg, #07131a 0%, #0b2e2d 58%, #123f3e 100%);
-  padding: 26px;
+    linear-gradient(90deg, rgba(191, 164, 106, 0.14), transparent 42%),
+    linear-gradient(135deg, #ffffff 0%, #fbfaf6 60%, #eeeae0 100%);
+  padding: 30px;
 }
 
 .fp-client-dossier-hero::after {
@@ -476,7 +475,7 @@ body {
   inset: auto 24px 0;
   height: 1px;
   content: "";
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.38), transparent);
+  background: linear-gradient(90deg, transparent, rgba(191, 164, 106, 0.46), transparent);
 }
 
 .fp-client-dossier-hero > * {
@@ -485,20 +484,20 @@ body {
 }
 
 .fp-client-dossier-photo {
-  border-color: rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.1);
-  color: #ffffff;
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.22);
+  border-color: rgba(17, 19, 24, 0.12);
+  background: #ffffff;
+  color: #111318;
+  box-shadow: 0 16px 34px rgba(17, 19, 24, 0.1);
 }
 
 .fp-client-dossier-status {
   display: inline-flex;
   align-items: center;
-  border: 1px solid rgba(167, 243, 208, 0.36);
+  border: 1px solid rgba(191, 164, 106, 0.34);
   border-radius: 999px;
-  background: rgba(6, 95, 70, 0.42);
+  background: rgba(191, 164, 106, 0.12);
   padding: 6px 10px;
-  color: #bbf7d0;
+  color: #6b541d;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.12em;
@@ -506,44 +505,53 @@ body {
 }
 
 .fp-client-dossier-actions button {
-  border-color: rgba(255, 255, 255, 0.2) !important;
-  background: rgba(255, 255, 255, 0.1) !important;
-  color: rgba(255, 255, 255, 0.86) !important;
+  border: 1px solid rgba(17, 19, 24, 0.14) !important;
+  background: #ffffff !important;
+  color: #20242a !important;
+  padding: 10px 15px;
+  font-size: 13px;
+  font-weight: 800;
+  transition: border-color 180ms ease, background 180ms ease, color 180ms ease, opacity 180ms ease;
 }
 
-.fp-client-dossier-actions button:first-child {
-  border-color: #ffffff !important;
-  background: #ffffff !important;
-  color: #0b2e2d !important;
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22);
+.fp-client-action-primary {
+  border: 1px solid #111318 !important;
+  background: #111318 !important;
+  color: #ffffff !important;
+  box-shadow: 0 18px 38px rgba(17, 19, 24, 0.18);
 }
 
 .fp-client-dossier-actions button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.18) !important;
+  border-color: rgba(17, 19, 24, 0.3) !important;
+  background: #f7f6f1 !important;
 }
 
-.fp-client-dossier-actions button:first-child:hover:not(:disabled) {
-  background: #eefbf7 !important;
+.fp-client-action-primary:hover:not(:disabled) {
+  background: #2a2d33 !important;
+}
+
+.fp-client-dossier-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
 }
 
 .fp-client-dossier-summary {
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(10px);
+  border: 1px solid rgba(17, 19, 24, 0.1);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.82);
 }
 
 .fp-client-dossier-summary > div {
-  border-color: rgba(255, 255, 255, 0.13) !important;
+  border-color: rgba(17, 19, 24, 0.1) !important;
 }
 
 .fp-client-dossier-summary p {
-  color: rgba(255, 255, 255, 0.7) !important;
+  color: #64748b !important;
 }
 
 .fp-client-dossier-summary p:nth-child(2) {
-  color: #ffffff !important;
+  color: #111318 !important;
 }
 
 .fp-client-dossier-detail {
@@ -551,21 +559,21 @@ body {
 }
 
 .fp-client-dossier-statusbar {
-  border: 1px solid rgba(20, 90, 90, 0.1);
+  border: 1px solid rgba(17, 19, 24, 0.1);
   border-radius: 24px;
-  background: linear-gradient(135deg, #f8fcfa 0%, #ffffff 70%);
+  background: linear-gradient(135deg, #faf9f5 0%, #ffffff 70%);
   padding: 18px;
 }
 
 .fp-client-detail-actions button {
-  border-color: rgba(20, 90, 90, 0.16) !important;
+  border-color: rgba(17, 19, 24, 0.14) !important;
   background: #ffffff !important;
   color: #24404a !important;
 }
 
 .fp-client-detail-actions button:hover:not(:disabled) {
-  border-color: rgba(20, 90, 90, 0.32) !important;
-  background: #f3faf7 !important;
+  border-color: rgba(17, 19, 24, 0.28) !important;
+  background: #f7f6f1 !important;
 }
 
 @media (min-width: 1280px) {

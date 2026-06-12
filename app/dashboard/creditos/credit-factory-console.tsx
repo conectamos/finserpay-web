@@ -2014,10 +2014,6 @@ export default function CreditFactoryConsole({
       selectedCredit.clienteTelefono ||
       selectedCredit.folio
     : "";
-  const clientPendingTotal = sameClientCredits.reduce(
-    (total, item) => total + item.saldoPendiente,
-    0
-  );
   const clientInitialTotal = sameClientCredits.reduce(
     (total, item) => total + item.cuotaInicial,
     0
@@ -2026,9 +2022,6 @@ export default function CreditFactoryConsole({
     (total, item) => total + item.totalAbonado,
     0
   );
-  const clientDocumentsCount = sameClientCredits.filter(
-    (item) => item.contratoAceptadoAt || item.pagareAceptadoAt
-  ).length;
   const clientPrimaryStatus =
     selectedCredit?.saldoPendiente && selectedCredit.saldoPendiente > 0
       ? "Con saldo"
@@ -2057,12 +2050,6 @@ export default function CreditFactoryConsole({
     ? `${humanizeConstant(selectedCredit.clienteTipoDocumento || "CC")} ${
         selectedCredit.clienteDocumento || "Sin documento"
       }`
-    : "-";
-  const selectedCreditContactLine = selectedCredit
-    ? [
-        selectedCredit.clienteTelefono || "Sin telefono",
-        selectedCredit.clienteCorreo || "Sin correo",
-      ].join(" | ")
     : "-";
   const selectedCreditLocationLine = selectedCredit
     ? [
@@ -2109,6 +2096,22 @@ export default function CreditFactoryConsole({
         selectedCredit.cuotasPendientes || 0
       } pendientes / ${selectedCredit.cuotasEnMora || 0} en mora`
     : "-";
+  const selectedCreditPaidPercent = selectedCredit
+    ? Math.max(0, Number(selectedCredit.porcentajeRecaudado || 0))
+    : 0;
+  const selectedCreditIsPaidOff = selectedCredit
+    ? selectedCredit.saldoPendiente <= 0 || selectedCredit.estadoPago === "PAGADO"
+    : false;
+  const selectedCreditIsCurrent = selectedCredit
+    ? selectedCredit.estadoPago !== "MORA" && (selectedCredit.cuotasEnMora || 0) <= 0
+    : false;
+  const selectedCreditCanCreateNewCredit = selectedCredit
+    ? selectedCreditIsPaidOff ||
+      (selectedCreditIsCurrent && selectedCreditPaidPercent >= 50)
+    : false;
+  const selectedCreditNewCreditTitle = selectedCreditCanCreateNewCredit
+    ? "Crear nuevo credito con los datos de este cliente"
+    : "Disponible cuando el credito este al dia y tenga al menos el 50% pagado";
   const selectedCreditCreatedLabel = selectedCredit
     ? `Creado ${dateTime(selectedCredit.createdAt)} | Actualizado ${dateTime(
         selectedCredit.updatedAt
@@ -3695,7 +3698,7 @@ export default function CreditFactoryConsole({
 
       if (lookupMode) {
         setShowSearchResults(nextSelectedId === null);
-        setShowLookupDetail(nextSelectedId !== null);
+        setShowLookupDetail(clientLookupMode ? false : nextSelectedId !== null);
         if (nextSelectedId !== null) {
           focusSelectedCreditPanel();
         }
@@ -6336,13 +6339,13 @@ export default function CreditFactoryConsole({
                     <div className="flex flex-wrap gap-2">
                       <Link
                         href="/dashboard"
-                        className="inline-flex justify-center rounded-full border border-slate-300 bg-white/86 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[#145a5a] hover:text-[#145a5a]"
+                        className="inline-flex justify-center rounded-full border border-slate-300 bg-white/86 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
                       >
                         Dashboard
                       </Link>
                       <Link
                         href="/dashboard/abonos"
-                        className="inline-flex justify-center rounded-full border border-[#b8d8d6] bg-white/86 px-4 py-2 text-sm font-semibold text-[#145a5a] transition hover:border-[#145a5a] hover:bg-white"
+                        className="inline-flex justify-center rounded-full border border-[#d7c79d] bg-white/86 px-4 py-2 text-sm font-semibold text-[#6f551f] transition hover:border-slate-950 hover:bg-white hover:text-slate-950"
                       >
                         Ir a abonos
                       </Link>
@@ -6355,7 +6358,7 @@ export default function CreditFactoryConsole({
                 </div>
 
                 <div className="max-w-3xl">
-                  <p className="text-sm font-black uppercase tracking-[0.18em] text-[#145a5a]">
+                  <p className="text-sm font-black uppercase tracking-[0.18em] text-[#8a6a24]">
                     Clientes y expedientes
                   </p>
                   <h1 className="mt-3 max-w-2xl text-4xl font-black leading-[1.02] tracking-normal text-slate-950 sm:text-5xl">
@@ -6496,7 +6499,7 @@ export default function CreditFactoryConsole({
           <h2
             className={[
               "font-black tracking-tight text-slate-950",
-              paymentsView ? "mt-3 text-2xl" : clientLookupMode ? "text-sm uppercase tracking-[0.16em] text-[#145a5a]" : "mt-4 text-3xl",
+              paymentsView ? "mt-3 text-2xl" : clientLookupMode ? "text-sm uppercase tracking-[0.16em] text-[#8a6a24]" : "mt-4 text-3xl",
             ].join(" ")}
           >
             {paymentsView
@@ -6558,7 +6561,7 @@ export default function CreditFactoryConsole({
               type="button"
               onClick={() => void searchCredits()}
               disabled={loadingList || loadingDrafts}
-              className={clientLookupMode ? "rounded-[16px] bg-[#145a5a] px-6 py-3 text-sm font-black text-white transition hover:bg-[#0f4a4a] disabled:opacity-70" : "fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"}
+              className={clientLookupMode ? "rounded-[16px] bg-[#111318] px-6 py-3 text-sm font-black text-white transition hover:bg-[#2a2d33] disabled:opacity-70" : "fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"}
             >
               {loadingList || loadingDrafts
                 ? "Buscando..."
@@ -6594,7 +6597,7 @@ export default function CreditFactoryConsole({
                       key={`lookup-inline-${credit.id}`}
                       type="button"
                       onClick={() => openLookupCredit(credit.id)}
-                      className="grid w-full gap-2 py-3 text-left transition hover:text-[#145a5a] md:grid-cols-[1.3fr_1fr_auto] md:items-center"
+                      className="grid w-full gap-2 py-3 text-left transition hover:text-slate-950 md:grid-cols-[1.3fr_1fr_auto] md:items-center"
                     >
                       <span>
                         <span className="block text-sm font-black text-slate-950">
@@ -9828,9 +9831,9 @@ export default function CreditFactoryConsole({
                 {clientLookupMode && (
                   <>
                     <div className="fp-client-dossier-hero">
-                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
-                          <div className="fp-client-dossier-photo flex h-[82px] w-[82px] shrink-0 items-center justify-center overflow-hidden rounded-[24px] border text-2xl font-black">
+                      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+                        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
+                          <div className="fp-client-dossier-photo flex h-[92px] w-[92px] shrink-0 items-center justify-center overflow-hidden rounded-[28px] border text-2xl font-black">
                             {selectedCredit.contratoSelfieDataUrl ||
                             selectedCredit.contratoFotoDataUrl ? (
                               <img
@@ -9855,89 +9858,132 @@ export default function CreditFactoryConsole({
                           </div>
 
                           <div className="min-w-0">
+                            <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#8a6a24]">
+                              Abrir abonos
+                            </p>
                             <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="break-words text-3xl font-black leading-tight tracking-normal text-white sm:text-4xl">
+                              <h3 className="mt-2 break-words text-3xl font-black leading-tight tracking-normal text-slate-950 sm:text-4xl">
                                 {selectedCredit.clienteNombre}
                               </h3>
                               <span className="fp-client-dossier-status">
                                 {clientPrimaryStatus}
                               </span>
                             </div>
-                            <p className="mt-3 break-words text-base text-white/82">
-                              Documento:{" "}
-                              <span className="font-semibold text-white">
-                                {selectedCreditDocumentLabel}
-                              </span>
-                            </p>
-                            <p className="mt-1 break-words text-sm text-white/64">
-                              {selectedCreditContactLine}
-                            </p>
-                            <p className="mt-3 break-words text-xs font-semibold uppercase tracking-[0.12em] text-white/56">
-                              {accessProfileLabel} | {accessScopeLabel} | {selectedCredit.sede.nombre} | Asesor: {selectedCreditAdvisorLabel}
-                            </p>
+                            <div className="mt-4 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+                              <p>
+                                <span className="block text-[11px] font-black uppercase tracking-[0.14em] text-slate-400">
+                                  Documento
+                                </span>
+                                <span className="font-black text-slate-950">
+                                  {selectedCreditDocumentLabel}
+                                </span>
+                              </p>
+                              <p>
+                                <span className="block text-[11px] font-black uppercase tracking-[0.14em] text-slate-400">
+                                  Telefono
+                                </span>
+                                <span className="font-black text-slate-950">
+                                  {selectedCredit.clienteTelefono || "-"}
+                                </span>
+                              </p>
+                              <p className="sm:col-span-2">
+                                <span className="block text-[11px] font-black uppercase tracking-[0.14em] text-slate-400">
+                                  Correo
+                                </span>
+                                <span className="font-semibold text-slate-700">
+                                  {selectedCredit.clienteCorreo || "Sin correo"}
+                                </span>
+                              </p>
+                            </div>
                           </div>
                         </div>
 
-                        <div className="fp-client-dossier-actions flex w-full flex-wrap gap-2 xl:max-w-xl xl:justify-end">
-                          <button
-                            type="button"
-                            onClick={() => openPaymentsForCredit()}
-                            className="rounded-[14px] border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a]"
-                          >
-                            Abrir abonos
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openLookupDetail(selectedCredit.id)}
-                            className="rounded-[14px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                          >
-                            Expediente
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void openFirmaSeguroSignedDocument()}
-                            disabled={firmaSeguroRefreshing}
-                            className="rounded-[14px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
-                          >
-                            {firmaSeguroRefreshing ? "Consultando..." : "PDF firmado"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => createNewSaleFromClient()}
-                            className="rounded-[14px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                          >
-                            Nueva venta
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openPaymentsForCredit()}
+                          className="fp-client-action-primary rounded-[18px] px-6 py-3 text-sm font-black"
+                        >
+                          Abrir abonos
+                        </button>
                       </div>
 
-                      <div className="fp-client-dossier-summary mt-6 grid sm:grid-cols-4">
+                      <div className="fp-client-dossier-summary mt-6 grid lg:grid-cols-[1fr_1fr_1fr_1.35fr]">
                         <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
-                          <p className="text-[11px] font-semibold uppercase text-slate-500">Saldo</p>
-                          <p className="mt-1 break-words text-base font-black text-slate-950">{currency(clientPendingTotal)}</p>
-                          <p className="mt-1 text-xs text-slate-500">{sameClientCredits.length} credito(s)</p>
-                        </div>
-                        <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
-                          <p className="text-[11px] font-semibold uppercase text-slate-500">Credito</p>
-                          <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCredit.folio}</p>
+                          <p className="text-[11px] font-semibold uppercase text-slate-500">Saldo del credito</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{currency(selectedCredit.saldoPendiente)}</p>
                           <p className="mt-1 text-xs text-slate-500">{selectedCreditPaymentStatusLabel}</p>
                         </div>
                         <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
-                          <p className="text-[11px] font-semibold uppercase text-slate-500">Equipo</p>
-                          <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCreditEquipmentLabel}</p>
-                          <p className="mt-1 text-xs text-slate-500">IMEI: {selectedCredit.imei || selectedCredit.deviceUid || "-"}</p>
+                          <p className="text-[11px] font-semibold uppercase text-slate-500">Cuotas pagas</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCredit.cuotasPagadas || 0}</p>
+                          <p className="mt-1 text-xs text-slate-500">{formatPercent(selectedCreditPaidPercent)} pagado</p>
+                        </div>
+                        <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
+                          <p className="text-[11px] font-semibold uppercase text-slate-500">Cuotas pendientes</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCredit.cuotasPendientes || 0}</p>
+                          <p className="mt-1 text-xs text-slate-500">{selectedCredit.cuotasEnMora || 0} en mora</p>
                         </div>
                         <div className="px-4 py-3">
-                          <p className="text-[11px] font-semibold uppercase text-slate-500">Documentos</p>
-                          <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCreditDocumentsStatus}</p>
-                          <p className="mt-1 text-xs text-slate-500">{clientDocumentsCount} paquete(s)</p>
+                          <p className="text-[11px] font-semibold uppercase text-slate-500">Equipo / ref / IMEI</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCreditEquipmentLabel}</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Ref: {selectedCredit.referenciaEquipo || selectedCredit.folio} | IMEI: {selectedCredit.imei || selectedCredit.deviceUid || "-"}
+                          </p>
                         </div>
+                      </div>
+
+                      <div className="fp-client-dossier-actions mt-5 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openLookupDetail(selectedCredit.id)}
+                        >
+                          Ver detalle
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadPazYSalvo()}
+                          disabled={!selectedCredit || selectedCredit.saldoPendiente > 0}
+                        >
+                          Paz y salvo
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => createNewSaleFromClient()}
+                          disabled={!selectedCreditCanCreateNewCredit}
+                          title={selectedCreditNewCreditTitle}
+                        >
+                          Crear nuevo credito
+                        </button>
+                        {canAdmin || canSupervisor ? (
+                          <button
+                            type="button"
+                            onClick={() => void runCommand("toggle-stolen-lock")}
+                            disabled={!selectedCredit || runningCommand !== null}
+                          >
+                            {selectedCredit.bloqueoRobo ? "Desbloquear" : "Bloquear"}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => downloadPlanPagos()}
+                          disabled={!selectedCredit}
+                        >
+                          Plan de pagos
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void openFirmaSeguroSignedDocument()}
+                          disabled={firmaSeguroRefreshing}
+                        >
+                          {firmaSeguroRefreshing ? "Consultando..." : "Expediente PDF"}
+                        </button>
                       </div>
                     </div>
                   </>
                 )}
 
                 {lookupMode && !showLookupDetail ? (
+                  clientLookupMode ? null : (
                   <div className="flex flex-col gap-3 border-t border-slate-200 py-3 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-sm text-slate-600">
                       El detalle completo queda contraido para mantener esta vista limpia.
@@ -9950,11 +9996,12 @@ export default function CreditFactoryConsole({
                       Cambiar credito
                     </button>
                   </div>
+                  )
                 ) : lookupMode && !deliveryMode ? (
                   <div ref={lookupDetailPanelRef} className="fp-client-dossier-detail space-y-6">
                     <div className="fp-client-dossier-statusbar flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#145a5a]">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8a6a24]">
                           Expediente operativo
                         </p>
                         <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
@@ -10203,7 +10250,7 @@ export default function CreditFactoryConsole({
                       </section>
                     ) : null}
 
-                    {canAdmin ? (
+                    {canAdmin && !clientLookupMode ? (
                       <section className="border-t border-slate-200 pt-5">
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
                           <div className="lg:w-56">
