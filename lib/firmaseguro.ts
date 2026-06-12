@@ -681,7 +681,26 @@ function normalizeFirmaSeguroPdfBase64(value: string) {
     return "";
   }
 
-  return compact;
+  const normalized = compact.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = normalized.length % 4;
+  return padding ? normalized.padEnd(normalized.length + (4 - padding), "=") : normalized;
+}
+
+function normalizeFirmaSeguroDocumentUrl(value: string) {
+  const cleaned = value.trim();
+  if (!cleaned || /^data:/i.test(cleaned)) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(cleaned)) {
+    return cleaned;
+  }
+
+  if (cleaned.startsWith("/")) {
+    return `${getFirmaSeguroConfig().baseUrl}${cleaned}`;
+  }
+
+  return "";
 }
 
 export function extractFirmaSeguroSignedDocument(payload: unknown) {
@@ -689,24 +708,70 @@ export function extractFirmaSeguroSignedDocument(payload: unknown) {
     return {
       base64: normalizeFirmaSeguroPdfBase64(payload),
       fileName: "",
+      url: normalizeFirmaSeguroDocumentUrl(payload),
     };
   }
 
   const base64Value = getNestedValue(payload, [
+    "archivoBase64",
+    "archivo_base64",
     "base64String",
     "base64_string",
     "base64",
+    "contentBase64",
+    "content_base64",
     "documentBase64",
     "document_base64",
+    "documentoBase64",
+    "documento_base64",
+    "documentoFirmadoBase64",
+    "documento_firmado_base64",
     "fileBase64",
     "file_base64",
+    "pdfBase64",
+    "pdf_base64",
+    "signedDocumentBase64",
+    "signed_document_base64",
   ]);
   const fileNameValue = getNestedValue(payload, [
+    "archivoNombre",
+    "archivo_nombre",
     "fileName",
     "file_name",
     "name",
     "documentName",
     "document_name",
+    "documentoNombre",
+    "documento_nombre",
+    "pdfName",
+    "pdf_name",
+  ]);
+  const urlValue = getNestedValue(payload, [
+    "archivoUrl",
+    "archivo_url",
+    "downloadLink",
+    "download_link",
+    "downloadUrl",
+    "download_url",
+    "documentLink",
+    "document_link",
+    "documentUrl",
+    "document_url",
+    "documentoUrl",
+    "documento_url",
+    "fileLink",
+    "file_link",
+    "fileUrl",
+    "file_url",
+    "href",
+    "link",
+    "pdfUrl",
+    "pdf_url",
+    "signedDocumentUrl",
+    "signed_document_url",
+    "signedUrl",
+    "signed_url",
+    "url",
   ]);
 
   return {
@@ -717,6 +782,10 @@ export function extractFirmaSeguroSignedDocument(payload: unknown) {
     fileName:
       typeof fileNameValue === "string" && fileNameValue.trim()
         ? fileNameValue.trim()
+        : "",
+    url:
+      typeof urlValue === "string" && urlValue.trim()
+        ? normalizeFirmaSeguroDocumentUrl(urlValue)
         : "",
   };
 }
@@ -864,9 +933,10 @@ export async function firmaSeguroGetSignaturesStatus(token: string, uuid: string
   );
 }
 
-export async function firmaSeguroGetDocumentsByUuid(uuid: string) {
+export async function firmaSeguroGetDocumentsByUuid(uuid: string, token?: string) {
   return firmaSeguroRequest<unknown>(
-    `/api/v2/Document/ByUUID/${encodeURIComponent(uuid)}`
+    `/api/v2/Document/ByUUID/${encodeURIComponent(uuid)}`,
+    token ? { token } : {}
   );
 }
 

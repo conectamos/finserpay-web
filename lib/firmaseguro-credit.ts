@@ -284,6 +284,63 @@ function redactBase64Payload(value: unknown): unknown {
   );
 }
 
+async function downloadFirmaSeguroSignedDocument(url: string) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/pdf,application/json,text/plain,*/*",
+    },
+    cache: "no-store",
+  });
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const contentType = response.headers.get("content-type") || "";
+
+  if (!response.ok) {
+    const body = buffer.toString("utf8").trim();
+    throw new FirmaSeguroApiError(
+      `FirmaSeguro no permitio descargar el PDF firmado desde el enlace entregado (${response.status})`,
+      response.status,
+      body ? body.slice(0, 500) : null
+    );
+  }
+
+  if (/application\/json|text\//i.test(contentType)) {
+    const text = buffer.toString("utf8").trim();
+    let payload: unknown = text;
+    if (text.startsWith("{") || text.startsWith("[")) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = text;
+      }
+    }
+
+    const documentInfo = extractFirmaSeguroSignedDocument(payload);
+    if (documentInfo.base64) {
+      return documentInfo;
+    }
+
+    throw new FirmaSeguroApiError(
+      "FirmaSeguro entrego un enlace, pero la respuesta no contiene un PDF firmado",
+      500,
+      text.slice(0, 500)
+    );
+  }
+
+  if (buffer.length < 4 || buffer.subarray(0, 4).toString("ascii") !== "%PDF") {
+    throw new FirmaSeguroApiError(
+      "FirmaSeguro entrego un archivo que no parece ser PDF",
+      500,
+      { contentType, bytes: buffer.length }
+    );
+  }
+
+  return {
+    base64: buffer.toString("base64"),
+    fileName: "",
+    url,
+  };
+}
+
 function getFirmaSeguroTags(credito: FirmaSeguroCredit) {
   return [
     { empresa: "FINSERPAY" },
@@ -1121,22 +1178,53 @@ export async function refreshFirmaSeguroProcess(
     isFirmaSeguroCompletedStatus(status) ||
     isFirmaSeguroCompletedStatus(extractFirmaSeguroStatus(signaturesPayload));
   const completedAt = completed ? process.completedAt || new Date() : null;
+  let documentDownloadError: string | null = null;
 
   if (completed) {
     try {
       documentsPayload = await firmaSeguroGetDocumentsByUuid(process.processUuid);
-      const documentInfo = extractFirmaSeguroSignedDocument(documentsPayload);
-      signedDocumentBase64 = documentInfo.base64 || signedDocumentBase64;
+      let documentInfo = extractFirmaSeguroSignedDocument(documentsPayload);
+
+      if (!documentInfo.base64 && !documentInfo.url) {
+        const { result: authenticatedDocumentsPayload } =
+          await runWithFirmaSeguroAuth((token) =>
+            firmaSeguroGetDocumentsByUuid(process.processUuid, token)
+          );
+        documentsPayload = authenticatedDocumentsPayload;
+        documentInfo = extractFirmaSeguroSignedDocument(documentsPayload);
+      }
+
+      if (!documentInfo.base64 && documentInfo.url) {
+        const downloadedDocument = await downloadFirmaSeguroSignedDocument(
+          documentInfo.url
+        );
+        signedDocumentBase64 =
+          downloadedDocument.base64 || signedDocumentBase64;
+        signedDocumentFileName =
+          downloadedDocument.fileName ||
+          documentInfo.fileName ||
+          signedDocumentFileName ||
+          `finserpay-firmado-${process.processUuid}.pdf`;
+      } else {
+        signedDocumentBase64 = documentInfo.base64 || signedDocumentBase64;
+      }
+
       signedDocumentFileName =
         documentInfo.fileName ||
         signedDocumentFileName ||
         `finserpay-firmado-${process.processUuid}.pdf`;
+
+      if (!signedDocumentBase64) {
+        documentDownloadError =
+          "FirmaSeguro reporto firma exitosa, pero no devolvio el PDF firmado en la consulta de documentos.";
+      }
     } catch (error) {
+      documentDownloadError =
+        error instanceof Error
+          ? error.message
+          : "No se pudo descargar documento firmado";
       documentsPayload = {
-        warning:
-          error instanceof Error
-            ? error.message
-            : "No se pudo descargar documento firmado",
+        warning: documentDownloadError,
       };
     }
   }
@@ -1148,7 +1236,7 @@ export async function refreshFirmaSeguroProcess(
     documentsPayload: redactBase64Payload(documentsPayload),
     signedDocumentBase64,
     signedDocumentFileName,
-    lastError: null,
+    lastError: documentDownloadError,
     completedAt,
   });
 

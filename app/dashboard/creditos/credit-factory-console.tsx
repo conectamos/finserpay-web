@@ -5636,7 +5636,10 @@ export default function CreditFactoryConsole({
       setNotice({
         text: process
           ? signedWithoutPdf
-            ? `FirmaSeguro reporto firma exitosa. El PDF firmado aun no esta descargado en FINSER PAY; intenta consultar de nuevo en unos minutos. Estado: ${processStatus}.`
+            ? `FirmaSeguro reporto firma exitosa. ${
+                lastError ||
+                "El PDF firmado aun no esta descargado en FINSER PAY; intenta consultar de nuevo en unos minutos."
+              } Estado: ${processStatus}.`
             : `FirmaSeguro aun no reporta firma exitosa. Estado: ${processStatus}${lastError ? `. Ultimo error: ${lastError}` : ""}.`
           : "Este credito aun no se ha enviado a FirmaSeguro.",
         tone: process ? (signedWithoutPdf ? "emerald" : "amber") : "slate",
