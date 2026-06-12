@@ -56,7 +56,11 @@ export async function GET(
       );
     }
 
-    const bytes = Buffer.from(process.signedDocumentBase64, "base64");
+    const pdfBase64 = process.signedDocumentBase64.replace(
+      /^data:application\/pdf;base64,/i,
+      ""
+    );
+    const bytes = Buffer.from(pdfBase64, "base64");
     const fileName =
       process.signedDocumentFileName ||
       `finserpay-firmado-${authorized.credito.folio}.pdf`;
