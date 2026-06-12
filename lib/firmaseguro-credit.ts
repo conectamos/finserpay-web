@@ -15,6 +15,7 @@ import {
   firmaSeguroCreateFullByCompany,
   FirmaSeguroApiError,
   firmaSeguroGetAuthenticationTypes,
+  firmaSeguroGetAuraQuanticDocumentByUuid,
   firmaSeguroGetDocumentByUuid,
   firmaSeguroGetDocumentsByUuid,
   firmaSeguroGetProcessStatus,
@@ -1236,6 +1237,19 @@ export async function refreshFirmaSeguroProcess(
         documentResult = await trySignedDocumentPayload(
           "Document individual public",
           () => firmaSeguroGetDocumentByUuid(process.processUuid)
+        );
+        documentInfo = documentResult?.info || documentInfo;
+      }
+
+      if (!documentInfo.base64 && !documentInfo.url) {
+        documentResult = await trySignedDocumentPayload(
+          "Document Aura Quantic autenticado",
+          async () => {
+            const { result } = await runWithFirmaSeguroAuth((token) =>
+              firmaSeguroGetAuraQuanticDocumentByUuid(process.processUuid, token)
+            );
+            return result;
+          }
         );
         documentInfo = documentResult?.info || documentInfo;
       }
