@@ -707,7 +707,22 @@ function normalizeFirmaSeguroPdfBase64(value: string) {
 
   const normalized = compact.replace(/-/g, "+").replace(/_/g, "/");
   const padding = normalized.length % 4;
-  return padding ? normalized.padEnd(normalized.length + (4 - padding), "=") : normalized;
+  const padded = padding
+    ? normalized.padEnd(normalized.length + (4 - padding), "=")
+    : normalized;
+
+  try {
+    const header = Buffer.from(padded.slice(0, 64), "base64")
+      .subarray(0, 4)
+      .toString("ascii");
+    if (header !== "%PDF") {
+      return "";
+    }
+  } catch {
+    return "";
+  }
+
+  return padded;
 }
 
 function normalizeFirmaSeguroDocumentUrl(value: string) {
@@ -722,6 +737,55 @@ function normalizeFirmaSeguroDocumentUrl(value: string) {
 
   if (cleaned.startsWith("/")) {
     return `${getFirmaSeguroConfig().baseUrl}${cleaned}`;
+  }
+
+  return "";
+}
+
+function findFirmaSeguroStringValue(
+  payload: unknown,
+  predicate: (value: string, keyPath: string[]) => boolean,
+  keyPath: string[] = [],
+  seen = new Set<unknown>()
+): string {
+  if (typeof payload === "string") {
+    return predicate(payload, keyPath) ? payload : "";
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+
+  if (seen.has(payload)) {
+    return "";
+  }
+  seen.add(payload);
+
+  if (Array.isArray(payload)) {
+    for (const [index, item] of payload.entries()) {
+      const found = findFirmaSeguroStringValue(
+        item,
+        predicate,
+        [...keyPath, String(index)],
+        seen
+      );
+      if (found) {
+        return found;
+      }
+    }
+    return "";
+  }
+
+  for (const [key, item] of Object.entries(payload)) {
+    const found = findFirmaSeguroStringValue(
+      item,
+      predicate,
+      [...keyPath, key],
+      seen
+    );
+    if (found) {
+      return found;
+    }
   }
 
   return "";
@@ -797,12 +861,32 @@ export function extractFirmaSeguroSignedDocument(payload: unknown) {
     "signed_url",
     "url",
   ]);
+  const recursiveBase64Value = findFirmaSeguroStringValue(
+    payload,
+    (candidate) => Boolean(normalizeFirmaSeguroPdfBase64(candidate))
+  );
+  const recursiveUrlValue = findFirmaSeguroStringValue(
+    payload,
+    (candidate, keyPath) => {
+      const normalized = normalizeFirmaSeguroDocumentUrl(candidate);
+      if (!normalized) {
+        return false;
+      }
+
+      const haystack = `${keyPath.join(".")} ${normalized}`.toLowerCase();
+      return /pdf|document|documento|archivo|download|descarga|firma|signed|signature|s3|amazonaws/.test(
+        haystack
+      );
+    }
+  );
 
   return {
     base64:
       typeof base64Value === "string" && base64Value.trim()
         ? normalizeFirmaSeguroPdfBase64(base64Value)
-        : "",
+        : recursiveBase64Value
+          ? normalizeFirmaSeguroPdfBase64(recursiveBase64Value)
+          : "",
     fileName:
       typeof fileNameValue === "string" && fileNameValue.trim()
         ? fileNameValue.trim()
@@ -810,7 +894,70 @@ export function extractFirmaSeguroSignedDocument(payload: unknown) {
     url:
       typeof urlValue === "string" && urlValue.trim()
         ? normalizeFirmaSeguroDocumentUrl(urlValue)
-        : "",
+        : recursiveUrlValue
+          ? normalizeFirmaSeguroDocumentUrl(recursiveUrlValue)
+          : "",
+  };
+}
+
+export function collectFirmaSeguroUuidCandidates(...sources: unknown[]) {
+  const candidates = new Set<string>();
+  const uuidPattern =
+    /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi;
+
+  const visit = (value: unknown, seen = new Set<unknown>()) => {
+    if (typeof value === "string") {
+      for (const match of value.matchAll(uuidPattern)) {
+        candidates.add(match[0]);
+      }
+      return;
+    }
+
+    if (!value || typeof value !== "object" || seen.has(value)) {
+      return;
+    }
+
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, seen));
+      return;
+    }
+
+    Object.values(value).forEach((item) => visit(item, seen));
+  };
+
+  sources.forEach((source) => visit(source));
+
+  return Array.from(candidates).slice(0, 8);
+}
+
+export function summarizeFirmaSeguroDocumentPayload(payload: unknown) {
+  const keys = new Set<string>();
+
+  const visit = (value: unknown, depth = 0, seen = new Set<unknown>()) => {
+    if (!value || typeof value !== "object" || depth > 3 || seen.has(value)) {
+      return;
+    }
+
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      value.slice(0, 5).forEach((item) => visit(item, depth + 1, seen));
+      return;
+    }
+
+    Object.entries(value).forEach(([key, item]) => {
+      keys.add(key);
+      visit(item, depth + 1, seen);
+    });
+  };
+
+  visit(payload);
+
+  return {
+    type: Array.isArray(payload) ? "array" : typeof payload,
+    keys: Array.from(keys).slice(0, 25),
   };
 }
 

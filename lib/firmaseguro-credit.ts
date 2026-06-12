@@ -8,6 +8,7 @@ import {
 } from "@/lib/credit-route-lookup";
 import {
   buildFirmaSeguroCallbackUrl,
+  collectFirmaSeguroUuidCandidates,
   extractFirmaSeguroSignedDocument,
   extractFirmaSeguroStatus,
   extractFirmaSeguroUuid,
@@ -26,6 +27,7 @@ import {
   isFirmaSeguroConfigured,
   isFirmaSeguroPermissionError,
   isFirmaSeguroUnauthorizedError,
+  summarizeFirmaSeguroDocumentPayload,
 } from "@/lib/firmaseguro";
 import {
   buildFirmaSeguroCreditPdf,
@@ -341,6 +343,62 @@ async function downloadFirmaSeguroSignedDocument(url: string) {
     fileName: "",
     url,
   };
+}
+
+function summarizeFirmaSeguroDocumentAttempts(attempts: unknown[]) {
+  return attempts
+    .map((attempt) => {
+      if (!attempt || typeof attempt !== "object") {
+        return "";
+      }
+
+      const item = attempt as {
+        source?: unknown;
+        warning?: unknown;
+        foundBase64?: unknown;
+        foundUrl?: unknown;
+        fileName?: unknown;
+        payloadSummary?: unknown;
+      };
+      const source =
+        typeof item.source === "string" && item.source.trim()
+          ? item.source.trim()
+          : "consulta";
+
+      if (typeof item.warning === "string" && item.warning.trim()) {
+        return `${source}: ${item.warning.trim().slice(0, 120)}`;
+      }
+
+      if (item.foundBase64) {
+        return `${source}: PDF base64 encontrado`;
+      }
+
+      if (item.foundUrl) {
+        return `${source}: enlace encontrado`;
+      }
+
+      const payloadSummary =
+        item.payloadSummary &&
+        typeof item.payloadSummary === "object" &&
+        "keys" in item.payloadSummary
+          ? item.payloadSummary
+          : null;
+
+      if (payloadSummary) {
+        const keys = (payloadSummary as { keys?: unknown }).keys;
+        const keyText = Array.isArray(keys)
+          ? keys.filter((key) => typeof key === "string").slice(0, 6).join(", ")
+          : "";
+        return keyText
+          ? `${source}: sin PDF; campos ${keyText}`
+          : `${source}: sin PDF`;
+      }
+
+      return `${source}: sin PDF`;
+    })
+    .filter(Boolean)
+    .join("; ")
+    .slice(0, 900);
 }
 
 function getFirmaSeguroTags(credito: FirmaSeguroCredit) {
@@ -1196,6 +1254,7 @@ export async function refreshFirmaSeguroProcess(
           foundBase64: Boolean(info.base64),
           foundUrl: Boolean(info.url),
           fileName: info.fileName || null,
+          payloadSummary: summarizeFirmaSeguroDocumentPayload(payload),
           payload: redactBase64Payload(payload),
         });
         return { payload, info };
@@ -1210,61 +1269,94 @@ export async function refreshFirmaSeguroProcess(
     };
 
     try {
-      let documentResult = await trySignedDocumentPayload(
-        "Document/ByUUID public",
-        () => firmaSeguroGetDocumentsByUuid(process.processUuid)
-      );
-      let documentInfo = documentResult?.info || {
+      const documentUuidCandidates = [
+        process.processUuid,
+        ...collectFirmaSeguroUuidCandidates(
+          statusPayload,
+          signaturesPayload,
+          process.statusPayload,
+          process.signaturesPayload,
+          process.documentsPayload
+        ),
+      ].filter((uuid, index, list) => uuid && list.indexOf(uuid) === index);
+
+      let documentResult: Awaited<
+        ReturnType<typeof trySignedDocumentPayload>
+      > = null;
+      let documentInfo = {
         base64: "",
         fileName: "",
         url: "",
       };
 
-      if (!documentInfo.base64 && !documentInfo.url) {
+      for (const documentUuid of documentUuidCandidates) {
+        const label =
+          documentUuid === process.processUuid ? "proceso" : "relacionado";
+
         documentResult = await trySignedDocumentPayload(
-          "Document/ByUUID autenticado",
+          `Document/ByUUID public (${label})`,
+          () => firmaSeguroGetDocumentsByUuid(documentUuid)
+        );
+        documentInfo = documentResult?.info || documentInfo;
+
+        if (documentInfo.base64 || documentInfo.url) {
+          break;
+        }
+
+        documentResult = await trySignedDocumentPayload(
+          `Document/ByUUID autenticado (${label})`,
           async () => {
             const { result } = await runWithFirmaSeguroAuth((token) =>
-              firmaSeguroGetDocumentsByUuid(process.processUuid, token)
+              firmaSeguroGetDocumentsByUuid(documentUuid, token)
             );
             return result;
           }
         );
         documentInfo = documentResult?.info || documentInfo;
-      }
 
-      if (!documentInfo.base64 && !documentInfo.url) {
-        documentResult = await trySignedDocumentPayload(
-          "Document individual public",
-          () => firmaSeguroGetDocumentByUuid(process.processUuid)
-        );
-        documentInfo = documentResult?.info || documentInfo;
-      }
+        if (documentInfo.base64 || documentInfo.url) {
+          break;
+        }
 
-      if (!documentInfo.base64 && !documentInfo.url) {
         documentResult = await trySignedDocumentPayload(
-          "Document Aura Quantic autenticado",
+          `Document Aura Quantic autenticado (${label})`,
           async () => {
             const { result } = await runWithFirmaSeguroAuth((token) =>
-              firmaSeguroGetAuraQuanticDocumentByUuid(process.processUuid, token)
+              firmaSeguroGetAuraQuanticDocumentByUuid(documentUuid, token)
             );
             return result;
           }
         );
         documentInfo = documentResult?.info || documentInfo;
-      }
 
-      if (!documentInfo.base64 && !documentInfo.url) {
+        if (documentInfo.base64 || documentInfo.url) {
+          break;
+        }
+
         documentResult = await trySignedDocumentPayload(
-          "Document individual autenticado",
+          `Document individual public (${label})`,
+          () => firmaSeguroGetDocumentByUuid(documentUuid)
+        );
+        documentInfo = documentResult?.info || documentInfo;
+
+        if (documentInfo.base64 || documentInfo.url) {
+          break;
+        }
+
+        documentResult = await trySignedDocumentPayload(
+          `Document individual autenticado (${label})`,
           async () => {
             const { result } = await runWithFirmaSeguroAuth((token) =>
-              firmaSeguroGetDocumentByUuid(process.processUuid, token)
+              firmaSeguroGetDocumentByUuid(documentUuid, token)
             );
             return result;
           }
         );
         documentInfo = documentResult?.info || documentInfo;
+
+        if (documentInfo.base64 || documentInfo.url) {
+          break;
+        }
       }
 
       documentsPayload =
@@ -1291,8 +1383,11 @@ export async function refreshFirmaSeguroProcess(
         `finserpay-firmado-${process.processUuid}.pdf`;
 
       if (!signedDocumentBase64) {
+        const attemptsSummary =
+          summarizeFirmaSeguroDocumentAttempts(documentAttempts);
         documentDownloadError =
-          "FirmaSeguro reporto firma exitosa, pero no devolvio el PDF firmado en las consultas de documentos.";
+          "FirmaSeguro reporto firma exitosa, pero no devolvio el PDF firmado en las consultas de documentos." +
+          (attemptsSummary ? ` Intentos: ${attemptsSummary}` : "");
       }
     } catch (error) {
       documentDownloadError =
