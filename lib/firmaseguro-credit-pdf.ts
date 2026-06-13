@@ -643,7 +643,6 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   const marca = valueOrDash(credito.equipoMarca || equipo.split(" ")[0]);
   const modelo = valueOrDash(credito.equipoModelo || equipo);
   const saldoFinanciado = credito.montoCredito || 0;
-  const firmaDigital = "Firma electronica certificada por FirmaSeguro";
 
   legalHeader(doc, credito, fecha, fonts);
   doc
@@ -707,7 +706,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     "Firma del titular",
     `Nombre: ${credito.clienteNombre}\nCedula: ${
       credito.clienteDocumento || "-"
-    }\nFirma digital: ${firmaDigital}\nFecha: ${fecha}\nHora: ${hora}\nDireccion IP: ${
+    }\nFecha: ${fecha}\nHora: ${hora}\nDireccion IP: ${
       credito.contratoIp || "Registrada por FirmaSeguro"
     }`,
     fonts
@@ -844,7 +843,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   signatureBlock(
     doc,
     "Firma digital del cliente",
-    `Firma: ${firmaDigital}\nNombre: ${credito.clienteNombre}\nCedula: ${
+    `Nombre: ${credito.clienteNombre}\nCedula: ${
       credito.clienteDocumento || "-"
     }\nFecha: ${fecha}`,
     fonts
@@ -904,7 +903,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   signatureBlock(
     doc,
     "Firma del deudor",
-    `Firma: ${firmaDigital}\nNombre: ${credito.clienteNombre}\nCedula: ${
+    `Nombre: ${credito.clienteNombre}\nCedula: ${
       credito.clienteDocumento || "-"
     }`,
     fonts
@@ -1005,7 +1004,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   signatureBlock(
     doc,
     "Firma del deudor",
-    `Firma: ${firmaDigital}\nNombre: ${credito.clienteNombre}\nCedula: ${
+    `Nombre: ${credito.clienteNombre}\nCedula: ${
       credito.clienteDocumento || "-"
     }\nFecha: ${fecha}`,
     fonts
@@ -1059,7 +1058,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   signatureBlock(
     doc,
     "Firma del cliente",
-    `Firma: ${firmaDigital}\nNombre: ${credito.clienteNombre}\nCedula: ${
+    `Nombre: ${credito.clienteNombre}\nCedula: ${
       credito.clienteDocumento || "-"
     }\nFecha: ${fecha}`,
     fonts
@@ -1093,7 +1092,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   signatureBlock(
     doc,
     "Firma del cliente",
-    `Firma: ${firmaDigital}\nNombre: ${credito.clienteNombre}\nCedula: ${
+    `Nombre: ${credito.clienteNombre}\nCedula: ${
       credito.clienteDocumento || "-"
     }\nFecha: ${fecha}`,
     fonts
@@ -1163,7 +1162,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   signatureBlock(
     doc,
     "Firma del cliente",
-    `Firma: ${firmaDigital}\nNombre: ${credito.clienteNombre}\nCedula: ${
+    `Nombre: ${credito.clienteNombre}\nCedula: ${
       credito.clienteDocumento || "-"
     }\nFecha: ${fecha}\nHora: ${hora}\nDireccion IP: ${
       credito.contratoIp || "Registrada por FirmaSeguro"
