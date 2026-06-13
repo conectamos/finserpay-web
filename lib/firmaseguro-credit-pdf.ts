@@ -198,22 +198,22 @@ function documentTitle(
 
   doc
     .font(fonts.bold)
-    .fontSize(8)
-    .fillColor("#0F766E")
+    .fontSize(7)
+    .fillColor("#111827")
     .text(label.toUpperCase(), x, y, { width });
   doc
     .font(fonts.bold)
-    .fontSize(15)
+    .fontSize(11)
     .fillColor("#0F172A")
-    .text(title.toUpperCase(), x, y + 18, { width, lineGap: 2 });
-  const lineY = doc.y + 10;
+    .text(title.toUpperCase(), x, y + 14, { width, lineGap: 1 });
+  const lineY = doc.y + 5;
   doc
-    .strokeColor("#D1FAE5")
+    .strokeColor("#CBD5E1")
     .lineWidth(1)
     .moveTo(x, lineY)
     .lineTo(pageRight(doc), lineY)
     .stroke();
-  doc.y = lineY + 22;
+  doc.y = lineY + 12;
   resetFlow(doc);
 }
 
@@ -226,31 +226,31 @@ function bulletParagraph(
   const width = contentWidth(doc);
 
   items.forEach((item) => {
-    doc.font(fonts.regular).fontSize(9.6);
+    doc.font(fonts.regular).fontSize(8.1);
     const textWidth = width - 18;
     const height = doc.heightOfString(item, {
       width: textWidth,
-      lineGap: 3,
+      lineGap: 1,
     });
 
-    ensureSpace(doc, Math.max(18, height) + 6);
+    ensureSpace(doc, Math.max(14, height) + 3);
     const y = doc.y;
-    doc.font(fonts.bold).fontSize(9.6).fillColor("#0F766E").text("-", x, y, {
+    doc.font(fonts.bold).fontSize(8.1).fillColor("#111827").text("-", x, y, {
       width: 10,
     });
     doc
       .font(fonts.regular)
-      .fontSize(9.6)
+      .fontSize(8.1)
       .fillColor("#1F2937")
       .text(item, x + 18, y, {
         width: textWidth,
-        lineGap: 3,
+        lineGap: 1,
       });
-    doc.y = y + Math.max(18, height) + 6;
+    doc.y = y + Math.max(14, height) + 3;
     resetFlow(doc);
   });
 
-  doc.moveDown(0.3);
+  doc.moveDown(0.12);
   resetFlow(doc);
 }
 
@@ -281,6 +281,9 @@ function photoEvidenceBlock(
   const cedulaRespaldo = dataUrlToImageBuffer(
     credito.contratoCedulaRespaldoDataUrl
   );
+  if (!imageBuffer && !cedulaFrente && !cedulaRespaldo) {
+    return;
+  }
   const boxHeight = 184;
 
   ensureSpace(doc, boxHeight + 12);
@@ -386,22 +389,22 @@ function sectionTitle(
   title: string,
   fonts: { regular: string; bold: string }
 ) {
-  ensureSpace(doc, 58);
+  ensureSpace(doc, 24);
   resetFlow(doc);
-  doc.moveDown(0.8);
+  doc.moveDown(0.18);
   doc
     .font(fonts.bold)
-    .fontSize(11)
-    .fillColor("#0F766E")
+    .fontSize(8.7)
+    .fillColor("#111827")
     .text(title.toUpperCase(), pageLeft(doc), doc.y, { width: contentWidth(doc) });
-  doc.moveDown(0.35);
+  doc.moveDown(0.18);
   doc
-    .strokeColor("#D1FAE5")
+    .strokeColor("#CBD5E1")
     .lineWidth(1)
     .moveTo(pageLeft(doc), doc.y)
     .lineTo(pageRight(doc), doc.y)
     .stroke();
-  doc.moveDown(0.7);
+  doc.moveDown(0.25);
   resetFlow(doc);
 }
 
@@ -414,25 +417,25 @@ function paragraph(
   const x = pageLeft(doc);
   doc
     .font(fonts.regular)
-    .fontSize(10)
+    .fontSize(8.4)
     .fillColor("#1F2937");
   const height = doc.heightOfString(text, {
     width,
     align: "justify",
-    lineGap: 4,
+    lineGap: 1,
   });
 
-  ensureSpace(doc, Math.min(Math.max(height + 10, 42), pageBottom(doc) - doc.page.margins.top));
+  ensureSpace(doc, Math.min(Math.max(height + 6, 24), pageBottom(doc) - doc.page.margins.top));
   doc
     .font(fonts.regular)
-    .fontSize(10)
+    .fontSize(8.4)
     .fillColor("#1F2937")
     .text(text, x, doc.y, {
       width,
       align: "justify",
-      lineGap: 4,
+      lineGap: 1,
     });
-  doc.moveDown(0.45);
+  doc.moveDown(0.16);
   resetFlow(doc);
 }
 
@@ -443,22 +446,22 @@ function keyValueGrid(
 ) {
   const x = pageLeft(doc);
   const width = contentWidth(doc);
-  const labelWidth = 132;
+  const labelWidth = 120;
   const valueWidth = width - labelWidth;
 
   items.forEach((item, index) => {
     const value = item.value || "-";
-    doc.font(fonts.bold).fontSize(7.8);
+    doc.font(fonts.bold).fontSize(6.8);
     const labelHeight = doc.heightOfString(item.label.toUpperCase(), {
       width: labelWidth - 18,
-      lineGap: 2,
+      lineGap: 1,
     });
-    doc.font(fonts.regular).fontSize(9.4);
+    doc.font(fonts.regular).fontSize(8.2);
     const valueHeight = doc.heightOfString(value, {
       width: valueWidth - 18,
-      lineGap: 2,
+      lineGap: 1,
     });
-    const rowHeight = Math.max(32, Math.ceil(Math.max(labelHeight, valueHeight) + 16));
+    const rowHeight = Math.max(23, Math.ceil(Math.max(labelHeight, valueHeight) + 9));
 
     ensureSpace(doc, rowHeight + 2);
     const y = doc.y;
@@ -481,113 +484,85 @@ function keyValueGrid(
 
     doc
       .font(fonts.bold)
-      .fontSize(7.8)
+      .fontSize(6.8)
       .fillColor("#64748B")
-      .text(item.label.toUpperCase(), x + 10, y + 10, {
+      .text(item.label.toUpperCase(), x + 8, y + 7, {
         width: labelWidth - 18,
-        lineGap: 2,
+        lineGap: 1,
       });
     doc
       .font(fonts.bold)
-      .fontSize(9.4)
+      .fontSize(8.2)
       .fillColor("#0F172A")
-      .text(value, x + labelWidth + 10, y + 9, {
+      .text(value, x + labelWidth + 8, y + 7, {
         width: valueWidth - 18,
-        lineGap: 2,
+        lineGap: 1,
       });
 
     doc.y = y + rowHeight;
     resetFlow(doc);
   });
 
-  doc.moveDown(0.8);
+  doc.moveDown(0.28);
   resetFlow(doc);
 }
 
-function caseSummaryBlock(
+function legalHeader(
   doc: PDFKit.PDFDocument,
-  sections: Array<{
-    title: string;
-    rows: Array<{ label: string; value: string }>;
-  }>,
+  credito: CreditForFirmaSeguroPdf,
+  fecha: string,
   fonts: { regular: string; bold: string }
 ) {
   const x = pageLeft(doc);
   const width = contentWidth(doc);
-  const labelWidth = 126;
+  const tipoDocumento = (credito.clienteTipoDocumento || "CC").replace(/_/g, " ");
+  const rows = [
+    ["Nombre", credito.clienteNombre],
+    ["Fecha", fecha],
+    ["Direccion", credito.clienteDireccion || "-"],
+    ["Cedula", credito.clienteDocumento || "-"],
+    ["Correo", credito.clienteCorreo || "-"],
+    ["Telefono", credito.clienteTelefono || "-"],
+  ];
 
-  sections.forEach((section) => {
-    ensureSpace(doc, 36);
-    const titleY = doc.y;
-    doc
-      .save()
-      .rect(x, titleY, width, 24)
-      .fill("#ECFDF5")
-      .restore();
-    doc
-      .strokeColor("#A7F3D0")
-      .lineWidth(0.7)
-      .rect(x, titleY, width, 24)
-      .stroke();
-    doc
-      .font(fonts.bold)
-      .fontSize(8)
-      .fillColor("#0F766E")
-      .text(section.title.toUpperCase(), x + 10, titleY + 8, {
-        width: width - 20,
-      });
-    doc.y = titleY + 24;
+  doc
+    .font(fonts.bold)
+    .fontSize(12)
+    .fillColor("#111827")
+    .text("FINSER PAY S.A.S", x, doc.y, { width, align: "center" });
+  doc
+    .font(fonts.bold)
+    .fontSize(10)
+    .text("NIT. 902.052.909-4", x, doc.y + 4, { width, align: "center" });
+  doc.moveDown(1.2);
 
-    section.rows.forEach((row, rowIndex) => {
-      const value = row.value || "-";
-      doc.font(fonts.regular).fontSize(9.3);
-      const valueHeight = doc.heightOfString(value, {
-        width: width - labelWidth - 24,
-        lineGap: 2,
-      });
-      const rowHeight = Math.max(30, Math.ceil(valueHeight + 15));
-      ensureSpace(doc, rowHeight + 2);
-
-      const y = doc.y;
-      doc
-        .save()
-        .rect(x, y, width, rowHeight)
-        .fill(rowIndex % 2 === 0 ? "#FFFFFF" : "#F8FAFC")
-        .restore();
-      doc
-        .strokeColor("#E2E8F0")
-        .lineWidth(0.6)
-        .rect(x, y, width, rowHeight)
-        .stroke();
-      doc
-        .strokeColor("#E2E8F0")
-        .moveTo(x + labelWidth, y)
-        .lineTo(x + labelWidth, y + rowHeight)
-        .stroke();
-      doc
-        .font(fonts.bold)
-        .fontSize(7.4)
-        .fillColor("#64748B")
-        .text(row.label.toUpperCase(), x + 10, y + 10, {
-          width: labelWidth - 18,
-          lineGap: 2,
-        });
-      doc
-        .font(fonts.bold)
-        .fontSize(9.3)
-        .fillColor("#0F172A")
-        .text(value, x + labelWidth + 10, y + 9, {
-          width: width - labelWidth - 20,
-          lineGap: 2,
-        });
-
-      doc.y = y + rowHeight;
-      resetFlow(doc);
+  rows.forEach(([label, value]) => {
+    const y = doc.y;
+    doc.font(fonts.bold).fontSize(9.2).fillColor("#111827").text(`${label}:`, x, y, {
+      width: 72,
     });
-
-    doc.moveDown(0.7);
-    resetFlow(doc);
+    doc.font(fonts.regular).fontSize(9.2).fillColor("#111827").text(String(value || "-"), x + 78, y, {
+      width: width - 78,
+      lineGap: 1,
+    });
+    doc.y = Math.max(doc.y, y + 14);
   });
+
+  doc.moveDown(0.6);
+  doc
+    .strokeColor("#111827")
+    .lineWidth(0.7)
+    .moveTo(x, doc.y)
+    .lineTo(pageRight(doc), doc.y)
+    .stroke();
+  doc.moveDown(0.6);
+  doc
+    .font(fonts.regular)
+    .fontSize(7.4)
+    .fillColor("#475569")
+    .text(`Tipo documento: ${tipoDocumento}`, x, doc.y, { width, align: "right" });
+  doc.moveDown(0.4);
+  resetFlow(doc);
 }
 
 function signatureBlock(
@@ -596,44 +571,34 @@ function signatureBlock(
   value: string,
   fonts: { regular: string; bold: string }
 ) {
-  const boxHeight = 154;
-  ensureSpace(doc, boxHeight + 22);
   const x = pageLeft(doc);
-  const y = doc.y + 12;
   const width = contentWidth(doc);
+  const valueHeight = doc.heightOfString(value, {
+    width,
+    lineGap: 1,
+  });
 
-  doc
-    .save()
-    .roundedRect(x, y, width, boxHeight, 12)
-    .strokeColor("#CBD5E1")
-    .stroke()
-    .restore();
+  ensureSpace(doc, Math.max(58, Math.ceil(valueHeight + 46)));
+  doc.moveDown(0.2);
   doc
     .font(fonts.bold)
-    .fontSize(9)
-    .fillColor("#64748B")
-    .text(label.toUpperCase(), x + 14, y + 12);
+    .fontSize(8.1)
+    .fillColor("#111827")
+    .text(label.toUpperCase(), x, doc.y, { width });
   doc
-    .font(fonts.bold)
-    .fontSize(10)
-    .fillColor("#0F766E")
-    .text("Firma electronica certificada por FirmaSeguro", x + 14, y + 36, {
-      width: width - 28,
-    });
-  doc
-    .moveTo(x + 14, y + 68)
-    .lineTo(x + width - 14, y + 68)
+    .moveTo(x, doc.y + 16)
+    .lineTo(x + 190, doc.y + 16)
     .strokeColor("#94A3B8")
     .stroke();
   doc
     .font(fonts.regular)
-    .fontSize(8.8)
+    .fontSize(7.6)
     .fillColor("#334155")
-    .text(value, x + 14, y + 82, {
-      width: width - 28,
-      lineGap: 2,
+    .text(value, x, doc.y + 19, {
+      width,
+      lineGap: 1,
     });
-  doc.y = y + boxHeight + 14;
+  doc.moveDown(0.18);
   resetFlow(doc);
 }
 
@@ -658,7 +623,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   const fonts = getPdfFonts();
   const doc = new PDFDocument({
     size: "A4",
-    margin: 54,
+    margin: 46,
     compress: true,
     font: fonts.regular,
     info: {
@@ -667,8 +632,6 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     },
   });
   const bufferPromise = toBuffer(doc);
-  const tipoDocumento = (credito.clienteTipoDocumento || "CC").replace(/_/g, " ");
-  const asesor = credito.vendedor?.nombre || credito.usuario.nombre;
   const pagareNumero = getPagareNumber(credito);
   const fechaCredito = credito.fechaCredito || new Date();
   const fecha = formatDateOnly(fechaCredito);
@@ -681,104 +644,21 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   const modelo = valueOrDash(credito.equipoModelo || equipo);
   const saldoFinanciado = credito.montoCredito || 0;
   const firmaDigital = "Firma electronica certificada por FirmaSeguro";
-  const coverX = pageLeft(doc);
-  const coverY = doc.page.margins.top;
-  const coverWidth = contentWidth(doc);
 
-  doc.save().roundedRect(coverX, coverY, coverWidth, 136, 18).fill("#F8FAFC").restore();
-  doc.save().roundedRect(coverX, coverY, 8, 136, 4).fill("#111827").restore();
+  legalHeader(doc, credito, fecha, fonts);
   doc
     .font(fonts.bold)
-    .fontSize(10)
-    .fillColor("#0F766E")
-    .text("FINSER PAY", coverX + 24, coverY + 16);
-  doc
-    .font(fonts.bold)
-    .fontSize(24)
-    .fillColor("#0F172A")
-    .text("Paquete legal FirmaSeguro", coverX + 24, coverY + 38, {
-      width: coverWidth - 48,
+    .fontSize(12.5)
+    .fillColor("#111827")
+    .text("AUTORIZACION PARA EL TRATAMIENTO DE DATOS PERSONALES", pageLeft(doc), doc.y, {
+      width: contentWidth(doc),
+      align: "center",
     });
-  doc
-    .font(fonts.regular)
-    .fontSize(9.4)
-    .fillColor("#475569")
-    .text(
-      `Folio: ${credito.folio}\nCliente: ${credito.clienteNombre}\nDocumento: ${
-        credito.clienteDocumento || "-"
-      }\nSede: ${credito.sede.nombre}\nAsesor: ${asesor}`,
-      coverX + 24,
-      coverY + 78,
-      { width: coverWidth - 48, lineGap: 2 }
-    );
+  doc.moveDown(0.8);
 
-  doc.y = coverY + 166;
-  sectionTitle(doc, "Orden de firma", fonts);
-  paragraph(
-    doc,
-    "El cliente firma este paquete documental en el siguiente orden: 1) Autorizacion de tratamiento de datos personales. 2) Contrato de financiacion, autorizacion de control tecnologico y tratamiento de datos. 3) Pagare. 4) Carta de instrucciones para diligenciamiento de pagare en blanco.",
-    fonts
-  );
-
-  sectionTitle(doc, "Ficha del expediente", fonts);
-  caseSummaryBlock(
-    doc,
-    [
-      {
-        title: "Datos del cliente",
-        rows: [
-          { label: "Nombre", value: credito.clienteNombre },
-          { label: "Documento", value: `${tipoDocumento} ${credito.clienteDocumento || "-"}` },
-          { label: "Telefono", value: credito.clienteTelefono || "-" },
-          { label: "Correo", value: credito.clienteCorreo || "-" },
-          { label: "Direccion", value: credito.clienteDireccion || "-" },
-        ],
-      },
-      {
-        title: "Equipo financiado",
-        rows: [
-          { label: "Referencia", value: equipo },
-          { label: "IMEI", value: credito.imei || credito.deviceUid || "-" },
-          { label: "Marca", value: marca },
-          { label: "Modelo", value: modelo },
-        ],
-      },
-      {
-        title: "Condiciones del credito",
-        rows: [
-          { label: "Valor equipo", value: formatCurrency(credito.valorEquipoTotal) },
-          { label: "Cuota inicial", value: formatCurrency(credito.cuotaInicial) },
-          { label: "Saldo financiado", value: formatCurrency(saldoFinanciado) },
-          { label: "Valor cuota", value: formatCurrency(credito.valorCuota) },
-          { label: "Plazo", value: `${credito.plazoMeses || "-"} cuotas` },
-          { label: "Frecuencia", value: getPaymentFrequencyLabel(credito.frecuenciaPago) },
-          { label: "Primer pago", value: formatDate(credito.fechaPrimerPago) },
-          { label: "Referencia pago", value: credito.referenciaPago || credito.clienteDocumento || "-" },
-        ],
-      },
-    ],
-    fonts
-  );
-
-  documentTitle(
-    doc,
-    "Documento 1 de 4",
-    "Autorizacion para el tratamiento de datos personales",
-    fonts
-  );
   paragraph(
     doc,
     "FINSER PAY S.A.S. - NIT 902052909-4 - Ibague, Tolima.",
-    fonts
-  );
-  keyValueGrid(
-    doc,
-    [
-      { label: "Nombre completo", value: credito.clienteNombre },
-      { label: "Cedula de ciudadania", value: credito.clienteDocumento || "-" },
-      { label: "Telefono", value: credito.clienteTelefono || "-" },
-      { label: "Correo", value: credito.clienteCorreo || "-" },
-    ],
     fonts
   );
   paragraph(
@@ -790,13 +670,10 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   bulletParagraph(
     doc,
     [
-      "Estudio y otorgamiento de credito: validar identidad, analizar capacidad de pago, verificar informacion y evaluar solicitudes de financiacion.",
-      "Gestion contractual: celebrar contratos de financiacion, administrar obligaciones vigentes y gestionar pagos, recaudos y cartera.",
-      "Gestion de cobranza: realizar actividades preventivas, administrativas, prejuridicas y juridicas por llamadas, mensajes de texto, WhatsApp, correo electronico y demas canales autorizados.",
+      "Estudio y otorgamiento de credito: validar identidad, analizar capacidad de pago, verificar informacion suministrada y evaluar solicitudes de financiacion.",
+      "Gestion contractual y de cartera: celebrar contratos, administrar obligaciones vigentes, gestionar pagos, recaudos, cartera y actividades de cobranza preventiva, administrativa, prejuridica y juridica.",
       "Consulta y reporte a centrales de riesgo: consultar, reportar, actualizar, rectificar y compartir informacion financiera, crediticia, comercial y de servicios ante operadores autorizados por la ley.",
-      "Prevencion del fraude: verificar documentos, validar identidad y detectar posibles conductas fraudulentas.",
-      "Evidencia digital: almacenar firma electronica o digital, fotografias, videos, grabaciones y evidencias relacionadas con la solicitud de credito y la aceptacion contractual.",
-      "Cumplimiento legal: atender requerimientos de autoridades judiciales o administrativas y cumplir obligaciones legales y regulatorias.",
+      "Prevencion del fraude, evidencia digital y cumplimiento legal: verificar documentos, validar identidad, conservar firma electronica, fotografias y soportes, y atender requerimientos de autoridades.",
       "Contacto comercial: informar sobre productos, servicios, promociones, campanas y beneficios ofrecidos por FINSER PAY S.A.S. o sus aliados comerciales.",
     ],
     fonts
@@ -819,14 +696,12 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     "Podre ejercer mis derechos mediante solicitud escrita dirigida a FINSER PAY S.A.S. a traves de los canales de atencion dispuestos por la compania.",
     fonts
   );
-  addElectronicSignatureClause(doc, fonts);
   sectionTitle(doc, "Declaracion y aceptacion", fonts);
   paragraph(
     doc,
     "Declaro que he leido y comprendido el contenido de la presente autorizacion y que otorgo mi consentimiento de manera libre, expresa e informada.",
     fonts
   );
-  photoEvidenceBlock(doc, credito, fonts);
   signatureBlock(
     doc,
     "Firma del titular",
@@ -840,7 +715,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
 
   documentTitle(
     doc,
-    "Documento 2 de 4",
+    "Documento 2 de 7",
     "Contrato de financiacion, autorizacion de control tecnologico y tratamiento de datos",
     fonts
   );
@@ -966,8 +841,6 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     ],
     fonts
   );
-  addElectronicSignatureClause(doc, fonts);
-  photoEvidenceBlock(doc, credito, fonts);
   signatureBlock(
     doc,
     "Firma digital del cliente",
@@ -977,7 +850,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     fonts
   );
 
-  documentTitle(doc, "Documento 3 de 4", `Pagare No. ${pagareNumero}`, fonts);
+  documentTitle(doc, "Documento 3 de 7", `Pagare No. ${pagareNumero}`, fonts);
   paragraph(
     doc,
     `Yo, ${credito.clienteNombre}, mayor de edad, identificado con cedula de ciudadania No. ${valueOrDash(
@@ -1028,7 +901,6 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   paragraph(doc, "El presente pagare presta merito ejecutivo.", fonts);
   sectionTitle(doc, "Lugar y fecha", fonts);
   paragraph(doc, `Ibague, ${fecha}.`, fonts);
-  addElectronicSignatureClause(doc, fonts);
   signatureBlock(
     doc,
     "Firma del deudor",
@@ -1040,7 +912,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
 
   documentTitle(
     doc,
-    "Documento 4 de 4",
+    "Documento 4 de 7",
     "Carta de instrucciones para diligenciamiento de pagare en blanco",
     fonts
   );
@@ -1130,13 +1002,172 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     ["Firma digital.", "Registro fotografico.", "Datos tecnicos: fecha, hora, IP y dispositivo."],
     fonts
   );
-  addElectronicSignatureClause(doc, fonts);
   signatureBlock(
     doc,
     "Firma del deudor",
     `Firma: ${firmaDigital}\nNombre: ${credito.clienteNombre}\nCedula: ${
       credito.clienteDocumento || "-"
     }\nFecha: ${fecha}`,
+    fonts
+  );
+
+  documentTitle(
+    doc,
+    "Documento 5 de 7",
+    "Autorizacion de bloqueo equipo electronico o bien mueble",
+    fonts
+  );
+  paragraph(doc, "Senores: FINSER PAY S.A.S.", fonts);
+  paragraph(
+    doc,
+    `Yo, ${credito.clienteNombre}, identificado con cedula de ciudadania No. ${valueOrDash(
+      credito.clienteDocumento
+    )}, autorizo de manera expresa, previa e informada a FINSER PAY S.A.S. para aplicar mecanismos tecnologicos de control, restriccion o bloqueo sobre el equipo financiado en caso de mora o incumplimiento de la obligacion.`,
+    fonts
+  );
+  keyValueGrid(
+    doc,
+    [
+      { label: "Direccion", value: credito.clienteDireccion || "-" },
+      { label: "Nombre", value: credito.clienteNombre },
+      { label: "Telefono", value: credito.clienteTelefono || "-" },
+      { label: "Cedula", value: credito.clienteDocumento || "-" },
+      { label: "Correo", value: credito.clienteCorreo || "-" },
+      { label: "Equipo", value: equipo },
+      { label: "IMEI", value: credito.imei || credito.deviceUid || "-" },
+    ],
+    fonts
+  );
+  sectionTitle(doc, "Alcance de la autorizacion", fonts);
+  bulletParagraph(
+    doc,
+    [
+      "El equipo podra ser bloqueado, restringido o limitado cuando la obligacion se encuentre en mora.",
+      "FINSER PAY S.A.S. podra utilizar aplicaciones, software o herramientas tecnologicas de control remoto instaladas o asociadas al equipo.",
+      "La restriccion permanecera hasta que el cliente normalice la obligacion y el pago sea verificado por FINSER PAY S.A.S.",
+      "Esta medida no corresponde a bloqueo por hurto ni a reporte ante operador movil por perdida o robo; corresponde exclusivamente a control de garantia por pago.",
+      "Una vez verificado el pago, FINSER PAY S.A.S. realizara la gestion de desbloqueo dentro de los tiempos operativos disponibles.",
+    ],
+    fonts
+  );
+  sectionTitle(doc, "Declaracion del cliente", fonts);
+  paragraph(
+    doc,
+    "Declaro que recibo informacion clara sobre el mecanismo de control tecnologico y que acepto su uso como garantia de la obligacion financiera adquirida.",
+    fonts
+  );
+  signatureBlock(
+    doc,
+    "Firma del cliente",
+    `Firma: ${firmaDigital}\nNombre: ${credito.clienteNombre}\nCedula: ${
+      credito.clienteDocumento || "-"
+    }\nFecha: ${fecha}`,
+    fonts
+  );
+
+  documentTitle(
+    doc,
+    "Documento 6 de 7",
+    "Aceptacion de la garantia y autorizaciones fondo de garantias - Afianzamos Fintech S.A.S.",
+    fonts
+  );
+  paragraph(
+    doc,
+    `Yo, ${credito.clienteNombre}, identificado con cedula de ciudadania No. ${valueOrDash(
+      credito.clienteDocumento
+    )}, acepto que la obligacion derivada de la financiacion del equipo movil pueda estar respaldada por mecanismos de garantia, fianza o fondo de garantias gestionado por AFIANZAMOS FINTECH S.A.S. o la entidad que FINSER PAY S.A.S. designe para respaldar la operacion.`,
+    fonts
+  );
+  sectionTitle(doc, "Aceptaciones y autorizaciones", fonts);
+  bulletParagraph(
+    doc,
+    [
+      "Acepto los costos, comisiones, IVA o cargos asociados a la garantia, cuando estos hagan parte de las condiciones del credito informado.",
+      "Autorizo la consulta, validacion, reporte y actualizacion de informacion financiera, comercial y crediticia necesaria para la gestion de la garantia.",
+      "Autorizo que la informacion del credito sea compartida con el fondo de garantias, entidades aliadas, operadores de informacion y proveedores que participen en la administracion de la obligacion.",
+      "Declaro que conozco que la garantia respalda el pago de la obligacion y no elimina mi responsabilidad como deudor principal.",
+      "Acepto que, en caso de incumplimiento, puedan adelantarse gestiones de recuperacion, subrogacion, cobro prejuridico o juridico segun corresponda.",
+    ],
+    fonts
+  );
+  signatureBlock(
+    doc,
+    "Firma del cliente",
+    `Firma: ${firmaDigital}\nNombre: ${credito.clienteNombre}\nCedula: ${
+      credito.clienteDocumento || "-"
+    }\nFecha: ${fecha}`,
+    fonts
+  );
+
+  documentTitle(
+    doc,
+    "Documento 7 de 7",
+    "Endoso y contrato de arrendamiento de equipo celular con opcion de compra",
+    fonts
+  );
+  paragraph(
+    doc,
+    `Entre FINSER PAY S.A.S., identificada con NIT 902052909-4, y ${credito.clienteNombre}, identificado con cedula de ciudadania No. ${valueOrDash(
+      credito.clienteDocumento
+    )}, se deja constancia de las condiciones aplicables al uso, tenencia, garantia, endoso o cesion de derechos relacionados con el equipo financiado.`,
+    fonts
+  );
+  sectionTitle(doc, "Equipo objeto del acuerdo", fonts);
+  keyValueGrid(
+    doc,
+    [
+      { label: "Marca", value: marca },
+      { label: "Modelo", value: modelo },
+      { label: "Referencia", value: equipo },
+      { label: "IMEI", value: credito.imei || credito.deviceUid || "-" },
+      { label: "Valor equipo", value: formatCurrency(credito.valorEquipoTotal) },
+      { label: "Saldo financiado", value: formatCurrency(saldoFinanciado) },
+    ],
+    fonts
+  );
+  sectionTitle(doc, "Obligaciones del cliente", fonts);
+  bulletParagraph(
+    doc,
+    [
+      "Conservar el equipo en buen estado y usarlo conforme a su destinacion normal.",
+      "Pagar oportunamente las cuotas pactadas en el plan de financiacion.",
+      "No remover, alterar, eludir ni desinstalar mecanismos tecnologicos de control o garantia instalados en el equipo.",
+      "Informar oportunamente cualquier novedad sobre perdida, dano, hurto, cambio de contacto o dificultad de pago.",
+    ],
+    fonts
+  );
+  sectionTitle(doc, "Opcion de compra, terminacion y cesion", fonts);
+  bulletParagraph(
+    doc,
+    [
+      "El pago total de la obligacion permitira consolidar la propiedad economica del equipo a favor del cliente.",
+      "El incumplimiento faculta a FINSER PAY S.A.S. para exigir el pago total, aplicar mecanismos de control tecnologico y adelantar gestiones de cobro.",
+      "FINSER PAY S.A.S. podra endosar, ceder o transferir sus derechos economicos sobre la obligacion y sus garantias sin autorizacion adicional del cliente.",
+    ],
+    fonts
+  );
+  sectionTitle(doc, "Declaracion unica de aceptacion y ratificacion", fonts);
+  bulletParagraph(
+    doc,
+    [
+      "Ratifico la autorizacion de tratamiento de datos personales.",
+      "Ratifico el contrato de financiacion y la autorizacion de control tecnologico.",
+      "Ratifico el pagare y la carta de instrucciones.",
+      "Ratifico la aceptacion de garantia y autorizaciones asociadas al fondo de garantias.",
+      "Acepto que la firma electronica certificada aplicada sobre este paquete documental representa mi consentimiento libre, expreso e informado.",
+    ],
+    fonts
+  );
+  addElectronicSignatureClause(doc, fonts);
+  photoEvidenceBlock(doc, credito, fonts);
+  signatureBlock(
+    doc,
+    "Firma del cliente",
+    `Firma: ${firmaDigital}\nNombre: ${credito.clienteNombre}\nCedula: ${
+      credito.clienteDocumento || "-"
+    }\nFecha: ${fecha}\nHora: ${hora}\nDireccion IP: ${
+      credito.contratoIp || "Registrada por FirmaSeguro"
+    }`,
     fonts
   );
 
