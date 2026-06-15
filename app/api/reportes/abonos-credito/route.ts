@@ -257,13 +257,7 @@ export async function GET(req: Request) {
             nombre: item.vendedor.nombre,
             usuario: item.vendedor.documento || item.usuario.usuario,
           }
-        : item.credito.vendedor
-          ? {
-              id: item.credito.vendedor.id,
-              nombre: item.credito.vendedor.nombre,
-              usuario: item.credito.vendedor.documento || item.credito.usuario.usuario,
-            }
-          : item.credito.usuario,
+        : item.usuario,
       sede: item.sede,
     }));
 
