@@ -208,6 +208,7 @@ export async function processApprovedWompiPayment(
           fechaProximoPago: true,
           observacionAdmin: true,
           usuarioId: true,
+          vendedorId: true,
           sedeId: true,
         },
       },
@@ -406,6 +407,7 @@ export async function processApprovedWompiPayment(
       data: {
         creditoId: intent.creditoId,
         usuarioId: intent.credito.usuarioId,
+        vendedorId: intent.credito.vendedorId,
         sedeId: digitalSede.id,
         valor: intent.amount,
         metodoPago: paymentMethod,

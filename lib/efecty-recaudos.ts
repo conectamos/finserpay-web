@@ -473,6 +473,7 @@ async function loadCandidateCredits(reference: string) {
       pazYSalvoEmitidoAt: true,
       observacionAdmin: true,
       usuarioId: true,
+      vendedorId: true,
       sedeId: true,
       sede: {
         select: {
@@ -703,6 +704,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
       data: {
         creditoId: credit.id,
         usuarioId: credit.usuarioId,
+        vendedorId: credit.vendedorId,
         sedeId: digitalSede.id,
         valor: item.value,
         metodoPago: "EFECTY",

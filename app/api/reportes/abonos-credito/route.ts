@@ -203,6 +203,20 @@ export async function GET(req: Request) {
             clienteNombre: true,
             clienteDocumento: true,
             estado: true,
+            usuario: {
+              select: {
+                id: true,
+                nombre: true,
+                usuario: true,
+              },
+            },
+            vendedor: {
+              select: {
+                id: true,
+                nombre: true,
+                documento: true,
+              },
+            },
             sede: {
               select: {
                 id: true,
@@ -236,13 +250,20 @@ export async function GET(req: Request) {
       anulacionMotivo: item.anulacionMotivo || null,
       fechaAbono: item.fechaAbono.toISOString(),
       credito: item.credito,
-      usuario: item.vendedor
+      usuario: item.usuario,
+      vendedor: item.vendedor
         ? {
             id: item.vendedor.id,
             nombre: item.vendedor.nombre,
             usuario: item.vendedor.documento || item.usuario.usuario,
           }
-        : item.usuario,
+        : item.credito.vendedor
+          ? {
+              id: item.credito.vendedor.id,
+              nombre: item.credito.vendedor.nombre,
+              usuario: item.credito.vendedor.documento || item.credito.usuario.usuario,
+            }
+          : item.credito.usuario,
       sede: item.sede,
     }));
 
