@@ -179,7 +179,7 @@ export async function reconcilePendingWompiPayments(limit = 25) {
         },
       ],
       status: {
-        notIn: ["APPROVED", "AMOUNT_MISMATCH", "DECLINED", "ERROR", "VOIDED"],
+        notIn: ["AMOUNT_MISMATCH", "DECLINED", "ERROR", "VOIDED"],
       },
     },
     select: {
