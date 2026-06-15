@@ -168,7 +168,7 @@ function exportPaymentsToExcel(items: PaymentReportItem[], byDay: PaymentByDay[]
     item.credito.sede?.aliado?.nombre || item.sede.aliado?.nombre || "",
     item.credito.sede?.nombre || "",
     item.sede.nombre,
-    item.vendedor.nombre,
+    item.sede.nombre,
     item.metodoPago,
     item.valor,
     item.estado || "ACTIVO",
@@ -611,9 +611,7 @@ export default function ReporteAbonosPage() {
                               </div>
                             )}
                         </td>
-                        <td className="break-words px-3 py-3 align-top">
-                          {item.vendedor?.nombre || "-"}
-                        </td>
+                        <td className="break-words px-3 py-3 align-top">{item.sede.nombre}</td>
                         <td className="break-words px-3 py-3 align-top">{item.metodoPago}</td>
                         <td className="px-3 py-3 align-top whitespace-nowrap">{formatMoney(item.valor)}</td>
                         <td className="px-3 py-3 align-top">
