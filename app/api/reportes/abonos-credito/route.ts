@@ -86,7 +86,7 @@ export async function GET(req: Request) {
           : null;
     const from = parseDate(searchParams.get("from"));
     const to = parseDate(searchParams.get("to"), true);
-    const searchConditions: Prisma.CreditoWhereInput[] = search
+    const creditSearchConditions: Prisma.CreditoWhereInput[] = search
       ? [
           { clienteNombre: { contains: search, mode: "insensitive" } },
           { clienteDocumento: { contains: search, mode: "insensitive" } },
@@ -101,13 +101,40 @@ export async function GET(req: Request) {
           { vendedor: { nombre: { contains: search, mode: "insensitive" } } },
         ]
       : [];
+    const abonoSearchConditions: Prisma.CreditoAbonoWhereInput[] = search
+      ? [
+          { credito: { clienteNombre: { contains: search, mode: "insensitive" } } },
+          { credito: { clienteDocumento: { contains: search, mode: "insensitive" } } },
+          { credito: { clienteTelefono: { contains: search, mode: "insensitive" } } },
+          { credito: { folio: { contains: search, mode: "insensitive" } } },
+          { credito: { imei: { contains: search, mode: "insensitive" } } },
+          { credito: { deviceUid: { contains: search, mode: "insensitive" } } },
+          { sede: { nombre: { contains: search, mode: "insensitive" } } },
+          { sede: { aliado: { is: { nombre: { contains: search, mode: "insensitive" } } } } },
+          { sede: { aliado: { is: { codigo: { contains: search, mode: "insensitive" } } } } },
+          { usuario: { nombre: { contains: search, mode: "insensitive" } } },
+          { usuario: { usuario: { contains: search, mode: "insensitive" } } },
+          { vendedor: { nombre: { contains: search, mode: "insensitive" } } },
+          { vendedor: { documento: { contains: search, mode: "insensitive" } } },
+          { metodoPago: { contains: search, mode: "insensitive" } },
+          { observacion: { contains: search, mode: "insensitive" } },
+        ]
+      : [];
 
     if (searchDigits && searchDigits !== search) {
-      searchConditions.push(
+      creditSearchConditions.push(
         { clienteDocumento: { contains: searchDigits, mode: "insensitive" } },
         { clienteTelefono: { contains: searchDigits, mode: "insensitive" } },
         { imei: { contains: searchDigits, mode: "insensitive" } },
         { deviceUid: { contains: searchDigits, mode: "insensitive" } }
+      );
+      abonoSearchConditions.push(
+        { credito: { clienteDocumento: { contains: searchDigits, mode: "insensitive" } } },
+        { credito: { clienteTelefono: { contains: searchDigits, mode: "insensitive" } } },
+        { credito: { imei: { contains: searchDigits, mode: "insensitive" } } },
+        { credito: { deviceUid: { contains: searchDigits, mode: "insensitive" } } },
+        { vendedor: { documento: { contains: searchDigits, mode: "insensitive" } } },
+        { usuario: { usuario: { contains: searchDigits, mode: "insensitive" } } }
       );
     }
 
@@ -122,7 +149,7 @@ export async function GET(req: Request) {
       ...(sedeId ? { sedeId } : {}),
       ...(search
         ? {
-            OR: searchConditions,
+            OR: creditSearchConditions,
           }
         : {}),
     };
@@ -141,26 +168,33 @@ export async function GET(req: Request) {
       },
     });
 
-    const creditIds = credits.map((item) => item.id);
     const activeCredits = credits.filter((item) => item.estado !== "ANULADO");
     const activeCreditIds = activeCredits.map((item) => item.id);
 
     const abonosWhere: Prisma.CreditoAbonoWhereInput = {
-      ...(creditIds.length
+      ...(admin && selectedAliadoId
         ? {
-            creditoId: {
-              in: creditIds,
+            sede: {
+              aliadoId: selectedAliadoId,
             },
           }
-        : {
-            creditoId: -1,
-          }),
+        : {}),
+      ...(sedeId
+        ? {
+            sedeId,
+          }
+        : {}),
       ...(from || to
         ? {
             fechaAbono: {
               ...(from ? { gte: from } : {}),
               ...(to ? { lte: to } : {}),
             },
+          }
+        : {}),
+      ...(search
+        ? {
+            OR: abonoSearchConditions,
           }
         : {}),
     };

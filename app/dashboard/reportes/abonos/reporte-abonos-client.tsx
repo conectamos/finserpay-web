@@ -154,9 +154,8 @@ function exportPaymentsToExcel(items: PaymentReportItem[], byDay: PaymentByDay[]
     "Documento",
     "Folio",
     "Aliado",
-    "Sede credito",
-    "Sede recaudo",
-    "Vendedor",
+    "Sede",
+    "Vendedor/Supervisor",
     "Metodo",
     "Valor",
     "Estado",
@@ -169,8 +168,7 @@ function exportPaymentsToExcel(items: PaymentReportItem[], byDay: PaymentByDay[]
     item.credito.clienteNombre,
     item.credito.clienteDocumento || "",
     item.credito.folio,
-    item.credito.sede?.aliado?.nombre || item.sede.aliado?.nombre || "",
-    item.credito.sede?.nombre || "",
+    item.sede.aliado?.nombre || "",
     item.sede.nombre,
     collectorName(item),
     item.metodoPago,
@@ -576,7 +574,7 @@ export default function ReporteAbonosPage() {
                     <th className="px-3 py-3 text-left font-semibold">Folio</th>
                     <th className="px-3 py-3 text-left font-semibold">Aliado</th>
                     <th className="px-3 py-3 text-left font-semibold">Sede</th>
-                    <th className="px-3 py-3 text-left font-semibold">Vendedor</th>
+                    <th className="px-3 py-3 text-left font-semibold">Vendedor/Supervisor</th>
                     <th className="px-3 py-3 text-left font-semibold">Metodo</th>
                     <th className="px-3 py-3 text-left font-semibold">Valor</th>
                     <th className="px-3 py-3 text-left font-semibold">Estado</th>
@@ -604,17 +602,9 @@ export default function ReporteAbonosPage() {
                         </td>
                         <td className="break-all px-3 py-3 align-top font-semibold text-slate-950">{item.credito.folio}</td>
                         <td className="break-words px-3 py-3 align-top">
-                          {item.credito.sede?.aliado?.nombre || item.sede.aliado?.nombre || "-"}
+                          {item.sede.aliado?.nombre || "-"}
                         </td>
-                        <td className="break-words px-3 py-3 align-top">
-                          <div>{item.credito.sede?.nombre || item.sede.nombre}</div>
-                          {item.credito.sede?.nombre &&
-                            item.credito.sede.nombre !== item.sede.nombre && (
-                              <div className="mt-1 text-[11px] text-slate-500">
-                                Recibe: {item.sede.nombre}
-                              </div>
-                            )}
-                        </td>
+                        <td className="break-words px-3 py-3 align-top">{item.sede.nombre}</td>
                         <td className="break-words px-3 py-3 align-top">
                           {collectorName(item)}
                         </td>
