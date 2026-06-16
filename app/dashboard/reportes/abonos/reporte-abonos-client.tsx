@@ -16,6 +16,7 @@ type SessionUser = {
 type SedeItem = {
   id: number;
   nombre: string;
+  codigo?: string | null;
   aliadoId?: number | null;
   aliado?: {
     id: number;
@@ -47,6 +48,7 @@ type PaymentReportItem = {
     sede?: {
       id: number;
       nombre: string;
+      codigo?: string | null;
       aliadoId?: number | null;
       aliado?: {
         id: number;
@@ -68,6 +70,7 @@ type PaymentReportItem = {
   sede: {
     id: number;
     nombre: string;
+    codigo?: string | null;
     aliadoId?: number | null;
     aliado?: {
       id: number;
@@ -143,7 +146,32 @@ function htmlTable(headers: string[], rows: Array<Array<string | number | null |
     .join("")}</tbody></table>`;
 }
 
+const DIGITAL_COLLECTION_SEDE_CODE = "RECAUDO_DIGITAL";
+const DIGITAL_COLLECTION_SEDE_NAME = "RECAUDO DIGITAL FINSER PAY";
+const DIGITAL_COLLECTION_COLLECTOR_NAME = "DIGITAL";
+
+function normalizeText(value: string | null | undefined) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function isDigitalCollectionSede(
+  sede: { codigo?: string | null; nombre?: string | null } | null | undefined
+) {
+  const codigo = normalizeText(sede?.codigo).replace(/[\s-]+/g, "_");
+  const nombre = normalizeText(sede?.nombre);
+
+  return (
+    codigo === DIGITAL_COLLECTION_SEDE_CODE ||
+    nombre === DIGITAL_COLLECTION_SEDE_NAME ||
+    (nombre.includes("RECAUDO") && nombre.includes("DIGITAL"))
+  );
+}
+
 function collectorName(item: PaymentReportItem) {
+  if (isDigitalCollectionSede(item.sede)) {
+    return DIGITAL_COLLECTION_COLLECTOR_NAME;
+  }
+
   return item.vendedor?.nombre || item.usuario?.nombre || item.sede?.nombre || "-";
 }
 

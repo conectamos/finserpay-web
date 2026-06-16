@@ -704,7 +704,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
       data: {
         creditoId: credit.id,
         usuarioId: credit.usuarioId,
-        vendedorId: credit.vendedorId,
+        vendedorId: null,
         sedeId: digitalSede.id,
         valor: item.value,
         metodoPago: "EFECTY",

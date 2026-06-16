@@ -407,7 +407,7 @@ export async function processApprovedWompiPayment(
       data: {
         creditoId: intent.creditoId,
         usuarioId: intent.credito.usuarioId,
-        vendedorId: intent.credito.vendedorId,
+        vendedorId: null,
         sedeId: digitalSede.id,
         valor: intent.amount,
         metodoPago: paymentMethod,

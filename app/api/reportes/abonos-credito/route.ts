@@ -7,6 +7,10 @@ import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { resolveCreditPaymentSummary, sanitizeSearch } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import {
+  DIGITAL_COLLECTION_SEDE_CODE,
+  DIGITAL_COLLECTION_SEDE_NAME,
+} from "@/lib/digital-collection-sede";
 
 function parsePositiveInt(value: string | null) {
   const numeric = Number(value || 0);
@@ -15,6 +19,7 @@ function parsePositiveInt(value: string | null) {
 
 const BOGOTA_UTC_OFFSET_MS = 5 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const DIGITAL_COLLECTION_COLLECTOR_NAME = "DIGITAL";
 
 function parseDate(value: string | null, endOfDay = false) {
   const normalized = String(value || "").trim();
@@ -47,6 +52,23 @@ function parseDate(value: string | null, endOfDay = false) {
   }
 
   return parsed;
+}
+
+function normalizeText(value: string | null | undefined) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function isDigitalCollectionSede(
+  sede: { codigo?: string | null; nombre?: string | null } | null | undefined
+) {
+  const codigo = normalizeText(sede?.codigo).replace(/[\s-]+/g, "_");
+  const nombre = normalizeText(sede?.nombre);
+
+  return (
+    codigo === DIGITAL_COLLECTION_SEDE_CODE ||
+    nombre === DIGITAL_COLLECTION_SEDE_NAME ||
+    (nombre.includes("RECAUDO") && nombre.includes("DIGITAL"))
+  );
 }
 
 export async function GET(req: Request) {
@@ -218,6 +240,7 @@ export async function GET(req: Request) {
         },
         sede: {
           select: {
+            codigo: true,
             id: true,
             nombre: true,
             aliadoId: true,
@@ -253,6 +276,7 @@ export async function GET(req: Request) {
             },
             sede: {
               select: {
+                codigo: true,
                 id: true,
                 nombre: true,
                 aliadoId: true,
@@ -274,26 +298,36 @@ export async function GET(req: Request) {
       take: 500,
     });
 
-    const abonosRows = abonos.map((item) => ({
-      id: item.id,
-      valor: Number(item.valor || 0),
-      metodoPago: item.metodoPago,
-      observacion: item.observacion,
-      estado: item.estado || "ACTIVO",
-      anuladoAt: item.anuladoAt?.toISOString() || null,
-      anulacionMotivo: item.anulacionMotivo || null,
-      fechaAbono: item.fechaAbono.toISOString(),
-      credito: item.credito,
-      usuario: item.usuario,
-      vendedor: item.vendedor
-        ? {
-            id: item.vendedor.id,
-            nombre: item.vendedor.nombre,
-            usuario: item.vendedor.documento || item.usuario.usuario,
-          }
-        : item.usuario,
-      sede: item.sede,
-    }));
+    const abonosRows = abonos.map((item) => {
+      const digitalCollection = isDigitalCollectionSede(item.sede);
+
+      return {
+        id: item.id,
+        valor: Number(item.valor || 0),
+        metodoPago: item.metodoPago,
+        observacion: item.observacion,
+        estado: item.estado || "ACTIVO",
+        anuladoAt: item.anuladoAt?.toISOString() || null,
+        anulacionMotivo: item.anulacionMotivo || null,
+        fechaAbono: item.fechaAbono.toISOString(),
+        credito: item.credito,
+        usuario: item.usuario,
+        vendedor: digitalCollection
+          ? {
+              id: item.usuario.id,
+              nombre: DIGITAL_COLLECTION_COLLECTOR_NAME,
+              usuario: DIGITAL_COLLECTION_SEDE_CODE,
+            }
+          : item.vendedor
+            ? {
+                id: item.vendedor.id,
+                nombre: item.vendedor.nombre,
+                usuario: item.vendedor.documento || item.usuario.usuario,
+              }
+            : item.usuario,
+        sede: item.sede,
+      };
+    });
 
     const activeAbonosRows = abonosRows.filter(
       (item) => item.estado !== "ANULADO" && item.credito.estado !== "ANULADO"
