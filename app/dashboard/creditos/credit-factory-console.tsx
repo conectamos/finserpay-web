@@ -160,6 +160,8 @@ type VeriffConfigState = {
 type VeriffResponse = {
   ok?: boolean;
   error?: string;
+  remotePayload?: unknown;
+  remoteStatus?: number;
   validation?: VeriffValidationState | null;
   veriff?: VeriffConfigState;
 };
@@ -2051,6 +2053,7 @@ export default function CreditFactoryConsole({
   const [veriffValidation, setVeriffValidation] =
     useState<VeriffValidationState | null>(null);
   const [veriffQrDataUrl, setVeriffQrDataUrl] = useState("");
+  const [veriffInlineMessage, setVeriffInlineMessage] = useState("");
   const [veriffSubmitting, setVeriffSubmitting] = useState(false);
   const [veriffRefreshing, setVeriffRefreshing] = useState(false);
   const [enrollingDelivery, setEnrollingDelivery] = useState(false);
@@ -2871,6 +2874,7 @@ export default function CreditFactoryConsole({
     }
     setVeriffValidation(null);
     setVeriffQrDataUrl("");
+    setVeriffInlineMessage("");
   }, [
     contratoCedulaFrenteDataUrl,
     contratoCedulaRespaldoDataUrl,
@@ -4681,6 +4685,7 @@ export default function CreditFactoryConsole({
 
     try {
       setVeriffSubmitting(true);
+      setVeriffInlineMessage("");
       setNotice({
         text: "Generando QR Veriff...",
         tone: "slate",
@@ -4702,8 +4707,18 @@ export default function CreditFactoryConsole({
       });
 
       if (!result.ok) {
+        const remotePayload = result.data?.remotePayload;
+        const remoteMessage =
+          remotePayload && typeof remotePayload === "object"
+            ? String(
+                (remotePayload as Record<string, unknown>).message ||
+                  (remotePayload as Record<string, unknown>).error ||
+                  ""
+              )
+            : "";
         throw new Error(
-          result.data?.error || "No se pudo validar identidad con Veriff"
+          [result.data?.error, remoteMessage].filter(Boolean).join(" | ") ||
+            "No se pudo generar el QR de Veriff"
         );
       }
 
@@ -4713,6 +4728,11 @@ export default function CreditFactoryConsole({
 
       const validation = result.data.validation || null;
       setVeriffValidation(validation);
+      if (!validation?.sessionUrl) {
+        setVeriffInlineMessage(
+          "Veriff creo la sesion, pero no retorno un enlace para generar el QR."
+        );
+      }
       const filledClientData = applyVeriffIdentityData(validation);
       setNotice({
         text: validation?.approved
@@ -4732,6 +4752,11 @@ export default function CreditFactoryConsole({
             : "No se pudo validar identidad con Veriff.",
         tone: "red",
       });
+      setVeriffInlineMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el QR de Veriff."
+      );
       return null;
     } finally {
       setVeriffSubmitting(false);
@@ -7450,6 +7475,11 @@ export default function CreditFactoryConsole({
                           >
                             Abrir enlace Veriff
                           </a>
+                        ) : null}
+                        {veriffInlineMessage ? (
+                          <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold leading-5 text-red-700">
+                            {veriffInlineMessage}
+                          </p>
                         ) : null}
                       </div>
                     </div>

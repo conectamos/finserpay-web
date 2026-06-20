@@ -330,7 +330,23 @@ export function summarizeVeriffDecision(payload: unknown) {
 
 export function extractVeriffSessionUrl(payload: unknown) {
   const { root, verification } = rootAndVerification(payload);
-  return cleanText(verification.url || root.url);
+  const data =
+    root.data && typeof root.data === "object"
+      ? (root.data as Record<string, unknown>)
+      : {};
+  const url = cleanText(
+    verification.url ||
+      verification.sessionUrl ||
+      verification.sessionURL ||
+      root.url ||
+      root.sessionUrl ||
+      root.sessionURL ||
+      data.url ||
+      data.sessionUrl ||
+      data.sessionURL
+  );
+
+  return url;
 }
 
 export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData | null {
@@ -374,20 +390,29 @@ export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData 
 
 export async function veriffCreateSession(input: CreateSessionInput) {
   const callback = cleanText(input.callbackUrl || getVeriffConfig().callbackUrl);
+  const firstName = cleanText(input.firstName);
+  const lastName = cleanText(input.lastName);
+  const documentNumber = cleanText(input.documentNumber);
   const verification: Record<string, unknown> = {
-    person: {
-      firstName: cleanText(input.firstName) || undefined,
-      lastName: cleanText(input.lastName) || undefined,
-      idNumber: cleanText(input.documentNumber) || undefined,
-    },
-    document: {
-      country: "CO",
-      number: cleanText(input.documentNumber) || undefined,
-      type: mapDocumentType(input.documentType),
-    },
     endUserId: cleanText(input.endUserId) || undefined,
     vendorData: cleanText(input.vendorData) || undefined,
   };
+
+  if (firstName || lastName || documentNumber) {
+    verification.person = {
+      firstName: firstName || undefined,
+      lastName: lastName || undefined,
+      idNumber: documentNumber || undefined,
+    };
+  }
+
+  if (documentNumber) {
+    verification.document = {
+      country: "CO",
+      number: documentNumber,
+      type: mapDocumentType(input.documentType),
+    };
+  }
 
   if (callback) {
     verification.callback = callback;
