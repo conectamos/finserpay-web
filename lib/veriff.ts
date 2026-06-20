@@ -1,9 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export type VeriffStatus =
+  | "ABANDONED"
   | "APPROVED"
   | "DECLINED"
   | "ERROR"
+  | "EXPIRED"
   | "PENDING"
   | "RESUBMISSION"
   | "REVIEW";
@@ -32,6 +34,21 @@ type VeriffMediaInput = {
   timestamp?: string | null;
 };
 
+export type VeriffIdentityData = {
+  firstName: string | null;
+  lastName: string | null;
+  fullName: string | null;
+  documentNumber: string | null;
+  documentType: string | null;
+  documentCountry: string | null;
+  dateOfBirth: string | null;
+  issueDate: string | null;
+  validUntil: string | null;
+  gender: string | null;
+  nationality: string | null;
+  placeOfBirth: string | null;
+};
+
 type CreateSessionInput = {
   callbackUrl?: string | null;
   documentNumber?: string | null;
@@ -46,6 +63,25 @@ const DEFAULT_VERIFF_BASE_URL = "https://stationapi.veriff.com";
 
 function cleanText(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function cleanDate(value: unknown) {
+  const raw = cleanText(value);
+  if (!raw) {
+    return null;
+  }
+
+  const isoMatch = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoMatch) {
+    return isoMatch[1];
+  }
+
+  const slashMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (slashMatch) {
+    return `${slashMatch[3]}-${slashMatch[2]}-${slashMatch[1]}`;
+  }
+
+  return raw;
 }
 
 function cleanUrl(value: unknown) {
@@ -235,6 +271,14 @@ export function normalizeVeriffStatus(value: unknown): VeriffStatus {
     return "DECLINED";
   }
 
+  if (normalized.includes("ABANDONED")) {
+    return "ABANDONED";
+  }
+
+  if (normalized.includes("EXPIRED")) {
+    return "EXPIRED";
+  }
+
   if (normalized.includes("RESUBMISSION")) {
     return "RESUBMISSION";
   }
@@ -250,7 +294,7 @@ export function normalizeVeriffStatus(value: unknown): VeriffStatus {
   return "PENDING";
 }
 
-export function summarizeVeriffDecision(payload: unknown) {
+function rootAndVerification(payload: unknown) {
   const root =
     payload && typeof payload === "object"
       ? (payload as Record<string, unknown>)
@@ -259,6 +303,12 @@ export function summarizeVeriffDecision(payload: unknown) {
     root.verification && typeof root.verification === "object"
       ? (root.verification as Record<string, unknown>)
       : root;
+
+  return { root, verification };
+}
+
+export function summarizeVeriffDecision(payload: unknown) {
+  const { root, verification } = rootAndVerification(payload);
   const status = normalizeVeriffStatus(verification.status || root.status);
 
   return {
@@ -276,6 +326,50 @@ export function summarizeVeriffDecision(payload: unknown) {
     sessionId: cleanText(verification.id) || null,
     status,
   };
+}
+
+export function extractVeriffSessionUrl(payload: unknown) {
+  const { root, verification } = rootAndVerification(payload);
+  return cleanText(verification.url || root.url);
+}
+
+export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData | null {
+  const { verification } = rootAndVerification(payload);
+  const person =
+    verification.person && typeof verification.person === "object"
+      ? (verification.person as Record<string, unknown>)
+      : {};
+  const document =
+    verification.document && typeof verification.document === "object"
+      ? (verification.document as Record<string, unknown>)
+      : {};
+  const nameComponents =
+    person.nameComponents && typeof person.nameComponents === "object"
+      ? (person.nameComponents as Record<string, unknown>)
+      : {};
+  const firstName =
+    cleanText(nameComponents.firstNameOnly) || cleanText(person.firstName);
+  const lastName = cleanText(person.lastName);
+  const fullName =
+    cleanText(person.fullName) || [firstName, lastName].filter(Boolean).join(" ");
+  const documentNumber =
+    cleanText(person.idNumber) || cleanText(document.number);
+  const identityData: VeriffIdentityData = {
+    firstName: firstName || null,
+    lastName: lastName || null,
+    fullName: fullName || null,
+    documentNumber: documentNumber || null,
+    documentType: cleanText(document.type) || null,
+    documentCountry: cleanText(document.country) || null,
+    dateOfBirth: cleanDate(person.dateOfBirth),
+    issueDate: cleanDate(document.validFrom || document.firstIssue),
+    validUntil: cleanDate(document.validUntil),
+    gender: cleanText(person.gender) || null,
+    nationality: cleanText(person.nationality || person.citizenship) || null,
+    placeOfBirth: cleanText(person.placeOfBirth) || null,
+  };
+
+  return Object.values(identityData).some(Boolean) ? identityData : null;
 }
 
 export async function veriffCreateSession(input: CreateSessionInput) {

@@ -59,7 +59,11 @@ import {
   isVeriffApproved,
   linkVeriffValidationToCredit,
 } from "@/lib/veriff-storage";
-import { getVeriffPublicSummary, isVeriffRequired } from "@/lib/veriff";
+import {
+  extractVeriffIdentityData,
+  getVeriffPublicSummary,
+  isVeriffRequired,
+} from "@/lib/veriff";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1204,19 +1208,33 @@ export async function POST(req: Request) {
     }
 
     if (veriffValidation) {
-      const validationDocument = sanitizeText(veriffValidation.clienteDocumento);
-      const sameDocument = validationDocument === clienteDocumento;
+      const verifiedIdentity =
+        extractVeriffIdentityData(veriffValidation.decisionPayload) ||
+        extractVeriffIdentityData(veriffValidation.webhookPayload);
+      const validationDocument = sanitizeText(
+        verifiedIdentity?.documentNumber || veriffValidation.clienteDocumento
+      );
       const sameSede = veriffValidation.sedeId === user.sedeId;
       const sameAlly =
         admin &&
         user.aliadoAccesoId &&
         veriffValidation.aliadoId === user.aliadoAccesoId;
 
-      if (!sameDocument) {
+      if (validationDocument && validationDocument !== clienteDocumento) {
         return NextResponse.json(
           {
             error:
               "La validacion Veriff no corresponde a la cedula de este credito.",
+          },
+          { status: 409 }
+        );
+      }
+
+      if (veriffRequired && isVeriffApproved(veriffValidation) && !validationDocument) {
+        return NextResponse.json(
+          {
+            error:
+              "Veriff aprobo la identidad, pero no retorno un documento verificable para este credito.",
           },
           { status: 409 }
         );

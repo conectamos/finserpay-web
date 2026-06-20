@@ -110,13 +110,38 @@ type CedulaValidationState = {
 
 type VeriffMode = "off" | "required" | "soft";
 
+type VeriffIdentityDataState = {
+  firstName: string | null;
+  lastName: string | null;
+  fullName: string | null;
+  documentNumber: string | null;
+  documentType: string | null;
+  documentCountry: string | null;
+  dateOfBirth: string | null;
+  issueDate: string | null;
+  validUntil: string | null;
+  gender: string | null;
+  nationality: string | null;
+  placeOfBirth: string | null;
+};
+
 type VeriffValidationState = {
   id: number;
-  status: "APPROVED" | "DECLINED" | "ERROR" | "PENDING" | "RESUBMISSION" | "REVIEW";
+  status:
+    | "ABANDONED"
+    | "APPROVED"
+    | "DECLINED"
+    | "ERROR"
+    | "EXPIRED"
+    | "PENDING"
+    | "RESUBMISSION"
+    | "REVIEW";
   decision: string | null;
   approved: boolean;
   pending: boolean;
   veriffSessionId: string | null;
+  sessionUrl: string | null;
+  identityData: VeriffIdentityDataState | null;
   code: string | null;
   reason: string | null;
   lastError: string | null;
@@ -2025,11 +2050,13 @@ export default function CreditFactoryConsole({
   });
   const [veriffValidation, setVeriffValidation] =
     useState<VeriffValidationState | null>(null);
+  const [veriffQrDataUrl, setVeriffQrDataUrl] = useState("");
   const [veriffSubmitting, setVeriffSubmitting] = useState(false);
   const [veriffRefreshing, setVeriffRefreshing] = useState(false);
   const [enrollingDelivery, setEnrollingDelivery] = useState(false);
   const [validatingDelivery, setValidatingDelivery] = useState(false);
   const mobileCaptureAppliedRef = useRef<string>("");
+  const applyingVeriffIdentityRef = useRef(false);
   const [cedulaValidation, setCedulaValidation] = useState<CedulaValidationState>({
     status: "idle",
     summary:
@@ -2836,9 +2863,14 @@ export default function CreditFactoryConsole({
               "Carga frente y respaldo de la cedula y valida que coincidan con los datos ingresados.",
             checkedAt: null,
             checks: [],
-      }
-  );
+          }
+    );
+    if (applyingVeriffIdentityRef.current) {
+      applyingVeriffIdentityRef.current = false;
+      return;
+    }
     setVeriffValidation(null);
+    setVeriffQrDataUrl("");
   }, [
     contratoCedulaFrenteDataUrl,
     contratoCedulaRespaldoDataUrl,
@@ -2885,6 +2917,38 @@ export default function CreditFactoryConsole({
       active = false;
     };
   }, [mobileCaptureSession?.mobileUrl]);
+  useEffect(() => {
+    if (!veriffValidation?.sessionUrl) {
+      setVeriffQrDataUrl("");
+      return;
+    }
+
+    let active = true;
+
+    void QRCode.toDataURL(veriffValidation.sessionUrl, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 320,
+      color: {
+        dark: "#0f766e",
+        light: "#ffffff",
+      },
+    })
+      .then((value: string) => {
+        if (active) {
+          setVeriffQrDataUrl(value);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setVeriffQrDataUrl("");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [veriffValidation?.sessionUrl]);
   useEffect(() => {
     if (
       wizardStep !== 3 ||
@@ -2939,9 +3003,10 @@ export default function CreditFactoryConsole({
   const veriffRequired =
     veriffConfig.configured && veriffConfig.mode === "required";
   const veriffApproved = Boolean(veriffValidation?.approved);
-  const contractEvidenceReady = identityEvidenceReady;
+  const identityStepReady = identityEvidenceReady || veriffApproved;
+  const contractEvidenceReady = identityStepReady;
   const stepContratoReady =
-    identityEvidenceReady && (!veriffRequired || veriffApproved);
+    identityStepReady && (!veriffRequired || veriffApproved);
   const stepEquipoReady =
     Boolean(equipoMarca.trim()) &&
     Boolean(equipoModelo.trim()) &&
@@ -4452,6 +4517,10 @@ export default function CreditFactoryConsole({
       return "Rechazada por Veriff";
     }
 
+    if (validation.status === "EXPIRED" || validation.status === "ABANDONED") {
+      return "Sesion Veriff vencida";
+    }
+
     if (validation.status === "RESUBMISSION") {
       return "Requiere nueva captura";
     }
@@ -4460,7 +4529,86 @@ export default function CreditFactoryConsole({
       return "Error en Veriff";
     }
 
+    if (validation.sessionUrl) {
+      return "QR Veriff generado";
+    }
+
     return "En revision Veriff";
+  };
+
+  const normalizeVeriffDocumentType = (value: string | null | undefined) => {
+    const normalized = String(value || "").toUpperCase();
+    if (normalized.includes("PASSPORT")) {
+      return "PASAPORTE";
+    }
+    if (normalized.includes("RESIDENCE") || normalized.includes("FOREIGN")) {
+      return "CEDULA_DE_EXTRANJERIA";
+    }
+    return DOCUMENT_TYPE_OPTIONS[0].value;
+  };
+
+  const normalizeVeriffGender = (value: string | null | undefined) => {
+    const normalized = String(value || "").trim().toUpperCase();
+    if (["M", "MALE", "MASCULINO", "HOMBRE"].includes(normalized)) {
+      return "MASCULINO";
+    }
+    if (["F", "FEMALE", "FEMENINO", "MUJER"].includes(normalized)) {
+      return "FEMENINO";
+    }
+    return "";
+  };
+
+  const applyVeriffIdentityData = (validation: VeriffValidationState | null) => {
+    const identity = validation?.identityData;
+    if (!validation?.approved || !identity) {
+      return false;
+    }
+
+    const fullNameParts = String(identity.fullName || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter(Boolean);
+    const firstName = String(identity.firstName || fullNameParts[0] || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const lastName = String(
+      identity.lastName ||
+        (fullNameParts.length > 1 ? fullNameParts[fullNameParts.length - 1] : "")
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+    const documentNumber = String(identity.documentNumber || "").replace(/\D/g, "");
+    const birthDate = dateOnly(identity.dateOfBirth);
+    const issueDate = dateOnly(identity.issueDate);
+    const gender = normalizeVeriffGender(identity.gender);
+
+    applyingVeriffIdentityRef.current = true;
+
+    if (firstName) {
+      setClientePrimerNombre(firstName);
+    }
+    if (lastName) {
+      setClientePrimerApellido(lastName);
+    }
+    if (documentNumber) {
+      setClienteDocumento(documentNumber);
+    }
+    if (identity.documentType) {
+      setClienteTipoDocumento(normalizeVeriffDocumentType(identity.documentType));
+    }
+    if (birthDate) {
+      setClienteFechaNacimiento(birthDate);
+    }
+    if (issueDate) {
+      setClienteFechaExpedicion(issueDate);
+    }
+    if (gender) {
+      setClienteGenero(gender);
+    }
+    setWizardStep(1);
+
+    return true;
   };
 
   const refreshVeriffValidation = async (
@@ -4490,9 +4638,12 @@ export default function CreditFactoryConsole({
 
       const validation = result.data.validation || null;
       setVeriffValidation(validation);
+      const filledClientData = applyVeriffIdentityData(validation);
       setNotice({
         text: validation?.approved
-          ? "Veriff aprobo la identidad del cliente."
+          ? filledClientData
+            ? "Veriff aprobo la identidad y completo el paso 1."
+            : "Veriff aprobo la identidad del cliente."
           : validation
             ? `${veriffStatusLabel(validation)}.`
             : "Veriff aun no tiene resultado para esta identidad.",
@@ -4528,30 +4679,10 @@ export default function CreditFactoryConsole({
       return null;
     }
 
-    if (!identityEvidenceReady) {
-      setNotice({
-        text: "Captura selfie y cedula por ambos lados antes de enviar a Veriff.",
-        tone: "amber",
-      });
-      return null;
-    }
-
-    if (
-      !clienteDocumento.trim() ||
-      !clientePrimerNombre.trim() ||
-      !clientePrimerApellido.trim()
-    ) {
-      setNotice({
-        text: "Completa nombre, apellido y documento antes de validar con Veriff.",
-        tone: "amber",
-      });
-      return null;
-    }
-
     try {
       setVeriffSubmitting(true);
       setNotice({
-        text: "Enviando identidad a Veriff...",
+        text: "Generando QR Veriff...",
         tone: "slate",
       });
 
@@ -4567,14 +4698,6 @@ export default function CreditFactoryConsole({
           clientePrimerNombre,
           clientePrimerApellido,
           clienteTipoDocumento,
-          contratoSelfieDataUrl: contratoFotoDataUrl,
-          contratoSelfieCapturedAt: contratoFotoAudit?.capturedAt || null,
-          contratoCedulaFrenteDataUrl,
-          contratoCedulaFrenteCapturedAt:
-            contratoCedulaFrenteAudit?.capturedAt || null,
-          contratoCedulaRespaldoDataUrl,
-          contratoCedulaRespaldoCapturedAt:
-            contratoCedulaRespaldoAudit?.capturedAt || null,
         }),
       });
 
@@ -4590,10 +4713,13 @@ export default function CreditFactoryConsole({
 
       const validation = result.data.validation || null;
       setVeriffValidation(validation);
+      const filledClientData = applyVeriffIdentityData(validation);
       setNotice({
         text: validation?.approved
-          ? "Veriff aprobo la identidad del cliente."
-          : "Identidad enviada a Veriff. Actualiza el estado cuando Veriff emita la decision.",
+          ? filledClientData
+            ? "Veriff aprobo la identidad y completo el paso 1."
+            : "Veriff aprobo la identidad del cliente."
+          : "QR Veriff generado. Escanealo y actualiza el estado cuando termine la validacion.",
         tone: validation?.approved ? "emerald" : "amber",
       });
 
@@ -4712,10 +4838,10 @@ export default function CreditFactoryConsole({
     }
 
     if (wizardStep === 3) {
-      if (!identityEvidenceReady) {
+      if (!identityStepReady) {
         setNotice({
           text:
-            "Completa selfie y cedula por ambos lados antes de pasar a los contratos.",
+            "Aprueba la identidad con Veriff antes de pasar a los contratos.",
           tone: "amber",
         });
         return;
@@ -7246,6 +7372,89 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
 
+                  <div className="mt-5 rounded-[22px] border border-teal-200 bg-teal-50/60 p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-700">
+                          Veriff
+                        </p>
+                        <h4 className="mt-2 text-lg font-black text-slate-950">
+                          Validacion para autocompletar datos
+                        </h4>
+                        <p className="mt-2 text-sm leading-6 text-slate-600">
+                          {veriffValidation?.approved
+                            ? "Identidad aprobada; los datos disponibles ya se copiaron al formulario."
+                            : "Genera el QR, el cliente valida en Veriff y al aprobar se completa este paso."}
+                        </p>
+                      </div>
+                      <span
+                        className={[
+                          "w-fit rounded-2xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em]",
+                          veriffValidation?.approved
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : veriffValidation?.status === "DECLINED" ||
+                                veriffValidation?.status === "ERROR" ||
+                                veriffValidation?.status === "EXPIRED" ||
+                                veriffValidation?.status === "ABANDONED"
+                              ? "border-red-200 bg-red-50 text-red-700"
+                              : veriffConfig.configured
+                                ? "border-amber-200 bg-amber-50 text-amber-700"
+                                : "border-slate-200 bg-slate-50 text-slate-600",
+                        ].join(" ")}
+                      >
+                        {veriffStatusLabel(veriffValidation)}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 lg:grid-cols-[auto_1fr] lg:items-center">
+                      {veriffQrDataUrl ? (
+                        <img
+                          src={veriffQrDataUrl}
+                          alt="QR Veriff"
+                          className="h-40 w-40 rounded-2xl border border-white bg-white p-2 shadow-sm"
+                        />
+                      ) : (
+                        <div className="grid h-40 w-40 place-items-center rounded-2xl border border-dashed border-teal-200 bg-white text-center text-xs font-semibold text-teal-700">
+                          QR Veriff
+                        </div>
+                      )}
+                      <div>
+                        <div className="flex flex-col gap-3 sm:flex-row">
+                          <button
+                            type="button"
+                            onClick={() => void validateIdentityWithVeriff()}
+                            disabled={veriffSubmitting || !veriffConfig.configured}
+                            className="rounded-2xl bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                          >
+                            {veriffSubmitting
+                              ? "Generando QR..."
+                              : veriffValidation
+                                ? "Generar nuevo QR"
+                                : "Generar QR Veriff"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void refreshVeriffValidation()}
+                            disabled={veriffRefreshing || !veriffValidation?.id}
+                            className="rounded-2xl border border-teal-200 bg-white px-5 py-3 text-sm font-semibold text-teal-700 transition hover:bg-teal-50 disabled:opacity-60"
+                          >
+                            {veriffRefreshing ? "Consultando..." : "Actualizar estado"}
+                          </button>
+                        </div>
+                        {veriffValidation?.sessionUrl ? (
+                          <a
+                            href={veriffValidation.sessionUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-3 inline-flex rounded-2xl border border-teal-200 bg-white px-4 py-2 text-xs font-semibold text-teal-700 transition hover:bg-teal-50"
+                          >
+                            Abrir enlace Veriff
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="mt-5 rounded-[22px] border border-[#dbe8e6] bg-[#f8fbfa] p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
@@ -8281,7 +8490,7 @@ export default function CreditFactoryConsole({
                         Identidad del cliente
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Aqui capturas selfie, cedula por ambos lados y firma para continuar con los contratos.
+                        Aqui validas la identidad con Veriff; cuando apruebe, el paso 1 se completa con los datos extraidos.
                       </p>
                     </div>
                     <div
@@ -8294,7 +8503,7 @@ export default function CreditFactoryConsole({
                     >
                       {stepContratoReady
                         ? "Identidad validada"
-                        : veriffRequired && identityEvidenceReady
+                        : veriffRequired && identityStepReady
                           ? "Falta Veriff"
                           : "Faltan validaciones"}
                     </div>
@@ -8541,14 +8750,14 @@ export default function CreditFactoryConsole({
                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                               Veriff
                             </p>
-                            <h4 className="mt-2 text-lg font-black text-slate-950">
-                              Validacion API de identidad
+                          <h4 className="mt-2 text-lg font-black text-slate-950">
+                              QR de validacion Veriff
                             </h4>
                             <p className="mt-2 text-sm leading-6 text-slate-600">
                               {veriffConfig.configured
                                 ? veriffRequired
-                                  ? "Requerida para finalizar este credito."
-                                  : "Activa en modo auditoria; se guarda en el expediente."
+                                  ? "Disponible despues de la aprobacion crediticia; requerida para finalizar."
+                                  : "Modo prueba: genera un QR para que Veriff capture y valide la identidad."
                                 : "Pendiente configurar variables de entorno."}
                             </p>
                           </div>
@@ -8557,8 +8766,10 @@ export default function CreditFactoryConsole({
                               "rounded-2xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em]",
                               veriffValidation?.approved
                                 ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                : veriffValidation?.status === "DECLINED" ||
-                                    veriffValidation?.status === "ERROR"
+                                  : veriffValidation?.status === "DECLINED" ||
+                                      veriffValidation?.status === "ERROR" ||
+                                      veriffValidation?.status === "EXPIRED" ||
+                                      veriffValidation?.status === "ABANDONED"
                                   ? "border-red-200 bg-red-50 text-red-700"
                                   : veriffConfig.configured
                                     ? "border-amber-200 bg-amber-50 text-amber-700"
@@ -8575,16 +8786,15 @@ export default function CreditFactoryConsole({
                             onClick={() => void validateIdentityWithVeriff()}
                             disabled={
                               veriffSubmitting ||
-                              !veriffConfig.configured ||
-                              !identityEvidenceReady
+                              !veriffConfig.configured
                             }
                             className="rounded-2xl bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
                           >
                             {veriffSubmitting
-                              ? "Enviando a Veriff..."
+                              ? "Generando QR..."
                               : veriffValidation
-                                ? "Revalidar con Veriff"
-                                : "Validar con Veriff"}
+                                ? "Generar nuevo QR"
+                                : "Generar QR Veriff"}
                           </button>
                           <button
                             type="button"
@@ -8598,6 +8808,30 @@ export default function CreditFactoryConsole({
 
                         {veriffValidation ? (
                           <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">
+                            {veriffQrDataUrl ? (
+                              <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center">
+                                <img
+                                  src={veriffQrDataUrl}
+                                  alt="QR Veriff"
+                                  className="h-44 w-44 rounded-2xl border border-white bg-white p-2 shadow-sm"
+                                />
+                                <div className="space-y-2 text-sm leading-6 text-slate-600">
+                                  <p className="font-semibold text-slate-900">
+                                    Escanea este QR para hacer la validacion en Veriff.
+                                  </p>
+                                  {veriffValidation.sessionUrl ? (
+                                    <a
+                                      href={veriffValidation.sessionUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex rounded-2xl border border-teal-200 bg-white px-4 py-2 text-xs font-semibold text-teal-700 transition hover:bg-teal-50"
+                                    >
+                                      Abrir enlace Veriff
+                                    </a>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ) : null}
                             <p>
                               Sesion:{" "}
                               <span className="font-semibold text-slate-900">
@@ -8629,21 +8863,18 @@ export default function CreditFactoryConsole({
                         </p>
                         <div className="mt-4 grid gap-3 sm:grid-cols-2">
                           {[
-                            { label: "Selfie", ready: Boolean(contratoFotoDataUrl) },
                             {
-                              label: "Cedula frente y respaldo",
-                              ready:
-                                Boolean(contratoCedulaFrenteDataUrl) &&
-                                Boolean(contratoCedulaRespaldoDataUrl),
+                              label: "QR Veriff generado",
+                              ready: Boolean(veriffValidation?.sessionUrl),
                             },
-                            ...(veriffRequired
-                              ? [
-                                  {
-                                    label: "Veriff aprobado",
-                                    ready: veriffApproved,
-                                  },
-                                ]
-                              : []),
+                            {
+                              label: "Veriff aprobado",
+                              ready: veriffApproved,
+                            },
+                            {
+                              label: "Evidencia interna",
+                              ready: identityEvidenceReady,
+                            },
                           ].map(({ label, ready }) => (
                             <div
                               key={label}

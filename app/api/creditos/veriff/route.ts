@@ -1,26 +1,19 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import {
-  sanitizeImageDataUrl,
-  sanitizeText,
-  toNumber,
-} from "@/lib/credit-factory";
+import { sanitizeText, toNumber } from "@/lib/credit-factory";
 import {
   createVeriffValidation,
   serializeVeriffValidation,
   updateVeriffValidation,
-  updateVeriffValidationFromDecision,
 } from "@/lib/veriff-storage";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import {
   extractVeriffSessionId,
+  extractVeriffSessionUrl,
   getVeriffPublicSummary,
   isVeriffConfigured,
   redactVeriffPayload,
   veriffCreateSession,
-  veriffGetDecision,
-  veriffSubmitSession,
-  veriffUploadMedia,
   VeriffApiError,
 } from "@/lib/veriff";
 
@@ -33,12 +26,6 @@ type VeriffCreateBody = {
   clientePrimerApellido?: string | null;
   clientePrimerNombre?: string | null;
   clienteTipoDocumento?: string | null;
-  contratoCedulaFrenteCapturedAt?: string | null;
-  contratoCedulaFrenteDataUrl?: string | null;
-  contratoCedulaRespaldoCapturedAt?: string | null;
-  contratoCedulaRespaldoDataUrl?: string | null;
-  contratoSelfieCapturedAt?: string | null;
-  contratoSelfieDataUrl?: string | null;
   draftId?: number | string | null;
 };
 
@@ -120,35 +107,6 @@ export async function POST(request: Request) {
     const clienteNombre = [clientePrimerNombre, clientePrimerApellido]
       .filter(Boolean)
       .join(" ");
-    const selfieDataUrl = sanitizeImageDataUrl(body.contratoSelfieDataUrl);
-    const cedulaFrenteDataUrl = sanitizeImageDataUrl(
-      body.contratoCedulaFrenteDataUrl
-    );
-    const cedulaRespaldoDataUrl = sanitizeImageDataUrl(
-      body.contratoCedulaRespaldoDataUrl
-    );
-
-    if (!clienteDocumento || !clientePrimerNombre || !clientePrimerApellido) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Completa nombre, apellido y documento antes de validar identidad con Veriff.",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (!selfieDataUrl || !cedulaFrenteDataUrl || !cedulaRespaldoDataUrl) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Debes capturar selfie y cedula por ambos lados antes de validar con Veriff.",
-        },
-        { status: 400 }
-      );
-    }
 
     const vendorData = buildVendorData({
       documento: clienteDocumento,
@@ -166,11 +124,7 @@ export async function POST(request: Request) {
         clienteDocumento,
         clienteNombre,
         draftId,
-        evidence: {
-          cedulaFrente: Boolean(cedulaFrenteDataUrl),
-          cedulaRespaldo: Boolean(cedulaRespaldoDataUrl),
-          selfie: Boolean(selfieDataUrl),
-        },
+        flow: "veriff-qr",
       },
       sedeId: user.sedeId,
       usuarioId: user.id,
@@ -191,74 +145,25 @@ export async function POST(request: Request) {
       vendorData,
     });
     const sessionId = extractVeriffSessionId(createPayload);
+    const sessionUrl = extractVeriffSessionUrl(createPayload);
 
-    if (!sessionId) {
+    if (!sessionId || !sessionUrl) {
       await updateVeriffValidation(validation.id, {
         createPayload,
-        lastError: "Veriff no retorno session id",
+        lastError: "Veriff no retorno session id o URL",
         status: "ERROR",
       });
       return NextResponse.json(
-        { ok: false, error: "Veriff no retorno session id" },
+        { ok: false, error: "Veriff no retorno session id o URL" },
         { status: 502 }
       );
     }
 
-    await updateVeriffValidation(validation.id, {
+    const row = await updateVeriffValidation(validation.id, {
       createPayload,
       status: "CREATED",
       veriffSessionId: sessionId,
     });
-
-    const mediaPayloads = [];
-    mediaPayloads.push(
-      await veriffUploadMedia(sessionId, {
-        context: "face",
-        content: selfieDataUrl,
-        timestamp: sanitizeText(body.contratoSelfieCapturedAt) || null,
-      })
-    );
-    mediaPayloads.push(
-      await veriffUploadMedia(sessionId, {
-        context: "document-front",
-        content: cedulaFrenteDataUrl,
-        timestamp: sanitizeText(body.contratoCedulaFrenteCapturedAt) || null,
-      })
-    );
-    mediaPayloads.push(
-      await veriffUploadMedia(sessionId, {
-        context: "document-back",
-        content: cedulaRespaldoDataUrl,
-        timestamp: sanitizeText(body.contratoCedulaRespaldoCapturedAt) || null,
-      })
-    );
-
-    const submitPayload = await veriffSubmitSession(sessionId);
-    let row = await updateVeriffValidation(validation.id, {
-      mediaPayload: mediaPayloads,
-      status: "SUBMITTED",
-      submitPayload,
-      submittedAt: new Date(),
-      veriffSessionId: sessionId,
-    });
-
-    try {
-      const decisionPayload = await veriffGetDecision(sessionId);
-      row = await updateVeriffValidationFromDecision(
-        validation.id,
-        decisionPayload,
-        "decisionPayload"
-      );
-    } catch (error) {
-      if (error instanceof VeriffApiError && [404, 409].includes(error.status)) {
-        row = await updateVeriffValidation(validation.id, {
-          lastError: null,
-          status: "PENDING",
-        });
-      } else {
-        throw error;
-      }
-    }
 
     return NextResponse.json({
       ok: true,

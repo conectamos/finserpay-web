@@ -1,6 +1,8 @@
 import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import {
+  extractVeriffIdentityData,
+  extractVeriffSessionUrl,
   normalizeVeriffStatus,
   redactVeriffPayload,
   summarizeVeriffDecision,
@@ -212,6 +214,10 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
     draftId: row.draftId,
     captureToken: row.captureToken,
     veriffSessionId: row.veriffSessionId,
+    sessionUrl: extractVeriffSessionUrl(row.createPayload),
+    identityData:
+      extractVeriffIdentityData(row.decisionPayload) ||
+      extractVeriffIdentityData(row.webhookPayload),
     attemptId: row.attemptId,
     vendorData: row.vendorData,
     status,
@@ -324,7 +330,9 @@ export async function updateVeriffValidationFromDecision(
   source: "decisionPayload" | "webhookPayload"
 ) {
   const summary = summarizeVeriffDecision(payload);
-  const finalDecision = ["APPROVED", "DECLINED", "ERROR"].includes(summary.status);
+  const finalDecision = ["APPROVED", "DECLINED", "ERROR", "EXPIRED", "ABANDONED"].includes(
+    summary.status
+  );
 
   return updateVeriffValidation(id, {
     attemptId: summary.attemptId,
@@ -393,11 +401,15 @@ export function buildVeriffSnapshot(row: VeriffValidationRow | null) {
     id: serialized?.id || row.id,
     sessionId: row.veriffSessionId,
     attemptId: row.attemptId,
+    sessionUrl: extractVeriffSessionUrl(row.createPayload) || null,
     estado: normalizeVeriffStatus(row.decision || row.status) satisfies VeriffStatus,
     decision: row.decision,
     code: row.code,
     reason: row.reason,
     reasonCode: row.reasonCode,
+    identityData:
+      extractVeriffIdentityData(row.decisionPayload) ||
+      extractVeriffIdentityData(row.webhookPayload),
     checkedAt: row.decidedAt?.toISOString() || row.updatedAt?.toISOString() || null,
   };
 }
