@@ -99,11 +99,20 @@ function getApiKey() {
 
 export function getVeriffConfig() {
   const mode = cleanText(process.env.VERIFF_IDENTITY_MODE || "soft").toLowerCase();
+  const rawEnvironment = cleanText(
+    process.env.VERIFF_ENVIRONMENT || process.env.VERIFF_ENV || "test"
+  ).toLowerCase();
+  const environment =
+    rawEnvironment === "live" || rawEnvironment === "production"
+      ? "live"
+      : "test";
 
   return {
     apiKey: getApiKey(),
     baseUrl: cleanUrl(process.env.VERIFF_BASE_URL),
     callbackUrl: cleanText(process.env.VERIFF_CALLBACK_URL),
+    decisionsTrusted: environment === "live",
+    environment,
     mode: mode === "required" ? "required" : mode === "off" ? "off" : "soft",
     sharedSecret: getSecret(),
   } as const;
@@ -117,6 +126,11 @@ export function isVeriffConfigured() {
 export function isVeriffRequired() {
   const config = getVeriffConfig();
   return config.mode === "required";
+}
+
+export function areVeriffDecisionsTrusted() {
+  const config = getVeriffConfig();
+  return config.decisionsTrusted;
 }
 
 export function signVeriffPayload(payload: string) {
@@ -255,6 +269,8 @@ export function getVeriffPublicSummary() {
 
   return {
     configured: isVeriffConfigured(),
+    decisionsTrusted: config.decisionsTrusted,
+    environment: config.environment,
     mode: config.mode,
     baseUrl: config.baseUrl,
   };

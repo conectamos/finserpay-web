@@ -1,6 +1,7 @@
 import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import {
+  areVeriffDecisionsTrusted,
   extractVeriffIdentityData,
   extractVeriffSessionUrl,
   normalizeVeriffStatus,
@@ -198,7 +199,10 @@ export async function ensureVeriffSchema() {
 }
 
 export function isVeriffApproved(row: VeriffValidationRow | null | undefined) {
-  return normalizeVeriffStatus(row?.decision || row?.status) === "APPROVED";
+  return (
+    areVeriffDecisionsTrusted() &&
+    normalizeVeriffStatus(row?.decision || row?.status) === "APPROVED"
+  );
 }
 
 export function serializeVeriffValidation(row: VeriffValidationRow | null) {
@@ -207,6 +211,8 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
   }
 
   const status = normalizeVeriffStatus(row.decision || row.status);
+  const technicalApproved = status === "APPROVED";
+  const trusted = areVeriffDecisionsTrusted();
 
   return {
     id: row.id,
@@ -227,7 +233,9 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
     reasonCode: row.reasonCode,
     clienteDocumento: row.clienteDocumento,
     clienteNombre: row.clienteNombre,
-    approved: status === "APPROVED",
+    approved: technicalApproved && trusted,
+    technicalApproved,
+    trusted,
     pending: status === "PENDING" || status === "REVIEW" || status === "RESUBMISSION",
     lastError: row.lastError,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,

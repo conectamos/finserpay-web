@@ -33,6 +33,7 @@ En Railway debes crear estas variables:
 - `VERIFF_API_KEY`
 - `VERIFF_SHARED_SECRET`
 - `VERIFF_CALLBACK_URL`
+- `VERIFF_ENVIRONMENT`
 - `VERIFF_IDENTITY_MODE`
 
 ### Ejemplo de `SESSION_SECRET`
@@ -79,6 +80,7 @@ Si todavia no lo tienes en GitHub:
    - `VERIFF_API_KEY`
    - `VERIFF_SHARED_SECRET`
    - `VERIFF_CALLBACK_URL`
+   - `VERIFF_ENVIRONMENT`
    - `VERIFF_IDENTITY_MODE`
 
 Para Wompi, `NEXT_PUBLIC_APP_URL` debe ser el dominio publico de Railway o tu dominio propio, por ejemplo `https://finserpay-web.up.railway.app`.
@@ -88,6 +90,7 @@ Para Veriff, usa:
 ```bash
 VERIFF_BASE_URL=https://stationapi.veriff.com
 VERIFF_CALLBACK_URL=https://finserpay.com/dashboard/creditos
+VERIFF_ENVIRONMENT=test
 VERIFF_IDENTITY_MODE=soft
 ```
 
@@ -97,7 +100,7 @@ En produccion, configura el webhook de decision de Veriff hacia:
 https://finserpay.com/api/veriff/webhook
 ```
 
-Cuando ya hayas probado varias validaciones reales, cambia `VERIFF_IDENTITY_MODE` a `required` para impedir que se finalicen creditos sin identidad aprobada por Veriff.
+Mientras la integracion de Veriff este marcada como `PRUEBA`, deja `VERIFF_ENVIRONMENT=test`: esas aprobaciones solo prueban el flujo y FINSER PAY no las tomara como identidad real. Cuando Veriff active la integracion productiva con validaciones reales, cambia `VERIFF_ENVIRONMENT=live` y, despues de probar el flujo completo, cambia `VERIFF_IDENTITY_MODE` a `required` para impedir que se finalicen creditos sin identidad aprobada por Veriff.
 
 Si esta app debe convivir con la plataforma anterior, configura tambien:
 

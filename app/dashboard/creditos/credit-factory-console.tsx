@@ -138,6 +138,8 @@ type VeriffValidationState = {
     | "REVIEW";
   decision: string | null;
   approved: boolean;
+  technicalApproved?: boolean;
+  trusted?: boolean;
   pending: boolean;
   veriffSessionId: string | null;
   sessionUrl: string | null;
@@ -154,6 +156,8 @@ type VeriffValidationState = {
 type VeriffConfigState = {
   configured: boolean;
   mode: VeriffMode;
+  environment?: "live" | "test";
+  decisionsTrusted?: boolean;
   baseUrl?: string | null;
 };
 
@@ -4517,6 +4521,10 @@ export default function CreditFactoryConsole({
       return "Aprobada por Veriff";
     }
 
+    if (validation.technicalApproved && !validation.trusted) {
+      return "Aprobada solo en prueba";
+    }
+
     if (validation.status === "DECLINED") {
       return "Rechazada por Veriff";
     }
@@ -4651,14 +4659,18 @@ export default function CreditFactoryConsole({
           ? veriffMissingIdentityMessage
           : ""
       );
+      const isTestApproval =
+        Boolean(validation?.technicalApproved) && validation?.trusted === false;
       setNotice({
         text: validation?.approved
           ? filledClientData
             ? "Veriff aprobo la identidad y completo el paso 1."
             : "Veriff aprobo, pero no envio datos para autocompletar."
-          : validation
-            ? `${veriffStatusLabel(validation)}.`
-            : "Veriff aun no tiene resultado para esta identidad.",
+          : isTestApproval
+            ? "Veriff devolvio una aprobacion de prueba. No cuenta como identidad real ni autocompleta datos."
+            : validation
+              ? `${veriffStatusLabel(validation)}.`
+              : "Veriff aun no tiene resultado para esta identidad.",
         tone: validation?.approved
           ? "emerald"
           : validation?.status === "DECLINED" || validation?.status === "ERROR"
@@ -7424,7 +7436,13 @@ export default function CreditFactoryConsole({
                             ? veriffValidation.identityData
                               ? "Identidad aprobada; los datos disponibles ya se copiaron al formulario."
                               : "Identidad aprobada, pero Veriff no envio datos para autocompletar."
-                            : "Genera el QR, el cliente valida en Veriff y al aprobar se completa este paso."}
+                            : veriffValidation?.technicalApproved &&
+                                veriffValidation.trusted === false
+                              ? "Aprobacion de prueba; no valida identidad real ni autocompleta datos confiables."
+                              : veriffConfig.configured &&
+                                  veriffConfig.decisionsTrusted === false
+                                ? "Modo prueba: genera el QR para revisar el flujo; no autocompleta datos reales."
+                              : "Genera el QR, el cliente valida en Veriff y al aprobar se completa este paso."}
                         </p>
                       </div>
                       <span
@@ -8800,9 +8818,11 @@ export default function CreditFactoryConsole({
                             </h4>
                             <p className="mt-2 text-sm leading-6 text-slate-600">
                               {veriffConfig.configured
-                                ? veriffRequired
-                                  ? "Disponible despues de la aprobacion crediticia; requerida para finalizar."
-                                  : "Modo prueba: genera un QR para que Veriff capture y valide la identidad."
+                                ? veriffConfig.decisionsTrusted === false
+                                  ? "Modo prueba: genera un QR para validar el flujo; no confirma identidad real."
+                                  : veriffRequired
+                                    ? "Disponible despues de la aprobacion crediticia; requerida para finalizar."
+                                    : "Genera un QR para que Veriff capture y valide la identidad."
                                 : "Pendiente configurar variables de entorno."}
                             </p>
                           </div>
