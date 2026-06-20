@@ -179,6 +179,37 @@ function getSnapshotEvidenceAudit(snapshot: unknown, key: string) {
   };
 }
 
+function getSnapshotIdentityValidation(snapshot: unknown) {
+  const root = getSnapshotRoot(snapshot);
+  const evidencia =
+    typeof root?.evidencia === "object" && root.evidencia !== null
+      ? (root.evidencia as Record<string, unknown>)
+      : null;
+  const identidad =
+    typeof evidencia?.identidad === "object" && evidencia.identidad !== null
+      ? (evidencia.identidad as Record<string, unknown>)
+      : null;
+
+  if (!identidad) {
+    return null;
+  }
+
+  return {
+    proveedor:
+      typeof identidad.proveedor === "string" ? identidad.proveedor : "Veriff",
+    estado: typeof identidad.estado === "string" ? identidad.estado : "",
+    sessionId:
+      typeof identidad.sessionId === "string" ? identidad.sessionId : "",
+    checkedAt:
+      typeof identidad.checkedAt === "string" ? identidad.checkedAt : "",
+    reason: typeof identidad.reason === "string" ? identidad.reason : "",
+    code:
+      typeof identidad.code === "string" || typeof identidad.code === "number"
+        ? String(identidad.code)
+        : "",
+  };
+}
+
 function dataUrlToBuffer(value: string | null | undefined) {
   if (!value) {
     return null;
@@ -406,6 +437,9 @@ export async function GET(
         : credito.folio;
     const references = getSnapshotReferences(credito.contratoSnapshot);
     const authenticity = getSnapshotAuthenticity(credito.contratoSnapshot);
+    const identityValidation = getSnapshotIdentityValidation(
+      credito.contratoSnapshot
+    );
     const selfieAudit = getSnapshotEvidenceAudit(credito.contratoSnapshot, "selfie");
     const cedulaFrenteAudit = getSnapshotEvidenceAudit(
       credito.contratoSnapshot,
@@ -487,6 +521,33 @@ export async function GET(
       ],
       fonts
     );
+    if (identityValidation) {
+      addFieldGrid(
+        doc,
+        [
+          {
+            label: "Validacion de identidad",
+            value: `${identityValidation.proveedor} | ${identityValidation.estado || "-"}`,
+          },
+          {
+            label: "Sesion Veriff",
+            value: identityValidation.sessionId || "-",
+          },
+          {
+            label: "Fecha validacion",
+            value: formatDate(identityValidation.checkedAt),
+          },
+          {
+            label: "Resultado",
+            value:
+              [identityValidation.code, identityValidation.reason]
+                .filter(Boolean)
+                .join(" | ") || "-",
+          },
+        ],
+        fonts
+      );
+    }
     addParagraph(
       doc,
       "El expediente puede consultarse por su folio y numero de identificacion dentro del panel de FINSER PAY, conservando integridad documental, trazabilidad de IP y evidencia fotografica del proceso.",

@@ -29,6 +29,11 @@ En Railway debes crear estas variables:
 - `WOMPI_EVENTS_SECRET`
 - `WOMPI_LEGACY_WEBHOOK_URL`
 - `NEXT_PUBLIC_APP_URL`
+- `VERIFF_BASE_URL`
+- `VERIFF_API_KEY`
+- `VERIFF_SHARED_SECRET`
+- `VERIFF_CALLBACK_URL`
+- `VERIFF_IDENTITY_MODE`
 
 ### Ejemplo de `SESSION_SECRET`
 
@@ -70,8 +75,29 @@ Si todavia no lo tienes en GitHub:
    - `WOMPI_EVENTS_SECRET`
    - `WOMPI_LEGACY_WEBHOOK_URL`
    - `NEXT_PUBLIC_APP_URL`
+   - `VERIFF_BASE_URL`
+   - `VERIFF_API_KEY`
+   - `VERIFF_SHARED_SECRET`
+   - `VERIFF_CALLBACK_URL`
+   - `VERIFF_IDENTITY_MODE`
 
 Para Wompi, `NEXT_PUBLIC_APP_URL` debe ser el dominio publico de Railway o tu dominio propio, por ejemplo `https://finserpay-web.up.railway.app`.
+
+Para Veriff, usa:
+
+```bash
+VERIFF_BASE_URL=https://stationapi.veriff.com
+VERIFF_CALLBACK_URL=https://finserpay.com/dashboard/creditos
+VERIFF_IDENTITY_MODE=soft
+```
+
+En produccion, configura el webhook de decision de Veriff hacia:
+
+```bash
+https://finserpay.com/api/veriff/webhook
+```
+
+Cuando ya hayas probado varias validaciones reales, cambia `VERIFF_IDENTITY_MODE` a `required` para impedir que se finalicen creditos sin identidad aprobada por Veriff.
 
 Si esta app debe convivir con la plataforma anterior, configura tambien:
 

@@ -108,6 +108,37 @@ type CedulaValidationState = {
   checks: CedulaValidationCheck[];
 };
 
+type VeriffMode = "off" | "required" | "soft";
+
+type VeriffValidationState = {
+  id: number;
+  status: "APPROVED" | "DECLINED" | "ERROR" | "PENDING" | "RESUBMISSION" | "REVIEW";
+  decision: string | null;
+  approved: boolean;
+  pending: boolean;
+  veriffSessionId: string | null;
+  code: string | null;
+  reason: string | null;
+  lastError: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  submittedAt: string | null;
+  decidedAt: string | null;
+};
+
+type VeriffConfigState = {
+  configured: boolean;
+  mode: VeriffMode;
+  baseUrl?: string | null;
+};
+
+type VeriffResponse = {
+  ok?: boolean;
+  error?: string;
+  validation?: VeriffValidationState | null;
+  veriff?: VeriffConfigState;
+};
+
 type MobileCaptureSession = {
   token: string;
   estado: string;
@@ -342,6 +373,11 @@ type CreateCreditResponse = {
   warning?: string;
   item: CreditItem;
   deliveryStatus: DeliveryStatus | null;
+  identityValidation?: {
+    id?: number | null;
+    estado?: string | null;
+    sessionId?: string | null;
+  } | null;
 };
 
 type CommandResponse = {
@@ -1649,11 +1685,7 @@ function VideoEvidencePreview({
   heightClassName: string;
   roundedClassName?: string;
 }) {
-  const [previewFailed, setPreviewFailed] = useState(false);
-
-  useEffect(() => {
-    setPreviewFailed(false);
-  }, [value]);
+  const [failedPreviewValue, setFailedPreviewValue] = useState<string | null>(null);
 
   if (!value) {
     return (
@@ -1669,6 +1701,7 @@ function VideoEvidencePreview({
     );
   }
 
+  const previewFailed = failedPreviewValue === value;
   const showPlayer = isBrowserPlayableVideoDataUrl(value) && !previewFailed;
   const formatLabel = getVideoEvidenceFormatLabel(value);
   const downloadName = getVideoEvidenceDownloadName(value);
@@ -1705,11 +1738,11 @@ function VideoEvidencePreview({
         src={value}
         controls
         preload="metadata"
-        onError={() => setPreviewFailed(true)}
+        onError={() => setFailedPreviewValue(value)}
         onLoadedMetadata={(event) => {
           const duration = event.currentTarget.duration;
           if (!Number.isFinite(duration) || duration <= 0) {
-            setPreviewFailed(true);
+            setFailedPreviewValue(value);
           }
         }}
         className={[
@@ -1986,6 +2019,14 @@ export default function CreditFactoryConsole({
   const [paymentSummary, setPaymentSummary] = useState<CreditPaymentsResponse["credito"] | null>(null);
   const [deliveryValidation, setDeliveryValidation] =
     useState<DeliveryValidationState | null>(null);
+  const [veriffConfig, setVeriffConfig] = useState<VeriffConfigState>({
+    configured: false,
+    mode: "soft",
+  });
+  const [veriffValidation, setVeriffValidation] =
+    useState<VeriffValidationState | null>(null);
+  const [veriffSubmitting, setVeriffSubmitting] = useState(false);
+  const [veriffRefreshing, setVeriffRefreshing] = useState(false);
   const [enrollingDelivery, setEnrollingDelivery] = useState(false);
   const [validatingDelivery, setValidatingDelivery] = useState(false);
   const mobileCaptureAppliedRef = useRef<string>("");
@@ -2305,6 +2346,7 @@ export default function CreditFactoryConsole({
       contratoCedulaRespaldoCapturedAt:
         contratoCedulaRespaldoAudit?.capturedAt || null,
       contratoCedulaRespaldoSource: contratoCedulaRespaldoAudit?.source || null,
+      veriffValidationId: veriffValidation?.id || null,
       pagareAceptado,
       cartaAceptada,
       autorizacionDatosAceptada,
@@ -2355,6 +2397,7 @@ export default function CreditFactoryConsole({
       selectedEquipmentCatalogItem?.id,
       tasaInteresEaNumero,
       valorEquipoTotal,
+      veriffValidation?.id,
       wizardStep,
     ]
   );
@@ -2794,7 +2837,8 @@ export default function CreditFactoryConsole({
             checkedAt: null,
             checks: [],
       }
-    );
+  );
+    setVeriffValidation(null);
   }, [
     contratoCedulaFrenteDataUrl,
     contratoCedulaRespaldoDataUrl,
@@ -2892,8 +2936,12 @@ export default function CreditFactoryConsole({
     Boolean(contratoFotoDataUrl) &&
     Boolean(contratoCedulaFrenteDataUrl) &&
     Boolean(contratoCedulaRespaldoDataUrl);
+  const veriffRequired =
+    veriffConfig.configured && veriffConfig.mode === "required";
+  const veriffApproved = Boolean(veriffValidation?.approved);
   const contractEvidenceReady = identityEvidenceReady;
-  const stepContratoReady = identityEvidenceReady;
+  const stepContratoReady =
+    identityEvidenceReady && (!veriffRequired || veriffApproved);
   const stepEquipoReady =
     Boolean(equipoMarca.trim()) &&
     Boolean(equipoModelo.trim()) &&
@@ -3793,6 +3841,11 @@ export default function CreditFactoryConsole({
   useEffect(() => {
     void loadEquipmentCatalog();
     void loadCreditSettings();
+    void requestJson<VeriffResponse>("/api/creditos/veriff").then((result) => {
+      if (result.ok && result.data?.veriff) {
+        setVeriffConfig(result.data.veriff);
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -4384,6 +4437,181 @@ export default function CreditFactoryConsole({
     }
   };
 
+  const veriffStatusLabel = (validation: VeriffValidationState | null) => {
+    if (!validation) {
+      return veriffConfig.configured
+        ? "Pendiente Veriff"
+        : "Veriff sin configurar";
+    }
+
+    if (validation.approved) {
+      return "Aprobada por Veriff";
+    }
+
+    if (validation.status === "DECLINED") {
+      return "Rechazada por Veriff";
+    }
+
+    if (validation.status === "RESUBMISSION") {
+      return "Requiere nueva captura";
+    }
+
+    if (validation.status === "ERROR") {
+      return "Error en Veriff";
+    }
+
+    return "En revision Veriff";
+  };
+
+  const refreshVeriffValidation = async (
+    validationId = veriffValidation?.id || null
+  ) => {
+    if (!validationId) {
+      setNotice({
+        text: "Primero envia la identidad a Veriff.",
+        tone: "amber",
+      });
+      return null;
+    }
+
+    try {
+      setVeriffRefreshing(true);
+      const result = await requestJson<VeriffResponse>(
+        `/api/creditos/veriff/${validationId}`
+      );
+
+      if (!result.ok) {
+        throw new Error(result.data?.error || "No se pudo consultar Veriff");
+      }
+
+      if (result.data.veriff) {
+        setVeriffConfig(result.data.veriff);
+      }
+
+      const validation = result.data.validation || null;
+      setVeriffValidation(validation);
+      setNotice({
+        text: validation?.approved
+          ? "Veriff aprobo la identidad del cliente."
+          : validation
+            ? `${veriffStatusLabel(validation)}.`
+            : "Veriff aun no tiene resultado para esta identidad.",
+        tone: validation?.approved
+          ? "emerald"
+          : validation?.status === "DECLINED" || validation?.status === "ERROR"
+            ? "red"
+            : "amber",
+      });
+
+      return validation;
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo consultar Veriff.",
+        tone: "red",
+      });
+      return null;
+    } finally {
+      setVeriffRefreshing(false);
+    }
+  };
+
+  const validateIdentityWithVeriff = async () => {
+    if (!veriffConfig.configured) {
+      setNotice({
+        text:
+          "Configura VERIFF_BASE_URL, VERIFF_API_KEY y VERIFF_SHARED_SECRET antes de validar con Veriff.",
+        tone: "amber",
+      });
+      return null;
+    }
+
+    if (!identityEvidenceReady) {
+      setNotice({
+        text: "Captura selfie y cedula por ambos lados antes de enviar a Veriff.",
+        tone: "amber",
+      });
+      return null;
+    }
+
+    if (
+      !clienteDocumento.trim() ||
+      !clientePrimerNombre.trim() ||
+      !clientePrimerApellido.trim()
+    ) {
+      setNotice({
+        text: "Completa nombre, apellido y documento antes de validar con Veriff.",
+        tone: "amber",
+      });
+      return null;
+    }
+
+    try {
+      setVeriffSubmitting(true);
+      setNotice({
+        text: "Enviando identidad a Veriff...",
+        tone: "slate",
+      });
+
+      const result = await requestJson<VeriffResponse>("/api/creditos/veriff", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          captureToken: mobileCaptureSession?.token || null,
+          draftId,
+          clienteDocumento,
+          clientePrimerNombre,
+          clientePrimerApellido,
+          clienteTipoDocumento,
+          contratoSelfieDataUrl: contratoFotoDataUrl,
+          contratoSelfieCapturedAt: contratoFotoAudit?.capturedAt || null,
+          contratoCedulaFrenteDataUrl,
+          contratoCedulaFrenteCapturedAt:
+            contratoCedulaFrenteAudit?.capturedAt || null,
+          contratoCedulaRespaldoDataUrl,
+          contratoCedulaRespaldoCapturedAt:
+            contratoCedulaRespaldoAudit?.capturedAt || null,
+        }),
+      });
+
+      if (!result.ok) {
+        throw new Error(
+          result.data?.error || "No se pudo validar identidad con Veriff"
+        );
+      }
+
+      if (result.data.veriff) {
+        setVeriffConfig(result.data.veriff);
+      }
+
+      const validation = result.data.validation || null;
+      setVeriffValidation(validation);
+      setNotice({
+        text: validation?.approved
+          ? "Veriff aprobo la identidad del cliente."
+          : "Identidad enviada a Veriff. Actualiza el estado cuando Veriff emita la decision.",
+        tone: validation?.approved ? "emerald" : "amber",
+      });
+
+      return validation;
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo validar identidad con Veriff.",
+        tone: "red",
+      });
+      return null;
+    } finally {
+      setVeriffSubmitting(false);
+    }
+  };
+
   const clampWizardStep = (targetStep: number) => Math.min(5, Math.max(1, targetStep));
 
   const goToStep = (targetStep: number) => {
@@ -4417,7 +4645,9 @@ export default function CreditFactoryConsole({
     if (wizardStep === 3 && !stepContratoReady) {
       setNotice({
         text:
-          "Completa selfie, cedula por ambos lados y firma antes de avanzar a los contratos.",
+          veriffRequired && !veriffApproved
+            ? "Veriff debe aprobar la identidad antes de avanzar a los contratos."
+            : "Completa selfie y cedula por ambos lados antes de avanzar a los contratos.",
         tone: "amber",
       });
       return;
@@ -4485,7 +4715,15 @@ export default function CreditFactoryConsole({
       if (!identityEvidenceReady) {
         setNotice({
           text:
-            "Completa selfie, cedula por ambos lados y firma antes de pasar a los contratos.",
+            "Completa selfie y cedula por ambos lados antes de pasar a los contratos.",
+          tone: "amber",
+        });
+        return;
+      }
+
+      if (veriffRequired && !veriffApproved) {
+        setNotice({
+          text: "Veriff debe aprobar la identidad antes de pasar a los contratos.",
           tone: "amber",
         });
         return;
@@ -4820,6 +5058,7 @@ export default function CreditFactoryConsole({
     setAutorizacionDatosAceptada(false);
     setFirmaSeguroDraftProcess(null);
     setDeliveryValidation(null);
+    setVeriffValidation(null);
     setCameraSlot(null);
     setMobileCaptureSession(null);
     setMobileCaptureQrDataUrl("");
@@ -4969,8 +5208,12 @@ export default function CreditFactoryConsole({
     if (!readyToCreate) {
       setNotice({
         text: acceptsByFirmaSeguro
-          ? "FirmaSeguro debe reportar firma exitosa y debes validar la entrega antes de finalizar el credito."
-          : "Completa el flujo de cliente, equipo, identidad, contratos y valida el equipo antes de finalizar la venta.",
+          ? veriffRequired && !veriffApproved
+            ? "Veriff debe aprobar la identidad antes de finalizar el credito."
+            : "FirmaSeguro debe reportar firma exitosa y debes validar la entrega antes de finalizar el credito."
+          : veriffRequired && !veriffApproved
+            ? "Veriff debe aprobar la identidad antes de finalizar la venta."
+            : "Completa el flujo de cliente, equipo, identidad, contratos y valida el equipo antes de finalizar la venta.",
         tone: "red",
       });
       return null;
@@ -5040,6 +5283,7 @@ export default function CreditFactoryConsole({
           contratoOtpCanal: "",
           contratoOtpDestino: "",
           contratoOtpVerificadoAt: null,
+          veriffValidationId: veriffValidation?.id || null,
           pagareAceptado: acceptsByFirmaSeguro || pagareAceptado,
           cartaAceptada: acceptsByFirmaSeguro || cartaAceptada,
           autorizacionDatosAceptada:
@@ -5907,6 +6151,11 @@ export default function CreditFactoryConsole({
     setAutorizacionDatosAceptada(checked("autorizacionDatosAceptada"));
     setFirmaSeguroDraftProcess(null);
     setDeliveryValidation(null);
+    setVeriffValidation(null);
+    const savedVeriffValidationId = Number(value("veriffValidationId") || 0);
+    if (Number.isInteger(savedVeriffValidationId) && savedVeriffValidationId > 0) {
+      void refreshVeriffValidation(savedVeriffValidationId);
+    }
     setWizardStep(
       clampWizardStep(Number(payload.wizardStep || draft.currentStep || wizardStep))
     );
@@ -8043,7 +8292,11 @@ export default function CreditFactoryConsole({
                           : "border-amber-200 bg-amber-50 text-amber-700",
                       ].join(" ")}
                     >
-                      {stepContratoReady ? "Identidad validada" : "Faltan validaciones"}
+                      {stepContratoReady
+                        ? "Identidad validada"
+                        : veriffRequired && identityEvidenceReady
+                          ? "Falta Veriff"
+                          : "Faltan validaciones"}
                     </div>
                   </div>
 
@@ -8282,6 +8535,94 @@ export default function CreditFactoryConsole({
                         )}
                       </div>
 
+                      <div className="rounded-[24px] border border-[#d9e7ea] bg-white px-5 py-5 shadow-[0_14px_34px_rgba(15,23,42,0.05)]">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                              Veriff
+                            </p>
+                            <h4 className="mt-2 text-lg font-black text-slate-950">
+                              Validacion API de identidad
+                            </h4>
+                            <p className="mt-2 text-sm leading-6 text-slate-600">
+                              {veriffConfig.configured
+                                ? veriffRequired
+                                  ? "Requerida para finalizar este credito."
+                                  : "Activa en modo auditoria; se guarda en el expediente."
+                                : "Pendiente configurar variables de entorno."}
+                            </p>
+                          </div>
+                          <span
+                            className={[
+                              "rounded-2xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em]",
+                              veriffValidation?.approved
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : veriffValidation?.status === "DECLINED" ||
+                                    veriffValidation?.status === "ERROR"
+                                  ? "border-red-200 bg-red-50 text-red-700"
+                                  : veriffConfig.configured
+                                    ? "border-amber-200 bg-amber-50 text-amber-700"
+                                    : "border-slate-200 bg-slate-50 text-slate-600",
+                            ].join(" ")}
+                          >
+                            {veriffStatusLabel(veriffValidation)}
+                          </span>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <button
+                            type="button"
+                            onClick={() => void validateIdentityWithVeriff()}
+                            disabled={
+                              veriffSubmitting ||
+                              !veriffConfig.configured ||
+                              !identityEvidenceReady
+                            }
+                            className="rounded-2xl bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                          >
+                            {veriffSubmitting
+                              ? "Enviando a Veriff..."
+                              : veriffValidation
+                                ? "Revalidar con Veriff"
+                                : "Validar con Veriff"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void refreshVeriffValidation()}
+                            disabled={veriffRefreshing || !veriffValidation?.id}
+                            className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            {veriffRefreshing ? "Consultando..." : "Actualizar estado"}
+                          </button>
+                        </div>
+
+                        {veriffValidation ? (
+                          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">
+                            <p>
+                              Sesion:{" "}
+                              <span className="font-semibold text-slate-900">
+                                {veriffValidation.veriffSessionId || "-"}
+                              </span>
+                            </p>
+                            <p>
+                              Ultima revision:{" "}
+                              {dateTime(
+                                veriffValidation.decidedAt ||
+                                  veriffValidation.updatedAt ||
+                                  veriffValidation.submittedAt
+                              )}
+                            </p>
+                            {veriffValidation.reason || veriffValidation.lastError ? (
+                              <p>
+                                Detalle:{" "}
+                                {veriffValidation.reason ||
+                                  veriffValidation.lastError}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+
                       <div className="rounded-[24px] border border-[#d9e7ea] bg-[#f8fbfd] px-5 py-5">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                           Checklist de identidad
@@ -8295,6 +8636,14 @@ export default function CreditFactoryConsole({
                                 Boolean(contratoCedulaFrenteDataUrl) &&
                                 Boolean(contratoCedulaRespaldoDataUrl),
                             },
+                            ...(veriffRequired
+                              ? [
+                                  {
+                                    label: "Veriff aprobado",
+                                    ready: veriffApproved,
+                                  },
+                                ]
+                              : []),
                           ].map(({ label, ready }) => (
                             <div
                               key={label}

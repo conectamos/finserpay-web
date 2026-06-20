@@ -53,6 +53,13 @@ import {
   markCreditoFirmaSeguroCompleted,
   refreshFirmaSeguroProcess,
 } from "@/lib/firmaseguro-credit";
+import {
+  buildVeriffSnapshot,
+  getVeriffValidationById,
+  isVeriffApproved,
+  linkVeriffValidationToCredit,
+} from "@/lib/veriff-storage";
+import { getVeriffPublicSummary, isVeriffRequired } from "@/lib/veriff";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -168,6 +175,7 @@ type CreditCreateBody = {
   referenciaEquipo?: string;
   tasaInteresEa?: number | string;
   valorEquipoTotal?: number | string;
+  veriffValidationId?: number | string | null;
 };
 
 type PaymentAggregate = {
@@ -1180,6 +1188,79 @@ export async function POST(req: Request) {
       );
     }
 
+    const veriffValidationId = Math.trunc(toNumber(body.veriffValidationId));
+    const veriffRequired = isVeriffRequired();
+    const veriffSummary = getVeriffPublicSummary();
+    let veriffValidation =
+      veriffValidationId > 0
+        ? await getVeriffValidationById(veriffValidationId)
+        : null;
+
+    if (veriffValidationId > 0 && !veriffValidation) {
+      return NextResponse.json(
+        { error: "La validacion Veriff indicada no existe." },
+        { status: 404 }
+      );
+    }
+
+    if (veriffValidation) {
+      const validationDocument = sanitizeText(veriffValidation.clienteDocumento);
+      const sameDocument = validationDocument === clienteDocumento;
+      const sameSede = veriffValidation.sedeId === user.sedeId;
+      const sameAlly =
+        admin &&
+        user.aliadoAccesoId &&
+        veriffValidation.aliadoId === user.aliadoAccesoId;
+
+      if (!sameDocument) {
+        return NextResponse.json(
+          {
+            error:
+              "La validacion Veriff no corresponde a la cedula de este credito.",
+          },
+          { status: 409 }
+        );
+      }
+
+      if (!sameSede && !sameAlly) {
+        return NextResponse.json(
+          {
+            error:
+              "La validacion Veriff no pertenece a la sede o aliado de este credito.",
+          },
+          { status: 403 }
+        );
+      }
+    }
+
+    if (veriffRequired && !veriffSummary.configured) {
+      return NextResponse.json(
+        {
+          error:
+            "Veriff esta requerido, pero no esta configurado en el servidor.",
+        },
+        { status: 503 }
+      );
+    }
+
+    if (veriffRequired && !isVeriffApproved(veriffValidation)) {
+      return NextResponse.json(
+        {
+          error:
+            "Debes aprobar la validacion de identidad en Veriff antes de finalizar el credito.",
+          identityValidation: veriffValidation
+            ? {
+                id: veriffValidation.id,
+                status: veriffValidation.status,
+                decision: veriffValidation.decision,
+                lastError: veriffValidation.lastError,
+              }
+            : null,
+        },
+        { status: 409 }
+      );
+    }
+
     const allowPendingDeliveryClose =
       ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION ||
       documentCanSkipDeliveryVerification;
@@ -1367,12 +1448,14 @@ export async function POST(req: Request) {
             "Cedula frente",
             "Cedula respaldo",
             "Firma digital",
+            ...(veriffValidation ? ["Veriff"] : []),
           ],
           email: clienteCorreo,
           ip: contratoIp,
           firmadoAt: contratoAceptadoAt.toISOString(),
           documento: clienteDocumento,
         },
+        identidad: buildVeriffSnapshot(veriffValidation),
         selfie: {
           registrada: Boolean(contratoSelfieDataUrl),
           capturedAt: contratoSelfieCapturedAt,
@@ -1567,11 +1650,18 @@ export async function POST(req: Request) {
       }
     }
 
+    if (veriffValidation) {
+      veriffValidation =
+        (await linkVeriffValidationToCredit(veriffValidation.id, created.id)) ||
+        veriffValidation;
+    }
+
     return NextResponse.json({
       ok: true,
       warning: pendingDeliveryWarning,
       item: serializeCredit(created),
       deliveryStatus: effectiveDeliveryStatus,
+      identityValidation: buildVeriffSnapshot(veriffValidation),
       equality: equalitySummary
         ? {
             upload: equalityUpload,
