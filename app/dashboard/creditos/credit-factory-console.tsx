@@ -4615,6 +4615,9 @@ export default function CreditFactoryConsole({
     return true;
   };
 
+  const veriffMissingIdentityMessage =
+    "Veriff aprobo la identidad, pero esta respuesta no trae datos extraidos para autocompletar. Revisa que la integracion entregue Decision data con person/document.";
+
   const refreshVeriffValidation = async (
     validationId = veriffValidation?.id || null
   ) => {
@@ -4643,11 +4646,16 @@ export default function CreditFactoryConsole({
       const validation = result.data.validation || null;
       setVeriffValidation(validation);
       const filledClientData = applyVeriffIdentityData(validation);
+      setVeriffInlineMessage(
+        validation?.approved && !filledClientData
+          ? veriffMissingIdentityMessage
+          : ""
+      );
       setNotice({
         text: validation?.approved
           ? filledClientData
             ? "Veriff aprobo la identidad y completo el paso 1."
-            : "Veriff aprobo la identidad del cliente."
+            : "Veriff aprobo, pero no envio datos para autocompletar."
           : validation
             ? `${veriffStatusLabel(validation)}.`
             : "Veriff aun no tiene resultado para esta identidad.",
@@ -4734,11 +4742,16 @@ export default function CreditFactoryConsole({
         );
       }
       const filledClientData = applyVeriffIdentityData(validation);
+      setVeriffInlineMessage(
+        validation?.approved && !filledClientData
+          ? veriffMissingIdentityMessage
+          : ""
+      );
       setNotice({
         text: validation?.approved
           ? filledClientData
             ? "Veriff aprobo la identidad y completo el paso 1."
-            : "Veriff aprobo la identidad del cliente."
+            : "Veriff aprobo, pero no envio datos para autocompletar."
           : "QR Veriff generado. Escanealo y actualiza el estado cuando termine la validacion.",
         tone: validation?.approved ? "emerald" : "amber",
       });
@@ -7408,7 +7421,9 @@ export default function CreditFactoryConsole({
                         </h4>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
                           {veriffValidation?.approved
-                            ? "Identidad aprobada; los datos disponibles ya se copiaron al formulario."
+                            ? veriffValidation.identityData
+                              ? "Identidad aprobada; los datos disponibles ya se copiaron al formulario."
+                              : "Identidad aprobada, pero Veriff no envio datos para autocompletar."
                             : "Genera el QR, el cliente valida en Veriff y al aprobar se completa este paso."}
                         </p>
                       </div>

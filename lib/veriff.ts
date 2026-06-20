@@ -299,12 +299,60 @@ function rootAndVerification(payload: unknown) {
     payload && typeof payload === "object"
       ? (payload as Record<string, unknown>)
       : {};
+  const data =
+    root.data && typeof root.data === "object"
+      ? (root.data as Record<string, unknown>)
+      : {};
   const verification =
     root.verification && typeof root.verification === "object"
       ? (root.verification as Record<string, unknown>)
+      : data.verification && typeof data.verification === "object"
+        ? (data.verification as Record<string, unknown>)
       : root;
 
-  return { root, verification };
+  return { data, root, verification };
+}
+
+function asRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function findNestedRecord(
+  value: unknown,
+  predicate: (record: Record<string, unknown>) => boolean,
+  depth = 0
+): Record<string, unknown> | null {
+  if (depth > 6) {
+    return null;
+  }
+
+  const record = asRecord(value);
+
+  if (record) {
+    if (predicate(record)) {
+      return record;
+    }
+
+    for (const child of Object.values(record)) {
+      const found = findNestedRecord(child, predicate, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = findNestedRecord(child, predicate, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+
+  return null;
 }
 
 export function summarizeVeriffDecision(payload: unknown) {
@@ -329,11 +377,7 @@ export function summarizeVeriffDecision(payload: unknown) {
 }
 
 export function extractVeriffSessionUrl(payload: unknown) {
-  const { root, verification } = rootAndVerification(payload);
-  const data =
-    root.data && typeof root.data === "object"
-      ? (root.data as Record<string, unknown>)
-      : {};
+  const { data, root, verification } = rootAndVerification(payload);
   const url = cleanText(
     verification.url ||
       verification.sessionUrl ||
@@ -350,15 +394,32 @@ export function extractVeriffSessionUrl(payload: unknown) {
 }
 
 export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData | null {
-  const { verification } = rootAndVerification(payload);
+  const { data, root, verification } = rootAndVerification(payload);
   const person =
     verification.person && typeof verification.person === "object"
       ? (verification.person as Record<string, unknown>)
-      : {};
+      : data.person && typeof data.person === "object"
+        ? (data.person as Record<string, unknown>)
+        : findNestedRecord(root, (record) =>
+            Boolean(
+              record.firstName ||
+                record.fullName ||
+                record.idNumber ||
+                record.dateOfBirth ||
+                record.nameComponents
+            )
+          ) || {};
   const document =
     verification.document && typeof verification.document === "object"
       ? (verification.document as Record<string, unknown>)
-      : {};
+      : data.document && typeof data.document === "object"
+        ? (data.document as Record<string, unknown>)
+        : findNestedRecord(root, (record) =>
+            Boolean(
+              (record.number || record.documentNumber) &&
+                (record.type || record.country || record.validFrom || record.validUntil)
+            )
+          ) || {};
   const nameComponents =
     person.nameComponents && typeof person.nameComponents === "object"
       ? (person.nameComponents as Record<string, unknown>)
@@ -369,7 +430,8 @@ export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData 
   const fullName =
     cleanText(person.fullName) || [firstName, lastName].filter(Boolean).join(" ");
   const documentNumber =
-    cleanText(person.idNumber) || cleanText(document.number);
+    cleanText(person.idNumber) ||
+    cleanText(document.number || document.documentNumber);
   const identityData: VeriffIdentityData = {
     firstName: firstName || null,
     lastName: lastName || null,
