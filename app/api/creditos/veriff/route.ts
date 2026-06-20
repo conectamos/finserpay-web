@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { sanitizeText, toNumber } from "@/lib/credit-factory";
@@ -35,14 +36,12 @@ function parsePositiveId(value: unknown) {
 }
 
 function buildVendorData(params: {
-  documento: string;
   draftId: number | null;
   sedeId: number;
 }) {
-  const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
-  const documentPart = params.documento.replace(/\D/g, "").slice(-8) || "CLIENTE";
+  const suffix = randomUUID().slice(0, 8).toUpperCase();
   const draftPart = params.draftId ? `D${params.draftId}` : "SINBORRADOR";
-  return `FINSERPAY-${params.sedeId}-${draftPart}-${documentPart}-${suffix}`;
+  return `FINSERPAY-${params.sedeId}-${draftPart}-${suffix}`;
 }
 
 function veriffErrorResponse(error: unknown) {
@@ -109,17 +108,17 @@ export async function POST(request: Request) {
       .join(" ");
 
     const vendorData = buildVendorData({
-      documento: clienteDocumento,
       draftId,
       sedeId: user.sedeId,
     });
+    const endUserId = randomUUID();
     const validation = await createVeriffValidation({
       aliadoId: user.aliadoId || null,
       captureToken: sanitizeText(body.captureToken) || null,
       clienteDocumento,
       clienteNombre,
       draftId,
-      endUserId: vendorData,
+      endUserId,
       requestPayload: {
         clienteDocumento,
         clienteNombre,
@@ -139,7 +138,7 @@ export async function POST(request: Request) {
     const createPayload = await veriffCreateSession({
       documentNumber: clienteDocumento,
       documentType: sanitizeText(body.clienteTipoDocumento),
-      endUserId: vendorData,
+      endUserId,
       firstName: clientePrimerNombre,
       lastName: clientePrimerApellido,
       vendorData,

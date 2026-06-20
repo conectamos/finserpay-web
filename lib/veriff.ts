@@ -393,20 +393,21 @@ export async function veriffCreateSession(input: CreateSessionInput) {
   const firstName = cleanText(input.firstName);
   const lastName = cleanText(input.lastName);
   const documentNumber = cleanText(input.documentNumber);
+  const hasCompleteIdentity = Boolean(firstName && lastName && documentNumber);
   const verification: Record<string, unknown> = {
     endUserId: cleanText(input.endUserId) || undefined,
     vendorData: cleanText(input.vendorData) || undefined,
   };
 
-  if (firstName || lastName || documentNumber) {
+  if (hasCompleteIdentity) {
     verification.person = {
-      firstName: firstName || undefined,
-      lastName: lastName || undefined,
-      idNumber: documentNumber || undefined,
+      firstName,
+      lastName,
+      idNumber: documentNumber,
     };
   }
 
-  if (documentNumber) {
+  if (hasCompleteIdentity) {
     verification.document = {
       country: "CO",
       number: documentNumber,
