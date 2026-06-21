@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export type VeriffStatus =
   | "ABANDONED"
@@ -95,6 +95,22 @@ function getSecret() {
 
 function getApiKey() {
   return cleanText(process.env.VERIFF_API_KEY);
+}
+
+function maskApiKey(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  return value.length <= 6 ? "configurada" : `...${value.slice(-6)}`;
+}
+
+function fingerprintApiKey(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
 export function getVeriffConfig() {
@@ -268,6 +284,8 @@ export function getVeriffPublicSummary() {
   const config = getVeriffConfig();
 
   return {
+    apiKeyFingerprint: fingerprintApiKey(config.apiKey),
+    apiKeyHint: maskApiKey(config.apiKey),
     configured: isVeriffConfigured(),
     decisionsTrusted: config.decisionsTrusted,
     environment: config.environment,

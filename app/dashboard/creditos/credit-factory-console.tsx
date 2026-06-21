@@ -154,6 +154,8 @@ type VeriffValidationState = {
 };
 
 type VeriffConfigState = {
+  apiKeyFingerprint?: string | null;
+  apiKeyHint?: string | null;
   configured: boolean;
   mode: VeriffMode;
   environment?: "live" | "test";
@@ -8858,6 +8860,12 @@ export default function CreditFactoryConsole({
                                     : "Genera un QR para que Veriff capture y valide la identidad."
                                 : "Pendiente configurar variables de entorno."}
                             </p>
+                            {veriffConfig.configured ? (
+                              <p className="mt-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                                Entorno: {veriffConfig.environment || "-"} · API key:{" "}
+                                {veriffConfig.apiKeyHint || "-"}
+                              </p>
+                            ) : null}
                           </div>
                           <span
                             className={[
