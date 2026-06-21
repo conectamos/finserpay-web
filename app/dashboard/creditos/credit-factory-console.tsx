@@ -2146,6 +2146,7 @@ export default function CreditFactoryConsole({
   const [validatingDelivery, setValidatingDelivery] = useState(false);
   const mobileCaptureAppliedRef = useRef<string>("");
   const applyingVeriffIdentityRef = useRef(false);
+  const veriffClientFormUnlockedRef = useRef(false);
   const veriffAutoSessionRef = useRef(false);
   const [cedulaValidation, setCedulaValidation] = useState<CedulaValidationState>({
     status: "idle",
@@ -2978,6 +2979,9 @@ export default function CreditFactoryConsole({
       applyingVeriffIdentityRef.current = false;
       return;
     }
+    if (veriffClientFormUnlockedRef.current) {
+      return;
+    }
     setVeriffValidation(null);
     setVeriffQrDataUrl("");
     setVeriffInlineMessage("");
@@ -3031,7 +3035,10 @@ export default function CreditFactoryConsole({
     };
   }, [mobileCaptureSession?.mobileUrl]);
   useEffect(() => {
-    if (!veriffValidation?.sessionUrl) {
+    if (
+      !veriffValidation?.sessionUrl ||
+      veriffApprovalCanUnlockClient(veriffValidation, draftId)
+    ) {
       setVeriffQrDataUrl("");
       return;
     }
@@ -3061,7 +3068,7 @@ export default function CreditFactoryConsole({
     return () => {
       active = false;
     };
-  }, [veriffValidation?.sessionUrl]);
+  }, [draftId, veriffValidation]);
   useEffect(() => {
     if (
       wizardStep !== 3 ||
@@ -3139,6 +3146,12 @@ export default function CreditFactoryConsole({
   const contractEvidenceReady = identityStepReady;
   const stepContratoReady =
     identityStepReady && (!veriffRequired || veriffApproved);
+
+  useEffect(() => {
+    veriffClientFormUnlockedRef.current = Boolean(
+      veriffIdentityFlowEnabled && veriffApproved
+    );
+  }, [veriffApproved, veriffIdentityFlowEnabled]);
   const stepEquipoReady =
     Boolean(equipoMarca.trim()) &&
     Boolean(equipoModelo.trim()) &&
@@ -5688,6 +5701,7 @@ export default function CreditFactoryConsole({
     setAutorizacionDatosAceptada(false);
     setFirmaSeguroDraftProcess(null);
     setDeliveryValidation(null);
+    veriffClientFormUnlockedRef.current = false;
     setVeriffValidation(null);
     setVeriffQrDataUrl("");
     setVeriffInlineMessage("");
@@ -6787,6 +6801,7 @@ export default function CreditFactoryConsole({
     setAutorizacionDatosAceptada(checked("autorizacionDatosAceptada"));
     setFirmaSeguroDraftProcess(null);
     setDeliveryValidation(null);
+    veriffClientFormUnlockedRef.current = false;
     setVeriffValidation(null);
     const savedVeriffValidationId = Number(value("veriffValidationId") || 0);
     if (Number.isInteger(savedVeriffValidationId) && savedVeriffValidationId > 0) {
@@ -7990,50 +8005,57 @@ export default function CreditFactoryConsole({
                       </span>
                     </div>
 
-                    <div className="mt-4 grid gap-4 lg:grid-cols-[auto_1fr] lg:items-center">
-                      {veriffQrDataUrl ? (
-                        <img
-                          src={veriffQrDataUrl}
-                          alt="QR de validacion de identidad"
-                          className="h-64 w-64 rounded-2xl border border-white bg-white p-2 shadow-sm"
-                        />
-                      ) : (
-                        <div className="grid h-64 w-64 place-items-center rounded-2xl border border-dashed border-teal-200 bg-white text-center text-xs font-semibold text-teal-700">
-                          {veriffSubmitting ? "Preparando QR..." : "QR de validacion"}
-                        </div>
-                      )}
-                      <div>
-                        {veriffValidation?.sessionUrl ? (
-                          <a
-                            href={veriffValidation.sessionUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-3 inline-flex rounded-2xl border border-teal-200 bg-white px-4 py-2 text-xs font-semibold text-teal-700 transition hover:bg-teal-50"
-                          >
-                            Abrir enlace
-                          </a>
-                        ) : null}
-                        {!veriffApproved &&
-                        (veriffHasFinalDecision || Boolean(veriffInlineMessage)) ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              veriffAutoSessionRef.current = true;
-                              void validateIdentityWithVeriff();
-                            }}
-                            disabled={veriffSubmitting || !veriffConfig.configured}
-                            className="mt-3 rounded-2xl bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
-                          >
-                            {veriffSubmitting ? "Preparando QR..." : "Reintentar validacion"}
-                          </button>
-                        ) : null}
-                        {veriffInlineMessage ? (
-                          <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold leading-5 text-red-700">
-                            {veriffInlineMessage}
-                          </p>
-                        ) : null}
+                    {veriffApproved ? (
+                      <div className="mt-4 rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-700">
+                        Identidad aprobada. Continua completando los datos del cliente.
                       </div>
-                    </div>
+                    ) : (
+                      <div className="mt-4 grid gap-4 lg:grid-cols-[auto_1fr] lg:items-center">
+                        {veriffQrDataUrl ? (
+                          <img
+                            src={veriffQrDataUrl}
+                            alt="QR de validacion de identidad"
+                            className="h-64 w-64 rounded-2xl border border-white bg-white p-2 shadow-sm"
+                          />
+                        ) : (
+                          <div className="grid h-64 w-64 place-items-center rounded-2xl border border-dashed border-teal-200 bg-white text-center text-xs font-semibold text-teal-700">
+                            {veriffSubmitting ? "Preparando QR..." : "QR de validacion"}
+                          </div>
+                        )}
+                        <div>
+                          {veriffValidation?.sessionUrl ? (
+                            <a
+                              href={veriffValidation.sessionUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-3 inline-flex rounded-2xl border border-teal-200 bg-white px-4 py-2 text-xs font-semibold text-teal-700 transition hover:bg-teal-50"
+                            >
+                              Abrir enlace
+                            </a>
+                          ) : null}
+                          {veriffHasFinalDecision || Boolean(veriffInlineMessage) ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                veriffAutoSessionRef.current = true;
+                                void validateIdentityWithVeriff();
+                              }}
+                              disabled={veriffSubmitting || !veriffConfig.configured}
+                              className="mt-3 rounded-2xl bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                            >
+                              {veriffSubmitting
+                                ? "Preparando QR..."
+                                : "Reintentar validacion"}
+                            </button>
+                          ) : null}
+                          {veriffInlineMessage ? (
+                            <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold leading-5 text-red-700">
+                              {veriffInlineMessage}
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {clienteFormUnlocked ? (
