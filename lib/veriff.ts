@@ -462,7 +462,9 @@ function normalizeRiskLabels(value: unknown): VeriffRiskLabel[] {
     .map((item) => {
       if (typeof item === "string") {
         const label = cleanText(item);
-        return label ? { category: null, label, sessionIds: [] } : null;
+        return label && !riskTextIsNegative(label)
+          ? { category: null, label, sessionIds: [] }
+          : null;
       }
 
       const record = asRecord(item);
@@ -475,6 +477,25 @@ function normalizeRiskLabels(value: unknown): VeriffRiskLabel[] {
       const sessionIds = Array.isArray(record.sessionIds)
         ? record.sessionIds.map(cleanText).filter(Boolean)
         : [];
+      const signalValues = [
+        record.active,
+        record.detected,
+        record.found,
+        record.hit,
+        record.match,
+        record.matched,
+        record.result,
+        record.status,
+        record.value,
+      ].filter((signal) => signal !== undefined);
+
+      if (signalValues.length && !signalValues.some(riskSignalIsPositive)) {
+        return null;
+      }
+
+      if (!signalValues.length && Array.isArray(record.sessionIds) && !sessionIds.length) {
+        return null;
+      }
 
       return {
         category: cleanText(record.category) || null,
@@ -483,6 +504,90 @@ function normalizeRiskLabels(value: unknown): VeriffRiskLabel[] {
       };
     })
     .filter((item): item is VeriffRiskLabel => Boolean(item));
+}
+
+function normalizeRiskText(value: string) {
+  return value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+}
+
+function riskTextIsNegative(value: string) {
+  const normalized = normalizeRiskText(value);
+  const negative = new Set([
+    "0",
+    "APPROVED",
+    "CLEAR",
+    "CLEARED",
+    "FALSE",
+    "LOW",
+    "LOW_RISK",
+    "NO",
+    "NO_HIT",
+    "NO_MATCH",
+    "NO_RISK",
+    "NONE",
+    "NORMAL",
+    "NOT_APPLICABLE",
+    "NOT_FOUND",
+    "NULL",
+    "OK",
+    "PASSED",
+    "SUCCESS",
+  ]);
+
+  return !normalized || negative.has(normalized);
+}
+
+function riskTextIsPositive(value: string) {
+  const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+
+  if (riskTextIsNegative(value)) {
+    return false;
+  }
+
+  const positive = new Set([
+    "1",
+    "DETECTED",
+    "FOUND",
+    "HIGH",
+    "HIGH_RISK",
+    "HIT",
+    "HITS",
+    "MATCH",
+    "MATCHED",
+    "MEDIUM_RISK",
+    "PRESENT",
+    "POSITIVE",
+    "TRUE",
+    "YES",
+  ]);
+
+  if (positive.has(normalized)) {
+    return true;
+  }
+
+  return /(^|_)(HIT|MATCH|MATCHED|FOUND|DETECTED|PRESENT)(_|$)/.test(normalized);
+}
+
+function riskObjectKeyCanSignal(key: string) {
+  const normalized = key.trim().toUpperCase();
+
+  if (
+    [
+      "CATEGORY",
+      "CODE",
+      "DESCRIPTION",
+      "ID",
+      "LABEL",
+      "NAME",
+      "TYPE",
+    ].includes(normalized)
+  ) {
+    return false;
+  }
+
+  return /(ACTIVE|DETECTED|FOUND|HIT|MATCH|PEP|RESULT|RISK|SANCTION|SCREEN|STATUS|VALUE)/.test(
+    normalized
+  );
 }
 
 function riskSignalIsPositive(value: unknown): boolean {
@@ -499,30 +604,7 @@ function riskSignalIsPositive(value: unknown): boolean {
   }
 
   if (typeof value === "string") {
-    const normalized = value.trim().toUpperCase();
-    if (!normalized) {
-      return false;
-    }
-    if (
-      [
-        "0",
-        "FALSE",
-        "NO",
-        "NONE",
-        "NULL",
-        "CLEAR",
-        "CLEARED",
-        "NOT_FOUND",
-        "NO_MATCH",
-        "NO HIT",
-        "NO_HIT",
-        "PASSED",
-        "SUCCESS",
-      ].includes(normalized)
-    ) {
-      return false;
-    }
-    return true;
+    return riskTextIsPositive(value);
   }
 
   if (Array.isArray(value)) {
@@ -534,7 +616,9 @@ function riskSignalIsPositive(value: unknown): boolean {
     return false;
   }
 
-  return Object.values(record).some(riskSignalIsPositive);
+  return Object.entries(record).some(([key, item]) => {
+    return riskObjectKeyCanSignal(key) && riskSignalIsPositive(item);
+  });
 }
 
 function findFraudRiskLevel(payload: unknown) {
