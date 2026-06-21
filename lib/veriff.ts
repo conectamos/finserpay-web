@@ -82,6 +82,14 @@ function cleanText(value: unknown) {
 }
 
 function cleanDate(value: unknown) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  }
+
+  if (value && typeof value === "object") {
+    return null;
+  }
+
   const raw = cleanText(value);
   if (!raw) {
     return null;
@@ -92,9 +100,14 @@ function cleanDate(value: unknown) {
     return isoMatch[1];
   }
 
-  const slashMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (slashMatch) {
-    return `${slashMatch[3]}-${slashMatch[2]}-${slashMatch[1]}`;
+  const yearFirstMatch = raw.match(/^(\d{4})[/-](\d{2})[/-](\d{2})$/);
+  if (yearFirstMatch) {
+    return `${yearFirstMatch[1]}-${yearFirstMatch[2]}-${yearFirstMatch[3]}`;
+  }
+
+  const dayFirstMatch = raw.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/);
+  if (dayFirstMatch) {
+    return `${dayFirstMatch[3]}-${dayFirstMatch[2]}-${dayFirstMatch[1]}`;
   }
 
   return raw;
@@ -115,6 +128,41 @@ function pickFirstDate(...values: unknown[]) {
 
   return null;
 }
+
+function normalizeVeriffFieldKey(value: unknown) {
+  return cleanText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toLowerCase();
+}
+
+const DOCUMENT_ISSUE_DATE_KEYS = new Set(
+  [
+    "dateOfExpedition",
+    "dateOfFirstIssue",
+    "dateOfIssue",
+    "dateOfIssuance",
+    "documentDateOfIssue",
+    "documentExpeditionDate",
+    "documentIssueDate",
+    "documentIssuedDate",
+    "expeditionDate",
+    "fechaDeExpedicion",
+    "fechaDeExpedicionDocumento",
+    "fechaExpedicion",
+    "fechaExpedicionCc",
+    "fechaExpedicionDocumento",
+    "firstIssue",
+    "firstIssueDate",
+    "issueDate",
+    "issuedAt",
+    "issuedDate",
+    "issuingDate",
+    "validFrom",
+    "validFromDate",
+  ].map(normalizeVeriffFieldKey)
+);
 
 function getSecret() {
   return cleanText(process.env.VERIFF_SHARED_SECRET);
@@ -451,6 +499,137 @@ function firstNestedValue(
   }
 
   return undefined;
+}
+
+function dateFromVeriffValue(value: unknown) {
+  const direct = cleanDate(value);
+  if (direct) {
+    return direct;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  return pickFirstDate(
+    record.value,
+    record.rawValue,
+    record.normalizedValue,
+    record.text,
+    record.date,
+    record.answer,
+    record.content
+  );
+}
+
+function pickDateFromKeyedRecord(
+  record: Record<string, unknown>,
+  keys: Set<string>
+) {
+  for (const [key, value] of Object.entries(record)) {
+    if (keys.has(normalizeVeriffFieldKey(key))) {
+      const date = dateFromVeriffValue(value);
+      if (date) {
+        return date;
+      }
+    }
+  }
+
+  const fieldName = cleanText(
+    record.key ||
+      record.name ||
+      record.field ||
+      record.fieldName ||
+      record.label ||
+      record.type ||
+      record.code ||
+      record.id
+  );
+
+  if (keys.has(normalizeVeriffFieldKey(fieldName))) {
+    return pickFirstDate(
+      record.value,
+      record.rawValue,
+      record.normalizedValue,
+      record.text,
+      record.date,
+      record.answer,
+      record.content
+    );
+  }
+
+  return null;
+}
+
+function findNestedDateByKeys(
+  value: unknown,
+  keys: Set<string>,
+  depth = 0
+): string | null {
+  if (depth > 6) {
+    return null;
+  }
+
+  const record = asRecord(value);
+
+  if (record) {
+    const keyedDate = pickDateFromKeyedRecord(record, keys);
+    if (keyedDate) {
+      return keyedDate;
+    }
+
+    for (const child of Object.values(record)) {
+      const found = findNestedDateByKeys(child, keys, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = findNestedDateByKeys(child, keys, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractDocumentIssueDate(
+  document: Record<string, unknown>,
+  root: Record<string, unknown>
+) {
+  return (
+    pickFirstDate(
+      document.issueDate,
+      document.dateOfIssue,
+      document.dateOfIssuance,
+      document.issuedAt,
+      document.issuedDate,
+      document.issuingDate,
+      document.firstIssue,
+      document.firstIssueDate,
+      document.dateOfFirstIssue,
+      document.validFrom,
+      document.validFromDate,
+      document.documentIssueDate,
+      document.documentIssuedDate,
+      document.documentDateOfIssue,
+      document.dateOfExpedition,
+      document.expeditionDate,
+      document.documentExpeditionDate,
+      document.fechaExpedicion,
+      document.fechaDeExpedicion,
+      document.fechaExpedicionDocumento,
+      document.fechaDeExpedicionDocumento
+    ) ||
+    findNestedDateByKeys(document, DOCUMENT_ISSUE_DATE_KEYS) ||
+    findNestedDateByKeys(root, DOCUMENT_ISSUE_DATE_KEYS)
+  );
 }
 
 function normalizeRiskLabels(value: unknown): VeriffRiskLabel[] {
@@ -805,13 +984,7 @@ export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData 
     documentType: cleanText(document.type) || null,
     documentCountry: cleanText(document.country) || null,
     dateOfBirth: cleanDate(person.dateOfBirth),
-    issueDate: pickFirstDate(
-      document.issueDate,
-      document.dateOfIssue,
-      document.issuedAt,
-      document.issuedDate,
-      document.firstIssue
-    ),
+    issueDate: extractDocumentIssueDate(document, root),
     validUntil: cleanDate(document.validUntil),
     gender: cleanText(person.gender) || null,
     nationality: cleanText(person.nationality || person.citizenship) || null,
