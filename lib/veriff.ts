@@ -493,7 +493,7 @@ function normalizeRiskLabels(value: unknown): VeriffRiskLabel[] {
         return null;
       }
 
-      if (!signalValues.length && Array.isArray(record.sessionIds) && !sessionIds.length) {
+      if (!signalValues.length && !sessionIds.length) {
         return null;
       }
 
