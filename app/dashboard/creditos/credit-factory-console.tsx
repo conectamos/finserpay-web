@@ -1929,12 +1929,17 @@ export default function CreditFactoryConsole({
   const simulatorMode = !paymentsView && !lookupView && entryMode === "simulator";
   const lookupMode = (lookupView && canViewSavedCredits) || deliveryMode;
   const clientLookupMode = lookupView && canViewSavedCredits;
-  const adminFactoryAssistMode = canAdmin && createClientMode;
-  const canSearchCreditsInCurrentView = paymentsView || lookupMode || adminFactoryAssistMode;
   const canAdminMoveFreelyInFactory = canAdmin && !paymentsView && !lookupMode;
-  const showSearchSection = paymentsView || lookupMode || adminFactoryAssistMode;
+  const adminFactoryAssistAvailable = canAdmin && createClientMode;
   const pathname = usePathname();
   const normalizedInitialSearch = initialSearch.trim();
+  const [showAdminAssist, setShowAdminAssist] = useState(
+    adminFactoryAssistAvailable &&
+      (Boolean(normalizedInitialSearch) || Boolean(initialDraftId))
+  );
+  const adminFactoryAssistMode = adminFactoryAssistAvailable && showAdminAssist;
+  const canSearchCreditsInCurrentView = paymentsView || lookupMode || adminFactoryAssistMode;
+  const showSearchSection = paymentsView || lookupMode || adminFactoryAssistMode;
   const [credits, setCredits] = useState<CreditItem[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -3296,7 +3301,7 @@ export default function CreditFactoryConsole({
     : lookupMode
       ? "Buscar cliente"
     : createClientMode
-      ? `Hola ${initialSeller?.nombre?.split(" ")[0] || "asesor"}, iniciemos una venta`
+      ? "Nueva venta"
       : "Genera, inscribe y valida entrega";
   const heroDescription = paymentsView
     ? "Esta vista queda enfocada en buscar clientes, revisar saldo pendiente, registrar abonos y consultar historial de pagos sin mezclar la creacion del credito."
@@ -3307,7 +3312,7 @@ export default function CreditFactoryConsole({
     : lookupMode
       ? "Consulta por cedula, telefono, folio, IMEI o nombre y abre el expediente del credito seleccionado."
     : createClientMode
-      ? "Captura cliente, equipo, evidencias, firma y entrega desde un recorrido simple."
+      ? `${initialSeller?.nombre || "Asesor"} | ${initialSession.sedeNombre}`
       : "Genera el credito, inscribe el equipo y confirma si el dispositivo se puede entregar.";
   const searchDescription = paymentsView
     ? "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid para ubicar el caso y recibir el pago de las cuotas desde esta vista separada."
@@ -4538,40 +4543,38 @@ export default function CreditFactoryConsole({
 
   const veriffStatusLabel = (validation: VeriffValidationState | null) => {
     if (!validation) {
-      return veriffConfig.configured
-        ? "Pendiente Veriff"
-        : "Veriff sin configurar";
+      return veriffConfig.configured ? "Pendiente" : "Sin configurar";
     }
 
     if (validation.approved) {
-      return "Aprobada por Veriff";
+      return "Aprobada";
     }
 
     if (validation.technicalApproved && !validation.trusted) {
-      return "Aprobada solo en prueba";
+      return "Prueba";
     }
 
     if (validation.status === "DECLINED") {
-      return "Rechazada por Veriff";
+      return "Rechazada";
     }
 
     if (validation.status === "EXPIRED" || validation.status === "ABANDONED") {
-      return "Sesion Veriff vencida";
+      return "Vencida";
     }
 
     if (validation.status === "RESUBMISSION") {
-      return "Requiere nueva captura";
+      return "Nueva captura";
     }
 
     if (validation.status === "ERROR") {
-      return "Error en Veriff";
+      return "Error";
     }
 
     if (validation.sessionUrl) {
-      return "QR Veriff generado";
+      return "QR listo";
     }
 
-    return "En revision Veriff";
+    return "En revision";
   };
 
   const normalizeVeriffDocumentType = (value: string | null | undefined) => {
@@ -4650,7 +4653,7 @@ export default function CreditFactoryConsole({
   };
 
   const veriffMissingIdentityMessage =
-    "Veriff aprobo la identidad, pero esta respuesta no trae datos extraidos para autocompletar. Revisa que la integracion entregue Decision data con person/document.";
+    "Aprobada sin datos para autocompletar.";
 
   const veriffMediaLabel = (item: VeriffMediaState) => {
     const context = `${item.context || item.name}`.toLowerCase();
@@ -4746,13 +4749,13 @@ export default function CreditFactoryConsole({
       setNotice({
         text: validation?.approved
           ? filledClientData
-            ? "Veriff aprobo la identidad y completo el paso 1."
-            : "Veriff aprobo, pero no envio datos para autocompletar."
+            ? "Identidad aprobada. Datos copiados."
+            : "Identidad aprobada sin datos."
           : isTestApproval
-            ? "Veriff devolvio una aprobacion de prueba. No cuenta como identidad real ni autocompleta datos."
+            ? "Aprobacion de prueba."
             : validation
               ? `${veriffStatusLabel(validation)}.`
-              : "Veriff aun no tiene resultado para esta identidad.",
+              : "Sin resultado Veriff.",
         tone: validation?.approved
           ? "emerald"
           : validation?.status === "DECLINED" || validation?.status === "ERROR"
@@ -4853,9 +4856,9 @@ export default function CreditFactoryConsole({
       setNotice({
         text: validation?.approved
           ? filledClientData
-            ? "Veriff aprobo la identidad y completo el paso 1."
-            : "Veriff aprobo, pero no envio datos para autocompletar."
-          : "QR Veriff generado. Escanealo y actualiza el estado cuando termine la validacion.",
+            ? "Identidad aprobada. Datos copiados."
+            : "Identidad aprobada sin datos."
+          : "QR Veriff listo.",
         tone: validation?.approved ? "emerald" : "amber",
       });
 
@@ -6995,9 +6998,12 @@ export default function CreditFactoryConsole({
                     : "flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between"
                 }
               >
-                <div className={lookupMode ? "max-w-2xl" : "max-w-3xl"}>
-                  <FinserBrand compact={lookupMode} showTagline={!lookupMode} />
-                  {!lookupMode ? (
+                <div className={lookupMode || createClientMode ? "max-w-2xl" : "max-w-3xl"}>
+                  <FinserBrand
+                    compact={lookupMode || createClientMode}
+                    showTagline={!lookupMode && !createClientMode}
+                  />
+                  {!lookupMode && !createClientMode ? (
                     <div className="mt-4 inline-flex rounded-full border border-[#c7dbe0] bg-[#f7fbfa] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#145a5a]">
                       {heroEyebrow}
                     </div>
@@ -7006,12 +7012,20 @@ export default function CreditFactoryConsole({
                     className={
                       lookupMode
                         ? "mt-3 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl"
-                        : "mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl"
+                        : createClientMode
+                          ? "mt-3 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl"
+                          : "mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl"
                     }
                   >
                     {heroTitle}
                   </h1>
-                  <p className={lookupMode ? "mt-1 max-w-xl text-sm leading-6 text-slate-500" : "mt-2 max-w-2xl text-sm leading-6 text-slate-600"}>
+                  <p
+                    className={
+                      lookupMode || createClientMode
+                        ? "mt-1 max-w-xl text-xs font-semibold leading-5 text-slate-500"
+                        : "mt-2 max-w-2xl text-sm leading-6 text-slate-600"
+                    }
+                  >
                     {heroDescription}
                   </p>
                 </div>
@@ -7022,9 +7036,9 @@ export default function CreditFactoryConsole({
                       href="/dashboard"
                       className={lookupMode ? "inline-flex justify-center rounded-[14px] border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50" : "inline-flex min-w-[160px] justify-center rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"}
                     >
-                      {lookupMode ? "Dashboard" : "Volver al dashboard"}
+                      {lookupMode || createClientMode ? "Dashboard" : "Volver al dashboard"}
                     </Link>
-                    {canViewSavedCredits && !lookupMode ? (
+                    {canViewSavedCredits && !lookupMode && !createClientMode ? (
                         <Link
                           href="/dashboard/integraciones"
                           className="inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"
@@ -7043,9 +7057,32 @@ export default function CreditFactoryConsole({
                           }
                           className={lookupMode ? "inline-flex justify-center rounded-[14px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]" : "inline-flex min-w-[160px] justify-center rounded-[16px] border border-[#c7dbe0] bg-[#f7fbfa] px-4 py-2.5 text-sm font-semibold text-[#145a5a] transition hover:bg-[#eef8f6]"}
                         >
-                          {paymentsView ? "Ir a crear cliente" : "Ir a abonos"}
+                          {paymentsView ? "Crear cliente" : createClientMode ? "Abonos" : "Ir a abonos"}
                         </Link>
                     )}
+                    {adminFactoryAssistAvailable ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAdminAssist((value) => !value);
+                          if (showAdminAssist) {
+                            setDraftSearchResults([]);
+                            setCredits([]);
+                            setActiveSearch("");
+                            setSelectedId(null);
+                          }
+                        }}
+                        aria-expanded={showAdminAssist}
+                        className={[
+                          "inline-flex min-w-[160px] justify-center rounded-[16px] border px-4 py-2.5 text-sm font-semibold transition",
+                          showAdminAssist
+                            ? "border-[#145a5a] bg-[#123f3e] text-white hover:bg-[#0f3433]"
+                            : "border-[#c7dbe0] bg-white text-[#145a5a] hover:bg-[#eef8f6]",
+                        ].join(" ")}
+                      >
+                        {showAdminAssist ? "Cerrar asistencia" : "Asistencia"}
+                      </button>
+                    ) : null}
                   </div>
 
                   {lookupMode ? (
@@ -7053,7 +7090,7 @@ export default function CreditFactoryConsole({
                       {initialSession.sedeNombre} | {initialSession.rolNombre} | {accessProfileLabel}
                       {initialSeller ? ` | ${initialSeller.nombre}` : ""}
                     </p>
-                  ) : (
+                  ) : createClientMode ? null : (
                   <div className="flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                     <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
                       {initialSession.sedeNombre}
@@ -7097,7 +7134,9 @@ export default function CreditFactoryConsole({
                 ? "fp-surface mt-6 rounded-[28px] p-5"
               : clientLookupMode
                 ? "fp-client-lookup-search"
-              : "fp-surface mt-6 rounded-[28px] p-6"
+              : adminFactoryAssistMode
+                ? "fp-surface mt-4 rounded-[24px] p-4"
+                : "fp-surface mt-6 rounded-[28px] p-6"
           }
         >
           {!clientLookupMode ? (
@@ -7117,7 +7156,13 @@ export default function CreditFactoryConsole({
           <h2
             className={[
               "font-black tracking-tight text-slate-950",
-              paymentsView ? "mt-3 text-2xl" : clientLookupMode ? "text-sm uppercase tracking-[0.16em] text-[#8a6a24]" : "mt-4 text-3xl",
+              paymentsView
+                ? "mt-3 text-2xl"
+                : clientLookupMode
+                  ? "text-sm uppercase tracking-[0.16em] text-[#8a6a24]"
+                  : adminFactoryAssistMode
+                    ? "mt-3 text-xl"
+                    : "mt-4 text-3xl",
             ].join(" ")}
           >
             {paymentsView
@@ -7125,25 +7170,25 @@ export default function CreditFactoryConsole({
               : deliveryMode
                 ? "Busca el credito"
                 : adminFactoryAssistMode
-                  ? "Busca un caso para apoyar"
+                  ? "Buscar caso"
                 : clientLookupMode
                   ? "Buscar expediente"
                 : "Encuentra al cliente y su credito"}
           </h2>
-          <p
-            className={[
-              "max-w-3xl text-sm leading-6 text-slate-600",
-              paymentsView || clientLookupMode ? "mt-1" : "mt-3",
-            ].join(" ")}
-          >
-            {paymentsView
-              ? "Cedula, telefono, folio o IMEI."
-              : deliveryMode
-                ? "Ingresa cedula o IMEI para saber si el equipo se puede entregar."
-                : adminFactoryAssistMode
-                  ? "Busca por cedula o IMEI para abrir un borrador en curso o el expediente ya guardado."
-                : searchDescription}
-          </p>
+          {adminFactoryAssistMode ? null : (
+            <p
+              className={[
+                "max-w-3xl text-sm leading-6 text-slate-600",
+                paymentsView || clientLookupMode ? "mt-1" : "mt-3",
+              ].join(" ")}
+            >
+              {paymentsView
+                ? "Cedula, telefono, folio o IMEI."
+                : deliveryMode
+                  ? "Ingresa cedula o IMEI para saber si el equipo se puede entregar."
+                  : searchDescription}
+            </p>
+          )}
 
           <div
             className={
@@ -7151,7 +7196,9 @@ export default function CreditFactoryConsole({
                 ? "mt-5 flex flex-col gap-3 lg:flex-row"
                 : clientLookupMode
                   ? "fp-client-lookup-command mt-4 flex flex-col gap-2 lg:flex-row"
-                : "mt-6 flex flex-col gap-3 lg:flex-row"
+                : adminFactoryAssistMode
+                  ? "mt-4 flex flex-col gap-3 lg:flex-row"
+                  : "mt-6 flex flex-col gap-3 lg:flex-row"
             }
           >
             <input
@@ -7524,20 +7571,20 @@ export default function CreditFactoryConsole({
                           Veriff
                         </p>
                         <h4 className="mt-2 text-lg font-black text-slate-950">
-                          Validacion para autocompletar datos
+                          Validacion Veriff
                         </h4>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
                           {veriffValidation?.approved
                             ? veriffValidation.identityData
-                              ? "Identidad aprobada; los datos disponibles ya se copiaron al formulario."
-                              : "Identidad aprobada, pero Veriff no envio datos para autocompletar."
+                              ? "Datos copiados al formulario."
+                              : "Aprobada sin datos."
                             : veriffValidation?.technicalApproved &&
                                 veriffValidation.trusted === false
-                              ? "Aprobacion de prueba; no valida identidad real ni autocompleta datos confiables."
+                              ? "Aprobacion de prueba."
                               : veriffConfig.configured &&
                                   veriffConfig.decisionsTrusted === false
-                                ? "Modo prueba: genera el QR para revisar el flujo; no autocompleta datos reales."
-                              : "Genera el QR, el cliente valida en Veriff y al aprobar se completa este paso."}
+                                ? "Modo prueba."
+                              : "Genera el QR y actualiza estado."}
                         </p>
                       </div>
                       <span
@@ -7901,13 +7948,13 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
                   ) : (
-                    <div className="mt-5 rounded-[22px] border border-amber-200 bg-amber-50 px-5 py-5">
-                      <p className="text-base font-black tracking-tight text-slate-950">
-                        Datos del cliente pendientes de Veriff
+                    <div className="mt-4 flex flex-col gap-2 rounded-[18px] border border-amber-200 bg-amber-50/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-sm font-black text-slate-950">
+                        Formulario bloqueado
                       </p>
-                      <p className="mt-2 text-sm leading-6 text-amber-800">
-                        El formulario se habilita cuando Veriff apruebe la identidad real del cliente. Si la integracion esta en modo prueba, no se autocompleta ni se toma como dato confiable.
-                      </p>
+                      <span className="w-fit rounded-full border border-amber-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                        Esperando Veriff
+                      </span>
                     </div>
                   )}
                 </div>
