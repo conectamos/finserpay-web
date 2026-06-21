@@ -11,6 +11,7 @@ import {
 import {
   getVeriffPublicSummary,
   veriffGetDecision,
+  veriffGetPerson,
   VeriffApiError,
 } from "@/lib/veriff";
 
@@ -89,6 +90,23 @@ export async function GET(
             decisionPayload,
             "decisionPayload"
           )) || current;
+        try {
+          const personPayload = await veriffGetPerson(current.veriffSessionId);
+          row =
+            (await updateVeriffValidation(row.id, {
+              decisionPayload: {
+                decisionPayload,
+                personPayload,
+              },
+            })) || row;
+        } catch (personError) {
+          if (
+            !(personError instanceof VeriffApiError) ||
+            ![404, 409].includes(personError.status)
+          ) {
+            throw personError;
+          }
+        }
       } catch (error) {
         if (error instanceof VeriffApiError && [404, 409].includes(error.status)) {
           row =

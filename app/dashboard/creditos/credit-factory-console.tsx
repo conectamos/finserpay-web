@@ -3011,6 +3011,9 @@ export default function CreditFactoryConsole({
   const veriffRequired =
     veriffConfig.configured && veriffConfig.mode === "required";
   const veriffApproved = Boolean(veriffValidation?.approved);
+  const veriffIdentityFlowEnabled =
+    veriffConfig.configured && veriffConfig.mode !== "off";
+  const clienteFormUnlocked = !veriffIdentityFlowEnabled || veriffApproved;
   const identityStepReady = identityEvidenceReady || veriffApproved;
   const contractEvidenceReady = identityStepReady;
   const stepContratoReady =
@@ -4821,7 +4824,7 @@ export default function CreditFactoryConsole({
     if (wizardStep === 3 && !stepContratoReady) {
       setNotice({
         text:
-          veriffRequired && !veriffApproved
+          veriffIdentityFlowEnabled && !veriffApproved
             ? "Veriff debe aprobar la identidad antes de avanzar a los contratos."
             : "Completa selfie y cedula por ambos lados antes de avanzar a los contratos.",
         tone: "amber",
@@ -7469,10 +7472,10 @@ export default function CreditFactoryConsole({
                         <img
                           src={veriffQrDataUrl}
                           alt="QR Veriff"
-                          className="h-40 w-40 rounded-2xl border border-white bg-white p-2 shadow-sm"
+                          className="h-64 w-64 rounded-2xl border border-white bg-white p-2 shadow-sm"
                         />
                       ) : (
-                        <div className="grid h-40 w-40 place-items-center rounded-2xl border border-dashed border-teal-200 bg-white text-center text-xs font-semibold text-teal-700">
+                        <div className="grid h-64 w-64 place-items-center rounded-2xl border border-dashed border-teal-200 bg-white text-center text-xs font-semibold text-teal-700">
                           QR Veriff
                         </div>
                       )}
@@ -7518,6 +7521,7 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
 
+                  {clienteFormUnlocked ? (
                   <div className="mt-5 rounded-[22px] border border-[#dbe8e6] bg-[#f8fbfa] p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
@@ -7804,6 +7808,16 @@ export default function CreditFactoryConsole({
                       </div>
                     </div>
                   </div>
+                  ) : (
+                    <div className="mt-5 rounded-[22px] border border-amber-200 bg-amber-50 px-5 py-5">
+                      <p className="text-base font-black tracking-tight text-slate-950">
+                        Datos del cliente pendientes de Veriff
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-amber-800">
+                        El formulario se habilita cuando Veriff apruebe la identidad real del cliente. Si la integracion esta en modo prueba, no se autocompleta ni se toma como dato confiable.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -8553,7 +8567,9 @@ export default function CreditFactoryConsole({
                         Identidad del cliente
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Aqui validas la identidad con Veriff; cuando apruebe, el paso 1 se completa con los datos extraidos.
+                        {veriffIdentityFlowEnabled
+                          ? "Aqui validas la identidad con Veriff; si aprueba, no debes capturar cedula ni selfie otra vez."
+                          : "Captura selfie y cedula por ambos lados para anexar la evidencia interna."}
                       </p>
                     </div>
                     <div
@@ -8566,12 +8582,13 @@ export default function CreditFactoryConsole({
                     >
                       {stepContratoReady
                         ? "Identidad validada"
-                        : veriffRequired && identityStepReady
+                        : veriffIdentityFlowEnabled && !veriffApproved
                           ? "Falta Veriff"
                           : "Faltan validaciones"}
                     </div>
                   </div>
 
+                  {!veriffIdentityFlowEnabled ? (
                   <div className="mt-6 rounded-[28px] border border-[#d9e6ea] bg-[#f8fdff] px-5 py-5">
                     <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
                       <div className="max-w-2xl">
@@ -8661,8 +8678,17 @@ export default function CreditFactoryConsole({
                       </div>
                     </div>
                   </div>
+                  ) : null}
 
-                  <div className="mt-6 grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+                  <div
+                    className={[
+                      "mt-6 grid gap-4",
+                      veriffIdentityFlowEnabled
+                        ? "xl:grid-cols-1"
+                        : "xl:grid-cols-[1.05fr_0.95fr]",
+                    ].join(" ")}
+                  >
+                    {!veriffIdentityFlowEnabled ? (
                     <div className="space-y-4">
                       <EvidenceCaptureCard
                         title="Selfie del cliente"
@@ -8761,8 +8787,15 @@ export default function CreditFactoryConsole({
                       </div>
 
                     </div>
+                    ) : null}
 
-                    <div className="space-y-4">
+                    <div
+                      className={
+                        veriffIdentityFlowEnabled
+                          ? "grid gap-4 xl:grid-cols-[1.15fr_0.85fr] xl:items-start"
+                          : "space-y-4"
+                      }
+                    >
                       <div className="hidden rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-4 py-4">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                           OTP por WhatsApp
@@ -8878,7 +8911,7 @@ export default function CreditFactoryConsole({
                                 <img
                                   src={veriffQrDataUrl}
                                   alt="QR Veriff"
-                                  className="h-44 w-44 rounded-2xl border border-white bg-white p-2 shadow-sm"
+                                  className="h-64 w-64 rounded-2xl border border-white bg-white p-2 shadow-sm"
                                 />
                                 <div className="space-y-2 text-sm leading-6 text-slate-600">
                                   <p className="font-semibold text-slate-900">
@@ -8927,20 +8960,31 @@ export default function CreditFactoryConsole({
                           Checklist de identidad
                         </p>
                         <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                          {[
-                            {
-                              label: "QR Veriff generado",
-                              ready: Boolean(veriffValidation?.sessionUrl),
-                            },
-                            {
-                              label: "Veriff aprobado",
-                              ready: veriffApproved,
-                            },
-                            {
-                              label: "Evidencia interna",
-                              ready: identityEvidenceReady,
-                            },
-                          ].map(({ label, ready }) => (
+                          {(veriffIdentityFlowEnabled
+                            ? [
+                                {
+                                  label: "QR Veriff generado",
+                                  ready: Boolean(veriffValidation?.sessionUrl),
+                                },
+                                {
+                                  label: "Aprobacion real Veriff",
+                                  ready: veriffApproved,
+                                },
+                              ]
+                            : [
+                                {
+                                  label: "Selfie interna",
+                                  ready: Boolean(contratoFotoDataUrl),
+                                },
+                                {
+                                  label: "Cedula frente",
+                                  ready: Boolean(contratoCedulaFrenteDataUrl),
+                                },
+                                {
+                                  label: "Cedula respaldo",
+                                  ready: Boolean(contratoCedulaRespaldoDataUrl),
+                                },
+                              ]).map(({ label, ready }) => (
                             <div
                               key={label}
                               className={[

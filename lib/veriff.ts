@@ -446,7 +446,7 @@ export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData 
   const fullName =
     cleanText(person.fullName) || [firstName, lastName].filter(Boolean).join(" ");
   const documentNumber =
-    cleanText(person.idNumber) ||
+    cleanText(person.idNumber || person.idCode || person.documentNumber) ||
     cleanText(document.number || document.documentNumber);
   const identityData: VeriffIdentityData = {
     firstName: firstName || null,
@@ -544,6 +544,17 @@ export async function veriffGetDecision(sessionId: string) {
   return veriffRequest<Record<string, unknown>>(
     "GET",
     `/sessions/${encodeURIComponent(sessionId)}/decision`,
+    {
+      sign: "session",
+      sessionId,
+    }
+  );
+}
+
+export async function veriffGetPerson(sessionId: string) {
+  return veriffRequest<Record<string, unknown>>(
+    "GET",
+    `/sessions/${encodeURIComponent(sessionId)}/person`,
     {
       sign: "session",
       sessionId,
