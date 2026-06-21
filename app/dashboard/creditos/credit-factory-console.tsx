@@ -6663,18 +6663,8 @@ export default function CreditFactoryConsole({
     setDeliveryValidation(null);
     setVeriffValidation(null);
     const savedVeriffValidationId = Number(value("veriffValidationId") || 0);
-    const draftHasClientIdentity = Boolean(
-      value("clienteDocumento") ||
-        value("clientePrimerNombre") ||
-        value("clientePrimerApellido") ||
-        value("clienteFechaNacimiento") ||
-        value("clienteFechaExpedicion")
-    );
-    if (
-      Number.isInteger(savedVeriffValidationId) &&
-      savedVeriffValidationId > 0 &&
-      draftHasClientIdentity
-    ) {
+    if (Number.isInteger(savedVeriffValidationId) && savedVeriffValidationId > 0) {
+      veriffAutoSessionRef.current = true;
       void refreshVeriffValidation(savedVeriffValidationId);
     } else {
       veriffAutoSessionRef.current = false;
