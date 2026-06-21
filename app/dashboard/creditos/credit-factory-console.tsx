@@ -125,6 +125,20 @@ type VeriffIdentityDataState = {
   placeOfBirth: string | null;
 };
 
+type VeriffRiskSignalState = {
+  blocked?: boolean;
+  fraudRiskLevel?: string | null;
+  highRisk?: boolean;
+  pepSanctionMatch?: boolean;
+  reasons?: string[];
+  riskLabels?: Array<{
+    category?: string | null;
+    label?: string | null;
+    sessionIds?: string[];
+  }>;
+  riskScore?: number | null;
+};
+
 type VeriffValidationState = {
   id: number;
   status:
@@ -140,6 +154,8 @@ type VeriffValidationState = {
   approved: boolean;
   technicalApproved?: boolean;
   trusted?: boolean;
+  riskBlocked?: boolean;
+  riskSignals?: VeriffRiskSignalState | null;
   pending: boolean;
   veriffSessionId: string | null;
   sessionUrl: string | null;
@@ -4550,6 +4566,10 @@ export default function CreditFactoryConsole({
       return "Aprobada";
     }
 
+    if (validation.technicalApproved && validation.riskBlocked) {
+      return "Riesgo";
+    }
+
     if (validation.technicalApproved && !validation.trusted) {
       return "Prueba";
     }
@@ -4654,6 +4674,8 @@ export default function CreditFactoryConsole({
 
   const veriffMissingIdentityMessage =
     "Aprobada sin datos para autocompletar.";
+  const veriffRiskMessage =
+    "Veriff aprobo tecnicamente, pero tiene etiquetas de riesgo.";
 
   const veriffMediaLabel = (item: VeriffMediaState) => {
     const context = `${item.context || item.name}`.toLowerCase();
@@ -4740,14 +4762,18 @@ export default function CreditFactoryConsole({
       setVeriffValidation(validation);
       const filledClientData = applyVeriffIdentityData(validation);
       setVeriffInlineMessage(
-        validation?.approved && !filledClientData
-          ? veriffMissingIdentityMessage
-          : ""
+        validation?.riskBlocked
+          ? veriffRiskMessage
+          : validation?.approved && !filledClientData
+            ? veriffMissingIdentityMessage
+            : ""
       );
       const isTestApproval =
         Boolean(validation?.technicalApproved) && validation?.trusted === false;
       setNotice({
-        text: validation?.approved
+        text: validation?.riskBlocked
+          ? "Validacion bloqueada por riesgo."
+          : validation?.approved
           ? filledClientData
             ? "Identidad aprobada. Datos copiados."
             : "Identidad aprobada sin datos."
@@ -4756,7 +4782,9 @@ export default function CreditFactoryConsole({
             : validation
               ? `${veriffStatusLabel(validation)}.`
               : "Sin resultado Veriff.",
-        tone: validation?.approved
+        tone: validation?.riskBlocked
+          ? "red"
+          : validation?.approved
           ? "emerald"
           : validation?.status === "DECLINED" || validation?.status === "ERROR"
             ? "red"
@@ -4849,17 +4877,21 @@ export default function CreditFactoryConsole({
       }
       const filledClientData = applyVeriffIdentityData(validation);
       setVeriffInlineMessage(
-        validation?.approved && !filledClientData
-          ? veriffMissingIdentityMessage
-          : ""
+        validation?.riskBlocked
+          ? veriffRiskMessage
+          : validation?.approved && !filledClientData
+            ? veriffMissingIdentityMessage
+            : ""
       );
       setNotice({
-        text: validation?.approved
+        text: validation?.riskBlocked
+          ? "Validacion bloqueada por riesgo."
+          : validation?.approved
           ? filledClientData
             ? "Identidad aprobada. Datos copiados."
             : "Identidad aprobada sin datos."
           : "QR Veriff listo.",
-        tone: validation?.approved ? "emerald" : "amber",
+        tone: validation?.riskBlocked ? "red" : validation?.approved ? "emerald" : "amber",
       });
 
       if (validation?.veriffSessionId) {
@@ -7574,7 +7606,9 @@ export default function CreditFactoryConsole({
                           Validacion Veriff
                         </h4>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
-                          {veriffValidation?.approved
+                          {veriffValidation?.riskBlocked
+                            ? "Requiere revision."
+                            : veriffValidation?.approved
                             ? veriffValidation.identityData
                               ? "Datos copiados al formulario."
                               : "Aprobada sin datos."
@@ -7592,6 +7626,8 @@ export default function CreditFactoryConsole({
                           "w-fit rounded-2xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em]",
                           veriffValidation?.approved
                             ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : veriffValidation?.riskBlocked
+                              ? "border-red-200 bg-red-50 text-red-700"
                             : veriffValidation?.status === "DECLINED" ||
                                 veriffValidation?.status === "ERROR" ||
                                 veriffValidation?.status === "EXPIRED" ||
@@ -8989,7 +9025,9 @@ export default function CreditFactoryConsole({
                               QR de validacion Veriff
                             </h4>
                             <p className="mt-2 text-sm leading-6 text-slate-600">
-                              {veriffConfig.configured
+                              {veriffValidation?.riskBlocked
+                                ? "Requiere revision por riesgo."
+                                : veriffConfig.configured
                                 ? veriffConfig.decisionsTrusted === false
                                   ? "Modo prueba: genera un QR para validar el flujo; no confirma identidad real."
                                   : veriffRequired
@@ -9009,6 +9047,8 @@ export default function CreditFactoryConsole({
                               "rounded-2xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em]",
                               veriffValidation?.approved
                                 ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : veriffValidation?.riskBlocked
+                                  ? "border-red-200 bg-red-50 text-red-700"
                                   : veriffValidation?.status === "DECLINED" ||
                                       veriffValidation?.status === "ERROR" ||
                                       veriffValidation?.status === "EXPIRED" ||
@@ -9094,6 +9134,17 @@ export default function CreditFactoryConsole({
                                 Detalle:{" "}
                                 {veriffValidation.reason ||
                                   veriffValidation.lastError}
+                              </p>
+                            ) : null}
+                            {veriffValidation.riskBlocked ? (
+                              <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 font-semibold text-red-700">
+                                Riesgo:{" "}
+                                {veriffValidation.riskSignals?.riskLabels
+                                  ?.map((item) => item.label)
+                                  .filter(Boolean)
+                                  .join(", ") ||
+                                  veriffValidation.riskSignals?.reasons?.join(", ") ||
+                                  "senal de riesgo"}
                               </p>
                             ) : null}
                           </div>

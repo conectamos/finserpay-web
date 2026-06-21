@@ -1261,17 +1261,29 @@ export async function POST(req: Request) {
       );
     }
 
-    if (veriffRequired && !isVeriffApproved(veriffValidation)) {
+    const veriffRiskSnapshot = veriffValidation
+      ? buildVeriffSnapshot(veriffValidation)
+      : null;
+    const veriffRiskBlocked = Boolean(veriffRiskSnapshot?.riskBlocked);
+    const veriffMustBeRejected =
+      veriffValidation
+        ? !isVeriffApproved(veriffValidation)
+        : veriffRequired;
+
+    if (veriffMustBeRejected) {
       return NextResponse.json(
         {
           error:
-            "Debes aprobar la validacion de identidad en Veriff antes de finalizar el credito.",
+            veriffRiskBlocked
+              ? "Veriff aprobo tecnicamente, pero tiene etiquetas de riesgo o PEP/sanciones. Debe revisarse antes de finalizar."
+              : "Debes aprobar la validacion de identidad en Veriff antes de finalizar el credito.",
           identityValidation: veriffValidation
             ? {
                 id: veriffValidation.id,
                 status: veriffValidation.status,
                 decision: veriffValidation.decision,
                 lastError: veriffValidation.lastError,
+                riskSignals: veriffRiskSnapshot?.riskSignals || null,
               }
             : null,
         },

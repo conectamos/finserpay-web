@@ -7,6 +7,7 @@ import {
   normalizeVeriffStatus,
   redactVeriffPayload,
   summarizeVeriffDecision,
+  summarizeVeriffRisk,
   type VeriffStatus,
 } from "@/lib/veriff";
 
@@ -199,9 +200,12 @@ export async function ensureVeriffSchema() {
 }
 
 export function isVeriffApproved(row: VeriffValidationRow | null | undefined) {
+  const risk = summarizeVeriffRisk(row?.decisionPayload, row?.webhookPayload);
+
   return (
     areVeriffDecisionsTrusted() &&
-    normalizeVeriffStatus(row?.decision || row?.status) === "APPROVED"
+    normalizeVeriffStatus(row?.decision || row?.status) === "APPROVED" &&
+    !risk.blocked
   );
 }
 
@@ -213,6 +217,8 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
   const status = normalizeVeriffStatus(row.decision || row.status);
   const technicalApproved = status === "APPROVED";
   const trusted = areVeriffDecisionsTrusted();
+  const risk = summarizeVeriffRisk(row.decisionPayload, row.webhookPayload);
+  const approved = technicalApproved && trusted && !risk.blocked;
 
   return {
     id: row.id,
@@ -233,9 +239,11 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
     reasonCode: row.reasonCode,
     clienteDocumento: row.clienteDocumento,
     clienteNombre: row.clienteNombre,
-    approved: technicalApproved && trusted,
+    approved,
     technicalApproved,
     trusted,
+    riskBlocked: risk.blocked,
+    riskSignals: risk,
     pending: status === "PENDING" || status === "REVIEW" || status === "RESUBMISSION",
     lastError: row.lastError,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
@@ -418,6 +426,8 @@ export function buildVeriffSnapshot(row: VeriffValidationRow | null) {
     identityData:
       extractVeriffIdentityData(row.decisionPayload) ||
       extractVeriffIdentityData(row.webhookPayload),
+    riskSignals: serialized?.riskSignals || null,
+    riskBlocked: Boolean(serialized?.riskBlocked),
     checkedAt: row.decidedAt?.toISOString() || row.updatedAt?.toISOString() || null,
   };
 }

@@ -49,6 +49,22 @@ export type VeriffIdentityData = {
   placeOfBirth: string | null;
 };
 
+export type VeriffRiskLabel = {
+  category: string | null;
+  label: string;
+  sessionIds: string[];
+};
+
+export type VeriffRiskSummary = {
+  blocked: boolean;
+  fraudRiskLevel: string | null;
+  highRisk: boolean;
+  pepSanctionMatch: boolean;
+  reasons: string[];
+  riskLabels: VeriffRiskLabel[];
+  riskScore: number | null;
+};
+
 type CreateSessionInput = {
   callbackUrl?: string | null;
   documentNumber?: string | null;
@@ -398,6 +414,226 @@ function findNestedRecord(
   }
 
   return null;
+}
+
+function firstNestedValue(
+  value: unknown,
+  predicate: (record: Record<string, unknown>) => boolean,
+  selector: (record: Record<string, unknown>) => unknown,
+  depth = 0
+): unknown {
+  if (depth > 6) {
+    return undefined;
+  }
+
+  const record = asRecord(value);
+
+  if (record) {
+    if (predicate(record)) {
+      return selector(record);
+    }
+
+    for (const child of Object.values(record)) {
+      const found = firstNestedValue(child, predicate, selector, depth + 1);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+  }
+
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = firstNestedValue(child, predicate, selector, depth + 1);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeRiskLabels(value: unknown): VeriffRiskLabel[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        const label = cleanText(item);
+        return label ? { category: null, label, sessionIds: [] } : null;
+      }
+
+      const record = asRecord(item);
+      const label = cleanText(record?.label || record?.name || record?.type);
+
+      if (!record || !label) {
+        return null;
+      }
+
+      const sessionIds = Array.isArray(record.sessionIds)
+        ? record.sessionIds.map(cleanText).filter(Boolean)
+        : [];
+
+      return {
+        category: cleanText(record.category) || null,
+        label,
+        sessionIds,
+      };
+    })
+    .filter((item): item is VeriffRiskLabel => Boolean(item));
+}
+
+function riskSignalIsPositive(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toUpperCase();
+    if (!normalized) {
+      return false;
+    }
+    if (
+      [
+        "0",
+        "FALSE",
+        "NO",
+        "NONE",
+        "NULL",
+        "CLEAR",
+        "CLEARED",
+        "NOT_FOUND",
+        "NO_MATCH",
+        "NO HIT",
+        "NO_HIT",
+        "PASSED",
+        "SUCCESS",
+      ].includes(normalized)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(riskSignalIsPositive);
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return false;
+  }
+
+  return Object.values(record).some(riskSignalIsPositive);
+}
+
+function findFraudRiskLevel(payload: unknown) {
+  const value = firstNestedValue(
+    payload,
+    (record) => Boolean(asRecord(record.fraud)?.riskLevel || record.riskLevel),
+    (record) => asRecord(record.fraud)?.riskLevel || record.riskLevel
+  );
+  return cleanText(value).toUpperCase() || null;
+}
+
+function findRiskScore(payload: unknown) {
+  const value = firstNestedValue(
+    payload,
+    (record) =>
+      Object.prototype.hasOwnProperty.call(asRecord(record.riskScore) || {}, "score") ||
+      Object.prototype.hasOwnProperty.call(record, "riskScore"),
+    (record) => asRecord(record.riskScore)?.score ?? record.riskScore
+  );
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function findPepSanctionMatch(payload: unknown) {
+  const { data, root, verification } = rootAndVerification(payload);
+  const person =
+    asRecord(verification.person) ||
+    asRecord(data.person) ||
+    findNestedRecord(root, (record) =>
+      Object.prototype.hasOwnProperty.call(record, "pepSanctionMatch")
+    );
+  const legacyValue = person?.pepSanctionMatch;
+  const uktfPep = firstNestedValue(
+    root,
+    (record) => Boolean(asRecord(record.UKTFResult)?.PEP || record.PEP),
+    (record) => asRecord(record.UKTFResult)?.PEP || record.PEP
+  );
+
+  return riskSignalIsPositive(legacyValue) || riskSignalIsPositive(uktfPep);
+}
+
+function uniqueRiskLabels(labels: VeriffRiskLabel[]) {
+  const seen = new Set<string>();
+
+  return labels.filter((item) => {
+    const key = `${item.category || ""}:${item.label}:${item.sessionIds.join(",")}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+export function summarizeVeriffRisk(...payloads: unknown[]): VeriffRiskSummary {
+  const riskLabels = uniqueRiskLabels(
+    payloads.flatMap((payload) => {
+      const { data, root, verification } = rootAndVerification(payload);
+      const nestedRiskLabels = firstNestedValue(
+        root,
+        (record) => Array.isArray(record.riskLabels),
+        (record) => record.riskLabels
+      );
+
+      return [
+        normalizeRiskLabels(verification.riskLabels),
+        normalizeRiskLabels(data.riskLabels),
+        normalizeRiskLabels(root.riskLabels),
+        normalizeRiskLabels(nestedRiskLabels),
+      ].flat();
+    })
+  );
+  const highRisk = payloads.some((payload) => {
+    const { root, verification } = rootAndVerification(payload);
+    return riskSignalIsPositive(verification.highRisk) || riskSignalIsPositive(root.highRisk);
+  });
+  const pepSanctionMatch = payloads.some(findPepSanctionMatch);
+  const fraudRiskLevel =
+    payloads.map(findFraudRiskLevel).find((value) => Boolean(value)) || null;
+  const riskScore =
+    payloads.map(findRiskScore).find((value) => value !== null) ?? null;
+  const fraudRiskBlocked =
+    fraudRiskLevel === "HIGH_RISK" || fraudRiskLevel === "MEDIUM_RISK";
+  const reasons = [
+    riskLabels.length ? "risk-labels" : "",
+    pepSanctionMatch ? "pep-sanctions" : "",
+    highRisk ? "high-risk" : "",
+    fraudRiskBlocked ? "fraud-risk" : "",
+  ].filter(Boolean);
+
+  return {
+    blocked: reasons.length > 0,
+    fraudRiskLevel,
+    highRisk,
+    pepSanctionMatch,
+    reasons,
+    riskLabels,
+    riskScore,
+  };
 }
 
 export function summarizeVeriffDecision(payload: unknown) {
