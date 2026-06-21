@@ -100,6 +100,18 @@ export async function POST(request: Request) {
     const sellerSession = await getSellerSessionUser(user);
     const body = (await request.json().catch(() => ({}))) as VeriffCreateBody;
     const draftId = parsePositiveId(body.draftId);
+
+    if (!draftId) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Primero guarda el borrador de la venta antes de crear la validacion Veriff.",
+        },
+        { status: 400 }
+      );
+    }
+
     const clienteDocumento = sanitizeText(body.clienteDocumento);
     const clientePrimerNombre = sanitizeText(body.clientePrimerNombre);
     const clientePrimerApellido = sanitizeText(body.clientePrimerApellido);

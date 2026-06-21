@@ -141,6 +141,7 @@ type VeriffRiskSignalState = {
 
 type VeriffValidationState = {
   id: number;
+  draftId: number | null;
   status:
     | "ABANDONED"
     | "APPROVED"
@@ -190,8 +191,16 @@ function veriffIdentityHasAutofillData(
 }
 
 function veriffApprovalCanUnlockClient(
-  validation: VeriffValidationState | null | undefined
+  validation: VeriffValidationState | null | undefined,
+  expectedDraftId?: number | null
 ) {
+  if (
+    expectedDraftId &&
+    (!validation?.draftId || validation.draftId !== expectedDraftId)
+  ) {
+    return false;
+  }
+
   return Boolean(
     validation?.approved &&
       validation.decidedAt &&
@@ -2535,6 +2544,25 @@ export default function CreditFactoryConsole({
     () => DEPARTMENT_CITY_OPTIONS[clienteDepartamento] || [],
     [clienteDepartamento]
   );
+  const replaceDraftInUrl = (nextDraftId: number | null) => {
+    if (!createClientMode || typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    if (nextDraftId) {
+      params.set("draft", String(nextDraftId));
+    } else {
+      params.delete("draft");
+    }
+
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}`
+    );
+  };
   const clienteTipoDocumentoLabel =
     DOCUMENT_TYPE_OPTIONS.find((option) => option.value === clienteTipoDocumento)?.label ||
     clienteTipoDocumento ||
@@ -3088,7 +3116,7 @@ export default function CreditFactoryConsole({
     Boolean(contratoCedulaRespaldoDataUrl);
   const veriffRequired =
     veriffConfig.configured && veriffConfig.mode === "required";
-  const veriffApproved = veriffApprovalCanUnlockClient(veriffValidation);
+  const veriffApproved = veriffApprovalCanUnlockClient(veriffValidation, draftId);
   const veriffHasFinalDecision = Boolean(
     veriffValidation?.approved ||
       veriffValidation?.riskBlocked ||
@@ -4626,7 +4654,7 @@ export default function CreditFactoryConsole({
       return veriffConfig.configured ? "Pendiente" : "Sin configurar";
     }
 
-    if (veriffApprovalCanUnlockClient(validation)) {
+    if (veriffApprovalCanUnlockClient(validation, draftId)) {
       return "Aprobada";
     }
 
@@ -4687,9 +4715,12 @@ export default function CreditFactoryConsole({
     return "";
   };
 
-  const applyVeriffIdentityData = (validation: VeriffValidationState | null) => {
+  const applyVeriffIdentityData = (
+    validation: VeriffValidationState | null,
+    expectedDraftId = draftId
+  ) => {
     const identity = validation?.identityData;
-    if (!veriffApprovalCanUnlockClient(validation) || !identity) {
+    if (!veriffApprovalCanUnlockClient(validation, expectedDraftId) || !identity) {
       return false;
     }
 
@@ -4814,9 +4845,46 @@ export default function CreditFactoryConsole({
     }
   };
 
+  const saveDraftPayloadForVeriff = async (
+    payload: CreditDraftPayload,
+    currentStepOverride = wizardStep,
+    currentDraftId = draftId
+  ) => {
+    const result = await requestJson<CreditDraftSingleResponse>(
+      "/api/creditos/borradores",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: currentDraftId,
+          currentStep: currentStepOverride,
+          payload: {
+            ...payload,
+            wizardStep: currentStepOverride,
+          },
+        }),
+      }
+    );
+
+    if (!result.ok || !result.data?.item) {
+      throw new Error(result.data?.error || "No se pudo guardar el borrador");
+    }
+
+    setDraftId(result.data.item.id);
+    setDraftLastSavedAt(
+      result.data.item.updatedAt ? dateTime(result.data.item.updatedAt) : ""
+    );
+    setDraftStatus("saved");
+    replaceDraftInUrl(result.data.item.id);
+
+    return result.data.item;
+  };
+
   const refreshVeriffValidation = async (
     validationId = veriffValidation?.id || null,
-    options: { silent?: boolean } = {}
+    options: { expectedDraftId?: number | null; silent?: boolean } = {}
   ) => {
     if (!validationId) {
       if (!options.silent) {
@@ -4844,8 +4912,12 @@ export default function CreditFactoryConsole({
 
       const validation = result.data.validation || null;
       setVeriffValidation(validation);
-      const usableApproval = veriffApprovalCanUnlockClient(validation);
-      const filledClientData = applyVeriffIdentityData(validation);
+      const expectedDraftId = options.expectedDraftId ?? draftId;
+      const usableApproval = veriffApprovalCanUnlockClient(
+        validation,
+        expectedDraftId
+      );
+      const filledClientData = applyVeriffIdentityData(validation, expectedDraftId);
       setVeriffInlineMessage(
         validation?.riskBlocked
           ? veriffRiskMessage
@@ -4934,6 +5006,17 @@ export default function CreditFactoryConsole({
         tone: "slate",
       });
 
+      let currentDraftId = draftId;
+      if (createClientMode && !simulatorMode && !deliveryMode) {
+        setDraftStatus("saving");
+        const savedDraft = await saveDraftPayloadForVeriff(
+          factoryDraftPayload,
+          wizardStep,
+          currentDraftId
+        );
+        currentDraftId = savedDraft.id;
+      }
+
       const result = await requestJson<VeriffResponse>("/api/creditos/veriff", {
         method: "POST",
         headers: {
@@ -4941,7 +5024,7 @@ export default function CreditFactoryConsole({
         },
         body: JSON.stringify({
           captureToken: mobileCaptureSession?.token || null,
-          draftId,
+          draftId: currentDraftId,
           clienteDocumento,
           clientePrimerNombre,
           clientePrimerApellido,
@@ -4971,13 +5054,23 @@ export default function CreditFactoryConsole({
 
       const validation = result.data.validation || null;
       setVeriffValidation(validation);
+      if (validation?.id && currentDraftId) {
+        await saveDraftPayloadForVeriff(
+          {
+            ...factoryDraftPayload,
+            veriffValidationId: validation.id,
+          },
+          wizardStep,
+          currentDraftId
+        );
+      }
       if (!validation?.sessionUrl) {
         setVeriffInlineMessage(
           "Se creo la sesion, pero no retorno un enlace para generar el QR."
         );
       }
-      const filledClientData = applyVeriffIdentityData(validation);
-      const usableApproval = veriffApprovalCanUnlockClient(validation);
+      const usableApproval = veriffApprovalCanUnlockClient(validation, currentDraftId);
+      const filledClientData = applyVeriffIdentityData(validation, currentDraftId);
       setVeriffInlineMessage(
         validation?.riskBlocked
           ? veriffRiskMessage
@@ -5036,6 +5129,8 @@ export default function CreditFactoryConsole({
       paymentsView ||
       lookupMode ||
       simulatorMode ||
+      Boolean(initialDraftId && !draftId) ||
+      draftStatus === "loading" ||
       wizardStep !== 1 ||
       veriffValidation?.id ||
       veriffSubmitting ||
@@ -5051,6 +5146,9 @@ export default function CreditFactoryConsole({
       }
     });
   }, [
+    draftId,
+    draftStatus,
+    initialDraftId,
     lookupMode,
     paymentsView,
     simulatorMode,
@@ -5076,7 +5174,10 @@ export default function CreditFactoryConsole({
       }
       polling = true;
       void refreshVeriffValidationRef
-        .current(veriffValidation.id, { silent: true })
+        .current(veriffValidation.id, {
+          expectedDraftId: draftId,
+          silent: true,
+        })
         .finally(() => {
           polling = false;
         });
@@ -5091,6 +5192,7 @@ export default function CreditFactoryConsole({
     veriffHasFinalDecision,
     veriffIdentityFlowEnabled,
     veriffValidation?.id,
+    draftId,
   ]);
 
   const clampWizardStep = (targetStep: number) => {
@@ -5569,11 +5671,17 @@ export default function CreditFactoryConsole({
     setFirmaSeguroDraftProcess(null);
     setDeliveryValidation(null);
     setVeriffValidation(null);
+    setVeriffQrDataUrl("");
+    setVeriffInlineMessage("");
+    setVeriffMediaItems([]);
+    setVeriffMediaError("");
+    veriffAutoSessionRef.current = false;
     setCameraSlot(null);
     setMobileCaptureSession(null);
     setMobileCaptureQrDataUrl("");
     mobileCaptureAppliedRef.current = "";
     setSignaturePadKey((current) => current + 1);
+    replaceDraftInUrl(null);
     void loadCreditSettings();
   };
 
@@ -6665,7 +6773,9 @@ export default function CreditFactoryConsole({
     const savedVeriffValidationId = Number(value("veriffValidationId") || 0);
     if (Number.isInteger(savedVeriffValidationId) && savedVeriffValidationId > 0) {
       veriffAutoSessionRef.current = true;
-      void refreshVeriffValidation(savedVeriffValidationId);
+      void refreshVeriffValidation(savedVeriffValidationId, {
+        expectedDraftId: draft.id,
+      });
     } else {
       veriffAutoSessionRef.current = false;
     }
@@ -9296,7 +9406,11 @@ export default function CreditFactoryConsole({
                           </button>
                           <button
                             type="button"
-                            onClick={() => void refreshVeriffValidation()}
+                            onClick={() =>
+                              void refreshVeriffValidation(undefined, {
+                                expectedDraftId: draftId,
+                              })
+                            }
                             disabled={veriffRefreshing || !veriffValidation?.id}
                             className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
                           >
