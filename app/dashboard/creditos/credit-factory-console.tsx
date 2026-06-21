@@ -3057,6 +3057,7 @@ export default function CreditFactoryConsole({
   const veriffApproved = Boolean(veriffValidation?.approved);
   const veriffIdentityFlowEnabled =
     veriffConfig.configured && veriffConfig.mode !== "off";
+  const hideIdentityWizardStep = veriffIdentityFlowEnabled;
   const clienteFormUnlocked = !veriffIdentityFlowEnabled || veriffApproved;
   const identityStepReady = identityEvidenceReady || veriffApproved;
   const contractEvidenceReady = identityStepReady;
@@ -3376,12 +3377,25 @@ export default function CreditFactoryConsole({
         : "Validar entrega",
     },
   ];
-  const completedFactorySteps = factorySteps.filter((step) => step.ready).length;
-  const factoryProgress = Math.round((completedFactorySteps / factorySteps.length) * 100);
+  const visibleFactorySteps = hideIdentityWizardStep
+    ? factorySteps.filter((step) => step.id !== 3)
+    : factorySteps;
+  const completedFactorySteps = visibleFactorySteps.filter((step) => step.ready).length;
+  const factoryProgress = Math.round((completedFactorySteps / visibleFactorySteps.length) * 100);
   const activeFactoryStep =
-    factorySteps.find((step) => step.id === wizardStep) || factorySteps[0];
+    visibleFactorySteps.find((step) => step.id === wizardStep) ||
+    (hideIdentityWizardStep && wizardStep === 3
+      ? visibleFactorySteps.find((step) => step.id === 4)
+      : null) ||
+    visibleFactorySteps[0];
+  const activeFactoryStepNumber =
+    Math.max(
+      0,
+      visibleFactorySteps.findIndex((step) => step.id === activeFactoryStep.id)
+    ) + 1;
   const nextFactoryStep =
-    factorySteps.find((step) => !step.ready) || factorySteps[factorySteps.length - 1];
+    visibleFactorySteps.find((step) => !step.ready) ||
+    visibleFactorySteps[visibleFactorySteps.length - 1];
   const factoryStepRequirements: Record<
     number,
     Array<{ label: string; ready: boolean }>
@@ -3428,7 +3442,9 @@ export default function CreditFactoryConsole({
     5: [
       { label: "Cliente", ready: stepClienteReady },
       { label: "Equipo", ready: stepEquipoReady },
-      { label: "Identidad", ready: stepContratoReady },
+      ...(!hideIdentityWizardStep
+        ? [{ label: "Identidad", ready: stepContratoReady }]
+        : []),
       { label: "Contratos", ready: stepDocumentosReady },
       { label: "Entrega", ready: entregaValidada },
     ],
@@ -3988,6 +4004,12 @@ export default function CreditFactoryConsole({
       setWizardStep(2);
     }
   }, [simulatorMode]);
+
+  useEffect(() => {
+    if (hideIdentityWizardStep && wizardStep === 3) {
+      setWizardStep(4);
+    }
+  }, [hideIdentityWizardStep, wizardStep]);
 
   useEffect(() => {
     if (!canSearchCreditsInCurrentView) {
@@ -4918,16 +4940,38 @@ export default function CreditFactoryConsole({
     }
   };
 
-  const clampWizardStep = (targetStep: number) => Math.min(5, Math.max(1, targetStep));
+  const clampWizardStep = (targetStep: number) => {
+    const clamped = Math.min(5, Math.max(1, targetStep));
+    return hideIdentityWizardStep && clamped === 3 ? 4 : clamped;
+  };
+
+  const nextVisibleWizardStep = (currentStep: number) =>
+    visibleFactorySteps.find((step) => step.id > currentStep)?.id || currentStep;
+
+  const previousVisibleWizardStep = (currentStep: number) =>
+    [...visibleFactorySteps].reverse().find((step) => step.id < currentStep)?.id || 1;
 
   const goToStep = (targetStep: number) => {
     if (FLEXIBLE_WIZARD_FOR_TESTING || canAdminMoveFreelyInFactory) {
+      if (
+        !FLEXIBLE_WIZARD_FOR_TESTING &&
+        hideIdentityWizardStep &&
+        wizardStep <= 2 &&
+        targetStep >= 3 &&
+        !stepContratoReady
+      ) {
+        setNotice({
+          text: "Veriff debe aprobar la identidad antes de avanzar a contratos.",
+          tone: "amber",
+        });
+        return;
+      }
       setWizardStep(clampWizardStep(targetStep));
       return;
     }
 
     if (targetStep <= wizardStep) {
-      setWizardStep(targetStep);
+      setWizardStep(clampWizardStep(targetStep));
       return;
     }
 
@@ -4942,7 +4986,17 @@ export default function CreditFactoryConsole({
     if (wizardStep === 2 && !stepEquipoReady) {
       setNotice({
         text:
-          "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a identidad.",
+          hideIdentityWizardStep
+            ? "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a contratos."
+            : "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a identidad.",
+        tone: "amber",
+      });
+      return;
+    }
+
+    if (hideIdentityWizardStep && wizardStep === 2 && targetStep >= 3 && !stepContratoReady) {
+      setNotice({
+        text: "Veriff debe aprobar la identidad antes de avanzar a contratos.",
         tone: "amber",
       });
       return;
@@ -4986,17 +5040,30 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    setWizardStep(targetStep);
+    setWizardStep(clampWizardStep(targetStep));
   };
 
   const advanceToStep = async (targetStep: number) => {
     if (FLEXIBLE_WIZARD_FOR_TESTING || canAdminMoveFreelyInFactory) {
+      if (
+        !FLEXIBLE_WIZARD_FOR_TESTING &&
+        hideIdentityWizardStep &&
+        wizardStep <= 2 &&
+        targetStep >= 3 &&
+        !stepContratoReady
+      ) {
+        setNotice({
+          text: "Veriff debe aprobar la identidad antes de pasar a contratos.",
+          tone: "amber",
+        });
+        return;
+      }
       setWizardStep(clampWizardStep(targetStep));
       return;
     }
 
     if (targetStep <= wizardStep) {
-      setWizardStep(targetStep);
+      setWizardStep(clampWizardStep(targetStep));
       return;
     }
 
@@ -5011,7 +5078,17 @@ export default function CreditFactoryConsole({
     if (wizardStep === 2 && !stepEquipoReady) {
       setNotice({
         text:
-          "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a identidad.",
+          hideIdentityWizardStep
+            ? "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a contratos."
+            : "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a identidad.",
+        tone: "amber",
+      });
+      return;
+    }
+
+    if (hideIdentityWizardStep && wizardStep === 2 && targetStep >= 3 && !stepContratoReady) {
+      setNotice({
+        text: "Veriff debe aprobar la identidad antes de pasar a contratos.",
         tone: "amber",
       });
       return;
@@ -5035,7 +5112,7 @@ export default function CreditFactoryConsole({
         return;
       }
 
-      setWizardStep(targetStep);
+      setWizardStep(clampWizardStep(targetStep));
       return;
     }
 
@@ -5068,7 +5145,7 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    setWizardStep(targetStep);
+    setWizardStep(clampWizardStep(targetStep));
   };
 
   const createWhatsAppOtp = async () => {
@@ -7413,7 +7490,7 @@ export default function CreditFactoryConsole({
                     {simulatorMode ? "Calculo rapido" : "Flujo de venta"}
                   </p>
                   <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-                    {simulatorMode ? "Equipo e inicial" : "Nueva venta en 5 pasos"}
+                    {simulatorMode ? "Equipo e inicial" : `Nueva venta en ${visibleFactorySteps.length} pasos`}
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
                     {simulatorMode
@@ -7459,8 +7536,8 @@ export default function CreditFactoryConsole({
                   simulatorMode ? "hidden" : "",
                 ].join(" ")}
               >
-                {factorySteps.map((step) => {
-                  const active = step.id === wizardStep;
+                {visibleFactorySteps.map((step, stepIndex) => {
+                  const active = step.id === activeFactoryStep.id;
 
                   return (
                     <button
@@ -7486,7 +7563,7 @@ export default function CreditFactoryConsole({
                               : "border-slate-200 bg-white text-slate-500 group-hover:border-[#8fd8cf]",
                         ].join(" ")}
                       >
-                        {step.ready ? "OK" : step.id}
+                        {step.ready ? "OK" : stepIndex + 1}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block text-sm font-black tracking-tight">
@@ -7511,7 +7588,7 @@ export default function CreditFactoryConsole({
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">
-                        Paso {activeFactoryStep.id} en curso
+                        Paso {activeFactoryStepNumber} en curso
                       </p>
                       <p className="mt-1 text-xl font-black tracking-tight text-slate-950">
                         {activeFactoryStep.label}
@@ -8731,7 +8808,7 @@ export default function CreditFactoryConsole({
                 </div>
               )}
 
-              {wizardStep === 3 && (
+              {!hideIdentityWizardStep && wizardStep === 3 && (
                 <div>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
@@ -9275,7 +9352,7 @@ export default function CreditFactoryConsole({
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <div className="inline-flex rounded-full border border-[#e6d6bd] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8a5a21]">
-                        Paso 4
+                        {hideIdentityWizardStep ? "Paso 3" : "Paso 4"}
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
                         FirmaSeguro
@@ -9357,7 +9434,9 @@ export default function CreditFactoryConsole({
                         {[
                           { label: "Cliente", ready: stepClienteReady },
                           { label: "Equipo", ready: stepEquipoReady },
-                          { label: "Identidad", ready: stepContratoReady },
+                          ...(!hideIdentityWizardStep
+                            ? [{ label: "Identidad", ready: stepContratoReady }]
+                            : []),
                         ].map(({ label, ready }) => (
                           <div
                             key={label}
@@ -9620,7 +9699,7 @@ export default function CreditFactoryConsole({
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <div className="inline-flex rounded-full border border-[#e6d6bd] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8a5a21]">
-                        Paso 5
+                        {hideIdentityWizardStep ? "Paso 4" : "Paso 5"}
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
                         Validacion del equipo
@@ -9743,7 +9822,9 @@ export default function CreditFactoryConsole({
                         {[
                           { label: "Cliente", ready: stepClienteReady },
                           { label: "Equipo", ready: stepEquipoReady },
-                          { label: "Identidad", ready: stepContratoReady },
+                          ...(!hideIdentityWizardStep
+                            ? [{ label: "Identidad", ready: stepContratoReady }]
+                            : []),
                           { label: "Contratos", ready: stepDocumentosReady },
                           { label: "Entregable", ready: entregaValidada },
                         ].map(({ label, ready }) => (
@@ -10245,7 +10326,9 @@ export default function CreditFactoryConsole({
                 {wizardStep > 1 && (
                   <button
                     type="button"
-                    onClick={() => setWizardStep((current) => Math.max(1, current - 1))}
+                    onClick={() =>
+                      setWizardStep((current) => previousVisibleWizardStep(current))
+                    }
                     className="rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa]"
                   >
                     Anterior
@@ -10261,7 +10344,7 @@ export default function CreditFactoryConsole({
                       (wizardStep === 4 && !stepDocumentosReady)
                     }
                     onClick={() => {
-                      void advanceToStep(wizardStep + 1);
+                      void advanceToStep(nextVisibleWizardStep(wizardStep));
                     }}
                     className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-70"
                   >
