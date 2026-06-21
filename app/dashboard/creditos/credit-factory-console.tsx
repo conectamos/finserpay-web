@@ -29,7 +29,6 @@ import {
   getCreditInstallmentOptions,
   getPaymentFrequencyLabel,
   MAX_CREDIT_INSTALLMENTS,
-  MAX_DEVICE_FINANCING_BASE,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
   PAYMENT_FREQUENCY_OPTIONS,
@@ -2108,6 +2107,7 @@ export default function CreditFactoryConsole({
   const [validatingDelivery, setValidatingDelivery] = useState(false);
   const mobileCaptureAppliedRef = useRef<string>("");
   const applyingVeriffIdentityRef = useRef(false);
+  const veriffAutoSessionRef = useRef(false);
   const [cedulaValidation, setCedulaValidation] = useState<CedulaValidationState>({
     status: "idle",
     summary:
@@ -2320,10 +2320,6 @@ export default function CreditFactoryConsole({
     );
   }, [activeEquipmentCatalog, equipoMarca, equipoModelo]);
   const precioBaseVentaCatalogo = selectedEquipmentCatalogItem?.precioBaseVenta || 0;
-  const excedentePrecioBase =
-    precioBaseVentaCatalogo > 0
-      ? Math.max(0, valorTotalEquipoNumero - precioBaseVentaCatalogo)
-      : Math.max(0, valorTotalEquipoNumero - MAX_DEVICE_FINANCING_BASE);
   const initialPaymentPercentage =
     creditSettings.cuotaInicialPorcentaje ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE;
   const cuotaInicialMinimaNumero = calculateRequiredInitialPayment(
@@ -2923,6 +2919,9 @@ export default function CreditFactoryConsole({
     setVeriffValidation(null);
     setVeriffQrDataUrl("");
     setVeriffInlineMessage("");
+    setVeriffMediaItems([]);
+    setVeriffMediaError("");
+    veriffAutoSessionRef.current = false;
   }, [
     contratoCedulaFrenteDataUrl,
     contratoCedulaRespaldoDataUrl,
@@ -3055,6 +3054,14 @@ export default function CreditFactoryConsole({
   const veriffRequired =
     veriffConfig.configured && veriffConfig.mode === "required";
   const veriffApproved = Boolean(veriffValidation?.approved);
+  const veriffHasFinalDecision = Boolean(
+    veriffValidation?.approved ||
+      veriffValidation?.riskBlocked ||
+      veriffValidation?.status === "DECLINED" ||
+      veriffValidation?.status === "ERROR" ||
+      veriffValidation?.status === "EXPIRED" ||
+      veriffValidation?.status === "ABANDONED"
+  );
   const veriffIdentityFlowEnabled =
     veriffConfig.configured && veriffConfig.mode !== "off";
   const hideIdentityWizardStep = veriffIdentityFlowEnabled;
@@ -3341,10 +3348,10 @@ export default function CreditFactoryConsole({
   const factorySteps = [
     {
       id: 1,
-      label: "Cliente",
-      detail: "Datos",
+      label: veriffIdentityFlowEnabled ? "Identidad" : "Cliente",
+      detail: veriffIdentityFlowEnabled ? "Cliente" : "Datos",
       ready: stepClienteReady,
-      action: "Datos personales",
+      action: veriffIdentityFlowEnabled ? "Validacion y datos" : "Datos personales",
     },
     {
       id: 2,
@@ -4697,7 +4704,7 @@ export default function CreditFactoryConsole({
   const veriffMissingIdentityMessage =
     "Aprobada sin datos para autocompletar.";
   const veriffRiskMessage =
-    "Veriff aprobo tecnicamente, pero tiene etiquetas de riesgo.";
+    "Validacion aprobada tecnicamente, pero tiene etiquetas de riesgo.";
 
   const veriffMediaLabel = (item: VeriffMediaState) => {
     const context = `${item.context || item.name}`.toLowerCase();
@@ -4756,13 +4763,16 @@ export default function CreditFactoryConsole({
   };
 
   const refreshVeriffValidation = async (
-    validationId = veriffValidation?.id || null
+    validationId = veriffValidation?.id || null,
+    options: { silent?: boolean } = {}
   ) => {
     if (!validationId) {
-      setNotice({
-        text: "Primero envia la identidad a Veriff.",
-        tone: "amber",
-      });
+      if (!options.silent) {
+        setNotice({
+          text: "Primero genera la validacion de identidad.",
+          tone: "amber",
+        });
+      }
       return null;
     }
 
@@ -4773,7 +4783,7 @@ export default function CreditFactoryConsole({
       );
 
       if (!result.ok) {
-        throw new Error(result.data?.error || "No se pudo consultar Veriff");
+        throw new Error(result.data?.error || "No se pudo consultar la validacion");
       }
 
       if (result.data.veriff) {
@@ -4792,26 +4802,37 @@ export default function CreditFactoryConsole({
       );
       const isTestApproval =
         Boolean(validation?.technicalApproved) && validation?.trusted === false;
-      setNotice({
-        text: validation?.riskBlocked
-          ? "Validacion bloqueada por riesgo."
-          : validation?.approved
-          ? filledClientData
-            ? "Identidad aprobada. Datos copiados."
-            : "Identidad aprobada sin datos."
-          : isTestApproval
-            ? "Aprobacion de prueba."
-            : validation
-              ? `${veriffStatusLabel(validation)}.`
-              : "Sin resultado Veriff.",
-        tone: validation?.riskBlocked
-          ? "red"
-          : validation?.approved
-          ? "emerald"
-          : validation?.status === "DECLINED" || validation?.status === "ERROR"
+      const shouldNotify =
+        !options.silent ||
+        Boolean(validation?.approved) ||
+        Boolean(validation?.riskBlocked) ||
+        validation?.status === "DECLINED" ||
+        validation?.status === "ERROR" ||
+        validation?.status === "EXPIRED" ||
+        validation?.status === "ABANDONED";
+
+      if (shouldNotify) {
+        setNotice({
+          text: validation?.riskBlocked
+            ? "Validacion bloqueada por riesgo."
+            : validation?.approved
+            ? filledClientData
+              ? "Identidad aprobada. Datos copiados."
+              : "Identidad aprobada sin datos."
+            : isTestApproval
+              ? "Aprobacion de prueba."
+              : validation
+                ? `${veriffStatusLabel(validation)}.`
+                : "Sin resultado.",
+          tone: validation?.riskBlocked
             ? "red"
-            : "amber",
-      });
+            : validation?.approved
+            ? "emerald"
+            : validation?.status === "DECLINED" || validation?.status === "ERROR"
+              ? "red"
+              : "amber",
+        });
+      }
 
       if (validation?.veriffSessionId) {
         void refreshVeriffMedia(validation);
@@ -4826,7 +4847,7 @@ export default function CreditFactoryConsole({
         text:
           error instanceof Error
             ? error.message
-            : "No se pudo consultar Veriff.",
+            : "No se pudo consultar la validacion.",
         tone: "red",
       });
       return null;
@@ -4851,7 +4872,7 @@ export default function CreditFactoryConsole({
       setVeriffMediaItems([]);
       setVeriffMediaError("");
       setNotice({
-        text: "Generando QR Veriff...",
+        text: "Preparando validacion de identidad...",
         tone: "slate",
       });
 
@@ -4882,7 +4903,7 @@ export default function CreditFactoryConsole({
             : "";
         throw new Error(
           [result.data?.error, remoteMessage].filter(Boolean).join(" | ") ||
-            "No se pudo generar el QR de Veriff"
+            "No se pudo generar el QR de identidad"
         );
       }
 
@@ -4894,7 +4915,7 @@ export default function CreditFactoryConsole({
       setVeriffValidation(validation);
       if (!validation?.sessionUrl) {
         setVeriffInlineMessage(
-          "Veriff creo la sesion, pero no retorno un enlace para generar el QR."
+          "Se creo la sesion, pero no retorno un enlace para generar el QR."
         );
       }
       const filledClientData = applyVeriffIdentityData(validation);
@@ -4912,7 +4933,7 @@ export default function CreditFactoryConsole({
           ? filledClientData
             ? "Identidad aprobada. Datos copiados."
             : "Identidad aprobada sin datos."
-          : "QR Veriff listo.",
+          : "QR de validacion listo.",
         tone: validation?.riskBlocked ? "red" : validation?.approved ? "emerald" : "amber",
       });
 
@@ -4926,19 +4947,90 @@ export default function CreditFactoryConsole({
         text:
           error instanceof Error
             ? error.message
-            : "No se pudo validar identidad con Veriff.",
+            : "No se pudo validar identidad.",
         tone: "red",
       });
       setVeriffInlineMessage(
         error instanceof Error
           ? error.message
-          : "No se pudo generar el QR de Veriff."
+          : "No se pudo generar el QR de identidad."
       );
       return null;
     } finally {
       setVeriffSubmitting(false);
     }
   };
+
+  const validateIdentityWithVeriffRef = useRef(validateIdentityWithVeriff);
+  const refreshVeriffValidationRef = useRef(refreshVeriffValidation);
+
+  useEffect(() => {
+    validateIdentityWithVeriffRef.current = validateIdentityWithVeriff;
+    refreshVeriffValidationRef.current = refreshVeriffValidation;
+  });
+
+  useEffect(() => {
+    if (
+      !veriffIdentityFlowEnabled ||
+      paymentsView ||
+      lookupMode ||
+      simulatorMode ||
+      wizardStep !== 1 ||
+      veriffValidation?.id ||
+      veriffSubmitting ||
+      veriffAutoSessionRef.current
+    ) {
+      return;
+    }
+
+    veriffAutoSessionRef.current = true;
+    void validateIdentityWithVeriffRef.current().then((validation) => {
+      if (!validation?.id) {
+        veriffAutoSessionRef.current = false;
+      }
+    });
+  }, [
+    lookupMode,
+    paymentsView,
+    simulatorMode,
+    veriffIdentityFlowEnabled,
+    veriffSubmitting,
+    veriffValidation?.id,
+    wizardStep,
+  ]);
+
+  useEffect(() => {
+    if (
+      !veriffIdentityFlowEnabled ||
+      !veriffValidation?.id ||
+      veriffHasFinalDecision
+    ) {
+      return;
+    }
+
+    let polling = false;
+    const syncStatus = () => {
+      if (polling) {
+        return;
+      }
+      polling = true;
+      void refreshVeriffValidationRef
+        .current(veriffValidation.id, { silent: true })
+        .finally(() => {
+          polling = false;
+        });
+    };
+
+    const pollId = window.setInterval(syncStatus, 4000);
+
+    return () => {
+      window.clearInterval(pollId);
+    };
+  }, [
+    veriffHasFinalDecision,
+    veriffIdentityFlowEnabled,
+    veriffValidation?.id,
+  ]);
 
   const clampWizardStep = (targetStep: number) => {
     const clamped = Math.min(5, Math.max(1, targetStep));
@@ -7457,14 +7549,19 @@ export default function CreditFactoryConsole({
               lookupMode ? "hidden" : "",
             ].join(" ")}
           >
-            <div className="fp-flow-header fp-seller-flow-intro relative overflow-hidden rounded-[24px] border border-[#cfe5e2] bg-white/72 p-4 sm:p-5">
+            <div
+              className={[
+                "fp-flow-header fp-seller-flow-intro relative overflow-hidden rounded-[24px] border border-[#cfe5e2] bg-white/72 p-4 sm:p-5",
+                createClientMode ? "hidden" : "",
+              ].join(" ")}
+            >
               <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">
                     {simulatorMode ? "Calculo rapido" : "Flujo de venta"}
                   </p>
                   <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-                    {simulatorMode ? "Equipo e inicial" : `Nueva venta en ${visibleFactorySteps.length} pasos`}
+                    {simulatorMode ? "Equipo e inicial" : "Venta en curso"}
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
                     {simulatorMode
@@ -7558,7 +7655,12 @@ export default function CreditFactoryConsole({
               </aside>
 
               <div>
-                <div className="fp-active-step-summary mb-4 rounded-[22px] border border-[#d8e6e5] bg-white px-4 py-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
+                <div
+                  className={[
+                    "fp-active-step-summary mb-4 rounded-[22px] border border-[#d8e6e5] bg-white px-4 py-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]",
+                    createClientMode ? "hidden" : "",
+                  ].join(" ")}
+                >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">
@@ -7625,43 +7727,47 @@ export default function CreditFactoryConsole({
                 <div>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <div className="inline-flex rounded-full border border-[#e6d6bd] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8a5a21]">
-                        Paso 1
-                      </div>
-                      <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        Captura de datos del cliente
+                      <h3 className="text-2xl font-black uppercase tracking-normal text-slate-950">
+                        VALIDACION DE IDENTIDAD
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Reune primero los datos sensibles del cliente para dejar lista la validacion del contrato.
+                        Escanea el QR. Al aprobarse la identidad se habilita la informacion del cliente.
                       </p>
                     </div>
                     <div
                       className={[
                         "inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
-                        stepClienteReady
+                        veriffApproved
                           ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : veriffValidation?.riskBlocked ||
+                              veriffValidation?.status === "DECLINED" ||
+                              veriffValidation?.status === "ERROR"
+                            ? "border-red-200 bg-red-50 text-red-700"
                           : "border-amber-200 bg-amber-50 text-amber-700",
                       ].join(" ")}
                     >
-                      {stepClienteReady ? "Datos completos" : "Faltan datos"}
+                      {veriffApproved
+                        ? "Aprobada"
+                        : veriffValidation?.riskBlocked ||
+                            veriffValidation?.status === "DECLINED" ||
+                            veriffValidation?.status === "ERROR"
+                          ? "Revisar"
+                          : "Pendiente"}
                     </div>
                   </div>
 
                   <div className="mt-5 rounded-[22px] border border-teal-200 bg-teal-50/60 p-4">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                       <div className="min-w-0">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-700">
-                          Veriff
-                        </p>
                         <h4 className="mt-2 text-lg font-black text-slate-950">
-                          Validacion Veriff
+                          Escanea el QR con el celular del cliente
                         </h4>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
                           {veriffValidation?.riskBlocked
                             ? "Requiere revision."
                             : veriffValidation?.approved
                             ? veriffValidation.identityData
-                              ? "Datos copiados al formulario."
+                              ? "Identidad aprobada. Datos copiados al formulario."
                               : "Aprobada sin datos."
                             : veriffValidation?.technicalApproved &&
                                 veriffValidation.trusted === false
@@ -7669,7 +7775,9 @@ export default function CreditFactoryConsole({
                               : veriffConfig.configured &&
                                   veriffConfig.decisionsTrusted === false
                                 ? "Modo prueba."
-                              : "Genera el QR y actualiza estado."}
+                              : veriffValidation?.sessionUrl
+                                ? "QR listo. Esperando decision."
+                                : "Preparando QR..."}
                         </p>
                       </div>
                       <span
@@ -7697,37 +7805,20 @@ export default function CreditFactoryConsole({
                       {veriffQrDataUrl ? (
                         <img
                           src={veriffQrDataUrl}
-                          alt="QR Veriff"
+                          alt="QR de validacion de identidad"
                           className="h-64 w-64 rounded-2xl border border-white bg-white p-2 shadow-sm"
                         />
                       ) : (
                         <div className="grid h-64 w-64 place-items-center rounded-2xl border border-dashed border-teal-200 bg-white text-center text-xs font-semibold text-teal-700">
-                          QR Veriff
+                          {veriffSubmitting ? "Preparando QR..." : "QR de validacion"}
                         </div>
                       )}
                       <div>
-                        <div className="flex flex-col gap-3 sm:flex-row">
-                          <button
-                            type="button"
-                            onClick={() => void validateIdentityWithVeriff()}
-                            disabled={veriffSubmitting || !veriffConfig.configured}
-                            className="rounded-2xl bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
-                          >
-                            {veriffSubmitting
-                              ? "Generando QR..."
-                              : veriffValidation
-                                ? "Generar nuevo QR"
-                                : "Generar QR Veriff"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void refreshVeriffValidation()}
-                            disabled={veriffRefreshing || !veriffValidation?.id}
-                            className="rounded-2xl border border-teal-200 bg-white px-5 py-3 text-sm font-semibold text-teal-700 transition hover:bg-teal-50 disabled:opacity-60"
-                          >
-                            {veriffRefreshing ? "Consultando..." : "Actualizar estado"}
-                          </button>
-                        </div>
+                        {veriffRefreshing && !veriffApproved ? (
+                          <p className="rounded-2xl border border-teal-200 bg-white px-4 py-3 text-sm font-semibold text-teal-700">
+                            Consultando estado...
+                          </p>
+                        ) : null}
                         {veriffValidation?.sessionUrl ? (
                           <a
                             href={veriffValidation.sessionUrl}
@@ -7735,8 +7826,22 @@ export default function CreditFactoryConsole({
                             rel="noreferrer"
                             className="mt-3 inline-flex rounded-2xl border border-teal-200 bg-white px-4 py-2 text-xs font-semibold text-teal-700 transition hover:bg-teal-50"
                           >
-                            Abrir enlace Veriff
+                            Abrir enlace
                           </a>
+                        ) : null}
+                        {!veriffApproved &&
+                        (veriffHasFinalDecision || Boolean(veriffInlineMessage)) ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              veriffAutoSessionRef.current = true;
+                              void validateIdentityWithVeriff();
+                            }}
+                            disabled={veriffSubmitting || !veriffConfig.configured}
+                            className="mt-3 rounded-2xl bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                          >
+                            {veriffSubmitting ? "Preparando QR..." : "Reintentar validacion"}
+                          </button>
                         ) : null}
                         {veriffInlineMessage ? (
                           <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold leading-5 text-red-700">
@@ -8035,14 +8140,7 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
                   ) : (
-                    <div className="mt-4 flex flex-col gap-2 rounded-[18px] border border-amber-200 bg-amber-50/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                      <p className="text-sm font-black text-slate-950">
-                        Formulario bloqueado
-                      </p>
-                      <span className="w-fit rounded-full border border-amber-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">
-                        Esperando Veriff
-                      </span>
-                    </div>
+                    null
                   )}
                 </div>
               )}
@@ -8580,18 +8678,6 @@ export default function CreditFactoryConsole({
                           placeholder="15 numeros del IMEI"
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                         />
-                        <p
-                          className={[
-                            "mt-2 text-xs font-medium",
-                            imeiDigits.length > 0 && !imeiValido
-                              ? "text-red-600"
-                              : "text-slate-500",
-                          ].join(" ")}
-                        >
-                          {imeiDigits.length > 0
-                            ? `${imeiDigits.length}/15 digitos`
-                            : "Debe tener exactamente 15 numeros."}
-                        </p>
                       </div>
 
                       <div>
@@ -8607,18 +8693,6 @@ export default function CreditFactoryConsole({
                           placeholder="$ 850.000"
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                         />
-                        {canSeeInternalPricing ? (
-                          <p className="mt-2 text-xs font-medium text-slate-500">
-                            {precioBaseVentaCatalogo > 0
-                              ? `Base del modelo: ${currency(precioBaseVentaCatalogo)}. Excedente a inicial: ${currency(excedentePrecioBase)}.`
-                              : `Base maxima sin catalogo: ${currency(MAX_DEVICE_FINANCING_BASE)}.`}
-                            {` Inicial base: ${initialPaymentPercentage}%.`}
-                          </p>
-                        ) : (
-                          <p className="mt-2 text-xs font-medium text-slate-500">
-                            Ingresa manualmente el valor de venta acordado con el cliente.
-                          </p>
-                        )}
                       </div>
 
                       <div>
@@ -8696,7 +8770,7 @@ export default function CreditFactoryConsole({
                       </div>
                     </div>
 
-                    <div className="space-y-4">
+                    <div className="space-y-4 xl:sticky xl:top-4">
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -10484,16 +10558,6 @@ export default function CreditFactoryConsole({
                   placeholder="15 numeros del IMEI"
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 />
-                <p
-                  className={[
-                    "mt-2 text-xs font-medium",
-                    imeiDigits.length > 0 && !imeiValido ? "text-red-600" : "text-slate-500",
-                  ].join(" ")}
-                >
-                  {imeiDigits.length > 0
-                    ? `${imeiDigits.length}/15 digitos`
-                    : "Debe tener exactamente 15 numeros."}
-                </p>
               </div>
 
               <div>
@@ -10507,15 +10571,6 @@ export default function CreditFactoryConsole({
                   placeholder="$ 850.000"
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 />
-                {canSeeInternalPricing ? (
-                  <p className="mt-2 text-xs font-medium text-slate-500">
-                    Base financiable maxima: {currency(MAX_DEVICE_FINANCING_BASE)}. El excedente se cobra en la inicial.
-                  </p>
-                ) : (
-                  <p className="mt-2 text-xs font-medium text-slate-500">
-                    Ingresa manualmente el valor de venta acordado con el cliente.
-                  </p>
-                )}
               </div>
 
               <div>
