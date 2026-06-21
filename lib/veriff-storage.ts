@@ -199,12 +199,49 @@ export async function ensureVeriffSchema() {
   await veriffSchemaPromise;
 }
 
+function objectValue(value: unknown, key: string) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)[key]
+    : null;
+}
+
+function statusFromDecisionPayload(payload: unknown): VeriffStatus | null {
+  if (!payload) {
+    return null;
+  }
+
+  const status = summarizeVeriffDecision(payload).status;
+
+  if (status !== "PENDING") {
+    return status;
+  }
+
+  const nestedDecisionPayload = objectValue(payload, "decisionPayload");
+  if (nestedDecisionPayload) {
+    return summarizeVeriffDecision(nestedDecisionPayload).status;
+  }
+
+  return status;
+}
+
+function resolveVeriffRowStatus(row: VeriffValidationRow | null | undefined) {
+  if (!row) {
+    return "PENDING" satisfies VeriffStatus;
+  }
+
+  return (
+    statusFromDecisionPayload(row.webhookPayload) ||
+    statusFromDecisionPayload(row.decisionPayload) ||
+    normalizeVeriffStatus(row.decision || row.status)
+  );
+}
+
 export function isVeriffApproved(row: VeriffValidationRow | null | undefined) {
   const risk = summarizeVeriffRisk(row?.decisionPayload, row?.webhookPayload);
 
   return (
     areVeriffDecisionsTrusted() &&
-    normalizeVeriffStatus(row?.decision || row?.status) === "APPROVED" &&
+    resolveVeriffRowStatus(row) === "APPROVED" &&
     !risk.blocked
   );
 }
@@ -214,7 +251,7 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
     return null;
   }
 
-  const status = normalizeVeriffStatus(row.decision || row.status);
+  const status = resolveVeriffRowStatus(row);
   const technicalApproved = status === "APPROVED";
   const trusted = areVeriffDecisionsTrusted();
   const risk = summarizeVeriffRisk(row.decisionPayload, row.webhookPayload);
@@ -233,7 +270,7 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
     attemptId: row.attemptId,
     vendorData: row.vendorData,
     status,
-    decision: row.decision,
+    decision: status,
     code: row.code,
     reason: row.reason,
     reasonCode: row.reasonCode,
@@ -418,8 +455,8 @@ export function buildVeriffSnapshot(row: VeriffValidationRow | null) {
     sessionId: row.veriffSessionId,
     attemptId: row.attemptId,
     sessionUrl: extractVeriffSessionUrl(row.createPayload) || null,
-    estado: normalizeVeriffStatus(row.decision || row.status) satisfies VeriffStatus,
-    decision: row.decision,
+    estado: serialized?.status || resolveVeriffRowStatus(row),
+    decision: serialized?.decision || resolveVeriffRowStatus(row),
     code: row.code,
     reason: row.reason,
     reasonCode: row.reasonCode,

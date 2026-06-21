@@ -324,7 +324,7 @@ export function getVeriffPublicSummary() {
 export function normalizeVeriffStatus(value: unknown): VeriffStatus {
   const normalized = cleanText(value).toUpperCase();
 
-  if (["APPROVED", "SUCCESS"].includes(normalized)) {
+  if (normalized === "APPROVED") {
     return "APPROVED";
   }
 
