@@ -29,6 +29,7 @@ import {
   getCreditInstallmentOptions,
   getPaymentFrequencyLabel,
   MAX_CREDIT_INSTALLMENTS,
+  MAX_DEVICE_FINANCING_BASE,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
   PAYMENT_FREQUENCY_OPTIONS,
@@ -2320,6 +2321,10 @@ export default function CreditFactoryConsole({
     );
   }, [activeEquipmentCatalog, equipoMarca, equipoModelo]);
   const precioBaseVentaCatalogo = selectedEquipmentCatalogItem?.precioBaseVenta || 0;
+  const excedentePrecioBase =
+    precioBaseVentaCatalogo > 0
+      ? Math.max(0, valorTotalEquipoNumero - precioBaseVentaCatalogo)
+      : Math.max(0, valorTotalEquipoNumero - MAX_DEVICE_FINANCING_BASE);
   const initialPaymentPercentage =
     creditSettings.cuotaInicialPorcentaje ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE;
   const cuotaInicialMinimaNumero = calculateRequiredInitialPayment(
@@ -8678,6 +8683,18 @@ export default function CreditFactoryConsole({
                           placeholder="15 numeros del IMEI"
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                         />
+                        <p
+                          className={[
+                            "mt-2 text-xs font-medium",
+                            imeiDigits.length > 0 && !imeiValido
+                              ? "text-red-600"
+                              : "text-slate-500",
+                          ].join(" ")}
+                        >
+                          {imeiDigits.length > 0
+                            ? `${imeiDigits.length}/15 digitos`
+                            : "Debe tener exactamente 15 numeros."}
+                        </p>
                       </div>
 
                       <div>
@@ -8693,6 +8710,18 @@ export default function CreditFactoryConsole({
                           placeholder="$ 850.000"
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                         />
+                        {canSeeInternalPricing ? (
+                          <p className="mt-2 text-xs font-medium text-slate-500">
+                            {precioBaseVentaCatalogo > 0
+                              ? `Base del modelo: ${currency(precioBaseVentaCatalogo)}. Excedente a inicial: ${currency(excedentePrecioBase)}.`
+                              : `Base maxima sin catalogo: ${currency(MAX_DEVICE_FINANCING_BASE)}.`}
+                            {` Inicial base: ${initialPaymentPercentage}%.`}
+                          </p>
+                        ) : (
+                          <p className="mt-2 text-xs font-medium text-slate-500">
+                            Ingresa manualmente el valor de venta acordado con el cliente.
+                          </p>
+                        )}
                       </div>
 
                       <div>
@@ -8770,7 +8799,7 @@ export default function CreditFactoryConsole({
                       </div>
                     </div>
 
-                    <div className="space-y-4 xl:sticky xl:top-4">
+                    <div className="space-y-4">
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -10558,6 +10587,16 @@ export default function CreditFactoryConsole({
                   placeholder="15 numeros del IMEI"
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 />
+                <p
+                  className={[
+                    "mt-2 text-xs font-medium",
+                    imeiDigits.length > 0 && !imeiValido ? "text-red-600" : "text-slate-500",
+                  ].join(" ")}
+                >
+                  {imeiDigits.length > 0
+                    ? `${imeiDigits.length}/15 digitos`
+                    : "Debe tener exactamente 15 numeros."}
+                </p>
               </div>
 
               <div>
@@ -10571,6 +10610,15 @@ export default function CreditFactoryConsole({
                   placeholder="$ 850.000"
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 />
+                {canSeeInternalPricing ? (
+                  <p className="mt-2 text-xs font-medium text-slate-500">
+                    Base financiable maxima: {currency(MAX_DEVICE_FINANCING_BASE)}. El excedente se cobra en la inicial.
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs font-medium text-slate-500">
+                    Ingresa manualmente el valor de venta acordado con el cliente.
+                  </p>
+                )}
               </div>
 
               <div>
