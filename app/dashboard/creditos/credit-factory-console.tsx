@@ -172,6 +172,24 @@ type VeriffResponse = {
   veriff?: VeriffConfigState;
 };
 
+type VeriffMediaState = {
+  context: string;
+  downloadUrl: string;
+  duration: number | null;
+  id: string;
+  kind: "image" | "video";
+  mimetype: string;
+  name: string;
+  size: number | null;
+};
+
+type VeriffMediaResponse = {
+  ok?: boolean;
+  error?: string;
+  images?: VeriffMediaState[];
+  videos?: VeriffMediaState[];
+};
+
 type MobileCaptureSession = {
   token: string;
   estado: string;
@@ -2062,6 +2080,9 @@ export default function CreditFactoryConsole({
   const [veriffInlineMessage, setVeriffInlineMessage] = useState("");
   const [veriffSubmitting, setVeriffSubmitting] = useState(false);
   const [veriffRefreshing, setVeriffRefreshing] = useState(false);
+  const [veriffMediaItems, setVeriffMediaItems] = useState<VeriffMediaState[]>([]);
+  const [veriffMediaLoading, setVeriffMediaLoading] = useState(false);
+  const [veriffMediaError, setVeriffMediaError] = useState("");
   const [enrollingDelivery, setEnrollingDelivery] = useState(false);
   const [validatingDelivery, setValidatingDelivery] = useState(false);
   const mobileCaptureAppliedRef = useRef<string>("");
@@ -4631,6 +4652,62 @@ export default function CreditFactoryConsole({
   const veriffMissingIdentityMessage =
     "Veriff aprobo la identidad, pero esta respuesta no trae datos extraidos para autocompletar. Revisa que la integracion entregue Decision data con person/document.";
 
+  const veriffMediaLabel = (item: VeriffMediaState) => {
+    const context = `${item.context || item.name}`.toLowerCase();
+
+    if (context.includes("document-and-face")) {
+      return "Documento y rostro";
+    }
+    if (context.includes("document-front")) {
+      return "Cedula frente";
+    }
+    if (context.includes("document-back")) {
+      return "Cedula respaldo";
+    }
+    if (context.includes("face") || context.includes("self")) {
+      return "Selfie";
+    }
+    return item.kind === "video" ? "Video Veriff" : "Foto Veriff";
+  };
+
+  const refreshVeriffMedia = async (
+    validation: VeriffValidationState | null = veriffValidation
+  ) => {
+    if (!validation?.id || !validation.veriffSessionId) {
+      setVeriffMediaItems([]);
+      setVeriffMediaError("");
+      return;
+    }
+
+    try {
+      setVeriffMediaLoading(true);
+      setVeriffMediaError("");
+      const result = await requestJson<VeriffMediaResponse>(
+        `/api/creditos/veriff/${validation.id}/media`
+      );
+
+      if (!result.ok) {
+        throw new Error(
+          result.data?.error || "No se pudo consultar la evidencia Veriff"
+        );
+      }
+
+      setVeriffMediaItems([
+        ...(result.data.images || []),
+        ...(result.data.videos || []),
+      ]);
+    } catch (error) {
+      setVeriffMediaItems([]);
+      setVeriffMediaError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo consultar la evidencia Veriff"
+      );
+    } finally {
+      setVeriffMediaLoading(false);
+    }
+  };
+
   const refreshVeriffValidation = async (
     validationId = veriffValidation?.id || null
   ) => {
@@ -4683,6 +4760,13 @@ export default function CreditFactoryConsole({
             : "amber",
       });
 
+      if (validation?.veriffSessionId) {
+        void refreshVeriffMedia(validation);
+      } else {
+        setVeriffMediaItems([]);
+        setVeriffMediaError("");
+      }
+
       return validation;
     } catch (error) {
       setNotice({
@@ -4711,6 +4795,8 @@ export default function CreditFactoryConsole({
     try {
       setVeriffSubmitting(true);
       setVeriffInlineMessage("");
+      setVeriffMediaItems([]);
+      setVeriffMediaError("");
       setNotice({
         text: "Generando QR Veriff...",
         tone: "slate",
@@ -4772,6 +4858,10 @@ export default function CreditFactoryConsole({
           : "QR Veriff generado. Escanealo y actualiza el estado cuando termine la validacion.",
         tone: validation?.approved ? "emerald" : "amber",
       });
+
+      if (validation?.veriffSessionId) {
+        void refreshVeriffMedia(validation);
+      }
 
       return validation;
     } catch (error) {
@@ -8962,6 +9052,76 @@ export default function CreditFactoryConsole({
                           </div>
                         ) : null}
                       </div>
+
+                      {veriffIdentityFlowEnabled ? (
+                        <div className="rounded-[24px] border border-[#d9e7ea] bg-white px-5 py-5 shadow-[0_14px_34px_rgba(15,23,42,0.05)]">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                Evidencia Veriff
+                              </p>
+                              <h4 className="mt-2 text-lg font-black text-slate-950">
+                                Fotos de la validacion
+                              </h4>
+                            </div>
+                            {veriffMediaLoading ? (
+                              <span className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-amber-700">
+                                Cargando
+                              </span>
+                            ) : veriffMediaItems.length ? (
+                              <span className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                                {veriffMediaItems.length} archivos
+                              </span>
+                            ) : (
+                              <span className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+                                Sin fotos
+                              </span>
+                            )}
+                          </div>
+
+                          {veriffMediaError ? (
+                            <p className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-700">
+                              {veriffMediaError}
+                            </p>
+                          ) : null}
+
+                          {!veriffMediaLoading &&
+                          !veriffMediaError &&
+                          !veriffMediaItems.length ? (
+                            <p className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm font-semibold leading-6 text-slate-500">
+                              Disponible despues de actualizar una sesion Veriff con media.
+                            </p>
+                          ) : null}
+
+                          {veriffMediaItems.length ? (
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                              {veriffMediaItems.map((item) => (
+                                <figure
+                                  key={item.id}
+                                  className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50"
+                                >
+                                  {item.kind === "video" ? (
+                                    <video
+                                      controls
+                                      src={item.downloadUrl}
+                                      className="h-52 w-full bg-black object-contain"
+                                    />
+                                  ) : (
+                                    <img
+                                      src={item.downloadUrl}
+                                      alt={veriffMediaLabel(item)}
+                                      className="h-52 w-full bg-white object-contain"
+                                    />
+                                  )}
+                                  <figcaption className="border-t border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+                                    {veriffMediaLabel(item)}
+                                  </figcaption>
+                                </figure>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
 
                       <div className="rounded-[24px] border border-[#d9e7ea] bg-[#f8fbfd] px-5 py-5">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">

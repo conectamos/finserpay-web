@@ -597,6 +597,56 @@ export async function veriffGetPerson(sessionId: string) {
   );
 }
 
+export async function veriffGetSessionMedia(sessionId: string) {
+  return veriffRequest<Record<string, unknown>>(
+    "GET",
+    `/sessions/${encodeURIComponent(sessionId)}/media`,
+    {
+      sign: "session",
+      sessionId,
+    }
+  );
+}
+
+export async function veriffDownloadMedia(mediaId: string) {
+  const cleanMediaId = cleanText(mediaId);
+
+  if (!cleanMediaId) {
+    throw new VeriffApiError("Media Veriff invalido", 400);
+  }
+
+  if (!isVeriffConfigured()) {
+    throw new VeriffApiError(
+      "Veriff no esta configurado. Faltan VERIFF_API_KEY, VERIFF_SHARED_SECRET o VERIFF_BASE_URL.",
+      503
+    );
+  }
+
+  const response = await fetch(veriffApiUrl(`/media/${encodeURIComponent(cleanMediaId)}`), {
+    cache: "no-store",
+    headers: buildHeaders(cleanMediaId),
+    method: "GET",
+  });
+  const contentType = response.headers.get("content-type") || "application/octet-stream";
+  const contentLength = response.headers.get("content-length");
+  const arrayBuffer = await response.arrayBuffer();
+
+  if (!response.ok) {
+    const payload = parseResponsePayload(Buffer.from(arrayBuffer).toString("utf8"));
+    throw new VeriffApiError(
+      getErrorMessage(payload, `Veriff respondio con estado ${response.status}`),
+      response.status,
+      payload
+    );
+  }
+
+  return {
+    arrayBuffer,
+    contentLength,
+    contentType,
+  };
+}
+
 export function extractVeriffSessionId(payload: unknown) {
   if (!payload || typeof payload !== "object") {
     return "";

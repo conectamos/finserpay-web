@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { isFinserPayCentralAlly } from "@/lib/aliados";
-import { isAdminRole } from "@/lib/roles";
+import { canAccessVeriffValidation } from "@/lib/veriff-access";
 import {
   getVeriffValidationById,
   serializeVeriffValidation,
@@ -21,28 +20,6 @@ export const dynamic = "force-dynamic";
 function parseId(value: string) {
   const numeric = Math.trunc(Number(value));
   return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
-}
-
-function canAccessValidation(
-  user: Awaited<ReturnType<typeof getSessionUser>>,
-  row: Awaited<ReturnType<typeof getVeriffValidationById>>
-) {
-  if (!user || !row) {
-    return false;
-  }
-
-  const admin = isAdminRole(user.rolNombre);
-  const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
-
-  if (adminCentral) {
-    return true;
-  }
-
-  if (admin && user.aliadoAccesoId && row.aliadoId === user.aliadoAccesoId) {
-    return true;
-  }
-
-  return row.sedeId === user.sedeId || row.usuarioId === user.id;
 }
 
 export async function GET(
@@ -72,7 +49,7 @@ export async function GET(
       );
     }
 
-    if (!canAccessValidation(user, current)) {
+    if (!canAccessVeriffValidation(user, current)) {
       return NextResponse.json(
         { ok: false, error: "No tienes acceso a esta validacion" },
         { status: 403 }
