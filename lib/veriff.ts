@@ -89,6 +89,17 @@ function cleanUrl(value: unknown) {
   return raw.endsWith("/v1") ? raw.slice(0, -3) : raw;
 }
 
+function pickFirstDate(...values: unknown[]) {
+  for (const value of values) {
+    const date = cleanDate(value);
+    if (date) {
+      return date;
+    }
+  }
+
+  return null;
+}
+
 function getSecret() {
   return cleanText(process.env.VERIFF_SHARED_SECRET);
 }
@@ -474,7 +485,13 @@ export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData 
     documentType: cleanText(document.type) || null,
     documentCountry: cleanText(document.country) || null,
     dateOfBirth: cleanDate(person.dateOfBirth),
-    issueDate: cleanDate(document.validFrom || document.firstIssue),
+    issueDate: pickFirstDate(
+      document.issueDate,
+      document.dateOfIssue,
+      document.issuedAt,
+      document.issuedDate,
+      document.firstIssue
+    ),
     validUntil: cleanDate(document.validUntil),
     gender: cleanText(person.gender) || null,
     nationality: cleanText(person.nationality || person.citizenship) || null,
