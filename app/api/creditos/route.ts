@@ -121,6 +121,34 @@ const DATA_AUTHORIZATION_CLAUSE_LABELS = [
   "9. FECHA DE AUTORIZACION",
 ];
 
+function documentDigits(value: unknown) {
+  return sanitizeText(value).replace(/\D/g, "");
+}
+
+function documentKey(value: unknown) {
+  return sanitizeText(value)
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toUpperCase();
+}
+
+function documentValuesMatch(left: unknown, right: unknown) {
+  const leftKey = documentKey(left);
+  const rightKey = documentKey(right);
+
+  if (!leftKey || !rightKey) {
+    return false;
+  }
+
+  if (leftKey === rightKey) {
+    return true;
+  }
+
+  const leftDigits = documentDigits(left);
+  const rightDigits = documentDigits(right);
+
+  return Boolean(leftDigits && rightDigits && leftDigits === rightDigits);
+}
+
 type CreditCreateBody = {
   clienteCiudad?: string;
   clienteCorreo?: string;
@@ -1162,8 +1190,24 @@ export async function POST(req: Request) {
       const verifiedIdentity =
         extractVeriffIdentityData(veriffValidation.decisionPayload) ||
         extractVeriffIdentityData(veriffValidation.webhookPayload);
-      const validationDocument = sanitizeText(
+      const verifiedDocument = sanitizeText(
         verifiedIdentity?.documentNumber || veriffValidation.clienteDocumento
+      );
+      const storedValidationDocument = sanitizeText(veriffValidation.clienteDocumento);
+      const verifiedDocumentIsNumeric = documentDigits(verifiedDocument).length >= 5;
+      const verifiedDocumentMatches = documentValuesMatch(
+        verifiedDocument,
+        clienteDocumento
+      );
+      const storedValidationDocumentMatches = documentValuesMatch(
+        storedValidationDocument,
+        clienteDocumento
+      );
+      const validationDocumentAvailable = Boolean(
+        verifiedDocumentIsNumeric ||
+          documentDigits(storedValidationDocument).length >= 5 ||
+          verifiedDocumentMatches ||
+          storedValidationDocumentMatches
       );
       const sameSede = veriffValidation.sedeId === user.sedeId;
       const sameAlly =
@@ -1171,7 +1215,13 @@ export async function POST(req: Request) {
         user.aliadoAccesoId &&
         veriffValidation.aliadoId === user.aliadoAccesoId;
 
-      if (validationDocument && validationDocument !== clienteDocumento) {
+      if (
+        (verifiedDocumentIsNumeric && !verifiedDocumentMatches) ||
+        (!verifiedDocumentIsNumeric &&
+          documentKey(verifiedDocument) &&
+          !verifiedDocumentMatches &&
+          !storedValidationDocumentMatches)
+      ) {
         return NextResponse.json(
           {
             error:
@@ -1181,7 +1231,11 @@ export async function POST(req: Request) {
         );
       }
 
-      if (veriffRequired && isVeriffApproved(veriffValidation) && !validationDocument) {
+      if (
+        veriffRequired &&
+        isVeriffApproved(veriffValidation) &&
+        !validationDocumentAvailable
+      ) {
         return NextResponse.json(
           {
             error:
