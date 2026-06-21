@@ -4953,19 +4953,6 @@ export default function CreditFactoryConsole({
 
   const goToStep = (targetStep: number) => {
     if (FLEXIBLE_WIZARD_FOR_TESTING || canAdminMoveFreelyInFactory) {
-      if (
-        !FLEXIBLE_WIZARD_FOR_TESTING &&
-        hideIdentityWizardStep &&
-        wizardStep <= 2 &&
-        targetStep >= 3 &&
-        !stepContratoReady
-      ) {
-        setNotice({
-          text: "Veriff debe aprobar la identidad antes de avanzar a contratos.",
-          tone: "amber",
-        });
-        return;
-      }
       setWizardStep(clampWizardStep(targetStep));
       return;
     }
@@ -5045,19 +5032,6 @@ export default function CreditFactoryConsole({
 
   const advanceToStep = async (targetStep: number) => {
     if (FLEXIBLE_WIZARD_FOR_TESTING || canAdminMoveFreelyInFactory) {
-      if (
-        !FLEXIBLE_WIZARD_FOR_TESTING &&
-        hideIdentityWizardStep &&
-        wizardStep <= 2 &&
-        targetStep >= 3 &&
-        !stepContratoReady
-      ) {
-        setNotice({
-          text: "Veriff debe aprobar la identidad antes de pasar a contratos.",
-          tone: "amber",
-        });
-        return;
-      }
       setWizardStep(clampWizardStep(targetStep));
       return;
     }
