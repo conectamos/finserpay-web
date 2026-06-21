@@ -1143,55 +1143,6 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!contratoAceptado) {
-      return NextResponse.json(
-        { error: "Debes confirmar la aceptacion del contrato digital" },
-        { status: 400 }
-      );
-    }
-
-    if (!contratoFotoDataUrl) {
-      return NextResponse.json(
-        { error: "Debes tomar la selfie del cliente para el contrato" },
-        { status: 400 }
-      );
-    }
-
-    if (!contratoCedulaFrenteDataUrl || !contratoCedulaRespaldoDataUrl) {
-      return NextResponse.json(
-        { error: "Debes capturar la cedula por ambos lados" },
-        { status: 400 }
-      );
-    }
-
-    if (!contratoFirmaDataUrl && !firmaSeguroPasoContratos) {
-      return NextResponse.json(
-        { error: "Debes capturar la firma digital del cliente" },
-        { status: 400 }
-      );
-    }
-
-    if (!pagareAceptado) {
-      return NextResponse.json(
-        { error: "Debes validar el pagare digital antes de finalizar la venta" },
-        { status: 400 }
-      );
-    }
-
-    if (!cartaAceptada) {
-      return NextResponse.json(
-        { error: "Debes confirmar la carta de instrucciones antes de finalizar" },
-        { status: 400 }
-      );
-    }
-
-    if (!autorizacionDatosAceptada) {
-      return NextResponse.json(
-        { error: "Debes aceptar la autorizacion de tratamiento de datos" },
-        { status: 400 }
-      );
-    }
-
     const veriffValidationId = Math.trunc(toNumber(body.veriffValidationId));
     const veriffRequired = isVeriffRequired();
     const veriffSummary = getVeriffPublicSummary();
@@ -1288,6 +1239,62 @@ export async function POST(req: Request) {
             : null,
         },
         { status: 409 }
+      );
+    }
+
+    const veriffApprovedForEvidence = Boolean(
+      veriffValidation && isVeriffApproved(veriffValidation)
+    );
+
+    if (!contratoAceptado) {
+      return NextResponse.json(
+        { error: "Debes confirmar la aceptacion del contrato digital" },
+        { status: 400 }
+      );
+    }
+
+    if (!contratoFotoDataUrl && !veriffApprovedForEvidence) {
+      return NextResponse.json(
+        { error: "Debes tomar la selfie del cliente para el contrato" },
+        { status: 400 }
+      );
+    }
+
+    if (
+      (!contratoCedulaFrenteDataUrl || !contratoCedulaRespaldoDataUrl) &&
+      !veriffApprovedForEvidence
+    ) {
+      return NextResponse.json(
+        { error: "Debes capturar la cedula por ambos lados" },
+        { status: 400 }
+      );
+    }
+
+    if (!contratoFirmaDataUrl && !firmaSeguroPasoContratos) {
+      return NextResponse.json(
+        { error: "Debes capturar la firma digital del cliente" },
+        { status: 400 }
+      );
+    }
+
+    if (!pagareAceptado) {
+      return NextResponse.json(
+        { error: "Debes validar el pagare digital antes de finalizar la venta" },
+        { status: 400 }
+      );
+    }
+
+    if (!cartaAceptada) {
+      return NextResponse.json(
+        { error: "Debes confirmar la carta de instrucciones antes de finalizar" },
+        { status: 400 }
+      );
+    }
+
+    if (!autorizacionDatosAceptada) {
+      return NextResponse.json(
+        { error: "Debes aceptar la autorizacion de tratamiento de datos" },
+        { status: 400 }
       );
     }
 
@@ -1467,9 +1474,15 @@ export async function POST(req: Request) {
         documentoFirmado: firmaSeguroProcess?.signedDocumentFileName || null,
       },
       evidencia: {
-        selfieRegistrada: Boolean(contratoSelfieDataUrl),
-        cedulaFrenteRegistrada: Boolean(contratoCedulaFrenteDataUrl),
-        cedulaRespaldoRegistrada: Boolean(contratoCedulaRespaldoDataUrl),
+        selfieRegistrada: Boolean(
+          contratoSelfieDataUrl || veriffApprovedForEvidence
+        ),
+        cedulaFrenteRegistrada: Boolean(
+          contratoCedulaFrenteDataUrl || veriffApprovedForEvidence
+        ),
+        cedulaRespaldoRegistrada: Boolean(
+          contratoCedulaRespaldoDataUrl || veriffApprovedForEvidence
+        ),
         autenticidad: {
           autenticadoCon: [
             "Correo electronico",
@@ -1487,23 +1500,32 @@ export async function POST(req: Request) {
         },
         identidad: buildVeriffSnapshot(veriffValidation),
         selfie: {
-          registrada: Boolean(contratoSelfieDataUrl),
+          registrada: Boolean(contratoSelfieDataUrl || veriffApprovedForEvidence),
           capturedAt: contratoSelfieCapturedAt,
-          source: contratoSelfieSource,
+          source:
+            contratoSelfieSource || (veriffApprovedForEvidence ? "Veriff" : null),
           ip: contratoIp,
           email: clienteCorreo,
         },
         cedulaFrente: {
-          registrada: Boolean(contratoCedulaFrenteDataUrl),
+          registrada: Boolean(
+            contratoCedulaFrenteDataUrl || veriffApprovedForEvidence
+          ),
           capturedAt: contratoCedulaFrenteCapturedAt,
-          source: contratoCedulaFrenteSource,
+          source:
+            contratoCedulaFrenteSource ||
+            (veriffApprovedForEvidence ? "Veriff" : null),
           ip: contratoIp,
           email: clienteCorreo,
         },
         cedulaRespaldo: {
-          registrada: Boolean(contratoCedulaRespaldoDataUrl),
+          registrada: Boolean(
+            contratoCedulaRespaldoDataUrl || veriffApprovedForEvidence
+          ),
           capturedAt: contratoCedulaRespaldoCapturedAt,
-          source: contratoCedulaRespaldoSource,
+          source:
+            contratoCedulaRespaldoSource ||
+            (veriffApprovedForEvidence ? "Veriff" : null),
           ip: contratoIp,
           email: clienteCorreo,
         },
