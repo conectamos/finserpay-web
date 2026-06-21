@@ -237,13 +237,7 @@ function resolveVeriffRowStatus(row: VeriffValidationRow | null | undefined) {
 }
 
 export function isVeriffApproved(row: VeriffValidationRow | null | undefined) {
-  const risk = summarizeVeriffRisk(row?.decisionPayload, row?.webhookPayload);
-
-  return (
-    areVeriffDecisionsTrusted() &&
-    resolveVeriffRowStatus(row) === "APPROVED" &&
-    !risk.blocked
-  );
+  return areVeriffDecisionsTrusted() && resolveVeriffRowStatus(row) === "APPROVED";
 }
 
 export function serializeVeriffValidation(row: VeriffValidationRow | null) {
@@ -255,7 +249,8 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
   const technicalApproved = status === "APPROVED";
   const trusted = areVeriffDecisionsTrusted();
   const risk = summarizeVeriffRisk(row.decisionPayload, row.webhookPayload);
-  const approved = technicalApproved && trusted && !risk.blocked;
+  const approved = technicalApproved && trusted;
+  const riskBlocked = !technicalApproved && risk.blocked;
 
   return {
     id: row.id,
@@ -279,7 +274,7 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
     approved,
     technicalApproved,
     trusted,
-    riskBlocked: risk.blocked,
+    riskBlocked,
     riskSignals: risk,
     pending: status === "PENDING" || status === "REVIEW" || status === "RESUBMISSION",
     lastError: row.lastError,
