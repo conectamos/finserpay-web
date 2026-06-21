@@ -169,6 +169,36 @@ type VeriffValidationState = {
   decidedAt: string | null;
 };
 
+function veriffIdentityHasAutofillData(
+  validation: VeriffValidationState | null | undefined
+) {
+  const identity = validation?.identityData;
+
+  if (!identity) {
+    return false;
+  }
+
+  return Boolean(
+    String(identity.fullName || "").trim() ||
+      String(identity.firstName || "").trim() ||
+      String(identity.lastName || "").trim() ||
+      String(identity.documentNumber || "").replace(/\D/g, "") ||
+      String(identity.dateOfBirth || "").trim() ||
+      String(identity.issueDate || "").trim() ||
+      String(identity.gender || "").trim()
+  );
+}
+
+function veriffApprovalCanUnlockClient(
+  validation: VeriffValidationState | null | undefined
+) {
+  return Boolean(
+    validation?.approved &&
+      validation.decidedAt &&
+      veriffIdentityHasAutofillData(validation)
+  );
+}
+
 type VeriffConfigState = {
   apiKeyFingerprint?: string | null;
   apiKeyHint?: string | null;
@@ -3058,7 +3088,7 @@ export default function CreditFactoryConsole({
     Boolean(contratoCedulaRespaldoDataUrl);
   const veriffRequired =
     veriffConfig.configured && veriffConfig.mode === "required";
-  const veriffApproved = Boolean(veriffValidation?.approved);
+  const veriffApproved = veriffApprovalCanUnlockClient(veriffValidation);
   const veriffHasFinalDecision = Boolean(
     veriffValidation?.approved ||
       veriffValidation?.riskBlocked ||
@@ -4596,8 +4626,12 @@ export default function CreditFactoryConsole({
       return veriffConfig.configured ? "Pendiente" : "Sin configurar";
     }
 
-    if (validation.approved) {
+    if (veriffApprovalCanUnlockClient(validation)) {
       return "Aprobada";
+    }
+
+    if (validation.approved) {
+      return "Sin datos";
     }
 
     if (validation.technicalApproved && validation.riskBlocked) {
@@ -4655,7 +4689,7 @@ export default function CreditFactoryConsole({
 
   const applyVeriffIdentityData = (validation: VeriffValidationState | null) => {
     const identity = validation?.identityData;
-    if (!validation?.approved || !identity) {
+    if (!veriffApprovalCanUnlockClient(validation) || !identity) {
       return false;
     }
 
@@ -4678,29 +4712,42 @@ export default function CreditFactoryConsole({
     const issueDate = dateOnly(identity.issueDate);
     const gender = normalizeVeriffGender(identity.gender);
 
-    applyingVeriffIdentityRef.current = true;
+    let copiedFields = 0;
 
     if (firstName) {
+      copiedFields += 1;
       setClientePrimerNombre(firstName);
     }
     if (lastName) {
+      copiedFields += 1;
       setClientePrimerApellido(lastName);
     }
     if (documentNumber) {
+      copiedFields += 1;
       setClienteDocumento(documentNumber);
     }
     if (identity.documentType) {
+      copiedFields += 1;
       setClienteTipoDocumento(normalizeVeriffDocumentType(identity.documentType));
     }
     if (birthDate) {
+      copiedFields += 1;
       setClienteFechaNacimiento(birthDate);
     }
     if (issueDate) {
+      copiedFields += 1;
       setClienteFechaExpedicion(issueDate);
     }
     if (gender) {
+      copiedFields += 1;
       setClienteGenero(gender);
     }
+
+    if (copiedFields <= 0) {
+      return false;
+    }
+
+    applyingVeriffIdentityRef.current = true;
     setWizardStep(1);
 
     return true;
@@ -4797,11 +4844,12 @@ export default function CreditFactoryConsole({
 
       const validation = result.data.validation || null;
       setVeriffValidation(validation);
+      const usableApproval = veriffApprovalCanUnlockClient(validation);
       const filledClientData = applyVeriffIdentityData(validation);
       setVeriffInlineMessage(
         validation?.riskBlocked
           ? veriffRiskMessage
-          : validation?.approved && !filledClientData
+          : validation?.approved && (!usableApproval || !filledClientData)
             ? veriffMissingIdentityMessage
             : ""
       );
@@ -4809,7 +4857,8 @@ export default function CreditFactoryConsole({
         Boolean(validation?.technicalApproved) && validation?.trusted === false;
       const shouldNotify =
         !options.silent ||
-        Boolean(validation?.approved) ||
+        usableApproval ||
+        Boolean(validation?.approved && !usableApproval) ||
         Boolean(validation?.riskBlocked) ||
         validation?.status === "DECLINED" ||
         validation?.status === "ERROR" ||
@@ -4820,10 +4869,12 @@ export default function CreditFactoryConsole({
         setNotice({
           text: validation?.riskBlocked
             ? "Validacion bloqueada por riesgo."
-            : validation?.approved
+            : usableApproval
             ? filledClientData
               ? "Identidad aprobada. Datos copiados."
               : "Identidad aprobada sin datos."
+            : validation?.approved
+              ? "Identidad aprobada sin datos para autocompletar. Reintenta la validacion."
             : isTestApproval
               ? "Aprobacion de prueba."
               : validation
@@ -4831,8 +4882,10 @@ export default function CreditFactoryConsole({
                 : "Sin resultado.",
           tone: validation?.riskBlocked
             ? "red"
-            : validation?.approved
+            : usableApproval
             ? "emerald"
+            : validation?.approved
+              ? "amber"
             : validation?.status === "DECLINED" || validation?.status === "ERROR"
               ? "red"
               : "amber",
@@ -4924,22 +4977,25 @@ export default function CreditFactoryConsole({
         );
       }
       const filledClientData = applyVeriffIdentityData(validation);
+      const usableApproval = veriffApprovalCanUnlockClient(validation);
       setVeriffInlineMessage(
         validation?.riskBlocked
           ? veriffRiskMessage
-          : validation?.approved && !filledClientData
+          : validation?.approved && (!usableApproval || !filledClientData)
             ? veriffMissingIdentityMessage
             : ""
       );
       setNotice({
         text: validation?.riskBlocked
           ? "Validacion bloqueada por riesgo."
-          : validation?.approved
+          : usableApproval
           ? filledClientData
             ? "Identidad aprobada. Datos copiados."
             : "Identidad aprobada sin datos."
+          : validation?.approved
+            ? "Identidad aprobada sin datos para autocompletar. Reintenta la validacion."
           : "QR de validacion listo.",
-        tone: validation?.riskBlocked ? "red" : validation?.approved ? "emerald" : "amber",
+        tone: validation?.riskBlocked ? "red" : usableApproval ? "emerald" : "amber",
       });
 
       if (validation?.veriffSessionId) {
@@ -6607,8 +6663,21 @@ export default function CreditFactoryConsole({
     setDeliveryValidation(null);
     setVeriffValidation(null);
     const savedVeriffValidationId = Number(value("veriffValidationId") || 0);
-    if (Number.isInteger(savedVeriffValidationId) && savedVeriffValidationId > 0) {
+    const draftHasClientIdentity = Boolean(
+      value("clienteDocumento") ||
+        value("clientePrimerNombre") ||
+        value("clientePrimerApellido") ||
+        value("clienteFechaNacimiento") ||
+        value("clienteFechaExpedicion")
+    );
+    if (
+      Number.isInteger(savedVeriffValidationId) &&
+      savedVeriffValidationId > 0 &&
+      draftHasClientIdentity
+    ) {
       void refreshVeriffValidation(savedVeriffValidationId);
+    } else {
+      veriffAutoSessionRef.current = false;
     }
     setWizardStep(
       clampWizardStep(Number(payload.wizardStep || draft.currentStep || wizardStep))
@@ -7770,10 +7839,12 @@ export default function CreditFactoryConsole({
                         <p className="mt-2 text-sm leading-6 text-slate-600">
                           {veriffValidation?.riskBlocked
                             ? "Requiere revision."
-                            : veriffValidation?.approved
-                            ? veriffValidation.identityData
+                            : veriffApproved
+                            ? veriffValidation?.identityData
                               ? "Identidad aprobada. Datos copiados al formulario."
                               : "Aprobada sin datos."
+                            : veriffValidation?.approved
+                              ? "Aprobada sin datos para autocompletar. Reintenta la validacion."
                             : veriffValidation?.technicalApproved &&
                                 veriffValidation.trusted === false
                               ? "Aprobacion de prueba."
@@ -7788,7 +7859,7 @@ export default function CreditFactoryConsole({
                       <span
                         className={[
                           "w-fit rounded-2xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em]",
-                          veriffValidation?.approved
+                          veriffApproved
                             ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                             : veriffValidation?.riskBlocked
                               ? "border-red-200 bg-red-50 text-red-700"
@@ -9199,7 +9270,7 @@ export default function CreditFactoryConsole({
                           <span
                             className={[
                               "rounded-2xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em]",
-                              veriffValidation?.approved
+                              veriffApproved
                                 ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                                 : veriffValidation?.riskBlocked
                                   ? "border-red-200 bg-red-50 text-red-700"
