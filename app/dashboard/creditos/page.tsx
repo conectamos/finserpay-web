@@ -85,6 +85,7 @@ export default async function CreditosPage(props: {
 
   return (
     <CreditFactoryConsole
+      key={`${entryMode}:${Number.isInteger(initialDraftId) && initialDraftId > 0 ? initialDraftId : "nuevo"}`}
       initialSession={session}
       initialSeller={sellerSession}
       initialSearch={initialSearch}

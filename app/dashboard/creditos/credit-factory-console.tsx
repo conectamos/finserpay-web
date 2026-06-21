@@ -194,18 +194,17 @@ function veriffApprovalCanUnlockClient(
   validation: VeriffValidationState | null | undefined,
   expectedDraftId?: number | null
 ) {
-  if (
-    expectedDraftId &&
-    (!validation?.draftId || validation.draftId !== expectedDraftId)
-  ) {
+  if (!validation?.approved || !validation.decidedAt) {
     return false;
   }
 
-  return Boolean(
-    validation?.approved &&
-      validation.decidedAt &&
-      veriffIdentityHasAutofillData(validation)
-  );
+  if (expectedDraftId !== undefined) {
+    if (!expectedDraftId || validation.draftId !== expectedDraftId) {
+      return false;
+    }
+  }
+
+  return veriffIdentityHasAutofillData(validation);
 }
 
 type VeriffConfigState = {
