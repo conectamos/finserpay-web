@@ -325,6 +325,49 @@ export async function createVeriffValidation(input: CreateInput) {
   return rows[0] || null;
 }
 
+export async function getReusableVeriffValidationForDraft(input: {
+  aliadoId?: number | null;
+  clienteDocumento?: string | null;
+  draftId: number;
+  sedeId: number;
+}) {
+  await ensureVeriffSchema();
+
+  const rows = await prisma.$queryRawUnsafe<VeriffValidationRow[]>(
+    `
+      SELECT *
+      FROM "VeriffIdentityValidation"
+      WHERE "draftId" = $1
+        AND "sedeId" = $2
+        AND "aliadoId" IS NOT DISTINCT FROM $3
+        AND "creditoId" IS NULL
+        AND "decidedAt" IS NULL
+        AND "veriffSessionId" IS NOT NULL
+        AND "createPayload" IS NOT NULL
+        AND "status" NOT IN ('APPROVED', 'DECLINED', 'ERROR', 'EXPIRED', 'ABANDONED')
+        AND "createdAt" >= NOW() - INTERVAL '24 hours'
+      ORDER BY "createdAt" DESC
+      LIMIT 5
+    `,
+    input.draftId,
+    input.sedeId,
+    input.aliadoId || null
+  );
+
+  const requestedDocument = String(input.clienteDocumento || "").replace(/\D/g, "");
+
+  return (
+    rows.find((row) => {
+      if (!extractVeriffSessionUrl(row.createPayload)) {
+        return false;
+      }
+
+      const rowDocument = String(row.clienteDocumento || "").replace(/\D/g, "");
+      return !requestedDocument || !rowDocument || rowDocument === requestedDocument;
+    }) || null
+  );
+}
+
 export async function updateVeriffValidation(id: number, input: UpdateInput) {
   await ensureVeriffSchema();
 

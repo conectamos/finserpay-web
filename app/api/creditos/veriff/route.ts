@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { sanitizeText, toNumber } from "@/lib/credit-factory";
 import {
   createVeriffValidation,
+  getReusableVeriffValidationForDraft,
   serializeVeriffValidation,
   updateVeriffValidation,
 } from "@/lib/veriff-storage";
@@ -118,6 +119,22 @@ export async function POST(request: Request) {
     const clienteNombre = [clientePrimerNombre, clientePrimerApellido]
       .filter(Boolean)
       .join(" ");
+
+    const reusableValidation = await getReusableVeriffValidationForDraft({
+      aliadoId: user.aliadoId || null,
+      clienteDocumento,
+      draftId,
+      sedeId: user.sedeId,
+    });
+
+    if (reusableValidation) {
+      return NextResponse.json({
+        ok: true,
+        reused: true,
+        validation: serializeVeriffValidation(reusableValidation),
+        veriff: getVeriffPublicSummary(),
+      });
+    }
 
     const vendorData = buildVendorData({
       draftId,
