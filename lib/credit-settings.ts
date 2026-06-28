@@ -22,9 +22,14 @@ export type CreditSettings = {
   cuotaInicialPorcentaje: number;
   plazoCuotas: number;
   plazoMaximoCuotas: number;
+  iphoneCuotaInicialPorcentaje: number;
+  iphonePlazoCuotas: number;
+  iphonePlazoMaximoCuotas: number;
   frecuenciaPago: string;
   updatedAt: string | null;
 };
+
+export type CreditPlatform = "ANDROID" | "IPHONE";
 
 export type CreditDocumentException = {
   id: number;
@@ -115,10 +120,40 @@ export function normalizeCreditDocument(value: unknown) {
   return String(value ?? "").replace(/\D/g, "").slice(0, 40);
 }
 
+export function normalizeCreditPlatform(value: unknown): CreditPlatform {
+  const normalized = String(value ?? "").trim().toUpperCase();
+
+  return normalized === "IPHONE" || normalized === "IOS" ? "IPHONE" : "ANDROID";
+}
+
+export function getPlatformCreditSettings(
+  settings: CreditSettings,
+  platform?: unknown
+): CreditSettings {
+  if (normalizeCreditPlatform(platform) !== "IPHONE") {
+    return settings;
+  }
+
+  return {
+    ...settings,
+    cuotaInicialPorcentaje: settings.iphoneCuotaInicialPorcentaje,
+    plazoCuotas: settings.iphonePlazoCuotas,
+    plazoMaximoCuotas: settings.iphonePlazoMaximoCuotas,
+  };
+}
+
 function toCreditSettings(row?: Record<string, unknown> | null): CreditSettings {
   const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
     row?.plazoMaximoCuotas,
     DEFAULT_MAX_CREDIT_INSTALLMENTS
+  );
+  const iphonePlazoMaximoCuotas = normalizeCreditInstallmentLimit(
+    row?.iphonePlazoMaximoCuotas ?? plazoMaximoCuotas,
+    plazoMaximoCuotas
+  );
+  const cuotaInicialPorcentaje = toNumber(
+    row?.cuotaInicialPorcentaje,
+    DEFAULT_INITIAL_PAYMENT_PERCENTAGE
   );
 
   return {
@@ -127,16 +162,23 @@ function toCreditSettings(row?: Record<string, unknown> | null): CreditSettings 
       row?.fianzaPorcentaje,
       DEFAULT_FIANCO_SURETY_PERCENTAGE
     ),
-    cuotaInicialPorcentaje: toNumber(
-      row?.cuotaInicialPorcentaje,
-      DEFAULT_INITIAL_PAYMENT_PERCENTAGE
-    ),
+    cuotaInicialPorcentaje,
     plazoCuotas: normalizeCreditInstallments(
       row?.plazoCuotas,
       DEFAULT_CREDIT_INSTALLMENTS,
       plazoMaximoCuotas
     ),
     plazoMaximoCuotas,
+    iphoneCuotaInicialPorcentaje: toNumber(
+      row?.iphoneCuotaInicialPorcentaje,
+      cuotaInicialPorcentaje
+    ),
+    iphonePlazoCuotas: normalizeCreditInstallments(
+      row?.iphonePlazoCuotas,
+      DEFAULT_CREDIT_INSTALLMENTS,
+      iphonePlazoMaximoCuotas
+    ),
+    iphonePlazoMaximoCuotas,
     frecuenciaPago: normalizePaymentFrequency(row?.frecuenciaPago),
     updatedAt: toIsoString(row?.updatedAt),
   };
@@ -146,26 +188,41 @@ function mergeDocumentSettings(
   globalSettings: CreditSettings,
   row?: Record<string, unknown> | null
 ): CreditSettings {
+  const documentInitialPercentage = toNullableNumber(row?.cuotaInicialPorcentaje);
+  const documentInstallments = toNullableNumber(row?.plazoCuotas);
+  const documentMaxInstallments = toNullableNumber(row?.plazoMaximoCuotas);
   const plazoMaximoCuotas =
-    toNullableNumber(row?.plazoMaximoCuotas) ?? globalSettings.plazoMaximoCuotas;
+    documentMaxInstallments ?? globalSettings.plazoMaximoCuotas;
   const normalizedMax = normalizeCreditInstallmentLimit(
     plazoMaximoCuotas,
     globalSettings.plazoMaximoCuotas
   );
+  const iphoneMax = normalizeCreditInstallmentLimit(
+    documentMaxInstallments ?? globalSettings.iphonePlazoMaximoCuotas,
+    globalSettings.iphonePlazoMaximoCuotas
+  );
 
   return {
+    ...globalSettings,
     tasaInteresEa:
       toNullableNumber(row?.tasaInteresEa) ?? globalSettings.tasaInteresEa,
     fianzaPorcentaje:
       toNullableNumber(row?.fianzaPorcentaje) ?? globalSettings.fianzaPorcentaje,
     cuotaInicialPorcentaje:
-      toNullableNumber(row?.cuotaInicialPorcentaje) ??
-      globalSettings.cuotaInicialPorcentaje,
+      documentInitialPercentage ?? globalSettings.cuotaInicialPorcentaje,
     plazoMaximoCuotas: normalizedMax,
     plazoCuotas: normalizeCreditInstallments(
-      toNullableNumber(row?.plazoCuotas) ?? globalSettings.plazoCuotas,
+      documentInstallments ?? globalSettings.plazoCuotas,
       globalSettings.plazoCuotas,
       normalizedMax
+    ),
+    iphoneCuotaInicialPorcentaje:
+      documentInitialPercentage ?? globalSettings.iphoneCuotaInicialPorcentaje,
+    iphonePlazoMaximoCuotas: iphoneMax,
+    iphonePlazoCuotas: normalizeCreditInstallments(
+      documentInstallments ?? globalSettings.iphonePlazoCuotas,
+      globalSettings.iphonePlazoCuotas,
+      iphoneMax
     ),
     frecuenciaPago: normalizePaymentFrequency(
       row?.frecuenciaPago || globalSettings.frecuenciaPago
@@ -212,6 +269,9 @@ export async function ensureCreditSettingsTable() {
       "cuotaInicialPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INITIAL_PAYMENT_PERCENTAGE},
       "plazoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_CREDIT_INSTALLMENTS},
       "plazoMaximoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_CREDIT_INSTALLMENTS},
+      "iphoneCuotaInicialPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INITIAL_PAYMENT_PERCENTAGE},
+      "iphonePlazoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_CREDIT_INSTALLMENTS},
+      "iphonePlazoMaximoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_CREDIT_INSTALLMENTS},
       "frecuenciaPago" TEXT NOT NULL DEFAULT '${DEFAULT_PAYMENT_FREQUENCY}',
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -228,6 +288,18 @@ export async function ensureCreditSettingsTable() {
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "CreditoConfiguracion"
     ADD COLUMN IF NOT EXISTS "plazoMaximoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_CREDIT_INSTALLMENTS}
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracion"
+    ADD COLUMN IF NOT EXISTS "iphoneCuotaInicialPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INITIAL_PAYMENT_PERCENTAGE}
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracion"
+    ADD COLUMN IF NOT EXISTS "iphonePlazoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_CREDIT_INSTALLMENTS}
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracion"
+    ADD COLUMN IF NOT EXISTS "iphonePlazoMaximoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_CREDIT_INSTALLMENTS}
   `);
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "CreditoConfiguracion"
@@ -301,7 +373,9 @@ export async function getCreditSettings() {
   await ensureCreditSettingsTable();
 
   const rows = (await prisma.$queryRawUnsafe(
-    `SELECT "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago", "updatedAt"
+    `SELECT "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas",
+            "iphoneCuotaInicialPorcentaje", "iphonePlazoCuotas", "iphonePlazoMaximoCuotas",
+            "frecuenciaPago", "updatedAt"
      FROM "CreditoConfiguracion"
      WHERE nombre = $1
      LIMIT 1`,
@@ -334,17 +408,27 @@ export async function getCreditDocumentException(documento: unknown) {
   return rows[0] ? toDocumentException(rows[0], globalSettings) : null;
 }
 
-export async function getEffectiveCreditSettings(documento?: unknown): Promise<EffectiveCreditSettings> {
+export async function getEffectiveCreditSettings(
+  documento?: unknown,
+  platform?: unknown
+): Promise<EffectiveCreditSettings> {
   const globalSettings = await getCreditSettings();
   const documentException = documento
     ? await getCreditDocumentException(documento)
     : null;
   const activeException = documentException?.activo ? documentException : null;
+  const activeSettings = activeException?.effectiveSettings || globalSettings;
+  const platformSettings = getPlatformCreditSettings(activeSettings, platform);
 
   return {
-    settings: activeException?.effectiveSettings || globalSettings,
-    globalSettings,
-    documentException: activeException,
+    settings: platformSettings,
+    globalSettings: getPlatformCreditSettings(globalSettings, platform),
+    documentException: activeException
+      ? {
+          ...activeException,
+          effectiveSettings: platformSettings,
+        }
+      : null,
   };
 }
 
@@ -369,6 +453,9 @@ export async function updateCreditSettings(params: {
   cuotaInicialPorcentaje?: unknown;
   plazoCuotas?: unknown;
   plazoMaximoCuotas?: unknown;
+  iphoneCuotaInicialPorcentaje?: unknown;
+  iphonePlazoCuotas?: unknown;
+  iphonePlazoMaximoCuotas?: unknown;
   frecuenciaPago?: unknown;
 }) {
   await ensureCreditSettingsTable();
@@ -401,6 +488,22 @@ export async function updateCreditSettings(params: {
           params.cuotaInicialPorcentaje,
           current.cuotaInicialPorcentaje
         );
+  const iphonePlazoMaximoCuotas = normalizeCreditInstallmentLimit(
+    params.iphonePlazoMaximoCuotas,
+    current.iphonePlazoMaximoCuotas
+  );
+  const iphonePlazoCuotas = normalizeCreditInstallments(
+    params.iphonePlazoCuotas,
+    current.iphonePlazoCuotas,
+    iphonePlazoMaximoCuotas
+  );
+  const iphoneCuotaInicialPorcentaje =
+    params.iphoneCuotaInicialPorcentaje === undefined
+      ? current.iphoneCuotaInicialPorcentaje
+      : normalizePercentage(
+          params.iphoneCuotaInicialPorcentaje,
+          current.iphoneCuotaInicialPorcentaje
+        );
 
   const rows = (await prisma.$queryRawUnsafe(
     `UPDATE "CreditoConfiguracion"
@@ -410,16 +513,24 @@ export async function updateCreditSettings(params: {
          "plazoCuotas" = $5,
          "plazoMaximoCuotas" = $6,
          "frecuenciaPago" = $7,
+         "iphoneCuotaInicialPorcentaje" = $8,
+         "iphonePlazoCuotas" = $9,
+         "iphonePlazoMaximoCuotas" = $10,
          "updatedAt" = NOW()
      WHERE nombre = $1
-     RETURNING "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago", "updatedAt"`,
+     RETURNING "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas",
+       "iphoneCuotaInicialPorcentaje", "iphonePlazoCuotas", "iphonePlazoMaximoCuotas",
+       "frecuenciaPago", "updatedAt"`,
     CREDIT_SETTINGS_KEY,
     tasaInteresEa,
     fianzaPorcentaje,
     cuotaInicialPorcentaje,
     plazoCuotas,
     plazoMaximoCuotas,
-    frecuenciaPago
+    frecuenciaPago,
+    iphoneCuotaInicialPorcentaje,
+    iphonePlazoCuotas,
+    iphonePlazoMaximoCuotas
   )) as Array<Record<string, unknown>>;
 
   return toCreditSettings(rows[0]);

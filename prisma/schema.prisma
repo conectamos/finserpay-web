@@ -413,6 +413,9 @@ model CreditoConfiguracion {
   cuotaInicialPorcentaje   Float    @default(20)
   plazoCuotas              Int      @default(12)
   plazoMaximoCuotas        Int      @default(16)
+  iphoneCuotaInicialPorcentaje Float @default(20)
+  iphonePlazoCuotas       Int      @default(12)
+  iphonePlazoMaximoCuotas Int      @default(16)
   frecuenciaPago           String   @default("QUINCENAL")
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt

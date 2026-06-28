@@ -199,6 +199,11 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
   const imei = sanitizeDeviceValue(payload.imei || payload.deviceUid)
     .replace(/\D/g, "")
     .slice(0, 15);
+  const plataformaDispositivo = sanitizeText(payload.plataformaDispositivo)
+    .toUpperCase()
+    .includes("IPHONE")
+    ? "IPHONE"
+    : "ANDROID";
   const valorEquipoTotalInput = toNumber(payload.valorEquipoTotal);
   const catalogItem =
     equipoMarca && equipoModelo
@@ -207,7 +212,10 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
   const precioBaseVentaCatalogo = catalogItem?.activo
     ? catalogItem.precioBaseVenta
     : null;
-  const effectiveCreditSettings = await getEffectiveCreditSettings(clienteDocumento);
+  const effectiveCreditSettings = await getEffectiveCreditSettings(
+    clienteDocumento,
+    plataformaDispositivo
+  );
   const creditSettings = effectiveCreditSettings.settings;
   const cuotaInicialMinima = calculateRequiredInitialPayment(
     valorEquipoTotalInput,

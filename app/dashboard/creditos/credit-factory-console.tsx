@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import NextImage from "next/image";
 import { usePathname } from "next/navigation";
 import QRCode from "qrcode";
 import {
@@ -100,6 +101,8 @@ type DeliveryValidationState = {
   serviceDetails: string | null;
   status: DeliveryStatus;
 };
+
+type DevicePlatform = "android" | "iphone";
 
 type CedulaValidationState = {
   status: "idle" | "processing" | "valid" | "invalid";
@@ -453,8 +456,11 @@ type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
   cuotaInicialPorcentaje: number;
+  iphoneCuotaInicialPorcentaje: number;
   plazoCuotas: number;
   plazoMaximoCuotas: number;
+  iphonePlazoCuotas: number;
+  iphonePlazoMaximoCuotas: number;
   frecuenciaPago: string;
   updatedAt: string | null;
 };
@@ -1962,6 +1968,8 @@ export default function CreditFactoryConsole({
   initialSelectedId = null,
   initialDraftId = null,
   entryMode = "default",
+  devicePlatform = null,
+  chooseDevicePlatform = false,
 }: {
   initialSession: SessionUser;
   initialSeller?: SellerSessionProfile;
@@ -1970,6 +1978,8 @@ export default function CreditFactoryConsole({
   initialSelectedId?: number | null;
   initialDraftId?: number | null;
   entryMode?: "default" | "create-client" | "delivery" | "simulator";
+  devicePlatform?: DevicePlatform | null;
+  chooseDevicePlatform?: boolean;
 }) {
   const canAdmin = String(initialSession.rolNombre || "").toUpperCase() === "ADMIN";
   const canSeeInternalPricing =
@@ -1994,6 +2004,28 @@ export default function CreditFactoryConsole({
   const adminFactoryAssistMode = adminFactoryAssistAvailable && showAdminAssist;
   const canSearchCreditsInCurrentView = paymentsView || lookupMode || adminFactoryAssistMode;
   const showSearchSection = paymentsView || lookupMode || adminFactoryAssistMode;
+  const [draftDevicePlatform, setDraftDevicePlatform] =
+    useState<DevicePlatform | null>(devicePlatform);
+  const currentDevicePlatform: DevicePlatform =
+    draftDevicePlatform || devicePlatform || "android";
+  const iphoneFactory = currentDevicePlatform === "iphone";
+  const shouldShowDeviceChoice =
+    chooseDevicePlatform && createClientMode && !initialDraftId;
+  const buildCreditPlatformHref = (platform: DevicePlatform) => {
+    const params = new URLSearchParams();
+    params.set("mode", "create-client");
+    params.set("platform", platform);
+
+    if (normalizedInitialSearch) {
+      params.set("search", normalizedInitialSearch);
+    }
+
+    if (initialSelectedId) {
+      params.set("selected", String(initialSelectedId));
+    }
+
+    return `${pathname}?${params.toString()}`;
+  };
   const [credits, setCredits] = useState<CreditItem[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -2053,8 +2085,11 @@ export default function CreditFactoryConsole({
     tasaInteresEa: DEFAULT_LEGAL_CONSUMER_RATE_EA,
     fianzaPorcentaje: DEFAULT_FIANCO_SURETY_PERCENTAGE,
     cuotaInicialPorcentaje: DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
+    iphoneCuotaInicialPorcentaje: DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
     plazoCuotas: DEFAULT_CREDIT_INSTALLMENTS,
     plazoMaximoCuotas: DEFAULT_MAX_CREDIT_INSTALLMENTS,
+    iphonePlazoCuotas: DEFAULT_CREDIT_INSTALLMENTS,
+    iphonePlazoMaximoCuotas: DEFAULT_MAX_CREDIT_INSTALLMENTS,
     frecuenciaPago: DEFAULT_PAYMENT_FREQUENCY,
     updatedAt: null,
   });
@@ -2129,6 +2164,8 @@ export default function CreditFactoryConsole({
   const [paymentSummary, setPaymentSummary] = useState<CreditPaymentsResponse["credito"] | null>(null);
   const [deliveryValidation, setDeliveryValidation] =
     useState<DeliveryValidationState | null>(null);
+  const [iphoneEnrollmentVerified, setIphoneEnrollmentVerified] =
+    useState(false);
   const [veriffConfig, setVeriffConfig] = useState<VeriffConfigState>({
     configured: false,
     mode: "soft",
@@ -2440,6 +2477,8 @@ export default function CreditFactoryConsole({
       equipoModelo,
       equipoCatalogoId: selectedEquipmentCatalogItem?.id || null,
       imei: imeiDigits,
+      plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
+      iphoneEnrolamientoVerificado: iphoneEnrollmentVerified,
       valorEquipoTotal,
       cuotaInicial,
       plazoMeses,
@@ -2504,6 +2543,8 @@ export default function CreditFactoryConsole({
       financialPlan.fianzaPorcentaje,
       financialPlan.tasaInteresEa,
       imeiDigits,
+      iphoneEnrollmentVerified,
+      iphoneFactory,
       pagareAceptado,
       plazoMeses,
       referenciaFamiliar1Nombre,
@@ -3175,20 +3216,34 @@ export default function CreditFactoryConsole({
   const entregaSinVerificacionAutorizada = Boolean(
     creditDocumentException?.permiteEntregaSinVerificacion
   );
+  const iphoneDeliveryVerified = iphoneFactory && iphoneEnrollmentVerified;
   const entregaValidada = Boolean(
-    deliveryValidation?.status?.ready || entregaSinVerificacionAutorizada
+    deliveryValidation?.status?.ready ||
+      entregaSinVerificacionAutorizada ||
+      iphoneDeliveryVerified
   );
   const deliveryStatusLabel = deliveryValidation?.status?.ready
     ? deliveryValidation.status.label
-    : entregaSinVerificacionAutorizada
-      ? "Entrega autorizada"
-      : deliveryValidation?.status?.label || "Pendiente por validar";
+    : iphoneDeliveryVerified
+      ? "Enrolamiento iPhone verificado"
+      : entregaSinVerificacionAutorizada
+        ? "Entrega autorizada"
+        : iphoneFactory
+          ? "Pendiente enrolamiento"
+          : deliveryValidation?.status?.label || "Pendiente por validar";
   const deliveryStatusDetail = deliveryValidation?.status?.ready
     ? deliveryValidation.status.detail
-    : entregaSinVerificacionAutorizada
-      ? "Esta cedula tiene excepcion administrativa para entregar sin verificar dispositivo."
-      : deliveryValidation?.status?.detail ||
-        "Aun no se ha ejecutado la validacion final de entrega.";
+    : iphoneDeliveryVerified
+      ? "El asesor confirmo manualmente que el iPhone quedo enrolado."
+      : entregaSinVerificacionAutorizada
+        ? "Esta cedula tiene excepcion administrativa para entregar sin verificar dispositivo."
+        : iphoneFactory
+          ? "Confirma manualmente el enrolamiento del iPhone para habilitar el cierre."
+          : deliveryValidation?.status?.detail ||
+            "Aun no se ha ejecutado la validacion final de entrega.";
+  const deliveryPendingMessage = iphoneFactory
+    ? "Verifica manualmente el enrolamiento del iPhone antes de finalizar este credito."
+    : "Valida primero la entrega con Zero Touch antes de finalizar este credito.";
   const deliveryRequirementReady = FLEXIBLE_WIZARD_FOR_TESTING || entregaValidada;
   const ventaLista =
     stepClienteReady &&
@@ -3458,12 +3513,18 @@ export default function CreditFactoryConsole({
     },
     {
       id: 5,
-      label: "Entrega",
-      detail: entregaSinVerificacionAutorizada ? "Excepcion" : "Zero Touch",
+      label: iphoneFactory ? "Enrolamiento" : "Entrega",
+      detail: iphoneFactory
+        ? "Manual"
+        : entregaSinVerificacionAutorizada
+          ? "Excepcion"
+          : "Zero Touch",
       ready: entregaValidada,
-      action: entregaSinVerificacionAutorizada
-        ? "Entrega autorizada"
-        : "Validar entrega",
+      action: iphoneFactory
+        ? "Verificar enrolamiento"
+        : entregaSinVerificacionAutorizada
+          ? "Entrega autorizada"
+          : "Validar entrega",
     },
   ];
   const visibleFactorySteps = hideIdentityWizardStep
@@ -3535,7 +3596,7 @@ export default function CreditFactoryConsole({
         ? [{ label: "Identidad", ready: stepContratoReady }]
         : []),
       { label: "Contratos", ready: stepDocumentosReady },
-      { label: "Entrega", ready: entregaValidada },
+      { label: iphoneFactory ? "Enrolamiento" : "Entrega", ready: entregaValidada },
     ],
   };
   const activeRequirements = factoryStepRequirements[wizardStep] || [];
@@ -3845,13 +3906,25 @@ export default function CreditFactoryConsole({
     const nextMaxInstallments = normalizeCreditInstallmentLimit(
       nextSettingsInput.plazoMaximoCuotas
     );
+    const nextIphoneMaxInstallments = normalizeCreditInstallmentLimit(
+      nextSettingsInput.iphonePlazoMaximoCuotas ?? nextSettingsInput.plazoMaximoCuotas
+    );
     const nextSettings = {
       ...nextSettingsInput,
+      iphoneCuotaInicialPorcentaje:
+        nextSettingsInput.iphoneCuotaInicialPorcentaje ??
+        nextSettingsInput.cuotaInicialPorcentaje,
       plazoMaximoCuotas: nextMaxInstallments,
       plazoCuotas: normalizeCreditInstallments(
         nextSettingsInput.plazoCuotas,
         DEFAULT_CREDIT_INSTALLMENTS,
         nextMaxInstallments
+      ),
+      iphonePlazoMaximoCuotas: nextIphoneMaxInstallments,
+      iphonePlazoCuotas: normalizeCreditInstallments(
+        nextSettingsInput.iphonePlazoCuotas ?? nextSettingsInput.plazoCuotas,
+        DEFAULT_CREDIT_INSTALLMENTS,
+        nextIphoneMaxInstallments
       ),
     };
 
@@ -3869,9 +3942,15 @@ export default function CreditFactoryConsole({
   const loadCreditSettings = async (documentValue = "") => {
     try {
       const normalizedDocument = documentValue.replace(/\D/g, "");
-      const endpoint = normalizedDocument
-        ? `/api/creditos/configuracion?documento=${encodeURIComponent(normalizedDocument)}`
-        : "/api/creditos/configuracion";
+      const params = new URLSearchParams({
+        platform: iphoneFactory ? "IPHONE" : "ANDROID",
+      });
+
+      if (normalizedDocument) {
+        params.set("documento", normalizedDocument);
+      }
+
+      const endpoint = `/api/creditos/configuracion?${params.toString()}`;
       const result = await requestJson<CreditSettingsResponse>(
         endpoint
       );
@@ -4089,6 +4168,13 @@ export default function CreditFactoryConsole({
   }, [clienteDocumento, creditSettingsDocument]);
 
   useEffect(() => {
+    const normalizedDocument = clienteDocumento.replace(/\D/g, "");
+    const targetDocument = normalizedDocument.length >= 5 ? normalizedDocument : "";
+
+    void loadCreditSettings(targetDocument);
+  }, [iphoneFactory]);
+
+  useEffect(() => {
     if (simulatorMode) {
       setWizardStep(2);
     }
@@ -4198,7 +4284,16 @@ export default function CreditFactoryConsole({
 
   useEffect(() => {
     setDeliveryValidation(null);
-  }, [imei, equipoMarca, equipoModelo, valorEquipoTotal, plazoMeses, fechaPrimerPago]);
+    setIphoneEnrollmentVerified(false);
+  }, [
+    currentDevicePlatform,
+    equipoMarca,
+    equipoModelo,
+    fechaPrimerPago,
+    imei,
+    plazoMeses,
+    valorEquipoTotal,
+  ]);
 
   const loadPayments = async (creditId: number) => {
     try {
@@ -5701,6 +5796,8 @@ export default function CreditFactoryConsole({
     setAutorizacionDatosAceptada(false);
     setFirmaSeguroDraftProcess(null);
     setDeliveryValidation(null);
+    setIphoneEnrollmentVerified(false);
+    setDraftDevicePlatform(devicePlatform);
     veriffClientFormUnlockedRef.current = false;
     setVeriffValidation(null);
     setVeriffQrDataUrl("");
@@ -5809,8 +5906,9 @@ export default function CreditFactoryConsole({
       if (process?.completedAt || process?.hasSignedDocument) {
         setWizardStep(5);
         setNotice({
-          text:
-            "FirmaSeguro reporto firma exitosa. Ahora valida la entrega y finaliza el credito.",
+          text: iphoneFactory
+            ? "FirmaSeguro reporto firma exitosa. Ahora verifica el enrolamiento iPhone y finaliza el credito."
+            : "FirmaSeguro reporto firma exitosa. Ahora valida la entrega y finaliza el credito.",
           tone: "emerald",
         });
       } else {
@@ -5840,6 +5938,7 @@ export default function CreditFactoryConsole({
       allowPendingDelivery?: boolean;
       firmaSeguroPasoContratos?: boolean;
       firmaSeguroProcessUuid?: string;
+      iphoneEnrolamientoVerificado?: boolean;
     } = {}
   ) => {
     const acceptsByFirmaSeguro = Boolean(options.firmaSeguroPasoContratos);
@@ -5860,10 +5959,14 @@ export default function CreditFactoryConsole({
         text: acceptsByFirmaSeguro
           ? veriffRequired && !veriffApproved
             ? "Veriff debe aprobar la identidad antes de finalizar el credito."
-            : "FirmaSeguro debe reportar firma exitosa y debes validar la entrega antes de finalizar el credito."
+            : iphoneFactory
+              ? "FirmaSeguro debe reportar firma exitosa y debes verificar el enrolamiento iPhone antes de finalizar el credito."
+              : "FirmaSeguro debe reportar firma exitosa y debes validar la entrega antes de finalizar el credito."
           : veriffRequired && !veriffApproved
             ? "Veriff debe aprobar la identidad antes de finalizar la venta."
-            : "Completa el flujo de cliente, equipo, identidad, contratos y valida el equipo antes de finalizar la venta.",
+            : iphoneFactory
+              ? "Completa el flujo de cliente, equipo, identidad, contratos y verifica el enrolamiento iPhone antes de finalizar la venta."
+              : "Completa el flujo de cliente, equipo, identidad, contratos y valida el equipo antes de finalizar la venta.",
         tone: "red",
       });
       return null;
@@ -5903,6 +6006,9 @@ export default function CreditFactoryConsole({
           equipoModelo,
           equipoCatalogoId: selectedEquipmentCatalogItem?.id || null,
           imei: imeiDigits,
+          plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
+          iphoneEnrolamientoVerificado:
+            options.iphoneEnrolamientoVerificado ?? iphoneEnrollmentVerified,
           valorEquipoTotal,
           cuotaInicial,
           plazoMeses,
@@ -6023,7 +6129,9 @@ export default function CreditFactoryConsole({
 
       setNotice({
         text: signed
-          ? "FirmaSeguro reporto firma exitosa. Valida la entrega para finalizar el credito."
+          ? iphoneFactory
+            ? "FirmaSeguro reporto firma exitosa. Verifica el enrolamiento iPhone para finalizar el credito."
+            : "FirmaSeguro reporto firma exitosa. Valida la entrega para finalizar el credito."
           : uuid
             ? `Expediente enviado a FirmaSeguro. Proceso: ${uuid}. Espera la firma exitosa para continuar.`
             : signature.message ||
@@ -6055,8 +6163,7 @@ export default function CreditFactoryConsole({
 
       if (!deliveryRequirementReady) {
         setNotice({
-          text:
-            "Valida primero la entrega con Zero Touch antes de finalizar este credito.",
+          text: deliveryPendingMessage,
           tone: "amber",
         });
         return;
@@ -6065,6 +6172,7 @@ export default function CreditFactoryConsole({
       await createCredit({
         firmaSeguroPasoContratos: true,
         firmaSeguroProcessUuid: firmaSeguroDraftProcess?.processUuid || undefined,
+        iphoneEnrolamientoVerificado: iphoneEnrollmentVerified,
       });
       return;
     }
@@ -6080,14 +6188,15 @@ export default function CreditFactoryConsole({
 
     if (!deliveryRequirementReady) {
       setNotice({
-        text:
-          "Valida primero la entrega con Zero Touch antes de finalizar este credito.",
+        text: deliveryPendingMessage,
         tone: "amber",
       });
       return;
     }
 
-    await createCredit();
+    await createCredit({
+      iphoneEnrolamientoVerificado: iphoneEnrollmentVerified,
+    });
   };
 
   const registerPayment = async () => {
@@ -6735,6 +6844,15 @@ export default function CreditFactoryConsole({
     setEquipoMarca(value("equipoMarca"));
     setEquipoModelo(value("equipoModelo"));
     setImei(value("imei"));
+    const payloadPlatform = value("plataformaDispositivo").trim().toUpperCase();
+    setDraftDevicePlatform(
+      payloadPlatform === "IPHONE" || payloadPlatform === "IOS"
+        ? "iphone"
+        : payloadPlatform === "ANDROID"
+          ? "android"
+          : devicePlatform
+    );
+    setIphoneEnrollmentVerified(checked("iphoneEnrolamientoVerificado"));
     setValorEquipoTotal(value("valorEquipoTotal"));
     setCuotaInicial(value("cuotaInicial"));
     setPlazoMeses(value("plazoMeses") || plazoMeses);
@@ -7241,6 +7359,94 @@ export default function CreditFactoryConsole({
       </div>
     </div>
   );
+
+  if (shouldShowDeviceChoice) {
+    return (
+      <main className="min-h-screen bg-[#eef3f7] px-4 py-8 text-slate-950">
+        <section className="mx-auto max-w-5xl rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.10)]">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <FinserBrand compact showTagline={false} />
+              <p className="mt-6 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-emerald-700">
+                Nueva venta
+              </p>
+              <h1 className="mt-3 text-4xl font-black tracking-tight sm:text-5xl">
+                VAMOS POR ESA VENTA
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+                Elige el tipo de equipo para abrir el flujo correcto de credito,
+                firma y validacion.
+              </p>
+            </div>
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50"
+            >
+              Volver al dashboard
+            </Link>
+          </div>
+        </section>
+
+        <section className="mx-auto mt-6 grid max-w-5xl gap-5 md:grid-cols-2">
+          <Link
+            href={buildCreditPlatformHref("android")}
+            className="group overflow-hidden rounded-[28px] border border-emerald-300 bg-slate-950 shadow-[0_24px_80px_rgba(15,23,42,0.16)] transition hover:-translate-y-1 hover:shadow-[0_28px_90px_rgba(15,23,42,0.24)]"
+          >
+            <NextImage
+              src="/assets/creditos/android-choice.png"
+              alt="Android"
+              width={1536}
+              height={1024}
+              priority
+              className="aspect-[3/2] w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+            />
+            <div className="flex items-center justify-between gap-4 p-5 text-white">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-emerald-300">
+                  Fabrica actual
+                </p>
+                <h2 className="mt-2 text-3xl font-black">ANDROID</h2>
+                <p className="mt-1 text-sm text-slate-300">
+                  Trustonic / Zero Touch
+                </p>
+              </div>
+              <span className="rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-black text-slate-950">
+                Abrir
+              </span>
+            </div>
+          </Link>
+
+          <Link
+            href={buildCreditPlatformHref("iphone")}
+            className="group overflow-hidden rounded-[28px] border border-slate-400 bg-slate-950 shadow-[0_24px_80px_rgba(15,23,42,0.16)] transition hover:-translate-y-1 hover:shadow-[0_28px_90px_rgba(15,23,42,0.24)]"
+          >
+            <NextImage
+              src="/assets/creditos/iphone-choice.png"
+              alt="Iphone"
+              width={1536}
+              height={1024}
+              priority
+              className="aspect-[3/2] w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+            />
+            <div className="flex items-center justify-between gap-4 p-5 text-white">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-300">
+                  Nueva fabrica
+                </p>
+                <h2 className="mt-2 text-3xl font-black">IPHONE</h2>
+                <p className="mt-1 text-sm text-slate-300">
+                  Verificacion manual de enrolamiento
+                </p>
+              </div>
+              <span className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-slate-950">
+                Abrir
+              </span>
+            </div>
+          </Link>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <div
@@ -9983,12 +10189,16 @@ export default function CreditFactoryConsole({
                         {hideIdentityWizardStep ? "Paso 4" : "Paso 5"}
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        Validacion del equipo
+                        {iphoneFactory
+                          ? "Verificacion de enrolamiento"
+                          : "Validacion del equipo"}
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {entregaSinVerificacionAutorizada
                           ? "Esta cedula tiene autorizacion administrativa para cerrar la entrega sin validar el dispositivo."
-                          : "El cierre queda reservado para validar la entregabilidad del dispositivo con Zero Touch antes de cerrar la entrega."}
+                          : iphoneFactory
+                            ? "El cierre queda reservado para confirmar manualmente que el iPhone ya quedo enrolado."
+                            : "El cierre queda reservado para validar la entregabilidad del dispositivo con Zero Touch antes de cerrar la entrega."}
                       </p>
                     </div>
                     <div
@@ -9999,7 +10209,11 @@ export default function CreditFactoryConsole({
                           : "border-amber-200 bg-amber-50 text-amber-700",
                       ].join(" ")}
                     >
-                      {entregaValidada ? "Lista para cierre" : "Pendiente validacion"}
+                      {entregaValidada
+                        ? "Lista para cierre"
+                        : iphoneFactory
+                          ? "Pendiente enrolamiento"
+                          : "Pendiente validacion"}
                     </div>
                   </div>
 
@@ -10022,11 +10236,13 @@ export default function CreditFactoryConsole({
 
                     <div className="rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-5 py-5">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                        Validacion de entrega
+                        {iphoneFactory ? "Enrolamiento iPhone" : "Validacion de entrega"}
                       </p>
                       <div className="mt-4 space-y-3 text-sm text-slate-700">
                         <p>
-                          Primero inscribe el equipo en Zero Touch. Luego valida la entrega para confirmar si el dispositivo ya permite cerrar el credito.
+                          {iphoneFactory
+                            ? "Confirma en el sistema externo que el iPhone quedo enrolado correctamente. Esta verificacion manual habilita el cierre del credito."
+                            : "Primero inscribe el equipo en Zero Touch. Luego valida la entrega para confirmar si el dispositivo ya permite cerrar el credito."}
                         </p>
                         <div
                           className={[
@@ -10058,40 +10274,62 @@ export default function CreditFactoryConsole({
                           )}
                         </div>
 
-                        <div className="flex flex-wrap gap-3">
-                          <button
-                            type="button"
-                            onClick={() => void enrollDeviceBeforeFinalize()}
-                            disabled={
-                              enrollingDelivery ||
-                              validatingDelivery ||
-                              entregaSinVerificacionAutorizada
-                            }
-                            className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
-                          >
-                            {entregaSinVerificacionAutorizada
-                              ? "Inscripcion no requerida"
-                              : enrollingDelivery
-                                ? "Inscribiendo..."
-                                : "Inscribir equipo"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void validateDeliveryBeforeFinalize()}
-                            disabled={
-                              validatingDelivery ||
-                              enrollingDelivery ||
-                              entregaSinVerificacionAutorizada
-                            }
-                            className="rounded-2xl border border-[#145a5a]/25 bg-white px-5 py-3 text-sm font-semibold text-[#145a5a] transition hover:bg-[#e9f7f4] disabled:opacity-70"
-                          >
-                            {entregaSinVerificacionAutorizada
-                              ? "Verificacion no requerida"
-                              : validatingDelivery
-                                ? "Validando..."
-                                : "Validar entrega"}
-                          </button>
-                        </div>
+                        {iphoneFactory && (
+                          <label className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-black text-emerald-900">
+                            <input
+                              type="checkbox"
+                              checked={iphoneEnrollmentVerified}
+                              onChange={(event) =>
+                                setIphoneEnrollmentVerified(event.target.checked)
+                              }
+                              className="mt-1 h-5 w-5 accent-emerald-600"
+                            />
+                            <span>
+                              Enrolamiento iPhone verificado
+                              <span className="mt-1 block text-xs font-semibold text-emerald-700">
+                                Confirmo manualmente que el equipo quedo enrolado
+                                antes de finalizar.
+                              </span>
+                            </span>
+                          </label>
+                        )}
+
+                        {!iphoneFactory && (
+                          <div className="flex flex-wrap gap-3">
+                            <button
+                              type="button"
+                              onClick={() => void enrollDeviceBeforeFinalize()}
+                              disabled={
+                                enrollingDelivery ||
+                                validatingDelivery ||
+                                entregaSinVerificacionAutorizada
+                              }
+                              className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
+                            >
+                              {entregaSinVerificacionAutorizada
+                                ? "Inscripcion no requerida"
+                                : enrollingDelivery
+                                  ? "Inscribiendo..."
+                                  : "Inscribir equipo"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void validateDeliveryBeforeFinalize()}
+                              disabled={
+                                validatingDelivery ||
+                                enrollingDelivery ||
+                                entregaSinVerificacionAutorizada
+                              }
+                              className="rounded-2xl border border-[#145a5a]/25 bg-white px-5 py-3 text-sm font-semibold text-[#145a5a] transition hover:bg-[#e9f7f4] disabled:opacity-70"
+                            >
+                              {entregaSinVerificacionAutorizada
+                                ? "Verificacion no requerida"
+                                : validatingDelivery
+                                  ? "Validando..."
+                                  : "Validar entrega"}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -10107,7 +10345,10 @@ export default function CreditFactoryConsole({
                             ? [{ label: "Identidad", ready: stepContratoReady }]
                             : []),
                           { label: "Contratos", ready: stepDocumentosReady },
-                          { label: "Entregable", ready: entregaValidada },
+                          {
+                            label: iphoneFactory ? "Enrolado" : "Entregable",
+                            ready: entregaValidada,
+                          },
                         ].map(({ label, ready }) => (
                           <div
                             key={label}
@@ -10125,7 +10366,9 @@ export default function CreditFactoryConsole({
 
                       {!entregaValidada && !FLEXIBLE_WIZARD_FOR_TESTING && (
                         <div className="mt-5 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
-                          El credito solo se puede finalizar cuando Zero Touch confirme que el equipo esta entregable.
+                          {iphoneFactory
+                            ? "El credito solo se puede finalizar cuando confirmes manualmente el enrolamiento del iPhone."
+                            : "El credito solo se puede finalizar cuando Zero Touch confirme que el equipo esta entregable."}
                         </div>
                       )}
                     </div>
@@ -10694,7 +10937,9 @@ export default function CreditFactoryConsole({
 
                 {wizardStep === 5 && !ventaLista && !FLEXIBLE_WIZARD_FOR_TESTING && (
                   <span className="text-sm font-medium text-amber-700">
-                    Primero valida la entregabilidad del dispositivo para habilitar el cierre.
+                    {iphoneFactory
+                      ? "Primero verifica el enrolamiento del iPhone para habilitar el cierre."
+                      : "Primero valida la entregabilidad del dispositivo para habilitar el cierre."}
                   </span>
                 )}
               </div>

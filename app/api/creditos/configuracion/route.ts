@@ -55,8 +55,10 @@ export async function GET(req: Request) {
 
     const url = new URL(req.url);
     const documento = url.searchParams.get("documento") || "";
+    const platform =
+      url.searchParams.get("platform") || url.searchParams.get("plataforma") || "";
     const includeExceptions = url.searchParams.get("includeExceptions") === "true";
-    const effective = await getEffectiveCreditSettings(documento);
+    const effective = await getEffectiveCreditSettings(documento, platform);
     const exceptions =
       includeExceptions && isAdminRole(session.user.rolNombre)
         ? await listCreditDocumentExceptions()
@@ -93,6 +95,9 @@ export async function PATCH(req: Request) {
       cuotaInicialPorcentaje: body.cuotaInicialPorcentaje,
       plazoCuotas: body.plazoCuotas,
       plazoMaximoCuotas: body.plazoMaximoCuotas,
+      iphoneCuotaInicialPorcentaje: body.iphoneCuotaInicialPorcentaje,
+      iphonePlazoCuotas: body.iphonePlazoCuotas,
+      iphonePlazoMaximoCuotas: body.iphonePlazoMaximoCuotas,
       frecuenciaPago: body.frecuenciaPago,
     });
     const exceptions = await listCreditDocumentExceptions();

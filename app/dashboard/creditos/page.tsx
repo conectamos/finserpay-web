@@ -14,8 +14,10 @@ type SearchParams = Promise<{
   mode?: string;
   selected?: string;
   draft?: string;
+  platform?: string;
 }>;
 type EntryMode = "default" | "create-client" | "delivery" | "simulator";
+type DevicePlatform = "android" | "iphone";
 
 export default async function CreditosPage(props: {
   searchParams: SearchParams;
@@ -38,6 +40,11 @@ export default async function CreditosPage(props: {
   const initialSearch = String(searchParams?.search || "").trim();
   const initialSelectedId = Number(searchParams?.selected || 0);
   const initialDraftId = Number(searchParams?.draft || 0);
+  const rawDevicePlatform = String(searchParams?.platform || "").trim().toLowerCase();
+  const devicePlatform: DevicePlatform | null =
+    rawDevicePlatform === "android" || rawDevicePlatform === "iphone"
+      ? rawDevicePlatform
+      : null;
   const rawEntryMode = String(searchParams?.mode || "").trim().toLowerCase();
   let requestedEntryMode: EntryMode = "default";
 
@@ -56,6 +63,10 @@ export default async function CreditosPage(props: {
       ? requestedEntryMode
       : "create-client"
     : requestedEntryMode;
+  const shouldChooseDevicePlatform =
+    entryMode === "create-client" &&
+    !devicePlatform &&
+    !(Number.isInteger(initialDraftId) && initialDraftId > 0);
 
   if (
     sellerSession?.tipoPerfil === "SUPERVISOR" &&
@@ -92,6 +103,8 @@ export default async function CreditosPage(props: {
       initialSelectedId={Number.isInteger(initialSelectedId) && initialSelectedId > 0 ? initialSelectedId : null}
       initialDraftId={Number.isInteger(initialDraftId) && initialDraftId > 0 ? initialDraftId : null}
       entryMode={entryMode}
+      devicePlatform={devicePlatform}
+      chooseDevicePlatform={shouldChooseDevicePlatform}
     />
   );
 }

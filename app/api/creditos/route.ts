@@ -200,9 +200,11 @@ type CreditCreateBody = {
   frecuenciaPago?: string;
   firmaSeguroPasoContratos?: boolean;
   firmaSeguroProcessUuid?: string;
+  iphoneEnrolamientoVerificado?: boolean;
   imei?: string;
   montoCredito?: number | string;
   pagareAceptado?: boolean;
+  plataformaDispositivo?: string;
   plazoMeses?: number | string;
   referenciaEquipo?: string;
   tasaInteresEa?: number | string;
@@ -717,6 +719,13 @@ export async function POST(req: Request) {
     const deviceUid = sanitizeDeviceValue(body.deviceUid || body.imei)
       .replace(/\D/g, "")
       .slice(0, 15);
+    const plataformaDispositivo = String(body.plataformaDispositivo || "ANDROID")
+      .trim()
+      .toUpperCase();
+    const isIphoneCredit =
+      plataformaDispositivo === "IPHONE" || plataformaDispositivo === "IOS";
+    const iphoneManualEnrollmentVerified =
+      isIphoneCredit && Boolean(body.iphoneEnrolamientoVerificado);
     const valorEquipoTotalInput = toNumber(body.valorEquipoTotal);
     const catalogItem =
       equipoMarca && equipoModelo
@@ -725,7 +734,10 @@ export async function POST(req: Request) {
     const precioBaseVentaCatalogo = catalogItem?.activo
       ? catalogItem.precioBaseVenta
       : null;
-    const effectiveCreditSettings = await getEffectiveCreditSettings(clienteDocumento);
+    const effectiveCreditSettings = await getEffectiveCreditSettings(
+      clienteDocumento,
+      plataformaDispositivo
+    );
     const creditSettings = effectiveCreditSettings.settings;
     const cuotaInicialMinima = calculateRequiredInitialPayment(
       valorEquipoTotalInput,
@@ -1354,7 +1366,8 @@ export async function POST(req: Request) {
 
     const allowPendingDeliveryClose =
       ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION ||
-      documentCanSkipDeliveryVerification;
+      documentCanSkipDeliveryVerification ||
+      iphoneManualEnrollmentVerified;
 
     if (!isEqualityConfigured() && !allowPendingDeliveryClose) {
       return NextResponse.json(
@@ -1376,7 +1389,11 @@ export async function POST(req: Request) {
       | ReturnType<typeof getEqualityDeviceMeta>
       | null = null;
 
-    if (isEqualityConfigured() && !documentCanSkipDeliveryVerification) {
+    if (
+      isEqualityConfigured() &&
+      !documentCanSkipDeliveryVerification &&
+      !iphoneManualEnrollmentVerified
+    ) {
       try {
         equalityUpload = await runBusinessSafe(() =>
           uploadEqualityInventoryDevice(deviceUid)
@@ -1434,7 +1451,15 @@ export async function POST(req: Request) {
       );
     }
     const administrativeDeliveryStatus: EqualityDeliveryStatus | null =
-      documentCanSkipDeliveryVerification && !equalityMeta?.deliveryStatus?.ready
+      iphoneManualEnrollmentVerified && !equalityMeta?.deliveryStatus?.ready
+        ? {
+            label: "Enrolamiento iPhone verificado",
+            detail:
+              "Entrega permitida con verificacion manual de enrolamiento iPhone.",
+            ready: true,
+            tone: "emerald",
+          }
+        : documentCanSkipDeliveryVerification && !equalityMeta?.deliveryStatus?.ready
         ? {
             label: "Entrega autorizada",
             detail:
@@ -1446,7 +1471,9 @@ export async function POST(req: Request) {
     const effectiveDeliveryStatus =
       administrativeDeliveryStatus || equalityMeta?.deliveryStatus || null;
     const pendingDeliveryWarning = administrativeDeliveryStatus
-      ? "Credito creado con excepcion administrativa: entrega permitida sin verificar dispositivo."
+      ? iphoneManualEnrollmentVerified
+        ? "Credito iPhone creado con verificacion manual de enrolamiento."
+        : "Credito creado con excepcion administrativa: entrega permitida sin verificar dispositivo."
       : ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION &&
           !equalityMeta?.deliveryStatus?.ready
         ? "Credito creado en modo prueba: la validacion final de entrega quedo pendiente."
@@ -1489,6 +1516,8 @@ export async function POST(req: Request) {
         marca: equipoMarca,
         modelo: equipoModelo,
         imei,
+        plataforma: isIphoneCredit ? "IPHONE" : "ANDROID",
+        enrolamientoManualVerificado: iphoneManualEnrollmentVerified,
         catalogoId: catalogItem?.id || null,
         precioBaseVenta: precioBaseVentaCatalogo,
         excedentePrecioBase: precioBaseVentaCatalogo
