@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type ChangeEvent } from "react";
+import {
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type HTMLInputTypeAttribute,
+} from "react";
 
 type MassCreditInputRow = {
   aliado: string;
@@ -76,6 +81,7 @@ type CatalogResponse = {
 };
 
 type FieldKey = keyof MassCreditInputRow;
+type InputMode = "bulk" | "single";
 
 const FIELD_ORDER: FieldKey[] = [
   "fecha",
@@ -223,6 +229,29 @@ function emptyRow(): MassCreditInputRow {
   };
 }
 
+function defaultManualRow(): MassCreditInputRow {
+  const today = new Date();
+  const offset = today.getTimezoneOffset();
+  const localDate = new Date(today.getTime() - offset * 60 * 1000);
+
+  return {
+    ...emptyRow(),
+    fecha: localDate.toISOString().slice(0, 10),
+    frecuencia: "CATORCENAL",
+    inicial: "0",
+  };
+}
+
+function hasManualCreditData(row: MassCreditInputRow) {
+  return FIELD_ORDER.some((field) => {
+    if (field === "fecha" || field === "frecuencia" || field === "inicial") {
+      return false;
+    }
+
+    return String(row[field] || "").trim();
+  });
+}
+
 function parseRows(raw: string) {
   const lines = raw
     .split(/\r?\n/)
@@ -286,7 +315,11 @@ async function postRows(rows: MassCreditInputRow[], commit: boolean) {
 }
 
 export default function MassCreditImportConsole() {
+  const [mode, setMode] = useState<InputMode>("bulk");
   const [rawText, setRawText] = useState(TEMPLATE_HEADER);
+  const [manualRow, setManualRow] = useState<MassCreditInputRow>(
+    defaultManualRow()
+  );
   const [validation, setValidation] = useState<ValidationResponse | null>(null);
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [loading, setLoading] = useState<"catalog" | "validate" | "create" | null>(
@@ -294,16 +327,36 @@ export default function MassCreditImportConsole() {
   );
   const [notice, setNotice] = useState("");
   const parsedRows = useMemo(() => parseRows(rawText), [rawText]);
+  const activeRows =
+    mode === "single"
+      ? hasManualCreditData(manualRow)
+        ? [manualRow]
+        : []
+      : parsedRows;
   const canCreate =
     Boolean(validation) &&
     validation?.summary.invalid === 0 &&
-    validation?.summary.total === parsedRows.length &&
-    parsedRows.length > 0 &&
+    validation?.summary.total === activeRows.length &&
+    activeRows.length > 0 &&
     !validation?.commit;
-  const totalAmount = parsedRows.reduce((sum, row) => {
+  const totalAmount = activeRows.reduce((sum, row) => {
     const raw = String(row.valorCredito || "").replace(/\D/g, "");
     return sum + Number(raw || 0);
   }, 0);
+
+  const switchMode = (nextMode: InputMode) => {
+    setMode(nextMode);
+    setValidation(null);
+    setNotice("");
+  };
+
+  const updateManualField = (field: FieldKey, value: string) => {
+    setManualRow((current) => ({
+      ...current,
+      [field]: value,
+    }));
+    setValidation(null);
+  };
 
   const loadCatalog = async () => {
     try {
@@ -332,7 +385,7 @@ export default function MassCreditImportConsole() {
     try {
       setLoading("validate");
       setNotice("");
-      const data = await postRows(parsedRows, false);
+      const data = await postRows(activeRows, false);
       setValidation(data);
       setNotice(
         data.summary.invalid
@@ -348,14 +401,16 @@ export default function MassCreditImportConsole() {
   };
 
   const createCredits = async () => {
-    if (!window.confirm(`Crear ${parsedRows.length} credito(s) masivo(s)?`)) {
+    const label = mode === "single" ? "credito" : "credito(s) masivo(s)";
+
+    if (!window.confirm(`Crear ${activeRows.length} ${label}?`)) {
       return;
     }
 
     try {
       setLoading("create");
       setNotice("");
-      const data = await postRows(parsedRows, true);
+      const data = await postRows(activeRows, true);
       setValidation(data);
       setNotice(
         `Lote ${data.batchId || ""}: ${data.created || 0} credito(s) creados`
@@ -388,6 +443,7 @@ export default function MassCreditImportConsole() {
     }
 
     setRawText(await file.text());
+    setMode("bulk");
     setValidation(null);
     setNotice(`${file.name} cargado`);
   };
@@ -405,7 +461,7 @@ export default function MassCreditImportConsole() {
                   Admin FINSER PAY
                 </span>
                 <span className="rounded-full border border-[#dde5e8] bg-[#f7fafb] px-3 py-1 text-xs font-bold text-[#64717b]">
-                  {parsedRows.length} filas
+                  {activeRows.length} filas
                 </span>
                 <span className="rounded-full border border-[#dde5e8] bg-[#f7fafb] px-3 py-1 text-xs font-bold text-[#64717b]">
                   {money(totalAmount)}
@@ -442,51 +498,183 @@ export default function MassCreditImportConsole() {
           </div>
         </header>
 
-        <section className="mt-5 grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
+        <section className="mt-5 grid gap-4 lg:grid-cols-[1fr_1.15fr]">
           <div className="rounded-[24px] border border-[#d8e0e3] bg-white p-4 shadow-[0_12px_34px_rgba(24,32,37,0.06)]">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#0f766e]">
                 Datos
               </p>
-              <label className="inline-flex min-h-10 cursor-pointer items-center rounded-2xl border border-[#d8e0e3] bg-[#f8fbfa] px-4 text-sm font-black text-[#182025]">
-                Subir archivo CSV
-                <input
-                  type="file"
-                  accept=".csv,.tsv,.txt"
-                  onChange={loadFile}
-                  className="sr-only"
-                />
-              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => switchMode("bulk")}
+                  className={[
+                    "min-h-10 rounded-2xl border px-4 text-sm font-black",
+                    mode === "bulk"
+                      ? "border-[#11161a] bg-[#11161a] text-white"
+                      : "border-[#d8e0e3] bg-[#f8fbfa] text-[#182025]",
+                  ].join(" ")}
+                >
+                  Carga CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchMode("single")}
+                  className={[
+                    "min-h-10 rounded-2xl border px-4 text-sm font-black",
+                    mode === "single"
+                      ? "border-[#11161a] bg-[#11161a] text-white"
+                      : "border-[#d8e0e3] bg-[#f8fbfa] text-[#182025]",
+                  ].join(" ")}
+                >
+                  Credito individual
+                </button>
+                {mode === "bulk" ? (
+                  <label className="inline-flex min-h-10 cursor-pointer items-center rounded-2xl border border-[#d8e0e3] bg-[#f8fbfa] px-4 text-sm font-black text-[#182025]">
+                    Subir archivo CSV
+                    <input
+                      type="file"
+                      accept=".csv,.tsv,.txt"
+                      onChange={loadFile}
+                      className="sr-only"
+                    />
+                  </label>
+                ) : null}
+              </div>
             </div>
 
-            <textarea
-              value={rawText}
-              onChange={(event) => {
-                setRawText(event.target.value);
-                setValidation(null);
-              }}
-              placeholder={TEMPLATE_HEADER}
-              spellCheck={false}
-              wrap="off"
-              className="mt-4 h-[460px] w-full resize-none rounded-2xl border border-[#d8e0e3] bg-[#fbfdfd] p-4 font-mono text-xs leading-5 text-[#20242a] outline-none focus:border-[#0f766e]"
-            />
+            {mode === "bulk" ? (
+              <textarea
+                value={rawText}
+                onChange={(event) => {
+                  setRawText(event.target.value);
+                  setValidation(null);
+                }}
+                placeholder={TEMPLATE_HEADER}
+                spellCheck={false}
+                wrap="off"
+                className="mt-4 h-[460px] w-full resize-none rounded-2xl border border-[#d8e0e3] bg-[#fbfdfd] p-4 font-mono text-xs leading-5 text-[#20242a] outline-none focus:border-[#0f766e]"
+              />
+            ) : (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <ManualField
+                  label="Fecha"
+                  type="date"
+                  value={manualRow.fecha}
+                  onChange={(value) => updateManualField("fecha", value)}
+                />
+                <ManualField
+                  label="Cedula"
+                  inputMode="numeric"
+                  value={manualRow.cedula}
+                  onChange={(value) => updateManualField("cedula", value)}
+                />
+                <ManualField
+                  label="Cliente"
+                  value={manualRow.cliente}
+                  onChange={(value) => updateManualField("cliente", value)}
+                />
+                <ManualField
+                  label="Telefono"
+                  inputMode="tel"
+                  value={manualRow.telefono}
+                  onChange={(value) => updateManualField("telefono", value)}
+                />
+                <ManualField
+                  label="Referencia"
+                  value={manualRow.referencia}
+                  onChange={(value) => updateManualField("referencia", value)}
+                />
+                <ManualField
+                  label="IMEI"
+                  inputMode="numeric"
+                  value={manualRow.imei}
+                  onChange={(value) => updateManualField("imei", value)}
+                />
+                <ManualField
+                  label="Aliado"
+                  list="mass-credit-aliados"
+                  value={manualRow.aliado}
+                  onChange={(value) => updateManualField("aliado", value)}
+                />
+                <ManualField
+                  label="Sede"
+                  list="mass-credit-sedes"
+                  value={manualRow.sede}
+                  onChange={(value) => updateManualField("sede", value)}
+                />
+                <ManualField
+                  label="Vendedor"
+                  list="mass-credit-vendedores"
+                  value={manualRow.vendedor}
+                  onChange={(value) => updateManualField("vendedor", value)}
+                />
+                <ManualField
+                  label="Inicial"
+                  inputMode="numeric"
+                  value={manualRow.inicial}
+                  onChange={(value) => updateManualField("inicial", value)}
+                />
+                <ManualField
+                  label="Valor del credito"
+                  inputMode="numeric"
+                  value={manualRow.valorCredito}
+                  onChange={(value) => updateManualField("valorCredito", value)}
+                />
+                <ManualField
+                  label="Cuota"
+                  inputMode="numeric"
+                  value={manualRow.cuota}
+                  onChange={(value) => updateManualField("cuota", value)}
+                />
+                <ManualField
+                  label="Plazo"
+                  inputMode="numeric"
+                  value={manualRow.plazo}
+                  onChange={(value) => updateManualField("plazo", value)}
+                />
+                <label className="grid gap-1">
+                  <span className="text-[10px] font-black uppercase tracking-[0.18em] text-[#687080]">
+                    Frecuencia
+                  </span>
+                  <select
+                    value={manualRow.frecuencia}
+                    onChange={(event) =>
+                      updateManualField("frecuencia", event.target.value)
+                    }
+                    className="h-11 rounded-2xl border border-[#d8e0e3] bg-[#fbfdfd] px-3 text-sm font-bold text-[#20242a] outline-none focus:border-[#0f766e]"
+                  >
+                    <option value="CATORCENAL">Catorcenal</option>
+                    <option value="MENSUAL">Mensual</option>
+                  </select>
+                </label>
+                <ManualField
+                  label="Fecha de pago"
+                  type="date"
+                  value={manualRow.fechaPago}
+                  onChange={(value) => updateManualField("fechaPago", value)}
+                />
+              </div>
+            )}
 
             <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setRawText(TEMPLATE_ROWS);
-                  setValidation(null);
-                  setNotice("Ejemplo cargado en el cuadro de datos");
-                }}
-                className="min-h-11 rounded-2xl border border-[#d8e0e3] bg-white px-5 text-sm font-black text-[#182025]"
-              >
-                Ver ejemplo
-              </button>
+              {mode === "bulk" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRawText(TEMPLATE_ROWS);
+                    setValidation(null);
+                    setNotice("Ejemplo cargado en el cuadro de datos");
+                  }}
+                  className="min-h-11 rounded-2xl border border-[#d8e0e3] bg-white px-5 text-sm font-black text-[#182025]"
+                >
+                  Ver ejemplo
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={validate}
-                disabled={!parsedRows.length || loading !== null}
+                disabled={!activeRows.length || loading !== null}
                 className="min-h-11 rounded-2xl border border-[#0f766e] bg-[#0f766e] px-5 text-sm font-black text-white disabled:opacity-50"
               >
                 {loading === "validate" ? "Validando" : "Validar"}
@@ -497,12 +685,20 @@ export default function MassCreditImportConsole() {
                 disabled={!canCreate || loading !== null}
                 className="min-h-11 rounded-2xl border border-[#11161a] bg-[#11161a] px-5 text-sm font-black text-white disabled:opacity-50"
               >
-                {loading === "create" ? "Creando" : "Crear creditos"}
+                {loading === "create"
+                  ? "Creando"
+                  : mode === "single"
+                    ? "Crear credito"
+                    : "Crear creditos"}
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setRawText("");
+                  if (mode === "single") {
+                    setManualRow(defaultManualRow());
+                  } else {
+                    setRawText("");
+                  }
                   setValidation(null);
                   setNotice("");
                 }}
@@ -511,11 +707,27 @@ export default function MassCreditImportConsole() {
                 Limpiar
               </button>
             </div>
+
+            <datalist id="mass-credit-aliados">
+              {catalog?.aliados?.map((aliado) => (
+                <option key={aliado.id} value={aliado.nombre} />
+              ))}
+            </datalist>
+            <datalist id="mass-credit-sedes">
+              {catalog?.sedes?.map((sede) => (
+                <option key={sede.id} value={sede.nombre} />
+              ))}
+            </datalist>
+            <datalist id="mass-credit-vendedores">
+              {catalog?.vendedores?.map((vendedor) => (
+                <option key={vendedor.id} value={vendedor.nombre} />
+              ))}
+            </datalist>
           </div>
 
           <div className="rounded-[24px] border border-[#d8e0e3] bg-white p-4 shadow-[0_12px_34px_rgba(24,32,37,0.06)]">
             <div className="grid gap-3 sm:grid-cols-4">
-              <SummaryBox label="Filas" value={String(validation?.summary.total ?? parsedRows.length)} />
+              <SummaryBox label="Filas" value={String(validation?.summary.total ?? activeRows.length)} />
               <SummaryBox label="Validas" value={String(validation?.summary.valid ?? 0)} tone="green" />
               <SummaryBox label="Errores" value={String(validation?.summary.invalid ?? 0)} tone="red" />
               <SummaryBox label="Creados" value={String(validation?.summary.created ?? 0)} tone="dark" />
@@ -637,5 +849,37 @@ function MiniBox({ label, value }: { label: string; value: string }) {
       </p>
       <p className="mt-1 text-xl font-black text-[#20242a]">{value}</p>
     </div>
+  );
+}
+
+function ManualField({
+  inputMode,
+  label,
+  list,
+  onChange,
+  type = "text",
+  value,
+}: {
+  inputMode?: "decimal" | "email" | "none" | "numeric" | "search" | "tel" | "text" | "url";
+  label: string;
+  list?: string;
+  onChange: (value: string) => void;
+  type?: HTMLInputTypeAttribute;
+  value: string;
+}) {
+  return (
+    <label className="grid gap-1">
+      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-[#687080]">
+        {label}
+      </span>
+      <input
+        type={type}
+        inputMode={inputMode}
+        list={list}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-11 rounded-2xl border border-[#d8e0e3] bg-[#fbfdfd] px-3 text-sm font-bold text-[#20242a] outline-none focus:border-[#0f766e]"
+      />
+    </label>
   );
 }
