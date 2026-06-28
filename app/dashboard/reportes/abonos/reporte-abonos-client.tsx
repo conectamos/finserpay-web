@@ -431,19 +431,10 @@ export default function ReporteAbonosPage() {
     }
 
     const confirmed = window.confirm(
-      `Vas a ELIMINAR este recaudo de ${formatMoney(item.valor)} del folio ${item.credito.folio}. Se borrara el abono local, caja asociada y enlaces digitales relacionados.`
+      `Vas a ELIMINAR este recaudo de ${formatMoney(item.valor)} del folio ${item.credito.folio}. Se borrara el abono local, caja asociada y enlaces digitales relacionados, y se quitara este registro del reporte.`
     );
 
     if (!confirmed) {
-      return;
-    }
-
-    const typed = window.prompt(
-      `Escribe ELIMINAR para confirmar el borrado definitivo del recaudo ${item.id}:`
-    );
-
-    if (String(typed || "").trim().toUpperCase() !== "ELIMINAR") {
-      setMessage("Eliminacion cancelada: confirmacion incorrecta.");
       return;
     }
 

@@ -345,19 +345,10 @@ export default function ReporteCreditosPage() {
     }
 
     const confirmed = window.confirm(
-      `Vas a ELIMINAR el credito ${item.folio}. Se borraran sus recaudos locales, movimientos de caja asociados, intents Wompi locales y enlaces Efecty. Esta accion no es una anulacion.`
+      `Vas a ELIMINAR el credito ${item.folio}. Se borraran sus recaudos locales, movimientos de caja asociados, intents Wompi locales y enlaces Efecty, y se quitara este registro del reporte. Esta accion no es una anulacion.`
     );
 
     if (!confirmed) {
-      return;
-    }
-
-    const typed = window.prompt(
-      `Escribe ELIMINAR para confirmar el borrado definitivo del credito ${item.folio}:`
-    );
-
-    if (String(typed || "").trim().toUpperCase() !== "ELIMINAR") {
-      setMessage("Eliminacion cancelada: confirmacion incorrecta.");
       return;
     }
 
