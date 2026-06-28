@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import {
+  CREDIT_ABONO_CAJA_MARKER,
   calculateCreditCharges,
   extendDays,
   extendFromNow,
@@ -829,6 +830,122 @@ export async function POST(
 
     return NextResponse.json(
       { error: "No se pudo ejecutar el comando administrativo" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  _req: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const user = await getSessionUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+    }
+
+    const adminCentral =
+      isAdminRole(user.rolNombre) && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
+
+    if (!adminCentral) {
+      return NextResponse.json(
+        { error: "Solo admin central FINSER PAY puede eliminar creditos" },
+        { status: 403 }
+      );
+    }
+
+    const params = await context.params;
+    const creditId = parseId(params.id);
+
+    if (!creditId) {
+      return NextResponse.json({ error: "Credito invalido" }, { status: 400 });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const current = await tx.credito.findUnique({
+        where: { id: creditId },
+        select: {
+          id: true,
+          folio: true,
+          clienteNombre: true,
+        },
+      });
+
+      if (!current) {
+        return {
+          status: 404 as const,
+          body: { error: "Credito no encontrado" },
+        };
+      }
+
+      const abonos = await tx.creditoAbono.findMany({
+        where: { creditoId: current.id },
+        select: { id: true },
+      });
+      const abonoIds = abonos.map((item) => item.id);
+
+      if (abonoIds.length) {
+        await tx.cajaMovimiento.deleteMany({
+          where: {
+            OR: abonoIds.flatMap((abonoId) => [
+              {
+                descripcion: {
+                  contains: `${CREDIT_ABONO_CAJA_MARKER}${abonoId}`,
+                },
+              },
+              {
+                descripcion: {
+                  contains: `Anulacion de recaudo ${abonoId}`,
+                },
+              },
+            ]),
+          },
+        });
+      }
+
+      await tx.efectyRecaudoImport.updateMany({
+        where: {
+          OR: [
+            { creditoId: current.id },
+            ...(abonoIds.length ? [{ abonoId: { in: abonoIds } }] : []),
+          ],
+        },
+        data: {
+          status: "ELIMINADO_ADMIN",
+          message: `Credito ${current.folio} eliminado de raiz por admin FINSER PAY`,
+          creditoId: null,
+          abonoId: null,
+        },
+      });
+
+      await tx.wompiPaymentIntent.deleteMany({
+        where: { creditoId: current.id },
+      });
+
+      await tx.creditoAbono.deleteMany({
+        where: { creditoId: current.id },
+      });
+
+      await tx.credito.delete({
+        where: { id: current.id },
+      });
+
+      return {
+        status: 200 as const,
+        body: {
+          ok: true,
+          message: `Credito ${current.folio} eliminado de raiz`,
+        },
+      };
+    });
+
+    return NextResponse.json(result.body, { status: result.status });
+  } catch (error) {
+    console.error("ERROR ELIMINANDO CREDITO:", error);
+    return NextResponse.json(
+      { error: "No se pudo eliminar el credito" },
       { status: 500 }
     );
   }

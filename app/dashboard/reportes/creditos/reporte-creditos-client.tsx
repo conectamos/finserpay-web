@@ -9,6 +9,7 @@ type SessionUser = {
   usuario: string;
   sedeId: number;
   sedeNombre: string;
+  aliadoAccesoCodigo?: string | null;
   rolId: number;
   rolNombre: string;
 };
@@ -112,6 +113,10 @@ function formatDate(value: string | null) {
   }
 }
 
+function isFinserPayCentral(codigo: string | null | undefined) {
+  return String(codigo || "").trim().toUpperCase() === "FINSERPAY";
+}
+
 function excelCell(value: string | number | null | undefined) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -200,6 +205,7 @@ export default function ReporteCreditosPage() {
   const [summary, setSummary] = useState<CreditReportResponse["summary"] | null>(null);
   const [loading, setLoading] = useState(true);
   const [annullingId, setAnnullingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
 
   const [search, setSearch] = useState("");
@@ -208,6 +214,7 @@ export default function ReporteCreditosPage() {
   const [aliadoId, setAliadoId] = useState("");
   const [sedeId, setSedeId] = useState("");
   const isAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
+  const isCentralAdmin = isAdmin && isFinserPayCentral(user?.aliadoAccesoCodigo);
   const sedesFiltradas = aliadoId
     ? sedes.filter((sede) => String(sede.aliadoId || "") === aliadoId)
     : sedes;
@@ -320,6 +327,52 @@ export default function ReporteCreditosPage() {
       );
     } finally {
       setAnnullingId(null);
+    }
+  };
+
+  const deleteCredit = async (item: CreditReportItem) => {
+    if (!isCentralAdmin || deletingId) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Vas a ELIMINAR de raiz el credito ${item.folio}. Se borraran sus recaudos locales, movimientos de caja asociados, intents Wompi locales y enlaces Efecty. Esta accion no es una anulacion.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const typed = window.prompt(
+      `Escribe ELIMINAR para confirmar el borrado definitivo del credito ${item.folio}:`
+    );
+
+    if (String(typed || "").trim().toUpperCase() !== "ELIMINAR") {
+      setMessage("Eliminacion cancelada: confirmacion incorrecta.");
+      return;
+    }
+
+    try {
+      setDeletingId(item.id);
+      setMessage("");
+
+      const res = await fetch(`/api/creditos/${item.id}/command`, {
+        method: "DELETE",
+      });
+      const data = (await res.json()) as CreditCommandResponse;
+
+      if (!res.ok) {
+        throw new Error(data.error || "No se pudo eliminar el credito");
+      }
+
+      await loadReport();
+      setMessage(data.message || "Credito eliminado de raiz");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "No se pudo eliminar el credito"
+      );
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -531,16 +584,28 @@ export default function ReporteCreditosPage() {
                     <td className="px-3 py-3 align-top whitespace-nowrap">{formatMoney(item.creditoAutorizado)}</td>
                     <td className="px-3 py-3 align-top">
                       <div className="font-semibold text-slate-950">{item.estado}</div>
-                      {isAdmin && item.estado !== "ANULADO" && (
-                        <button
-                          type="button"
-                          onClick={() => void annulCredit(item)}
-                          disabled={annullingId === item.id}
-                          className="mt-2 inline-flex max-w-full items-center justify-center rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {annullingId === item.id ? "Anulando..." : "Anular"}
-                        </button>
-                      )}
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {isAdmin && item.estado !== "ANULADO" && (
+                          <button
+                            type="button"
+                            onClick={() => void annulCredit(item)}
+                            disabled={annullingId === item.id || deletingId === item.id}
+                            className="inline-flex max-w-full items-center justify-center rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {annullingId === item.id ? "Anulando..." : "Anular"}
+                          </button>
+                        )}
+                        {isCentralAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => void deleteCredit(item)}
+                            disabled={deletingId === item.id || annullingId === item.id}
+                            className="inline-flex max-w-full items-center justify-center rounded-xl border border-red-700 bg-red-700 px-3 py-1.5 text-[11px] font-black text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {deletingId === item.id ? "Eliminando..." : "Eliminar raiz"}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

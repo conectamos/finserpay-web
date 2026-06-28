@@ -9,6 +9,7 @@ type SessionUser = {
   usuario: string;
   sedeId: number;
   sedeNombre: string;
+  aliadoAccesoCodigo?: string | null;
   rolId: number;
   rolNombre: string;
 };
@@ -126,6 +127,10 @@ function formatDateTime(value: string | null) {
   } catch {
     return value;
   }
+}
+
+function isFinserPayCentral(codigo: string | null | undefined) {
+  return String(codigo || "").trim().toUpperCase() === "FINSERPAY";
 }
 
 function excelCell(value: string | number | null | undefined) {
@@ -277,6 +282,7 @@ export default function ReporteAbonosPage() {
   const [summary, setSummary] = useState<PaymentReportResponse["summary"] | null>(null);
   const [loading, setLoading] = useState(true);
   const [annullingId, setAnnullingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
 
   const [search, setSearch] = useState("");
@@ -285,6 +291,7 @@ export default function ReporteAbonosPage() {
   const [aliadoId, setAliadoId] = useState("");
   const [sedeId, setSedeId] = useState("");
   const isAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
+  const isCentralAdmin = isAdmin && isFinserPayCentral(user?.aliadoAccesoCodigo);
   const sedesFiltradas = aliadoId
     ? sedes.filter((sede) => String(sede.aliadoId || "") === aliadoId)
     : sedes;
@@ -406,6 +413,51 @@ export default function ReporteAbonosPage() {
       setMessage("Error anulando el recaudo");
     } finally {
       setAnnullingId(null);
+    }
+  };
+
+  const deletePayment = async (item: PaymentReportItem) => {
+    if (!isCentralAdmin || deletingId) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Vas a ELIMINAR de raiz este recaudo de ${formatMoney(item.valor)} del folio ${item.credito.folio}. Se borrara el abono local, caja asociada y enlaces digitales relacionados.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const typed = window.prompt(
+      `Escribe ELIMINAR para confirmar el borrado definitivo del recaudo ${item.id}:`
+    );
+
+    if (String(typed || "").trim().toUpperCase() !== "ELIMINAR") {
+      setMessage("Eliminacion cancelada: confirmacion incorrecta.");
+      return;
+    }
+
+    try {
+      setDeletingId(item.id);
+      setMessage("");
+
+      const res = await fetch(`/api/creditos/${item.credito.id}/abonos/${item.id}`, {
+        method: "DELETE",
+      });
+      const data = (await res.json()) as { error?: string; message?: string };
+
+      if (!res.ok) {
+        setMessage(data.error || "No se pudo eliminar el recaudo");
+        return;
+      }
+
+      await loadReport();
+      setMessage(data.message || "Recaudo eliminado de raiz");
+    } catch {
+      setMessage("Error eliminando el recaudo");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -657,15 +709,29 @@ export default function ReporteAbonosPage() {
                           )}
                         </td>
                         <td className="px-3 py-3 align-top">
-                          {isAdmin && !isAnnulled ? (
-                            <button
-                              type="button"
-                              onClick={() => void annulPayment(item)}
-                              disabled={annullingId === item.id}
-                              className="inline-flex max-w-full items-center justify-center rounded-xl border border-rose-200 bg-white px-3 py-2 text-[11px] font-black text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {annullingId === item.id ? "Anulando..." : "Anular"}
-                            </button>
+                          {(isAdmin && !isAnnulled) || isCentralAdmin ? (
+                            <div className="flex flex-wrap gap-2">
+                              {isAdmin && !isAnnulled && (
+                                <button
+                                  type="button"
+                                  onClick={() => void annulPayment(item)}
+                                  disabled={annullingId === item.id || deletingId === item.id}
+                                  className="inline-flex max-w-full items-center justify-center rounded-xl border border-rose-200 bg-white px-3 py-2 text-[11px] font-black text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {annullingId === item.id ? "Anulando..." : "Anular"}
+                                </button>
+                              )}
+                              {isCentralAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => void deletePayment(item)}
+                                  disabled={deletingId === item.id || annullingId === item.id}
+                                  className="inline-flex max-w-full items-center justify-center rounded-xl border border-red-700 bg-red-700 px-3 py-2 text-[11px] font-black text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {deletingId === item.id ? "Eliminando..." : "Eliminar raiz"}
+                                </button>
+                              )}
+                            </div>
                           ) : (
                             <span className="text-xs text-slate-400">-</span>
                           )}
