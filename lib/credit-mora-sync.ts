@@ -17,6 +17,7 @@ import {
   sanitizeText,
 } from "@/lib/credit-factory";
 import { buildMoraLockMessage } from "@/lib/credit-lock-message";
+import { isMassImportedCredit } from "@/lib/credit-import-flags";
 import prisma from "@/lib/prisma";
 
 const DEFAULT_SYNC_LIMIT = 500;
@@ -281,6 +282,15 @@ export async function syncCreditMora(
 
   if (credit.pazYSalvoEmitidoAt) {
     return buildResult(credit, "SKIPPED", "Credito con paz y salvo emitido.", plan);
+  }
+
+  if (isMassImportedCredit(credit)) {
+    return buildResult(
+      credit,
+      "SKIPPED",
+      "Credito importado sin gestion de bloqueo; mora solo informativa.",
+      plan
+    );
   }
 
   if (plan.estadoPago === "PAGADO" && !credit.bloqueoMora) {

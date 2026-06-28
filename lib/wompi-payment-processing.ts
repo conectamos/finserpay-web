@@ -24,6 +24,7 @@ import {
   unlockEqualityDevice,
 } from "@/lib/equality-zero-touch";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import { isMassImportedCredit } from "@/lib/credit-import-flags";
 import prisma from "@/lib/prisma";
 
 export type WompiPaymentTransaction = {
@@ -100,6 +101,7 @@ async function syncMoraAfterWompiPayment(creditId: number) {
       equalityLastCheckAt: true,
       bloqueoRobo: true,
       bloqueoMora: true,
+      observacionAdmin: true,
       pazYSalvoEmitidoAt: true,
       abonos: {
         where: {
@@ -118,7 +120,13 @@ async function syncMoraAfterWompiPayment(creditId: number) {
     },
   });
 
-  if (!credit || !credit.bloqueoMora || credit.bloqueoRobo || !isEqualityConfigured()) {
+  if (
+    !credit ||
+    isMassImportedCredit(credit) ||
+    !credit.bloqueoMora ||
+    credit.bloqueoRobo ||
+    !isEqualityConfigured()
+  ) {
     return;
   }
 

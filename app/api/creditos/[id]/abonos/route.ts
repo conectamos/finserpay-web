@@ -34,6 +34,7 @@ import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
+import { isMassImportedCredit } from "@/lib/credit-import-flags";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -317,6 +318,15 @@ async function syncMoraAutomation(credit: LoadedCredit, plan: PaymentPlan) {
       action: "SKIPPED" as const,
       credit,
       message: "Credito con paz y salvo emitido.",
+      remote: null as unknown,
+    };
+  }
+
+  if (isMassImportedCredit(credit)) {
+    return {
+      action: "SKIPPED" as const,
+      credit,
+      message: "Credito importado sin gestion de bloqueo; mora solo informativa.",
       remote: null as unknown,
     };
   }

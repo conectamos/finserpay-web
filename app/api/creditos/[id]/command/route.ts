@@ -36,6 +36,7 @@ import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
+import { isMassImportedCredit } from "@/lib/credit-import-flags";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,6 +57,17 @@ const SUPERVISOR_COMMANDS: CreditAdminCommand[] = [
   "toggle-mora-lock",
   "remove-lock",
 ];
+const DEVICE_CONTROL_COMMANDS = new Set<CreditAdminCommand>([
+  "consult-device",
+  "extend-1h",
+  "extend-24h",
+  "extend-48h",
+  "remove-lock",
+  "toggle-mora-lock",
+  "toggle-stolen-lock",
+  "warranty-15d",
+  "warranty-20d",
+]);
 
 function parseId(value: string) {
   const numeric = Number(value);
@@ -367,6 +379,16 @@ export async function POST(
     if (current.estado === "ANULADO") {
       return NextResponse.json(
         { error: "Este credito ya esta anulado" },
+        { status: 400 }
+      );
+    }
+
+    if (isMassImportedCredit(current) && DEVICE_CONTROL_COMMANDS.has(command)) {
+      return NextResponse.json(
+        {
+          error:
+            "Este credito fue importado como historico sin gestion de bloqueo.",
+        },
         { status: 400 }
       );
     }
