@@ -315,7 +315,7 @@ async function postRows(rows: MassCreditInputRow[], commit: boolean) {
 }
 
 export default function MassCreditImportConsole() {
-  const [mode, setMode] = useState<InputMode>("bulk");
+  const [mode, setMode] = useState<InputMode>("single");
   const [rawText, setRawText] = useState(TEMPLATE_HEADER);
   const [manualRow, setManualRow] = useState<MassCreditInputRow>(
     defaultManualRow()
@@ -451,23 +451,15 @@ export default function MassCreditImportConsole() {
   const visibleRows = validation?.rows || [];
 
   return (
-    <div className="min-h-screen bg-[#eef3f6] px-4 py-6 text-[#182025]">
-      <main className="mx-auto max-w-7xl">
-        <header className="rounded-[28px] border border-[#d8e0e3] bg-white p-5 shadow-[0_18px_55px_rgba(24,32,37,0.08)]">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className="min-h-screen bg-[#f3f6f7] px-4 py-5 text-[#182025] sm:px-6">
+      <main className="mx-auto max-w-[1440px]">
+        <header className="border-b border-[#d5dde2] pb-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-[#bfe9dd] bg-[#f0fbf7] px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-[#087061]">
-                  Admin FINSER PAY
-                </span>
-                <span className="rounded-full border border-[#dde5e8] bg-[#f7fafb] px-3 py-1 text-xs font-bold text-[#64717b]">
-                  {activeRows.length} filas
-                </span>
-                <span className="rounded-full border border-[#dde5e8] bg-[#f7fafb] px-3 py-1 text-xs font-bold text-[#64717b]">
-                  {money(totalAmount)}
-                </span>
-              </div>
-              <h1 className="mt-4 text-4xl font-black tracking-tight text-[#11161a]">
+              <span className="inline-flex rounded-md border border-[#b9ded9] bg-[#edf8f5] px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-[#0b6d63]">
+                Admin FINSER PAY
+              </span>
+              <h1 className="mt-3 text-3xl font-black tracking-tight text-[#101418] sm:text-4xl">
                 Creditos masivos
               </h1>
             </div>
@@ -477,20 +469,20 @@ export default function MassCreditImportConsole() {
                 type="button"
                 onClick={loadCatalog}
                 disabled={loading !== null}
-                className="min-h-11 rounded-2xl border border-[#d8e0e3] bg-white px-4 text-sm font-black text-[#182025]"
+                className="h-10 rounded-lg border border-[#cdd7dd] bg-white px-4 text-sm font-black text-[#182025] transition hover:border-[#9fb2bd] disabled:opacity-50"
               >
                 {loading === "catalog" ? "Cargando" : "Catalogo"}
               </button>
               <button
                 type="button"
                 onClick={downloadTemplate}
-                className="min-h-11 rounded-2xl border border-[#d8e0e3] bg-white px-4 text-sm font-black text-[#182025]"
+                className="h-10 rounded-lg border border-[#cdd7dd] bg-white px-4 text-sm font-black text-[#182025] transition hover:border-[#9fb2bd]"
               >
-                Descargar plantilla CSV
+                Plantilla CSV
               </button>
               <Link
                 href="/dashboard"
-                className="inline-flex min-h-11 items-center rounded-2xl border border-[#11161a] bg-[#11161a] px-4 text-sm font-black text-white"
+                className="inline-flex h-10 items-center rounded-lg border border-[#101418] bg-[#101418] px-4 text-sm font-black text-white"
               >
                 Dashboard
               </Link>
@@ -498,40 +490,40 @@ export default function MassCreditImportConsole() {
           </div>
         </header>
 
-        <section className="mt-5 grid gap-4 lg:grid-cols-[1fr_1.15fr]">
-          <div className="rounded-[24px] border border-[#d8e0e3] bg-white p-4 shadow-[0_12px_34px_rgba(24,32,37,0.06)]">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#0f766e]">
-                Datos
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => switchMode("bulk")}
-                  className={[
-                    "min-h-10 rounded-2xl border px-4 text-sm font-black",
-                    mode === "bulk"
-                      ? "border-[#11161a] bg-[#11161a] text-white"
-                      : "border-[#d8e0e3] bg-[#f8fbfa] text-[#182025]",
-                  ].join(" ")}
-                >
-                  Carga CSV
-                </button>
+        <section className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="overflow-hidden rounded-lg border border-[#d5dde2] bg-white shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-[#e1e7ea] px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="inline-grid grid-cols-2 rounded-lg border border-[#d5dde2] bg-[#f7fafb] p-1">
                 <button
                   type="button"
                   onClick={() => switchMode("single")}
                   className={[
-                    "min-h-10 rounded-2xl border px-4 text-sm font-black",
+                    "h-10 rounded-md px-4 text-sm font-black transition",
                     mode === "single"
-                      ? "border-[#11161a] bg-[#11161a] text-white"
-                      : "border-[#d8e0e3] bg-[#f8fbfa] text-[#182025]",
+                      ? "bg-[#101418] text-white shadow-sm"
+                      : "text-[#53616b] hover:text-[#101418]",
                   ].join(" ")}
                 >
                   Credito individual
                 </button>
-                {mode === "bulk" ? (
-                  <label className="inline-flex min-h-10 cursor-pointer items-center rounded-2xl border border-[#d8e0e3] bg-[#f8fbfa] px-4 text-sm font-black text-[#182025]">
-                    Subir archivo CSV
+                <button
+                  type="button"
+                  onClick={() => switchMode("bulk")}
+                  className={[
+                    "h-10 rounded-md px-4 text-sm font-black transition",
+                    mode === "bulk"
+                      ? "bg-[#101418] text-white shadow-sm"
+                      : "text-[#53616b] hover:text-[#101418]",
+                  ].join(" ")}
+                >
+                  Carga CSV
+                </button>
+              </div>
+
+              {mode === "bulk" ? (
+                <div className="flex flex-wrap gap-2">
+                  <label className="inline-flex h-10 cursor-pointer items-center rounded-lg border border-[#cdd7dd] bg-white px-4 text-sm font-black text-[#182025] transition hover:border-[#9fb2bd]">
+                    Subir CSV
                     <input
                       type="file"
                       accept=".csv,.tsv,.txt"
@@ -539,174 +531,138 @@ export default function MassCreditImportConsole() {
                       className="sr-only"
                     />
                   </label>
-                ) : null}
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRawText(TEMPLATE_ROWS);
+                      setValidation(null);
+                      setNotice("Ejemplo cargado");
+                    }}
+                    className="h-10 rounded-lg border border-[#cdd7dd] bg-white px-4 text-sm font-black text-[#182025] transition hover:border-[#9fb2bd]"
+                  >
+                    Ver ejemplo
+                  </button>
+                </div>
+              ) : null}
             </div>
 
-            {mode === "bulk" ? (
-              <textarea
-                value={rawText}
-                onChange={(event) => {
-                  setRawText(event.target.value);
-                  setValidation(null);
-                }}
-                placeholder={TEMPLATE_HEADER}
-                spellCheck={false}
-                wrap="off"
-                className="mt-4 h-[460px] w-full resize-none rounded-2xl border border-[#d8e0e3] bg-[#fbfdfd] p-4 font-mono text-xs leading-5 text-[#20242a] outline-none focus:border-[#0f766e]"
-              />
+            {mode === "single" ? (
+              <div className="p-5">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <ManualField
+                    label="Fecha"
+                    type="date"
+                    value={manualRow.fecha}
+                    onChange={(value) => updateManualField("fecha", value)}
+                  />
+                  <ManualField
+                    label="Cedula"
+                    inputMode="numeric"
+                    value={manualRow.cedula}
+                    onChange={(value) => updateManualField("cedula", value)}
+                  />
+                  <ManualField
+                    label="Cliente"
+                    value={manualRow.cliente}
+                    onChange={(value) => updateManualField("cliente", value)}
+                  />
+                  <ManualField
+                    label="Telefono"
+                    inputMode="tel"
+                    value={manualRow.telefono}
+                    onChange={(value) => updateManualField("telefono", value)}
+                  />
+                  <ManualField
+                    label="Referencia"
+                    value={manualRow.referencia}
+                    onChange={(value) => updateManualField("referencia", value)}
+                  />
+                  <ManualField
+                    label="IMEI"
+                    inputMode="numeric"
+                    value={manualRow.imei}
+                    onChange={(value) => updateManualField("imei", value)}
+                  />
+                  <ManualField
+                    label="Aliado"
+                    list="mass-credit-aliados"
+                    value={manualRow.aliado}
+                    onChange={(value) => updateManualField("aliado", value)}
+                  />
+                  <ManualField
+                    label="Sede"
+                    list="mass-credit-sedes"
+                    value={manualRow.sede}
+                    onChange={(value) => updateManualField("sede", value)}
+                  />
+                  <ManualField
+                    label="Vendedor"
+                    list="mass-credit-vendedores"
+                    value={manualRow.vendedor}
+                    onChange={(value) => updateManualField("vendedor", value)}
+                  />
+                  <ManualField
+                    label="Inicial"
+                    inputMode="numeric"
+                    value={manualRow.inicial}
+                    onChange={(value) => updateManualField("inicial", value)}
+                  />
+                  <ManualField
+                    label="Valor del credito"
+                    inputMode="numeric"
+                    value={manualRow.valorCredito}
+                    onChange={(value) => updateManualField("valorCredito", value)}
+                  />
+                  <ManualField
+                    label="Cuota"
+                    inputMode="numeric"
+                    value={manualRow.cuota}
+                    onChange={(value) => updateManualField("cuota", value)}
+                  />
+                  <ManualField
+                    label="Plazo"
+                    inputMode="numeric"
+                    value={manualRow.plazo}
+                    onChange={(value) => updateManualField("plazo", value)}
+                  />
+                  <label className="grid gap-1">
+                    <span className="text-[10px] font-black uppercase tracking-[0.16em] text-[#64717b]">
+                      Frecuencia
+                    </span>
+                    <select
+                      value={manualRow.frecuencia}
+                      onChange={(event) =>
+                        updateManualField("frecuencia", event.target.value)
+                      }
+                      className="h-11 rounded-lg border border-[#cdd7dd] bg-white px-3 text-sm font-bold text-[#182025] outline-none transition focus:border-[#0f766e] focus:ring-2 focus:ring-[#0f766e]/10"
+                    >
+                      <option value="CATORCENAL">Catorcenal</option>
+                      <option value="MENSUAL">Mensual</option>
+                    </select>
+                  </label>
+                  <ManualField
+                    label="Fecha de pago"
+                    type="date"
+                    value={manualRow.fechaPago}
+                    onChange={(value) => updateManualField("fechaPago", value)}
+                  />
+                </div>
+              </div>
             ) : (
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <ManualField
-                  label="Fecha"
-                  type="date"
-                  value={manualRow.fecha}
-                  onChange={(value) => updateManualField("fecha", value)}
-                />
-                <ManualField
-                  label="Cedula"
-                  inputMode="numeric"
-                  value={manualRow.cedula}
-                  onChange={(value) => updateManualField("cedula", value)}
-                />
-                <ManualField
-                  label="Cliente"
-                  value={manualRow.cliente}
-                  onChange={(value) => updateManualField("cliente", value)}
-                />
-                <ManualField
-                  label="Telefono"
-                  inputMode="tel"
-                  value={manualRow.telefono}
-                  onChange={(value) => updateManualField("telefono", value)}
-                />
-                <ManualField
-                  label="Referencia"
-                  value={manualRow.referencia}
-                  onChange={(value) => updateManualField("referencia", value)}
-                />
-                <ManualField
-                  label="IMEI"
-                  inputMode="numeric"
-                  value={manualRow.imei}
-                  onChange={(value) => updateManualField("imei", value)}
-                />
-                <ManualField
-                  label="Aliado"
-                  list="mass-credit-aliados"
-                  value={manualRow.aliado}
-                  onChange={(value) => updateManualField("aliado", value)}
-                />
-                <ManualField
-                  label="Sede"
-                  list="mass-credit-sedes"
-                  value={manualRow.sede}
-                  onChange={(value) => updateManualField("sede", value)}
-                />
-                <ManualField
-                  label="Vendedor"
-                  list="mass-credit-vendedores"
-                  value={manualRow.vendedor}
-                  onChange={(value) => updateManualField("vendedor", value)}
-                />
-                <ManualField
-                  label="Inicial"
-                  inputMode="numeric"
-                  value={manualRow.inicial}
-                  onChange={(value) => updateManualField("inicial", value)}
-                />
-                <ManualField
-                  label="Valor del credito"
-                  inputMode="numeric"
-                  value={manualRow.valorCredito}
-                  onChange={(value) => updateManualField("valorCredito", value)}
-                />
-                <ManualField
-                  label="Cuota"
-                  inputMode="numeric"
-                  value={manualRow.cuota}
-                  onChange={(value) => updateManualField("cuota", value)}
-                />
-                <ManualField
-                  label="Plazo"
-                  inputMode="numeric"
-                  value={manualRow.plazo}
-                  onChange={(value) => updateManualField("plazo", value)}
-                />
-                <label className="grid gap-1">
-                  <span className="text-[10px] font-black uppercase tracking-[0.18em] text-[#687080]">
-                    Frecuencia
-                  </span>
-                  <select
-                    value={manualRow.frecuencia}
-                    onChange={(event) =>
-                      updateManualField("frecuencia", event.target.value)
-                    }
-                    className="h-11 rounded-2xl border border-[#d8e0e3] bg-[#fbfdfd] px-3 text-sm font-bold text-[#20242a] outline-none focus:border-[#0f766e]"
-                  >
-                    <option value="CATORCENAL">Catorcenal</option>
-                    <option value="MENSUAL">Mensual</option>
-                  </select>
-                </label>
-                <ManualField
-                  label="Fecha de pago"
-                  type="date"
-                  value={manualRow.fechaPago}
-                  onChange={(value) => updateManualField("fechaPago", value)}
+              <div className="p-5">
+                <textarea
+                  value={rawText}
+                  onChange={(event) => {
+                    setRawText(event.target.value);
+                    setValidation(null);
+                  }}
+                  placeholder={TEMPLATE_HEADER}
+                  spellCheck={false}
+                  wrap="off"
+                  className="h-[360px] w-full resize-none rounded-lg border border-[#cdd7dd] bg-[#fbfdfd] p-4 font-mono text-xs leading-5 text-[#182025] outline-none transition focus:border-[#0f766e] focus:ring-2 focus:ring-[#0f766e]/10"
                 />
               </div>
             )}
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              {mode === "bulk" ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRawText(TEMPLATE_ROWS);
-                    setValidation(null);
-                    setNotice("Ejemplo cargado en el cuadro de datos");
-                  }}
-                  className="min-h-11 rounded-2xl border border-[#d8e0e3] bg-white px-5 text-sm font-black text-[#182025]"
-                >
-                  Ver ejemplo
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={validate}
-                disabled={!activeRows.length || loading !== null}
-                className="min-h-11 rounded-2xl border border-[#0f766e] bg-[#0f766e] px-5 text-sm font-black text-white disabled:opacity-50"
-              >
-                {loading === "validate" ? "Validando" : "Validar"}
-              </button>
-              <button
-                type="button"
-                onClick={createCredits}
-                disabled={!canCreate || loading !== null}
-                className="min-h-11 rounded-2xl border border-[#11161a] bg-[#11161a] px-5 text-sm font-black text-white disabled:opacity-50"
-              >
-                {loading === "create"
-                  ? "Creando"
-                  : mode === "single"
-                    ? "Crear credito"
-                    : "Crear creditos"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (mode === "single") {
-                    setManualRow(defaultManualRow());
-                  } else {
-                    setRawText("");
-                  }
-                  setValidation(null);
-                  setNotice("");
-                }}
-                className="min-h-11 rounded-2xl border border-[#d8e0e3] bg-white px-5 text-sm font-black text-[#182025]"
-              >
-                Limpiar
-              </button>
-            </div>
 
             <datalist id="mass-credit-aliados">
               {catalog?.aliados?.map((aliado) => (
@@ -725,16 +681,78 @@ export default function MassCreditImportConsole() {
             </datalist>
           </div>
 
-          <div className="rounded-[24px] border border-[#d8e0e3] bg-white p-4 shadow-[0_12px_34px_rgba(24,32,37,0.06)]">
-            <div className="grid gap-3 sm:grid-cols-4">
-              <SummaryBox label="Filas" value={String(validation?.summary.total ?? activeRows.length)} />
-              <SummaryBox label="Validas" value={String(validation?.summary.valid ?? 0)} tone="green" />
-              <SummaryBox label="Errores" value={String(validation?.summary.invalid ?? 0)} tone="red" />
-              <SummaryBox label="Creados" value={String(validation?.summary.created ?? 0)} tone="dark" />
+          <aside className="rounded-lg border border-[#d5dde2] bg-white p-5 shadow-sm">
+            <div className="grid grid-cols-2 gap-3">
+              <SummaryBox
+                label="Filas"
+                value={String(validation?.summary.total ?? activeRows.length)}
+              />
+              <SummaryBox
+                label="Validas"
+                value={String(validation?.summary.valid ?? 0)}
+                tone="green"
+              />
+              <SummaryBox
+                label="Errores"
+                value={String(validation?.summary.invalid ?? 0)}
+                tone="red"
+              />
+              <SummaryBox
+                label="Creados"
+                value={String(validation?.summary.created ?? 0)}
+                tone="dark"
+              />
+            </div>
+
+            <div className="mt-5 rounded-lg border border-[#d5dde2] bg-[#f8fbfa] px-4 py-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#64717b]">
+                Monto
+              </p>
+              <p className="mt-1 text-2xl font-black text-[#101418]">
+                {money(totalAmount)}
+              </p>
+            </div>
+
+            <div className="mt-5 grid gap-2">
+              <button
+                type="button"
+                onClick={validate}
+                disabled={!activeRows.length || loading !== null}
+                className="h-11 rounded-lg border border-[#0f766e] bg-[#0f766e] px-4 text-sm font-black text-white transition hover:bg-[#115e59] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading === "validate" ? "Validando" : "Validar"}
+              </button>
+              <button
+                type="button"
+                onClick={createCredits}
+                disabled={!canCreate || loading !== null}
+                className="h-11 rounded-lg border border-[#101418] bg-[#101418] px-4 text-sm font-black text-white transition hover:bg-[#242b31] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading === "create"
+                  ? "Creando"
+                  : mode === "single"
+                    ? "Crear credito"
+                    : "Crear creditos"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (mode === "single") {
+                    setManualRow(defaultManualRow());
+                  } else {
+                    setRawText("");
+                  }
+                  setValidation(null);
+                  setNotice("");
+                }}
+                className="h-11 rounded-lg border border-[#cdd7dd] bg-white px-4 text-sm font-black text-[#182025] transition hover:border-[#9fb2bd]"
+              >
+                Limpiar
+              </button>
             </div>
 
             {catalog ? (
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <div className="mt-5 grid grid-cols-3 gap-2">
                 <MiniBox label="Aliados" value={String(catalog.aliados?.length || 0)} />
                 <MiniBox label="Sedes" value={String(catalog.sedes?.length || 0)} />
                 <MiniBox label="Vendedores" value={String(catalog.vendedores?.length || 0)} />
@@ -742,70 +760,84 @@ export default function MassCreditImportConsole() {
             ) : null}
 
             {notice ? (
-              <div className="mt-4 rounded-2xl border border-[#d8e0e3] bg-[#f8fbfa] px-4 py-3 text-sm font-bold text-[#182025]">
+              <div className="mt-5 rounded-lg border border-[#d5dde2] bg-white px-4 py-3 text-sm font-bold text-[#182025]">
                 {notice}
               </div>
             ) : null}
+          </aside>
+        </section>
 
-            <div className="mt-4 overflow-hidden rounded-2xl border border-[#d8e0e3]">
-              <div className="max-h-[560px] overflow-auto">
-                <table className="min-w-[980px] w-full text-left text-xs">
-                  <thead className="sticky top-0 bg-[#111318] text-white">
-                    <tr>
-                      <th className="px-3 py-3 font-black">Fila</th>
-                      <th className="px-3 py-3 font-black">Estado</th>
-                      <th className="px-3 py-3 font-black">Cliente</th>
-                      <th className="px-3 py-3 font-black">Cedula</th>
-                      <th className="px-3 py-3 font-black">Sede</th>
-                      <th className="px-3 py-3 font-black">Vendedor</th>
-                      <th className="px-3 py-3 font-black">Credito</th>
-                      <th className="px-3 py-3 font-black">Cuota</th>
-                      <th className="px-3 py-3 font-black">Notas</th>
+        <section className="mt-5 overflow-hidden rounded-lg border border-[#d5dde2] bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-[#e1e7ea] px-5 py-4">
+            <h2 className="text-sm font-black uppercase tracking-[0.16em] text-[#101418]">
+              Validacion
+            </h2>
+            <span className="text-sm font-bold text-[#64717b]">
+              {visibleRows.length} resultados
+            </span>
+          </div>
+          <div className="max-h-[420px] overflow-auto">
+            <table className="min-w-[1040px] w-full text-left text-xs">
+              <thead className="sticky top-0 bg-[#101418] text-white">
+                <tr>
+                  <th className="px-4 py-3 font-black">Fila</th>
+                  <th className="px-4 py-3 font-black">Estado</th>
+                  <th className="px-4 py-3 font-black">Cliente</th>
+                  <th className="px-4 py-3 font-black">Cedula</th>
+                  <th className="px-4 py-3 font-black">Sede</th>
+                  <th className="px-4 py-3 font-black">Vendedor</th>
+                  <th className="px-4 py-3 font-black">Credito</th>
+                  <th className="px-4 py-3 font-black">Cuota</th>
+                  <th className="px-4 py-3 font-black">Notas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRows.length ? (
+                  visibleRows.map((row) => (
+                    <tr
+                      key={row.rowNumber}
+                      className="border-b border-[#edf1f3] last:border-0"
+                    >
+                      <td className="px-4 py-3 font-black">{row.rowNumber}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={[
+                            "rounded-md border px-2 py-1 text-[11px] font-black",
+                            statusClasses(row.ok),
+                          ].join(" ")}
+                        >
+                          {row.createdFolio || (row.ok ? "OK" : "ERROR")}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-bold text-[#20242a]">
+                        {row.normalized.cliente || "-"}
+                      </td>
+                      <td className="px-4 py-3">{row.normalized.cedula || "-"}</td>
+                      <td className="px-4 py-3">{row.normalized.sede || "-"}</td>
+                      <td className="px-4 py-3">{row.normalized.vendedor || "-"}</td>
+                      <td className="px-4 py-3 font-black">
+                        {money(row.normalized.valorCredito)}
+                      </td>
+                      <td className="px-4 py-3">
+                        {money(row.normalized.cuota)} / {row.normalized.plazo}
+                      </td>
+                      <td className="px-4 py-3">
+                        {[...row.errors, ...row.warnings].join(" | ") || "-"}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {visibleRows.length ? (
-                      visibleRows.map((row) => (
-                        <tr key={row.rowNumber} className="border-b border-[#edf1f3] last:border-0">
-                          <td className="px-3 py-3 font-black">{row.rowNumber}</td>
-                          <td className="px-3 py-3">
-                            <span
-                              className={[
-                                "rounded-full border px-2 py-1 text-[11px] font-black",
-                                statusClasses(row.ok),
-                              ].join(" ")}
-                            >
-                              {row.createdFolio || (row.ok ? "OK" : "ERROR")}
-                            </span>
-                          </td>
-                          <td className="px-3 py-3 font-bold text-[#20242a]">
-                            {row.normalized.cliente || "-"}
-                          </td>
-                          <td className="px-3 py-3">{row.normalized.cedula || "-"}</td>
-                          <td className="px-3 py-3">{row.normalized.sede || "-"}</td>
-                          <td className="px-3 py-3">{row.normalized.vendedor || "-"}</td>
-                          <td className="px-3 py-3 font-black">
-                            {money(row.normalized.valorCredito)}
-                          </td>
-                          <td className="px-3 py-3">
-                            {money(row.normalized.cuota)} / {row.normalized.plazo}
-                          </td>
-                          <td className="px-3 py-3">
-                            {[...row.errors, ...row.warnings].join(" | ") || "-"}
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={9} className="px-4 py-12 text-center text-sm font-semibold text-[#687080]">
-                          Sin validacion ejecutada.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                  ))
+                ) : (
+                  <tr>
+                    <td
+                      colSpan={9}
+                      className="px-4 py-12 text-center text-sm font-semibold text-[#687080]"
+                    >
+                      Sin validacion.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </section>
       </main>
@@ -832,19 +864,19 @@ function SummaryBox({
           : "border-[#d8e0e3] bg-[#f8fbfa] text-[#20242a]";
 
   return (
-    <div className={["rounded-2xl border px-4 py-4", toneClass].join(" ")}>
-      <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-70">
+    <div className={["rounded-lg border px-3 py-3", toneClass].join(" ")}>
+      <p className="text-[10px] font-black uppercase tracking-[0.16em] opacity-70">
         {label}
       </p>
-      <p className="mt-2 text-3xl font-black">{value}</p>
+      <p className="mt-1 text-2xl font-black">{value}</p>
     </div>
   );
 }
 
 function MiniBox({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-[#d8e0e3] bg-white px-4 py-3">
-      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#687080]">
+    <div className="rounded-lg border border-[#d8e0e3] bg-white px-3 py-3">
+      <p className="text-[9px] font-black uppercase tracking-[0.12em] text-[#687080]">
         {label}
       </p>
       <p className="mt-1 text-xl font-black text-[#20242a]">{value}</p>
@@ -860,7 +892,15 @@ function ManualField({
   type = "text",
   value,
 }: {
-  inputMode?: "decimal" | "email" | "none" | "numeric" | "search" | "tel" | "text" | "url";
+  inputMode?:
+    | "decimal"
+    | "email"
+    | "none"
+    | "numeric"
+    | "search"
+    | "tel"
+    | "text"
+    | "url";
   label: string;
   list?: string;
   onChange: (value: string) => void;
@@ -869,7 +909,7 @@ function ManualField({
 }) {
   return (
     <label className="grid gap-1">
-      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-[#687080]">
+      <span className="text-[10px] font-black uppercase tracking-[0.16em] text-[#64717b]">
         {label}
       </span>
       <input
@@ -878,7 +918,7 @@ function ManualField({
         list={list}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-11 rounded-2xl border border-[#d8e0e3] bg-[#fbfdfd] px-3 text-sm font-bold text-[#20242a] outline-none focus:border-[#0f766e]"
+        className="h-11 rounded-lg border border-[#cdd7dd] bg-white px-3 text-sm font-bold text-[#182025] outline-none transition focus:border-[#0f766e] focus:ring-2 focus:ring-[#0f766e]/10"
       />
     </label>
   );
