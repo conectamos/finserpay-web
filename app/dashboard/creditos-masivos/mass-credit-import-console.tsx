@@ -114,25 +114,27 @@ const FIELD_LABELS: Record<FieldKey, string> = {
 };
 
 const TEMPLATE_HEADER = FIELD_ORDER.map((key) => FIELD_LABELS[key]).join("\t");
-const TEMPLATE_ROWS = [
-  TEMPLATE_HEADER,
-  [
-    "2026-06-27",
-    "1234567890",
-    "NOMBRE CLIENTE",
-    "3001234567",
-    "Samsung A15",
-    "123456789012345",
-    "CONECTAMOS",
-    "SEDE CENTRO",
-    "VENDEDOR UNO",
-    "100000",
-    "600000",
-    "50000",
-    "12",
-    "CATORCENAL",
-    "2026-07-11",
-  ].join("\t"),
+const TEMPLATE_EXAMPLE_ROW = [
+  "2026-06-27",
+  "1234567890",
+  "NOMBRE CLIENTE",
+  "3001234567",
+  "Samsung A15",
+  "123456789012345",
+  "CONECTAMOS",
+  "SEDE CENTRO",
+  "VENDEDOR UNO",
+  "100000",
+  "600000",
+  "50000",
+  "12",
+  "CATORCENAL",
+  "2026-07-11",
+];
+const TEMPLATE_ROWS = [TEMPLATE_HEADER, TEMPLATE_EXAMPLE_ROW.join("\t")].join("\n");
+const TEMPLATE_CSV = [
+  FIELD_ORDER.map((key) => FIELD_LABELS[key]).join(";"),
+  TEMPLATE_EXAMPLE_ROW.join(";"),
 ].join("\n");
 
 const HEADER_ALIASES: Record<string, FieldKey> = {
@@ -366,15 +368,16 @@ export default function MassCreditImportConsole() {
   };
 
   const downloadTemplate = () => {
-    const blob = new Blob([TEMPLATE_ROWS], {
-      type: "text/tab-separated-values;charset=utf-8",
+    const blob = new Blob([TEMPLATE_CSV], {
+      type: "text/csv;charset=utf-8",
     });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "plantilla-creditos-masivos.tsv";
+    link.download = "plantilla-creditos-masivos.csv";
     link.click();
     URL.revokeObjectURL(url);
+    setNotice("Plantilla descargada: plantilla-creditos-masivos.csv");
   };
 
   const loadFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -427,7 +430,7 @@ export default function MassCreditImportConsole() {
                 onClick={downloadTemplate}
                 className="min-h-11 rounded-2xl border border-[#d8e0e3] bg-white px-4 text-sm font-black text-[#182025]"
               >
-                Plantilla
+                Descargar plantilla CSV
               </button>
               <Link
                 href="/dashboard"
@@ -446,7 +449,7 @@ export default function MassCreditImportConsole() {
                 Datos
               </p>
               <label className="inline-flex min-h-10 cursor-pointer items-center rounded-2xl border border-[#d8e0e3] bg-[#f8fbfa] px-4 text-sm font-black text-[#182025]">
-                Archivo
+                Subir archivo CSV
                 <input
                   type="file"
                   accept=".csv,.tsv,.txt"
@@ -462,11 +465,24 @@ export default function MassCreditImportConsole() {
                 setRawText(event.target.value);
                 setValidation(null);
               }}
+              placeholder={TEMPLATE_HEADER}
               spellCheck={false}
+              wrap="off"
               className="mt-4 h-[460px] w-full resize-none rounded-2xl border border-[#d8e0e3] bg-[#fbfdfd] p-4 font-mono text-xs leading-5 text-[#20242a] outline-none focus:border-[#0f766e]"
             />
 
             <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setRawText(TEMPLATE_ROWS);
+                  setValidation(null);
+                  setNotice("Ejemplo cargado en el cuadro de datos");
+                }}
+                className="min-h-11 rounded-2xl border border-[#d8e0e3] bg-white px-5 text-sm font-black text-[#182025]"
+              >
+                Ver ejemplo
+              </button>
               <button
                 type="button"
                 onClick={validate}
