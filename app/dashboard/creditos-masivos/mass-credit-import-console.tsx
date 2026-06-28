@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import {
+  useCallback,
+  useEffect,
   useMemo,
   useState,
   type ChangeEvent,
@@ -80,6 +82,7 @@ type CatalogResponse = {
   }>;
 };
 
+type CatalogSede = NonNullable<CatalogResponse["sedes"]>[number];
 type FieldKey = keyof MassCreditInputRow;
 type InputMode = "bulk" | "single";
 
@@ -171,6 +174,15 @@ function normalizeHeader(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-zA-Z0-9]+/g, "")
     .toLowerCase();
+}
+
+function normalizeOption(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
 }
 
 function detectDelimiter(line: string) {
@@ -343,6 +355,66 @@ export default function MassCreditImportConsole() {
     const raw = String(row.valorCredito || "").replace(/\D/g, "");
     return sum + Number(raw || 0);
   }, 0);
+  const sedesById = useMemo(() => {
+    const map = new Map<number, CatalogSede>();
+
+    for (const sede of catalog?.sedes || []) {
+      map.set(sede.id, sede);
+    }
+
+    return map;
+  }, [catalog?.sedes]);
+  const selectedAliado = useMemo(() => {
+    const current = normalizeOption(manualRow.aliado);
+
+    if (!current) {
+      return null;
+    }
+
+    return (
+      catalog?.aliados?.find(
+        (aliado) =>
+          normalizeOption(aliado.nombre) === current ||
+          normalizeOption(aliado.codigo) === current
+      ) || null
+    );
+  }, [catalog?.aliados, manualRow.aliado]);
+  const availableSedes = useMemo(() => {
+    if (!selectedAliado) {
+      return [];
+    }
+
+    return (catalog?.sedes || []).filter(
+      (sede) => sede.aliadoId === selectedAliado.id
+    );
+  }, [catalog?.sedes, selectedAliado]);
+  const selectedSede = useMemo(() => {
+    const current = normalizeOption(manualRow.sede);
+
+    if (!current) {
+      return null;
+    }
+
+    return (
+      availableSedes.find((sede) => normalizeOption(sede.nombre) === current) ||
+      null
+    );
+  }, [availableSedes, manualRow.sede]);
+  const availableVendedores = useMemo(() => {
+    if (!selectedAliado) {
+      return [];
+    }
+
+    const sedeIds = new Set(
+      selectedSede
+        ? [selectedSede.id]
+        : availableSedes.map((sede) => sede.id)
+    );
+
+    return (catalog?.vendedores || []).filter((vendedor) =>
+      sedeIds.has(vendedor.sedeId)
+    );
+  }, [availableSedes, catalog?.vendedores, selectedAliado, selectedSede]);
 
   const switchMode = (nextMode: InputMode) => {
     setMode(nextMode);
@@ -358,7 +430,34 @@ export default function MassCreditImportConsole() {
     setValidation(null);
   };
 
-  const loadCatalog = async () => {
+  const selectAliado = (value: string) => {
+    setManualRow((current) => ({
+      ...current,
+      aliado: value,
+      sede: "",
+      vendedor: "",
+    }));
+    setValidation(null);
+  };
+
+  const selectSede = (value: string) => {
+    setManualRow((current) => ({
+      ...current,
+      sede: value,
+      vendedor: "",
+    }));
+    setValidation(null);
+  };
+
+  const selectVendedor = (value: string) => {
+    setManualRow((current) => ({
+      ...current,
+      vendedor: value,
+    }));
+    setValidation(null);
+  };
+
+  const loadCatalog = useCallback(async (showNotice = true) => {
     try {
       setLoading("catalog");
       const response = await fetch("/api/creditos/masivos", {
@@ -373,13 +472,19 @@ export default function MassCreditImportConsole() {
       }
 
       setCatalog(data);
-      setNotice("Catalogo actualizado");
+      if (showNotice) {
+        setNotice("Catalogo actualizado");
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Error cargando catalogo");
     } finally {
       setLoading(null);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void loadCatalog(false);
+  }, [loadCatalog]);
 
   const validate = async () => {
     try {
@@ -467,7 +572,7 @@ export default function MassCreditImportConsole() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={loadCatalog}
+                onClick={() => void loadCatalog()}
                 disabled={loading !== null}
                 className="h-10 rounded-lg border border-[#cdd7dd] bg-white px-4 text-sm font-black text-[#182025] transition hover:border-[#9fb2bd] disabled:opacity-50"
               >
@@ -583,23 +688,61 @@ export default function MassCreditImportConsole() {
                     value={manualRow.imei}
                     onChange={(value) => updateManualField("imei", value)}
                   />
-                  <ManualField
+                  <ManualSelect
                     label="Aliado"
-                    list="mass-credit-aliados"
                     value={manualRow.aliado}
-                    onChange={(value) => updateManualField("aliado", value)}
+                    onChange={selectAliado}
+                    disabled={!catalog?.aliados?.length || loading === "catalog"}
+                    placeholder={
+                      loading === "catalog"
+                        ? "Cargando aliados..."
+                        : "Selecciona aliado"
+                    }
+                    options={(catalog?.aliados || []).map((aliado) => ({
+                      value: aliado.nombre,
+                      label: aliado.codigo
+                        ? `${aliado.nombre} (${aliado.codigo})`
+                        : aliado.nombre,
+                    }))}
                   />
-                  <ManualField
+                  <ManualSelect
                     label="Sede"
-                    list="mass-credit-sedes"
                     value={manualRow.sede}
-                    onChange={(value) => updateManualField("sede", value)}
+                    onChange={selectSede}
+                    disabled={!selectedAliado || !availableSedes.length}
+                    placeholder={
+                      selectedAliado
+                        ? availableSedes.length
+                          ? "Selecciona sede"
+                          : "Sin sedes disponibles"
+                        : "Selecciona aliado primero"
+                    }
+                    options={availableSedes.map((sede) => ({
+                      value: sede.nombre,
+                      label: sede.nombre,
+                    }))}
                   />
-                  <ManualField
+                  <ManualSelect
                     label="Vendedor"
-                    list="mass-credit-vendedores"
                     value={manualRow.vendedor}
-                    onChange={(value) => updateManualField("vendedor", value)}
+                    onChange={selectVendedor}
+                    disabled={!selectedAliado || !availableVendedores.length}
+                    placeholder={
+                      selectedAliado
+                        ? availableVendedores.length
+                          ? "Selecciona vendedor"
+                          : "Sin vendedores disponibles"
+                        : "Selecciona aliado primero"
+                    }
+                    options={availableVendedores.map((vendedor) => ({
+                      key: `${vendedor.sedeId}-${vendedor.id}`,
+                      value: vendedor.nombre,
+                      label: selectedSede
+                        ? vendedor.nombre
+                        : `${vendedor.nombre} - ${
+                            sedesById.get(vendedor.sedeId)?.nombre || "Sede"
+                          }`,
+                    }))}
                   />
                   <ManualField
                     label="Inicial"
@@ -664,21 +807,6 @@ export default function MassCreditImportConsole() {
               </div>
             )}
 
-            <datalist id="mass-credit-aliados">
-              {catalog?.aliados?.map((aliado) => (
-                <option key={aliado.id} value={aliado.nombre} />
-              ))}
-            </datalist>
-            <datalist id="mass-credit-sedes">
-              {catalog?.sedes?.map((sede) => (
-                <option key={sede.id} value={sede.nombre} />
-              ))}
-            </datalist>
-            <datalist id="mass-credit-vendedores">
-              {catalog?.vendedores?.map((vendedor) => (
-                <option key={vendedor.id} value={vendedor.nombre} />
-              ))}
-            </datalist>
           </div>
 
           <aside className="rounded-lg border border-[#d5dde2] bg-white p-5 shadow-sm">
@@ -920,6 +1048,43 @@ function ManualField({
         onChange={(event) => onChange(event.target.value)}
         className="h-11 rounded-lg border border-[#cdd7dd] bg-white px-3 text-sm font-bold text-[#182025] outline-none transition focus:border-[#0f766e] focus:ring-2 focus:ring-[#0f766e]/10"
       />
+    </label>
+  );
+}
+
+function ManualSelect({
+  disabled = false,
+  label,
+  onChange,
+  options,
+  placeholder,
+  value,
+}: {
+  disabled?: boolean;
+  label: string;
+  onChange: (value: string) => void;
+  options: Array<{ key?: string; label: string; value: string }>;
+  placeholder: string;
+  value: string;
+}) {
+  return (
+    <label className="grid gap-1">
+      <span className="text-[10px] font-black uppercase tracking-[0.16em] text-[#64717b]">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        className="h-11 rounded-lg border border-[#cdd7dd] bg-white px-3 text-sm font-bold text-[#182025] outline-none transition focus:border-[#0f766e] focus:ring-2 focus:ring-[#0f766e]/10 disabled:cursor-not-allowed disabled:bg-[#eef3f6] disabled:text-[#8a969e]"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={option.key || option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
