@@ -320,7 +320,7 @@ export default function ReporteAbonosPage() {
     }
   };
 
-  const loadReport = async () => {
+  const loadReport = async (excludeIds: number[] = []) => {
     try {
       setLoading(true);
       setMessage("");
@@ -332,9 +332,13 @@ export default function ReporteAbonosPage() {
       if (to) params.set("to", to);
       if (aliadoId) params.set("aliadoId", aliadoId);
       if (sedeId) params.set("sedeId", sedeId);
+      params.set("_", String(Date.now()));
 
       const res = await fetch(`/api/reportes/abonos-credito?${params.toString()}`, {
         cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache",
+        },
       });
       const data = (await res.json()) as PaymentReportResponse & { error?: string };
 
@@ -346,7 +350,12 @@ export default function ReporteAbonosPage() {
         return;
       }
 
-      setItems(Array.isArray(data.items) ? data.items : []);
+      const excluded = new Set(excludeIds);
+      const nextItems = Array.isArray(data.items) ? data.items : [];
+
+      setItems(
+        excluded.size ? nextItems.filter((item) => !excluded.has(item.id)) : nextItems
+      );
       setByDay(Array.isArray(data.byDay) ? data.byDay : []);
       setSummary(data.summary);
     } catch {
@@ -422,7 +431,7 @@ export default function ReporteAbonosPage() {
     }
 
     const confirmed = window.confirm(
-      `Vas a ELIMINAR de raiz este recaudo de ${formatMoney(item.valor)} del folio ${item.credito.folio}. Se borrara el abono local, caja asociada y enlaces digitales relacionados.`
+      `Vas a ELIMINAR este recaudo de ${formatMoney(item.valor)} del folio ${item.credito.folio}. Se borrara el abono local, caja asociada y enlaces digitales relacionados.`
     );
 
     if (!confirmed) {
@@ -452,8 +461,9 @@ export default function ReporteAbonosPage() {
         return;
       }
 
-      await loadReport();
-      setMessage(data.message || "Recaudo eliminado de raiz");
+      await loadReport([item.id]);
+      setItems((current) => current.filter((currentItem) => currentItem.id !== item.id));
+      setMessage(data.message || "Recaudo eliminado");
     } catch {
       setMessage("Error eliminando el recaudo");
     } finally {
@@ -728,7 +738,7 @@ export default function ReporteAbonosPage() {
                                   disabled={deletingId === item.id || annullingId === item.id}
                                   className="inline-flex max-w-full items-center justify-center rounded-xl border border-red-700 bg-red-700 px-3 py-2 text-[11px] font-black text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
-                                  {deletingId === item.id ? "Eliminando..." : "Eliminar raiz"}
+                                  {deletingId === item.id ? "Eliminando..." : "Eliminar"}
                                 </button>
                               )}
                             </div>

@@ -311,7 +311,7 @@ export async function DELETE(
         where: { abonoId: abono.id },
         data: {
           status: "ELIMINADO_ADMIN",
-          message: `Recaudo ${abono.id} eliminado de raiz por admin FINSER PAY`,
+          message: `Recaudo ${abono.id} eliminado por admin FINSER PAY`,
           abonoId: null,
         },
       });
@@ -372,7 +372,7 @@ export async function DELETE(
         status: 200 as const,
         body: {
           ok: true,
-          message: "Recaudo eliminado de raiz",
+          message: "Recaudo eliminado",
           deletedId: abono.id,
           summary,
         },

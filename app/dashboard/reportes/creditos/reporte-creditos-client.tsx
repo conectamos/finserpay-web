@@ -243,7 +243,7 @@ export default function ReporteCreditosPage() {
     }
   };
 
-  const loadReport = async () => {
+  const loadReport = async (excludeIds: number[] = []) => {
     try {
       setLoading(true);
       setMessage("");
@@ -255,9 +255,13 @@ export default function ReporteCreditosPage() {
       if (to) params.set("to", to);
       if (aliadoId) params.set("aliadoId", aliadoId);
       if (sedeId) params.set("sedeId", sedeId);
+      params.set("_", String(Date.now()));
 
       const res = await fetch(`/api/reportes/creditos?${params.toString()}`, {
         cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache",
+        },
       });
       const data = (await res.json()) as CreditReportResponse & { error?: string };
 
@@ -268,7 +272,12 @@ export default function ReporteCreditosPage() {
         return;
       }
 
-      setItems(Array.isArray(data.items) ? data.items : []);
+      const excluded = new Set(excludeIds);
+      const nextItems = Array.isArray(data.items) ? data.items : [];
+
+      setItems(
+        excluded.size ? nextItems.filter((item) => !excluded.has(item.id)) : nextItems
+      );
       setSummary(data.summary);
     } catch {
       setMessage("Error cargando el reporte de creditos");
@@ -336,7 +345,7 @@ export default function ReporteCreditosPage() {
     }
 
     const confirmed = window.confirm(
-      `Vas a ELIMINAR de raiz el credito ${item.folio}. Se borraran sus recaudos locales, movimientos de caja asociados, intents Wompi locales y enlaces Efecty. Esta accion no es una anulacion.`
+      `Vas a ELIMINAR el credito ${item.folio}. Se borraran sus recaudos locales, movimientos de caja asociados, intents Wompi locales y enlaces Efecty. Esta accion no es una anulacion.`
     );
 
     if (!confirmed) {
@@ -365,8 +374,9 @@ export default function ReporteCreditosPage() {
         throw new Error(data.error || "No se pudo eliminar el credito");
       }
 
-      await loadReport();
-      setMessage(data.message || "Credito eliminado de raiz");
+      await loadReport([item.id]);
+      setItems((current) => current.filter((currentItem) => currentItem.id !== item.id));
+      setMessage(data.message || "Credito eliminado");
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "No se pudo eliminar el credito"
@@ -602,7 +612,7 @@ export default function ReporteCreditosPage() {
                             disabled={deletingId === item.id || annullingId === item.id}
                             className="inline-flex max-w-full items-center justify-center rounded-xl border border-red-700 bg-red-700 px-3 py-1.5 text-[11px] font-black text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            {deletingId === item.id ? "Eliminando..." : "Eliminar raiz"}
+                            {deletingId === item.id ? "Eliminando..." : "Eliminar"}
                           </button>
                         )}
                       </div>

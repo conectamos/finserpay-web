@@ -914,7 +914,7 @@ export async function DELETE(
         },
         data: {
           status: "ELIMINADO_ADMIN",
-          message: `Credito ${current.folio} eliminado de raiz por admin FINSER PAY`,
+          message: `Credito ${current.folio} eliminado por admin FINSER PAY`,
           creditoId: null,
           abonoId: null,
         },
@@ -936,7 +936,8 @@ export async function DELETE(
         status: 200 as const,
         body: {
           ok: true,
-          message: `Credito ${current.folio} eliminado de raiz`,
+          message: `Credito ${current.folio} eliminado`,
+          deletedId: current.id,
         },
       };
     });
