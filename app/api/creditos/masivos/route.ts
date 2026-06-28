@@ -191,6 +191,20 @@ function parseMoney(value: unknown) {
   return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : 0;
 }
 
+function roundMoney(value: number) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function calculateCollectibleTotal(row: Pick<PreparedCreditRow, "cuota" | "plazo">) {
+  return roundMoney(row.cuota * Math.max(1, row.plazo));
+}
+
+function calculateEmbeddedCharges(
+  row: Pick<PreparedCreditRow, "cuota" | "plazo" | "valorCredito">
+) {
+  return roundMoney(Math.max(0, calculateCollectibleTotal(row) - row.valorCredito));
+}
+
 function parseInteger(value: unknown) {
   const parsed = Math.trunc(parseMoney(value));
   return Number.isFinite(parsed) ? parsed : 0;
@@ -544,16 +558,6 @@ async function validateRows(rows: MassCreditInputRow[]) {
       warnings.push("FECHA DE PAGO es anterior a FECHA");
     }
 
-    const plannedTotal = cuota * Math.max(1, plazo);
-    const tolerance = Math.max(1000, plazo * 100);
-    const difference = Math.abs(plannedTotal - valorCredito);
-
-    if (valorCredito > 0 && cuota > 0 && plazo > 0 && difference > tolerance) {
-      errors.push("CUOTA x PLAZO no cuadra con VALOR DEL CREDITO");
-    } else if (difference > 0) {
-      warnings.push("CUOTA x PLAZO tiene diferencia menor por redondeo");
-    }
-
     if (
       !errors.length &&
       aliado &&
@@ -661,6 +665,9 @@ function buildContractSnapshot(
     createdByUserName: string;
   }
 ) {
+  const totalCobrable = calculateCollectibleTotal(row);
+  const cargosIncorporados = calculateEmbeddedCharges(row);
+
   return {
     origen: {
       tipo: MASS_CREDIT_SOURCE,
@@ -683,7 +690,9 @@ function buildContractSnapshot(
     },
     financiero: {
       cuotaInicial: row.inicial,
-      montoCredito: row.valorCredito,
+      saldoBaseFinanciado: row.valorCredito,
+      montoCredito: totalCobrable,
+      cargosIncorporados,
       valorCuota: row.cuota,
       plazo: row.plazo,
       frecuenciaPago: row.frecuencia,
@@ -786,6 +795,8 @@ export async function POST(req: Request) {
       for (const row of validation.prepared) {
         const folio = foliosByRowNumber.get(row.rowNumber) || generateCreditFolio();
         const referenciaPago = generatePaymentReference(folio, row.cedula);
+        const totalCobrable = calculateCollectibleTotal(row);
+        const cargosIncorporados = calculateEmbeddedCharges(row);
         const observation = buildMassCreditObservation({
           batchId,
           createdBy: access.user.nombre,
@@ -812,12 +823,12 @@ export async function POST(req: Request) {
             referenciaEquipo: row.referencia,
             valorEquipoTotal: row.valorCredito + row.inicial,
             saldoBaseFinanciado: row.valorCredito,
-            montoCredito: row.valorCredito,
+            montoCredito: totalCobrable,
             cuotaInicial: row.inicial,
             plazoMeses: row.plazo,
             frecuenciaPago: row.frecuencia,
             tasaInteresEa: 0,
-            valorInteres: 0,
+            valorInteres: cargosIncorporados,
             fianzaPorcentaje: 0,
             valorFianza: 0,
             valorCuota: row.cuota,
