@@ -1513,107 +1513,92 @@ export default async function DashboardPage() {
           <LogoutButton className="w-full justify-center !border-[#111318] !bg-[#111318] !text-white sm:w-auto" />
         </header>
 
-        <section className="fp-admin-home mt-5 overflow-hidden rounded-[28px] border border-[#cfd6df] bg-white shadow-[0_22px_60px_rgba(17,19,24,0.09)]">
-          <div className="grid lg:grid-cols-[minmax(0,1fr)_370px]">
-            <div className="bg-[#15171d] p-5 text-white sm:p-7">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#8fd9cf]">
-                    Inicio operativo
-                  </p>
-                  <h1 className="mt-3 text-3xl font-black leading-tight tracking-tight sm:text-4xl">
-                    Panel de control FINSER PAY
-                  </h1>
-                  <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-white/68">
-                    {adminCentral
-                      ? "Accesos centrales para credito, recaudo, cartera y reportes."
-                      : `Accesos de gestion para ${aliadoPanelNombre}.`}
-                  </p>
-                </div>
-                <div className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3">
-                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-white/45">
-                    Usuario
-                  </p>
-                  <p className="mt-1 truncate text-sm font-black text-white">
-                    {nombreUsuario}
-                  </p>
-                  <p className="mt-1 truncate text-xs font-bold text-white/55">
-                    {rolUsuario}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <DashboardButton
-                  href="/dashboard/creditos"
-                  label="Nuevo credito"
-                  tone="orange"
-                />
-                <DashboardButton href="/dashboard/abonos" label="Recibir abono" tone="light" />
-                <DashboardButton href="/dashboard/clientes" label="Buscar cliente" tone="green" />
-                {adminCentral && (
-                  <DashboardButton href="/dashboard/cartera" label="Cartera" tone="portfolio" />
-                )}
-              </div>
-
-              <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                {adminCentral && (
-                  <DashboardButton
-                    href="/dashboard/creditos-masivos"
-                    label="Creditos masivos"
-                    tone="blue"
-                  />
-                )}
-                {adminCentral && (
-                  <DashboardButton href="/dashboard/clientes" label="Ajustar plan" tone="blue" />
-                )}
-                <DashboardButton href="/dashboard/reportes" label="Ver reportes" tone="light" />
-              </div>
+        <section className="fp-admin-home mt-5 rounded-[28px] border border-[#d7dce2] bg-white p-5 shadow-[0_18px_48px_rgba(17,19,24,0.07)] sm:p-6">
+          <div className="flex flex-col gap-4 border-b border-[#e1e6ed] pb-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
+                Inicio
+              </p>
+              <h1 className="mt-2 text-3xl font-black leading-tight tracking-tight text-[#20242a]">
+                {adminCentral ? "Panel central" : "Panel aliado"}
+              </h1>
+              <p className="mt-1 text-sm font-bold text-[#687080]">
+                {adminCentral ? sedeLabel : aliadoPanelNombre} - {rolUsuario}
+              </p>
             </div>
 
-            <aside className="border-t border-[#d7dce2] bg-[#f7f9f8] p-5 lg:border-l lg:border-t-0">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
-                    Resumen
-                  </p>
-                  <h2 className="mt-2 text-xl font-black text-[#20242a]">
-                    Operacion activa
-                  </h2>
-                </div>
-                <span className="rounded-full border border-[#bfe4dc] bg-[#e8f7f3] px-3 py-1 text-xs font-black text-[#0f766e]">
-                  En linea
-                </span>
-              </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <span className="inline-flex min-h-10 items-center justify-center rounded-2xl border border-[#cce7df] bg-[#eff8f5] px-4 text-sm font-black text-[#0f766e]">
+                Operacion activa
+              </span>
+              <span className="inline-flex min-h-10 max-w-full items-center justify-center truncate rounded-2xl border border-[#d7dce2] bg-[#f8faf9] px-4 text-sm font-black text-[#20242a]">
+                {nombreUsuario}
+              </span>
+            </div>
+          </div>
 
-              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                <div className="rounded-2xl border border-[#dfe4ea] bg-white px-4 py-3">
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#8a909b]">
-                    Creditos activos
-                  </p>
-                  <p className="mt-1 text-3xl font-black text-[#20242a]">
-                    {adminStats?.creditosActivos ?? 0}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-[#dfe4ea] bg-white px-4 py-3">
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#8a909b]">
-                    Abonos activos
-                  </p>
-                  <p className="mt-1 text-3xl font-black text-[#20242a]">
-                    {adminStats?.abonosActivos ?? 0}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3">
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-700">
-                    Anulados
-                  </p>
-                  <p className="mt-1 text-3xl font-black text-red-800">
-                    {(adminStats?.creditosAnulados ?? 0) +
-                      (adminStats?.recaudosAnulados ?? 0)}
-                  </p>
-                </div>
-              </div>
-            </aside>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-[#dfe4ea] bg-[#f8faf9] px-4 py-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#8a909b]">
+                Creditos activos
+              </p>
+              <p className="mt-2 text-3xl font-black text-[#20242a]">
+                {adminStats?.creditosActivos ?? 0}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-[#dfe4ea] bg-[#f8faf9] px-4 py-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#8a909b]">
+                Abonos activos
+              </p>
+              <p className="mt-2 text-3xl font-black text-[#20242a]">
+                {adminStats?.abonosActivos ?? 0}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-700">
+                Creditos anulados
+              </p>
+              <p className="mt-2 text-3xl font-black text-red-800">
+                {adminStats?.creditosAnulados ?? 0}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-700">
+                Recaudos anulados
+              </p>
+              <p className="mt-2 text-3xl font-black text-red-800">
+                {adminStats?.recaudosAnulados ?? 0}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 border-t border-[#e1e6ed] pt-5">
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#6d5a22]">
+              Accesos rapidos
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <DashboardButton
+                href="/dashboard/creditos"
+                label="Nuevo credito"
+                tone="orange"
+              />
+              <DashboardButton href="/dashboard/abonos" label="Recibir abono" tone="green" />
+              <DashboardButton href="/dashboard/clientes" label="Buscar cliente" tone="light" />
+              {adminCentral && (
+                <DashboardButton href="/dashboard/cartera" label="Cartera" tone="portfolio" />
+              )}
+              {adminCentral && (
+                <DashboardButton
+                  href="/dashboard/creditos-masivos"
+                  label="Creditos masivos"
+                  tone="light"
+                />
+              )}
+              {adminCentral && (
+                <DashboardButton href="/dashboard/clientes" label="Ajustar plan" tone="light" />
+              )}
+              <DashboardButton href="/dashboard/reportes" label="Ver reportes" tone="light" />
+            </div>
           </div>
         </section>
 
