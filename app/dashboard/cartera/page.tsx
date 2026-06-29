@@ -443,7 +443,7 @@ export default async function CarteraPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="min-w-[1080px] text-left text-sm">
+            <table className="w-full min-w-[1080px] text-left text-sm">
               <thead className="bg-[#20242a] text-white">
                 <tr>
                   <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Cliente</th>
