@@ -24,6 +24,11 @@ export const DEFAULT_MAX_CREDIT_INSTALLMENTS = 16;
 export const MAX_CREDIT_INSTALLMENTS = 60;
 export const DEFAULT_PAYMENT_FREQUENCY = "QUINCENAL";
 export const MAX_DEVICE_FINANCING_BASE = 800_000;
+export const IPHONE_INITIAL_PAYMENT_PERCENTAGE = 30;
+export const IPHONE_DEFAULT_CREDIT_INSTALLMENTS = 24;
+export const IPHONE_MAX_CREDIT_INSTALLMENTS = 48;
+export const IPHONE_MAX_FINANCED_AMOUNT = 3_500_000;
+export const IPHONE_MAX_INSTALLMENT_VALUE = 160_000;
 export const MAX_VIDEO_DATA_URL_LENGTH = 64_000_000;
 export const MAX_VIDEO_UPLOAD_BYTES = 45 * 1024 * 1024;
 export const DEFAULT_LEGAL_RATE_REFERENCE =
@@ -324,6 +329,103 @@ export function calculateRequiredInitialPayment(
   const initial = (financedBase * percentage) / 100 + excedente;
 
   return Math.round(initial * 100) / 100;
+}
+
+export function isIphoneCreditPlatform(value: unknown) {
+  const normalized = String(value ?? "").trim().toUpperCase();
+
+  return normalized === "IPHONE" || normalized === "IOS" || normalized === "APPLE";
+}
+
+export function normalizeMoneyLimit(value: unknown, fallback: number) {
+  const numericValue = Number(value);
+  const numericFallback = Number(fallback);
+
+  if (Number.isFinite(numericValue) && numericValue > 0) {
+    return Math.trunc(numericValue);
+  }
+
+  if (Number.isFinite(numericFallback) && numericFallback > 0) {
+    return Math.trunc(numericFallback);
+  }
+
+  return 0;
+}
+
+export function calculateRequiredInitialPaymentByPlatform(options: {
+  valorTotalEquipo: number | null | undefined;
+  precioBaseVenta?: number | null;
+  initialPaymentPercentage?: number | null | undefined;
+  platform?: unknown;
+  iphoneMaxFinancedAmount?: number | null | undefined;
+}) {
+  if (!isIphoneCreditPlatform(options.platform)) {
+    return calculateRequiredInitialPayment(
+      options.valorTotalEquipo,
+      options.precioBaseVenta,
+      options.initialPaymentPercentage ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE
+    );
+  }
+
+  const total = Math.max(0, Number(options.valorTotalEquipo || 0));
+  const percentage = Math.max(
+    0,
+    Math.min(100, Number(options.initialPaymentPercentage ?? IPHONE_INITIAL_PAYMENT_PERCENTAGE))
+  );
+  const maxFinanced = normalizeMoneyLimit(
+    options.iphoneMaxFinancedAmount,
+    IPHONE_MAX_FINANCED_AMOUNT
+  );
+  const percentageInitial = (total * percentage) / 100;
+  const excessInitial = maxFinanced > 0 ? Math.max(0, total - maxFinanced) : 0;
+  const initial = Math.max(percentageInitial, excessInitial);
+
+  return Math.round(initial * 100) / 100;
+}
+
+function formatCopLimit(value: number) {
+  return `$ ${Math.round(Math.max(0, Number(value || 0))).toLocaleString("es-CO")}`;
+}
+
+export function getIphoneInstallmentLimitMessage(options: {
+  valorCuota: number | null | undefined;
+  iphoneMaxInstallmentValue: number | null | undefined;
+}) {
+  const valorCuota = Math.max(0, Number(options.valorCuota || 0));
+  const maxInstallment = normalizeMoneyLimit(
+    options.iphoneMaxInstallmentValue,
+    IPHONE_MAX_INSTALLMENT_VALUE
+  );
+
+  return `La cuota iPhone queda en ${formatCopLimit(valorCuota)} y supera el tope configurado de ${formatCopLimit(maxInstallment)}. Aumenta la inicial o el plazo para continuar.`;
+}
+
+export function validateIphoneInstallmentLimit(options: {
+  platform?: unknown;
+  valorCuota: number | null | undefined;
+  iphoneMaxInstallmentValue?: number | null | undefined;
+}) {
+  const maxInstallment = normalizeMoneyLimit(
+    options.iphoneMaxInstallmentValue,
+    IPHONE_MAX_INSTALLMENT_VALUE
+  );
+  const valorCuota = Math.max(0, Number(options.valorCuota || 0));
+  const exceeded =
+    isIphoneCreditPlatform(options.platform) &&
+    maxInstallment > 0 &&
+    valorCuota > maxInstallment;
+
+  return {
+    exceeded,
+    maxInstallment,
+    valorCuota,
+    message: exceeded
+      ? getIphoneInstallmentLimitMessage({
+          valorCuota,
+          iphoneMaxInstallmentValue: maxInstallment,
+        })
+      : "",
+  };
 }
 
 export function getDefaultFirstPaymentDate(

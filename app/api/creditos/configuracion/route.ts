@@ -98,6 +98,8 @@ export async function PATCH(req: Request) {
       iphoneCuotaInicialPorcentaje: body.iphoneCuotaInicialPorcentaje,
       iphonePlazoCuotas: body.iphonePlazoCuotas,
       iphonePlazoMaximoCuotas: body.iphonePlazoMaximoCuotas,
+      iphoneTopeFinanciado: body.iphoneTopeFinanciado,
+      iphoneTopeCuota: body.iphoneTopeCuota,
       frecuenciaPago: body.frecuenciaPago,
     });
     const exceptions = await listCreditDocumentExceptions();

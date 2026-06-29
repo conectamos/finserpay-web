@@ -58,11 +58,17 @@ export default async function CreditosPage(props: {
 
   const advisorSession =
     !isAdminRole(session.rolNombre) && sellerSession?.tipoPerfil !== "SUPERVISOR";
+  const hasDirectCreditIntent =
+    Boolean(initialSearch) ||
+    (Number.isInteger(initialSelectedId) && initialSelectedId > 0) ||
+    (Number.isInteger(initialDraftId) && initialDraftId > 0);
   const entryMode: EntryMode = advisorSession
     ? requestedEntryMode === "delivery" || requestedEntryMode === "simulator"
       ? requestedEntryMode
       : "create-client"
-    : requestedEntryMode;
+    : requestedEntryMode === "default" && !hasDirectCreditIntent
+      ? "create-client"
+      : requestedEntryMode;
   const shouldChooseDevicePlatform =
     entryMode === "create-client" &&
     !devicePlatform &&

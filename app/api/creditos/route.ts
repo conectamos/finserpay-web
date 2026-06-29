@@ -6,14 +6,16 @@ import prisma from "@/lib/prisma";
 import {
   calculateCreditCharges,
   calculateFinancedBalance,
-  calculateRequiredInitialPayment,
+  calculateRequiredInitialPaymentByPlatform,
   calculateInstallmentValue,
   DEFAULT_CREDIT_INSTALLMENTS,
+  DEFAULT_PAYMENT_FREQUENCY,
   extendDays,
   generateCreditFolio,
   generatePagareNumber,
   generatePaymentReference,
   getDefaultFirstPaymentDateObject,
+  isIphoneCreditPlatform,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
   normalizePaymentFrequency,
@@ -26,6 +28,7 @@ import {
   sanitizeVideoDataUrl,
   toNullableDate,
   toNumber,
+  validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import {
   getEqualityDeviceMeta,
@@ -722,8 +725,7 @@ export async function POST(req: Request) {
     const plataformaDispositivo = String(body.plataformaDispositivo || "ANDROID")
       .trim()
       .toUpperCase();
-    const isIphoneCredit =
-      plataformaDispositivo === "IPHONE" || plataformaDispositivo === "IOS";
+    const isIphoneCredit = isIphoneCreditPlatform(plataformaDispositivo);
     const iphoneManualEnrollmentVerified =
       isIphoneCredit && Boolean(body.iphoneEnrolamientoVerificado);
     const valorEquipoTotalInput = toNumber(body.valorEquipoTotal);
@@ -739,11 +741,13 @@ export async function POST(req: Request) {
       plataformaDispositivo
     );
     const creditSettings = effectiveCreditSettings.settings;
-    const cuotaInicialMinima = calculateRequiredInitialPayment(
-      valorEquipoTotalInput,
-      precioBaseVentaCatalogo,
-      creditSettings.cuotaInicialPorcentaje
-    );
+    const cuotaInicialMinima = calculateRequiredInitialPaymentByPlatform({
+      valorTotalEquipo: valorEquipoTotalInput,
+      precioBaseVenta: precioBaseVentaCatalogo,
+      initialPaymentPercentage: creditSettings.cuotaInicialPorcentaje,
+      platform: plataformaDispositivo,
+      iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
+    });
     const cuotaInicialInput = toNumber(body.cuotaInicial);
     const cuotaInicial =
       cuotaInicialInput > 0
@@ -758,9 +762,9 @@ export async function POST(req: Request) {
       creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
       plazoMaximoCuotas
     );
-    const frecuenciaPago = normalizePaymentFrequency(
-      body.frecuenciaPago || creditSettings.frecuenciaPago
-    );
+    const frecuenciaPago = isIphoneCredit
+      ? DEFAULT_PAYMENT_FREQUENCY
+      : normalizePaymentFrequency(body.frecuenciaPago || creditSettings.frecuenciaPago);
     const fechaCredito = new Date();
     const fechaPrimerPago = getDefaultFirstPaymentDateObject(
       frecuenciaPago,
@@ -877,6 +881,11 @@ export async function POST(req: Request) {
       financialPlan.valorCuota > 0
         ? financialPlan.valorCuota
         : calculateInstallmentValue(montoCredito, plazoMeses);
+    const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
+      platform: plataformaDispositivo,
+      valorCuota,
+      iphoneMaxInstallmentValue: creditSettings.iphoneTopeCuota,
+    });
     const firmaSeguroDraftFolio = firmaSeguroProcess?.draftFolio
       ? sanitizeText(firmaSeguroProcess.draftFolio)
       : "";
@@ -1160,11 +1169,22 @@ export async function POST(req: Request) {
       );
     }
 
-    if (cuotaInicialInput > 0 && cuotaInicialInput < cuotaInicialMinima) {
+    if (
+      !isIphoneCredit &&
+      cuotaInicialInput > 0 &&
+      cuotaInicialInput < cuotaInicialMinima
+    ) {
       return NextResponse.json(
         {
           error: `La cuota inicial minima es ${Math.round(cuotaInicialMinima).toLocaleString("es-CO")}`,
         },
+        { status: 400 }
+      );
+    }
+
+    if (iphoneInstallmentLimit.exceeded) {
+      return NextResponse.json(
+        { error: iphoneInstallmentLimit.message },
         { status: 400 }
       );
     }

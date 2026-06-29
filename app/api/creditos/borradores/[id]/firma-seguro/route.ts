@@ -5,11 +5,13 @@ import prisma from "@/lib/prisma";
 import {
   calculateCreditCharges,
   calculateFinancedBalance,
-  calculateRequiredInitialPayment,
+  calculateRequiredInitialPaymentByPlatform,
   DEFAULT_CREDIT_INSTALLMENTS,
+  DEFAULT_PAYMENT_FREQUENCY,
   generateCreditFolio,
   generatePaymentReference,
   getDefaultFirstPaymentDateObject,
+  isIphoneCreditPlatform,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
   normalizePaymentFrequency,
@@ -17,6 +19,7 @@ import {
   sanitizeImageDataUrl,
   sanitizeText,
   toNumber,
+  validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import { findEquipmentCatalogItem } from "@/lib/equipment-catalog";
@@ -53,6 +56,10 @@ type DraftRow = {
   sedeCodigo: string | null;
   sedeAliadoId: number | null;
 };
+
+class CreditValidationError extends Error {
+  status = 400;
+}
 
 let draftTableReady: Promise<void> | null = null;
 
@@ -199,11 +206,10 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
   const imei = sanitizeDeviceValue(payload.imei || payload.deviceUid)
     .replace(/\D/g, "")
     .slice(0, 15);
-  const plataformaDispositivo = sanitizeText(payload.plataformaDispositivo)
-    .toUpperCase()
-    .includes("IPHONE")
+  const plataformaDispositivo = isIphoneCreditPlatform(payload.plataformaDispositivo)
     ? "IPHONE"
     : "ANDROID";
+  const isIphoneCredit = plataformaDispositivo === "IPHONE";
   const valorEquipoTotalInput = toNumber(payload.valorEquipoTotal);
   const catalogItem =
     equipoMarca && equipoModelo
@@ -217,11 +223,13 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
     plataformaDispositivo
   );
   const creditSettings = effectiveCreditSettings.settings;
-  const cuotaInicialMinima = calculateRequiredInitialPayment(
-    valorEquipoTotalInput,
-    precioBaseVentaCatalogo,
-    creditSettings.cuotaInicialPorcentaje
-  );
+  const cuotaInicialMinima = calculateRequiredInitialPaymentByPlatform({
+    valorTotalEquipo: valorEquipoTotalInput,
+    precioBaseVenta: precioBaseVentaCatalogo,
+    initialPaymentPercentage: creditSettings.cuotaInicialPorcentaje,
+    platform: plataformaDispositivo,
+    iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
+  });
   const cuotaInicialInput = toNumber(payload.cuotaInicial);
   const cuotaInicial =
     cuotaInicialInput > 0
@@ -235,14 +243,17 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
     creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
     plazoMaximoCuotas
   );
-  const frecuenciaPago = normalizePaymentFrequency(
-    payload.frecuenciaPago || creditSettings.frecuenciaPago
-  );
+  const frecuenciaPago = isIphoneCredit
+    ? DEFAULT_PAYMENT_FREQUENCY
+    : normalizePaymentFrequency(payload.frecuenciaPago || creditSettings.frecuenciaPago);
   const fechaCredito = new Date();
-  const fechaPrimerPago = toValidDate(
-    payload.fechaPrimerPago,
-    getDefaultFirstPaymentDateObject(frecuenciaPago, fechaCredito)
+  const defaultFirstPaymentDate = getDefaultFirstPaymentDateObject(
+    frecuenciaPago,
+    fechaCredito
   );
+  const fechaPrimerPago = isIphoneCredit
+    ? defaultFirstPaymentDate
+    : toValidDate(payload.fechaPrimerPago, defaultFirstPaymentDate);
   const saldoBaseFinanciado = calculateFinancedBalance(
     valorEquipoTotalInput,
     cuotaInicial
@@ -254,6 +265,16 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
     fianzaPorcentaje: creditSettings.fianzaPorcentaje,
     frecuenciaPago,
   });
+  const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
+    platform: plataformaDispositivo,
+    valorCuota: financialPlan.valorCuota,
+    iphoneMaxInstallmentValue: creditSettings.iphoneTopeCuota,
+  });
+
+  if (iphoneInstallmentLimit.exceeded) {
+    throw new CreditValidationError(iphoneInstallmentLimit.message);
+  }
+
   const folio = sanitizeText(payload.firmaSeguroDraftFolio) || generateCreditFolio();
   const referenciaPago = generatePaymentReference(folio, clienteDocumento);
 
@@ -312,6 +333,13 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
 }
 
 function firmaSeguroErrorResponse(error: unknown) {
+  if (error instanceof CreditValidationError) {
+    return NextResponse.json(
+      { ok: false, error: error.message },
+      { status: error.status }
+    );
+  }
+
   if (error instanceof FirmaSeguroApiError) {
     return NextResponse.json(
       {

@@ -7,10 +7,16 @@ import {
   DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
   DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
+  IPHONE_DEFAULT_CREDIT_INSTALLMENTS,
+  IPHONE_INITIAL_PAYMENT_PERCENTAGE,
+  IPHONE_MAX_CREDIT_INSTALLMENTS,
+  IPHONE_MAX_FINANCED_AMOUNT,
+  IPHONE_MAX_INSTALLMENT_VALUE,
   MAX_CREDIT_INSTALLMENTS,
   PAYMENT_FREQUENCY_OPTIONS,
   getPaymentFrequencyLabel,
   getCreditInstallmentOptions,
+  normalizeMoneyLimit,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
 } from "@/lib/credit-factory";
@@ -28,6 +34,8 @@ type CreditSettings = {
   plazoMaximoCuotas: number;
   iphonePlazoCuotas: number;
   iphonePlazoMaximoCuotas: number;
+  iphoneTopeFinanciado: number;
+  iphoneTopeCuota: number;
   frecuenciaPago: string;
   updatedAt: string | null;
 };
@@ -71,21 +79,43 @@ function percentValue(value: number | string) {
 
 function installmentValue(
   value: number | string,
-  maxInstallments: number | string = DEFAULT_MAX_CREDIT_INSTALLMENTS
+  maxInstallments: number | string = DEFAULT_MAX_CREDIT_INSTALLMENTS,
+  fallback: number = DEFAULT_CREDIT_INSTALLMENTS
 ) {
   return String(
     normalizeCreditInstallments(
       value,
-      DEFAULT_CREDIT_INSTALLMENTS,
+      fallback,
       maxInstallments
     )
   );
 }
 
-function installmentLimitValue(value: number | string) {
+function installmentLimitValue(
+  value: number | string,
+  fallback: number = DEFAULT_MAX_CREDIT_INSTALLMENTS
+) {
   return String(
-    normalizeCreditInstallmentLimit(value, DEFAULT_MAX_CREDIT_INSTALLMENTS)
+    normalizeCreditInstallmentLimit(value, fallback)
   );
+}
+
+function moneyLimitValue(value: number | string, fallback: number) {
+  return String(normalizeMoneyLimit(value, fallback));
+}
+
+function digitsOnly(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function currency(value: number | string) {
+  const amount = Number(value) || 0;
+
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+  }).format(amount);
 }
 
 function dateTime(value: string | null) {
@@ -116,17 +146,23 @@ export default function CreditParametersConsole() {
     String(DEFAULT_INITIAL_PAYMENT_PERCENTAGE)
   );
   const [iphoneCuotaInicialPorcentaje, setIphoneCuotaInicialPorcentaje] = useState(
-    String(DEFAULT_INITIAL_PAYMENT_PERCENTAGE)
+    String(IPHONE_INITIAL_PAYMENT_PERCENTAGE)
   );
   const [plazoCuotas, setPlazoCuotas] = useState(String(DEFAULT_CREDIT_INSTALLMENTS));
   const [plazoMaximoCuotas, setPlazoMaximoCuotas] = useState(
     String(DEFAULT_MAX_CREDIT_INSTALLMENTS)
   );
   const [iphonePlazoCuotas, setIphonePlazoCuotas] = useState(
-    String(DEFAULT_CREDIT_INSTALLMENTS)
+    String(IPHONE_DEFAULT_CREDIT_INSTALLMENTS)
   );
   const [iphonePlazoMaximoCuotas, setIphonePlazoMaximoCuotas] = useState(
-    String(DEFAULT_MAX_CREDIT_INSTALLMENTS)
+    String(IPHONE_MAX_CREDIT_INSTALLMENTS)
+  );
+  const [iphoneTopeFinanciado, setIphoneTopeFinanciado] = useState(
+    String(IPHONE_MAX_FINANCED_AMOUNT)
+  );
+  const [iphoneTopeCuota, setIphoneTopeCuota] = useState(
+    String(IPHONE_MAX_INSTALLMENT_VALUE)
   );
   const [frecuenciaPago, setFrecuenciaPago] = useState(DEFAULT_PAYMENT_FREQUENCY);
   const [exceptions, setExceptions] = useState<CreditDocumentException[]>([]);
@@ -156,8 +192,10 @@ export default function CreditParametersConsole() {
   const esAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
   const plazoMaximoNormalizado = normalizeCreditInstallmentLimit(plazoMaximoCuotas);
   const plazoCuotasOptions = getCreditInstallmentOptions(plazoMaximoNormalizado);
-  const iphonePlazoMaximoNormalizado =
-    normalizeCreditInstallmentLimit(iphonePlazoMaximoCuotas);
+  const iphonePlazoMaximoNormalizado = normalizeCreditInstallmentLimit(
+    iphonePlazoMaximoCuotas,
+    IPHONE_MAX_CREDIT_INSTALLMENTS
+  );
   const iphonePlazoCuotasOptions = getCreditInstallmentOptions(
     iphonePlazoMaximoNormalizado
   );
@@ -179,7 +217,8 @@ export default function CreditParametersConsole() {
       nextSettings.plazoMaximoCuotas || DEFAULT_MAX_CREDIT_INSTALLMENTS
     );
     const nextIphoneMaxInstallments = installmentLimitValue(
-      nextSettings.iphonePlazoMaximoCuotas || nextSettings.plazoMaximoCuotas
+      nextSettings.iphonePlazoMaximoCuotas || IPHONE_MAX_CREDIT_INSTALLMENTS,
+      IPHONE_MAX_CREDIT_INSTALLMENTS
     );
 
     setSettings(nextSettings);
@@ -189,7 +228,7 @@ export default function CreditParametersConsole() {
     setIphoneCuotaInicialPorcentaje(
       percentValue(
         nextSettings.iphoneCuotaInicialPorcentaje ??
-          nextSettings.cuotaInicialPorcentaje
+          IPHONE_INITIAL_PAYMENT_PERCENTAGE
       )
     );
     setPlazoMaximoCuotas(nextMaxInstallments);
@@ -198,8 +237,15 @@ export default function CreditParametersConsole() {
     setIphonePlazoCuotas(
       installmentValue(
         nextSettings.iphonePlazoCuotas || nextSettings.plazoCuotas,
-        nextIphoneMaxInstallments
+        nextIphoneMaxInstallments,
+        IPHONE_DEFAULT_CREDIT_INSTALLMENTS
       )
+    );
+    setIphoneTopeFinanciado(
+      moneyLimitValue(nextSettings.iphoneTopeFinanciado, IPHONE_MAX_FINANCED_AMOUNT)
+    );
+    setIphoneTopeCuota(
+      moneyLimitValue(nextSettings.iphoneTopeCuota, IPHONE_MAX_INSTALLMENT_VALUE)
     );
     setFrecuenciaPago(nextSettings.frecuenciaPago || DEFAULT_PAYMENT_FREQUENCY);
   };
@@ -215,13 +261,16 @@ export default function CreditParametersConsole() {
   };
 
   const handleIphoneMaxInstallmentsChange = (value: string) => {
-    const cleanValue = value.replace(/\D/g, "");
+    const cleanValue = digitsOnly(value);
     const nextMax = normalizeCreditInstallmentLimit(
-      cleanValue || DEFAULT_MAX_CREDIT_INSTALLMENTS
+      cleanValue || IPHONE_MAX_CREDIT_INSTALLMENTS,
+      IPHONE_MAX_CREDIT_INSTALLMENTS
     );
 
     setIphonePlazoMaximoCuotas(cleanValue);
-    setIphonePlazoCuotas((current) => installmentValue(current, nextMax));
+    setIphonePlazoCuotas((current) =>
+      installmentValue(current, nextMax, IPHONE_DEFAULT_CREDIT_INSTALLMENTS)
+    );
   };
 
   const handleExceptionMaxInstallmentsChange = (value: string) => {
@@ -320,6 +369,8 @@ export default function CreditParametersConsole() {
             plazoMaximoCuotas,
             iphonePlazoCuotas,
             iphonePlazoMaximoCuotas,
+            iphoneTopeFinanciado,
+            iphoneTopeCuota,
             frecuenciaPago,
           }),
         }
@@ -485,7 +536,7 @@ export default function CreditParametersConsole() {
                 Dashboard
               </Link>
               <Link
-                href="/dashboard/creditos?mode=create-client"
+                href="/dashboard/creditos"
                 className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
               >
                 Fabrica de creditos
@@ -645,6 +696,42 @@ export default function CreditParametersConsole() {
                       })}
                     </select>
                   </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-semibold text-slate-700">
+                      Tope financiado iPhone
+                    </span>
+                    <input
+                      value={iphoneTopeFinanciado}
+                      onChange={(event) =>
+                        setIphoneTopeFinanciado(digitsOnly(event.target.value))
+                      }
+                      inputMode="numeric"
+                      className={inputClass}
+                      placeholder={`${IPHONE_MAX_FINANCED_AMOUNT}`}
+                    />
+                    <span className="mt-2 block text-xs font-semibold text-emerald-800">
+                      {currency(iphoneTopeFinanciado || IPHONE_MAX_FINANCED_AMOUNT)}
+                    </span>
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-semibold text-slate-700">
+                      Tope de cuota iPhone
+                    </span>
+                    <input
+                      value={iphoneTopeCuota}
+                      onChange={(event) =>
+                        setIphoneTopeCuota(digitsOnly(event.target.value))
+                      }
+                      inputMode="numeric"
+                      className={inputClass}
+                      placeholder={`${IPHONE_MAX_INSTALLMENT_VALUE}`}
+                    />
+                    <span className="mt-2 block text-xs font-semibold text-emerald-800">
+                      {currency(iphoneTopeCuota || IPHONE_MAX_INSTALLMENT_VALUE)}
+                    </span>
+                  </label>
                 </div>
               </div>
 
@@ -740,7 +827,7 @@ export default function CreditParametersConsole() {
                 </p>
                 <p className="mt-2 text-3xl font-black text-slate-950">
                   {settings?.iphoneCuotaInicialPorcentaje ??
-                    DEFAULT_INITIAL_PAYMENT_PERCENTAGE}
+                    IPHONE_INITIAL_PAYMENT_PERCENTAGE}
                   %
                 </p>
               </div>
@@ -753,7 +840,25 @@ export default function CreditParametersConsole() {
                   {settings?.iphonePlazoCuotas ?? DEFAULT_CREDIT_INSTALLMENTS}
                 </p>
                 <p className="mt-1 text-xs font-semibold text-slate-500">
-                  max {settings?.iphonePlazoMaximoCuotas ?? DEFAULT_MAX_CREDIT_INSTALLMENTS} cuotas
+                  max {settings?.iphonePlazoMaximoCuotas ?? IPHONE_MAX_CREDIT_INSTALLMENTS} cuotas
+                </p>
+              </div>
+
+              <div className="rounded-[22px] border border-emerald-100 bg-emerald-50 px-4 py-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#0f5d59]">
+                  Tope financiado iPhone
+                </p>
+                <p className="mt-2 text-2xl font-black text-slate-950">
+                  {currency(settings?.iphoneTopeFinanciado ?? IPHONE_MAX_FINANCED_AMOUNT)}
+                </p>
+              </div>
+
+              <div className="rounded-[22px] border border-emerald-100 bg-emerald-50 px-4 py-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#0f5d59]">
+                  Tope cuota iPhone
+                </p>
+                <p className="mt-2 text-2xl font-black text-slate-950">
+                  {currency(settings?.iphoneTopeCuota ?? IPHONE_MAX_INSTALLMENT_VALUE)}
                 </p>
               </div>
 
@@ -769,8 +874,8 @@ export default function CreditParametersConsole() {
 
             <div className="mt-5 rounded-[22px] border border-emerald-100 bg-emerald-50 px-4 py-4 text-sm leading-6 text-emerald-900">
               Al guardar, el paso 2 toma los valores de Android o iPhone segun
-              la fabrica elegida para calcular cuota inicial, plazo y total a
-              pagar en nuevas ventas.
+              la fabrica elegida para calcular cuota inicial, plazo, topes y
+              total a pagar en nuevas ventas.
             </div>
 
             <p className="mt-4 text-xs font-semibold text-slate-400">

@@ -899,7 +899,7 @@ export default async function DashboardPage() {
 
   const sellerActions: SellerAction[] = [
     {
-      href: "/dashboard/creditos?mode=create-client",
+      href: "/dashboard/creditos",
       title: "Crear cliente",
       description:
         "Captura datos, firma contrato, selecciona el equipo e inicia el flujo comercial.",
@@ -958,7 +958,7 @@ export default async function DashboardPage() {
   const sellerMenuItems: SellerMenuItem[] = sellerIsSupervisor
     ? [
         { href: "/dashboard", label: "Inicio", icon: "home", active: true },
-        { href: "/dashboard/creditos?mode=create-client", label: "Crear cliente", icon: "new-sale" },
+        { href: "/dashboard/creditos", label: "Crear cliente", icon: "new-sale" },
         { href: "/dashboard#busqueda-rapida", label: "Buscar cliente", icon: "clients" as const },
         { href: "/dashboard/abonos", label: "Abonos y recaudo", icon: "payments" as const },
         { href: "/dashboard/creditos?mode=simulator", label: "Simulador", icon: "calculator" as const },
@@ -968,7 +968,7 @@ export default async function DashboardPage() {
         { href: "/dashboard/pin", label: "Cambiar PIN", icon: "search" },
       ]
     : [
-        { href: "/dashboard/creditos?mode=create-client", label: "Crear cliente", icon: "new-sale" },
+        { href: "/dashboard/creditos", label: "Crear cliente", icon: "new-sale" },
         { href: "/dashboard/creditos?mode=delivery", label: "Validar entrega", icon: "search" },
         { href: "/dashboard/creditos?mode=simulator", label: "Simulador", icon: "calculator" },
       ];
@@ -1033,7 +1033,7 @@ export default async function DashboardPage() {
                     : "Crea ventas, valida entrega y consulta el simulador sin ruido."}
                 </p>
                 <div className="mt-7 flex flex-col gap-3 sm:flex-row">
-                  <DashboardButton href="/dashboard/creditos?mode=create-client" label="Nuevo credito" tone="orange" />
+                  <DashboardButton href="/dashboard/creditos" label="Nuevo credito" tone="orange" />
                   <DashboardButton
                     href={sellerIsSupervisor ? "/dashboard/clientes" : "/dashboard/creditos?mode=delivery"}
                     label={sellerIsSupervisor ? "Buscar cliente" : "Validar entrega"}
@@ -1126,7 +1126,7 @@ export default async function DashboardPage() {
 
           <section className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <DashboardTile
-              href="/dashboard/creditos?mode=create-client"
+              href="/dashboard/creditos"
               eyebrow="Venta"
               title="Nuevo credito"
               description="Crear cliente y abrir venta."
@@ -1530,7 +1530,7 @@ export default async function DashboardPage() {
                 />
               )}
               <DashboardButton
-                href="/dashboard/creditos?mode=create-client"
+                href="/dashboard/creditos"
                 label="Nuevo credito"
                 tone="orange"
               />
@@ -1623,7 +1623,7 @@ export default async function DashboardPage() {
 
           <div className="grid gap-5 sm:grid-cols-2">
             <DashboardTile
-              href="/dashboard/creditos?mode=create-client"
+              href="/dashboard/creditos"
               eyebrow="Venta"
               title="Fabrica"
               description="Abrir venta guiada para el asesor."
