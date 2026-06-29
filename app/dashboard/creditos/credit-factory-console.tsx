@@ -34,6 +34,7 @@ import {
   IPHONE_MAX_CREDIT_INSTALLMENTS,
   IPHONE_MAX_FINANCED_AMOUNT,
   IPHONE_MAX_INSTALLMENT_VALUE,
+  isEquipmentCatalogItemAllowedForPlatform,
   MAX_CREDIT_INSTALLMENTS,
   MAX_DEVICE_FINANCING_BASE,
   normalizeMoneyLimit,
@@ -2368,10 +2369,17 @@ export default function CreditFactoryConsole({
     () => equipmentCatalog.filter((item) => item.activo),
     [equipmentCatalog]
   );
+  const platformEquipmentCatalog = useMemo(
+    () =>
+      activeEquipmentCatalog.filter((item) =>
+        isEquipmentCatalogItemAllowedForPlatform(item, currentDevicePlatform)
+      ),
+    [activeEquipmentCatalog, currentDevicePlatform]
+  );
   const equipmentBrandOptions = useMemo(() => {
     const brands = new Map<string, string>();
 
-    for (const item of activeEquipmentCatalog) {
+    for (const item of platformEquipmentCatalog) {
       const key = equipmentCatalogKey(item.marca);
       if (key && !brands.has(key)) {
         brands.set(key, item.marca);
@@ -2379,18 +2387,18 @@ export default function CreditFactoryConsole({
     }
 
     return Array.from(brands.values());
-  }, [activeEquipmentCatalog]);
+  }, [platformEquipmentCatalog]);
   const equipmentModelOptions = useMemo(() => {
     const selectedBrandKey = equipmentCatalogKey(equipoMarca);
 
-    return activeEquipmentCatalog.filter((item) => {
+    return platformEquipmentCatalog.filter((item) => {
       if (!selectedBrandKey) {
         return false;
       }
 
       return equipmentCatalogKey(item.marca) === selectedBrandKey;
     });
-  }, [activeEquipmentCatalog, equipoMarca]);
+  }, [platformEquipmentCatalog, equipoMarca]);
   const selectedEquipmentCatalogItem = useMemo(() => {
     const selectedBrandKey = equipmentCatalogKey(equipoMarca);
     const selectedModelKey = equipmentCatalogKey(equipoModelo);
@@ -2400,13 +2408,13 @@ export default function CreditFactoryConsole({
     }
 
     return (
-      activeEquipmentCatalog.find(
+      platformEquipmentCatalog.find(
         (item) =>
           equipmentCatalogKey(item.marca) === selectedBrandKey &&
           equipmentCatalogKey(item.modelo) === selectedModelKey
       ) || null
     );
-  }, [activeEquipmentCatalog, equipoMarca, equipoModelo]);
+  }, [platformEquipmentCatalog, equipoMarca, equipoModelo]);
   const precioBaseVentaCatalogo = selectedEquipmentCatalogItem?.precioBaseVenta || 0;
   const excedentePrecioBase =
     precioBaseVentaCatalogo > 0
@@ -4031,6 +4039,16 @@ export default function CreditFactoryConsole({
   };
 
   const applyEquipmentCatalogItem = (item: EquipmentCatalogItem) => {
+    if (!isEquipmentCatalogItemAllowedForPlatform(item, currentDevicePlatform)) {
+      setNotice({
+        text: iphoneFactory
+          ? "En iPhone solo puedes seleccionar equipos de marca IPHONE."
+          : "En Android no puedes seleccionar equipos de marca IPHONE.",
+        tone: "red",
+      });
+      return;
+    }
+
     const previousCatalogBase = selectedEquipmentCatalogItem?.precioBaseVenta || 0;
     const currentEquipmentValue = Number(valorEquipoTotal || 0);
 
@@ -4204,6 +4222,24 @@ export default function CreditFactoryConsole({
       }
     });
   }, []);
+
+  useEffect(() => {
+    if (!activeEquipmentCatalog.length || !equipoMarca.trim()) {
+      return;
+    }
+
+    if (
+      isEquipmentCatalogItemAllowedForPlatform(
+        { marca: equipoMarca },
+        currentDevicePlatform
+      )
+    ) {
+      return;
+    }
+
+    setEquipoMarca("");
+    setEquipoModelo("");
+  }, [activeEquipmentCatalog.length, currentDevicePlatform, equipoMarca]);
 
   useEffect(() => {
     const normalizedDocument = clienteDocumento.replace(/\D/g, "");
@@ -9101,16 +9137,23 @@ export default function CreditFactoryConsole({
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Marca
                         </label>
-                        {equipmentBrandOptions.length ? (
+                        {activeEquipmentCatalog.length ? (
                           <select
                             value={equipoMarca}
                             onChange={(event) => {
                               setEquipoMarca(event.target.value);
                               setEquipoModelo("");
                             }}
-                            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                            disabled={!equipmentBrandOptions.length}
+                            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50 disabled:text-slate-400"
                           >
-                            <option value="">Selecciona marca</option>
+                            <option value="">
+                              {equipmentBrandOptions.length
+                                ? "Selecciona marca"
+                                : iphoneFactory
+                                  ? "No hay marcas IPHONE en catalogo"
+                                  : "No hay marcas Android en catalogo"}
+                            </option>
                             {equipmentBrandOptions.map((brand) => (
                               <option key={equipmentCatalogKey(brand)} value={brand}>
                                 {brand}
@@ -9131,7 +9174,7 @@ export default function CreditFactoryConsole({
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Modelo
                         </label>
-                        {equipmentBrandOptions.length ? (
+                        {activeEquipmentCatalog.length ? (
                           <select
                             value={selectedEquipmentCatalogItem?.id || ""}
                             onChange={(event) => {
@@ -9145,11 +9188,15 @@ export default function CreditFactoryConsole({
                                 setEquipoModelo("");
                               }
                             }}
-                            disabled={!equipoMarca}
+                            disabled={!equipoMarca || !equipmentModelOptions.length}
                             className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50 disabled:text-slate-400"
                           >
                             <option value="">
-                              {equipoMarca ? "Selecciona modelo" : "Elige una marca"}
+                              {equipoMarca
+                                ? equipmentModelOptions.length
+                                  ? "Selecciona modelo"
+                                  : "No hay modelos para esta marca"
+                                : "Elige una marca"}
                             </option>
                             {equipmentModelOptions.map((item) => (
                               <option key={item.id} value={item.id}>

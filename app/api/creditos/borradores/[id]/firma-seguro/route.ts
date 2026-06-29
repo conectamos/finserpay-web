@@ -11,6 +11,7 @@ import {
   generateCreditFolio,
   generatePaymentReference,
   getDefaultFirstPaymentDateObject,
+  isEquipmentCatalogItemAllowedForPlatform,
   isIphoneCreditPlatform,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
@@ -215,6 +216,17 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
     equipoMarca && equipoModelo
       ? await findEquipmentCatalogItem({ marca: equipoMarca, modelo: equipoModelo })
       : null;
+  if (
+    catalogItem &&
+    !isEquipmentCatalogItemAllowedForPlatform(catalogItem, plataformaDispositivo)
+  ) {
+    throw new CreditValidationError(
+      isIphoneCredit
+        ? "En iPhone solo puedes seleccionar equipos del catalogo con marca IPHONE."
+        : "En Android no puedes seleccionar equipos del catalogo con marca IPHONE."
+    );
+  }
+
   const precioBaseVentaCatalogo = catalogItem?.activo
     ? catalogItem.precioBaseVenta
     : null;

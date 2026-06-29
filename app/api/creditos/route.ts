@@ -15,6 +15,7 @@ import {
   generatePagareNumber,
   generatePaymentReference,
   getDefaultFirstPaymentDateObject,
+  isEquipmentCatalogItemAllowedForPlatform,
   isIphoneCreditPlatform,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
@@ -733,6 +734,20 @@ export async function POST(req: Request) {
       equipoMarca && equipoModelo
         ? await findEquipmentCatalogItem({ marca: equipoMarca, modelo: equipoModelo })
         : null;
+    if (
+      catalogItem &&
+      !isEquipmentCatalogItemAllowedForPlatform(catalogItem, plataformaDispositivo)
+    ) {
+      return NextResponse.json(
+        {
+          error: isIphoneCredit
+            ? "En iPhone solo puedes seleccionar equipos del catalogo con marca IPHONE."
+            : "En Android no puedes seleccionar equipos del catalogo con marca IPHONE.",
+        },
+        { status: 400 }
+      );
+    }
+
     const precioBaseVentaCatalogo = catalogItem?.activo
       ? catalogItem.precioBaseVenta
       : null;

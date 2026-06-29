@@ -337,6 +337,29 @@ export function isIphoneCreditPlatform(value: unknown) {
   return normalized === "IPHONE" || normalized === "IOS" || normalized === "APPLE";
 }
 
+export function isIphoneEquipmentCatalogBrand(value: unknown) {
+  const normalized = sanitizeText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+  return normalized === "IPHONE";
+}
+
+export function isEquipmentCatalogItemAllowedForPlatform(
+  item: { marca?: string | null } | null | undefined,
+  platform?: unknown
+) {
+  if (!item) {
+    return true;
+  }
+
+  const isIphoneBrand = isIphoneEquipmentCatalogBrand(item.marca);
+
+  return isIphoneCreditPlatform(platform) ? isIphoneBrand : !isIphoneBrand;
+}
+
 export function normalizeMoneyLimit(value: unknown, fallback: number) {
   const numericValue = Number(value);
   const numericFallback = Number(fallback);
