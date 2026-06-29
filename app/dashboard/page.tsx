@@ -597,7 +597,14 @@ function AdminAnnulmentsCard() {
   );
 }
 
-type DashboardTone = "dark" | "orange" | "blue" | "green" | "light" | "danger";
+type DashboardTone =
+  | "dark"
+  | "orange"
+  | "blue"
+  | "green"
+  | "light"
+  | "danger"
+  | "portfolio";
 
 type DashboardTileProps = {
   href: string;
@@ -623,6 +630,8 @@ function DashboardTile({
     green: "border-[#cce7df] bg-[#eff8f5] text-[#173c38]",
     light: "border-[#d7dce2] bg-white text-[#20242a]",
     danger: "border-[#ffd0d0] bg-[#fff7f7] text-[#3c3030]",
+    portfolio:
+      "border-[#123c38] bg-[linear-gradient(135deg,#13231f_0%,#0f766e_54%,#bfa46a_140%)] text-white",
   };
   const iconTone: Record<DashboardTone, string> = {
     dark: "bg-white/10 text-white border-white/12",
@@ -631,6 +640,7 @@ function DashboardTile({
     green: "bg-[#0f766e] text-white border-[#0f766e]",
     light: "bg-[#f4f5f4] text-[#20242a] border-[#d7dce2]",
     danger: "bg-[#111318] text-white border-[#111318]",
+    portfolio: "bg-white/14 text-white border-white/18",
   };
 
   return (
@@ -680,6 +690,7 @@ function DashboardButton({
     green: "border-[#0f766e] bg-[#0f766e] text-white",
     light: "border-[#d7dce2] bg-white text-[#20242a]",
     danger: "border-[#ffd0d0] bg-white text-[#c01b1b]",
+    portfolio: "border-[#123c38] bg-[#123c38] text-white",
   };
 
   return (
@@ -1537,7 +1548,7 @@ export default async function DashboardPage() {
               <DashboardButton href="/dashboard/abonos" label="Recibir abono" tone="dark" />
               <DashboardButton href="/dashboard/clientes" label="Buscar cliente" tone="green" />
               {adminCentral && (
-                <DashboardButton href="/dashboard/cartera" label="Cartera" tone="green" />
+                <DashboardButton href="/dashboard/cartera" label="Cartera" tone="portfolio" />
               )}
               {adminCentral && (
                 <DashboardButton href="/dashboard/clientes" label="Ajustar plan" tone="blue" />
@@ -1643,9 +1654,9 @@ export default async function DashboardPage() {
                 href="/dashboard/cartera"
                 eyebrow="Salud cartera"
                 title="Cartera"
-                description="Mora, pagos y riesgo financiero."
+                description="Mora, recuperacion y riesgo financiero."
                 icon="credit"
-                tone="light"
+                tone="portfolio"
               />
             )}
           </div>
