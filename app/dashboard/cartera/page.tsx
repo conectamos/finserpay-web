@@ -1,7 +1,9 @@
 import Link from "next/link";
+import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import FinserBrand from "@/app/_components/finser-brand";
 import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
+import { ALIADO_FINSER_PAY } from "@/lib/aliados";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import PushMassivePanel from "./push-massive-panel";
 
@@ -11,6 +13,11 @@ export const metadata = {
 };
 
 type RiskBucket = "alDia" | "temprana" | "mayor" | "avanzada" | "pagado";
+type CarteraPageProps = {
+  searchParams?: Promise<{
+    aliadoId?: string | string[] | undefined;
+  }>;
+};
 
 const riskLabels: Record<RiskBucket, string> = {
   alDia: "Al dia",
@@ -87,6 +94,16 @@ function ratio(part: number, total: number) {
   return total > 0 ? (part / total) * 100 : 0;
 }
 
+function firstSearchParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function parsePositiveInt(value: unknown) {
+  const parsed = Number(String(value ?? "").trim());
+
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function firstFamilyReferencePhone(snapshot: unknown) {
   if (typeof snapshot !== "object" || snapshot === null) {
     return "";
@@ -111,12 +128,54 @@ function firstFamilyReferencePhone(snapshot: unknown) {
   return typeof record.telefono === "string" ? record.telefono : "";
 }
 
-export default async function CarteraPage() {
+export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   await requireCentralAdminDashboardAccess();
 
+  const params = searchParams ? await searchParams : {};
+  const requestedAliadoId = parsePositiveInt(firstSearchParam(params.aliadoId));
   const today = new Date();
+  const aliados = await prisma.aliado.findMany({
+    where: {
+      activo: true,
+      NOT: {
+        codigo: ALIADO_FINSER_PAY.codigo,
+      },
+    },
+    select: {
+      id: true,
+      nombre: true,
+      codigo: true,
+    },
+    orderBy: {
+      nombre: "asc",
+    },
+  });
+  const selectedAliado = requestedAliadoId
+    ? aliados.find((aliado) => aliado.id === requestedAliadoId) || null
+    : null;
+  const selectedAliadoId = selectedAliado?.id || null;
+  const selectedAliadoLabel = selectedAliado?.nombre || "Todos los aliados";
+  const exportHref = selectedAliadoId
+    ? `/api/dashboard/cartera/export?aliadoId=${selectedAliadoId}`
+    : "/api/dashboard/cartera/export";
+  const creditWhere: Prisma.CreditoWhereInput = selectedAliadoId
+    ? {
+        sede: {
+          aliadoId: selectedAliadoId,
+        },
+      }
+    : {};
+  const gastoWhere: Prisma.GastoCarteraWhereInput = selectedAliadoId
+    ? {
+        sede: {
+          aliadoId: selectedAliadoId,
+        },
+      }
+    : {};
+
   const [creditos, gastosOperacion] = await Promise.all([
     prisma.credito.findMany({
+      where: creditWhere,
       include: {
         abonos: {
           where: {
@@ -135,6 +194,13 @@ export default async function CarteraPage() {
         sede: {
           select: {
             nombre: true,
+            aliado: {
+              select: {
+                id: true,
+                nombre: true,
+                codigo: true,
+              },
+            },
           },
         },
         vendedor: {
@@ -149,6 +215,7 @@ export default async function CarteraPage() {
       take: 1000,
     }),
     prisma.gastoCartera.findMany({
+      where: gastoWhere,
       select: {
         valor: true,
       },
@@ -196,6 +263,7 @@ export default async function CarteraPage() {
           [credito.equipoMarca, credito.equipoModelo].filter(Boolean).join(" ") ||
           "Equipo",
         sede: credito.sede.nombre,
+        aliado: credito.sede.aliado?.nombre || "Sin aliado",
         vendedor: credito.vendedor?.nombre || "Sin vendedor",
         cuotaInicial: Number(credito.cuotaInicial || 0),
         creditoAutorizado,
@@ -323,7 +391,7 @@ export default async function CarteraPage() {
           </div>
 
           <div className="flex flex-wrap gap-2 sm:justify-end">
-            <ActionLink href="/api/dashboard/cartera/export" label="Excel" primary />
+            <ActionLink href={exportHref} label="Excel" primary />
             <ActionLink href="/dashboard/reportes/creditos" label="Creditos" />
             <ActionLink href="/dashboard" label="Dashboard" dark />
           </div>
@@ -338,18 +406,62 @@ export default async function CarteraPage() {
               <h1 className="mt-2 text-3xl font-black tracking-tight text-[#20242a]">
                 Cartera
               </h1>
+              <p className="mt-2 text-sm font-bold text-[#687080]">
+                {selectedAliadoLabel}
+              </p>
             </div>
 
-            <div className="flex flex-wrap gap-2 lg:justify-end">
-              <span className="rounded-full border border-[#d7dce2] bg-[#f8fafc] px-3 py-1 text-xs font-black text-[#687080]">
-                {activeCredits.length} activos
-              </span>
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
-                {clientsMora} clientes en mora
-              </span>
-              <span className={["rounded-full border px-3 py-1 text-xs font-black uppercase tracking-[0.12em]", health.tone].join(" ")}>
-                {health.label}
-              </span>
+            <div className="flex flex-col gap-3 lg:items-end">
+              <form
+                action="/dashboard/cartera"
+                className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end"
+              >
+                <label className="flex flex-col gap-1">
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#0f766e]">
+                    Aliado
+                  </span>
+                  <select
+                    name="aliadoId"
+                    defaultValue={selectedAliadoId ? String(selectedAliadoId) : ""}
+                    className="min-h-11 min-w-[230px] rounded-2xl border border-[#cfd8df] bg-white px-4 text-sm font-black text-[#20242a] outline-none transition focus:border-[#0f766e] focus:ring-2 focus:ring-emerald-100"
+                  >
+                    <option value="">Todos los aliados</option>
+                    {aliados.map((aliado) => (
+                      <option key={aliado.id} value={aliado.id}>
+                        {aliado.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-[#20242a] bg-[#20242a] px-4 text-sm font-black text-white transition hover:bg-[#111318]"
+                  >
+                    Filtrar
+                  </button>
+                  {selectedAliadoId ? (
+                    <Link
+                      href="/dashboard/cartera"
+                      className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-[#d8e0e3] bg-white px-4 text-sm font-black text-[#20242a] transition hover:bg-[#f8fafc]"
+                    >
+                      Todos
+                    </Link>
+                  ) : null}
+                </div>
+              </form>
+
+              <div className="flex flex-wrap gap-2 lg:justify-end">
+                <span className="rounded-full border border-[#d7dce2] bg-[#f8fafc] px-3 py-1 text-xs font-black text-[#687080]">
+                  {activeCredits.length} activos
+                </span>
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
+                  {clientsMora} clientes en mora
+                </span>
+                <span className={["rounded-full border px-3 py-1 text-xs font-black uppercase tracking-[0.12em]", health.tone].join(" ")}>
+                  {health.label}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -472,7 +584,10 @@ export default async function CarteraPage() {
                         <p className="font-semibold text-[#20242a]">{item.imei}</p>
                         <p className="mt-1 max-w-[240px] text-xs leading-5 text-[#687080]">{item.referencia}</p>
                       </td>
-                      <td className="px-5 py-4 align-top text-[#687080]">{item.sede}</td>
+                      <td className="px-5 py-4 align-top text-[#687080]">
+                        <p className="font-semibold text-[#20242a]">{item.sede}</p>
+                        <p className="mt-1 text-xs text-[#687080]">{item.aliado}</p>
+                      </td>
                       <td className="px-5 py-4 align-top">
                         <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
                           {riskLabels[item.bucket]} - {item.diasMora} dias

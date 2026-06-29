@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import {
@@ -6,6 +7,7 @@ import {
   sanitizeText,
 } from "@/lib/credit-factory";
 import { getSessionUser } from "@/lib/auth";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isAdminRole } from "@/lib/roles";
 import prisma from "@/lib/prisma";
 
@@ -76,6 +78,12 @@ function moneyCell(value: number) {
 
 function numberCell(value: number) {
   return `<td style='mso-number-format:"0";'>${Math.round(Number(value || 0))}</td>`;
+}
+
+function parsePositiveInt(value: unknown) {
+  const parsed = Number(String(value ?? "").trim());
+
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function splitOutstandingBalance(options: {
@@ -149,6 +157,7 @@ function buildWorkbookHtml(rows: string) {
         <th>Referencia</th>
         <th>Plazo credito</th>
         <th>Frecuencia de pago</th>
+        <th>ALIADO</th>
         <th>SEDE</th>
         <th>Fecha proxima cuota a pagar</th>
         <th>Cuotas pendientes</th>
@@ -167,7 +176,7 @@ function buildWorkbookHtml(rows: string) {
 </html>`;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const user = await getSessionUser();
 
@@ -184,13 +193,27 @@ export async function GET() {
 
     await ensureCreditAbonoAuditColumns();
 
+    const { searchParams } = new URL(req.url);
+    const requestedAliadoId = parsePositiveInt(searchParams.get("aliadoId"));
+    const adminCentral = isFinserPayCentralAlly(user.aliadoAccesoCodigo);
+    const ownAliadoId = parsePositiveInt(user.aliadoAccesoId);
+    const selectedAliadoId = adminCentral ? requestedAliadoId : ownAliadoId;
+    const where: Prisma.CreditoWhereInput = {
+      estado: {
+        not: "ANULADO",
+      },
+      ...(selectedAliadoId
+        ? {
+            sede: {
+              aliadoId: selectedAliadoId,
+            },
+          }
+        : {}),
+    };
+
     const today = new Date();
     const creditos = await prisma.credito.findMany({
-      where: {
-        estado: {
-          not: "ANULADO",
-        },
-      },
+      where,
       include: {
         abonos: {
           where: {
@@ -210,6 +233,11 @@ export async function GET() {
         sede: {
           select: {
             nombre: true,
+            aliado: {
+              select: {
+                nombre: true,
+              },
+            },
           },
         },
       },
@@ -286,6 +314,7 @@ export async function GET() {
           ${textCell(referenciaEquipo)}
           ${numberCell(Number(credito.plazoMeses || 0))}
           ${textCell(getPaymentFrequencyLabel(credito.frecuenciaPago))}
+          ${textCell(credito.sede.aliado?.nombre || "")}
           ${textCell(credito.sede.nombre)}
           ${textCell(plan.nextInstallment?.fechaVencimiento || "")}
           ${numberCell(plan.pendingCount)}
