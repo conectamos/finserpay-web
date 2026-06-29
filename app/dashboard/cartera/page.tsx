@@ -1,5 +1,6 @@
 import Link from "next/link";
 import prisma from "@/lib/prisma";
+import FinserBrand from "@/app/_components/finser-brand";
 import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import PushMassivePanel from "./push-massive-panel";
@@ -297,80 +298,143 @@ export default async function CarteraPage() {
     .filter((item) => item.bucket !== "alDia")
     .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente)
     .slice(0, 12);
+  const lastUpdatedLabel = new Intl.DateTimeFormat("es-CO", {
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short",
+  }).format(today);
 
   return (
-    <div className="min-h-screen bg-[#eef3f6] px-4 py-6 text-[#182025]">
-      <main className="mx-auto max-w-7xl">
-        <header className="overflow-hidden rounded-[28px] border border-[#d8e0e3] bg-white shadow-[0_18px_55px_rgba(24,32,37,0.08)]">
-          <div className="grid gap-6 p-5 lg:grid-cols-[1fr_360px] lg:p-7">
+    <div className="fp-dashboard-app min-h-screen text-[#20242a]">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:py-8">
+        <header className="flex flex-col gap-4 rounded-[34px] border border-[#d7dce2] bg-white/92 p-4 shadow-[0_18px_48px_rgba(17,19,24,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <FinserBrand compact />
+            <div className="hidden h-10 w-px bg-[#d7dce2] sm:block" />
             <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-[#bfe9dd] bg-[#f0fbf7] px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-[#087061]">
-                  Admin cartera
-                </span>
-                <span className="rounded-full border border-[#dde5e8] bg-[#f7fafb] px-3 py-1 text-xs font-bold text-[#64717b]">
-                  {activeCredits.length} activos
-                </span>
-                <span className="rounded-full border border-[#dde5e8] bg-[#f7fafb] px-3 py-1 text-xs font-bold text-[#64717b]">
-                  {clientsMora} en mora
-                </span>
-              </div>
-              <h1 className="mt-4 max-w-3xl text-4xl font-black tracking-tight text-[#11161a] md:text-5xl">
-                Salud de cartera
-              </h1>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-[#687080]">
-                Lectura ejecutiva de inversion, cartera por cobrar, utilidad esperada y riesgo de mora.
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
+                Panel central
               </p>
-              <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                <HeroMetric label="Invertido" value={money(totalInvertido)} />
-                <HeroMetric label="Por cobrar" value={money(totalPendiente)} />
-                <HeroMetric label="Ganancias" value={money(totalGanancias)} danger={totalGanancias < 0} />
-              </div>
+              <p className="mt-1 text-sm font-bold text-[#687080]">
+                Cartera actualizada {lastUpdatedLabel}
+              </p>
             </div>
+          </div>
 
-            <div className="rounded-[24px] border border-[#d8e0e3] bg-[#f8fbfa] p-4">
-              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#087061]">
-                Acciones
-              </p>
-              <div className="mt-4 grid gap-2">
-                <ActionLink href="/api/dashboard/cartera/export" label="Descargar Excel" primary />
-                <ActionLink href="/dashboard/financiero/cartera" label="Agregar gasto" />
-                <ActionLink href="/dashboard/financiero/cartera/detalle" label="Detalle gastos" />
-                <ActionLink href="/dashboard/reportes/creditos" label="Ver creditos" />
-                <ActionLink href="/dashboard" label="Dashboard" dark />
-              </div>
-            </div>
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            <ActionLink href="/api/dashboard/cartera/export" label="Excel" primary />
+            <ActionLink href="/dashboard/reportes/creditos" label="Creditos" />
+            <ActionLink href="/dashboard" label="Dashboard" dark />
           </div>
         </header>
 
-        <section className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard label="Bolsa de respaldo" value={money(bolsaRespaldoMora)} detail="10% de lo invertido" tone="mint" />
-          <MetricCard label="Cartera sana" value={percent(pctSana)} detail={`${money(totalSano)} sin mora`} />
-          <MetricCard label="Creditos activos" value={String(activeCredits.length)} detail={`${paidCredits.length} creditos pagos`} />
-          <MetricCard label="Cartera en mora" value={money(totalMora)} detail={`${percent(pctMora)} del saldo pendiente`} warning={pctMora > 18} tone="risk" />
-        </section>
+        <section className="mt-5 grid gap-5 lg:grid-cols-[1.12fr_0.88fr]">
+          <div className="relative overflow-hidden rounded-[38px] border border-[#d7dce2] bg-white p-6 shadow-[0_24px_70px_rgba(17,19,24,0.08)] sm:p-8">
+            <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-[#0f766e]/10" />
+            <div className="pointer-events-none absolute -bottom-28 left-1/3 h-72 w-72 rounded-full bg-[#bfa46a]/12" />
 
-        <PushMassivePanel />
+            <div className="relative">
+              <div className="flex flex-wrap gap-2">
+                <span className="rounded-full border border-[#cce7df] bg-[#eff8f5] px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-[#0f766e]">
+                  Control de cartera
+                </span>
+                <span className="rounded-full border border-[#d7dce2] bg-[#f8fafc] px-3 py-1 text-xs font-black text-[#687080]">
+                  {activeCredits.length} activos
+                </span>
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
+                  {clientsMora} clientes en mora
+                </span>
+              </div>
 
-        <section className="mt-5 grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className={["rounded-[26px] border p-5 shadow-[0_16px_40px_rgba(24,32,37,0.06)]", health.tone].join(" ")}>
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] opacity-75">
-              Diagnostico
-            </p>
-            <h2 className="mt-3 text-3xl font-black tracking-tight">{health.label}</h2>
-            <p className="mt-3 text-sm leading-6 opacity-80">{health.detail}</p>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <MiniMetric label="Recuperado" value={percent(pctRecuperado)} />
-              <MiniMetric label="Creditos pagos" value={percent(pctPagados)} />
-              <MiniMetric label="Recaudo total" value={money(totalPagado)} />
-              <MiniMetric label="Gastos operacion" value={money(totalGastosOperacion)} />
+              <h1 className="mt-5 max-w-3xl text-4xl font-black leading-[1.04] tracking-tight text-[#20242a] sm:text-5xl">
+                Salud, recaudo y riesgo en una sola lectura.
+              </h1>
+              <p className="mt-4 max-w-2xl text-sm leading-6 text-[#687080]">
+                Seguimiento ejecutivo de inversion, saldo por cobrar, mora por edades y casos que necesitan gestion inmediata.
+              </p>
+
+              <div className="mt-8 grid gap-5 border-t border-[#d7dce2] pt-6 sm:grid-cols-3">
+                <HeroMetric label="Inversion activa" value={money(totalInvertido)} />
+                <HeroMetric label="Saldo por cobrar" value={money(totalPendiente)} />
+                <HeroMetric
+                  label="Ganancia estimada"
+                  value={money(totalGanancias)}
+                  danger={totalGanancias < 0}
+                />
+              </div>
             </div>
           </div>
 
-          <div className="rounded-[26px] border border-[#d8e0e3] bg-white p-5 shadow-[0_16px_40px_rgba(24,32,37,0.06)]">
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
-              Mora por edades
-            </p>
+          <aside className="rounded-[34px] border border-[#d7dce2] bg-[#fbf8ef] p-5 shadow-[0_18px_48px_rgba(17,19,24,0.06)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#8a909b]">
+                  Diagnostico
+                </p>
+                <h2 className="mt-3 text-3xl font-black tracking-tight text-[#20242a]">
+                  {health.label}
+                </h2>
+              </div>
+              <span className={["rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em]", health.tone].join(" ")}>
+                {percent(pctMora)} mora
+              </span>
+            </div>
+
+            <p className="mt-4 text-sm leading-6 text-[#687080]">{health.detail}</p>
+
+            <div className="mt-6 space-y-4 border-t border-[#d7dce2] pt-5">
+              <MiniMetric label="Recuperado" value={percent(pctRecuperado)} detail={money(totalPagado)} />
+              <MiniMetric label="Creditos pagos" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
+              <MiniMetric label="Gastos operacion" value={money(totalGastosOperacion)} detail="Descontado de ganancias" />
+            </div>
+          </aside>
+        </section>
+
+        <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            label="Bolsa de respaldo"
+            value={money(bolsaRespaldoMora)}
+            detail="10% de lo invertido"
+            tone="gold"
+          />
+          <MetricCard
+            label="Cartera sana"
+            value={percent(pctSana)}
+            detail={`${money(totalSano)} sin mora`}
+            tone="green"
+          />
+          <MetricCard
+            label="Creditos activos"
+            value={String(activeCredits.length)}
+            detail={`${paidCredits.length} creditos pagos`}
+            tone="slate"
+          />
+          <MetricCard
+            label="Cartera en mora"
+            value={money(totalMora)}
+            detail={`${percent(pctMora)} del saldo pendiente`}
+            warning={pctMora > 18}
+            tone="red"
+          />
+        </section>
+
+        <section className="mt-5 grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-[34px] border border-[#d7dce2] bg-white p-5 shadow-[0_18px_48px_rgba(17,19,24,0.07)]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
+                  Mora por edades
+                </p>
+                <h2 className="mt-3 text-3xl font-black tracking-tight text-[#20242a]">
+                  Segmentos de riesgo
+                </h2>
+              </div>
+              <p className="max-w-xs text-sm leading-6 text-[#687080]">
+                Ordena la gestion diaria segun dias vencidos y saldo pendiente.
+              </p>
+            </div>
+
             <div className="mt-5 grid gap-3 md:grid-cols-3">
               <BucketCard
                 title="Temprana"
@@ -378,6 +442,7 @@ export default async function CarteraPage() {
                 clients={clientsTemprana}
                 value={bucketValues.temprana}
                 percentValue={ratio(bucketValues.temprana, totalPendiente)}
+                tone="amber"
               />
               <BucketCard
                 title="Mayor"
@@ -385,6 +450,7 @@ export default async function CarteraPage() {
                 clients={clientsMayor}
                 value={bucketValues.mayor}
                 percentValue={ratio(bucketValues.mayor, totalPendiente)}
+                tone="orange"
               />
               <BucketCard
                 title="Avanzada"
@@ -392,13 +458,16 @@ export default async function CarteraPage() {
                 clients={clientsAvanzada}
                 value={bucketValues.avanzada}
                 percentValue={ratio(bucketValues.avanzada, totalPendiente)}
+                tone="red"
               />
             </div>
           </div>
+
+          <PushMassivePanel />
         </section>
 
-        <section className="mt-5 overflow-hidden rounded-[26px] border border-[#d8e0e3] bg-white shadow-[0_16px_40px_rgba(24,32,37,0.06)]">
-          <div className="flex flex-col gap-2 border-b border-[#d7dce2] px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+        <section className="mt-5 overflow-hidden rounded-[34px] border border-[#d7dce2] bg-white shadow-[0_18px_48px_rgba(17,19,24,0.07)]">
+          <div className="flex flex-col gap-3 border-b border-[#d7dce2] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
                 Riesgos prioritarios
@@ -407,55 +476,56 @@ export default async function CarteraPage() {
                 Clientes que requieren gestion
               </h2>
             </div>
-            <p className="text-sm font-semibold text-[#687080]">
+            <span className="rounded-full border border-[#d7dce2] bg-[#f8fafc] px-4 py-2 text-sm font-black text-[#687080]">
               {riskRows.length ? `${riskRows.length} casos visibles` : "Sin mora registrada"}
-            </p>
+            </span>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-[#111318] text-white">
+            <table className="min-w-[1080px] text-left text-sm">
+              <thead className="bg-[#20242a] text-white">
                 <tr>
-                  <th className="px-5 py-4 font-black">Cliente</th>
-                  <th className="px-5 py-4 font-black">IMEI</th>
-                  <th className="px-5 py-4 font-black">Referencia</th>
-                  <th className="px-5 py-4 font-black">Sede</th>
-                  <th className="px-5 py-4 font-black">Mora</th>
-                  <th className="px-5 py-4 font-black">Saldo</th>
-                  <th className="px-5 py-4 font-black">Proxima cuota</th>
+                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Cliente</th>
+                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Equipo</th>
+                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Sede</th>
+                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Mora</th>
+                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Saldo</th>
+                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Proxima cuota</th>
                 </tr>
               </thead>
               <tbody>
                 {riskRows.length ? (
                   riskRows.map((item) => (
                     <tr key={item.id} className="border-b border-[#e5eaf0] last:border-0">
-                      <td className="px-5 py-4">
+                      <td className="px-5 py-4 align-top">
                         <p className="font-black text-[#20242a]">{item.clienteNombre}</p>
-                        <p className="text-xs text-[#687080]">{item.clienteDocumento || "Sin documento"}</p>
-                        <p className="text-xs font-semibold text-[#0f766e]">
+                        <p className="mt-1 text-xs text-[#687080]">{item.clienteDocumento || "Sin documento"}</p>
+                        <p className="mt-1 text-xs font-semibold text-[#0f766e]">
                           {item.clienteTelefono || "Sin celular"}
                         </p>
-                        <p className="text-xs text-[#687080]">
+                        <p className="mt-1 text-xs text-[#687080]">
                           Ref. 1: {item.primeraReferenciaTelefono || "Sin referencia"}
                         </p>
                       </td>
-                      <td className="px-5 py-4 font-semibold text-[#20242a]">{item.imei}</td>
-                      <td className="px-5 py-4 text-[#687080]">{item.referencia}</td>
-                      <td className="px-5 py-4 text-[#687080]">{item.sede}</td>
-                      <td className="px-5 py-4">
-                        <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
+                      <td className="px-5 py-4 align-top">
+                        <p className="font-semibold text-[#20242a]">{item.imei}</p>
+                        <p className="mt-1 max-w-[240px] text-xs leading-5 text-[#687080]">{item.referencia}</p>
+                      </td>
+                      <td className="px-5 py-4 align-top text-[#687080]">{item.sede}</td>
+                      <td className="px-5 py-4 align-top">
+                        <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
                           {riskLabels[item.bucket]} - {item.diasMora} dias
                         </span>
                       </td>
-                      <td className="px-5 py-4 font-black text-[#20242a]">{money(item.saldoPendiente)}</td>
-                      <td className="px-5 py-4 text-[#687080]">
+                      <td className="px-5 py-4 align-top font-black text-[#20242a]">{money(item.saldoPendiente)}</td>
+                      <td className="px-5 py-4 align-top text-[#687080]">
                         {item.nextDueDate ? `${item.nextDueDate} - ${money(item.nextDueValue)}` : "Sin cuota"}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={7} className="px-5 py-10 text-center text-sm font-semibold text-[#687080]">
+                    <td colSpan={6} className="px-5 py-12 text-center text-sm font-semibold text-[#687080]">
                       No hay creditos en mora para mostrar.
                     </td>
                   </tr>
@@ -479,7 +549,7 @@ function HeroMetric({
   danger?: boolean;
 }) {
   return (
-    <div className="rounded-[20px] border border-[#d8e0e3] bg-[#fbfdfd] px-4 py-4">
+    <div>
       <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#64717b]">
         {label}
       </p>
@@ -507,12 +577,12 @@ function ActionLink({
   dark?: boolean;
 }) {
   const classes = dark
-    ? "border-[#11161a] bg-[#11161a] text-white"
+    ? "border-[#20242a] bg-[#20242a] text-white hover:bg-[#111318]"
     : primary
-      ? "border-[#a7dfce] bg-[#eafbf5] text-[#087061]"
-      : "border-[#d8e0e3] bg-white text-[#182025]";
+      ? "border-[#0f766e] bg-[#0f766e] text-white hover:bg-[#145a5a]"
+      : "border-[#d8e0e3] bg-white text-[#20242a] hover:bg-[#f8fafc]";
   const className = [
-    "flex min-h-11 items-center justify-between rounded-2xl border px-4 text-sm font-black transition hover:-translate-y-0.5",
+    "inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border px-4 text-sm font-black transition hover:-translate-y-0.5",
     classes,
   ].join(" ");
 
@@ -538,28 +608,29 @@ function MetricCard({
   value,
   detail,
   warning = false,
-  tone = "default",
+  tone = "slate",
 }: {
   label: string;
   value: string;
   detail: string;
   warning?: boolean;
-  tone?: "default" | "mint" | "risk";
+  tone?: "gold" | "green" | "red" | "slate";
 }) {
-  const toneClass =
-    tone === "mint"
-      ? "border-[#bfe9dd] bg-[#f2fbf7]"
-      : tone === "risk"
-        ? "border-amber-200 bg-[#fffaf0]"
-        : "border-[#d8e0e3] bg-white";
+  const toneMap = {
+    gold: "border-[#d9c691] bg-[#fbf8ef]",
+    green: "border-[#cce7df] bg-[#eff8f5]",
+    red: "border-rose-200 bg-rose-50",
+    slate: "border-[#d7dce2] bg-white",
+  };
 
   return (
     <div
       className={[
-        "rounded-[22px] border p-4 shadow-[0_12px_30px_rgba(24,32,37,0.05)]",
-        warning ? "border-red-200 bg-red-50" : toneClass,
+        "relative overflow-hidden rounded-[28px] border p-5 shadow-[0_14px_32px_rgba(15,23,42,0.08)]",
+        warning ? "border-red-200 bg-red-50" : toneMap[tone],
       ].join(" ")}
     >
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
       <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#687080]">
         {label}
       </p>
@@ -569,11 +640,22 @@ function MetricCard({
   );
 }
 
-function MiniMetric({ label, value }: { label: string; value: string }) {
+function MiniMetric({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+}) {
   return (
-    <div className="rounded-[22px] bg-white/70 px-4 py-4">
+    <div className="flex items-baseline justify-between gap-4 border-b border-[#d7dce2] pb-4 last:border-0 last:pb-0">
       <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">{label}</p>
-      <p className="mt-2 text-xl font-black">{value}</p>
+      <div className="text-right">
+        <p className="text-xl font-black">{value}</p>
+        <p className="mt-1 text-xs font-semibold text-[#687080]">{detail}</p>
+      </div>
     </div>
   );
 }
@@ -584,16 +666,37 @@ function BucketCard({
   clients,
   value,
   percentValue,
+  tone,
 }: {
   title: string;
   subtitle: string;
   clients: number;
   value: number;
   percentValue: number;
+  tone: "amber" | "orange" | "red";
 }) {
+  const toneMap = {
+    amber: {
+      card: "border-amber-200 bg-amber-50",
+      text: "text-amber-800",
+      bar: "bg-amber-500",
+    },
+    orange: {
+      card: "border-orange-200 bg-orange-50",
+      text: "text-orange-800",
+      bar: "bg-orange-500",
+    },
+    red: {
+      card: "border-red-200 bg-red-50",
+      text: "text-red-800",
+      bar: "bg-red-600",
+    },
+  };
+  const selectedTone = toneMap[tone];
+
   return (
-    <div className="rounded-[22px] border border-[#d8e0e3] bg-[#f7fbf9] p-4">
-      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#0f766e]">
+    <div className={["rounded-[24px] border p-4", selectedTone.card].join(" ")}>
+      <p className={["text-[10px] font-black uppercase tracking-[0.22em]", selectedTone.text].join(" ")}>
         {title}
       </p>
       <p className="mt-1 text-xs font-semibold text-[#687080]">{subtitle}</p>
@@ -601,7 +704,7 @@ function BucketCard({
       <p className="mt-2 text-sm font-semibold text-[#687080]">{money(value)}</p>
       <div className="mt-4 h-2 overflow-hidden rounded-full bg-white">
         <div
-          className="h-full rounded-full bg-[#0f766e]"
+          className={["h-full rounded-full", selectedTone.bar].join(" ")}
           style={{ width: `${Math.min(100, Math.max(0, percentValue))}%` }}
         />
       </div>

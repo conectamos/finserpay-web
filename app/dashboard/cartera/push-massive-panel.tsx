@@ -108,18 +108,18 @@ export default function PushMassivePanel() {
   };
 
   return (
-    <section className="mt-4 rounded-[26px] border border-[#cfe4de] bg-white p-4 shadow-[0_14px_36px_rgba(24,32,37,0.05)]">
+    <section className="rounded-[34px] border border-[#d7dce2] bg-white p-5 shadow-[0_18px_48px_rgba(17,19,24,0.07)]">
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
               Push clientes
             </p>
-            <h2 className="mt-2 text-xl font-black tracking-tight text-[#20242a]">
-              Envio por cartera
+            <h2 className="mt-3 text-3xl font-black tracking-tight text-[#20242a]">
+              Gestion masiva
             </h2>
-            <p className="mt-1 text-sm leading-5 text-[#687080]">
-              Previsualiza antes de enviar.
+            <p className="mt-2 max-w-xl text-sm leading-6 text-[#687080]">
+              Previsualiza el alcance antes de enviar recordatorios a clientes con app.
             </p>
           </div>
 
@@ -128,7 +128,7 @@ export default function PushMassivePanel() {
               type="button"
               onClick={() => void runPush(true)}
               disabled={running !== null}
-              className="h-11 rounded-2xl border border-[#b9e5d3] bg-white px-4 text-sm font-black text-[#0f766e] transition hover:-translate-y-0.5 disabled:opacity-70"
+              className="h-11 rounded-2xl border border-[#cce7df] bg-white px-4 text-sm font-black text-[#0f766e] transition hover:-translate-y-0.5 hover:bg-[#eff8f5] disabled:opacity-70"
             >
               {running === "preview" ? "Revisando..." : "Previsualizar"}
             </button>
@@ -136,20 +136,20 @@ export default function PushMassivePanel() {
               type="button"
               onClick={() => void runPush(false)}
               disabled={running !== null || !preview}
-              className="h-11 rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 text-sm font-black text-white transition hover:-translate-y-0.5 disabled:opacity-70"
+              className="h-11 rounded-2xl border border-[#20242a] bg-[#20242a] px-4 text-sm font-black text-white transition hover:-translate-y-0.5 hover:bg-[#111318] disabled:opacity-70"
             >
               {running === "send" ? "Enviando..." : "Enviar masivo"}
             </button>
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 border-t border-[#d7dce2] pt-4 md:grid-cols-2 xl:grid-cols-4">
           <label className="grid gap-2 text-sm font-semibold text-[#20242a]">
             Grupo
             <select
               value={filter}
               onChange={(event) => setFilter(event.target.value as BulkPushFilter)}
-              className="h-11 rounded-2xl border border-[#d7dce2] bg-white px-4 text-sm font-semibold outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+              className="h-12 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
             >
               {FILTER_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -164,7 +164,7 @@ export default function PushMassivePanel() {
             <select
               value={preset}
               onChange={(event) => setPreset(event.target.value as ManualPushPreset)}
-              className="h-11 rounded-2xl border border-[#d7dce2] bg-white px-4 text-sm font-semibold outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+              className="h-12 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
             >
               {PRESET_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -179,7 +179,7 @@ export default function PushMassivePanel() {
             <input
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              className="h-11 rounded-2xl border border-[#d7dce2] bg-white px-4 text-sm font-semibold outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+              className="h-12 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
             />
           </label>
 
@@ -189,7 +189,7 @@ export default function PushMassivePanel() {
               value={body}
               onChange={(event) => setBody(event.target.value)}
               placeholder="Solo si eliges Personalizado"
-              className="h-11 rounded-2xl border border-[#d7dce2] bg-white px-4 text-sm font-semibold outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
+              className="h-12 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
             />
           </label>
         </div>
@@ -197,7 +197,7 @@ export default function PushMassivePanel() {
 
       {preview ? (
         <div className="mt-4 grid gap-3 text-sm sm:grid-cols-4">
-          <div className="rounded-2xl border border-[#d7dce2] bg-[#f8fbfa] px-4 py-3">
+          <div className="rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 py-3">
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#687080]">
               Creditos
             </p>
