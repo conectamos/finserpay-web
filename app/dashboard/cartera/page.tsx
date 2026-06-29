@@ -329,113 +329,74 @@ export default async function CarteraPage() {
           </div>
         </header>
 
-        <section className="mt-5 grid gap-5 lg:grid-cols-[1.12fr_0.88fr]">
-          <div className="relative overflow-hidden rounded-[38px] border border-[#d7dce2] bg-white p-6 shadow-[0_24px_70px_rgba(17,19,24,0.08)] sm:p-8">
-            <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-[#0f766e]/10" />
-            <div className="pointer-events-none absolute -bottom-28 left-1/3 h-72 w-72 rounded-full bg-[#bfa46a]/12" />
-
-            <div className="relative">
-              <div className="flex flex-wrap gap-2">
-                <span className="rounded-full border border-[#cce7df] bg-[#eff8f5] px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-[#0f766e]">
-                  Control de cartera
-                </span>
-                <span className="rounded-full border border-[#d7dce2] bg-[#f8fafc] px-3 py-1 text-xs font-black text-[#687080]">
-                  {activeCredits.length} activos
-                </span>
-                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
-                  {clientsMora} clientes en mora
-                </span>
-              </div>
-
-              <h1 className="mt-5 max-w-3xl text-4xl font-black leading-[1.04] tracking-tight text-[#20242a] sm:text-5xl">
-                Salud, recaudo y riesgo en una sola lectura.
-              </h1>
-              <p className="mt-4 max-w-2xl text-sm leading-6 text-[#687080]">
-                Seguimiento ejecutivo de inversion, saldo por cobrar, mora por edades y casos que necesitan gestion inmediata.
+        <section className="mt-5 rounded-[28px] border border-[#d7dce2] bg-white p-5 shadow-[0_16px_42px_rgba(17,19,24,0.07)]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
+                Control de cartera
               </p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight text-[#20242a]">
+                Cartera
+              </h1>
+            </div>
 
-              <div className="mt-8 grid gap-5 border-t border-[#d7dce2] pt-6 sm:grid-cols-3">
-                <HeroMetric label="Inversion activa" value={money(totalInvertido)} />
-                <HeroMetric label="Saldo por cobrar" value={money(totalPendiente)} />
-                <HeroMetric
-                  label="Ganancia estimada"
-                  value={money(totalGanancias)}
-                  danger={totalGanancias < 0}
-                />
-              </div>
+            <div className="flex flex-wrap gap-2 lg:justify-end">
+              <span className="rounded-full border border-[#d7dce2] bg-[#f8fafc] px-3 py-1 text-xs font-black text-[#687080]">
+                {activeCredits.length} activos
+              </span>
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
+                {clientsMora} clientes en mora
+              </span>
+              <span className={["rounded-full border px-3 py-1 text-xs font-black uppercase tracking-[0.12em]", health.tone].join(" ")}>
+                {health.label}
+              </span>
             </div>
           </div>
 
-          <aside className="rounded-[34px] border border-[#d7dce2] bg-[#fbf8ef] p-5 shadow-[0_18px_48px_rgba(17,19,24,0.06)]">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#8a909b]">
-                  Diagnostico
-                </p>
-                <h2 className="mt-3 text-3xl font-black tracking-tight text-[#20242a]">
-                  {health.label}
-                </h2>
-              </div>
-              <span className={["rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em]", health.tone].join(" ")}>
-                {percent(pctMora)} mora
-              </span>
-            </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <MetricCard label="Inversion activa" value={money(totalInvertido)} detail="Credito autorizado activo" tone="slate" />
+            <MetricCard label="Saldo por cobrar" value={money(totalPendiente)} detail={`${percent(pctSana)} cartera sana`} tone="green" />
+            <MetricCard
+              label="Ganancia estimada"
+              value={money(totalGanancias)}
+              detail={`${money(totalGastosOperacion)} en gastos`}
+              warning={totalGanancias < 0}
+              tone="gold"
+            />
+            <MetricCard
+              label="Cartera en mora"
+              value={money(totalMora)}
+              detail={`${percent(pctMora)} del saldo pendiente`}
+              warning={pctMora > 18}
+              tone="red"
+            />
+          </div>
 
-            <p className="mt-4 text-sm leading-6 text-[#687080]">{health.detail}</p>
-
-            <div className="mt-6 space-y-4 border-t border-[#d7dce2] pt-5">
-              <MiniMetric label="Recuperado" value={percent(pctRecuperado)} detail={money(totalPagado)} />
-              <MiniMetric label="Creditos pagos" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
-              <MiniMetric label="Gastos operacion" value={money(totalGastosOperacion)} detail="Descontado de ganancias" />
-            </div>
-          </aside>
+          <div className="mt-4 grid gap-3 border-t border-[#d7dce2] pt-4 sm:grid-cols-2 xl:grid-cols-4">
+            <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail="10% de inversion" />
+            <MiniMetric label="Recuperado" value={percent(pctRecuperado)} detail={money(totalPagado)} />
+            <MiniMetric label="Creditos pagos" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
+            <MiniMetric label="Sin mora" value={money(totalSano)} detail="Saldo al dia" />
+          </div>
         </section>
 
-        <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
-            label="Bolsa de respaldo"
-            value={money(bolsaRespaldoMora)}
-            detail="10% de lo invertido"
-            tone="gold"
-          />
-          <MetricCard
-            label="Cartera sana"
-            value={percent(pctSana)}
-            detail={`${money(totalSano)} sin mora`}
-            tone="green"
-          />
-          <MetricCard
-            label="Creditos activos"
-            value={String(activeCredits.length)}
-            detail={`${paidCredits.length} creditos pagos`}
-            tone="slate"
-          />
-          <MetricCard
-            label="Cartera en mora"
-            value={money(totalMora)}
-            detail={`${percent(pctMora)} del saldo pendiente`}
-            warning={pctMora > 18}
-            tone="red"
-          />
-        </section>
-
-        <section className="mt-5 grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-[34px] border border-[#d7dce2] bg-white p-5 shadow-[0_18px_48px_rgba(17,19,24,0.07)]">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <section className="mt-4 grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-[28px] border border-[#d7dce2] bg-white p-5 shadow-[0_14px_36px_rgba(17,19,24,0.06)]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
                   Mora por edades
                 </p>
-                <h2 className="mt-3 text-3xl font-black tracking-tight text-[#20242a]">
-                  Segmentos de riesgo
+                <h2 className="mt-2 text-2xl font-black tracking-tight text-[#20242a]">
+                  Riesgo por dias
                 </h2>
               </div>
-              <p className="max-w-xs text-sm leading-6 text-[#687080]">
-                Ordena la gestion diaria segun dias vencidos y saldo pendiente.
-              </p>
+              <span className="rounded-full border border-[#d7dce2] bg-[#f8fafc] px-3 py-1 text-xs font-black text-[#687080]">
+                {percent(pctMora)} mora
+              </span>
             </div>
 
-            <div className="mt-5 grid gap-3 md:grid-cols-3">
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
               <BucketCard
                 title="Temprana"
                 subtitle="1 a 15 dias"
@@ -626,7 +587,7 @@ function MetricCard({
   return (
     <div
       className={[
-        "relative overflow-hidden rounded-[28px] border p-5 shadow-[0_14px_32px_rgba(15,23,42,0.08)]",
+        "relative overflow-hidden rounded-[22px] border p-4 shadow-[0_10px_24px_rgba(15,23,42,0.06)]",
         warning ? "border-red-200 bg-red-50" : toneMap[tone],
       ].join(" ")}
     >
@@ -634,7 +595,7 @@ function MetricCard({
       <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#687080]">
         {label}
       </p>
-      <p className="mt-3 text-3xl font-black tracking-tight text-[#20242a]">{value}</p>
+      <p className="mt-2 text-2xl font-black tracking-tight text-[#20242a]">{value}</p>
       <p className="mt-2 text-sm font-semibold text-[#687080]">{detail}</p>
     </div>
   );
@@ -650,10 +611,10 @@ function MiniMetric({
   detail: string;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-[#d7dce2] pb-4 last:border-0 last:pb-0">
-      <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">{label}</p>
+    <div className="rounded-[18px] border border-[#d7dce2] bg-[#f8fafc] px-4 py-3">
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#687080]">{label}</p>
       <div className="text-right">
-        <p className="text-xl font-black">{value}</p>
+        <p className="mt-1 text-xl font-black text-[#20242a]">{value}</p>
         <p className="mt-1 text-xs font-semibold text-[#687080]">{detail}</p>
       </div>
     </div>

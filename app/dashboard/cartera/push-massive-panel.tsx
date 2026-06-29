@@ -108,19 +108,16 @@ export default function PushMassivePanel() {
   };
 
   return (
-    <section className="rounded-[34px] border border-[#d7dce2] bg-white p-5 shadow-[0_18px_48px_rgba(17,19,24,0.07)]">
+    <section className="rounded-[28px] border border-[#d7dce2] bg-white p-5 shadow-[0_14px_36px_rgba(17,19,24,0.06)]">
       <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
               Push clientes
             </p>
-            <h2 className="mt-3 text-3xl font-black tracking-tight text-[#20242a]">
+            <h2 className="mt-2 text-2xl font-black tracking-tight text-[#20242a]">
               Gestion masiva
             </h2>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-[#687080]">
-              Previsualiza el alcance antes de enviar recordatorios a clientes con app.
-            </p>
           </div>
 
           <div className="flex flex-wrap gap-2 lg:justify-end">
