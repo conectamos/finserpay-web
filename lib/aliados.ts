@@ -10,6 +10,8 @@ export const ALIADO_FINSER_PAY = {
   codigo: "FINSERPAY",
 } as const;
 
+export const DEFAULT_REDESCUENTO_PERCENTAGE = 10;
+
 type AliadoClient = Pick<PrismaClient, "aliado">;
 type AliadoBootstrapClient = Pick<PrismaClient, "aliado" | "sede">;
 type AliadoSchemaClient = Pick<PrismaClient, "$executeRawUnsafe">;
@@ -24,9 +26,15 @@ async function runAliadoSchemaSetup(prisma: AliadoSchemaClient) {
       "nombre" TEXT NOT NULL,
       "codigo" TEXT,
       "activo" BOOLEAN NOT NULL DEFAULT true,
+      "redescuentoPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_REDESCUENTO_PERCENTAGE},
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "Aliado"
+      ADD COLUMN IF NOT EXISTS "redescuentoPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_REDESCUENTO_PERCENTAGE}
   `);
 
   await prisma.$executeRawUnsafe(`
@@ -236,6 +244,18 @@ export async function ensureFinserPayCentralAdmin(prisma: CentralAdminClient) {
 
 export function isFinserPayCentralAlly(codigo: string | null | undefined) {
   return String(codigo || "").trim().toUpperCase() === ALIADO_FINSER_PAY.codigo;
+}
+
+export function normalizeRedescuentoPercentage(value: unknown) {
+  const normalized =
+    typeof value === "string" ? value.replace(",", ".").trim() : value;
+  const parsed = Number(normalized);
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_REDESCUENTO_PERCENTAGE;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(parsed * 100) / 100));
 }
 
 export function normalizeAllyName(value: unknown) {

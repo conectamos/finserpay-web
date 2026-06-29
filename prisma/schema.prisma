@@ -17,13 +17,14 @@ model Rol {
 }
 
 model Aliado {
-  id        Int      @id @default(autoincrement())
-  nombre    String   @unique
-  codigo    String?  @unique
-  activo    Boolean  @default(true)
-  sedes     Sede[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                    Int      @id @default(autoincrement())
+  nombre                String   @unique
+  codigo                String?  @unique
+  activo                Boolean  @default(true)
+  redescuentoPorcentaje Float    @default(10)
+  sedes                 Sede[]
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   @@index([activo])
 }

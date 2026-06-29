@@ -14,6 +14,7 @@ type AliadoItem = {
   nombre: string;
   codigo: string | null;
   activo: boolean;
+  redescuentoPorcentaje: number;
   sedes: SedeItem[];
   totalSedes: number;
   totalCreditos: number;
@@ -38,6 +39,13 @@ type AliadosPayload = {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("es-CO").format(value || 0);
+}
+
+function formatPercent(value: number) {
+  return new Intl.NumberFormat("es-CO", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+  }).format(Number.isFinite(value) ? value : 0);
 }
 
 function slugUsuarioSede(valor: string) {
@@ -85,6 +93,8 @@ export default function AliadosClient() {
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
   const [nombre, setNombre] = useState("");
   const [codigo, setCodigo] = useState("");
+  const [redescuentoPorcentaje, setRedescuentoPorcentaje] = useState("10");
+  const [redescuentoInputs, setRedescuentoInputs] = useState<Record<number, string>>({});
   const [sedesForm, setSedesForm] = useState<Record<number, NuevaSedeState>>({});
   const [esCentral, setEsCentral] = useState(true);
 
@@ -105,6 +115,12 @@ export default function AliadosClient() {
       setSistemaCentral(data.sistemaCentral || null);
       setAliados(items);
       setEsCentral(Boolean(data.scope?.central));
+      setRedescuentoInputs(
+        items.reduce((acc: Record<number, string>, aliado) => {
+          acc[aliado.id] = String(Number(aliado.redescuentoPorcentaje || 0));
+          return acc;
+        }, {})
+      );
       setSedesForm((actual) =>
         items.reduce((acc: Record<number, NuevaSedeState>, aliado) => {
           acc[aliado.id] = actual[aliado.id] || emptySedeForm();
@@ -135,6 +151,7 @@ export default function AliadosClient() {
         body: JSON.stringify({
           nombre,
           codigo,
+          redescuentoPorcentaje,
         }),
       });
 
@@ -148,6 +165,7 @@ export default function AliadosClient() {
       setMensaje(data.mensaje || "Aliado creado correctamente");
       setNombre("");
       setCodigo("");
+      setRedescuentoPorcentaje("10");
       await cargarAliados();
     } catch {
       setMensaje("Error creando aliado");
@@ -226,6 +244,52 @@ export default function AliadosClient() {
       await cargarAliados();
     } catch {
       setMensaje("Error creando sede");
+    } finally {
+      setProcesandoId(null);
+    }
+  };
+
+  const actualizarRedescuentoInput = (aliadoId: number, valor: string) => {
+    const sanitized = valor.replace(/[^0-9,.]/g, "").replace(",", ".");
+
+    setRedescuentoInputs((actual) => ({
+      ...actual,
+      [aliadoId]: sanitized,
+    }));
+  };
+
+  const guardarRedescuento = async (aliado: AliadoItem) => {
+    if (!esCentral) {
+      return;
+    }
+
+    try {
+      setProcesandoId(aliado.id);
+      setMensaje("");
+
+      const res = await fetch("/api/aliados/admin", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          aliadoId: aliado.id,
+          redescuentoPorcentaje:
+            redescuentoInputs[aliado.id] ?? aliado.redescuentoPorcentaje,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setMensaje(data.error || "No se pudo actualizar el redescuento");
+        return;
+      }
+
+      setMensaje(data.mensaje || "Redescuento actualizado correctamente");
+      await cargarAliados();
+    } catch {
+      setMensaje("Error actualizando el redescuento");
     } finally {
       setProcesandoId(null);
     }
@@ -352,7 +416,7 @@ export default function AliadosClient() {
 
         {esCentral ? (
           <section className="rounded-[24px] border border-emerald-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
-            <div className="grid gap-3 lg:grid-cols-[1fr_220px_160px] lg:items-end">
+            <div className="grid gap-3 lg:grid-cols-[1fr_220px_170px_160px] lg:items-end">
               <label className="block">
                 <span className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
                   Nuevo aliado comercial
@@ -373,6 +437,23 @@ export default function AliadosClient() {
                   value={codigo}
                   onChange={(event) => setCodigo(event.target.value)}
                   placeholder="PUNTO-CELULAR"
+                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none transition focus:border-emerald-400"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
+                  Redescuento %
+                </span>
+                <input
+                  value={redescuentoPorcentaje}
+                  onChange={(event) =>
+                    setRedescuentoPorcentaje(
+                      event.target.value.replace(/[^0-9,.]/g, "").replace(",", ".")
+                    )
+                  }
+                  inputMode="decimal"
+                  placeholder="10"
                   className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none transition focus:border-emerald-400"
                 />
               </label>
@@ -431,7 +512,7 @@ export default function AliadosClient() {
                     </div>
                   </div>
 
-                  <div className="mt-5 grid grid-cols-3 gap-2">
+                  <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <div className="rounded-2xl bg-slate-50 p-3">
                       <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
                         Sedes
@@ -450,7 +531,48 @@ export default function AliadosClient() {
                       </p>
                       <p className="mt-1 text-xl font-black">{formatNumber(aliado.totalRecaudos)}</p>
                     </div>
+                    <div className="rounded-2xl bg-slate-50 p-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+                        Redescuento
+                      </p>
+                      <p className="mt-1 text-xl font-black">
+                        {formatPercent(aliado.redescuentoPorcentaje)}%
+                      </p>
+                    </div>
                   </div>
+
+                  {esCentral ? (
+                    <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
+                        Redescuento de respaldo
+                      </p>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_140px]">
+                        <label>
+                          <span className="sr-only">Porcentaje de redescuento</span>
+                          <input
+                            value={
+                              redescuentoInputs[aliado.id] ??
+                              String(Number(aliado.redescuentoPorcentaje || 0))
+                            }
+                            onChange={(event) =>
+                              actualizarRedescuentoInput(aliado.id, event.target.value)
+                            }
+                            inputMode="decimal"
+                            placeholder="0"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => guardarRedescuento(aliado)}
+                          disabled={procesandoId === aliado.id}
+                          className="rounded-2xl bg-[#101318] px-5 py-3 text-sm font-black text-white transition hover:bg-[#1f2630] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {procesandoId === aliado.id ? "Guardando..." : "Guardar %"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="mt-5 rounded-3xl border border-emerald-100 bg-emerald-50/50 p-4">
                     <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-700">

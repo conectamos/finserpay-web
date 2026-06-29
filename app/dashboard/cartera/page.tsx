@@ -3,7 +3,11 @@ import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import FinserBrand from "@/app/_components/finser-brand";
 import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
-import { ALIADO_FINSER_PAY } from "@/lib/aliados";
+import {
+  ALIADO_FINSER_PAY,
+  DEFAULT_REDESCUENTO_PERCENTAGE,
+  ensureAliadoSchema,
+} from "@/lib/aliados";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import PushMassivePanel from "./push-massive-panel";
 
@@ -130,6 +134,7 @@ function firstFamilyReferencePhone(snapshot: unknown) {
 
 export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   await requireCentralAdminDashboardAccess();
+  await ensureAliadoSchema(prisma);
 
   const params = searchParams ? await searchParams : {};
   const requestedAliadoId = parsePositiveInt(firstSearchParam(params.aliadoId));
@@ -145,6 +150,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
       id: true,
       nombre: true,
       codigo: true,
+      redescuentoPorcentaje: true,
     },
     orderBy: {
       nombre: "asc",
@@ -199,6 +205,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                 id: true,
                 nombre: true,
                 codigo: true,
+                redescuentoPorcentaje: true,
               },
             },
           },
@@ -264,6 +271,10 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
           "Equipo",
         sede: credito.sede.nombre,
         aliado: credito.sede.aliado?.nombre || "Sin aliado",
+        redescuentoPorcentaje: Number(
+          credito.sede.aliado?.redescuentoPorcentaje ??
+            DEFAULT_REDESCUENTO_PERCENTAGE
+        ),
         vendedor: credito.vendedor?.nombre || "Sin vendedor",
         cuotaInicial: Number(credito.cuotaInicial || 0),
         creditoAutorizado,
@@ -292,7 +303,14 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   const totalPagado = cartera.reduce((sum, item) => sum + item.totalPaid, 0);
   const totalCredito = cartera.reduce((sum, item) => sum + item.montoCredito, 0);
   const totalInvertido = activeCredits.reduce((sum, item) => sum + item.creditoAutorizado, 0);
-  const bolsaRespaldoMora = totalInvertido * 0.1;
+  const bolsaRespaldoMora = activeCredits.reduce(
+    (sum, item) =>
+      sum + item.creditoAutorizado * Math.max(0, item.redescuentoPorcentaje) / 100,
+    0
+  );
+  const respaldoDetail = selectedAliado
+    ? `${percent(selectedAliado.redescuentoPorcentaje)} de inversion`
+    : "Segun porcentaje por aliado";
   const totalGananciaBruta = activeCredits.reduce(
     (sum, item) => sum + item.gananciaProyectada,
     0
@@ -485,7 +503,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
           </div>
 
           <div className="mt-4 grid gap-3 border-t border-[#d7dce2] pt-4 sm:grid-cols-2 xl:grid-cols-4">
-            <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail="10% de inversion" />
+            <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail={respaldoDetail} />
             <MiniMetric label="Recuperado" value={percent(pctRecuperado)} detail={money(totalPagado)} />
             <MiniMetric label="Creditos pagos" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
             <MiniMetric label="Sin mora" value={money(totalSano)} detail="Saldo al dia" />

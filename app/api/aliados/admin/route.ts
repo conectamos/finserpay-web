@@ -4,9 +4,11 @@ import { getSessionUser } from "@/lib/auth";
 import {
   ensureAliadoConectamos,
   ensureAliadoFinserPay,
+  ensureAliadoSchema,
   isFinserPayCentralAlly,
   normalizeAllyCode,
   normalizeAllyName,
+  normalizeRedescuentoPercentage,
 } from "@/lib/aliados";
 import { ensureDigitalCollectionSede } from "@/lib/digital-collection-sede";
 
@@ -53,6 +55,7 @@ function getAliadoScope(user: Awaited<ReturnType<typeof getSessionUser>>) {
 }
 
 async function loadAliadosPayload(aliadoScopeId: number | null) {
+  await ensureAliadoSchema(prisma);
   await Promise.all([
     ensureAliadoFinserPay(prisma),
     ensureAliadoConectamos(prisma),
@@ -68,6 +71,7 @@ async function loadAliadosPayload(aliadoScopeId: number | null) {
       nombre: true,
       codigo: true,
       activo: true,
+      redescuentoPorcentaje: true,
       createdAt: true,
       updatedAt: true,
       sedes: {
@@ -127,6 +131,7 @@ async function loadAliadosPayload(aliadoScopeId: number | null) {
         nombre: aliado.nombre,
         codigo: aliado.codigo,
         activo: aliado.activo,
+        redescuentoPorcentaje: aliado.redescuentoPorcentaje,
         sedes: aliado.sedes,
         totalSedes: aliado.sedes.length,
         totalCreditos: creditos,
@@ -195,6 +200,9 @@ export async function POST(req: Request) {
     const body = (await req.json()) as Record<string, unknown>;
     const nombre = normalizeAllyName(body.nombre);
     const codigo = normalizeAllyCode(body.codigo || nombre);
+    const redescuentoPorcentaje = normalizeRedescuentoPercentage(
+      body.redescuentoPorcentaje
+    );
 
     if (!nombre) {
       return NextResponse.json(
@@ -207,6 +215,7 @@ export async function POST(req: Request) {
       data: {
         nombre,
         codigo,
+        redescuentoPorcentaje,
         activo: true,
       },
     });
@@ -252,6 +261,7 @@ export async function PATCH(req: Request) {
       nombre?: string;
       codigo?: string | null;
       activo?: boolean;
+      redescuentoPorcentaje?: number;
     } = {};
 
     if ("nombre" in body) {
@@ -273,6 +283,19 @@ export async function PATCH(req: Request) {
 
     if ("activo" in body) {
       data.activo = Boolean(body.activo);
+    }
+
+    if ("redescuentoPorcentaje" in body) {
+      if (aliadoScopeId) {
+        return NextResponse.json(
+          { error: "Solo FINSER PAY central puede editar el redescuento" },
+          { status: 403 }
+        );
+      }
+
+      data.redescuentoPorcentaje = normalizeRedescuentoPercentage(
+        body.redescuentoPorcentaje
+      );
     }
 
     if (Object.keys(data).length > 0) {
