@@ -143,13 +143,13 @@ export default function PushMassivePanel() {
           </div>
         </div>
 
-        <div className="grid gap-3 border-t border-[#d7dce2] pt-4 md:grid-cols-2 xl:grid-cols-4">
-          <label className="grid gap-2 text-sm font-semibold text-[#20242a]">
+        <div className="grid gap-3 border-t border-[#d7dce2] pt-4 md:grid-cols-2">
+          <label className="grid min-w-0 gap-2 text-sm font-semibold text-[#20242a]">
             Grupo
             <select
               value={filter}
               onChange={(event) => setFilter(event.target.value as BulkPushFilter)}
-              className="h-12 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
+              className="h-12 w-full min-w-0 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
             >
               {FILTER_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -159,12 +159,12 @@ export default function PushMassivePanel() {
             </select>
           </label>
 
-          <label className="grid gap-2 text-sm font-semibold text-[#20242a]">
+          <label className="grid min-w-0 gap-2 text-sm font-semibold text-[#20242a]">
             Mensaje
             <select
               value={preset}
               onChange={(event) => setPreset(event.target.value as ManualPushPreset)}
-              className="h-12 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
+              className="h-12 w-full min-w-0 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
             >
               {PRESET_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -174,22 +174,22 @@ export default function PushMassivePanel() {
             </select>
           </label>
 
-          <label className="grid gap-2 text-sm font-semibold text-[#20242a]">
+          <label className="grid min-w-0 gap-2 text-sm font-semibold text-[#20242a]">
             Titulo
             <input
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              className="h-12 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
+              className="h-12 w-full min-w-0 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
             />
           </label>
 
-          <label className="grid gap-2 text-sm font-semibold text-[#20242a]">
+          <label className="grid min-w-0 gap-2 text-sm font-semibold text-[#20242a]">
             Personalizado
             <input
               value={body}
               onChange={(event) => setBody(event.target.value)}
               placeholder="Solo si eliges Personalizado"
-              className="h-12 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
+              className="h-12 w-full min-w-0 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
             />
           </label>
         </div>
