@@ -101,19 +101,6 @@ function formatCurrency(value: number | null | undefined) {
   }).format(Number(value || 0));
 }
 
-function formatDate(value: Date | string | null | undefined) {
-  if (!value) {
-    return "-";
-  }
-
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "-";
-  }
-
-  return date.toLocaleString("es-CO");
-}
-
 function getDateValue(value: Date | string | null | undefined) {
   if (!value) {
     return null;
@@ -573,32 +560,61 @@ function signatureBlock(
 ) {
   const x = pageLeft(doc);
   const width = contentWidth(doc);
-  const valueHeight = doc.heightOfString(value, {
-    width,
+  const paddingX = 14;
+  const paddingY = 13;
+  const innerWidth = width - paddingX * 2;
+  const certifiedText = "Firma electronica certificada por FirmaSeguro";
+  const detailText = value.includes("Firma:")
+    ? value
+    : `Firma: ${certifiedText}\n${value}`;
+  const detailHeight = doc.heightOfString(detailText, {
+    width: innerWidth,
     lineGap: 1,
   });
+  const boxHeight = Math.max(92, Math.ceil(detailHeight + 76));
 
-  ensureSpace(doc, Math.max(58, Math.ceil(valueHeight + 46)));
-  doc.moveDown(0.2);
+  ensureSpace(doc, boxHeight + 10);
+  doc.moveDown(0.4);
+
+  const y = doc.y;
+  doc
+    .save()
+    .roundedRect(x, y, width, boxHeight, 10)
+    .lineWidth(0.9)
+    .strokeColor("#CBD5E1")
+    .stroke()
+    .restore();
+
   doc
     .font(fonts.bold)
-    .fontSize(8.1)
-    .fillColor("#111827")
-    .text(label.toUpperCase(), x, doc.y, { width });
+    .fontSize(7.8)
+    .fillColor("#64748B")
+    .text(label.toUpperCase(), x + paddingX, y + paddingY, { width: innerWidth });
+
   doc
-    .moveTo(x, doc.y + 16)
-    .lineTo(x + 190, doc.y + 16)
+    .font(fonts.bold)
+    .fontSize(9)
+    .fillColor("#008578")
+    .text(certifiedText, x + paddingX, y + paddingY + 24, { width: innerWidth });
+
+  const lineY = y + paddingY + 50;
+  doc
+    .moveTo(x + paddingX, lineY)
+    .lineTo(x + width - paddingX, lineY)
+    .lineWidth(0.8)
     .strokeColor("#94A3B8")
     .stroke();
+
   doc
     .font(fonts.regular)
-    .fontSize(7.6)
+    .fontSize(7.7)
     .fillColor("#334155")
-    .text(value, x, doc.y + 19, {
-      width,
+    .text(detailText, x + paddingX, lineY + 12, {
+      width: innerWidth,
       lineGap: 1,
     });
-  doc.moveDown(0.18);
+
+  doc.y = y + boxHeight + 8;
   resetFlow(doc);
 }
 
@@ -611,6 +627,175 @@ function getSnapshotRecord(snapshot: unknown, key: string) {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function afianzamosHeader(
+  doc: PDFKit.PDFDocument,
+  fonts: { regular: string; bold: string }
+) {
+  const top = Math.max(doc.y, doc.page.margins.top);
+  doc
+    .font(fonts.bold)
+    .fontSize(6.2)
+    .fillColor("#111827")
+    .text(
+      "ANEXO 1: ACEPTACION DE LA GARANTIA Y\nAUTORIZACIONES\nFONDO DE GARANTIAS - AFIANZAMOS FINTECH\nS.A.S.",
+      pageLeft(doc),
+      top,
+      { width: 220, lineGap: 0.4 }
+    );
+
+  doc
+    .font(fonts.bold)
+    .fontSize(24)
+    .fillColor("#7E22CE")
+    .text("Afianzamos", pageRight(doc) - 180, top - 8, {
+      width: 180,
+      align: "right",
+    });
+  doc
+    .font(fonts.bold)
+    .fontSize(9)
+    .fillColor("#F97316")
+    .text("FONDO DE GARANTIAS", pageRight(doc) - 180, top + 24, {
+      width: 180,
+      align: "right",
+    });
+  doc.y = top + 62;
+  resetFlow(doc);
+}
+
+function afianzamosSectionTitle(
+  doc: PDFKit.PDFDocument,
+  title: string,
+  fonts: { regular: string; bold: string }
+) {
+  ensureSpace(doc, 18);
+  doc
+    .font(fonts.bold)
+    .fontSize(8.6)
+    .fillColor("#111827")
+    .text(title, pageLeft(doc), doc.y, { width: contentWidth(doc) });
+  doc.moveDown(0.14);
+  resetFlow(doc);
+}
+
+function afianzamosParagraph(
+  doc: PDFKit.PDFDocument,
+  text: string,
+  fonts: { regular: string; bold: string }
+) {
+  const width = contentWidth(doc);
+  doc.font(fonts.regular).fontSize(8.6);
+  const height = doc.heightOfString(text, {
+    width,
+    align: "justify",
+    lineGap: 1,
+  });
+  ensureSpace(doc, Math.min(height + 8, pageBottom(doc) - doc.page.margins.top));
+  doc
+    .font(fonts.regular)
+    .fontSize(8.6)
+    .fillColor("#111827")
+    .text(text, pageLeft(doc), doc.y, {
+      width,
+      align: "justify",
+      lineGap: 1,
+    });
+  doc.moveDown(0.18);
+  resetFlow(doc);
+}
+
+function afianzamosIndentedItems(
+  doc: PDFKit.PDFDocument,
+  items: string[],
+  fonts: { regular: string; bold: string },
+  options: { numbered?: boolean; lettered?: boolean; startIndex?: number } = {}
+) {
+  const left = pageLeft(doc);
+  const textX = left + 26;
+  const width = contentWidth(doc) - 26;
+
+  items.forEach((item, index) => {
+    const itemIndex = index + (options.startIndex || 0);
+    const marker = options.numbered
+      ? `${itemIndex + 1}.`
+      : options.lettered
+      ? `${String.fromCharCode(97 + itemIndex)})`
+      : "-";
+    doc.font(fonts.regular).fontSize(8.1);
+    const height = doc.heightOfString(item, {
+      width,
+      align: "justify",
+      lineGap: 1,
+    });
+    ensureSpace(doc, Math.max(14, height) + 3);
+    const y = doc.y;
+    doc
+      .font(fonts.regular)
+      .fontSize(8.1)
+      .fillColor("#111827")
+      .text(marker, left + 8, y, { width: 18 });
+    doc
+      .font(options.lettered ? fonts.bold : fonts.regular)
+      .fontSize(8.1)
+      .fillColor("#111827")
+      .text(item, textX, y, {
+        width,
+        align: "justify",
+        lineGap: 1,
+      });
+    doc.y = y + Math.max(14, height) + 3;
+    resetFlow(doc);
+  });
+  doc.moveDown(0.15);
+  resetFlow(doc);
+}
+
+function afianzamosLineSignature(
+  doc: PDFKit.PDFDocument,
+  role: string,
+  fonts: { regular: string; bold: string },
+  values?: { nombre?: string; documento?: string; fechaHora?: string }
+) {
+  const left = pageLeft(doc);
+  const lineX = left + 54;
+  const lineWidth = 235;
+  ensureSpace(doc, 72);
+  doc
+    .font(fonts.bold)
+    .fontSize(8.5)
+    .fillColor("#111827")
+    .text(role, left, doc.y, { width: contentWidth(doc) });
+  doc.moveDown(0.8);
+
+  [
+    { label: "Nombre:", value: values?.nombre || "" },
+    { label: "C.C. No:", value: values?.documento || "" },
+    { label: "Fecha y Hora:", value: values?.fechaHora || "" },
+  ].forEach((row) => {
+    const y = doc.y;
+    doc.font(fonts.regular).fontSize(8.5).fillColor("#111827").text(row.label, left, y, {
+      width: 58,
+    });
+    doc
+      .moveTo(lineX, y + 10)
+      .lineTo(lineX + lineWidth, y + 10)
+      .lineWidth(0.8)
+      .strokeColor("#111827")
+      .stroke();
+    if (row.value) {
+      doc
+        .font(fonts.regular)
+        .fontSize(8.3)
+        .fillColor("#111827")
+        .text(row.value, lineX + 3, y - 1, { width: lineWidth - 6 });
+    }
+    doc.y = y + 14;
+    resetFlow(doc);
+  });
+  doc.moveDown(0.8);
+  resetFlow(doc);
 }
 
 function getPagareNumber(credito: CreditForFirmaSeguroPdf) {
@@ -643,6 +828,7 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   const marca = valueOrDash(credito.equipoMarca || equipo.split(" ")[0]);
   const modelo = valueOrDash(credito.equipoModelo || equipo);
   const saldoFinanciado = credito.montoCredito || 0;
+  const firmaFechaHora = `${fecha} ${hora}`;
 
   legalHeader(doc, credito, fecha, fonts);
   doc
@@ -1067,36 +1253,126 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   documentTitle(
     doc,
     "Documento 6 de 7",
-    "Aceptacion de la garantia y autorizaciones fondo de garantias - Afianzamos Fintech S.A.S.",
+    "Anexo 1 - Aceptacion de la garantia y autorizaciones - Afianzamos Fintech S.A.S.",
     fonts
   );
-  paragraph(
+  afianzamosHeader(doc, fonts);
+  afianzamosSectionTitle(doc, "a.) ACEPTACION DE LA GARANTIA:", fonts);
+  afianzamosParagraph(
     doc,
-    `Yo, ${credito.clienteNombre}, identificado con cedula de ciudadania No. ${valueOrDash(
-      credito.clienteDocumento
-    )}, acepto que la obligacion derivada de la financiacion del equipo movil pueda estar respaldada por mecanismos de garantia, fianza o fondo de garantias gestionado por AFIANZAMOS FINTECH S.A.S. o la entidad que FINSER PAY S.A.S. designe para respaldar la operacion.`,
+    `Yo, ${credito.clienteNombre}, identificado como aparece al pie de mi firma, en calidad de cliente/usuario del Credito FINSER PAY, actuando en nombre propio, por medio del presente documento acepto el servicio de FIANZA prestado por el Fondo De Garantias - AFIANZAMOS FINTECH S.A.S. ("AFIANZAMOS") como mecanismo de cobertura de riesgo, para respaldar la operacion de credito aprobado por FINSER PAY S.A.S. bajo el folio ${credito.folio}. Acepto de manera expresa e irrevocable el pago de las comisiones, incluido el valor del IVA, derivado de la fianza conferida por AFIANZAMOS, que se pagara en la proporcion del uso del credito y con las mismas condiciones pactadas para la compra financiada, sin que haya lugar a devolucion o reintegro por prepago de la obligacion crediticia.`,
     fonts
   );
-  sectionTitle(doc, "Aceptaciones y autorizaciones", fonts);
-  bulletParagraph(
+  afianzamosParagraph(
+    doc,
+    "Declaro conocer las condiciones de la Fianza otorgada por AFIANZAMOS como se describe en el Reglamento de la Fianza publicado en www.afianzamos.com.co y en el documento que firme denominado \"ACEPTACION DE LAS CONDICIONES Y EL VALOR DE LA FIANZA\" dirigido a FINSER PAY S.A.S., por tanto, reconozco que la fianza no extingue parcial, ni totalmente, mi obligacion con FINSER PAY S.A.S. otorgante del credito. Si producto del incumplimiento del pago de la obligacion crediticia adquirida, AFIANZAMOS se ve obligado a pagar esta obligacion a favor de FINSER PAY S.A.S., en consecuencia, operara a favor de AFIANZAMOS la subrogacion del credito, permitiendo recobrar el valor reclamado y pagado. A partir de este momento AFIANZAMOS generara intereses de mora y gastos de cobranza; en efecto cancelare los valores adeudados a AFIANZAMOS, de conformidad con el reglamento interno, el cual puede ser consultado en la pagina web http://www.afianzamos.com.co.",
+    fonts
+  );
+  afianzamosParagraph(
+    doc,
+    "Autorizo expresa e irrevocablemente a FINSER PAY S.A.S. para entregar a AFIANZAMOS toda la informacion relacionada con la operacion de credito afianzada a mi nombre; del mismo modo, autorizo a AFIANZAMOS para entregar mis datos personales a quien realice la gestion cobranza de la cartera directa o a traves de cobranza delegada, de acuerdo con lo establecido en la normatividad vigente en Colombia.",
+    fonts
+  );
+  afianzamosSectionTitle(
+    doc,
+    "b.) AUTORIZACION REPORTE ANTE LAS CENTRALES DE RIESGOS:",
+    fonts
+  );
+  afianzamosParagraph(
+    doc,
+    "Autorizo en nombre propio, expresa, libre, voluntaria e irrevocablemente, al Fondo de Garantias - AFIANZAMOS FINTECH S.A.S. (\"AFIANZAMOS\") a quien represente sus derechos u ostente en el futuro la calidad de acreedor, para que consulte toda la informacion financiera, crediticia, comercial, de servicios y la proveniente de otros paises, atinente a las relaciones comerciales que tenga con el sistema financiero, comercial y de servicios, o de cualquier sector, tanto en Colombia como en el exterior, con sujecion a los principios, terminos y condiciones consagrados en la Ley 1266 de 2008 y demas normas que la modifiquen, aclaren o reglamenten. Asi mismo, el abajo firmante en la calidad indicada o quien hiciere sus veces, autoriza expresa e irrevocablemente a AFIANZAMOS, a reportar, actualizar, solicitar, compartir y divulgar informacion referente a mi comportamiento crediticio a cualquier otro operador y/o fuente de informacion financiera legalmente establecida en Colombia.",
+    fonts
+  );
+  afianzamosSectionTitle(doc, "c.) DECLARACION DE ORIGEN DE FONDOS:", fonts);
+  afianzamosParagraph(
+    doc,
+    "Con el proposito de dar cumplimiento a lo senalado al respecto en el Estatuto Organico del Sistema Financiero (Decreto 663 de 1993), la Circular Externa No. 007 de 1996, expedida por la Superintendencia Financiera, la Ley 1474 de 2011 y demas normas legales para el control de las actividades de lavado de activos vigentes en Colombia; en particular para cumplir con lo establecido en el articulo 27 de la ley 1121 de 2006, pese a no estar obligado a ello, DECLARO que los recursos del pago de las comisiones provienen de:",
+    fonts
+  );
+  afianzamosIndentedItems(
     doc,
     [
-      "Acepto los costos, comisiones, IVA o cargos asociados a la garantia, cuando estos hagan parte de las condiciones del credito informado.",
-      "Autorizo la consulta, validacion, reporte y actualizacion de informacion financiera, comercial y crediticia necesaria para la gestion de la garantia.",
-      "Autorizo que la informacion del credito sea compartida con el fondo de garantias, entidades aliadas, operadores de informacion y proveedores que participen en la administracion de la obligacion.",
-      "Declaro que conozco que la garantia respalda el pago de la obligacion y no elimina mi responsabilidad como deudor principal.",
-      "Acepto que, en caso de incumplimiento, puedan adelantarse gestiones de recuperacion, subrogacion, cobro prejuridico o juridico segun corresponda.",
+      "Mis recursos, ocupacion, actividad y de la compania que represento tienen un origen licito y provienen directamente de la actividad economica senalada en este formulario, la cual se desarrolla dentro del marco legal y normativo colombiano.",
+      "Que la fuente de fondos en ningun caso involucra actividades ilicitas propias o de terceras personas, ni relacionadas con los delitos de lavado de activos, rebelion, terrorismo, y/o fabricacion o trafico de estupefacientes.",
+      "La informacion aqui suministrada corresponde a la realidad y autorizo su verificacion y actualizacion ante cualquier persona publica o privada sin limitacion alguna, desde ahora y mientras subsista alguna relacion con la sociedad AFIANZAMOS, o con quien represente sus derechos.",
+      "Eximo de toda responsabilidad que se derive por informacion erronea, falsa o inexacta que hubiere proporcionado en este documento, o de la violacion del mismo, a AFIANZAMOS, en el caso de comprobarse cualquier infraccion de las normas legales tendientes al control de lavado de activos, rebelion, terrorismo, y/o fabricacion o trafico de estupefacientes, de acuerdo con la legislacion colombiana vigente.",
     ],
-    fonts
+    fonts,
+    { numbered: true }
   );
-  signatureBlock(
+
+  doc.addPage();
+  afianzamosHeader(doc, fonts);
+  afianzamosSectionTitle(doc, "d.) AVISO DE PRIVACIDAD:", fonts);
+  afianzamosParagraph(
     doc,
-    "Firma del cliente",
-    `Nombre: ${credito.clienteNombre}\nCedula: ${
-      credito.clienteDocumento || "-"
-    }\nFecha: ${fecha}`,
+    "La sociedad AFIANZAMOS FINTECH S.A.S. identificada con NIT. 901.229.892-6 es una sociedad comercial legalmente constituida bajo las leyes de Colombia, y domiciliada en la Calle 67 No. 52 - 20 Piso 2 Torre A Edificio Ruta N. Medellin Antioquia Telefono: 3104264554 / correo electronico notificaciones@afianzamos.com.co; en cumplimiento con el Regimen General de Proteccion de Datos Personales reglamentado por la Constitucion Politica Nacional en sus articulos 15 y 20, de la Ley 1581 de 2012, el Decreto 1377 de 2013 y demas preceptos normativos y la Politica de Tratamiento y Proteccion de Datos Personales, adoptada por AFIANZAMOS y publicada en su pagina web http://www.afianzamos.com.co, por los cuales se establecen disposiciones generales del habeas data y se regula el manejo de la informacion contenida en bases de datos, es responsable del tratamiento de sus datos personales y para tal fin, da el presente AVISO sobre el tratamiento de los datos personales bajo su responsabilidad.",
     fonts
   );
+  afianzamosParagraph(doc, "Usted como titular de datos personales, tiene derecho a:", fonts);
+  afianzamosIndentedItems(
+    doc,
+    [
+      "Conocer, actualizar y rectificar sus datos personales. Este derecho se podra ejercer, entre otros, frente a datos parciales, inexactos, incompletos, fraccionados, que induzcan a error, o aquellos cuyo tratamiento este expresamente prohibido o no haya sido autorizado.",
+      "Por cualquier medio solicitar prueba de la autorizacion otorgada a AFIANZAMOS, en su condicion de responsable del tratamiento.",
+      "Recibir informacion, previa solicitud a AFIANZAMOS, respecto del uso que les ha dado a sus datos personales.",
+      "Acceder a los Datos Personales que hayan sido objeto de Tratamiento, de manera gratuita.",
+      "Acudir ante la Superintendencia de Industria y Comercio y presentar quejas por infracciones a lo dispuesto en la ley 1581 de 2012 y las demas normas que la modifiquen, adicionen o complementen.",
+      "Modificar y revocar la autorizacion y/o solicitar la supresion del dato cuando en el tratamiento no se respeten los principios, derechos y garantias constitucionales y legales. Nota: La solicitud de supresion o revocatoria no procederan cuando el titular tenga un deber legal o contractual de permanecer en la base de datos. Para tal efecto, podra enviar peticion al correo electronico notificaciones@afianzamos.com.co o escribiendonos a la Calle 67 No. 52 - 20 Piso 2 Torre A Edificio Ruta N. Medellin Antioquia tambien puede comunicarse a nuestro telefono de servicio al cliente 3104264554 en horarios de lunes a viernes, para recibir la informacion respectiva.",
+    ],
+    fonts,
+    { lettered: true }
+  );
+  afianzamosParagraph(
+    doc,
+    "De igual manera, el Fondo De Garantias - AFIANZAMOS FINTECH S.A.S. (\"AFIANZAMOS\") o quien represente sus derechos u ostente su calidad en virtud de la subrogacion, informa que realizara el siguiente tratamiento de sus datos personales asi:",
+    fonts
+  );
+  afianzamosIndentedItems(
+    doc,
+    [
+      "Recolectar, consultar, solicitar, verificar, administrar, actualizar, transferir, transmitir, compartir, almacenar, usar, circular y/o suprimir las bases de datos bajo su responsabilidad, a traves de medios fisicos, electronicos y/o digitales de acuerdo con el tipo y forma de recoleccion de la informacion.",
+      "Facilitar el desarrollo de obligaciones contractuales con AFIANZAMOS, relacionadas con el respaldo de la operacion de credito FINSER PAY.",
+      "Estructurar base de datos para ser utilizada en el desarrollo de sus funciones tales como la comunicacion con sus clientes, proveedores, usuarios, trabajadores y contratistas y otras obligaciones como: facturacion, gestion de cobro, recaudo, verificaciones, consultas, reportes, generacion de estadistica, control, comportamiento, monitoreo habito de pago, envio de certificados, extractos, comunicaciones, promociones, planes de mercadeo, planes de fidelizacion y relacionamiento comercial-operativo.",
+      "Dar atencion y respuestas a las solicitudes, quejas y reclamos presentados ante AFIANZAMOS.",
+      "Realizar consulta y recoleccion del dato del titular, sobre informacion financiera, crediticia y comercial a que se refiere la Ley 1266 de 2008, ante las centrales de informacion crediticia, operadores de bancos de datos que tengan el mismo fin y/o entidades publicas o privadas ya sea directa o a traves de terceros contratados para este fin.",
+      "Realizar todas las busquedas y recopilacion de informacion que permita realizar el estudio de capacidad crediticia y de pago, valorar el riesgo y corroborar que la informacion suministrada sea veraz, completa, exacta, y actualizada.",
+      "Recopilar y transmitir informacion personal, comercial, financiera del titular del dato, para que sea conocida y tratada por terceros en calidad de proveedores, contratista o quien ostente la calidad de acreedor, para la prestacion de servicios de mercadeo, cobranza, operativos, tecnologicos, logisticos, y de apoyo.",
+      "Realizar actividades de gestion de cobro, aviso de reporte a las centrales de riesgo, entrega de extractos de obligaciones y actualizar informacion a traves de diferentes actividades como lo son la consulta en bases de datos publicas, paginas de internet y redes sociales y referencias de terceras personas, en particular las personas que han servido de referencia para la utilizacion de los servicios de AFIANZAMOS.",
+      "Reportar datos sobre la generacion, modificacion, extincion, cumplimiento o incumplimiento de las obligaciones del titular del dato ante las centrales de informacion crediticia.",
+    ],
+    fonts,
+    { lettered: true }
+  );
+
+  doc.addPage();
+  afianzamosHeader(doc, fonts);
+  afianzamosIndentedItems(
+    doc,
+    [
+      "Realizar el registro, manejo, tratamiento y negociacion de inversiones de titulos o valores que conforman el portafolio de inversion de AFIANZAMOS.",
+      "Realizar tratamiento a los datos sensibles tales como huellas dactilares, ubicacion, datos de ordenadores, o telefonos celulares, fotografias, correos electronicos, entre otras para ser utilizados con fines de autenticacion, validacion, verificacion e identificacion de mi firma electronica y/o digital.",
+    ],
+    fonts,
+    { lettered: true, startIndex: 9 }
+  );
+  afianzamosParagraph(
+    doc,
+    "Declaro que he sido informado de la politica de tratamiento de datos personales y este aviso de privacidad, los cuales puedo consultar la pagina web de AFIANZAMOS: http://www.afianzamos.com.co.",
+    fonts
+  );
+  afianzamosParagraph(
+    doc,
+    "En constancia de haber leido y aceptado lo anterior, firmo el presente documento en la ciudad de __________________ a los ______________ dias del mes ______________ ano 20____, el cual tendra validez desde su firma, durante la vigencia de la fianza y durante el tiempo que me encuentre en calidad de deudor de AFIANZAMOS o quien ostente la calidad de acreedor de la obligacion y demas terminos de ley.",
+    fonts
+  );
+  afianzamosLineSignature(doc, "DEUDOR", fonts, {
+    nombre: valueOrDash(credito.clienteNombre),
+    documento: valueOrDash(credito.clienteDocumento),
+    fechaHora: firmaFechaHora,
+  });
+  afianzamosLineSignature(doc, "CO - DEUDOR 1", fonts);
+  afianzamosLineSignature(doc, "CO - DEUDOR 2", fonts);
 
   documentTitle(
     doc,
