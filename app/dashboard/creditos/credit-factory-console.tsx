@@ -3135,7 +3135,7 @@ export default function CreditFactoryConsole({
       margin: 1,
       width: 320,
       color: {
-        dark: "#0f766e",
+        dark: "#111827",
         light: "#ffffff",
       },
     })
@@ -8259,10 +8259,10 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
 
-                  <div className="mt-5 rounded-[22px] border border-teal-200 bg-teal-50/60 p-4">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="mt-5 rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div className="min-w-0">
-                        <h4 className="mt-2 text-lg font-black text-slate-950">
+                        <h4 className="text-lg font-black text-slate-950">
                           Validacion de identidad del cliente
                         </h4>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
@@ -8306,17 +8306,19 @@ export default function CreditFactoryConsole({
                     </div>
 
                     {veriffApproved ? (
-                      <div className="mt-4 rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-700">
+                      <p className="mt-4 text-sm font-semibold text-emerald-700">
                         Identidad aprobada. Continua completando los datos del cliente.
-                      </div>
+                      </p>
                     ) : (
-                      <div className="mt-4 grid gap-4 lg:grid-cols-[auto_1fr] lg:items-center">
+                      <div className="mt-5 flex flex-col gap-5 lg:flex-row lg:items-center">
                         {veriffQrDataUrl ? (
-                          <img
-                            src={veriffQrDataUrl}
-                            alt="QR de validacion de identidad"
-                            className="h-64 w-64 rounded-2xl border border-white bg-white p-2 shadow-sm"
-                          />
+                          <div className="rounded-[24px] bg-slate-950 p-3 shadow-[0_18px_42px_rgba(15,23,42,0.18)]">
+                            <img
+                              src={veriffQrDataUrl}
+                              alt="QR de validacion de identidad"
+                              className="h-72 w-72 rounded-[18px] bg-white p-2"
+                            />
+                          </div>
                         ) : (
                           <button
                             type="button"
@@ -8325,42 +8327,49 @@ export default function CreditFactoryConsole({
                               void validateIdentityWithVeriff();
                             }}
                             disabled={veriffSubmitting || !veriffConfig.configured}
-                            className="group w-full max-w-[28rem] overflow-hidden rounded-[24px] border border-slate-900 bg-slate-950 shadow-[0_18px_42px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_48px_rgba(15,23,42,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
+                            className="group w-full max-w-[22rem] overflow-hidden rounded-[28px] border border-slate-950 bg-slate-950 shadow-[0_18px_42px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_48px_rgba(15,23,42,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <img
                               src="/assets/veriff-start-validation.png"
                               alt="Iniciar validacion de identidad"
-                              className="block aspect-[3/2] w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+                              className="block aspect-square w-full object-cover transition duration-300 group-hover:scale-[1.02]"
                             />
                           </button>
                         )}
-                        <div>
-                          {veriffValidation?.sessionUrl ? (
-                            <a
-                              href={veriffValidation.sessionUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="mt-3 inline-flex rounded-2xl border border-teal-200 bg-white px-4 py-2 text-xs font-semibold text-teal-700 transition hover:bg-teal-50"
-                            >
-                              Abrir enlace
-                            </a>
-                          ) : null}
-                          {veriffQrDataUrl &&
-                          (veriffHasFinalDecision || Boolean(veriffInlineMessage)) ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                veriffAutoSessionRef.current = true;
-                                void validateIdentityWithVeriff();
-                              }}
-                              disabled={veriffSubmitting || !veriffConfig.configured}
-                              className="mt-3 rounded-2xl bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
-                            >
-                              {veriffSubmitting
-                                ? "Preparando QR..."
-                                : "Reintentar validacion"}
-                            </button>
-                          ) : null}
+                        <div className="flex min-w-0 flex-1 flex-col gap-3">
+                          <p className="text-sm leading-6 text-slate-600">
+                            {veriffQrDataUrl
+                              ? "El cliente escanea este QR con su celular para completar la validacion."
+                              : "Da clic para generar el QR solo cuando el cliente este listo."}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-3">
+                            {veriffValidation?.sessionUrl ? (
+                              <a
+                                href={veriffValidation.sessionUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex rounded-2xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                              >
+                                Abrir enlace
+                              </a>
+                            ) : null}
+                            {veriffQrDataUrl &&
+                            (veriffHasFinalDecision || Boolean(veriffInlineMessage)) ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  veriffAutoSessionRef.current = true;
+                                  void validateIdentityWithVeriff();
+                                }}
+                                disabled={veriffSubmitting || !veriffConfig.configured}
+                                className="rounded-2xl bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                              >
+                                {veriffSubmitting
+                                  ? "Preparando QR..."
+                                  : "Reintentar validacion"}
+                              </button>
+                            ) : null}
+                          </div>
                           {veriffInlineMessage ? (
                             <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold leading-5 text-red-700">
                               {veriffInlineMessage}
@@ -8372,7 +8381,7 @@ export default function CreditFactoryConsole({
                   </div>
 
                   {clienteFormUnlocked ? (
-                  <div className="mt-5 rounded-[22px] border border-[#dbe8e6] bg-[#f8fbfa] p-4">
+                  <div className="mt-5 rounded-[22px] border border-slate-200 bg-white p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <p className="text-base font-black tracking-tight text-slate-950">
