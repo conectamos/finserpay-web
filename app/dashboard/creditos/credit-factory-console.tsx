@@ -5330,48 +5330,11 @@ export default function CreditFactoryConsole({
     }
   };
 
-  const validateIdentityWithVeriffRef = useRef(validateIdentityWithVeriff);
   const refreshVeriffValidationRef = useRef(refreshVeriffValidation);
 
   useEffect(() => {
-    validateIdentityWithVeriffRef.current = validateIdentityWithVeriff;
     refreshVeriffValidationRef.current = refreshVeriffValidation;
   });
-
-  useEffect(() => {
-    if (
-      !veriffIdentityFlowEnabled ||
-      paymentsView ||
-      lookupMode ||
-      simulatorMode ||
-      Boolean(initialDraftId && !draftId) ||
-      draftStatus === "loading" ||
-      wizardStep !== 1 ||
-      veriffValidation?.id ||
-      veriffSubmitting ||
-      veriffAutoSessionRef.current
-    ) {
-      return;
-    }
-
-    veriffAutoSessionRef.current = true;
-    void validateIdentityWithVeriffRef.current().then((validation) => {
-      if (!validation?.id) {
-        veriffAutoSessionRef.current = false;
-      }
-    });
-  }, [
-    draftId,
-    draftStatus,
-    initialDraftId,
-    lookupMode,
-    paymentsView,
-    simulatorMode,
-    veriffIdentityFlowEnabled,
-    veriffSubmitting,
-    veriffValidation?.id,
-    wizardStep,
-  ]);
 
   useEffect(() => {
     if (
@@ -8273,7 +8236,7 @@ export default function CreditFactoryConsole({
                         VALIDACION DE IDENTIDAD
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Escanea el QR. Al aprobarse la identidad se habilita la informacion del cliente.
+                        Inicia la validacion cuando el cliente este listo. Al aprobarse la identidad se habilita la informacion del cliente.
                       </p>
                     </div>
                     <div
@@ -8300,7 +8263,7 @@ export default function CreditFactoryConsole({
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                       <div className="min-w-0">
                         <h4 className="mt-2 text-lg font-black text-slate-950">
-                          Escanea el QR con el celular del cliente
+                          Validacion de identidad del cliente
                         </h4>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
                           {veriffValidation?.status === "DECLINED"
@@ -8321,7 +8284,9 @@ export default function CreditFactoryConsole({
                                 ? "Modo prueba."
                               : veriffValidation?.sessionUrl
                                 ? "QR listo. Esperando decision."
-                                : "Preparando QR..."}
+                                : veriffSubmitting
+                                  ? "Generando QR..."
+                                  : "Pendiente por iniciar."}
                         </p>
                       </div>
                       <span
@@ -8353,9 +8318,21 @@ export default function CreditFactoryConsole({
                             className="h-64 w-64 rounded-2xl border border-white bg-white p-2 shadow-sm"
                           />
                         ) : (
-                          <div className="grid h-64 w-64 place-items-center rounded-2xl border border-dashed border-teal-200 bg-white text-center text-xs font-semibold text-teal-700">
-                            {veriffSubmitting ? "Preparando QR..." : "QR de validacion"}
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              veriffAutoSessionRef.current = true;
+                              void validateIdentityWithVeriff();
+                            }}
+                            disabled={veriffSubmitting || !veriffConfig.configured}
+                            className="group w-full max-w-[28rem] overflow-hidden rounded-[24px] border border-slate-900 bg-slate-950 shadow-[0_18px_42px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_48px_rgba(15,23,42,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <img
+                              src="/assets/veriff-start-validation.png"
+                              alt="Iniciar validacion de identidad"
+                              className="block aspect-[3/2] w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+                            />
+                          </button>
                         )}
                         <div>
                           {veriffValidation?.sessionUrl ? (
@@ -8368,7 +8345,8 @@ export default function CreditFactoryConsole({
                               Abrir enlace
                             </a>
                           ) : null}
-                          {veriffHasFinalDecision || Boolean(veriffInlineMessage) ? (
+                          {veriffQrDataUrl &&
+                          (veriffHasFinalDecision || Boolean(veriffInlineMessage)) ? (
                             <button
                               type="button"
                               onClick={() => {
