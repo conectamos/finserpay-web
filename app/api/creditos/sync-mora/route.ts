@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 type SyncRequestBody = {
   dryRun?: boolean | string;
+  forceRemoteAudit?: boolean | string;
   limit?: number | string;
   today?: string;
 };
@@ -73,6 +74,10 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const report = await syncAllCreditMora({
     dryRun: true,
+    forceRemoteAudit: parseBoolean(
+      searchParams.get("forceRemoteAudit"),
+      false
+    ),
     limit: searchParams.get("limit") || undefined,
     today: searchParams.get("today") || null,
   });
@@ -91,8 +96,13 @@ export async function POST(req: Request) {
     searchParams.get("dryRun") ?? body.dryRun,
     false
   );
+  const forceRemoteAudit = parseBoolean(
+    searchParams.get("forceRemoteAudit") ?? body.forceRemoteAudit,
+    false
+  );
   const report = await syncAllCreditMora({
     dryRun,
+    forceRemoteAudit,
     limit: searchParams.get("limit") || body.limit,
     today: searchParams.get("today") || body.today || null,
   });

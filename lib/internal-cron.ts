@@ -185,6 +185,7 @@ async function runScheduledTask(
     logCron("Ejecutando mora y bloqueos.");
     const result = await syncAllCreditMora({
       dryRun: false,
+      forceRemoteAudit: true,
       today: moraEffectiveDate,
     });
     logCron("Mora y bloqueos finalizados.", summarizeReport(result));

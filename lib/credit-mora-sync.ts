@@ -170,6 +170,7 @@ export type MoraSyncReport = {
 export type MoraSyncOptions = {
   dryRun?: boolean;
   exemptDocuments?: ReadonlySet<string>;
+  forceRemoteAudit?: boolean;
   limit?: unknown;
   today?: Date | string | null;
 };
@@ -344,7 +345,7 @@ export async function syncCreditMora(
     return buildResult(credit, "SKIPPED", "Credito anulado.", plan);
   }
 
-  if (credit.pazYSalvoEmitidoAt) {
+  if (credit.pazYSalvoEmitidoAt && !options.forceRemoteAudit) {
     return buildResult(credit, "SKIPPED", "Credito con paz y salvo emitido.", plan);
   }
 
@@ -357,7 +358,11 @@ export async function syncCreditMora(
     );
   }
 
-  if (plan.estadoPago === "PAGADO" && !credit.bloqueoMora) {
+  if (
+    plan.estadoPago === "PAGADO" &&
+    !credit.bloqueoMora &&
+    !options.forceRemoteAudit
+  ) {
     return buildResult(credit, "SKIPPED", "Credito sin saldo pendiente.", plan);
   }
 
@@ -371,7 +376,7 @@ export async function syncCreditMora(
       );
     }
 
-    if (!credit.bloqueoMora) {
+    if (!credit.bloqueoMora && !options.forceRemoteAudit) {
       return buildResult(
         credit,
         "SKIPPED",
@@ -485,11 +490,20 @@ export async function syncCreditMora(
     );
   }
 
-  if (isInMora && credit.bloqueoMora) {
+  if (isInMora && credit.bloqueoMora && !options.forceRemoteAudit) {
     return buildResult(credit, "UNCHANGED", "Ya estaba bloqueado por mora.", plan);
   }
 
-  if (!isInMora && !credit.bloqueoMora) {
+  if (!isInMora && credit.bloqueoRobo) {
+    return buildResult(
+      credit,
+      "SKIPPED",
+      "Equipo con bloqueo por robo; no se desbloquea por estado de pago.",
+      plan
+    );
+  }
+
+  if (!isInMora && !credit.bloqueoMora && !options.forceRemoteAudit) {
     return buildResult(credit, "UNCHANGED", "No tiene mora activa.", plan);
   }
 
@@ -498,8 +512,12 @@ export async function syncCreditMora(
       credit,
       isInMora ? "WOULD_LOCK" : "WOULD_UNLOCK",
       isInMora
-        ? "Se bloquearia por mora al ejecutar el proceso."
-        : "Se desbloquearia porque ya no tiene mora.",
+        ? options.forceRemoteAudit
+          ? "Se confirmaria el bloqueo remoto por mora."
+          : "Se bloquearia por mora al ejecutar el proceso."
+        : options.forceRemoteAudit
+          ? "Se confirmaria el desbloqueo remoto porque no tiene mora o tiene una excepcion activa."
+          : "Se desbloquearia porque ya no tiene mora.",
       plan
     );
   }
@@ -694,6 +712,7 @@ export async function syncCreditMoraByDocument(
       await syncCreditMora(credit as MoraSyncCredit, {
         ...options,
         exemptDocuments,
+        forceRemoteAudit: options.forceRemoteAudit ?? true,
         today,
       })
     );

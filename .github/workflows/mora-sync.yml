@@ -50,5 +50,5 @@ jobs:
             --request POST \
             --header "Authorization: Bearer ${MORA_SYNC_TOKEN}" \
             --header "Content-Type: application/json" \
-            --data "{\"dryRun\":${DRY_RUN},\"today\":\"${TARGET_DATE}\"}" \
+            --data "{\"dryRun\":${DRY_RUN},\"forceRemoteAudit\":true,\"today\":\"${TARGET_DATE}\"}" \
             "${BASE_URL%/}/api/creditos/sync-mora"
