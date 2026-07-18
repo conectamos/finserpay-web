@@ -1,10 +1,14 @@
 import { syncAllCreditMora } from "@/lib/credit-mora-sync";
 import { syncEfectyRecaudosFromSftp } from "@/lib/efecty-recaudos";
+import { reconcilePendingWompiPayments } from "@/lib/wompi-reconciliation";
 
 const BOGOTA_TIME_ZONE = "America/Bogota";
 const CHECK_INTERVAL_MS = 30_000;
 const EFECTY_TIMES = new Set(["23:15", "23:25", "23:35", "23:45"]);
 const MORA_TIMES = new Set(["23:30"]);
+const WOMPI_INTERVAL_MINUTES = 5;
+
+type InternalCronTask = "efecty" | "mora" | "wompi";
 
 type InternalCronState = {
   completed: Set<string>;
@@ -60,7 +64,13 @@ function getBogotaClock(date = new Date()) {
 }
 
 function getDueTasks(timeKey: string) {
-  const tasks: Array<"efecty" | "mora"> = [];
+  const tasks: InternalCronTask[] = [];
+  const [, minuteValue = ""] = timeKey.split(":");
+  const minute = Number.parseInt(minuteValue, 10);
+
+  if (Number.isFinite(minute) && minute % WOMPI_INTERVAL_MINUTES === 0) {
+    tasks.push("wompi");
+  }
 
   if (EFECTY_TIMES.has(timeKey)) {
     tasks.push("efecty");
@@ -99,7 +109,7 @@ function summarizeReport(payload: unknown) {
   return Object.keys(summary).length ? summary : payload;
 }
 
-async function runScheduledTask(taskName: "efecty" | "mora", runKey: string) {
+async function runScheduledTask(taskName: InternalCronTask, runKey: string) {
   const state = getState();
 
   if (state.running.has(runKey) || state.completed.has(runKey)) {
@@ -107,8 +117,17 @@ async function runScheduledTask(taskName: "efecty" | "mora", runKey: string) {
   }
 
   state.running.add(runKey);
+  let completed = false;
 
   try {
+    if (taskName === "wompi") {
+      logCron("Conciliando pagos Wompi.");
+      const result = await reconcilePendingWompiPayments(50);
+      logCron("Pagos Wompi conciliados.", summarizeReport(result));
+      completed = true;
+      return;
+    }
+
     if (taskName === "efecty") {
       logCron("Ejecutando recaudos Efecty.");
       const result = await syncEfectyRecaudosFromSftp({
@@ -117,12 +136,14 @@ async function runScheduledTask(taskName: "efecty" | "mora", runKey: string) {
         limitFiles: 10,
       });
       logCron("Recaudos Efecty finalizados.", summarizeReport(result));
+      completed = true;
       return;
     }
 
     logCron("Ejecutando mora y bloqueos.");
     const result = await syncAllCreditMora({ dryRun: false });
     logCron("Mora y bloqueos finalizados.", summarizeReport(result));
+    completed = true;
   } catch (error) {
     console.error(
       `[finserpay-cron] Fallo ${taskName}:`,
@@ -130,7 +151,10 @@ async function runScheduledTask(taskName: "efecty" | "mora", runKey: string) {
     );
   } finally {
     state.running.delete(runKey);
-    state.completed.add(runKey);
+
+    if (completed) {
+      state.completed.add(runKey);
+    }
 
     if (state.completed.size > 200) {
       state.completed.clear();
@@ -166,7 +190,7 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: Efecty 23:15/23:25/23:35/23:45, mora 23:30, hora Colombia.",
+    "Programacion interna activa: Wompi cada 5 minutos, Efecty 23:15/23:25/23:35/23:45, mora 23:30, hora Colombia.",
   );
 
   void tick();

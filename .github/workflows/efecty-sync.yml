@@ -7,8 +7,11 @@ on:
         description: "Fecha del TXT a procesar en formato YYYYMMDD. Dejalo vacio para usar el dia actual."
         required: false
         type: string
+  schedule:
+    # Respaldo automatico en GitHub. 04:15/04:25/04:35/04:45 UTC = 23:15/23:25/23:35/23:45 Colombia.
+    - cron: "15,25,35,45 4 * * *"
 
-# Programado ahora en Railway. Este workflow queda como respaldo manual.
+# Programado tambien en Railway. Este workflow queda como respaldo automatico.
 
 concurrency:
   group: efecty-sync
