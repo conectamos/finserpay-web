@@ -382,8 +382,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
 
   const riskRows = activeCredits
     .filter((item) => item.bucket !== "alDia")
-    .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente)
-    .slice(0, 12);
+    .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente);
   const lastUpdatedLabel = new Intl.DateTimeFormat("es-CO", {
     day: "2-digit",
     hour: "2-digit",
@@ -568,20 +567,25 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
               </h2>
             </div>
             <span className="rounded-full border border-[#d7dce2] bg-[#f8fafc] px-4 py-2 text-sm font-black text-[#687080]">
-              {riskRows.length ? `${riskRows.length} casos visibles` : "Sin mora registrada"}
+              {riskRows.length ? `${riskRows.length} registros en mora` : "Sin mora registrada"}
             </span>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1080px] text-left text-sm">
+            <table className="w-full min-w-[1480px] text-left text-sm">
               <thead className="bg-[#20242a] text-white">
                 <tr>
-                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Cliente</th>
-                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Equipo</th>
-                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Sede</th>
-                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Mora</th>
-                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Saldo</th>
-                  <th className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Proxima cuota</th>
+                  <th className="w-[190px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Cliente</th>
+                  <th className="w-[130px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Documento</th>
+                  <th className="w-[135px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Celular</th>
+                  <th className="w-[135px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Ref. familiar</th>
+                  <th className="w-[180px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Folio</th>
+                  <th className="w-[220px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Equipo</th>
+                  <th className="w-[120px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Sede</th>
+                  <th className="w-[170px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Mora</th>
+                  <th className="w-[140px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Saldo</th>
+                  <th className="w-[135px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Vence</th>
+                  <th className="w-[130px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Cuota</th>
                 </tr>
               </thead>
               <tbody>
@@ -589,37 +593,47 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                   riskRows.map((item) => (
                     <tr key={item.id} className="border-b border-[#e5eaf0] last:border-0">
                       <td className="px-5 py-4 align-top">
-                        <p className="font-black text-[#20242a]">{item.clienteNombre}</p>
-                        <p className="mt-1 text-xs text-[#687080]">{item.clienteDocumento || "Sin documento"}</p>
-                        <p className="mt-1 text-xs font-semibold text-[#0f766e]">
-                          {item.clienteTelefono || "Sin celular"}
-                        </p>
-                        <p className="mt-1 text-xs text-[#687080]">
-                          Ref. 1: {item.primeraReferenciaTelefono || "Sin referencia"}
-                        </p>
+                        <p className="font-black leading-5 text-[#20242a]">{item.clienteNombre}</p>
+                      </td>
+                      <td className="px-5 py-4 align-top font-semibold text-[#42506a]">
+                        {item.clienteDocumento || "Sin documento"}
+                      </td>
+                      <td className="px-5 py-4 align-top font-semibold text-[#0f766e]">
+                        {item.clienteTelefono || "Sin celular"}
+                      </td>
+                      <td className="px-5 py-4 align-top font-semibold text-[#42506a]">
+                        {item.primeraReferenciaTelefono || "Sin referencia"}
+                      </td>
+                      <td className="px-5 py-4 align-top font-black leading-5 text-[#20242a]">
+                        {item.folio || "Sin folio"}
                       </td>
                       <td className="px-5 py-4 align-top">
-                        <p className="font-semibold text-[#20242a]">{item.imei}</p>
-                        <p className="mt-1 max-w-[240px] text-xs leading-5 text-[#687080]">{item.referencia}</p>
+                        <p className="font-semibold leading-5 text-[#20242a]">{item.referencia}</p>
+                        <p className="mt-1 text-xs font-semibold text-[#687080]">{item.imei}</p>
                       </td>
-                      <td className="px-5 py-4 align-top text-[#687080]">
+                      <td className="px-5 py-4 align-top">
                         <p className="font-semibold text-[#20242a]">{item.sede}</p>
                         <p className="mt-1 text-xs text-[#687080]">{item.aliado}</p>
                       </td>
                       <td className="px-5 py-4 align-top">
-                        <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
+                        <span className="inline-flex whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
                           {riskLabels[item.bucket]} - {item.diasMora} dias
                         </span>
                       </td>
-                      <td className="px-5 py-4 align-top font-black text-[#20242a]">{money(item.saldoPendiente)}</td>
-                      <td className="px-5 py-4 align-top text-[#687080]">
-                        {item.nextDueDate ? `${item.nextDueDate} - ${money(item.nextDueValue)}` : "Sin cuota"}
+                      <td className="px-5 py-4 align-top font-black text-[#20242a]">
+                        {money(item.saldoPendiente)}
+                      </td>
+                      <td className="px-5 py-4 align-top font-semibold text-[#42506a]">
+                        {item.nextDueDate || "Sin cuota"}
+                      </td>
+                      <td className="px-5 py-4 align-top font-semibold text-[#42506a]">
+                        {item.nextDueDate ? money(item.nextDueValue) : "Sin cuota"}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="px-5 py-12 text-center text-sm font-semibold text-[#687080]">
+                    <td colSpan={11} className="px-5 py-12 text-center text-sm font-semibold text-[#687080]">
                       No hay creditos en mora para mostrar.
                     </td>
                   </tr>

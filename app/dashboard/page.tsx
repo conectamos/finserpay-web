@@ -1583,7 +1583,7 @@ export default async function DashboardPage() {
                 tone="orange"
               />
               <DashboardButton href="/dashboard/abonos" label="Recibir abono" tone="green" />
-              <DashboardButton href="/dashboard/clientes" label="Buscar cliente" tone="light" />
+              <DashboardButton href="/dashboard/clientes" label="Buscar usuario" tone="light" />
               {adminCentral && (
                 <DashboardButton href="/dashboard/cartera" label="Cartera" tone="portfolio" />
               )}
