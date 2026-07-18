@@ -1628,6 +1628,7 @@ export default async function DashboardPage() {
                   <DashboardButton href="/dashboard/aliados" label="Aliados" tone="blue" />
                   <DashboardButton href="/dashboard/catalogo-equipos" label="Catalogo equipos" tone="green" />
                   <DashboardButton href="/dashboard/parametros-credito" label="Parametros credito" tone="orange" />
+                  <DashboardButton href="/dashboard/excepciones-mora" label="Acuerdos de mora" tone="light" />
                 </>
               )}
             </div>

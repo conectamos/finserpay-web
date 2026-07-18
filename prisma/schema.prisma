@@ -260,6 +260,19 @@ model CreditoAbono {
   @@index([estado, creditoId])
 }
 
+model ExcepcionBloqueoMora {
+  id                    Int       @id @default(autoincrement())
+  documento             String    @unique
+  motivo                String
+  activa                Boolean   @default(true)
+  fechaFin              DateTime?
+  creadoPorUsuarioId    Int?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([activa, fechaFin])
+}
+
 model EfectyRecaudoImport {
   id               Int       @id @default(autoincrement())
   sourceFile       String

@@ -18,6 +18,11 @@ import {
 } from "@/lib/credit-factory";
 import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import { isMassImportedCredit } from "@/lib/credit-import-flags";
+import {
+  getActiveMoraBlockExemptionDocuments,
+  isMoraBlockExempt,
+  normalizeMoraExemptionDocument,
+} from "@/lib/mora-block-exemptions";
 import prisma from "@/lib/prisma";
 
 const DEFAULT_SYNC_LIMIT = 500;
@@ -58,6 +63,55 @@ type MoraSyncCredit = {
     fechaAbono: Date;
   }>;
 };
+
+const moraSyncCreditSelect = {
+  id: true,
+  folio: true,
+  clienteNombre: true,
+  clienteDocumento: true,
+  clienteTelefono: true,
+  imei: true,
+  deviceUid: true,
+  montoCredito: true,
+  valorCuota: true,
+  plazoMeses: true,
+  frecuenciaPago: true,
+  fechaPrimerPago: true,
+  fechaProximoPago: true,
+  estado: true,
+  deliverableLabel: true,
+  deliverableReady: true,
+  equalityState: true,
+  equalityService: true,
+  equalityPayload: true,
+  equalityLastCheckAt: true,
+  bloqueoRobo: true,
+  bloqueoRoboAt: true,
+  bloqueoMora: true,
+  bloqueoMoraAt: true,
+  pazYSalvoEmitidoAt: true,
+  observacionAdmin: true,
+  sede: {
+    select: {
+      id: true,
+      nombre: true,
+    },
+  },
+  abonos: {
+    where: {
+      estado: {
+        not: "ANULADO",
+      },
+    },
+    select: {
+      valor: true,
+      fechaAbono: true,
+    },
+    orderBy: {
+      fechaAbono: "asc" as const,
+    },
+  },
+} satisfies Prisma.CreditoSelect;
 
 export type MoraSyncAction =
   | "FAILED"
@@ -113,8 +167,9 @@ export type MoraSyncReport = {
   items: MoraSyncResult[];
 };
 
-type MoraSyncOptions = {
+export type MoraSyncOptions = {
   dryRun?: boolean;
+  exemptDocuments?: ReadonlySet<string>;
   limit?: unknown;
   today?: Date | string | null;
 };
@@ -275,6 +330,15 @@ export async function syncCreditMora(
     today,
   });
   const isInMora = plan.estadoPago === "MORA";
+  const effectiveAt = today || new Date();
+  const normalizedDocument = normalizeMoraExemptionDocument(
+    credit.clienteDocumento
+  );
+  const exemptFromMoraBlock = normalizedDocument
+    ? options.exemptDocuments
+      ? options.exemptDocuments.has(normalizedDocument)
+      : await isMoraBlockExempt(normalizedDocument, effectiveAt)
+    : false;
 
   if (credit.estado === "ANULADO") {
     return buildResult(credit, "SKIPPED", "Credito anulado.", plan);
@@ -295,6 +359,117 @@ export async function syncCreditMora(
 
   if (plan.estadoPago === "PAGADO" && !credit.bloqueoMora) {
     return buildResult(credit, "SKIPPED", "Credito sin saldo pendiente.", plan);
+  }
+
+  if (exemptFromMoraBlock) {
+    if (credit.bloqueoRobo) {
+      return buildResult(
+        credit,
+        "SKIPPED",
+        "Cedula con acuerdo, pero el bloqueo por robo permanece sin cambios.",
+        plan
+      );
+    }
+
+    if (!credit.bloqueoMora) {
+      return buildResult(
+        credit,
+        "SKIPPED",
+        "Cedula exenta de bloqueo por acuerdo; la mora sigue informativa.",
+        plan
+      );
+    }
+
+    if (!credit.deviceUid) {
+      return buildResult(
+        credit,
+        "FAILED",
+        "La excepcion esta activa, pero falta el deviceUid para desbloquear.",
+        plan
+      );
+    }
+
+    if (options.dryRun) {
+      return buildResult(
+        credit,
+        "WOULD_UNLOCK",
+        "Se desbloquearia por excepcion de acuerdo vigente.",
+        plan
+      );
+    }
+
+    if (!isEqualityConfigured()) {
+      return buildResult(
+        credit,
+        "FAILED",
+        "La excepcion esta activa, pero Equality no esta configurado para desbloquear.",
+        plan
+      );
+    }
+
+    try {
+      const remotePayload = await unlockEqualityDevice(credit.deviceUid);
+      const remoteQuery = await queryEqualityDevices(credit.deviceUid).catch(
+        () => null
+      );
+      const payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
+      const deviceMeta = getEqualityDeviceMeta(payloadSource);
+      const updated = await prisma.credito.update({
+        where: { id: credit.id },
+        data: {
+          estado: resolveCreditState({
+            bloqueoRobo: credit.bloqueoRobo,
+            bloqueoMora: false,
+            deliverable: deviceMeta.deliveryStatus || null,
+            pazYSalvoEmitidoAt: credit.pazYSalvoEmitidoAt,
+          }),
+          deliverableLabel:
+            deviceMeta.deliveryStatus?.label || credit.deliverableLabel,
+          deliverableReady:
+            typeof deviceMeta.deliveryStatus?.ready === "boolean"
+              ? deviceMeta.deliveryStatus.ready
+              : credit.deliverableReady,
+          equalityState: deviceMeta.deviceState || credit.equalityState,
+          equalityService: deviceMeta.serviceDetails || credit.equalityService,
+          equalityPayload: asJsonValue(payloadSource),
+          equalityLastCheckAt: payloadSource
+            ? new Date()
+            : credit.equalityLastCheckAt,
+          bloqueoMora: false,
+          bloqueoMoraAt: null,
+          observacionAdmin: appendObservation(
+            credit.observacionAdmin,
+            "ACUERDO: desbloqueo aplicado por excepcion de mora para la cedula."
+          ),
+        },
+        select: {
+          estado: true,
+          equalityState: true,
+          equalityService: true,
+          bloqueoMora: true,
+          bloqueoMoraAt: true,
+        },
+      });
+
+      return buildUpdatedResult(
+        credit,
+        updated,
+        "UNLOCKED",
+        "Desbloqueo aplicado por excepcion de acuerdo vigente.",
+        plan,
+        payloadSource
+      );
+    } catch (error) {
+      return buildResult(
+        credit,
+        "FAILED",
+        isEqualityApiError(error)
+          ? `Equality no confirmo el desbloqueo por acuerdo: ${error.message}`
+          : "No se pudo desbloquear el equipo cubierto por el acuerdo.",
+        plan,
+        isEqualityApiError(error) ? error.payload : null
+      );
+    }
   }
 
   if (!credit.deviceUid) {
@@ -417,60 +592,14 @@ export async function syncAllCreditMora(
 
   const limit = normalizeLimit(options.limit);
   const today = normalizeDateInput(options.today || null) || new Date();
+  const exemptDocuments = await getActiveMoraBlockExemptionDocuments(today);
   const credits = await prisma.credito.findMany({
     where: {
       estado: {
         not: "ANULADO",
       },
     },
-    select: {
-      id: true,
-      folio: true,
-      clienteNombre: true,
-      clienteDocumento: true,
-      clienteTelefono: true,
-      imei: true,
-      deviceUid: true,
-      montoCredito: true,
-      valorCuota: true,
-      plazoMeses: true,
-      frecuenciaPago: true,
-      fechaPrimerPago: true,
-      fechaProximoPago: true,
-      estado: true,
-      deliverableLabel: true,
-      deliverableReady: true,
-      equalityState: true,
-      equalityService: true,
-      equalityPayload: true,
-      equalityLastCheckAt: true,
-      bloqueoRobo: true,
-      bloqueoRoboAt: true,
-      bloqueoMora: true,
-      bloqueoMoraAt: true,
-      pazYSalvoEmitidoAt: true,
-      observacionAdmin: true,
-      sede: {
-        select: {
-          id: true,
-          nombre: true,
-        },
-      },
-      abonos: {
-        where: {
-          estado: {
-            not: "ANULADO",
-          },
-        },
-        select: {
-          valor: true,
-          fechaAbono: true,
-        },
-        orderBy: {
-          fechaAbono: "asc",
-        },
-      },
-    },
+    select: moraSyncCreditSelect,
     orderBy: [
       {
         bloqueoMora: "desc",
@@ -487,7 +616,13 @@ export async function syncAllCreditMora(
   const items: MoraSyncResult[] = [];
 
   for (const credit of credits) {
-    items.push(await syncCreditMora(credit, { ...options, today }));
+    items.push(
+      await syncCreditMora(credit, {
+        ...options,
+        exemptDocuments,
+        today,
+      })
+    );
   }
 
   const summary = items.reduce<MoraSyncSummary>(
@@ -524,4 +659,45 @@ export async function syncAllCreditMora(
     summary,
     items,
   };
+}
+
+export async function syncCreditMoraByDocument(
+  documento: unknown,
+  options: MoraSyncOptions = {}
+) {
+  await ensureCreditAbonoAuditColumns();
+
+  const normalizedDocument = normalizeMoraExemptionDocument(documento);
+
+  if (!normalizedDocument) {
+    return [] as MoraSyncResult[];
+  }
+
+  const today = normalizeDateInput(options.today || null) || new Date();
+  const exemptDocuments = await getActiveMoraBlockExemptionDocuments(today);
+  const credits = await prisma.credito.findMany({
+    where: {
+      clienteDocumento: normalizedDocument,
+      estado: {
+        not: "ANULADO",
+      },
+    },
+    select: moraSyncCreditSelect,
+    orderBy: {
+      id: "desc",
+    },
+  });
+  const items: MoraSyncResult[] = [];
+
+  for (const credit of credits) {
+    items.push(
+      await syncCreditMora(credit as MoraSyncCredit, {
+        ...options,
+        exemptDocuments,
+        today,
+      })
+    );
+  }
+
+  return items;
 }
