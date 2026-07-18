@@ -8,8 +8,8 @@ on:
         required: false
         type: string
   schedule:
-    # Respaldo automatico en GitHub. 04:15/04:25/04:35/04:45 UTC = 23:15/23:25/23:35/23:45 Colombia.
-    - cron: "15,25,35,45 4 * * *"
+    # Respaldo entre 23:00 y 01:45 Colombia. La ventana amplia recupera archivos tardios o caidas temporales.
+    - cron: "*/15 4,5,6 * * *"
 
 # Programado tambien en Railway. Este workflow queda como respaldo automatico.
 
@@ -45,14 +45,41 @@ jobs:
             exit 1
           fi
 
-          BODY='{"dryRun":false,"limitFiles":10,"includePreviousFiles":false}'
-          if [ -n "${FILE_DATE}" ]; then
-            BODY="{\"dryRun\":false,\"limitFiles\":10,\"includePreviousFiles\":false,\"fileDate\":\"${FILE_DATE}\"}"
-          fi
+          sync_date() {
+            local target_date="$1"
+            local response_file
+            response_file="$(mktemp)"
 
-          curl --fail-with-body \
-            --request POST \
-            --header "Authorization: Bearer ${TOKEN}" \
-            --header "Content-Type: application/json" \
-            --data "${BODY}" \
-            "${BASE_URL%/}/api/efecty/sync"
+            echo "Conciliando archivo Efecty de ${target_date}."
+            curl --fail-with-body \
+              --retry 3 \
+              --retry-all-errors \
+              --retry-delay 10 \
+              --connect-timeout 30 \
+              --max-time 180 \
+              --request POST \
+              --header "Authorization: Bearer ${TOKEN}" \
+              --header "Content-Type: application/json" \
+              --data "{\"dryRun\":false,\"limitFiles\":10,\"includePreviousFiles\":false,\"fileDate\":\"${target_date}\"}" \
+              --output "${response_file}" \
+              "${BASE_URL%/}/api/efecty/sync"
+
+            cat "${response_file}"
+            echo
+
+            if [ "$(jq -r '.ok // false' "${response_file}")" != "true" ]; then
+              echo "La conciliacion de ${target_date} reporto errores."
+              exit 1
+            fi
+
+            rm -f "${response_file}"
+          }
+
+          if [ -n "${FILE_DATE}" ]; then
+            sync_date "${FILE_DATE}"
+          else
+            TODAY_BOGOTA="$(TZ=America/Bogota date +%Y%m%d)"
+            YESTERDAY_BOGOTA="$(TZ=America/Bogota date --date='yesterday' +%Y%m%d)"
+            sync_date "${TODAY_BOGOTA}"
+            sync_date "${YESTERDAY_BOGOTA}"
+          fi

@@ -27,9 +27,25 @@ jobs:
             exit 1
           fi
 
+          RESPONSE_FILE="$(mktemp)"
+
           curl --fail-with-body \
+            --retry 3 \
+            --retry-all-errors \
+            --retry-delay 10 \
+            --connect-timeout 30 \
+            --max-time 180 \
             --request POST \
             --header "Authorization: Bearer ${TOKEN}" \
             --header "Content-Type: application/json" \
-            --data '{"limit":25}' \
+            --data '{"limit":50}' \
+            --output "${RESPONSE_FILE}" \
             "${BASE_URL%/}/api/wompi/reconcile-pending"
+
+          cat "${RESPONSE_FILE}"
+          echo
+
+          if [ "$(jq -r '.ok // false' "${RESPONSE_FILE}")" != "true" ]; then
+            echo "La conciliacion Wompi no termino correctamente."
+            exit 1
+          fi

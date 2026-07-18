@@ -4,7 +4,9 @@ import { reconcilePendingWompiPayments } from "@/lib/wompi-reconciliation";
 
 const BOGOTA_TIME_ZONE = "America/Bogota";
 const CHECK_INTERVAL_MS = 30_000;
-const EFECTY_TIMES = new Set(["23:15", "23:25", "23:35", "23:45"]);
+const EFECTY_INTERVAL_MINUTES = 10;
+const EFECTY_WINDOW_START_MINUTE = 23 * 60 + 10;
+const EFECTY_WINDOW_END_MINUTE = 1 * 60 + 50;
 const MORA_TIMES = new Set(["23:30"]);
 const WOMPI_INTERVAL_MINUTES = 5;
 
@@ -65,14 +67,24 @@ function getBogotaClock(date = new Date()) {
 
 function getDueTasks(timeKey: string) {
   const tasks: InternalCronTask[] = [];
-  const [, minuteValue = ""] = timeKey.split(":");
+  const [hourValue = "", minuteValue = ""] = timeKey.split(":");
+  const hour = Number.parseInt(hourValue, 10);
   const minute = Number.parseInt(minuteValue, 10);
+  const minuteOfDay = hour * 60 + minute;
 
   if (Number.isFinite(minute) && minute % WOMPI_INTERVAL_MINUTES === 0) {
     tasks.push("wompi");
   }
 
-  if (EFECTY_TIMES.has(timeKey)) {
+  const isEfectyWindow =
+    minuteOfDay >= EFECTY_WINDOW_START_MINUTE ||
+    minuteOfDay <= EFECTY_WINDOW_END_MINUTE;
+
+  if (
+    Number.isFinite(minute) &&
+    minute % EFECTY_INTERVAL_MINUTES === 0 &&
+    isEfectyWindow
+  ) {
     tasks.push("efecty");
   }
 
@@ -112,11 +124,11 @@ function summarizeReport(payload: unknown) {
 async function runScheduledTask(taskName: InternalCronTask, runKey: string) {
   const state = getState();
 
-  if (state.running.has(runKey) || state.completed.has(runKey)) {
+  if (state.running.has(taskName) || state.completed.has(runKey)) {
     return;
   }
 
-  state.running.add(runKey);
+  state.running.add(taskName);
   let completed = false;
 
   try {
@@ -132,8 +144,8 @@ async function runScheduledTask(taskName: InternalCronTask, runKey: string) {
       logCron("Ejecutando recaudos Efecty.");
       const result = await syncEfectyRecaudosFromSftp({
         dryRun: false,
-        includePreviousFiles: false,
-        limitFiles: 10,
+        includePreviousFiles: true,
+        limitFiles: 3,
       });
       logCron("Recaudos Efecty finalizados.", summarizeReport(result));
       completed = true;
@@ -150,14 +162,16 @@ async function runScheduledTask(taskName: InternalCronTask, runKey: string) {
       error instanceof Error ? error.message : error,
     );
   } finally {
-    state.running.delete(runKey);
+    state.running.delete(taskName);
 
     if (completed) {
       state.completed.add(runKey);
     }
 
-    if (state.completed.size > 200) {
-      state.completed.clear();
+    if (state.completed.size > 500) {
+      for (const key of Array.from(state.completed).slice(0, 250)) {
+        state.completed.delete(key);
+      }
     }
   }
 }
@@ -190,8 +204,11 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: Wompi cada 5 minutos, Efecty 23:15/23:25/23:35/23:45, mora 23:30, hora Colombia.",
+    "Programacion interna activa: Wompi cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50 con recuperacion al iniciar, mora 23:30, hora Colombia.",
   );
 
+  const { dateKey } = getBogotaClock();
+  void runScheduledTask("efecty", `efecty:startup-recovery:${dateKey}`);
+  void runScheduledTask("wompi", `wompi:startup-recovery:${dateKey}`);
   void tick();
 }

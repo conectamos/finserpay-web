@@ -7,8 +7,8 @@ const TASKS = {
     tokenNames: ["EFECTY_SYNC_TOKEN", "MORA_SYNC_TOKEN", "CRON_SECRET"],
     body: {
       dryRun: false,
-      limitFiles: 10,
-      includePreviousFiles: false,
+      limitFiles: 3,
+      includePreviousFiles: true,
     },
   },
   mora: {
