@@ -7,7 +7,9 @@ const CHECK_INTERVAL_MS = 30_000;
 const EFECTY_INTERVAL_MINUTES = 10;
 const EFECTY_WINDOW_START_MINUTE = 23 * 60 + 10;
 const EFECTY_WINDOW_END_MINUTE = 1 * 60 + 50;
-const MORA_TIMES = new Set(["23:30"]);
+const MORA_INTERVAL_MINUTES = 10;
+const MORA_WINDOW_START_MINUTE = 23 * 60 + 30;
+const MORA_WINDOW_END_MINUTE = 1 * 60 + 50;
 const WOMPI_INTERVAL_MINUTES = 5;
 
 type InternalCronTask = "efecty" | "mora" | "wompi";
@@ -65,6 +67,22 @@ function getBogotaClock(date = new Date()) {
   };
 }
 
+function previousDateKey(dateKey: string) {
+  const date = new Date(`${dateKey}T12:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function getMoraEffectiveDate(dateKey: string, timeKey: string) {
+  const [hourValue = "", minuteValue = ""] = timeKey.split(":");
+  const minuteOfDay =
+    Number.parseInt(hourValue, 10) * 60 + Number.parseInt(minuteValue, 10);
+
+  return minuteOfDay >= MORA_WINDOW_START_MINUTE
+    ? dateKey
+    : previousDateKey(dateKey);
+}
+
 function getDueTasks(timeKey: string) {
   const tasks: InternalCronTask[] = [];
   const [hourValue = "", minuteValue = ""] = timeKey.split(":");
@@ -88,7 +106,15 @@ function getDueTasks(timeKey: string) {
     tasks.push("efecty");
   }
 
-  if (MORA_TIMES.has(timeKey)) {
+  const isMoraWindow =
+    minuteOfDay >= MORA_WINDOW_START_MINUTE ||
+    minuteOfDay <= MORA_WINDOW_END_MINUTE;
+
+  if (
+    Number.isFinite(minute) &&
+    minute % MORA_INTERVAL_MINUTES === 0 &&
+    isMoraWindow
+  ) {
     tasks.push("mora");
   }
 
@@ -121,7 +147,11 @@ function summarizeReport(payload: unknown) {
   return Object.keys(summary).length ? summary : payload;
 }
 
-async function runScheduledTask(taskName: InternalCronTask, runKey: string) {
+async function runScheduledTask(
+  taskName: InternalCronTask,
+  runKey: string,
+  moraEffectiveDate?: string,
+) {
   const state = getState();
 
   if (state.running.has(taskName) || state.completed.has(runKey)) {
@@ -153,7 +183,10 @@ async function runScheduledTask(taskName: InternalCronTask, runKey: string) {
     }
 
     logCron("Ejecutando mora y bloqueos.");
-    const result = await syncAllCreditMora({ dryRun: false });
+    const result = await syncAllCreditMora({
+      dryRun: false,
+      today: moraEffectiveDate,
+    });
     logCron("Mora y bloqueos finalizados.", summarizeReport(result));
     completed = true;
   } catch (error) {
@@ -179,10 +212,28 @@ async function runScheduledTask(taskName: InternalCronTask, runKey: string) {
 async function tick() {
   const { dateKey, timeKey } = getBogotaClock();
   const dueTasks = getDueTasks(timeKey);
+  const moraEffectiveDate = getMoraEffectiveDate(dateKey, timeKey);
 
   for (const taskName of dueTasks) {
-    await runScheduledTask(taskName, `${taskName}:${dateKey}:${timeKey}`);
+    await runScheduledTask(
+      taskName,
+      `${taskName}:${dateKey}:${timeKey}`,
+      taskName === "mora" ? moraEffectiveDate : undefined,
+    );
   }
+}
+
+async function runStartupRecovery() {
+  const { dateKey, timeKey } = getBogotaClock();
+  const moraEffectiveDate = getMoraEffectiveDate(dateKey, timeKey);
+
+  await runScheduledTask("wompi", `wompi:startup-recovery:${dateKey}`);
+  await runScheduledTask("efecty", `efecty:startup-recovery:${dateKey}`);
+  await runScheduledTask(
+    "mora",
+    `mora:startup-recovery:${moraEffectiveDate}`,
+    moraEffectiveDate,
+  );
 }
 
 export function startInternalCron() {
@@ -204,11 +255,8 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: Wompi cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50 con recuperacion al iniciar, mora 23:30, hora Colombia.",
+    "Programacion interna activa: Wompi cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, con recuperacion al iniciar, hora Colombia.",
   );
 
-  const { dateKey } = getBogotaClock();
-  void runScheduledTask("efecty", `efecty:startup-recovery:${dateKey}`);
-  void runScheduledTask("wompi", `wompi:startup-recovery:${dateKey}`);
-  void tick();
+  void runStartupRecovery();
 }

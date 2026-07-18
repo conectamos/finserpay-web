@@ -2,8 +2,15 @@ name: Sincronizar mora y bloqueos
 
 on:
   workflow_dispatch:
-
-# Programado ahora en Railway Cron. Este workflow queda como respaldo manual.
+    inputs:
+      dry_run:
+        description: "Solo mostrar los bloqueos y desbloqueos pendientes"
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    # 23:30 en Colombia (UTC-5).
+    - cron: "30 4 * * *"
 
 concurrency:
   group: mora-sync
@@ -19,10 +26,18 @@ jobs:
         env:
           FINSERPAY_BASE_URL: ${{ secrets.FINSERPAY_BASE_URL }}
           MORA_SYNC_TOKEN: ${{ secrets.MORA_SYNC_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
         run: |
           set -euo pipefail
 
           BASE_URL="${FINSERPAY_BASE_URL:-https://finserpay.com}"
+          TARGET_DATE="$(TZ=America/Bogota date +%F)"
+
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            DRY_RUN=true
+          else
+            DRY_RUN=false
+          fi
 
           if [ -z "${MORA_SYNC_TOKEN:-}" ]; then
             echo "Falta configurar el secret MORA_SYNC_TOKEN en GitHub Actions."
@@ -30,8 +45,10 @@ jobs:
           fi
 
           curl --fail-with-body \
+            --retry 3 \
+            --retry-all-errors \
             --request POST \
             --header "Authorization: Bearer ${MORA_SYNC_TOKEN}" \
             --header "Content-Type: application/json" \
-            --data '{"dryRun":false}' \
+            --data "{\"dryRun\":${DRY_RUN},\"today\":\"${TARGET_DATE}\"}" \
             "${BASE_URL%/}/api/creditos/sync-mora"
