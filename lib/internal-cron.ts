@@ -1,4 +1,8 @@
 import { syncAllCreditMora } from "@/lib/credit-mora-sync";
+import {
+  processPendingDeviceUnlockCommands,
+  recoverRecentApprovedWompiUnlockCommands,
+} from "@/lib/device-unlock-queue";
 import { syncEfectyRecaudosFromSftp } from "@/lib/efecty-recaudos";
 import { reconcilePendingWompiPayments } from "@/lib/wompi-reconciliation";
 
@@ -12,7 +16,7 @@ const MORA_WINDOW_START_MINUTE = 23 * 60 + 30;
 const MORA_WINDOW_END_MINUTE = 1 * 60 + 50;
 const WOMPI_INTERVAL_MINUTES = 5;
 
-type InternalCronTask = "efecty" | "mora" | "wompi";
+type InternalCronTask = "efecty" | "mora" | "unlock" | "wompi";
 
 type InternalCronState = {
   completed: Set<string>;
@@ -162,6 +166,17 @@ async function runScheduledTask(
   let completed = false;
 
   try {
+    if (taskName === "unlock") {
+      const result = await processPendingDeviceUnlockCommands({ limit: 20 });
+
+      if (result.processed > 0) {
+        logCron("Desbloqueos pendientes procesados.", result);
+      }
+
+      completed = true;
+      return;
+    }
+
     if (taskName === "wompi") {
       logCron("Conciliando pagos Wompi.");
       const result = await reconcilePendingWompiPayments(50);
@@ -215,6 +230,11 @@ async function tick() {
   const dueTasks = getDueTasks(timeKey);
   const moraEffectiveDate = getMoraEffectiveDate(dateKey, timeKey);
 
+  await runScheduledTask(
+    "unlock",
+    `unlock:${dateKey}:${timeKey}:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`,
+  );
+
   for (const taskName of dueTasks) {
     await runScheduledTask(
       taskName,
@@ -227,6 +247,23 @@ async function tick() {
 async function runStartupRecovery() {
   const { dateKey, timeKey } = getBogotaClock();
   const moraEffectiveDate = getMoraEffectiveDate(dateKey, timeKey);
+
+  try {
+    const recovered = await recoverRecentApprovedWompiUnlockCommands({
+      limit: 200,
+    });
+    logCron("Ordenes Wompi recientes recuperadas.", recovered);
+  } catch (error) {
+    console.error(
+      "[finserpay-cron] Fallo la recuperacion de desbloqueos Wompi:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+
+  await runScheduledTask(
+    "unlock",
+    `unlock:startup-recovery:${dateKey}:${timeKey}`,
+  );
 
   await runScheduledTask("wompi", `wompi:startup-recovery:${dateKey}`);
   await runScheduledTask("efecty", `efecty:startup-recovery:${dateKey}`);
@@ -256,7 +293,7 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: Wompi cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, con recuperacion al iniciar, hora Colombia.",
+    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, con recuperacion al iniciar, hora Colombia.",
   );
 
   void runStartupRecovery();

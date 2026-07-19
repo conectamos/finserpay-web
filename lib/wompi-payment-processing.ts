@@ -7,24 +7,18 @@ import {
 } from "@/lib/credit-early-payoff";
 import {
   creditCajaDescription,
-  resolveCreditState,
 } from "@/lib/credit-factory";
 import {
   DIGITAL_COLLECTION_CAJA_CONCEPT,
   ensureDigitalCollectionSede,
 } from "@/lib/digital-collection-sede";
 import {
-  getEqualityDeviceMeta,
-  getPayloadSummary,
-} from "@/lib/equality-device-meta";
-import {
-  isEqualityApiError,
-  isEqualityConfigured,
-  queryEqualityDevices,
-  unlockEqualityDevice,
-} from "@/lib/equality-zero-touch";
+  enqueueDeviceUnlockCommand,
+  enqueueUnlockForCurrentCredit,
+  ensureDeviceUnlockCommandTable,
+  processDeviceUnlockCommand,
+} from "@/lib/device-unlock-queue";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
-import { isMassImportedCredit } from "@/lib/credit-import-flags";
 import prisma from "@/lib/prisma";
 
 export type WompiPaymentTransaction = {
@@ -57,12 +51,6 @@ export type WompiPaymentProcessingResult = {
   status: string;
 };
 
-function asJsonValue(value: unknown) {
-  return value && typeof value === "object"
-    ? (value as Prisma.InputJsonValue)
-    : undefined;
-}
-
 function parseCuotaNumeros(value: unknown) {
   return (Array.isArray(value) ? value : [])
     .map((item) => Number(item))
@@ -79,111 +67,37 @@ function resolveStaleProcessingCutoff() {
   return new Date(Date.now() - 5 * 60 * 1000);
 }
 
-async function syncMoraAfterWompiPayment(creditId: number) {
-  await ensureCreditAbonoAuditColumns();
-
-  const credit = await prisma.credito.findUnique({
-    where: { id: creditId },
-    select: {
-      id: true,
-      deviceUid: true,
-      montoCredito: true,
-      valorCuota: true,
-      plazoMeses: true,
-      frecuenciaPago: true,
-      fechaPrimerPago: true,
-      fechaProximoPago: true,
-      deliverableLabel: true,
-      deliverableReady: true,
-      equalityState: true,
-      equalityService: true,
-      equalityPayload: true,
-      equalityLastCheckAt: true,
-      bloqueoRobo: true,
-      bloqueoMora: true,
-      observacionAdmin: true,
-      pazYSalvoEmitidoAt: true,
-      abonos: {
-        where: {
-          estado: {
-            not: "ANULADO",
-          },
-        },
-        select: {
-          valor: true,
-          fechaAbono: true,
-        },
-        orderBy: {
-          fechaAbono: "asc",
-        },
-      },
-    },
+async function ensureAndTryApprovedPaymentUnlock(options: {
+  abonoId: number;
+  creditoId: number;
+  intentId: number;
+  reference: string;
+}) {
+  const command = await enqueueUnlockForCurrentCredit({
+    commandKey: `WOMPI:${options.intentId}:${options.abonoId}`,
+    creditoId: options.creditoId,
+    source: "WOMPI",
+    sourceReference: options.reference,
   });
 
-  if (
-    !credit ||
-    isMassImportedCredit(credit) ||
-    !credit.bloqueoMora ||
-    credit.bloqueoRobo ||
-    !isEqualityConfigured()
-  ) {
-    return;
-  }
-
-  const plan = buildCreditPaymentPlan({
-    montoCredito: Number(credit.montoCredito || 0),
-    valorCuota: Number(credit.valorCuota || 0),
-    plazoMeses: Number(credit.plazoMeses || 1),
-    frecuenciaPago: credit.frecuenciaPago,
-    fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
-    abonos: credit.abonos.map((item) => ({
-      valor: Number(item.valor || 0),
-      fechaAbono: item.fechaAbono,
-    })),
-  });
-
-  if (plan.estadoPago === "MORA") {
+  if (!command || command.status === "CONFIRMED") {
     return;
   }
 
   try {
-    const remotePayload = await unlockEqualityDevice(credit.deviceUid);
-    const remoteQuery = await queryEqualityDevices(credit.deviceUid).catch(() => null);
-    const payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
-    const deviceMeta = getEqualityDeviceMeta(payloadSource);
+    const result = await processDeviceUnlockCommand(command.id);
 
-    await prisma.credito.update({
-      where: { id: credit.id },
-      data: {
-        estado: resolveCreditState({
-          bloqueoRobo: credit.bloqueoRobo,
-          bloqueoMora: false,
-          deliverable: deviceMeta.deliveryStatus || null,
-          pazYSalvoEmitidoAt: credit.pazYSalvoEmitidoAt,
-        }),
-        deliverableLabel:
-          deviceMeta.deliveryStatus?.label || credit.deliverableLabel,
-        deliverableReady:
-          typeof deviceMeta.deliveryStatus?.ready === "boolean"
-            ? deviceMeta.deliveryStatus.ready
-            : credit.deliverableReady,
-        equalityState: deviceMeta.deviceState || credit.equalityState,
-        equalityService: deviceMeta.serviceDetails || credit.equalityService,
-        equalityPayload: asJsonValue(payloadSource),
-        equalityLastCheckAt: payloadSource ? new Date() : credit.equalityLastCheckAt,
-        bloqueoMora: false,
-        bloqueoMoraAt: null,
-        observacionAdmin: `Wompi desbloqueo por pago aprobado. ${
-          getPayloadSummary(payloadSource).resultMessage || ""
-        }`.trim(),
-      },
-    });
-  } catch (error) {
-    console.error("ERROR DESBLOQUEANDO MORA DESPUES DE WOMPI:", error);
-
-    if (!isEqualityApiError(error)) {
-      throw error;
+    if (result.status === "RETRY") {
+      console.warn(
+        `[wompi-unlock] Desbloqueo pendiente de confirmacion para credito ${options.creditoId}:`,
+        result.reason
+      );
     }
+  } catch (error) {
+    console.error(
+      `[wompi-unlock] La orden ${command.id} quedo en cola para reintento:`,
+      error
+    );
   }
 }
 
@@ -192,6 +106,7 @@ export async function processApprovedWompiPayment(
   payload: WompiPaymentEventPayload
 ): Promise<WompiPaymentProcessingResult> {
   await ensureCreditAbonoAuditColumns();
+  await ensureDeviceUnlockCommandTable();
 
   if (!transaction?.reference) {
     return { applied: false, status: "NO_REFERENCE" };
@@ -218,6 +133,7 @@ export async function processApprovedWompiPayment(
           usuarioId: true,
           vendedorId: true,
           sedeId: true,
+          deviceUid: true,
         },
       },
     },
@@ -228,6 +144,13 @@ export async function processApprovedWompiPayment(
   }
 
   if (intent.status === "APPROVED" && intent.processedAbonoId) {
+    await ensureAndTryApprovedPaymentUnlock({
+      abonoId: intent.processedAbonoId,
+      creditoId: intent.creditoId,
+      intentId: intent.id,
+      reference: intent.reference,
+    });
+
     return {
       abonoId: intent.processedAbonoId,
       alreadyProcessed: true,
@@ -342,6 +265,13 @@ export async function processApprovedWompiPayment(
       },
     });
 
+    await ensureAndTryApprovedPaymentUnlock({
+      abonoId: existingReferencePayment.id,
+      creditoId: intent.creditoId,
+      intentId: intent.id,
+      reference: intent.reference,
+    });
+
     return {
       abonoId: existingReferencePayment.id,
       alreadyProcessed: true,
@@ -351,7 +281,7 @@ export async function processApprovedWompiPayment(
     };
   }
 
-  const abono = await prisma.$transaction(async (tx) => {
+  const transactionResult = await prisma.$transaction(async (tx) => {
     const previousAbonos = earlyPayoffIntent
       ? await tx.creditoAbono.findMany({
           where: {
@@ -503,15 +433,46 @@ export async function processApprovedWompiPayment(
       },
     });
 
-    return created;
+    const shouldUnlock = Boolean(earlyPayoff) || plan?.estadoPago !== "MORA";
+    const unlockCommand = shouldUnlock
+      ? await enqueueDeviceUnlockCommand({
+          client: tx,
+          commandKey: `WOMPI:${intent.id}:${created.id}`,
+          creditoId: intent.creditoId,
+          deviceUid: intent.credito.deviceUid,
+          source: "WOMPI",
+          sourceReference: intent.reference,
+        })
+      : null;
+
+    return {
+      abono: created,
+      unlockCommandId: unlockCommand?.id || null,
+    };
   });
 
-  if (abono) {
-    await syncMoraAfterWompiPayment(intent.creditoId);
+  if (transactionResult.unlockCommandId) {
+    try {
+      const result = await processDeviceUnlockCommand(
+        transactionResult.unlockCommandId
+      );
+
+      if (result.status === "RETRY") {
+        console.warn(
+          `[wompi-unlock] Pago ${intent.reference} aplicado; desbloqueo pendiente de confirmacion:`,
+          result.reason
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[wompi-unlock] Pago ${intent.reference} aplicado; la orden ${transactionResult.unlockCommandId} sigue persistida:`,
+        error
+      );
+    }
   }
 
   return {
-    abonoId: abono.id,
+    abonoId: transactionResult.abono.id,
     applied: true,
     intentId: intent.id,
     status: "APPROVED",
