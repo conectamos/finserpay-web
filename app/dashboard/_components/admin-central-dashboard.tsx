@@ -7,6 +7,7 @@ import {
   Bell,
   CalendarClock,
   CalendarDays,
+  ChevronDown,
   ChevronRight,
   CircleCheck,
   CircleDollarSign,
@@ -16,8 +17,10 @@ import {
   Files,
   Flag,
   Handshake,
+  Landmark,
   LayoutDashboard,
   MapPin,
+  Menu,
   PieChart,
   Plug,
   Plus,
@@ -52,6 +55,11 @@ type AdminCentralDashboardProps = {
 type NavItem = {
   href: string;
   icon: IconType;
+  label: string;
+};
+
+type NavGroup = {
+  items: NavItem[];
   label: string;
 };
 
@@ -120,6 +128,25 @@ function SidebarLink({ href, icon: Icon, label }: NavItem) {
       <Icon className="h-5 w-5 shrink-0" strokeWidth={1.8} />
       <span className="whitespace-nowrap">{label}</span>
     </Link>
+  );
+}
+
+function SidebarNavigation({ groups }: { groups: NavGroup[] }) {
+  return (
+    <div className="space-y-5">
+      {groups.map((group) => (
+        <section key={group.label}>
+          <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+            {group.label}
+          </p>
+          <div className="space-y-1">
+            {group.items.map((item) => (
+              <SidebarLink key={item.href} {...item} />
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -338,33 +365,95 @@ export default function AdminCentralDashboard({
 }: AdminCentralDashboardProps) {
   const scopeLabel = adminCentral ? "Todas las sedes" : aliadoNombre;
   const carteraHref = adminCentral ? "/dashboard/cartera" : "/dashboard/abonos";
-  const navItems: NavItem[] = [
+  const navGroups: NavGroup[] = [
     {
-      href: "/dashboard",
-      icon: LayoutDashboard,
-      label: adminCentral ? "Panel central" : "Panel aliado",
+      label: "Principal",
+      items: [
+        {
+          href: "/dashboard",
+          icon: LayoutDashboard,
+          label: adminCentral ? "Panel central" : "Panel aliado",
+        },
+      ],
     },
-    { href: "/dashboard/creditos", icon: FileText, label: "Creditos" },
-    { href: "/dashboard/abonos", icon: CircleDollarSign, label: "Recaudos" },
-    ...(adminCentral
-      ? [{ href: "/dashboard/cartera", icon: PieChart, label: "Cartera" }]
-      : []),
-    { href: "/dashboard/clientes", icon: Users, label: "Clientes" },
+    {
+      label: "Operacion",
+      items: [
+        { href: "/dashboard/creditos", icon: FileText, label: "Creditos" },
+        ...(adminCentral
+          ? [
+              {
+                href: "/dashboard/creditos-masivos",
+                icon: Files,
+                label: "Creditos masivos",
+              },
+            ]
+          : []),
+        { href: "/dashboard/abonos", icon: CircleDollarSign, label: "Recaudos" },
+        { href: "/dashboard/clientes", icon: Users, label: "Clientes" },
+        ...(adminCentral
+          ? [
+              { href: "/dashboard/cartera", icon: PieChart, label: "Cartera" },
+              {
+                href: "/dashboard/excepciones-mora",
+                icon: TriangleAlert,
+                label: "Excepciones por mora",
+              },
+            ]
+          : []),
+      ],
+    },
+    {
+      label: "Control",
+      items: [
+        ...(adminCentral
+          ? [
+              { href: "/dashboard/financiero", icon: Landmark, label: "Financiero" },
+              {
+                href: "/dashboard/deuda-sedes",
+                icon: WalletCards,
+                label: "Deuda entre sedes",
+              },
+            ]
+          : []),
+        { href: "/dashboard/reportes", icon: BarChart3, label: "Reportes" },
+      ],
+    },
+    {
+      label: "Administracion",
+      items: [
+        ...(adminCentral
+          ? [{ href: "/dashboard/aliados", icon: Handshake, label: "Aliados" }]
+          : []),
+        { href: "/dashboard/sedes", icon: MapPin, label: "Sedes" },
+        { href: "/dashboard/usuarios", icon: UserRound, label: "Usuarios" },
+        ...(adminCentral
+          ? [
+              {
+                href: "/dashboard/catalogo-equipos",
+                icon: Smartphone,
+                label: "Catalogo de equipos",
+              },
+              {
+                href: "/dashboard/parametros-credito",
+                icon: Settings,
+                label: "Parametros de credito",
+              },
+            ]
+          : []),
+      ],
+    },
     ...(adminCentral
       ? [
-          { href: "/dashboard/aliados", icon: Handshake, label: "Aliados" },
-          { href: "/dashboard/catalogo-equipos", icon: Smartphone, label: "Equipos" },
+          {
+            label: "Integraciones",
+            items: [
+              { href: "/dashboard/integraciones", icon: Plug, label: "Integraciones" },
+              { href: "/dashboard/equality", icon: Equal, label: "Equality Zero Touch" },
+            ],
+          },
         ]
       : []),
-    { href: "/dashboard/reportes", icon: BarChart3, label: "Reportes" },
-    ...(adminCentral
-      ? [{ href: "/dashboard/integraciones", icon: Plug, label: "Integraciones" }]
-      : []),
-    {
-      href: adminCentral ? "/dashboard/parametros-credito" : "/dashboard/usuarios",
-      icon: Settings,
-      label: "Configuracion",
-    },
   ];
   const maxSedeValue = Math.max(1, ...data.sedes.map((sede) => sede.value));
   const metricCards: MetricCardProps[] = [
@@ -413,10 +502,19 @@ export default function AdminCentralDashboard({
           <LogoutButton className="!rounded-lg !border-white/15 !px-3 lg:hidden" />
         </div>
 
-        <nav className="flex gap-1 overflow-x-auto px-3 py-3 lg:block lg:space-y-1 lg:overflow-visible lg:py-2">
-          {navItems.map((item) => (
-            <SidebarLink key={item.href} {...item} />
-          ))}
+        <details className="group border-b border-white/10 lg:hidden">
+          <summary className="flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 text-sm font-bold text-white [&::-webkit-details-marker]:hidden">
+            <Menu className="h-5 w-5" strokeWidth={1.8} />
+            Todos los modulos
+            <ChevronDown className="ml-auto h-4 w-4 transition group-open:rotate-180" />
+          </summary>
+          <nav className="max-h-[70vh] overflow-y-auto px-3 pb-4 pt-2 [scrollbar-color:#334155_transparent] [scrollbar-width:thin]">
+            <SidebarNavigation groups={navGroups} />
+          </nav>
+        </details>
+
+        <nav className="hidden min-h-0 flex-1 overflow-y-auto px-3 pb-4 [scrollbar-color:#334155_transparent] [scrollbar-width:thin] lg:block">
+          <SidebarNavigation groups={navGroups} />
         </nav>
 
         <div className="mt-auto hidden border-t border-white/15 px-5 py-5 lg:block">
@@ -563,7 +661,15 @@ export default function AdminCentralDashboard({
               <ActionLink href="/dashboard/abonos" icon={ArrowDownToLine} label="Recibir abono" />
               <ActionLink href="/dashboard/clientes" icon={Search} label="Buscar usuario" />
               {adminCentral ? (
-                <ActionLink href="/dashboard/creditos-masivos" icon={Files} label="Creditos masivos" />
+                <>
+                  <ActionLink href="/dashboard/creditos-masivos" icon={Files} label="Creditos masivos" />
+                  <ActionLink
+                    href="/dashboard/excepciones-mora"
+                    icon={TriangleAlert}
+                    label="Excepciones por mora"
+                  />
+                  <ActionLink href="/dashboard/financiero" icon={Landmark} label="Financiero" />
+                </>
               ) : (
                 <ActionLink href="/dashboard/reportes" icon={BarChart3} label="Ver reportes" />
               )}
