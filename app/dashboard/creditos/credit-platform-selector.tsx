@@ -8,7 +8,6 @@ import {
   CircleHelp,
   FileSignature,
   ShieldCheck,
-  Smartphone,
   UserCheck,
 } from "lucide-react";
 import FinserBrand from "@/app/_components/finser-brand";
@@ -51,13 +50,13 @@ function PlatformCard({
     <Link
       href={href}
       className={[
-        "group relative isolate overflow-hidden rounded-lg border bg-[#0c1013] transition duration-200 hover:-translate-y-0.5",
+        "group relative isolate min-h-[800px] overflow-hidden rounded-lg border bg-white transition duration-200 hover:-translate-y-0.5 sm:min-h-[470px]",
         android
-          ? "border-[#31553a] hover:border-[#54c86e] hover:shadow-[0_18px_60px_rgba(47,180,80,0.12)]"
-          : "border-white/15 hover:border-white/35 hover:shadow-[0_18px_60px_rgba(255,255,255,0.06)]",
+          ? "border-[#c9d9aa] border-t-[3px] border-t-[#87b90c] hover:border-[#87b90c] hover:shadow-[0_18px_42px_rgba(47,68,12,0.10)]"
+          : "border-[#cfd4d8] border-t-[3px] border-t-[#7f878e] hover:border-[#959da3] hover:shadow-[0_18px_42px_rgba(17,24,39,0.09)]",
       ].join(" ")}
     >
-      <div className="relative aspect-[16/9] overflow-hidden border-b border-white/10 bg-black lg:absolute lg:inset-0 lg:aspect-auto lg:border-0">
+      <div className="absolute bottom-24 left-0 top-[360px] w-full sm:inset-y-14 sm:left-auto sm:right-0 sm:w-[50%]">
         <Image
           src={imageSrc}
           alt={imageAlt}
@@ -65,49 +64,35 @@ function PlatformCard({
           priority
           unoptimized
           sizes="(max-width: 1024px) 100vw, 760px"
-          className="object-cover object-center transition duration-300 group-hover:scale-[1.01]"
+          className="object-contain object-center transition duration-300 group-hover:scale-[1.015]"
         />
       </div>
 
-      <div
-        className={[
-          "pointer-events-none absolute inset-0 hidden lg:block",
-          android
-            ? "bg-[linear-gradient(90deg,rgba(5,12,9,0.98)_0%,rgba(5,12,9,0.88)_39%,rgba(5,12,9,0.12)_68%,rgba(5,12,9,0)_100%)]"
-            : "bg-[linear-gradient(90deg,rgba(8,10,12,0.98)_0%,rgba(8,10,12,0.88)_39%,rgba(8,10,12,0.10)_68%,rgba(8,10,12,0)_100%)]",
-        ].join(" ")}
-      />
-
-      <div className="relative flex flex-col bg-[#0c1013] p-5 lg:min-h-[560px] lg:w-[54%] lg:bg-transparent lg:p-9 lg:pb-32 xl:min-h-[590px] xl:p-10 2xl:min-h-[620px] 2xl:p-12">
+      <div className="relative flex min-h-[800px] w-full flex-col p-7 pb-[500px] sm:min-h-[470px] sm:w-[50%] sm:p-8 sm:pb-24 xl:p-9 xl:pb-24">
         <span
           className={[
-            "grid h-16 w-16 place-items-center rounded-full border bg-black/25 xl:h-[72px] xl:w-[72px]",
+            "w-fit rounded-md px-3 py-2 text-[11px] font-extrabold uppercase",
             android
-              ? "border-[#58d878]/35 text-[#58d878]"
-              : "border-white/20 text-white",
-          ].join(" ")}
-        >
-          <Smartphone className="h-7 w-7 xl:h-8 xl:w-8" strokeWidth={1.6} />
-        </span>
-
-        <h2 className="mt-7 text-4xl font-black text-white">{platform}</h2>
-        <span
-          className={[
-            "mt-4 w-fit rounded-md border px-3 py-1.5 text-xs font-bold uppercase",
-            android
-              ? "border-[#58d878]/30 text-[#58d878]"
-              : "border-white/20 text-slate-200",
+              ? "bg-[#eef5dc] text-[#668b05]"
+              : "bg-[#f0f2f3] text-[#6b737a]",
           ].join(" ")}
         >
           {badge}
         </span>
 
-        <div className="mt-7 max-w-[310px] space-y-5 border-t border-white/15 pt-6 text-base leading-6 text-slate-300">
+        <h2 className="mt-7 text-4xl font-black text-[#15191d]">{platform}</h2>
+        <p className="mt-3 max-w-[260px] text-base leading-6 text-[#68717a]">
+          {android
+            ? "Enrolamiento automatico con Trustonic y Zero Touch."
+            : "Validacion guiada y enrolamiento verificado."}
+        </p>
+
+        <div className="mt-7 max-w-[250px] space-y-4 border-t border-[#dfe3e5] pt-6 text-sm leading-5 text-[#3f474e]">
           <span className="flex items-start gap-3">
             <ShieldCheck
               className={[
-                "mt-0.5 h-6 w-6 shrink-0",
-                android ? "text-[#58d878]" : "text-slate-300",
+                "mt-0.5 h-5 w-5 shrink-0",
+                android ? "text-[#7fa90c]" : "text-[#747d84]",
               ].join(" ")}
               strokeWidth={1.8}
             />
@@ -116,8 +101,8 @@ function PlatformCard({
           <span className="flex items-start gap-3">
             <BadgeCheck
               className={[
-                "mt-0.5 h-6 w-6 shrink-0",
-                android ? "text-[#58d878]" : "text-slate-300",
+                "mt-0.5 h-5 w-5 shrink-0",
+                android ? "text-[#7fa90c]" : "text-[#747d84]",
               ].join(" ")}
               strokeWidth={1.8}
             />
@@ -129,10 +114,10 @@ function PlatformCard({
 
       <span
         className={[
-          "mx-5 mb-5 flex min-h-14 items-center justify-center gap-3 rounded-lg border px-5 text-base font-bold transition lg:absolute lg:bottom-9 lg:left-9 lg:right-9 lg:m-0 xl:bottom-10 xl:left-10 xl:right-10 2xl:bottom-12 2xl:left-12 2xl:right-12",
+          "absolute bottom-7 left-7 right-7 flex min-h-14 items-center justify-center gap-3 rounded-md border px-5 text-sm font-extrabold transition sm:bottom-8 sm:left-8 sm:right-8 xl:bottom-9 xl:left-9 xl:right-9",
           android
-            ? "border-[#42bb5d] bg-[#35ad51] text-white group-hover:bg-[#40bd5d]"
-            : "border-white/65 bg-black/20 text-white group-hover:border-white group-hover:bg-white group-hover:text-[#0b1013]",
+            ? "border-[#171d22] bg-[#171d22] text-white group-hover:border-[#87b90c]"
+            : "border-[#2b3238] bg-white text-[#171d22] group-hover:border-[#87b90c]",
         ].join(" ")}
       >
         Iniciar venta {platform}
@@ -156,49 +141,49 @@ export default function CreditPlatformSelector({
   rolUsuario,
 }: CreditPlatformSelectorProps) {
   const content = (
-    <main className="min-w-0 bg-[#090d10] text-white">
-      <header className="border-b border-white/10 bg-[#0a0e11]">
+    <main className="min-w-0 bg-[#f4f5f3] text-[#15191d]">
+      <header className="border-b border-[#dfe2e4] bg-white">
         <div className="mx-auto flex min-h-[72px] max-w-[1680px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-10 xl:px-12">
           <div className="flex min-w-0 items-center gap-5">
-            {!admin ? <FinserBrand compact dark showTagline={false} /> : null}
+            {!admin ? <FinserBrand compact showTagline={false} /> : null}
             <div className="flex items-center gap-2 text-sm">
-              <span className="hidden text-slate-400 sm:inline">Ventas</span>
-              <ChevronRight className="hidden h-4 w-4 text-slate-600 sm:block" strokeWidth={1.8} />
-              <span className="font-semibold text-[#58d878]">Nueva venta</span>
+              <span className="hidden text-[#4f5962] sm:inline">Ventas</span>
+              <ChevronRight className="hidden h-4 w-4 text-[#a6adb2] sm:block" strokeWidth={1.8} />
+              <span className="font-semibold text-[#6f9806]">Nueva venta</span>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="grid h-9 w-9 place-items-center rounded-full border border-white/15 text-slate-300">
+            <span className="grid h-9 w-9 place-items-center rounded-full border border-[#d6dadd] text-[#5f6870]">
               <CircleHelp className="h-4 w-4" strokeWidth={1.8} />
             </span>
-            <div className="hidden h-8 w-px bg-white/10 sm:block" />
-            <span className="grid h-9 w-9 place-items-center rounded-full bg-white/10 text-xs font-bold text-white">
+            <div className="hidden h-8 w-px bg-[#e2e5e7] sm:block" />
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-[#142331] text-xs font-bold text-white">
               {getInitials(nombreUsuario)}
             </span>
             <div className="hidden sm:block">
-              <p className="max-w-40 truncate text-sm font-bold text-white">{nombreUsuario}</p>
-              <p className="text-xs text-slate-500">{rolUsuario}</p>
+              <p className="max-w-40 truncate text-sm font-bold text-[#171b1f]">{nombreUsuario}</p>
+              <p className="text-xs text-[#737c84]">{rolUsuario}</p>
             </div>
           </div>
         </div>
       </header>
 
-      <div className="mx-auto max-w-[1680px] px-4 py-8 sm:px-6 lg:px-10 lg:py-10 xl:px-12 xl:py-12">
+      <div className="mx-auto max-w-[1540px] px-4 py-8 sm:px-6 lg:px-10 lg:py-10 xl:px-12 xl:py-11">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase text-[#58d878]">Nueva venta</p>
-            <h1 className="mt-3 text-3xl font-black text-white sm:text-4xl xl:text-[42px]">
-              Selecciona el tipo de equipo
+            <p className="text-xs font-extrabold uppercase text-[#719a08]">Nueva venta</p>
+            <h1 className="mt-3 text-3xl font-black text-[#15191d] sm:text-4xl xl:text-[40px]">
+              ¿Qué tipo de equipo vas a financiar?
             </h1>
-            <p className="mt-3 text-base text-slate-400">
-              Elige la plataforma para iniciar el flujo correcto de credito, firma y validacion.
+            <p className="mt-3 text-base text-[#66707a]">
+              Selecciona una plataforma para iniciar el flujo correspondiente.
             </p>
           </div>
 
           <Link
             href="/dashboard"
-            className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-white/15 px-5 text-sm font-bold text-slate-200 transition hover:border-white/30 hover:bg-white/5"
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-md px-3 text-sm font-bold text-[#59636c] transition hover:bg-[#e9ecec] hover:text-[#171b1f]"
           >
             <ArrowLeft className="h-4 w-4" strokeWidth={2} />
             Volver
@@ -212,7 +197,7 @@ export default function CreditPlatformSelector({
             description="Trustonic / Zero Touch"
             href={androidHref}
             imageAlt="Telefono Android con enrolamiento seguro"
-            imageSrc="/assets/creditos/platform-android.png"
+            imageSrc="/assets/creditos/android-choice-light.png"
             platform="Android"
             secondary="Enrolamiento automatico del dispositivo"
           />
@@ -222,45 +207,52 @@ export default function CreditPlatformSelector({
             description="Verificacion manual de enrolamiento"
             href={iphoneHref}
             imageAlt="iPhone con validacion segura"
-            imageSrc="/assets/creditos/platform-iphone.png"
+            imageSrc="/assets/creditos/iphone-choice-light.png"
             platform="iPhone"
             secondary="Validacion guiada antes de continuar"
           />
         </section>
 
-        <section className="mt-7 grid rounded-lg border border-white/10 bg-white/[0.025] px-2 py-2 sm:grid-cols-3">
-          <div className="flex min-h-20 items-center gap-4 px-5 py-3 sm:border-r sm:border-white/10 xl:px-7">
-            <UserCheck className="h-7 w-7 shrink-0 text-[#58d878]" strokeWidth={1.7} />
+        <section className="mt-7 grid rounded-lg border border-[#d8dcdf] bg-white px-2 py-3 shadow-[0_5px_16px_rgba(17,24,39,0.04)] sm:grid-cols-[1.15fr_1fr_1fr_1fr]">
+          <div className="flex min-h-20 items-center px-5 py-3 text-base font-extrabold text-[#20252a] sm:border-r sm:border-[#e1e4e6] xl:px-7">
+            Todos los procesos incluyen
+          </div>
+          <div className="flex min-h-20 items-center gap-4 border-t border-[#e1e4e6] px-5 py-3 sm:border-r sm:border-t-0 xl:px-7">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#eef5dc] text-[#739b0a]"><UserCheck className="h-6 w-6" strokeWidth={1.7} /></span>
             <div>
-              <p className="text-base font-bold text-white">Validacion de identidad</p>
-              <p className="mt-1 text-sm text-slate-500">Proceso seguro y verificable</p>
+              <p className="text-sm font-bold text-[#20252a]">Validacion de identidad</p>
+              <p className="mt-1 text-xs text-[#747d85]">Proceso seguro y verificable</p>
             </div>
           </div>
-          <div className="flex min-h-20 items-center gap-4 border-y border-white/10 px-5 py-3 sm:border-y-0 sm:border-r xl:px-7">
-            <FileSignature className="h-7 w-7 shrink-0 text-[#58d878]" strokeWidth={1.7} />
+          <div className="flex min-h-20 items-center gap-4 border-t border-[#e1e4e6] px-5 py-3 sm:border-r sm:border-t-0 xl:px-7">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#eef5dc] text-[#739b0a]"><FileSignature className="h-6 w-6" strokeWidth={1.7} /></span>
             <div>
-              <p className="text-base font-bold text-white">Firma digital</p>
-              <p className="mt-1 text-sm text-slate-500">Documentos con validez legal</p>
+              <p className="text-sm font-bold text-[#20252a]">Firma digital</p>
+              <p className="mt-1 text-xs text-[#747d85]">Documentos con validez legal</p>
             </div>
           </div>
-          <div className="flex min-h-20 items-center gap-4 px-5 py-3 xl:px-7">
-            <ShieldCheck className="h-7 w-7 shrink-0 text-[#58d878]" strokeWidth={1.7} />
+          <div className="flex min-h-20 items-center gap-4 border-t border-[#e1e4e6] px-5 py-3 sm:border-t-0 xl:px-7">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#eef5dc] text-[#739b0a]"><ShieldCheck className="h-6 w-6" strokeWidth={1.7} /></span>
             <div>
-              <p className="text-base font-bold text-white">Entrega controlada</p>
-              <p className="mt-1 text-sm text-slate-500">Validacion antes del desembolso</p>
+              <p className="text-sm font-bold text-[#20252a]">Entrega controlada</p>
+              <p className="mt-1 text-xs text-[#747d85]">Validacion antes del desembolso</p>
             </div>
           </div>
         </section>
+
+        <p className="mt-7 text-center text-xs text-[#98a0a6]">
+          El flujo puede variar segun la plataforma seleccionada.
+        </p>
       </div>
     </main>
   );
 
   if (!admin) {
-    return <div className="min-h-screen bg-[#090d10]">{content}</div>;
+    return <div className="min-h-screen bg-[#f4f5f3]">{content}</div>;
   }
 
   return (
-    <div className="min-h-screen bg-[#090d10] lg:grid lg:grid-cols-[270px_minmax(0,1fr)]">
+    <div className="min-h-screen bg-[#f4f5f3] lg:grid lg:grid-cols-[270px_minmax(0,1fr)]">
       <AdminSidebar
         activeHref="/dashboard/creditos"
         adminCentral={adminCentral}

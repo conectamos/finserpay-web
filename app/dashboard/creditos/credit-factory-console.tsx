@@ -5,21 +5,33 @@ import NextImage from "next/image";
 import { usePathname } from "next/navigation";
 import QRCode from "qrcode";
 import {
+  AlertCircle,
+  ArrowLeft,
   ArrowRight,
+  BadgeCheck,
   Building2,
   Check,
+  CircleHelp,
   CircleDollarSign,
+  Clock3,
   FileText,
   History,
+  IdCard,
+  LoaderCircle,
+  LockKeyhole,
+  QrCode,
   RefreshCw,
   RotateCcw,
   ScanFace,
   Search,
+  Save,
   Send,
   ShieldCheck,
+  ShoppingCart,
   Smartphone,
   UserSearch,
   WalletCards,
+  XCircle,
 } from "lucide-react";
 import {
   useEffect,
@@ -2218,6 +2230,7 @@ export default function CreditFactoryConsole({
   const applyingVeriffIdentityRef = useRef(false);
   const veriffClientFormUnlockedRef = useRef(false);
   const veriffAutoSessionRef = useRef(false);
+  const veriffRequestInFlightRef = useRef(false);
   const [cedulaValidation, setCedulaValidation] = useState<CedulaValidationState>({
     status: "idle",
     summary:
@@ -3244,6 +3257,53 @@ export default function CreditFactoryConsole({
       veriffValidation?.status === "EXPIRED" ||
       veriffValidation?.status === "ABANDONED"
   );
+  const veriffConnectionError = Boolean(
+    veriffValidation?.status === "ERROR" ||
+      (veriffInlineMessage && !veriffValidation?.sessionUrl && !veriffSubmitting)
+  );
+  const veriffVisualState = veriffSubmitting
+    ? "generating"
+    : veriffApproved
+      ? "approved"
+      : veriffValidation?.status === "EXPIRED" ||
+          veriffValidation?.status === "ABANDONED"
+        ? "expired"
+        : veriffValidation?.status === "DECLINED" || veriffRiskOnly
+          ? "rejected"
+          : veriffConnectionError
+            ? "error"
+            : veriffRefreshing ||
+                veriffValidation?.status === "REVIEW" ||
+                veriffValidation?.status === "RESUBMISSION" ||
+                Boolean(veriffValidation?.submittedAt)
+              ? "processing"
+              : veriffValidation?.sessionUrl
+                ? "ready"
+                : "pending";
+  const veriffVisualLabel =
+    veriffVisualState === "generating"
+      ? "Generando codigo"
+      : veriffVisualState === "approved"
+        ? "Aprobada"
+        : veriffVisualState === "expired"
+          ? "Codigo vencido"
+          : veriffVisualState === "rejected"
+            ? "Rechazada"
+            : veriffVisualState === "error"
+              ? "Error de conexion"
+              : veriffVisualState === "processing"
+                ? "Validacion en proceso"
+                : veriffVisualState === "ready"
+                  ? "QR generado"
+                  : "Pendiente";
+  const veriffCanGenerateNewQr =
+    !veriffSubmitting &&
+    veriffConfig.configured &&
+    !veriffApproved &&
+    (!veriffValidation?.sessionUrl || veriffHasFinalDecision || veriffConnectionError);
+  const veriffQrValidityLabel = veriffValidation?.createdAt
+    ? `Generado ${dateTime(veriffValidation.createdAt)}. La vigencia se actualiza con el estado de Veriff.`
+    : "La vigencia del codigo se controla con el estado real de Veriff.";
   const veriffIdentityFlowEnabled =
     veriffConfig.configured && veriffConfig.mode !== "off";
   const hideIdentityWizardStep = veriffIdentityFlowEnabled;
@@ -3552,14 +3612,14 @@ export default function CreditFactoryConsole({
     {
       id: 1,
       label: veriffIdentityFlowEnabled ? "Identidad" : "Cliente",
-      detail: veriffIdentityFlowEnabled ? "Cliente" : "Datos",
+      detail: veriffIdentityFlowEnabled ? "Validar cliente" : "Datos personales",
       ready: stepClienteReady,
       action: veriffIdentityFlowEnabled ? "Validacion y datos" : "Datos personales",
     },
     {
       id: 2,
       label: "Equipo",
-      detail: "Plan",
+      detail: "Seleccionar plan",
       ready: stepEquipoReady,
       action: "Equipo y cuotas",
     },
@@ -3609,6 +3669,18 @@ export default function CreditFactoryConsole({
       0,
       visibleFactorySteps.findIndex((step) => step.id === activeFactoryStep.id)
     ) + 1;
+  const draftStatusLabel =
+    draftStatus === "saving"
+      ? "Guardando automaticamente"
+      : draftStatus === "loading"
+        ? "Cargando solicitud"
+        : draftStatus === "error"
+          ? "No se pudo guardar"
+          : draftId
+            ? `Solicitud #${draftId} guardada${draftLastSavedAt ? ` - ${draftLastSavedAt}` : ""}`
+            : draftHasMeaningfulData
+              ? "Cambios pendientes de guardado"
+              : "Solicitud nueva - Sin guardar";
   const nextFactoryStep =
     visibleFactorySteps.find((step) => !step.ready) ||
     visibleFactorySteps[visibleFactorySteps.length - 1];
@@ -5214,6 +5286,10 @@ export default function CreditFactoryConsole({
   };
 
   const validateIdentityWithVeriff = async () => {
+    if (veriffRequestInFlightRef.current) {
+      return null;
+    }
+
     if (!veriffConfig.configured) {
       setNotice({
         text:
@@ -5224,6 +5300,7 @@ export default function CreditFactoryConsole({
     }
 
     try {
+      veriffRequestInFlightRef.current = true;
       setVeriffSubmitting(true);
       setVeriffInlineMessage("");
       setVeriffMediaItems([]);
@@ -5347,6 +5424,7 @@ export default function CreditFactoryConsole({
       );
       return null;
     } finally {
+      veriffRequestInFlightRef.current = false;
       setVeriffSubmitting(false);
     }
   };
@@ -7634,10 +7712,60 @@ export default function CreditFactoryConsole({
                 : [
                     "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6",
                     simulatorMode || deliveryMode ? "fp-tool-hero" : "",
+                    createClientMode ? "fp-new-sale-header" : "",
                   ].join(" ")
             }
           >
-            {simulatorMode || deliveryMode ? (
+            {createClientMode ? (
+              <div className="fp-new-sale-header-inner">
+                <div className="fp-new-sale-brand">
+                  <FinserBrand compact dark showTagline={false} />
+                  <span className="fp-new-sale-divider" aria-hidden="true" />
+                  <strong>Nueva venta</strong>
+                  <span className="fp-platform-badge">
+                    {iphoneFactory ? "IPHONE" : "ANDROID"}
+                  </span>
+                </div>
+
+                <nav className="fp-new-sale-nav" aria-label="Navegacion de la venta">
+                  <Link href="/dashboard">Dashboard</Link>
+                  {canViewSavedCredits ? (
+                    <Link href="/dashboard/abonos">Abonos</Link>
+                  ) : null}
+                  {adminFactoryAssistAvailable ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAdminAssist((value) => !value);
+                        if (showAdminAssist) {
+                          setDraftSearchResults([]);
+                          setCredits([]);
+                          setActiveSearch("");
+                          setSelectedId(null);
+                        }
+                      }}
+                      aria-expanded={showAdminAssist}
+                    >
+                      Asistencia
+                    </button>
+                  ) : null}
+                  <span className="fp-new-sale-profile">
+                    <span aria-hidden="true">
+                      {String(initialSeller?.nombre || initialSession.nombre || "FP")
+                        .trim()
+                        .split(/\s+/)
+                        .slice(0, 2)
+                        .map((part) => part.charAt(0).toUpperCase())
+                        .join("")}
+                    </span>
+                    <span>
+                      <strong>{initialSeller?.nombre || initialSession.nombre}</strong>
+                      <small>{initialSession.rolNombre}</small>
+                    </span>
+                  </span>
+                </nav>
+              </div>
+            ) : simulatorMode || deliveryMode ? (
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
                   <FinserBrand compact showTagline={false} />
@@ -8161,47 +8289,65 @@ export default function CreditFactoryConsole({
             <div
               className={[
                 "fp-flow-header fp-seller-flow-intro relative overflow-hidden rounded-[24px] border border-[#cfe5e2] bg-white/72 p-4 sm:p-5",
+                createClientMode ? "fp-sale-summary" : "",
               ].join(" ")}
             >
-              <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">
-                    {simulatorMode ? "Calculo rapido" : "Flujo de venta"}
-                  </p>
-                  <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-                    {simulatorMode ? "Equipo e inicial" : "Venta en curso"}
-                  </h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    {simulatorMode
-                      ? "Elige modelo, inicial y plazo."
-                      : (
-                          <>
-                            Paso actual: <span className="font-semibold text-slate-950">{activeFactoryStep.label}</span>
-                          </>
-                        )}
-                  </p>
+              {createClientMode ? (
+                <div className="fp-sale-summary-inner">
+                  <span className="fp-sale-summary-icon" aria-hidden="true">
+                    <ShoppingCart className="h-5 w-5" strokeWidth={1.8} />
+                  </span>
+                  <div className="fp-sale-summary-copy">
+                    <h2>Venta en curso</h2>
+                    <p>{draftStatusLabel}</p>
+                  </div>
+                  <div className="fp-sale-summary-progress">
+                    <div>
+                      <strong>
+                        Paso {activeFactoryStepNumber} de {visibleFactorySteps.length}
+                      </strong>
+                      <span>{factoryProgress}% completado</span>
+                    </div>
+                    <div className="fp-sale-progress-track" aria-hidden="true">
+                      <span style={{ width: `${factoryProgress}%` }} />
+                    </div>
+                  </div>
                 </div>
-
-                <div
-                  className={[
-                    "fp-factory-progress min-w-[260px] rounded-[20px] border border-[#d8e6e5] bg-white/88 px-4 py-3",
-                    simulatorMode ? "hidden" : "",
-                  ].join(" ")}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-slate-700">Avance general</p>
-                    <p className="text-xl font-black tracking-tight text-slate-950">
-                      {factoryProgress}%
+              ) : (
+                <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">
+                      {simulatorMode ? "Calculo rapido" : "Flujo de venta"}
+                    </p>
+                    <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
+                      {simulatorMode ? "Equipo e inicial" : "Venta en curso"}
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      {simulatorMode ? "Elige modelo, inicial y plazo." : `Paso actual: ${activeFactoryStep.label}`}
                     </p>
                   </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
-                    <div
-                      className="fp-flow-progress h-full rounded-full"
-                      style={{ width: `${factoryProgress}%` }}
-                    />
+
+                  <div
+                    className={[
+                      "fp-factory-progress min-w-[260px] rounded-[20px] border border-[#d8e6e5] bg-white/88 px-4 py-3",
+                      simulatorMode ? "hidden" : "",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-slate-700">Avance general</p>
+                      <p className="text-xl font-black tracking-tight text-slate-950">
+                        {factoryProgress}%
+                      </p>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                      <div
+                        className="fp-flow-progress h-full rounded-full"
+                        style={{ width: `${factoryProgress}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
 
             <div
@@ -8211,9 +8357,10 @@ export default function CreditFactoryConsole({
                   : "fp-credit-factory-layout mt-4 grid gap-4 xl:grid-cols-[220px_1fr] xl:items-start"
               }
             >
-              <aside
+              <nav
+                aria-label="Pasos de la nueva venta"
                 className={[
-                  "fp-step-rail rounded-[22px] border border-[#d8e6e5] bg-white/88 p-2.5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]",
+                  "fp-step-rail fp-stepper-horizontal rounded-[22px] border border-[#d8e6e5] bg-white/88 p-2.5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]",
                   simulatorMode ? "hidden" : "",
                 ].join(" ")}
               >
@@ -8227,11 +8374,14 @@ export default function CreditFactoryConsole({
                       onClick={() => {
                         void advanceToStep(step.id);
                       }}
+                      aria-current={active ? "step" : undefined}
                       className={[
                         "fp-seller-step-button group mb-2 flex w-full items-center gap-3 rounded-[22px] border px-3 py-3 text-left transition last:mb-0",
                         active
                           ? "fp-step-active border-[#145a5a] bg-[#123f3e] text-white"
-                          : "border-transparent bg-transparent text-slate-700 hover:border-[#cde2df] hover:bg-[#f5fbfa]",
+                          : step.ready
+                            ? "fp-step-ready border-transparent bg-transparent text-slate-700"
+                            : "border-transparent bg-transparent text-slate-700 hover:border-[#cde2df] hover:bg-[#f5fbfa]",
                       ].join(" ")}
                     >
                       <span
@@ -8244,7 +8394,11 @@ export default function CreditFactoryConsole({
                               : "border-slate-200 bg-white text-slate-500 group-hover:border-[#8fd8cf]",
                         ].join(" ")}
                       >
-                        {step.ready ? "OK" : stepIndex + 1}
+                        {step.ready ? (
+                          <Check className="h-4 w-4" strokeWidth={2.7} />
+                        ) : (
+                          stepIndex + 1
+                        )}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block text-sm font-black tracking-tight">
@@ -8262,7 +8416,7 @@ export default function CreditFactoryConsole({
                     </button>
                   );
                 })}
-              </aside>
+              </nav>
 
               <div>
                 <div
@@ -8332,171 +8486,211 @@ export default function CreditFactoryConsole({
                   </div>
                 </div>
 
-            <div className="fp-step-stage fp-form-redesign fp-seller-form-card rounded-[24px] border border-[#d6e4e1] bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+            <div
+              className={[
+                "fp-step-stage fp-form-redesign fp-seller-form-card rounded-[24px] border border-[#d6e4e1] bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]",
+                createClientMode && wizardStep === 1 ? "fp-identity-workspace" : "",
+              ].join(" ")}
+            >
               {wizardStep === 1 && (
-                <div>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h3 className="text-2xl font-black uppercase tracking-normal text-slate-950">
-                        VALIDACION DE IDENTIDAD
-                      </h3>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Inicia la validacion cuando el cliente este listo. Al aprobarse la identidad se habilita la informacion del cliente.
+                <div className="fp-identity-stage">
+                  <div className="fp-identity-layout">
+                    <section className="fp-identity-main">
+                      <p className="fp-identity-kicker">Paso {activeFactoryStepNumber}</p>
+                      <h3>Validacion de identidad</h3>
+                      <p className="fp-identity-description">
+                        Genera el codigo QR para que el cliente complete la validacion desde su celular.
                       </p>
-                    </div>
-                    <div
-                      className={[
-                        "inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
-                        veriffApproved
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : veriffRejected || veriffRiskOnly
-                            ? "border-red-200 bg-red-50 text-red-700"
-                          : "border-amber-200 bg-amber-50 text-amber-700",
-                      ].join(" ")}
-                    >
-                      {veriffApproved
-                        ? "Aprobada"
-                        : veriffValidation?.status === "DECLINED"
-                          ? "Rechazada"
-                          : veriffRejected || veriffRiskOnly
-                            ? "Revisar"
-                          : "Pendiente"}
-                    </div>
-                  </div>
 
-                  <div className="mt-5 rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="min-w-0">
-                        <h4 className="text-lg font-black text-slate-950">
-                          Validacion de identidad del cliente
-                        </h4>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                          {veriffValidation?.status === "DECLINED"
-                            ? "Validacion rechazada por Veriff."
-                            : veriffRiskOnly
-                              ? "Requiere revision."
-                            : veriffApproved
-                            ? veriffValidation?.identityData
-                              ? "Identidad aprobada. Datos copiados al formulario."
-                              : "Aprobada sin datos."
-                            : veriffValidation?.approved
-                              ? "Aprobada sin datos para autocompletar. Reintenta la validacion."
-                            : veriffValidation?.technicalApproved &&
-                                veriffValidation.trusted === false
-                              ? "Aprobacion de prueba."
-                              : veriffConfig.configured &&
-                                  veriffConfig.decisionsTrusted === false
-                                ? "Modo prueba."
-                              : veriffValidation?.sessionUrl
-                                ? "QR listo. Esperando decision."
-                                : veriffSubmitting
-                                  ? "Generando QR..."
-                                  : "Pendiente por iniciar."}
-                        </p>
-                      </div>
-                      <span
-                        className={[
-                          "w-fit rounded-2xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em]",
-                          veriffApproved
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                            : veriffRejected || veriffRiskOnly
-                              ? "border-red-200 bg-red-50 text-red-700"
-                              : veriffConfig.configured
-                                ? "border-amber-200 bg-amber-50 text-amber-700"
-                                : "border-slate-200 bg-slate-50 text-slate-600",
-                        ].join(" ")}
-                      >
-                        {veriffStatusLabel(veriffValidation)}
-                      </span>
-                    </div>
-
-                    {veriffApproved ? (
-                      <p className="mt-4 text-sm font-semibold text-emerald-700">
-                        Identidad aprobada. Continua completando los datos del cliente.
-                      </p>
-                    ) : (
-                      <div className="mt-5 flex flex-col gap-5 lg:flex-row lg:items-center">
-                        {veriffQrDataUrl ? (
-                          <div className="rounded-[24px] bg-slate-950 p-3 shadow-[0_18px_42px_rgba(15,23,42,0.18)]">
-                            <img
-                              src={veriffQrDataUrl}
-                              alt="QR de validacion de identidad"
-                              className="h-60 w-60 rounded-[18px] bg-white p-2 sm:h-64 sm:w-64"
-                            />
+                      <div className="fp-identity-moments" aria-label="Como funciona la validacion">
+                        {[
+                          {
+                            icon: <QrCode className="h-5 w-5" strokeWidth={1.8} />,
+                            title: "1. Genera el QR",
+                            detail: "Inicia la validacion y genera el codigo.",
+                          },
+                          {
+                            icon: <IdCard className="h-5 w-5" strokeWidth={1.8} />,
+                            title: "2. El cliente valida",
+                            detail: "Escanea el QR y completa el proceso desde su celular.",
+                          },
+                          {
+                            icon: <ShieldCheck className="h-5 w-5" strokeWidth={1.8} />,
+                            title: "3. Recibimos el resultado",
+                            detail: "Verificamos la identidad y actualizamos el estado.",
+                          },
+                        ].map((moment) => (
+                          <div key={moment.title}>
+                            <span aria-hidden="true">{moment.icon}</span>
+                            <div>
+                              <strong>{moment.title}</strong>
+                              <p>{moment.detail}</p>
+                            </div>
                           </div>
-                        ) : (
+                        ))}
+                      </div>
+
+                      <div className="fp-identity-launch-panel">
+                        <span className="fp-identity-qr-icon" aria-hidden="true">
+                          <QrCode className="h-10 w-10" strokeWidth={1.6} />
+                        </span>
+                        <div className="fp-identity-launch-copy">
+                          <h4>Iniciar validacion</h4>
+                          <p>{veriffQrValidityLabel}</p>
                           <button
                             type="button"
                             onClick={() => {
                               veriffAutoSessionRef.current = true;
                               void validateIdentityWithVeriff();
                             }}
-                            disabled={veriffSubmitting || !veriffConfig.configured}
-                            className="fp-identity-launch group flex w-full max-w-[28rem] items-center gap-4 rounded-[28px] border border-slate-950 bg-slate-950 px-5 py-5 text-left text-white shadow-[0_18px_42px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-[#152129] disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={!veriffCanGenerateNewQr}
+                            aria-busy={veriffSubmitting}
                           >
-                            <span className="grid h-14 w-14 shrink-0 place-items-center rounded-lg border border-[#4ade80]/30 bg-[#4ade80]/10 text-[#4ade80]">
-                              <ScanFace className="h-7 w-7" strokeWidth={1.7} />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block text-[11px] font-bold uppercase text-[#4ade80]">
-                                Validacion segura
-                              </span>
-                              <span className="mt-1 block text-lg font-black">
-                                Iniciar validacion de identidad
-                              </span>
-                              <span className="mt-1 block text-sm font-medium leading-5 text-slate-400">
-                                Genera el QR para continuar desde el celular del cliente.
-                              </span>
-                            </span>
-                            <ArrowRight className="h-5 w-5 shrink-0 text-[#4ade80] transition group-hover:translate-x-1" strokeWidth={2} />
+                            {veriffSubmitting ? (
+                              <LoaderCircle className="h-5 w-5 animate-spin" strokeWidth={2} />
+                            ) : (
+                              <QrCode className="h-5 w-5" strokeWidth={2} />
+                            )}
+                            {veriffSubmitting
+                              ? "Generando codigo QR"
+                              : veriffApproved
+                                ? "Identidad aprobada"
+                                : veriffValidation?.sessionUrl && !veriffHasFinalDecision
+                                  ? "Codigo QR generado"
+                                  : veriffHasFinalDecision || veriffConnectionError
+                                    ? "Generar nuevo codigo QR"
+                                    : "Generar codigo QR"}
                           </button>
-                        )}
-                        <div className="flex min-w-0 flex-1 flex-col gap-3">
-                          <p className="text-sm leading-6 text-slate-600">
-                            {veriffQrDataUrl
-                              ? "El cliente escanea este QR con su celular para completar la validacion."
-                              : "Da clic para generar el QR solo cuando el cliente este listo."}
-                          </p>
-                          <div className="flex flex-wrap items-center gap-3">
-                            {veriffValidation?.sessionUrl ? (
-                              <a
-                                href={veriffValidation.sessionUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex rounded-2xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                              >
-                                Abrir enlace
-                              </a>
-                            ) : null}
-                            {veriffQrDataUrl &&
-                            (veriffHasFinalDecision || Boolean(veriffInlineMessage)) ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  veriffAutoSessionRef.current = true;
-                                  void validateIdentityWithVeriff();
-                                }}
-                                disabled={veriffSubmitting || !veriffConfig.configured}
-                                className="rounded-2xl bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
-                              >
-                                {veriffSubmitting
-                                  ? "Preparando QR..."
-                                  : "Reintentar validacion"}
-                              </button>
-                            ) : null}
-                          </div>
-                          {veriffInlineMessage ? (
-                            <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold leading-5 text-red-700">
-                              {veriffInlineMessage}
-                            </p>
-                          ) : null}
                         </div>
                       </div>
-                    )}
+
+                      <p className="fp-identity-security-note">
+                        <LockKeyhole className="h-4 w-4" strokeWidth={1.8} />
+                        Proceso cifrado y verificacion biometrica
+                      </p>
+                    </section>
+
+                    <aside className="fp-identity-status" aria-live="polite">
+                      <h4>Estado de la validacion</h4>
+                      <span className={`fp-veriff-status is-${veriffVisualState}`}>
+                        {veriffVisualState === "generating" ? (
+                          <LoaderCircle className="h-4 w-4 animate-spin" strokeWidth={2} />
+                        ) : veriffVisualState === "approved" ? (
+                          <BadgeCheck className="h-4 w-4" strokeWidth={2} />
+                        ) : veriffVisualState === "expired" ? (
+                          <Clock3 className="h-4 w-4" strokeWidth={2} />
+                        ) : veriffVisualState === "rejected" ? (
+                          <XCircle className="h-4 w-4" strokeWidth={2} />
+                        ) : veriffVisualState === "error" ? (
+                          <AlertCircle className="h-4 w-4" strokeWidth={2} />
+                        ) : veriffVisualState === "ready" ? (
+                          <QrCode className="h-4 w-4" strokeWidth={2} />
+                        ) : (
+                          <Clock3 className="h-4 w-4" strokeWidth={2} />
+                        )}
+                        {veriffVisualLabel}
+                      </span>
+
+                      <div className={`fp-identity-qr-area is-${veriffVisualState}`}>
+                        {veriffApproved ? (
+                          <div className="fp-identity-result approved">
+                            <BadgeCheck className="h-12 w-12" strokeWidth={1.6} />
+                            <strong>Identidad aprobada</strong>
+                            <p>Los datos verificados fueron vinculados a esta solicitud.</p>
+                          </div>
+                        ) : veriffQrDataUrl ? (
+                          <img
+                            src={veriffQrDataUrl}
+                            alt="QR de validacion de identidad"
+                            className="fp-veriff-qr-image"
+                          />
+                        ) : (
+                          <div className="fp-identity-result">
+                            {veriffVisualState === "expired" ? (
+                              <Clock3 className="h-11 w-11" strokeWidth={1.5} />
+                            ) : veriffVisualState === "rejected" ? (
+                              <XCircle className="h-11 w-11" strokeWidth={1.5} />
+                            ) : veriffVisualState === "error" ? (
+                              <AlertCircle className="h-11 w-11" strokeWidth={1.5} />
+                            ) : (
+                              <QrCode className="h-11 w-11" strokeWidth={1.5} />
+                            )}
+                            <strong>
+                              {veriffVisualState === "expired"
+                                ? "El codigo QR vencio"
+                                : veriffVisualState === "rejected"
+                                  ? "La validacion fue rechazada"
+                                  : veriffVisualState === "error"
+                                    ? "No fue posible conectar"
+                                    : "El codigo QR aparecera aqui"}
+                            </strong>
+                            <p>
+                              {veriffVisualState === "expired" || veriffVisualState === "error"
+                                ? "Genera un nuevo codigo para volver a intentarlo."
+                                : "Inicia la validacion cuando el cliente este listo."}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      <p className="fp-identity-document-note">
+                        <IdCard className="h-5 w-5" strokeWidth={1.7} />
+                        Pide al cliente que tenga su documento de identidad a la mano.
+                      </p>
+
+                      <div className="fp-identity-support-row">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (adminFactoryAssistAvailable) {
+                              setShowAdminAssist(true);
+                            } else {
+                              setNotice({
+                                text: "Verifica la conexion y genera un nuevo codigo. Si el problema continua, contacta al administrador.",
+                                tone: "slate",
+                              });
+                            }
+                          }}
+                          aria-expanded={adminFactoryAssistAvailable ? showAdminAssist : undefined}
+                        >
+                          <CircleHelp className="h-4 w-4" strokeWidth={1.9} />
+                          Problemas con la validacion
+                        </button>
+                        {veriffValidation?.id && !veriffHasFinalDecision ? (
+                          <button
+                            type="button"
+                            onClick={() => void refreshVeriffValidation()}
+                            disabled={veriffRefreshing}
+                          >
+                            <RefreshCw className={`h-4 w-4 ${veriffRefreshing ? "animate-spin" : ""}`} strokeWidth={1.9} />
+                            Actualizar estado
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {veriffValidation?.sessionUrl ? (
+                        <a
+                          href={veriffValidation.sessionUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="fp-identity-open-link"
+                        >
+                          Abrir validacion en otra ventana
+                          <ArrowRight className="h-4 w-4" strokeWidth={1.9} />
+                        </a>
+                      ) : null}
+
+                      {veriffInlineMessage ? (
+                        <p className="fp-identity-inline-error">
+                          <AlertCircle className="h-4 w-4" strokeWidth={2} />
+                          {veriffInlineMessage}
+                        </p>
+                      ) : null}
+                    </aside>
                   </div>
 
                   {clienteFormUnlocked ? (
-                  <div className="mt-5 rounded-[22px] border border-slate-200 bg-white p-4">
+                  <div className="fp-identity-client-form mt-5 rounded-[22px] border border-slate-200 bg-white p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <p className="text-base font-black tracking-tight text-slate-950">
@@ -11194,7 +11388,62 @@ export default function CreditFactoryConsole({
             </div>
 
             {!simulatorMode && (
-              <div className="fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-[24px] border border-[#d8e6e5] bg-white/92 px-4 py-4 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur">
+              <div
+                className={[
+                  "fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-[24px] border border-[#d8e6e5] bg-white/92 px-4 py-4 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur",
+                  createClientMode && wizardStep === 1 ? "fp-identity-actions" : "",
+                ].join(" ")}
+              >
+                {createClientMode && wizardStep === 1 ? (
+                  <>
+                    <Link href="/dashboard/creditos" className="fp-identity-cancel">
+                      <ArrowLeft className="h-4 w-4" strokeWidth={1.9} />
+                      Cancelar venta
+                    </Link>
+
+                    <span
+                      className={[
+                        "fp-identity-autosave",
+                        draftStatus === "error"
+                          ? "is-error"
+                          : draftStatus === "saving" || draftStatus === "loading"
+                            ? "is-saving"
+                            : "is-saved",
+                      ].join(" ")}
+                      role="status"
+                    >
+                      <Save className="h-4 w-4" strokeWidth={1.8} />
+                      {draftStatusLabel}
+                    </span>
+
+                    <div className="fp-identity-action-buttons">
+                      <button
+                        type="button"
+                        onClick={() => resetForm()}
+                        disabled={creating || veriffSubmitting}
+                      >
+                        Limpiar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          creating ||
+                          veriffSubmitting ||
+                          !stepClienteReady ||
+                          (veriffIdentityFlowEnabled && !veriffApproved)
+                        }
+                        onClick={() => {
+                          void advanceToStep(nextVisibleWizardStep(wizardStep));
+                        }}
+                        className="fp-identity-continue"
+                      >
+                        Continuar
+                        <ArrowRight className="h-4 w-4" strokeWidth={2} />
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
                 {wizardStep > 1 && (
                   <button
                     type="button"
@@ -11289,6 +11538,8 @@ export default function CreditFactoryConsole({
                       ? "Primero verifica el enrolamiento del iPhone para habilitar el cierre."
                       : "Primero valida la entregabilidad del dispositivo para habilitar el cierre."}
                   </span>
+                )}
+                  </>
                 )}
               </div>
             )}
