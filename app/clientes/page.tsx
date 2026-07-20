@@ -332,17 +332,26 @@ function compactDateLabel(value?: string | null) {
 }
 
 function AppLogo({ large = false }: { large?: boolean }) {
+  if (!large) {
+    return (
+      <div
+        aria-label="FINSER PAY"
+        className="flex items-baseline text-[23px] font-black leading-none text-[#111317]"
+      >
+        <span>FINSER</span>
+        <span className="ml-1.5 text-[#747983]">PAY</span>
+      </div>
+    );
+  }
+
   return (
-    <div className={large ? "flex justify-center" : "flex items-center"}>
+    <div className="flex justify-center">
       <Image
         src="/branding/finserpay-logo.jpg"
         alt="FINSER PAY"
-        width={large ? 180 : 158}
-        height={large ? 64 : 42}
-        className={[
-          "object-contain",
-          large ? "h-auto w-44" : "h-10 w-auto",
-        ].join(" ")}
+        width={180}
+        height={64}
+        className="h-auto w-44 object-contain"
       />
     </div>
   );
@@ -1065,9 +1074,9 @@ export default function ClienteConsultaPage() {
   return (
     <main
       id="cliente-dashboard"
-      className="min-h-screen bg-[#f3f4f1] text-[#111317]"
+      className="min-h-screen bg-[#f7f7f6] text-[#111317]"
     >
-      <div className="mx-auto min-h-screen w-full max-w-[470px] px-5 pb-[calc(116px+env(safe-area-inset-bottom))] pt-[calc(22px+env(safe-area-inset-top))]">
+      <div className="mx-auto min-h-screen w-full max-w-[430px] px-5 pb-[calc(126px+env(safe-area-inset-bottom))] pt-[calc(18px+env(safe-area-inset-top))]">
         <header className="flex items-center justify-between gap-4">
           <AppLogo />
           <div className="flex items-center gap-3">
@@ -1076,20 +1085,20 @@ export default function ClienteConsultaPage() {
               aria-label="Notificaciones"
               className="grid h-11 w-11 place-items-center rounded-full text-[#111317] active:bg-black/5"
             >
-              <Bell className="h-7 w-7 stroke-[2.2]" />
+              <Bell className="h-7 w-7 stroke-[2.1]" />
             </button>
             <button
               type="button"
               aria-label="Cambiar cliente"
               onClick={forgetDocument}
-              className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#111418] text-base font-black tracking-wide text-white shadow-[0_12px_24px_rgba(17,20,24,0.18)]"
+              className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#111418] text-base font-bold text-white shadow-[0_10px_22px_rgba(17,20,24,0.18)]"
             >
               {profileInitials}
             </button>
           </div>
         </header>
 
-        <div className="pt-8">
+        <div className="pt-6">
           {notice ? (
             <div
               className={[
@@ -1147,13 +1156,13 @@ export default function ClienteConsultaPage() {
 
           {activeCredit ? (
             <>
-              <section className="mb-7">
-                <h1 className="text-[32px] font-semibold leading-tight tracking-[-0.01em] text-[#111317]">
+              <section className="mb-6">
+                <h1 className="text-[23px] font-medium leading-tight text-[#111317]">
                   Hola, {firstName}
                 </h1>
                 <span
                   className={[
-                    "mt-4 inline-flex min-h-11 items-center gap-3 rounded-xl border bg-white px-4 text-[20px] font-medium shadow-[0_8px_18px_rgba(17,20,24,0.04)]",
+                    "mt-3 inline-flex min-h-10 items-center gap-3 rounded-xl border bg-white px-3.5 text-[15px] font-medium shadow-[0_8px_18px_rgba(17,20,24,0.04)]",
                     activeCredit.estadoPago === "MORA"
                       ? "border-red-100 text-red-700"
                       : "border-[#dfe7d8] text-[#1f242b]",
@@ -1161,7 +1170,7 @@ export default function ClienteConsultaPage() {
                 >
                   <span
                     className={[
-                      "h-3 w-3 rounded-full shadow-[0_0_0_6px_rgba(166,231,96,0.14)]",
+                      "h-3 w-3 rounded-full shadow-[0_0_0_5px_rgba(166,231,96,0.14)]",
                       activeCredit.estadoPago === "MORA"
                         ? "bg-red-500"
                         : "bg-[#62b52b]",
@@ -1171,77 +1180,65 @@ export default function ClienteConsultaPage() {
                 </span>
               </section>
 
-              <section className="rounded-[22px] bg-[#121519] p-6 text-white shadow-[0_20px_44px_rgba(17,20,24,0.22)]">
+              <section className="rounded-[20px] bg-[#121519] p-5 text-white shadow-[0_20px_44px_rgba(17,20,24,0.22)]">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-3">
-                      <p className="text-[25px] font-medium text-white/72">
+                      <p className="text-[18px] font-medium text-white/72">
                         Proxima cuota
                       </p>
-                      <span className="rounded-lg border border-white/16 bg-white/[0.03] px-2.5 py-1 text-base font-semibold text-white">
+                      <span className="rounded-lg border border-white/16 bg-white/[0.03] px-2.5 py-1 text-[13px] font-semibold text-white">
                         {nextInstallment ? nextInstallment.numero : paidCount} de{" "}
                         {totalCount || 0}
                       </span>
                     </div>
-                    <p className="mt-7 text-[52px] font-black leading-none tracking-[-0.04em] text-white">
+                    <p className="mt-4 font-serif text-[46px] font-black leading-none text-white">
                       {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
                     </p>
                   </div>
-                  <MoreHorizontal className="mt-2 h-8 w-8 shrink-0 text-white/82" />
+                  <MoreHorizontal className="mt-1 h-6 w-6 shrink-0 text-white/82" />
                 </div>
 
-                <div className="mt-8 grid grid-cols-[1fr_auto_1fr] items-center gap-5">
+                <div className="mt-6 grid grid-cols-[1fr_auto_1fr] items-center gap-4">
                   <div>
-                    <p className="text-[21px] font-medium text-white/72">Vence</p>
-                    <p className="mt-2 text-[26px] font-black tracking-wide">
+                    <p className="text-[15px] font-medium text-white/72">Vence</p>
+                    <p className="mt-1.5 text-[21px] font-black">
                       {nextDueLabel}
                     </p>
                   </div>
-                  <span className="h-14 w-px bg-white/18" />
+                  <span className="h-12 w-px bg-white/18" />
                   <div>
-                    <p className="text-[21px] font-medium text-white/72">
+                    <p className="text-[15px] font-medium text-white/72">
                       Saldo pendiente
                     </p>
-                    <p className="mt-2 text-[26px] font-black tracking-[-0.02em]">
+                    <p className="mt-1.5 text-[21px] font-black">
                       {money(activeCredit.saldoPendiente)}
                     </p>
                   </div>
                 </div>
 
-                <div className="mt-8 grid grid-cols-[1fr_76px] items-center gap-4">
-                  <div className="grid gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openWompiConfirm(activeCredit)}
-                      disabled={!payable.length || payingCreditId === activeCredit.id}
-                      className="inline-flex min-h-[58px] items-center justify-center gap-3 rounded-2xl bg-[#b8f25d] px-5 text-[20px] font-semibold text-[#111317] shadow-[0_14px_28px_rgba(184,242,93,0.24)] disabled:bg-white/20 disabled:text-white/45"
-                    >
-                      <CreditCard className="h-7 w-7" />
-                      {payingCreditId === activeCredit.id ? "Abriendo" : "Pagar ahora"}
-                    </button>
-                    {canPayToday ? (
-                      <button
-                        type="button"
-                        onClick={() => openWompiConfirm(activeCredit, "PAYOFF")}
-                        disabled={payingCreditId === activeCredit.id}
-                        className="min-h-11 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-sm font-black text-white disabled:text-white/45"
-                      >
-                        Pagar hoy
-                      </button>
-                    ) : null}
-                  </div>
+                <div className="mt-6 grid grid-cols-[1fr_58px] items-center gap-4">
+                  <button
+                    type="button"
+                    onClick={() => openWompiConfirm(activeCredit)}
+                    disabled={!payable.length || payingCreditId === activeCredit.id}
+                    className="inline-flex min-h-[52px] items-center justify-center gap-3 rounded-2xl bg-[#b8f25d] px-5 text-[17px] font-semibold text-[#111317] shadow-[0_14px_28px_rgba(184,242,93,0.24)] disabled:bg-white/20 disabled:text-white/45"
+                  >
+                    <CreditCard className="h-6 w-6" />
+                    {payingCreditId === activeCredit.id ? "Abriendo" : "Pagar ahora"}
+                  </button>
                   <button
                     type="button"
                     aria-label="Pagar ahora"
                     onClick={() => openWompiConfirm(activeCredit)}
                     disabled={!payable.length || payingCreditId === activeCredit.id}
-                    className="grid h-[76px] w-[76px] place-items-center rounded-full border border-white/16 bg-white/[0.02] text-white active:bg-white/10 disabled:text-white/30"
+                    className="grid h-[58px] w-[58px] place-items-center rounded-full border border-white/16 bg-white/[0.02] text-white active:bg-white/10 disabled:text-white/30"
                   >
-                    <ArrowRight className="h-9 w-9" />
+                    <ArrowRight className="h-7 w-7" />
                   </button>
                 </div>
 
-                <div className="mt-8">
+                <div className="mt-6">
                   <div
                     className="grid gap-1.5"
                     style={{ gridTemplateColumns: `repeat(${progressSegments}, minmax(0, 1fr))` }}
@@ -1250,13 +1247,13 @@ export default function ClienteConsultaPage() {
                       <span
                         key={index}
                         className={[
-                          "h-2 rounded-full",
+                          "h-1.5 rounded-full",
                           index < completedSegments ? "bg-[#b8f25d]" : "bg-white/14",
                         ].join(" ")}
                       />
                     ))}
                   </div>
-                  <div className="mt-5 flex justify-between gap-4 text-[17px] font-medium text-white/72">
+                  <div className="mt-3 flex justify-between gap-4 text-[14px] font-medium text-white/72">
                     <span>
                       {paidCount} de {totalCount} cuotas pagadas
                     </span>
@@ -1266,7 +1263,7 @@ export default function ClienteConsultaPage() {
               </section>
 
               {items.length > 1 ? (
-                <section className="mt-5 rounded-[18px] border border-[#dfe8dc] bg-white p-4 shadow-[0_12px_28px_rgba(17,20,24,0.05)]">
+                <section className="mt-5 rounded-[18px] border border-[#dfe8dc] bg-white p-4 shadow-[0_10px_24px_rgba(17,20,24,0.05)]">
                   <SectionTitle
                     title="Creditos vigentes"
                     aside={
@@ -1275,7 +1272,7 @@ export default function ClienteConsultaPage() {
                       </span>
                     }
                   />
-                  <div className="mt-3 grid gap-2">
+                  <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
                     {items.map((credit, index) => {
                       const isActive = credit.id === activeCredit.id;
                       const creditPaid = getPaidInstallments(credit).length;
@@ -1288,7 +1285,7 @@ export default function ClienteConsultaPage() {
                           type="button"
                           onClick={() => selectCredit(credit.id)}
                           className={[
-                            "grid min-h-20 w-full grid-cols-[1fr_auto] gap-3 rounded-lg border px-3 py-3 text-left transition active:scale-[0.99]",
+                            "grid min-h-20 min-w-[270px] grid-cols-[1fr_auto] gap-3 rounded-xl border px-4 py-3 text-left transition active:scale-[0.99]",
                             isActive
                               ? "border-[#a7e66f] bg-[#f5ffef] shadow-[0_10px_22px_rgba(111,194,70,0.14)]"
                               : "border-[#edf0f4] bg-[#fbfcfd]",
@@ -1333,109 +1330,109 @@ export default function ClienteConsultaPage() {
               <button
                 type="button"
                 onClick={() => openPanel("pending")}
-                className="mt-6 grid min-h-[82px] w-full grid-cols-[68px_1fr_auto] items-center gap-4 rounded-2xl border border-[#e4e6e8] bg-white px-4 text-left shadow-[0_12px_30px_rgba(17,20,24,0.07)] active:scale-[0.99]"
+                className="mt-5 grid min-h-[76px] w-full grid-cols-[52px_minmax(0,1fr)_auto] items-center gap-3 rounded-[18px] border border-[#e4e6e8] bg-white px-3.5 text-left shadow-[0_12px_30px_rgba(17,20,24,0.07)] active:scale-[0.99]"
               >
-                <span className="grid h-14 w-14 place-items-center rounded-full bg-[#f0f0ed] text-[#52575f]">
-                  <Smartphone className="h-8 w-8 stroke-[1.8]" />
+                <span className="grid h-11 w-11 place-items-center rounded-full bg-[#f0f0ed] text-[#52575f]">
+                  <Smartphone className="h-6 w-6 stroke-[1.8]" />
                 </span>
                 <span className="min-w-0">
-                  <span className="block truncate text-[23px] font-black leading-tight tracking-[-0.02em] text-[#111317]">
+                  <span className="block truncate text-[17px] font-black leading-tight text-[#111317]">
                     {creditTitle(activeCredit)}
                   </span>
-                  <span className="mt-1 block truncate text-[17px] font-medium text-[#747985]">
+                  <span className="mt-1 block truncate text-[14px] font-medium text-[#747985]">
                     {maskedImeiLabel(deviceImei)}
                   </span>
                 </span>
-                <span className="inline-flex items-center gap-2 text-[17px] font-black text-[#111317]">
+                <span className="inline-flex items-center gap-1 text-[14px] font-bold text-[#111317]">
                   Ver credito
-                  <ChevronRight className="h-7 w-7 text-[#7b8088]" />
+                  <ChevronRight className="h-5 w-5 text-[#7b8088]" />
                 </span>
               </button>
 
-              <section className="mt-9">
-                <h2 className="text-[27px] font-semibold tracking-[-0.01em] text-[#111317]">
+              <section className="mt-8">
+                <h2 className="text-[20px] font-semibold text-[#111317]">
                   Tu proximo movimiento
                 </h2>
-                <div className="mt-5 overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white shadow-[0_12px_30px_rgba(17,20,24,0.06)]">
+                <div className="mt-4 overflow-hidden rounded-[18px] border border-[#e4e6e8] bg-white shadow-[0_12px_30px_rgba(17,20,24,0.06)]">
                   <button
                     type="button"
                     onClick={() => openPanel("pending")}
-                    className="grid min-h-[96px] w-full grid-cols-[76px_1fr_auto] items-center gap-4 px-4 text-left active:bg-[#f7f8f6]"
+                    className="grid min-h-[82px] w-full grid-cols-[50px_minmax(0,1fr)_auto] items-center gap-3 px-3.5 text-left active:bg-[#f7f8f6]"
                   >
-                    <span className="grid h-14 w-14 place-items-center rounded-full bg-[#edf8de] text-[#477d26]">
-                      <CalendarDays className="h-7 w-7" />
+                    <span className="grid h-10 w-10 place-items-center rounded-full bg-[#edf8de] text-[#477d26]">
+                      <CalendarDays className="h-6 w-6" />
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-[22px] font-black text-[#111317]">
+                      <span className="block truncate text-[16px] font-black text-[#111317]">
                         {nextDueLabel} - Cuota {nextInstallment?.numero || paidCount}
                       </span>
-                      <span className="mt-1 block text-[18px] font-medium text-[#7a808a]">
+                      <span className="mt-1 block text-[14px] font-medium text-[#7a808a]">
                         {nextInstallment?.estaEnMora ? "En mora" : "Programada"}
                       </span>
                     </span>
-                    <span className="inline-flex items-center gap-3 text-[22px] font-semibold text-[#111317]">
+                    <span className="inline-flex items-center gap-1 text-[16px] font-semibold text-[#111317]">
                       {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
-                      <ChevronRight className="h-7 w-7 text-[#7b8088]" />
+                      <ChevronRight className="h-5 w-5 text-[#7b8088]" />
                     </span>
                   </button>
                   <button
                     type="button"
                     onClick={() => openPanel("pending")}
-                    className="grid min-h-[68px] w-full grid-cols-[76px_1fr_auto] items-center gap-4 border-t border-[#eceef0] px-4 text-left active:bg-[#f7f8f6]"
+                    className="grid min-h-[56px] w-full grid-cols-[50px_1fr_auto] items-center gap-3 border-t border-[#eceef0] px-3.5 text-left active:bg-[#f7f8f6]"
                   >
                     <span />
-                    <span className="text-[20px] font-semibold text-[#4d535d]">
+                    <span className="text-[15px] font-semibold text-[#4d535d]">
                       Ver calendario
                     </span>
-                    <ChevronRight className="h-7 w-7 text-[#7b8088]" />
+                    <ChevronRight className="h-5 w-5 text-[#7b8088]" />
                   </button>
                 </div>
               </section>
 
-              <section className="mt-9">
-                <h2 className="text-[27px] font-semibold tracking-[-0.01em] text-[#111317]">
+              <section className="mt-8">
+                <h2 className="text-[20px] font-semibold text-[#111317]">
                   Ultimo pago
                 </h2>
                 <button
                   type="button"
                   onClick={() => openPanel("history")}
-                  className="mt-5 grid min-h-[96px] w-full grid-cols-[76px_1fr_auto] items-center gap-4 rounded-2xl border border-[#e4e6e8] bg-white px-4 text-left shadow-[0_12px_30px_rgba(17,20,24,0.06)] active:bg-[#f7f8f6]"
+                  className="mt-4 grid min-h-[82px] w-full grid-cols-[50px_minmax(0,1fr)_auto] items-center gap-3 rounded-[18px] border border-[#e4e6e8] bg-white px-3.5 text-left shadow-[0_12px_30px_rgba(17,20,24,0.06)] active:bg-[#f7f8f6]"
                 >
-                  <span className="grid h-14 w-14 place-items-center rounded-full bg-[#eef8df] text-[#3e8d27]">
-                    <Check className="h-8 w-8 stroke-[2.4]" />
+                  <span className="grid h-10 w-10 place-items-center rounded-full bg-[#eef8df] text-[#3e8d27]">
+                    <Check className="h-6 w-6 stroke-[2.4]" />
                   </span>
                   <span className="min-w-0">
-                    <span className="block truncate text-[22px] font-black text-[#111317]">
+                    <span className="block truncate text-[16px] font-black text-[#111317]">
                       {lastPaymentDateLabel}
                       {lastHistoryPayment ? ` - ${lastHistoryPayment.metodoPago}` : ""}
                     </span>
-                    <span className="mt-1 block text-[18px] font-medium text-[#3e8d27]">
+                    <span className="mt-1 block text-[14px] font-medium text-[#3e8d27]">
                       {lastHistoryPayment ? "Pago confirmado" : "Sin pagos registrados"}
                     </span>
                   </span>
-                  <span className="inline-flex items-center gap-3 text-[22px] font-semibold text-[#111317]">
+                  <span className="inline-flex items-center gap-1 text-[16px] font-semibold text-[#111317]">
                     {lastHistoryPayment ? money(lastHistoryPayment.valor) : money(0)}
-                    <ChevronRight className="h-7 w-7 text-[#7b8088]" />
+                    <ChevronRight className="h-5 w-5 text-[#7b8088]" />
                   </span>
                 </button>
               </section>
 
-              <section className="mt-9 grid grid-cols-3 items-center gap-2">
+              <section className="mt-8 grid grid-cols-3 items-center gap-2">
                 <button
                   type="button"
                   onClick={() => openPanel("payments")}
-                  className="grid min-h-[84px] place-items-center gap-2 text-[#111317]"
+                  className="grid min-h-[70px] place-items-center gap-1.5 text-[#111317]"
                 >
-                  <WalletCards className="h-9 w-9 stroke-[2.1]" />
-                  <span className="text-[18px] font-medium">Medios</span>
+                  <WalletCards className="h-7 w-7 stroke-[2.1]" />
+                  <span className="text-[14px] font-medium">Medios</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => openPanel("history")}
-                  className="grid min-h-[84px] place-items-center gap-2 border-x border-[#dde0e4] text-[#111317]"
+                  className="grid min-h-[70px] place-items-center gap-1.5 border-x border-[#dde0e4] text-[#111317]"
                 >
-                  <HistoryIconLucide className="h-9 w-9 stroke-[2.1]" />
-                  <span className="text-[18px] font-medium">Historial</span>
+                  <HistoryIconLucide className="h-7 w-7 stroke-[2.1]" />
+                  <span className="text-[14px] font-medium">Historial</span>
                 </button>
                 <button
                   type="button"
@@ -1445,17 +1442,17 @@ export default function ClienteConsultaPage() {
                       text: "Comunicate con FINSER PAY por tus canales registrados.",
                     })
                   }
-                  className="grid min-h-[84px] place-items-center gap-2 text-[#111317]"
+                  className="grid min-h-[70px] place-items-center gap-1.5 text-[#111317]"
                 >
-                  <Headphones className="h-9 w-9 stroke-[2.1]" />
-                  <span className="text-[18px] font-medium">Soporte</span>
+                  <Headphones className="h-7 w-7 stroke-[2.1]" />
+                  <span className="text-[14px] font-medium">Soporte</span>
                 </button>
               </section>
 
               {activePanel ? (
                 <section
                   id="explora-panel"
-                  className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm"
+                  className="mt-5 rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm"
                 >
                   {activePanel === "pending" ? (
                     <>
@@ -1895,16 +1892,16 @@ export default function ClienteConsultaPage() {
           ) : null}
         </div>
 
-        <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-[470px] -translate-x-1/2 px-5 pb-[calc(10px+env(safe-area-inset-bottom))]">
-          <div className="grid min-h-[86px] grid-cols-4 items-end rounded-[20px] border border-[#e7e9eb] bg-white px-3 pb-3 pt-4 shadow-[0_-18px_34px_rgba(17,20,24,0.12)]">
+        <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-[430px] -translate-x-1/2 px-5 pb-[calc(8px+env(safe-area-inset-bottom))]">
+          <div className="grid min-h-[86px] grid-cols-4 items-end rounded-[20px] border border-[#e7e9eb] bg-white px-2 pb-3 pt-3 shadow-[0_-14px_30px_rgba(17,20,24,0.11)]">
             <button
               type="button"
               onClick={returnHome}
               className="grid min-h-[58px] place-items-center gap-1 text-[#111317]"
             >
               <Home className="h-7 w-7 fill-[#111317] stroke-[2.1]" />
-              <span className="text-[15px] font-medium">Inicio</span>
-              <span className="h-1 w-9 rounded-full bg-[#b8f25d]" />
+              <span className="text-[13px] font-medium">Inicio</span>
+              <span className="h-1 w-8 rounded-full bg-[#b8f25d]" />
             </button>
 
             <button
@@ -1913,7 +1910,7 @@ export default function ClienteConsultaPage() {
               className="grid min-h-[58px] place-items-center gap-1 text-[#757b84] active:text-[#111317]"
             >
               <ReceiptText className="h-7 w-7 stroke-[2.1]" />
-              <span className="text-[15px] font-medium">Pagos</span>
+              <span className="text-[13px] font-medium">Pagos</span>
             </button>
 
             <button
@@ -1922,10 +1919,10 @@ export default function ClienteConsultaPage() {
               disabled={!activeCredit || !payable.length || payingCreditId === activeCredit.id}
               className="-mt-9 grid min-h-[78px] place-items-center gap-1 text-[#111317] disabled:text-[#8e949c]"
             >
-              <span className="grid h-[70px] w-[70px] place-items-center rounded-full bg-[#111418] text-white shadow-[0_16px_30px_rgba(17,20,24,0.28)]">
-                <CreditCard className="h-9 w-9 stroke-[2.1]" />
+              <span className="grid h-[66px] w-[66px] place-items-center rounded-full bg-[#111418] text-white shadow-[0_12px_26px_rgba(17,20,24,0.26)]">
+                <CreditCard className="h-8 w-8 stroke-[2.1]" />
               </span>
-              <span className="text-[16px] font-medium">Pagar</span>
+              <span className="text-[13px] font-medium">Pagar</span>
             </button>
 
             <button
@@ -1934,7 +1931,7 @@ export default function ClienteConsultaPage() {
               className="grid min-h-[58px] place-items-center gap-1 text-[#757b84] active:text-[#111317]"
             >
               <CircleUserRound className="h-7 w-7 stroke-[2.1]" />
-              <span className="text-[15px] font-medium">Perfil</span>
+              <span className="text-[13px] font-medium">Perfil</span>
             </button>
           </div>
         </nav>
