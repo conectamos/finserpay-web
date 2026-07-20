@@ -24,6 +24,7 @@
     "@prisma/client": "^7.7.0",
     "@types/pdfkit": "^0.17.6",
     "heic2any": "^0.0.4",
+    "lucide-react": "^0.468.0",
     "next": "16.2.3",
     "pdfkit": "^0.18.0",
     "pg": "^8.20.0",
