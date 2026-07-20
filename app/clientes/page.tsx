@@ -1047,15 +1047,22 @@ export default function ClienteConsultaPage() {
                   />
                   <div className="mx-6 h-24 w-px shrink-0 bg-[#70757d]" />
                   <div className="min-w-0 rotate-[0.5deg]">
-                    <p className="text-[14px] font-semibold text-[#aeb2b9]">Proxima cuota</p>
-                    <p className="mt-2 whitespace-nowrap text-[29px] font-semibold leading-none text-white">
-                      $286.033
-                    </p>
+                    <div className="flex items-center gap-3">
+                      <span className="grid h-12 w-10 shrink-0 place-items-center rounded-lg border border-[#747a83] bg-[#20242a] text-white">
+                        <Smartphone className="h-7 w-7" strokeWidth={1.7} />
+                      </span>
+                      <div>
+                        <p className="text-[13px] font-semibold text-[#aeb2b9]">Portal movil</p>
+                        <p className="mt-1 text-[19px] font-semibold leading-tight text-white">
+                          Tu credito
+                        </p>
+                      </div>
+                    </div>
                     <div className="mt-4 flex items-center gap-2 text-[14px] font-semibold text-[#a9df35]">
                       <span className="grid h-6 w-6 place-items-center rounded-full border border-[#a9df35]">
                         <Check className="h-4 w-4" strokeWidth={2.2} />
                       </span>
-                      Al dia
+                      Siempre contigo
                     </div>
                   </div>
                 </div>
