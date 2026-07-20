@@ -60,7 +60,7 @@ function SidebarLink({
       className={[
         "flex min-h-11 shrink-0 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition",
         active
-          ? "relative bg-white/10 text-white before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-[#b7e63d]"
+          ? "relative bg-white/10 text-[#dafa70] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-[#b7e63d]"
           : "text-slate-300 hover:bg-white/8 hover:text-white",
       ].join(" ")}
     >

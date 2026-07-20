@@ -46,7 +46,7 @@ function SidebarNavigation({ items }: { items: NavItem[] }) {
             className={[
               "flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition",
               active
-                ? "relative bg-white/10 text-white before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-[#b7e63d]"
+                ? "bg-[#dafa70] text-[#1f2a12] shadow-[0_8px_22px_rgba(183,230,61,0.14)]"
                 : "text-slate-300 hover:bg-white/8 hover:text-white",
             ].join(" ")}
           >

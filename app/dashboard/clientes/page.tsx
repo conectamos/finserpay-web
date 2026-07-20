@@ -7,6 +7,7 @@ import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import CreditFactoryConsole from "@/app/dashboard/creditos/credit-factory-console";
 import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
+import AdminWorkspaceTopbar from "@/app/dashboard/_components/admin-workspace-topbar";
 import { PageHeader } from "@/app/_components/finser-ui";
 
 export const metadata = {
@@ -66,7 +67,7 @@ export default async function ClientesPage(props: {
   const adminCentral = isFinserPayCentralAlly(session.aliadoAccesoCodigo);
 
   return (
-    <div className="fp-client-page min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
+    <div className="fp-client-page min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[228px_minmax(0,1fr)]">
       <AdminSidebar
         activeHref="/dashboard/clientes"
         adminCentral={adminCentral}
@@ -74,12 +75,18 @@ export default async function ClientesPage(props: {
         rolUsuario={session.rolNombre}
       />
 
-      <main className="fp-client-page-content min-w-0 px-4 py-5 sm:px-6 lg:px-7 xl:px-8">
+      <div className="min-w-0">
+        <AdminWorkspaceTopbar
+          parent="Clientes"
+          current="Expediente"
+          userName={session.nombre}
+          userRole={session.rolNombre}
+        />
+
+      <main className="fp-client-page-content min-w-0 px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
         <PageHeader
           className="fp-client-page-header mb-5"
-          eyebrow="Gestion comercial"
           title="Clientes y expedientes"
-          description={`${session.sedeNombre} | ${adminCentral ? "Cobertura global" : "Cobertura del aliado"}`}
           actions={
           <>
             <Link
@@ -91,7 +98,7 @@ export default async function ClientesPage(props: {
             </Link>
             <Link
               href="/dashboard/creditos"
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#151a21] px-4 text-sm font-bold text-white transition hover:bg-[#272e38]"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#347b30] px-4 text-sm font-bold text-white transition hover:bg-[#286326]"
             >
               <Plus className="h-4 w-4" strokeWidth={2.2} />
               Nuevo credito
@@ -102,6 +109,7 @@ export default async function ClientesPage(props: {
 
         {lookupConsole}
       </main>
+      </div>
     </div>
   );
 }
