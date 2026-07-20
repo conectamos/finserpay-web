@@ -21,7 +21,6 @@ import {
   FileText,
   History,
   IdCard,
-  Landmark,
   LoaderCircle,
   LockKeyhole,
   MoreHorizontal,
@@ -38,7 +37,6 @@ import {
   Smartphone,
   UserRound,
   UserSearch,
-  WalletCards,
   XCircle,
 } from "lucide-react";
 import {
@@ -14037,26 +14035,17 @@ export default function CreditFactoryConsole({
                       <label className="mb-2 block text-sm font-semibold text-slate-700">
                         Metodo de pago
                       </label>
-                      <div className="fp-payment-methods grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {[
-                          ["EFECTIVO", "Efectivo", Banknote],
-                          ["TRANSFERENCIA", "Transferencia", Landmark],
-                          ["NEQUI", "Nequi", Smartphone],
-                          ["DAVIPLATA", "Daviplata", Smartphone],
-                          ["OTRO", "Otro", WalletCards],
-                        ].map(([value, label, Icon]) => (
-                          <button
-                            key={String(value)}
-                            type="button"
-                            onClick={() => setPaymentMethod(String(value))}
-                            disabled={paymentBlockedByAnnulment}
-                            aria-pressed={paymentMethod === value}
-                            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-bold transition disabled:opacity-50"
-                          >
-                            <Icon className="h-4 w-4" strokeWidth={1.8} />
-                            {String(label)}
-                          </button>
-                        ))}
+                      <div className="fp-payment-methods grid grid-cols-1 gap-2 sm:max-w-[220px]">
+                        <button
+                          type="button"
+                          onClick={() => setPaymentMethod("EFECTIVO")}
+                          disabled={paymentBlockedByAnnulment}
+                          aria-pressed={paymentMethod === "EFECTIVO"}
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-bold transition disabled:opacity-50"
+                        >
+                          <Banknote className="h-4 w-4" strokeWidth={1.8} />
+                          Efectivo
+                        </button>
                       </div>
                     </div>
                   </div>
