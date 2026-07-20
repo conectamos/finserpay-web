@@ -13,7 +13,6 @@ import {
   Equal,
   Files,
   Flag,
-  Landmark,
   MapPin,
   Plus,
   RadioTower,
@@ -496,7 +495,6 @@ export default function AdminCentralDashboard({
                     icon={TriangleAlert}
                     label="Excepciones por mora"
                   />
-                  <ActionLink href="/dashboard/financiero" icon={Landmark} label="Financiero" />
                 </>
               ) : (
                 <ActionLink href="/dashboard/reportes" icon={BarChart3} label="Ver reportes" />

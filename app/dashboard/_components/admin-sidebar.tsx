@@ -8,7 +8,6 @@ import {
   FileText,
   Files,
   Handshake,
-  Landmark,
   LayoutDashboard,
   MapPin,
   Menu,
@@ -19,7 +18,6 @@ import {
   TriangleAlert,
   UserRound,
   Users,
-  WalletCards,
 } from "lucide-react";
 import FinserBrand from "@/app/_components/finser-brand";
 import LogoutButton from "./logout-button";
@@ -136,21 +134,6 @@ export default function AdminSidebar({
                 href: "/dashboard/excepciones-mora",
                 icon: TriangleAlert,
                 label: "Excepciones por mora",
-              },
-            ]
-          : []),
-      ],
-    },
-    {
-      label: "Control",
-      items: [
-        ...(adminCentral
-          ? [
-              { href: "/dashboard/financiero", icon: Landmark, label: "Financiero" },
-              {
-                href: "/dashboard/deuda-sedes",
-                icon: WalletCards,
-                label: "Deuda entre sedes",
               },
             ]
           : []),
