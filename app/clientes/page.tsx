@@ -2,6 +2,22 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
+import {
+  ArrowRight,
+  Bell,
+  CalendarDays,
+  Check,
+  ChevronRight,
+  CircleUserRound,
+  CreditCard,
+  Headphones,
+  Home,
+  MoreHorizontal,
+  ReceiptText,
+  Smartphone,
+  WalletCards,
+  History as HistoryIconLucide,
+} from "lucide-react";
 
 type ClientInstallment = {
   numero: number;
@@ -280,32 +296,54 @@ async function requestJson<T>(url: string, init?: RequestInit) {
   return { ok: response.ok, data };
 }
 
+function clientInitials(name: string) {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const first = parts[0]?.[0] || "F";
+  const second = parts.length > 1 ? parts[1]?.[0] : parts[0]?.[1];
+  return `${first}${second || "P"}`.toUpperCase();
+}
+
+function maskedImeiLabel(value?: string | null) {
+  const normalized = String(value || "").replace(/\D/g, "");
+  if (!normalized) return "IMEI no registrado";
+  return `IMEI terminado en ${normalized.slice(-4)}`;
+}
+
+function creditStatusText(status: ClientCredit["estadoPago"]) {
+  if (status === "MORA") return "Credito en mora";
+  if (status === "PAGADO") return "Credito pagado";
+  return "Credito al dia";
+}
+
+function compactDateLabel(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("es-CO", {
+    day: "2-digit",
+    month: "short",
+  })
+    .format(date)
+    .replace(".", "")
+    .toUpperCase();
+}
+
 function AppLogo({ large = false }: { large?: boolean }) {
   return (
-    <div className={large ? "text-center" : "flex items-center gap-3"}>
+    <div className={large ? "flex justify-center" : "flex items-center"}>
       <Image
-        src="/icons/finserpay-client-192.png"
+        src="/branding/finserpay-logo.jpg"
         alt="FINSER PAY"
-        width={large ? 80 : 40}
-        height={large ? 80 : 40}
+        width={large ? 180 : 158}
+        height={large ? 64 : 42}
         className={[
-          "object-cover",
-          large ? "mx-auto h-20 w-20 rounded-lg" : "h-10 w-10 rounded-lg",
+          "object-contain",
+          large ? "h-auto w-44" : "h-10 w-auto",
         ].join(" ")}
       />
-      <div className={large ? "mt-4" : "min-w-0"}>
-        <p
-          className={[
-            "font-black text-[#111317]",
-            large ? "text-3xl" : "truncate text-base",
-          ].join(" ")}
-        >
-          FINSER PAY
-        </p>
-        {!large ? (
-          <p className="truncate text-xs font-bold text-[#7a7f87]">Clientes</p>
-        ) : null}
-      </div>
     </div>
   );
 }
@@ -923,6 +961,21 @@ export default function ClienteConsultaPage() {
     confirmCredit?.clienteDocumento || activeDocumento || documento;
   const activePayoff = activeCredit?.liquidacionAnticipada || null;
   const canPayToday = Boolean(activePayoff?.disponible);
+  const profileInitials = activeCredit
+    ? clientInitials(activeCredit.clienteNombre)
+    : "FP";
+  const progressSegments = Math.max(1, Math.min(totalCount || 1, 8));
+  const completedSegments = Math.min(
+    progressSegments,
+    Math.round((progress / 100) * progressSegments)
+  );
+  const deviceImei = activeCredit?.imei || activeCredit?.deviceUid || null;
+  const nextDueLabel = nextInstallment
+    ? compactDateLabel(nextInstallment.fechaVencimiento)
+    : "-";
+  const lastPaymentDateLabel = lastHistoryPayment
+    ? compactDateLabel(lastHistoryPayment.fechaAbono)
+    : "Sin pagos";
 
   if (!items.length) {
     return (
@@ -1010,35 +1063,33 @@ export default function ClienteConsultaPage() {
   }
 
   return (
-    <main id="cliente-dashboard" className="min-h-screen bg-[#f5f6f8] text-[#252a35]">
-      <div className="mx-auto min-h-screen w-full max-w-[440px] pb-24">
-        <header className="sticky top-0 z-20 border-b border-[#e8eaf0] bg-[#f5f6f8]/95 px-5 py-4 backdrop-blur">
-          <div className="flex items-center justify-between gap-3">
+    <main
+      id="cliente-dashboard"
+      className="min-h-screen bg-[#f3f4f1] text-[#111317]"
+    >
+      <div className="mx-auto min-h-screen w-full max-w-[470px] px-5 pb-[calc(116px+env(safe-area-inset-bottom))] pt-[calc(22px+env(safe-area-inset-top))]">
+        <header className="flex items-center justify-between gap-4">
+          <AppLogo />
+          <div className="flex items-center gap-3">
             <button
               type="button"
-              aria-label="Volver al dashboard"
-              onClick={returnHome}
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[#dde1e8] bg-white text-[#171b22] shadow-sm active:bg-[#f3f4f6]"
+              aria-label="Notificaciones"
+              className="grid h-11 w-11 place-items-center rounded-full text-[#111317] active:bg-black/5"
             >
-              <HomeIcon />
+              <Bell className="h-7 w-7 stroke-[2.2]" />
             </button>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-black text-[#7d8490]">Hola, {firstName}</p>
-              <p className="truncate text-lg font-black text-[#171b22]">
-                Tu credito FINSER PAY
-              </p>
-            </div>
             <button
               type="button"
+              aria-label="Cambiar cliente"
               onClick={forgetDocument}
-              className="rounded-md border border-[#dde1e8] bg-white px-3 py-2 text-xs font-black text-[#414854] shadow-sm"
+              className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#111418] text-base font-black tracking-wide text-white shadow-[0_12px_24px_rgba(17,20,24,0.18)]"
             >
-              Cambiar
+              {profileInitials}
             </button>
           </div>
         </header>
 
-        <div className="space-y-4 px-5 py-4">
+        <div className="pt-8">
           {notice ? (
             <div
               className={[
@@ -1096,118 +1147,130 @@ export default function ClienteConsultaPage() {
 
           {activeCredit ? (
             <>
-              <section className="rounded-lg bg-[#111317] p-5 text-white shadow-[0_18px_36px_rgba(17,19,23,0.18)]">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-white/60">Proxima cuota</p>
-                    <p className="mt-2 text-4xl font-black leading-none">
-                      {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
-                    </p>
-                    <p className="mt-3 text-sm font-bold text-white/68">
-                      Cuota {nextInstallment ? nextInstallment.numero : paidCount} de{" "}
-                      {totalCount}
-                    </p>
-                  </div>
+              <section className="mb-7">
+                <h1 className="text-[32px] font-semibold leading-tight tracking-[-0.01em] text-[#111317]">
+                  Hola, {firstName}
+                </h1>
+                <span
+                  className={[
+                    "mt-4 inline-flex min-h-11 items-center gap-3 rounded-xl border bg-white px-4 text-[20px] font-medium shadow-[0_8px_18px_rgba(17,20,24,0.04)]",
+                    activeCredit.estadoPago === "MORA"
+                      ? "border-red-100 text-red-700"
+                      : "border-[#dfe7d8] text-[#1f242b]",
+                  ].join(" ")}
+                >
                   <span
                     className={[
-                      "shrink-0 rounded-md px-3 py-2 text-xs font-black",
-                      stateClasses(activeCredit.estadoPago),
+                      "h-3 w-3 rounded-full shadow-[0_0_0_6px_rgba(166,231,96,0.14)]",
+                      activeCredit.estadoPago === "MORA"
+                        ? "bg-red-500"
+                        : "bg-[#62b52b]",
                     ].join(" ")}
-                  >
-                    {stateLabel(activeCredit.estadoPago)}
-                  </span>
-                </div>
+                  />
+                  {creditStatusText(activeCredit.estadoPago)}
+                </span>
+              </section>
 
-                <div className="mt-5 grid gap-4">
-                  <div>
-                    <p className="text-xs font-bold text-white/55">Fecha limite</p>
-                    <p className="mt-1 text-lg font-black">
-                      {nextInstallment ? dateLabel(nextInstallment.fechaVencimiento) : "-"}
+              <section className="rounded-[22px] bg-[#121519] p-6 text-white shadow-[0_20px_44px_rgba(17,20,24,0.22)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-3">
+                      <p className="text-[25px] font-medium text-white/72">
+                        Proxima cuota
+                      </p>
+                      <span className="rounded-lg border border-white/16 bg-white/[0.03] px-2.5 py-1 text-base font-semibold text-white">
+                        {nextInstallment ? nextInstallment.numero : paidCount} de{" "}
+                        {totalCount || 0}
+                      </span>
+                    </div>
+                    <p className="mt-7 text-[52px] font-black leading-none tracking-[-0.04em] text-white">
+                      {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
                     </p>
                   </div>
-                  <div
-                    className={[
-                      "grid gap-2",
-                      canPayToday ? "grid-cols-2" : "grid-cols-1",
-                    ].join(" ")}
-                  >
+                  <MoreHorizontal className="mt-2 h-8 w-8 shrink-0 text-white/82" />
+                </div>
+
+                <div className="mt-8 grid grid-cols-[1fr_auto_1fr] items-center gap-5">
+                  <div>
+                    <p className="text-[21px] font-medium text-white/72">Vence</p>
+                    <p className="mt-2 text-[26px] font-black tracking-wide">
+                      {nextDueLabel}
+                    </p>
+                  </div>
+                  <span className="h-14 w-px bg-white/18" />
+                  <div>
+                    <p className="text-[21px] font-medium text-white/72">
+                      Saldo pendiente
+                    </p>
+                    <p className="mt-2 text-[26px] font-black tracking-[-0.02em]">
+                      {money(activeCredit.saldoPendiente)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-8 grid grid-cols-[1fr_76px] items-center gap-4">
+                  <div className="grid gap-2">
                     <button
                       type="button"
                       onClick={() => openWompiConfirm(activeCredit)}
                       disabled={!payable.length || payingCreditId === activeCredit.id}
-                      className="rounded-lg bg-[#a7e66f] px-4 py-3 text-sm font-black text-[#102316] shadow-[0_12px_24px_rgba(111,194,70,0.25)] disabled:bg-white/20 disabled:text-white/45"
+                      className="inline-flex min-h-[58px] items-center justify-center gap-3 rounded-2xl bg-[#b8f25d] px-5 text-[20px] font-semibold text-[#111317] shadow-[0_14px_28px_rgba(184,242,93,0.24)] disabled:bg-white/20 disabled:text-white/45"
                     >
-                      {payingCreditId === activeCredit.id ? "Abriendo" : "Pagar cuota"}
+                      <CreditCard className="h-7 w-7" />
+                      {payingCreditId === activeCredit.id ? "Abriendo" : "Pagar ahora"}
                     </button>
                     {canPayToday ? (
                       <button
                         type="button"
                         onClick={() => openWompiConfirm(activeCredit, "PAYOFF")}
                         disabled={payingCreditId === activeCredit.id}
-                        className="rounded-lg border border-white/18 bg-white px-4 py-3 text-sm font-black text-[#111317] shadow-[0_12px_24px_rgba(255,255,255,0.08)] disabled:bg-white/20 disabled:text-white/45"
+                        className="min-h-11 rounded-xl border border-white/15 bg-white/[0.06] px-4 text-sm font-black text-white disabled:text-white/45"
                       >
                         Pagar hoy
                       </button>
                     ) : null}
                   </div>
+                  <button
+                    type="button"
+                    aria-label="Pagar ahora"
+                    onClick={() => openWompiConfirm(activeCredit)}
+                    disabled={!payable.length || payingCreditId === activeCredit.id}
+                    className="grid h-[76px] w-[76px] place-items-center rounded-full border border-white/16 bg-white/[0.02] text-white active:bg-white/10 disabled:text-white/30"
+                  >
+                    <ArrowRight className="h-9 w-9" />
+                  </button>
                 </div>
 
-                <div className="mt-5">
-                  <div className="h-2 overflow-hidden rounded-full bg-white/15">
-                    <div
-                      className="h-full rounded-full bg-[#a7e66f]"
-                      style={{ width: `${progress}%` }}
-                    />
+                <div className="mt-8">
+                  <div
+                    className="grid gap-1.5"
+                    style={{ gridTemplateColumns: `repeat(${progressSegments}, minmax(0, 1fr))` }}
+                  >
+                    {Array.from({ length: progressSegments }).map((_, index) => (
+                      <span
+                        key={index}
+                        className={[
+                          "h-2 rounded-full",
+                          index < completedSegments ? "bg-[#b8f25d]" : "bg-white/14",
+                        ].join(" ")}
+                      />
+                    ))}
                   </div>
-                  <div className="mt-2 flex justify-between text-xs font-bold text-white/55">
-                    <span>{paidCount} pagadas</span>
+                  <div className="mt-5 flex justify-between gap-4 text-[17px] font-medium text-white/72">
+                    <span>
+                      {paidCount} de {totalCount} cuotas pagadas
+                    </span>
                     <span>{progress}% completado</span>
                   </div>
                 </div>
               </section>
 
-              <section className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm">
-                <SectionTitle
-                  title="Avisos"
-                  aside={
-                    <span className="rounded-md bg-[#effbe6] px-2 py-1 text-xs font-black text-[#3f7d2d]">
-                      Hoy
-                    </span>
-                  }
-                />
-                <div className="mt-3 grid gap-2">
-                  {clientNotices.map((item) => (
-                    <div
-                      key={`${item.title}-${item.detail}`}
-                      className="grid grid-cols-[34px_1fr] items-center gap-3 rounded-lg bg-[#f9fafb] px-3 py-3"
-                    >
-                      <span
-                        className={[
-                          "grid h-8 w-8 place-items-center rounded-md text-sm font-black",
-                          noticeToneClasses(item.tone),
-                        ].join(" ")}
-                      >
-                        !
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-black text-[#252a35]">
-                          {item.title}
-                        </span>
-                        <span className="mt-1 block truncate text-xs font-bold text-[#7d8490]">
-                          {item.detail}
-                        </span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
               {items.length > 1 ? (
-                <section className="rounded-lg border border-[#dfece0] bg-white p-4 shadow-sm">
+                <section className="mt-5 rounded-[18px] border border-[#dfe8dc] bg-white p-4 shadow-[0_12px_28px_rgba(17,20,24,0.05)]">
                   <SectionTitle
                     title="Creditos vigentes"
                     aside={
-                      <span className="rounded-md bg-[#effbe6] px-2 py-1 text-xs font-black text-[#3f7d2d]">
+                      <span className="rounded-full bg-[#effbe6] px-3 py-1 text-xs font-black text-[#3f7d2d]">
                         {items.length} activos
                       </span>
                     }
@@ -1239,7 +1302,7 @@ export default function ClienteConsultaPage() {
                               {creditTitle(credit)}
                             </span>
                             <span className="mt-1 block truncate text-xs font-bold text-[#848c98]">
-                              IMEI {credit.imei || credit.deviceUid || "No registrado"}
+                              {maskedImeiLabel(credit.imei || credit.deviceUid)}
                             </span>
                           </span>
                           <span className="shrink-0 text-right">
@@ -1267,54 +1330,126 @@ export default function ClienteConsultaPage() {
                 </section>
               ) : null}
 
-              <section className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm">
-                <SectionTitle title="Tu equipo financiado" />
-                <div className="mt-3 grid gap-3">
-                  <div>
-                    <p className="text-xs font-black uppercase text-[#7d8490]">
-                      Referencia
-                    </p>
-                    <p className="mt-1 truncate text-base font-black text-[#171b22]">
-                      {creditTitle(activeCredit)}
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-[#f6f7f9] px-3 py-3">
-                    <p className="text-xs font-black uppercase text-[#7d8490]">IMEI</p>
-                    <p className="mt-1 break-all text-sm font-black text-[#252a35]">
-                      {activeCredit.imei || activeCredit.deviceUid || "No registrado"}
-                    </p>
-                  </div>
+              <button
+                type="button"
+                onClick={() => openPanel("pending")}
+                className="mt-6 grid min-h-[82px] w-full grid-cols-[68px_1fr_auto] items-center gap-4 rounded-2xl border border-[#e4e6e8] bg-white px-4 text-left shadow-[0_12px_30px_rgba(17,20,24,0.07)] active:scale-[0.99]"
+              >
+                <span className="grid h-14 w-14 place-items-center rounded-full bg-[#f0f0ed] text-[#52575f]">
+                  <Smartphone className="h-8 w-8 stroke-[1.8]" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-[23px] font-black leading-tight tracking-[-0.02em] text-[#111317]">
+                    {creditTitle(activeCredit)}
+                  </span>
+                  <span className="mt-1 block truncate text-[17px] font-medium text-[#747985]">
+                    {maskedImeiLabel(deviceImei)}
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-2 text-[17px] font-black text-[#111317]">
+                  Ver credito
+                  <ChevronRight className="h-7 w-7 text-[#7b8088]" />
+                </span>
+              </button>
+
+              <section className="mt-9">
+                <h2 className="text-[27px] font-semibold tracking-[-0.01em] text-[#111317]">
+                  Tu proximo movimiento
+                </h2>
+                <div className="mt-5 overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white shadow-[0_12px_30px_rgba(17,20,24,0.06)]">
+                  <button
+                    type="button"
+                    onClick={() => openPanel("pending")}
+                    className="grid min-h-[96px] w-full grid-cols-[76px_1fr_auto] items-center gap-4 px-4 text-left active:bg-[#f7f8f6]"
+                  >
+                    <span className="grid h-14 w-14 place-items-center rounded-full bg-[#edf8de] text-[#477d26]">
+                      <CalendarDays className="h-7 w-7" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-[22px] font-black text-[#111317]">
+                        {nextDueLabel} - Cuota {nextInstallment?.numero || paidCount}
+                      </span>
+                      <span className="mt-1 block text-[18px] font-medium text-[#7a808a]">
+                        {nextInstallment?.estaEnMora ? "En mora" : "Programada"}
+                      </span>
+                    </span>
+                    <span className="inline-flex items-center gap-3 text-[22px] font-semibold text-[#111317]">
+                      {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
+                      <ChevronRight className="h-7 w-7 text-[#7b8088]" />
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openPanel("pending")}
+                    className="grid min-h-[68px] w-full grid-cols-[76px_1fr_auto] items-center gap-4 border-t border-[#eceef0] px-4 text-left active:bg-[#f7f8f6]"
+                  >
+                    <span />
+                    <span className="text-[20px] font-semibold text-[#4d535d]">
+                      Ver calendario
+                    </span>
+                    <ChevronRight className="h-7 w-7 text-[#7b8088]" />
+                  </button>
                 </div>
               </section>
 
-              <section className="rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm">
-                <SectionTitle title="Explora" />
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  <QuickAction
-                    label="Pagar cuota"
-                    onClick={() => openWompiConfirm(activeCredit)}
-                  >
-                    <CardIcon />
-                  </QuickAction>
-                  <QuickAction
-                    label="Medios de pago"
-                    onClick={() => openPanel("payments")}
-                  >
-                    <PaymentsIcon />
-                  </QuickAction>
-                  <QuickAction
-                    label="Pagos pendientes"
-                    onClick={() => openPanel("pending")}
-                  >
-                    <CalendarIcon />
-                  </QuickAction>
-                  <QuickAction
-                    label="Historial"
-                    onClick={() => openPanel("history")}
-                  >
-                    <HistoryIcon />
-                  </QuickAction>
-                </div>
+              <section className="mt-9">
+                <h2 className="text-[27px] font-semibold tracking-[-0.01em] text-[#111317]">
+                  Ultimo pago
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => openPanel("history")}
+                  className="mt-5 grid min-h-[96px] w-full grid-cols-[76px_1fr_auto] items-center gap-4 rounded-2xl border border-[#e4e6e8] bg-white px-4 text-left shadow-[0_12px_30px_rgba(17,20,24,0.06)] active:bg-[#f7f8f6]"
+                >
+                  <span className="grid h-14 w-14 place-items-center rounded-full bg-[#eef8df] text-[#3e8d27]">
+                    <Check className="h-8 w-8 stroke-[2.4]" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-[22px] font-black text-[#111317]">
+                      {lastPaymentDateLabel}
+                      {lastHistoryPayment ? ` - ${lastHistoryPayment.metodoPago}` : ""}
+                    </span>
+                    <span className="mt-1 block text-[18px] font-medium text-[#3e8d27]">
+                      {lastHistoryPayment ? "Pago confirmado" : "Sin pagos registrados"}
+                    </span>
+                  </span>
+                  <span className="inline-flex items-center gap-3 text-[22px] font-semibold text-[#111317]">
+                    {lastHistoryPayment ? money(lastHistoryPayment.valor) : money(0)}
+                    <ChevronRight className="h-7 w-7 text-[#7b8088]" />
+                  </span>
+                </button>
+              </section>
+
+              <section className="mt-9 grid grid-cols-3 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openPanel("payments")}
+                  className="grid min-h-[84px] place-items-center gap-2 text-[#111317]"
+                >
+                  <WalletCards className="h-9 w-9 stroke-[2.1]" />
+                  <span className="text-[18px] font-medium">Medios</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openPanel("history")}
+                  className="grid min-h-[84px] place-items-center gap-2 border-x border-[#dde0e4] text-[#111317]"
+                >
+                  <HistoryIconLucide className="h-9 w-9 stroke-[2.1]" />
+                  <span className="text-[18px] font-medium">Historial</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setNotice({
+                      tone: "emerald",
+                      text: "Comunicate con FINSER PAY por tus canales registrados.",
+                    })
+                  }
+                  className="grid min-h-[84px] place-items-center gap-2 text-[#111317]"
+                >
+                  <Headphones className="h-9 w-9 stroke-[2.1]" />
+                  <span className="text-[18px] font-medium">Soporte</span>
+                </button>
               </section>
 
               {activePanel ? (
@@ -1760,27 +1895,48 @@ export default function ClienteConsultaPage() {
           ) : null}
         </div>
 
-        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[440px] -translate-x-1/2 grid-cols-3 border-t border-[#e8eaf0] bg-white px-4 py-3 shadow-[0_-10px_26px_rgba(17,19,23,0.08)]">
-          <button type="button" className="rounded-lg px-2 py-2 text-center text-[#111317]">
-            <span className="mx-auto block h-1 w-8 rounded-full bg-[#111317]" />
-            <span className="mt-2 block text-xs font-black">Inicio</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => openPanel("pending")}
-            className="rounded-lg px-2 py-2 text-center text-[#7d8490] active:bg-[#f5f6f8]"
-          >
-            <span className="block text-xs font-black">Pendientes</span>
-            <span className="mt-1 block text-xs font-bold">{paidCount}/{totalCount}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => activeCredit && openWompiConfirm(activeCredit)}
-            disabled={!activeCredit || !payable.length || payingCreditId === activeCredit.id}
-            className="rounded-lg bg-[#a7e66f] px-2 py-3 text-center text-xs font-black text-[#102316] shadow-[0_10px_20px_rgba(111,194,70,0.2)] disabled:bg-[#d9dde4] disabled:text-[#7e8490]"
-          >
-            Pagar
-          </button>
+        <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-[470px] -translate-x-1/2 px-5 pb-[calc(10px+env(safe-area-inset-bottom))]">
+          <div className="grid min-h-[86px] grid-cols-4 items-end rounded-[20px] border border-[#e7e9eb] bg-white px-3 pb-3 pt-4 shadow-[0_-18px_34px_rgba(17,20,24,0.12)]">
+            <button
+              type="button"
+              onClick={returnHome}
+              className="grid min-h-[58px] place-items-center gap-1 text-[#111317]"
+            >
+              <Home className="h-7 w-7 fill-[#111317] stroke-[2.1]" />
+              <span className="text-[15px] font-medium">Inicio</span>
+              <span className="h-1 w-9 rounded-full bg-[#b8f25d]" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => openPanel("pending")}
+              className="grid min-h-[58px] place-items-center gap-1 text-[#757b84] active:text-[#111317]"
+            >
+              <ReceiptText className="h-7 w-7 stroke-[2.1]" />
+              <span className="text-[15px] font-medium">Pagos</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => activeCredit && openWompiConfirm(activeCredit)}
+              disabled={!activeCredit || !payable.length || payingCreditId === activeCredit.id}
+              className="-mt-9 grid min-h-[78px] place-items-center gap-1 text-[#111317] disabled:text-[#8e949c]"
+            >
+              <span className="grid h-[70px] w-[70px] place-items-center rounded-full bg-[#111418] text-white shadow-[0_16px_30px_rgba(17,20,24,0.28)]">
+                <CreditCard className="h-9 w-9 stroke-[2.1]" />
+              </span>
+              <span className="text-[16px] font-medium">Pagar</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={forgetDocument}
+              className="grid min-h-[58px] place-items-center gap-1 text-[#757b84] active:text-[#111317]"
+            >
+              <CircleUserRound className="h-7 w-7 stroke-[2.1]" />
+              <span className="text-[15px] font-medium">Perfil</span>
+            </button>
+          </div>
         </nav>
 
         {confirmCredit ? (
