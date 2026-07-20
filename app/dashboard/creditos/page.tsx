@@ -2,7 +2,9 @@ import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { isAdminRole } from "@/lib/roles";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import CreditFactoryConsole from "./credit-factory-console";
+import CreditPlatformSelector from "./credit-platform-selector";
 
 export const metadata = {
   title: "Fabrica de creditos | FINSER PAY",
@@ -28,11 +30,10 @@ export default async function CreditosPage(props: {
     return <div className="p-10">No autenticado</div>;
   }
 
-  const sellerSession = isAdminRole(session.rolNombre)
-    ? null
-    : await getSellerSessionUser(session);
+  const admin = isAdminRole(session.rolNombre);
+  const sellerSession = admin ? null : await getSellerSessionUser(session);
 
-  if (!isAdminRole(session.rolNombre) && !sellerSession) {
+  if (!admin && !sellerSession) {
     redirect("/dashboard");
   }
 
@@ -57,7 +58,7 @@ export default async function CreditosPage(props: {
   }
 
   const advisorSession =
-    !isAdminRole(session.rolNombre) && sellerSession?.tipoPerfil !== "SUPERVISOR";
+    !admin && sellerSession?.tipoPerfil !== "SUPERVISOR";
   const hasDirectCreditIntent =
     Boolean(initialSearch) ||
     (Number.isInteger(initialSelectedId) && initialSelectedId > 0) ||
@@ -82,7 +83,7 @@ export default async function CreditosPage(props: {
   }
 
   if (
-    (isAdminRole(session.rolNombre) || sellerSession?.tipoPerfil === "SUPERVISOR") &&
+    (admin || sellerSession?.tipoPerfil === "SUPERVISOR") &&
     (initialSearch || (Number.isInteger(initialSelectedId) && initialSelectedId > 0)) &&
     !(Number.isInteger(initialDraftId) && initialDraftId > 0) &&
     entryMode !== "create-client"
@@ -100,6 +101,36 @@ export default async function CreditosPage(props: {
     redirect(`/dashboard/clientes${params.size ? `?${params.toString()}` : ""}`);
   }
 
+  if (shouldChooseDevicePlatform) {
+    const buildPlatformHref = (platform: DevicePlatform) => {
+      const params = new URLSearchParams();
+      params.set("mode", "create-client");
+      params.set("platform", platform);
+
+      if (initialSearch) {
+        params.set("search", initialSearch);
+      }
+
+      if (Number.isInteger(initialSelectedId) && initialSelectedId > 0) {
+        params.set("selected", String(initialSelectedId));
+      }
+
+      return `/dashboard/creditos?${params.toString()}`;
+    };
+
+    return (
+      <CreditPlatformSelector
+        admin={admin}
+        adminCentral={admin && isFinserPayCentralAlly(session.aliadoAccesoCodigo)}
+        androidHref={buildPlatformHref("android")}
+        iphoneHref={buildPlatformHref("iphone")}
+        nombreUsuario={session.nombre}
+        rolUsuario={session.rolNombre}
+        sedeNombre={sellerSession?.sedeNombre || session.sedeNombre}
+      />
+    );
+  }
+
   return (
     <CreditFactoryConsole
       key={`${entryMode}:${Number.isInteger(initialDraftId) && initialDraftId > 0 ? initialDraftId : "nuevo"}`}
@@ -110,7 +141,7 @@ export default async function CreditosPage(props: {
       initialDraftId={Number.isInteger(initialDraftId) && initialDraftId > 0 ? initialDraftId : null}
       entryMode={entryMode}
       devicePlatform={devicePlatform}
-      chooseDevicePlatform={shouldChooseDevicePlatform}
+      chooseDevicePlatform={false}
     />
   );
 }
