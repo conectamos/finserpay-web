@@ -33,6 +33,13 @@ function normalizePending(value: number) {
 }
 
 function normalizeDate(value: Date | string | null | undefined, fallback = new Date()) {
+  const normalizedValue = String(value || "").trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalizedValue)) {
+    const [year, month, day] = normalizedValue.split("-").map(Number);
+    return new Date(year, month - 1, day, 12, 0, 0, 0);
+  }
+
   const date = value instanceof Date ? new Date(value) : new Date(String(value || ""));
 
   if (Number.isNaN(date.getTime())) {

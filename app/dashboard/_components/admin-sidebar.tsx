@@ -60,7 +60,7 @@ function SidebarLink({
       className={[
         "flex min-h-11 shrink-0 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition",
         active
-          ? "bg-[#0b6f6a] text-white"
+          ? "relative bg-white/10 text-white before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-[#b7e63d]"
           : "text-slate-300 hover:bg-white/8 hover:text-white",
       ].join(" ")}
     >
@@ -200,7 +200,7 @@ export default function AdminSidebar({
       </nav>
 
       <div className="mt-auto hidden border-t border-white/15 px-5 py-5 lg:block">
-        <p className="text-xs font-bold uppercase text-[#43c7bd]">{rolUsuario}</p>
+        <p className="text-xs font-bold uppercase text-[#b7e63d]">{rolUsuario}</p>
         <p className="mt-2 truncate text-sm font-semibold text-white">{nombreUsuario}</p>
         <LogoutButton className="mt-4 w-full !rounded-lg !border-white/15 !bg-transparent" />
       </div>
