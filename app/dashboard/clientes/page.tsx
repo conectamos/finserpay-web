@@ -65,7 +65,7 @@ export default async function ClientesPage(props: {
   const adminCentral = isFinserPayCentralAlly(session.aliadoAccesoCodigo);
 
   return (
-    <div className="min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
+    <div className="fp-client-page min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
       <AdminSidebar
         activeHref="/dashboard/clientes"
         adminCentral={adminCentral}
@@ -73,8 +73,8 @@ export default async function ClientesPage(props: {
         rolUsuario={session.rolNombre}
       />
 
-      <main className="min-w-0 px-4 py-5 sm:px-6 lg:px-7 xl:px-8">
-        <header className="mb-5 flex flex-col gap-4 border-b border-[#d8e0e7] pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <main className="fp-client-page-content min-w-0 px-4 py-5 sm:px-6 lg:px-7 xl:px-8">
+        <header className="fp-client-page-header mb-5 flex flex-col gap-4 border-b border-[#d8e0e7] pb-5 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-xs font-bold uppercase text-[#0d766f]">
               Gestion comercial

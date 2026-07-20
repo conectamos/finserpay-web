@@ -640,6 +640,307 @@ body {
   }
 }
 
+/* Client dossier workspace */
+.fp-client-page-content {
+  width: 100%;
+  max-width: 1680px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.fp-client-page-header {
+  min-height: 76px;
+  align-items: center !important;
+}
+
+.fp-client-page-header h1 {
+  font-size: 1.75rem;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.fp-client-page .fp-client-lookup-search {
+  padding: 18px;
+}
+
+.fp-client-page .fp-client-lookup-command {
+  background: #ffffff;
+}
+
+.fp-client-page .fp-client-dossier-hero {
+  padding: 26px;
+}
+
+.fp-client-page .fp-client-dossier-top {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.fp-client-page .fp-client-dossier-person {
+  grid-template-columns: 132px minmax(0, 1fr);
+  align-items: center;
+}
+
+.fp-client-page .fp-client-dossier-photo {
+  width: 132px !important;
+  height: 132px !important;
+}
+
+.fp-client-page .fp-client-dossier-hero h3 {
+  margin-top: 5px !important;
+  font-size: 2rem !important;
+  line-height: 1.05 !important;
+}
+
+.fp-client-page .fp-client-contact-grid {
+  max-width: 780px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 !important;
+  overflow: hidden;
+  border: 1px solid #dce3e7;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.fp-client-page .fp-client-contact-grid > p {
+  min-width: 0;
+  border-right: 1px solid #dce3e7;
+  padding: 11px 13px;
+}
+
+.fp-client-page .fp-client-contact-grid > p:last-child {
+  grid-column: auto !important;
+  border-right: 0;
+}
+
+.fp-client-page .fp-client-contact-grid span:last-child {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.fp-client-page .fp-client-action-primary {
+  display: inline-flex;
+  min-width: 148px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 6px !important;
+  background: #0e7a6f !important;
+  box-shadow: none;
+}
+
+.fp-client-page .fp-client-action-primary:hover:not(:disabled) {
+  background: #0a655d !important;
+}
+
+.fp-client-page .fp-client-dossier-summary {
+  display: grid;
+  grid-template-columns: 1fr 0.8fr 0.8fr 1.5fr !important;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.fp-client-page .fp-client-dossier-summary > div {
+  min-width: 0;
+  padding: 16px !important;
+}
+
+.fp-client-page .fp-client-dossier-summary p:nth-child(2) {
+  font-size: 1.15rem;
+}
+
+.fp-client-page .fp-client-dossier-actions {
+  padding-top: 16px;
+  border-top: 1px solid #e1e7ea;
+}
+
+.fp-client-page .fp-client-dossier-actions button {
+  min-height: 38px;
+  border-radius: 6px !important;
+  padding: 8px 12px;
+}
+
+.fp-client-page .fp-client-history {
+  border-radius: 8px !important;
+  padding: 0 !important;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.05) !important;
+}
+
+.fp-client-page .fp-client-history-heading {
+  align-items: center !important;
+  padding: 20px 22px;
+  border-bottom: 1px solid #dce3e7;
+}
+
+.fp-client-page .fp-client-history-heading h3 {
+  font-size: 1.35rem;
+}
+
+.fp-client-page .fp-client-history-actions button {
+  min-height: 38px;
+  border-radius: 6px !important;
+  padding: 8px 12px !important;
+}
+
+.fp-client-page .fp-client-history > .mt-5 {
+  margin-top: 0 !important;
+  padding: 14px;
+}
+
+.fp-client-page .fp-client-credit-item {
+  position: relative;
+  overflow: hidden;
+  border-color: #dce3e7 !important;
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  color: #101820 !important;
+  padding: 17px !important;
+  box-shadow: none !important;
+}
+
+.fp-client-page .fp-client-credit-item.is-selected {
+  border-color: #9fcfc8 !important;
+  border-left: 4px solid #0e7a6f !important;
+  background: #f4fbfa !important;
+}
+
+.fp-client-page .fp-client-credit-item.is-selected p {
+  color: #52636d !important;
+}
+
+.fp-client-page .fp-client-credit-item.is-selected p.text-lg,
+.fp-client-page .fp-client-credit-item.is-selected span.font-bold {
+  color: #101820 !important;
+}
+
+.fp-client-page .fp-client-credit-item.is-selected > div:first-child > div:first-child span {
+  border-color: #b5d9d3 !important;
+  background: #ffffff !important;
+  color: #0e6d64 !important;
+}
+
+.fp-client-page .fp-client-credit-item > .mt-4 {
+  margin-top: 14px !important;
+  padding-top: 13px;
+  border-top: 1px solid #dce3e7;
+}
+
+.fp-client-page .fp-client-credit-item button,
+.fp-client-page .fp-client-credit-item.is-selected button {
+  min-height: 36px;
+  border-color: #cbd5dc !important;
+  border-radius: 6px !important;
+  background: #ffffff !important;
+  padding: 7px 11px !important;
+  color: #263943 !important;
+  font-size: 0.75rem !important;
+}
+
+.fp-client-page .fp-client-credit-item button:first-child,
+.fp-client-page .fp-client-credit-item.is-selected button:first-child {
+  border-color: #0e7a6f !important;
+  background: #0e7a6f !important;
+  color: #ffffff !important;
+}
+
+.fp-client-page .fp-client-credit-item button:hover:not(:disabled) {
+  border-color: #8ea0aa !important;
+  background: #f6f8f9 !important;
+}
+
+/* Payment plan table */
+.fp-payments-content {
+  max-width: 1680px !important;
+}
+
+.fp-payments-workspace .fp-payment-plan {
+  padding: 22px !important;
+}
+
+.fp-payments-workspace .fp-payment-plan-table {
+  width: 100%;
+  border-radius: 8px;
+}
+
+.fp-payments-workspace .fp-payment-plan-table table {
+  width: 100%;
+}
+
+.fp-payments-workspace .fp-payment-plan-table th,
+.fp-payments-workspace .fp-payment-plan-table td {
+  vertical-align: middle;
+}
+
+.fp-payments-workspace .fp-payment-plan-table th:first-child {
+  width: 13%;
+}
+
+.fp-payments-workspace .fp-payment-plan-table th:nth-child(2) {
+  width: 18%;
+}
+
+.fp-payments-workspace .fp-payment-plan-table th:nth-child(3),
+.fp-payments-workspace .fp-payment-plan-table th:nth-child(4),
+.fp-payments-workspace .fp-payment-plan-table th:nth-child(5) {
+  width: 17%;
+}
+
+.fp-payments-workspace .fp-payment-plan-table th:last-child {
+  width: 18%;
+}
+
+.fp-payments-workspace .fp-payment-plan-table tbody tr {
+  transition: background 160ms ease;
+}
+
+.fp-payments-workspace .fp-payment-plan-table tbody tr:hover {
+  background: #e7f5f3 !important;
+}
+
+.fp-payments-workspace .fp-payment-plan-download {
+  min-height: 40px;
+}
+
+@media (max-width: 900px) {
+  .fp-client-page .fp-client-dossier-top,
+  .fp-client-page .fp-client-dossier-person {
+    grid-template-columns: 1fr;
+  }
+
+  .fp-client-page .fp-client-dossier-photo {
+    margin-right: 0 !important;
+    margin-left: 0 !important;
+  }
+
+  .fp-client-page .fp-client-contact-grid,
+  .fp-client-page .fp-client-dossier-summary {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .fp-client-page .fp-client-contact-grid > p,
+  .fp-client-page .fp-client-dossier-summary > div {
+    border-right: 0 !important;
+    border-bottom: 1px solid #dce3e7 !important;
+  }
+}
+
+@media (max-width: 580px) {
+  .fp-client-page .fp-client-contact-grid,
+  .fp-client-page .fp-client-dossier-summary {
+    grid-template-columns: 1fr !important;
+  }
+
+  .fp-client-page .fp-client-dossier-hero,
+  .fp-client-page .fp-client-history-heading {
+    padding: 16px !important;
+  }
+
+  .fp-client-page .fp-client-dossier-hero h3 {
+    font-size: 1.55rem !important;
+  }
+}
+
 /* Credit factory workspace */
 .fp-credit-factory {
   min-height: 100vh;
@@ -865,6 +1166,393 @@ body {
   color: #18232a !important;
 }
 
+.fp-credit-factory .fp-stage-heading {
+  padding-bottom: 20px;
+  border-bottom: 1px solid #dce3e7;
+}
+
+.fp-credit-factory .fp-stage-heading > div:first-child > div:first-child {
+  border-color: #c9d5da !important;
+  background: #f6f8f9 !important;
+  color: #53626c !important;
+}
+
+.fp-credit-factory .fp-stage-status {
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px !important;
+  padding: 7px 12px !important;
+}
+
+.fp-credit-factory .fp-stage-status::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.fp-credit-factory .fp-firma-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  margin-top: 20px;
+  border: 1px solid #24333c;
+  border-radius: 8px;
+  background: #101820;
+  padding: 18px 20px;
+  color: #ffffff;
+}
+
+.fp-credit-factory .fp-firma-banner-icon,
+.fp-credit-factory .fp-firma-docs-heading > span,
+.fp-credit-factory .fp-delivery-summary-heading > span {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(66, 198, 108, 0.28);
+  border-radius: 6px;
+  background: rgba(66, 198, 108, 0.1);
+  color: #67e58e;
+}
+
+.fp-credit-factory .fp-firma-banner p {
+  color: #9eabb4;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.fp-credit-factory .fp-firma-banner strong {
+  display: block;
+  margin-top: 3px;
+  color: #ffffff;
+  font-size: 1rem;
+}
+
+.fp-credit-factory .fp-firma-banner-state {
+  border: 1px solid #34444e;
+  border-radius: 999px;
+  background: #172129;
+  padding: 8px 12px;
+  color: #dce5e9;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.fp-credit-factory .fp-firma-main,
+.fp-credit-factory .fp-firma-docs,
+.fp-credit-factory .fp-delivery-sequence,
+.fp-credit-factory .fp-delivery-status-panel,
+.fp-credit-factory .fp-delivery-closure {
+  border-color: #d7dee3 !important;
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  padding: 22px !important;
+}
+
+.fp-credit-factory .fp-firma-main {
+  border-top: 3px solid #0e7a6f !important;
+}
+
+.fp-credit-factory .fp-section-eyebrow {
+  color: #0e7a6f !important;
+}
+
+.fp-credit-factory .fp-firma-data-grid {
+  gap: 0 !important;
+  overflow: hidden;
+  border: 1px solid #dce3e7;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.fp-credit-factory .fp-firma-data-grid > div {
+  min-width: 0;
+  border: 0 !important;
+  border-bottom: 1px solid #dce3e7 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 13px 15px !important;
+}
+
+.fp-credit-factory .fp-firma-data-grid > div:nth-last-child(-n + 2) {
+  border-bottom: 0 !important;
+}
+
+@media (min-width: 640px) {
+  .fp-credit-factory .fp-firma-data-grid > div:nth-child(odd) {
+    border-right: 1px solid #dce3e7 !important;
+  }
+}
+
+.fp-credit-factory .fp-firma-data-grid p:last-child {
+  overflow-wrap: anywhere;
+}
+
+.fp-credit-factory .fp-firma-readiness {
+  gap: 8px !important;
+}
+
+.fp-credit-factory .fp-firma-readiness > div,
+.fp-credit-factory .fp-delivery-checklist > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 6px !important;
+  padding: 11px 12px !important;
+  text-transform: none !important;
+}
+
+.fp-credit-factory .fp-firma-readiness strong,
+.fp-credit-factory .fp-delivery-checklist strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.fp-credit-factory .fp-firma-primary,
+.fp-credit-factory .fp-firma-secondary,
+.fp-credit-factory .fp-delivery-controls button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.fp-credit-factory .fp-firma-primary,
+.fp-credit-factory .fp-delivery-controls button:first-child {
+  background: #0e7a6f !important;
+}
+
+.fp-credit-factory .fp-firma-primary:hover:not(:disabled),
+.fp-credit-factory .fp-delivery-controls button:first-child:hover:not(:disabled) {
+  background: #0a655d !important;
+}
+
+.fp-credit-factory .fp-firma-docs-heading,
+.fp-credit-factory .fp-delivery-summary-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fp-credit-factory .fp-firma-docs-heading h4 {
+  margin-top: 2px;
+  font-size: 1.1rem;
+  font-weight: 900;
+}
+
+.fp-credit-factory .fp-firma-bundle-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  border-color: #cbd8dd !important;
+  background: #f8fafb !important;
+}
+
+.fp-credit-factory .fp-firma-bundle-summary > strong {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 6px;
+  background: #0e7a6f;
+  color: #ffffff;
+  font-size: 1.3rem;
+}
+
+.fp-credit-factory .fp-firma-bundle-summary p {
+  margin-top: 0 !important;
+}
+
+.fp-credit-factory .fp-firma-doc-list {
+  overflow: hidden;
+  border: 1px solid #dce3e7;
+  border-radius: 8px;
+}
+
+.fp-credit-factory .fp-firma-doc-list > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 !important;
+  border: 0 !important;
+  border-bottom: 1px solid #e1e7ea !important;
+  border-radius: 0 !important;
+  padding: 12px 14px !important;
+}
+
+.fp-credit-factory .fp-firma-doc-list > div:last-child {
+  border-bottom: 0 !important;
+}
+
+.fp-credit-factory .fp-firma-doc-list svg {
+  flex: 0 0 auto;
+  color: #0e7a6f;
+}
+
+.fp-credit-factory .fp-firma-doc-note {
+  border-style: solid !important;
+  border-color: #dce3e7 !important;
+  background: #f8fafb !important;
+}
+
+.fp-credit-factory .fp-delivery-summary {
+  margin-top: 20px;
+  overflow: hidden;
+  border: 1px solid #d7dee3;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.fp-credit-factory .fp-delivery-summary-heading {
+  border-bottom: 1px solid #dce3e7;
+  padding: 16px 18px;
+}
+
+.fp-credit-factory .fp-delivery-summary-heading > span {
+  width: 40px;
+  height: 40px;
+}
+
+.fp-credit-factory .fp-delivery-summary-heading p {
+  color: #0e7a6f;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.fp-credit-factory .fp-delivery-summary-heading strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.95rem;
+}
+
+.fp-credit-factory .fp-delivery-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.fp-credit-factory .fp-delivery-summary-grid > div {
+  min-width: 0;
+  border-right: 1px solid #dce3e7;
+  padding: 14px 16px;
+}
+
+.fp-credit-factory .fp-delivery-summary-grid > div:last-child {
+  border-right: 0;
+}
+
+.fp-credit-factory .fp-delivery-summary-grid span,
+.fp-credit-factory .fp-delivery-summary-grid strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.fp-credit-factory .fp-delivery-summary-grid span {
+  color: #697984;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.fp-credit-factory .fp-delivery-summary-grid strong {
+  margin-top: 5px;
+  color: #101820;
+  font-size: 0.84rem;
+}
+
+.fp-credit-factory .fp-delivery-sequence-list {
+  margin-top: 20px;
+  overflow: hidden;
+  border: 1px solid #dce3e7;
+  border-radius: 8px;
+}
+
+.fp-credit-factory .fp-delivery-sequence-list > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid #dce3e7;
+  padding: 14px;
+}
+
+.fp-credit-factory .fp-delivery-sequence-list > div:last-child {
+  border-bottom: 0;
+}
+
+.fp-credit-factory .fp-delivery-sequence-list > div > span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 6px;
+  background: #101820;
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.fp-credit-factory .fp-delivery-sequence-list strong,
+.fp-credit-factory .fp-delivery-sequence-list p {
+  display: block;
+}
+
+.fp-credit-factory .fp-delivery-sequence-list p {
+  margin-top: 2px;
+  color: #697984;
+  font-size: 0.78rem;
+}
+
+.fp-credit-factory .fp-delivery-controls,
+.fp-credit-factory .fp-iphone-confirmation {
+  margin-top: 18px;
+}
+
+.fp-credit-factory .fp-delivery-status-panel {
+  border-top: 3px solid #d39b21 !important;
+}
+
+.fp-credit-factory .fp-delivery-status-panel.is-ready {
+  border-top-color: #0e7a6f !important;
+}
+
+.fp-credit-factory .fp-delivery-status-panel > div > div {
+  border-radius: 8px !important;
+}
+
+.fp-credit-factory .fp-delivery-closure {
+  padding-top: 18px !important;
+}
+
+.fp-credit-factory .fp-delivery-checklist {
+  gap: 8px !important;
+}
+
+@media (max-width: 1180px) {
+  .fp-credit-factory .fp-delivery-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .fp-credit-factory .fp-delivery-summary-grid > div {
+    border-bottom: 1px solid #dce3e7;
+  }
+
+  .fp-credit-factory .fp-delivery-summary-grid > div:nth-child(3n) {
+    border-right: 0;
+  }
+}
+
 .fp-credit-factory .fp-seller-form-card [class*="rounded-[28px]"],
 .fp-credit-factory .fp-seller-form-card [class*="rounded-[24px]"],
 .fp-credit-factory .fp-seller-form-card [class*="rounded-[22px]"],
@@ -1039,6 +1727,55 @@ body {
 
   .fp-credit-factory .fp-flow-actions button {
     flex: 1 1 auto;
+  }
+
+  .fp-credit-factory .fp-firma-banner {
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 15px;
+  }
+
+  .fp-credit-factory .fp-firma-banner-state {
+    grid-column: 1 / -1;
+    width: 100%;
+    text-align: center;
+  }
+
+  .fp-credit-factory .fp-firma-main,
+  .fp-credit-factory .fp-firma-docs,
+  .fp-credit-factory .fp-delivery-sequence,
+  .fp-credit-factory .fp-delivery-status-panel,
+  .fp-credit-factory .fp-delivery-closure {
+    padding: 16px !important;
+  }
+
+  .fp-credit-factory .fp-firma-data-grid > div {
+    border-right: 0 !important;
+    border-bottom: 1px solid #dce3e7 !important;
+  }
+
+  .fp-credit-factory .fp-firma-data-grid > div:last-child {
+    border-bottom: 0 !important;
+  }
+
+  .fp-credit-factory .fp-delivery-summary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .fp-credit-factory .fp-delivery-summary-grid > div,
+  .fp-credit-factory .fp-delivery-summary-grid > div:nth-child(3n) {
+    border-right: 1px solid #dce3e7;
+    border-bottom: 1px solid #dce3e7;
+  }
+
+  .fp-credit-factory .fp-delivery-summary-grid > div:nth-child(even) {
+    border-right: 0;
+  }
+
+  .fp-credit-factory .fp-firma-primary,
+  .fp-credit-factory .fp-firma-secondary,
+  .fp-credit-factory .fp-delivery-controls button {
+    width: 100%;
+    margin-left: 0 !important;
   }
 }
 

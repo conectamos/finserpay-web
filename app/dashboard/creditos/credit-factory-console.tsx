@@ -7,11 +7,17 @@ import QRCode from "qrcode";
 import {
   ArrowRight,
   Building2,
+  Check,
   CircleDollarSign,
+  FileText,
   History,
+  RefreshCw,
   RotateCcw,
   ScanFace,
   Search,
+  Send,
+  ShieldCheck,
+  Smartphone,
   UserSearch,
   WalletCards,
 } from "lucide-react";
@@ -7559,7 +7565,7 @@ export default function CreditFactoryConsole({
     <div
       className={
         paymentsView
-          ? "min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[260px_minmax(0,1fr)]"
+          ? "fp-payments-workspace min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[260px_minmax(0,1fr)]"
           : [
               "fp-shell text-slate-950",
               embeddedClientLookup ? "fp-client-lookup-embedded" : "min-h-screen px-4 py-6",
@@ -7579,7 +7585,7 @@ export default function CreditFactoryConsole({
       <div
         className={
           paymentsView
-            ? "mx-auto w-full min-w-0 max-w-[1400px] px-4 py-5 sm:px-6 lg:px-7 xl:px-8"
+            ? "fp-payments-content mx-auto w-full min-w-0 max-w-[1400px] px-4 py-5 sm:px-6 lg:px-7 xl:px-8"
             : clientLookupMode
               ? embeddedClientLookup
                 ? "w-full"
@@ -10099,8 +10105,8 @@ export default function CreditFactoryConsole({
               )}
 
               {wizardStep === 4 && (
-                <div>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="fp-factory-stage fp-firma-stage">
+                  <div className="fp-stage-heading flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <div className="inline-flex rounded-full border border-[#e6d6bd] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8a5a21]">
                         {hideIdentityWizardStep ? "Paso 3" : "Paso 4"}
@@ -10114,10 +10120,12 @@ export default function CreditFactoryConsole({
                     </div>
                     <div
                       className={[
-                        "inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
+                        "fp-stage-status inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
                         firmaSeguroProcessSigned
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border-amber-200 bg-amber-50 text-amber-700",
+                          ? "is-success border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : firmaSeguroProcessSent
+                            ? "is-waiting border-amber-200 bg-amber-50 text-amber-700"
+                            : "is-pending border-amber-200 bg-amber-50 text-amber-700",
                       ].join(" ")}
                     >
                       {firmaSeguroSubmitting || firmaSeguroRefreshing
@@ -10130,15 +10138,33 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
 
-                  <div className="mt-6 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                    <div className="rounded-[24px] border border-emerald-200 bg-[#f2fbf7] px-5 py-5">
+                  <div className="fp-firma-banner">
+                    <span className="fp-firma-banner-icon" aria-hidden="true">
+                      <ShieldCheck className="h-7 w-7" strokeWidth={1.8} />
+                    </span>
+                    <div>
+                      <p>Canal de firma certificado</p>
+                      <strong>Un expediente, una firma y trazabilidad completa</strong>
+                    </div>
+                    <span className="fp-firma-banner-state">
+                      {firmaSeguroProcessSigned
+                        ? "Firmado"
+                        : firmaSeguroProcessSent
+                          ? "En seguimiento"
+                          : "Listo para preparar"}
+                    </span>
+                  </div>
+
+                  <div className="fp-firma-layout mt-6 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+                    <section className="fp-firma-main rounded-[24px] border border-emerald-200 bg-[#f2fbf7] px-5 py-5">
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                         <div>
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#0f766e]">
+                          <p className="fp-section-eyebrow text-[11px] font-semibold uppercase tracking-[0.18em] text-[#0f766e]">
                             FirmaSeguro
                           </p>
-                          <h4 className="mt-2 text-xl font-black tracking-tight text-slate-950">
-                            Envio digital certificado
+                          <h4 className="mt-2 flex items-center gap-2 text-xl font-black tracking-tight text-slate-950">
+                            <Send className="h-5 w-5 text-[#0e7a6f]" strokeWidth={2} />
+                            Preparar y enviar expediente
                           </h4>
                           <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
                             Se creara un expediente de borrador con los documentos legales. El credito solo se inscribe cuando FirmaSeguro reporte firma exitosa y valides la entrega.
@@ -10158,7 +10184,7 @@ export default function CreditFactoryConsole({
                         ) : null}
                       </div>
 
-                      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                      <div className="fp-firma-data-grid mt-5 grid gap-3 sm:grid-cols-2">
                         {[
                           ["Cliente", clienteNombre || "-"],
                           ["Contacto", clienteCorreo || clienteTelefono || "-"],
@@ -10181,7 +10207,7 @@ export default function CreditFactoryConsole({
                         ))}
                       </div>
 
-                      <div className="mt-5 grid gap-3 md:grid-cols-3">
+                      <div className="fp-firma-readiness mt-5 grid gap-3 md:grid-cols-3">
                         {[
                           { label: "Cliente", ready: stepClienteReady },
                           { label: "Equipo", ready: stepEquipoReady },
@@ -10198,7 +10224,11 @@ export default function CreditFactoryConsole({
                                 : "border-amber-200 bg-amber-50 text-amber-700",
                             ].join(" ")}
                           >
-                            {label}: {ready ? "OK" : "Pendiente"}
+                            <span>{label}</span>
+                            <strong>
+                              {ready ? <Check className="h-4 w-4" strokeWidth={2.5} /> : null}
+                              {ready ? "Listo" : "Pendiente"}
+                            </strong>
                           </div>
                         ))}
                       </div>
@@ -10211,8 +10241,9 @@ export default function CreditFactoryConsole({
                           creating ||
                           firmaSeguroSubmitting
                         }
-                        className="mt-5 w-full rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
+                        className="fp-firma-primary mt-5 w-full rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
                       >
+                        <Send className="h-4 w-4" strokeWidth={2} />
                         {creating || firmaSeguroSubmitting
                           ? "Enviando a FirmaSeguro..."
                           : firmaSeguroProcessSent
@@ -10225,8 +10256,9 @@ export default function CreditFactoryConsole({
                           type="button"
                           onClick={() => void refreshFirmaSeguroDraftProcess()}
                           disabled={firmaSeguroRefreshing || firmaSeguroSubmitting}
-                          className="mt-3 w-full rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa] disabled:cursor-not-allowed disabled:opacity-70 sm:ml-3 sm:w-auto"
+                          className="fp-firma-secondary mt-3 w-full rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa] disabled:cursor-not-allowed disabled:opacity-70 sm:ml-3 sm:w-auto"
                         >
+                          <RefreshCw className="h-4 w-4" strokeWidth={2} />
                           {firmaSeguroRefreshing
                             ? "Actualizando..."
                             : "Actualizar estado"}
@@ -10246,21 +10278,28 @@ export default function CreditFactoryConsole({
                           Cuando FirmaSeguro reporte firma exitosa se habilita el paso 5.
                         </p>
                       ) : null}
-                    </div>
+                    </section>
 
-                    <div className="rounded-[24px] border border-[#d9e7ea] bg-[#f8fbfd] px-5 py-5">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                        Paquete documental unico
-                      </p>
-                      <div className="mt-4 rounded-2xl border border-emerald-200 bg-white px-4 py-4">
-                        <p className="text-sm font-black text-slate-950">
-                          1 PDF para firmar
-                        </p>
+                    <section className="fp-firma-docs rounded-[24px] border border-[#d9e7ea] bg-[#f8fbfd] px-5 py-5">
+                      <div className="fp-firma-docs-heading">
+                        <span aria-hidden="true"><FileText className="h-5 w-5" strokeWidth={1.9} /></span>
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
+                            Paquete documental unico
+                          </p>
+                          <h4>Contenido del expediente</h4>
+                        </div>
+                      </div>
+                      <div className="fp-firma-bundle-summary mt-4 rounded-2xl border border-emerald-200 bg-white px-4 py-4">
+                        <strong>1</strong>
+                        <div>
+                          <p className="text-sm font-black text-slate-950">PDF consolidado para firmar</p>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
                           FirmaSeguro recibira un solo archivo con todos los soportes integrados.
                         </p>
+                        </div>
                       </div>
-                      <div className="mt-4 space-y-3 text-sm font-semibold text-slate-700">
+                      <div className="fp-firma-doc-list mt-4 space-y-3 text-sm font-semibold text-slate-700">
                         {[
                           "Autorizacion de datos integrada",
                           "Contrato de financiacion integrado",
@@ -10272,14 +10311,15 @@ export default function CreditFactoryConsole({
                             key={item}
                             className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
                           >
-                            {item}
+                            <Check className="h-4 w-4" strokeWidth={2.5} />
+                            <span>{item}</span>
                           </div>
                         ))}
                       </div>
-                      <div className="mt-5 rounded-[20px] border border-dashed border-emerald-200 bg-white px-4 py-4 text-sm leading-6 text-slate-600">
+                      <div className="fp-firma-doc-note mt-5 rounded-[20px] border border-dashed border-emerald-200 bg-white px-4 py-4 text-sm leading-6 text-slate-600">
                         El cliente firma desde FirmaSeguro. Luego validas la entrega del equipo en el paso 5.
                       </div>
-                    </div>
+                    </section>
                   </div>
 
                   <div className="hidden">
@@ -10446,8 +10486,8 @@ export default function CreditFactoryConsole({
               )}
 
               {wizardStep === 5 && (
-                <div>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="fp-factory-stage fp-delivery-stage">
+                  <div className="fp-stage-heading flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <div className="inline-flex rounded-full border border-[#e6d6bd] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8a5a21]">
                         {hideIdentityWizardStep ? "Paso 4" : "Paso 5"}
@@ -10467,10 +10507,10 @@ export default function CreditFactoryConsole({
                     </div>
                     <div
                       className={[
-                        "inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
+                        "fp-stage-status inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
                         entregaValidada
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border-amber-200 bg-amber-50 text-amber-700",
+                          ? "is-success border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "is-pending border-amber-200 bg-amber-50 text-amber-700",
                       ].join(" ")}
                     >
                       {entregaValidada
@@ -10481,24 +10521,120 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
 
-                  <div className="mt-6 grid gap-4 xl:grid-cols-2">
-                    <div className="rounded-[24px] border border-[#e2d6c5] bg-white px-5 py-5">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Resumen listo para validar
-                      </p>
-                      <div className="mt-4 space-y-2 text-sm text-slate-700">
-                        <p><span className="font-semibold text-slate-950">Cliente:</span> {clienteNombre || "-"}</p>
-                        <p><span className="font-semibold text-slate-950">Documento:</span> {clienteDocumento || "-"}</p>
-                        <p><span className="font-semibold text-slate-950">Equipo:</span> {referenciaEquipo || "-"}</p>
-                        <p><span className="font-semibold text-slate-950">IMEI:</span> {imei || "-"}</p>
-                        {canSeeInternalPricing ? (
-                          <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
-                        ) : null}
-                        <p><span className="font-semibold text-slate-950">Valor cuota:</span> {currency(valorCuota)}</p>
+                  <section className="fp-delivery-summary">
+                    <div className="fp-delivery-summary-heading">
+                      <span aria-hidden="true"><Smartphone className="h-5 w-5" strokeWidth={1.9} /></span>
+                      <div>
+                        <p>Resumen del equipo</p>
+                        <strong>Datos que se validaran antes de entregar</strong>
                       </div>
                     </div>
+                    <div className="fp-delivery-summary-grid">
+                      <div><span>Cliente</span><strong>{clienteNombre || "-"}</strong></div>
+                      <div><span>Documento</span><strong>{clienteDocumento || "-"}</strong></div>
+                      <div><span>Equipo</span><strong>{referenciaEquipo || "-"}</strong></div>
+                      <div><span>IMEI</span><strong>{imei || "-"}</strong></div>
+                      {canSeeInternalPricing ? (
+                        <div><span>Total financiado</span><strong>{currency(saldoFinanciado)}</strong></div>
+                      ) : null}
+                      <div><span>Valor cuota</span><strong>{currency(valorCuota)}</strong></div>
+                    </div>
+                  </section>
 
-                    <div className="rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-5 py-5">
+                  <div className="fp-delivery-layout mt-6 grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
+                    <section className="fp-delivery-sequence rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-5 py-5">
+                      <p className="fp-section-eyebrow text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
+                        {iphoneFactory ? "Control de enrolamiento" : "Secuencia Zero Touch"}
+                      </p>
+                      <h4 className="mt-2 text-xl font-black text-slate-950">
+                        {iphoneFactory ? "Confirma el enrolamiento" : "Inscribe y valida el dispositivo"}
+                      </h4>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        {iphoneFactory
+                          ? "Verifica el iPhone en el sistema externo antes de habilitar la finalizacion."
+                          : "Ejecuta los controles en orden. La validacion remota decide si el credito puede cerrarse."}
+                      </p>
+
+                      <div className="fp-delivery-sequence-list">
+                        <div>
+                          <span>1</span>
+                          <div>
+                            <strong>{iphoneFactory ? "Revisar enrolamiento" : "Inscribir equipo"}</strong>
+                            <p>{iphoneFactory ? "Consulta el estado en el sistema externo." : "Registra el dispositivo en Zero Touch."}</p>
+                          </div>
+                        </div>
+                        <div>
+                          <span>2</span>
+                          <div>
+                            <strong>{iphoneFactory ? "Confirmar control" : "Validar entrega"}</strong>
+                            <p>{iphoneFactory ? "Deja constancia antes de finalizar." : "Confirma que el dispositivo ya es entregable."}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {iphoneFactory && (
+                        <label className="fp-iphone-confirmation flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-black text-emerald-900">
+                          <input
+                            type="checkbox"
+                            checked={iphoneEnrollmentVerified}
+                            onChange={(event) =>
+                              setIphoneEnrollmentVerified(event.target.checked)
+                            }
+                            className="mt-1 h-5 w-5 accent-emerald-600"
+                          />
+                          <span>
+                            Enrolamiento iPhone verificado
+                            <span className="mt-1 block text-xs font-semibold text-emerald-700">
+                              Confirmo manualmente que el equipo quedo enrolado antes de finalizar.
+                            </span>
+                          </span>
+                        </label>
+                      )}
+
+                      {!iphoneFactory && (
+                        <div className="fp-delivery-controls flex flex-wrap gap-3">
+                          <button
+                            type="button"
+                            onClick={() => void enrollDeviceBeforeFinalize()}
+                            disabled={
+                              enrollingDelivery ||
+                              validatingDelivery ||
+                              entregaSinVerificacionAutorizada
+                            }
+                            className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
+                          >
+                            <Smartphone className="h-4 w-4" strokeWidth={2} />
+                            {entregaSinVerificacionAutorizada
+                              ? "Inscripcion no requerida"
+                              : enrollingDelivery
+                                ? "Inscribiendo..."
+                                : "Inscribir equipo"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void validateDeliveryBeforeFinalize()}
+                            disabled={
+                              validatingDelivery ||
+                              enrollingDelivery ||
+                              entregaSinVerificacionAutorizada
+                            }
+                            className="rounded-2xl border border-[#145a5a]/25 bg-white px-5 py-3 text-sm font-semibold text-[#145a5a] transition hover:bg-[#e9f7f4] disabled:opacity-70"
+                          >
+                            <ShieldCheck className="h-4 w-4" strokeWidth={2} />
+                            {entregaSinVerificacionAutorizada
+                              ? "Verificacion no requerida"
+                              : validatingDelivery
+                                ? "Validando..."
+                                : "Validar entrega"}
+                          </button>
+                        </div>
+                      )}
+                    </section>
+
+                    <section className={[
+                      "fp-delivery-status-panel rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-5 py-5",
+                      entregaValidada ? "is-ready" : deliveryValidation ? "is-review" : "is-pending",
+                    ].join(" ")}>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                         {iphoneFactory ? "Enrolamiento iPhone" : "Validacion de entrega"}
                       </p>
@@ -10538,70 +10674,14 @@ export default function CreditFactoryConsole({
                           )}
                         </div>
 
-                        {iphoneFactory && (
-                          <label className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-black text-emerald-900">
-                            <input
-                              type="checkbox"
-                              checked={iphoneEnrollmentVerified}
-                              onChange={(event) =>
-                                setIphoneEnrollmentVerified(event.target.checked)
-                              }
-                              className="mt-1 h-5 w-5 accent-emerald-600"
-                            />
-                            <span>
-                              Enrolamiento iPhone verificado
-                              <span className="mt-1 block text-xs font-semibold text-emerald-700">
-                                Confirmo manualmente que el equipo quedo enrolado
-                                antes de finalizar.
-                              </span>
-                            </span>
-                          </label>
-                        )}
-
-                        {!iphoneFactory && (
-                          <div className="flex flex-wrap gap-3">
-                            <button
-                              type="button"
-                              onClick={() => void enrollDeviceBeforeFinalize()}
-                              disabled={
-                                enrollingDelivery ||
-                                validatingDelivery ||
-                                entregaSinVerificacionAutorizada
-                              }
-                              className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
-                            >
-                              {entregaSinVerificacionAutorizada
-                                ? "Inscripcion no requerida"
-                                : enrollingDelivery
-                                  ? "Inscribiendo..."
-                                  : "Inscribir equipo"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void validateDeliveryBeforeFinalize()}
-                              disabled={
-                                validatingDelivery ||
-                                enrollingDelivery ||
-                                entregaSinVerificacionAutorizada
-                              }
-                              className="rounded-2xl border border-[#145a5a]/25 bg-white px-5 py-3 text-sm font-semibold text-[#145a5a] transition hover:bg-[#e9f7f4] disabled:opacity-70"
-                            >
-                              {entregaSinVerificacionAutorizada
-                                ? "Verificacion no requerida"
-                                : validatingDelivery
-                                  ? "Validando..."
-                                  : "Validar entrega"}
-                            </button>
-                          </div>
-                        )}
                       </div>
-                    </div>
+                    </section>
 
-                    <div className="rounded-[24px] border border-[#e2d6c5] bg-white px-5 py-5 xl:col-span-2">
+                    <section className="fp-delivery-closure rounded-[24px] border border-[#e2d6c5] bg-white px-5 py-5 xl:col-span-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                         Flujo de cierre
                       </p>
-                      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                      <div className="fp-delivery-checklist mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                         {[
                           { label: "Cliente", ready: stepClienteReady },
                           { label: "Equipo", ready: stepEquipoReady },
@@ -10623,7 +10703,11 @@ export default function CreditFactoryConsole({
                                 : "border-amber-200 bg-amber-50 text-amber-700",
                             ].join(" ")}
                           >
-                            {label}: {ready ? "OK" : "Pendiente"}
+                            <span>{label}</span>
+                            <strong>
+                              {ready ? <Check className="h-4 w-4" strokeWidth={2.5} /> : null}
+                              {ready ? "Listo" : "Pendiente"}
+                            </strong>
                           </div>
                         ))}
                       </div>
@@ -10635,7 +10719,7 @@ export default function CreditFactoryConsole({
                             : "El credito solo se puede finalizar cuando Zero Touch confirme que el equipo esta entregable."}
                         </div>
                       )}
-                    </div>
+                    </section>
                   </div>
                 </div>
               )}
@@ -11780,8 +11864,8 @@ export default function CreditFactoryConsole({
                 {clientLookupMode && (
                   <>
                     <div className="fp-client-dossier-hero">
-                      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
-                        <div className="grid min-w-0 gap-5 md:grid-cols-[172px_minmax(0,1fr)] md:items-center">
+                      <div className="fp-client-dossier-top grid gap-6 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+                        <div className="fp-client-dossier-person grid min-w-0 gap-5 md:grid-cols-[172px_minmax(0,1fr)] md:items-center">
                           <div className="fp-client-dossier-photo mx-auto flex h-[156px] w-[156px] shrink-0 items-center justify-center overflow-hidden rounded-[34px] border text-4xl font-black md:mx-0 md:h-[172px] md:w-[172px]">
                             {selectedCredit.contratoSelfieDataUrl ||
                             selectedCredit.contratoFotoDataUrl ? (
@@ -11808,7 +11892,7 @@ export default function CreditFactoryConsole({
 
                           <div className="min-w-0">
                             <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#8a6a24]">
-                              Abrir abonos
+                              Expediente activo
                             </p>
                             <div className="flex flex-wrap items-center gap-2">
                               <h3 className="mt-2 max-w-3xl break-words text-3xl font-black leading-tight tracking-normal text-slate-950 sm:text-4xl">
@@ -11818,7 +11902,7 @@ export default function CreditFactoryConsole({
                                 {clientPrimaryStatus}
                               </span>
                             </div>
-                            <div className="mt-4 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+                            <div className="fp-client-contact-grid mt-4 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
                               <p>
                                 <span className="block text-[11px] font-black uppercase tracking-[0.14em] text-slate-400">
                                   Documento
@@ -11852,6 +11936,7 @@ export default function CreditFactoryConsole({
                           onClick={() => openPaymentsForCredit()}
                           className="fp-client-action-primary rounded-[18px] px-6 py-3 text-sm font-black"
                         >
+                          <CircleDollarSign className="h-4 w-4" strokeWidth={2} />
                           Abrir abonos
                         </button>
                       </div>
@@ -12665,9 +12750,9 @@ export default function CreditFactoryConsole({
                 {lookupMode && !deliveryMode && (
                   <div
                     ref={historySectionRef}
-                    className="rounded-[24px] border border-[#dbe5ec] bg-white px-5 py-5 shadow-sm"
+                    className="fp-client-history rounded-[24px] border border-[#dbe5ec] bg-white px-5 py-5 shadow-sm"
                   >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div className="fp-client-history-heading flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                           Historial del cliente
@@ -12680,7 +12765,7 @@ export default function CreditFactoryConsole({
                         </p>
                       </div>
 
-                      <div className="flex flex-wrap gap-2">
+                      <div className="fp-client-history-actions flex flex-wrap gap-2">
                         <button
                           type="button"
                           onClick={() => openPaymentsForCredit()}
@@ -12718,9 +12803,9 @@ export default function CreditFactoryConsole({
                         <div
                           key={`history-${credit.id}`}
                           className={[
-                            "rounded-[24px] border px-4 py-4 transition",
+                            "fp-client-credit-item rounded-[24px] border px-4 py-4 transition",
                             credit.id === selectedCredit.id
-                              ? "border-slate-950 bg-slate-950 text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)]"
+                              ? "is-selected border-slate-950 bg-slate-950 text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)]"
                               : "border-[#e6dece] bg-[#fcfaf6]",
                           ].join(" ")}
                         >
@@ -13325,7 +13410,7 @@ export default function CreditFactoryConsole({
                     </p>
                   </div>
                 ) : null}
-                <section className="rounded-lg border border-[#d9e1e7] bg-white p-5 shadow-[0_5px_18px_rgba(16,24,40,0.04)]">
+                <section className="fp-payment-plan rounded-lg border border-[#d9e1e7] bg-white p-5 shadow-[0_5px_18px_rgba(16,24,40,0.04)]">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                     <div>
                       <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
@@ -13643,14 +13728,14 @@ export default function CreditFactoryConsole({
                     <button
                       type="button"
                       onClick={() => downloadPlanPagos()}
-                      className="rounded-lg border border-[#d0d5dd] bg-white px-4 py-2.5 text-sm font-semibold text-[#475467] transition hover:bg-[#f9fafb]"
+                      className="fp-payment-plan-download rounded-lg border border-[#d0d5dd] bg-white px-4 py-2.5 text-sm font-semibold text-[#475467] transition hover:bg-[#f9fafb]"
                     >
                       Descargar plan
                     </button>
                   </div>
 
-                  <div className="mt-4 overflow-x-auto rounded-lg border border-[#d9e1e7] bg-white">
-                    <table className="min-w-[760px] text-left text-sm">
+                  <div className="fp-payment-plan-table mt-4 overflow-x-auto rounded-lg border border-[#d9e1e7] bg-white">
+                    <table className="w-full min-w-[760px] table-fixed text-left text-sm">
                       <thead className="bg-[#171717] text-[11px] uppercase tracking-[0.16em] text-white">
                         <tr>
                           <th className="px-3 py-4">Cuota</th>
