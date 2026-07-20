@@ -7,36 +7,24 @@ import {
   Bell,
   CalendarClock,
   CalendarDays,
-  ChevronDown,
   ChevronRight,
   CircleCheck,
-  CircleDollarSign,
   CreditCard,
   Equal,
-  FileText,
   Files,
   Flag,
-  Handshake,
   Landmark,
-  LayoutDashboard,
   MapPin,
-  Menu,
-  PieChart,
-  Plug,
   Plus,
   RadioTower,
   Search,
-  Settings,
   ShieldCheck,
-  Smartphone,
   TriangleAlert,
   UserRound,
-  Users,
   WalletCards,
 } from "lucide-react";
-import FinserBrand from "@/app/_components/finser-brand";
 import type { AdminDashboardOverview } from "../_lib/admin-dashboard-data";
-import LogoutButton from "./logout-button";
+import AdminSidebar from "./admin-sidebar";
 
 type IconType = ComponentType<{
   className?: string;
@@ -50,17 +38,6 @@ type AdminCentralDashboardProps = {
   nombreUsuario: string;
   rolUsuario: string;
   sedeLabel: string;
-};
-
-type NavItem = {
-  href: string;
-  icon: IconType;
-  label: string;
-};
-
-type NavGroup = {
-  items: NavItem[];
-  label: string;
 };
 
 type MetricCardProps = {
@@ -110,44 +87,6 @@ function compactMoney(value: number) {
 
 function titleCase(value: string) {
   return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : value;
-}
-
-function SidebarLink({ href, icon: Icon, label }: NavItem) {
-  const active = href === "/dashboard";
-
-  return (
-    <Link
-      href={href}
-      className={[
-        "flex min-h-11 shrink-0 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition",
-        active
-          ? "bg-[#0b6f6a] text-white"
-          : "text-slate-300 hover:bg-white/8 hover:text-white",
-      ].join(" ")}
-    >
-      <Icon className="h-5 w-5 shrink-0" strokeWidth={1.8} />
-      <span className="whitespace-nowrap">{label}</span>
-    </Link>
-  );
-}
-
-function SidebarNavigation({ groups }: { groups: NavGroup[] }) {
-  return (
-    <div className="space-y-5">
-      {groups.map((group) => (
-        <section key={group.label}>
-          <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
-            {group.label}
-          </p>
-          <div className="space-y-1">
-            {group.items.map((item) => (
-              <SidebarLink key={item.href} {...item} />
-            ))}
-          </div>
-        </section>
-      ))}
-    </div>
-  );
 }
 
 function MetricCard({ detail, icon: Icon, label, tone, value }: MetricCardProps) {
@@ -365,96 +304,6 @@ export default function AdminCentralDashboard({
 }: AdminCentralDashboardProps) {
   const scopeLabel = adminCentral ? "Todas las sedes" : aliadoNombre;
   const carteraHref = adminCentral ? "/dashboard/cartera" : "/dashboard/abonos";
-  const navGroups: NavGroup[] = [
-    {
-      label: "Principal",
-      items: [
-        {
-          href: "/dashboard",
-          icon: LayoutDashboard,
-          label: adminCentral ? "Panel central" : "Panel aliado",
-        },
-      ],
-    },
-    {
-      label: "Operacion",
-      items: [
-        { href: "/dashboard/creditos", icon: FileText, label: "Creditos" },
-        ...(adminCentral
-          ? [
-              {
-                href: "/dashboard/creditos-masivos",
-                icon: Files,
-                label: "Creditos masivos",
-              },
-            ]
-          : []),
-        { href: "/dashboard/abonos", icon: CircleDollarSign, label: "Recaudos" },
-        { href: "/dashboard/clientes", icon: Users, label: "Clientes" },
-        ...(adminCentral
-          ? [
-              { href: "/dashboard/cartera", icon: PieChart, label: "Cartera" },
-              {
-                href: "/dashboard/excepciones-mora",
-                icon: TriangleAlert,
-                label: "Excepciones por mora",
-              },
-            ]
-          : []),
-      ],
-    },
-    {
-      label: "Control",
-      items: [
-        ...(adminCentral
-          ? [
-              { href: "/dashboard/financiero", icon: Landmark, label: "Financiero" },
-              {
-                href: "/dashboard/deuda-sedes",
-                icon: WalletCards,
-                label: "Deuda entre sedes",
-              },
-            ]
-          : []),
-        { href: "/dashboard/reportes", icon: BarChart3, label: "Reportes" },
-      ],
-    },
-    {
-      label: "Administracion",
-      items: [
-        ...(adminCentral
-          ? [{ href: "/dashboard/aliados", icon: Handshake, label: "Aliados" }]
-          : []),
-        { href: "/dashboard/sedes", icon: MapPin, label: "Sedes" },
-        { href: "/dashboard/usuarios", icon: UserRound, label: "Usuarios" },
-        ...(adminCentral
-          ? [
-              {
-                href: "/dashboard/catalogo-equipos",
-                icon: Smartphone,
-                label: "Catalogo de equipos",
-              },
-              {
-                href: "/dashboard/parametros-credito",
-                icon: Settings,
-                label: "Parametros de credito",
-              },
-            ]
-          : []),
-      ],
-    },
-    ...(adminCentral
-      ? [
-          {
-            label: "Integraciones",
-            items: [
-              { href: "/dashboard/integraciones", icon: Plug, label: "Integraciones" },
-              { href: "/dashboard/equality", icon: Equal, label: "Equality Zero Touch" },
-            ],
-          },
-        ]
-      : []),
-  ];
   const maxSedeValue = Math.max(1, ...data.sedes.map((sede) => sede.value));
   const metricCards: MetricCardProps[] = [
     {
@@ -496,33 +345,12 @@ export default function AdminCentralDashboard({
 
   return (
     <div className="min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
-      <aside className="bg-[#071827] text-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col">
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-4 lg:block lg:border-0 lg:px-5 lg:py-6">
-          <FinserBrand compact dark showTagline={false} />
-          <LogoutButton className="!rounded-lg !border-white/15 !px-3 lg:hidden" />
-        </div>
-
-        <details className="group border-b border-white/10 lg:hidden">
-          <summary className="flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 text-sm font-bold text-white [&::-webkit-details-marker]:hidden">
-            <Menu className="h-5 w-5" strokeWidth={1.8} />
-            Todos los modulos
-            <ChevronDown className="ml-auto h-4 w-4 transition group-open:rotate-180" />
-          </summary>
-          <nav className="max-h-[70vh] overflow-y-auto px-3 pb-4 pt-2 [scrollbar-color:#334155_transparent] [scrollbar-width:thin]">
-            <SidebarNavigation groups={navGroups} />
-          </nav>
-        </details>
-
-        <nav className="hidden min-h-0 flex-1 overflow-y-auto px-3 pb-4 [scrollbar-color:#334155_transparent] [scrollbar-width:thin] lg:block">
-          <SidebarNavigation groups={navGroups} />
-        </nav>
-
-        <div className="mt-auto hidden border-t border-white/15 px-5 py-5 lg:block">
-          <p className="text-xs font-bold uppercase text-[#43c7bd]">{rolUsuario}</p>
-          <p className="mt-2 truncate text-sm font-semibold text-white">{nombreUsuario}</p>
-          <LogoutButton className="mt-4 w-full !rounded-lg !border-white/15 !bg-transparent" />
-        </div>
-      </aside>
+      <AdminSidebar
+        activeHref="/dashboard"
+        adminCentral={adminCentral}
+        nombreUsuario={nombreUsuario}
+        rolUsuario={rolUsuario}
+      />
 
       <main className="min-w-0 px-4 py-5 sm:px-6 lg:px-7 xl:px-8">
         <header className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">

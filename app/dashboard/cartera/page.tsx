@@ -1,7 +1,18 @@
 import Link from "next/link";
 import type { Prisma } from "@/app/generated/prisma/client";
+import {
+  CircleCheck,
+  Download,
+  FileText,
+  Filter,
+  Landmark,
+  RotateCcw,
+  TrendingUp,
+  TriangleAlert,
+  WalletCards,
+  type LucideIcon,
+} from "lucide-react";
 import prisma from "@/lib/prisma";
-import FinserBrand from "@/app/_components/finser-brand";
 import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import {
   ALIADO_FINSER_PAY,
@@ -9,6 +20,7 @@ import {
   ensureAliadoSchema,
 } from "@/lib/aliados";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import AdminSidebar from "../_components/admin-sidebar";
 import PushMassivePanel from "./push-massive-panel";
 
 export const metadata = {
@@ -133,7 +145,7 @@ function firstFamilyReferencePhone(snapshot: unknown) {
 }
 
 export default async function CarteraPage({ searchParams }: CarteraPageProps) {
-  await requireCentralAdminDashboardAccess();
+  const { session } = await requireCentralAdminDashboardAccess();
   await ensureAliadoSchema(prisma);
 
   const params = searchParams ? await searchParams : {};
@@ -391,139 +403,130 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   }).format(today);
 
   return (
-    <div className="fp-dashboard-app min-h-screen text-[#20242a]">
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:py-8">
-        <header className="flex flex-col gap-4 rounded-[34px] border border-[#d7dce2] bg-white/92 p-4 shadow-[0_18px_48px_rgba(17,19,24,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-4">
-            <FinserBrand compact />
-            <div className="hidden h-10 w-px bg-[#d7dce2] sm:block" />
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
-                Panel central
-              </p>
-              <p className="mt-1 text-sm font-bold text-[#687080]">
-                Cartera actualizada {lastUpdatedLabel}
-              </p>
-            </div>
+    <div className="min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
+      <AdminSidebar
+        activeHref="/dashboard/cartera"
+        adminCentral
+        nombreUsuario={session.nombre}
+        rolUsuario={session.rolNombre}
+      />
+
+      <main className="min-w-0 px-4 py-5 sm:px-6 lg:px-7 xl:px-8">
+        <header className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase text-[#0d766f]">Control de cartera</p>
+            <h1 className="mt-1 text-3xl font-black text-[#101828]">Cartera</h1>
+            <p className="mt-1 text-sm text-[#667085]">
+              {selectedAliadoLabel} · Actualizada {lastUpdatedLabel}
+            </p>
           </div>
 
-          <div className="flex flex-wrap gap-2 sm:justify-end">
-            <ActionLink href={exportHref} label="Excel" primary />
-            <ActionLink href="/dashboard/reportes/creditos" label="Creditos" />
-            <ActionLink href="/dashboard" label="Dashboard" dark />
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
+            <form action="/dashboard/cartera" className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <label className="grid gap-1">
+                <span className="text-xs font-bold text-[#475467]">Aliado</span>
+                <select
+                  name="aliadoId"
+                  defaultValue={selectedAliadoId ? String(selectedAliadoId) : ""}
+                  className="h-11 min-w-[230px] rounded-lg border border-[#d0d7e0] bg-white px-3 text-sm font-semibold text-[#344054] outline-none transition focus:border-[#0d9488] focus:ring-4 focus:ring-[#0d9488]/10"
+                >
+                  <option value="">Todos los aliados</option>
+                  {aliados.map((aliado) => (
+                    <option key={aliado.id} value={aliado.id}>
+                      {aliado.nombre}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#087a73] px-4 text-sm font-bold text-white transition hover:bg-[#06645f]"
+                >
+                  <Filter className="h-4 w-4" strokeWidth={2} />
+                  Aplicar
+                </button>
+                {selectedAliadoId ? (
+                  <Link
+                    href="/dashboard/cartera"
+                    title="Quitar filtro de aliado"
+                    aria-label="Quitar filtro de aliado"
+                    className="flex h-11 w-11 items-center justify-center rounded-lg border border-[#d0d7e0] bg-white text-[#475467] transition hover:border-[#0d9488] hover:text-[#0d766f]"
+                  >
+                    <RotateCcw className="h-4 w-4" strokeWidth={2} />
+                  </Link>
+                ) : null}
+              </div>
+            </form>
+
+            <div className="flex gap-2">
+              <ActionLink href={exportHref} icon={Download} label="Excel" primary />
+              <ActionLink href="/dashboard/reportes/creditos" icon={FileText} label="Creditos" />
+            </div>
           </div>
         </header>
 
-        <section className="mt-5 rounded-[28px] border border-[#d7dce2] bg-white p-5 shadow-[0_16px_42px_rgba(17,19,24,0.07)]">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
-                Control de cartera
-              </p>
-              <h1 className="mt-2 text-3xl font-black tracking-tight text-[#20242a]">
-                Cartera
-              </h1>
-              <p className="mt-2 text-sm font-bold text-[#687080]">
-                {selectedAliadoLabel}
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-3 lg:items-end">
-              <form
-                action="/dashboard/cartera"
-                className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end"
-              >
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#0f766e]">
-                    Aliado
-                  </span>
-                  <select
-                    name="aliadoId"
-                    defaultValue={selectedAliadoId ? String(selectedAliadoId) : ""}
-                    className="min-h-11 min-w-[230px] rounded-2xl border border-[#cfd8df] bg-white px-4 text-sm font-black text-[#20242a] outline-none transition focus:border-[#0f766e] focus:ring-2 focus:ring-emerald-100"
-                  >
-                    <option value="">Todos los aliados</option>
-                    {aliados.map((aliado) => (
-                      <option key={aliado.id} value={aliado.id}>
-                        {aliado.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <div className="flex gap-2">
-                  <button
-                    type="submit"
-                    className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-[#20242a] bg-[#20242a] px-4 text-sm font-black text-white transition hover:bg-[#111318]"
-                  >
-                    Filtrar
-                  </button>
-                  {selectedAliadoId ? (
-                    <Link
-                      href="/dashboard/cartera"
-                      className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-[#d8e0e3] bg-white px-4 text-sm font-black text-[#20242a] transition hover:bg-[#f8fafc]"
-                    >
-                      Todos
-                    </Link>
-                  ) : null}
-                </div>
-              </form>
-
-              <div className="flex flex-wrap gap-2 lg:justify-end">
-                <span className="rounded-full border border-[#d7dce2] bg-[#f8fafc] px-3 py-1 text-xs font-black text-[#687080]">
-                  {activeCredits.length} activos
-                </span>
-                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
-                  {clientsMora} clientes en mora
-                </span>
-                <span className={["rounded-full border px-3 py-1 text-xs font-black uppercase tracking-[0.12em]", health.tone].join(" ")}>
-                  {health.label}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard label="Inversion activa" value={money(totalInvertido)} detail="Credito autorizado activo" tone="slate" />
-            <MetricCard label="Saldo por cobrar" value={money(totalPendiente)} detail={`${percent(pctSana)} cartera sana`} tone="green" />
-            <MetricCard
-              label="Ganancia estimada"
-              value={money(totalGanancias)}
-              detail={`${money(totalGastosOperacion)} en gastos`}
-              warning={totalGanancias < 0}
-              tone="gold"
-            />
-            <MetricCard
-              label="Cartera en mora"
-              value={money(totalMora)}
-              detail={`${percent(pctMora)} del saldo pendiente`}
-              warning={pctMora > 18}
-              tone="red"
-            />
-          </div>
-
-          <div className="mt-4 grid gap-3 border-t border-[#d7dce2] pt-4 sm:grid-cols-2 xl:grid-cols-4">
-            <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail={respaldoDetail} />
-            <MiniMetric label="Recuperado" value={percent(pctRecuperado)} detail={money(totalPagado)} />
-            <MiniMetric label="Creditos pagos" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
-            <MiniMetric label="Sin mora" value={money(totalSano)} detail="Saldo al dia" />
-          </div>
+        <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <MetricCard
+            detail={`${activeCredits.length} creditos con saldo`}
+            icon={WalletCards}
+            label="Saldo por cobrar"
+            tone="teal"
+            value={money(totalPendiente)}
+          />
+          <MetricCard
+            detail={`${money(totalSano)} sin mora`}
+            icon={CircleCheck}
+            label="Cartera al dia"
+            tone="green"
+            value={percent(pctSana)}
+          />
+          <MetricCard
+            detail={`${percent(pctMora)} del saldo pendiente`}
+            icon={TriangleAlert}
+            label="Cartera en mora"
+            tone="red"
+            value={money(totalMora)}
+            warning={pctMora > 18}
+          />
+          <MetricCard
+            detail={money(totalPagado)}
+            icon={TrendingUp}
+            label="Recuperado"
+            tone="teal"
+            value={percent(pctRecuperado)}
+          />
+          <MetricCard
+            detail={`${money(totalGastosOperacion)} en gastos`}
+            icon={Landmark}
+            label="Ganancia estimada"
+            tone="gold"
+            value={money(totalGanancias)}
+            warning={totalGanancias < 0}
+          />
         </section>
 
-        <section className="mt-4 grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-[28px] border border-[#d7dce2] bg-white p-5 shadow-[0_14px_36px_rgba(17,19,24,0.06)]">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <section className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <MiniMetric label="Inversion activa" value={money(totalInvertido)} detail="Credito autorizado activo" />
+          <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail={respaldoDetail} />
+          <MiniMetric label="Creditos pagados" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
+          <MiniMetric label="Clientes en mora" value={String(clientsMora)} detail={health.label} />
+        </section>
+
+        <section className="mt-4 grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+          <section className="rounded-lg border border-[#d8dee6] bg-white p-5 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
-                  Mora por edades
-                </p>
-                <h2 className="mt-2 text-2xl font-black tracking-tight text-[#20242a]">
-                  Riesgo por dias
-                </h2>
+                <p className="text-xs font-bold uppercase text-[#0d766f]">Mora por edades</p>
+                <h2 className="mt-1 text-xl font-black text-[#101828]">Riesgo por dias</h2>
               </div>
-              <span className="rounded-full border border-[#d7dce2] bg-[#f8fafc] px-3 py-1 text-xs font-black text-[#687080]">
-                {percent(pctMora)} mora
+              <span className={["inline-flex rounded-full border px-3 py-1 text-xs font-bold", health.tone].join(" ")}>
+                {health.label}
               </span>
             </div>
+            <p className="mt-3 rounded-lg bg-[#f7f9fb] px-3 py-2.5 text-sm text-[#667085]">
+              {health.detail}
+            </p>
 
             <div className="mt-4 grid gap-3 md:grid-cols-3">
               <BucketCard
@@ -551,89 +554,95 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                 tone="red"
               />
             </div>
-          </div>
+          </section>
 
           <PushMassivePanel />
         </section>
 
-        <section className="mt-5 overflow-hidden rounded-[34px] border border-[#d7dce2] bg-white shadow-[0_18px_48px_rgba(17,19,24,0.07)]">
-          <div className="flex flex-col gap-3 border-b border-[#d7dce2] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <section className="mt-4 overflow-hidden rounded-lg border border-[#d8dee6] bg-white shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
+          <div className="flex flex-col gap-2 border-b border-[#d8dee6] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
-                Riesgos prioritarios
-              </p>
-              <h2 className="mt-2 text-2xl font-black tracking-tight text-[#20242a]">
-                Clientes que requieren gestion
-              </h2>
+              <p className="text-xs font-bold uppercase text-[#0d766f]">Riesgos prioritarios</p>
+              <h2 className="mt-1 text-xl font-black text-[#101828]">Clientes que requieren gestion</h2>
+              <p className="mt-1 text-xs text-[#667085]">Ordenados por dias de mora y saldo pendiente.</p>
             </div>
-            <span className="rounded-full border border-[#d7dce2] bg-[#f8fafc] px-4 py-2 text-sm font-black text-[#687080]">
+            <span className="inline-flex w-fit rounded-full border border-[#d8dee6] bg-[#f7f9fb] px-3 py-1.5 text-xs font-bold text-[#475467]">
               {riskRows.length ? `${riskRows.length} registros en mora` : "Sin mora registrada"}
             </span>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1480px] text-left text-sm">
-              <thead className="bg-[#20242a] text-white">
+          <div className="overflow-x-auto [scrollbar-color:#98a2b3_transparent] [scrollbar-width:thin]">
+            <table className="w-full min-w-[1460px] text-left text-sm">
+              <thead className="sticky top-0 z-10 bg-[#17202b] text-white">
                 <tr>
-                  <th className="w-[190px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Cliente</th>
-                  <th className="w-[130px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Documento</th>
-                  <th className="w-[135px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Celular</th>
-                  <th className="w-[135px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Ref. familiar</th>
-                  <th className="w-[180px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Folio</th>
-                  <th className="w-[220px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Equipo</th>
-                  <th className="w-[120px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Sede</th>
-                  <th className="w-[170px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Mora</th>
-                  <th className="w-[140px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Saldo</th>
-                  <th className="w-[135px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Vence</th>
-                  <th className="w-[130px] px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em]">Cuota</th>
+                  <th className="sticky left-0 z-20 w-[190px] bg-[#17202b] px-4 py-3 text-[10px] font-bold uppercase">Cliente</th>
+                  <th className="w-[125px] px-4 py-3 text-[10px] font-bold uppercase">Documento</th>
+                  <th className="w-[130px] px-4 py-3 text-[10px] font-bold uppercase">Celular</th>
+                  <th className="w-[130px] px-4 py-3 text-[10px] font-bold uppercase">Ref. familiar</th>
+                  <th className="w-[175px] px-4 py-3 text-[10px] font-bold uppercase">Folio</th>
+                  <th className="w-[215px] px-4 py-3 text-[10px] font-bold uppercase">Equipo</th>
+                  <th className="w-[120px] px-4 py-3 text-[10px] font-bold uppercase">Sede</th>
+                  <th className="w-[175px] px-4 py-3 text-[10px] font-bold uppercase">Mora</th>
+                  <th className="w-[135px] px-4 py-3 text-[10px] font-bold uppercase">Saldo</th>
+                  <th className="w-[130px] px-4 py-3 text-[10px] font-bold uppercase">Vence</th>
+                  <th className="w-[130px] px-4 py-3 text-[10px] font-bold uppercase">Cuota</th>
                 </tr>
               </thead>
               <tbody>
                 {riskRows.length ? (
                   riskRows.map((item) => (
-                    <tr key={item.id} className="border-b border-[#e5eaf0] last:border-0">
-                      <td className="px-5 py-4 align-top">
-                        <p className="font-black leading-5 text-[#20242a]">{item.clienteNombre}</p>
+                    <tr key={item.id} className="group border-b border-[#e5eaf0] transition hover:bg-[#f7fbfa] last:border-0">
+                      <td className="sticky left-0 z-[1] bg-white px-4 py-3 align-top group-hover:bg-[#f7fbfa]">
+                        <p className="font-bold leading-5 text-[#101828]">{item.clienteNombre}</p>
                       </td>
-                      <td className="px-5 py-4 align-top font-semibold text-[#42506a]">
+                      <td className="px-4 py-3 align-top font-medium text-[#475467]">
                         {item.clienteDocumento || "Sin documento"}
                       </td>
-                      <td className="px-5 py-4 align-top font-semibold text-[#0f766e]">
+                      <td className="px-4 py-3 align-top font-semibold text-[#0d766f]">
                         {item.clienteTelefono || "Sin celular"}
                       </td>
-                      <td className="px-5 py-4 align-top font-semibold text-[#42506a]">
+                      <td className="px-4 py-3 align-top font-medium text-[#475467]">
                         {item.primeraReferenciaTelefono || "Sin referencia"}
                       </td>
-                      <td className="px-5 py-4 align-top font-black leading-5 text-[#20242a]">
+                      <td className="px-4 py-3 align-top font-bold leading-5 text-[#101828]">
                         {item.folio || "Sin folio"}
                       </td>
-                      <td className="px-5 py-4 align-top">
-                        <p className="font-semibold leading-5 text-[#20242a]">{item.referencia}</p>
-                        <p className="mt-1 text-xs font-semibold text-[#687080]">{item.imei}</p>
+                      <td className="px-4 py-3 align-top">
+                        <p className="font-semibold leading-5 text-[#101828]">{item.referencia}</p>
+                        <p className="mt-1 text-xs text-[#667085]">{item.imei}</p>
                       </td>
-                      <td className="px-5 py-4 align-top">
-                        <p className="font-semibold text-[#20242a]">{item.sede}</p>
-                        <p className="mt-1 text-xs text-[#687080]">{item.aliado}</p>
+                      <td className="px-4 py-3 align-top">
+                        <p className="font-semibold text-[#101828]">{item.sede}</p>
+                        <p className="mt-1 text-xs text-[#667085]">{item.aliado}</p>
                       </td>
-                      <td className="px-5 py-4 align-top">
-                        <span className="inline-flex whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800">
-                          {riskLabels[item.bucket]} - {item.diasMora} dias
+                      <td className="px-4 py-3 align-top">
+                        <span
+                          className={[
+                            "inline-flex whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-bold",
+                            item.bucket === "avanzada"
+                              ? "border-red-200 bg-red-50 text-red-700"
+                              : item.bucket === "mayor"
+                                ? "border-orange-200 bg-orange-50 text-orange-700"
+                                : "border-amber-200 bg-amber-50 text-amber-700",
+                          ].join(" ")}
+                        >
+                          {riskLabels[item.bucket]} · {item.diasMora} dias
                         </span>
                       </td>
-                      <td className="px-5 py-4 align-top font-black text-[#20242a]">
+                      <td className="px-4 py-3 align-top font-black text-[#101828]">
                         {money(item.saldoPendiente)}
                       </td>
-                      <td className="px-5 py-4 align-top font-semibold text-[#42506a]">
+                      <td className="px-4 py-3 align-top font-medium text-[#475467]">
                         {item.nextDueDate || "Sin cuota"}
                       </td>
-                      <td className="px-5 py-4 align-top font-semibold text-[#42506a]">
+                      <td className="px-4 py-3 align-top font-medium text-[#475467]">
                         {item.nextDueDate ? money(item.nextDueValue) : "Sin cuota"}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={11} className="px-5 py-12 text-center text-sm font-semibold text-[#687080]">
+                    <td colSpan={11} className="px-5 py-12 text-center text-sm font-semibold text-[#667085]">
                       No hay creditos en mora para mostrar.
                     </td>
                   </tr>
@@ -647,104 +656,89 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   );
 }
 
-function HeroMetric({
-  label,
-  value,
-  danger = false,
-}: {
-  label: string;
-  value: string;
-  danger?: boolean;
-}) {
-  return (
-    <div>
-      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#64717b]">
-        {label}
-      </p>
-      <p
-        className={[
-          "mt-2 text-2xl font-black tracking-tight",
-          danger ? "text-red-700" : "text-[#11161a]",
-        ].join(" ")}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
 function ActionLink({
   href,
+  icon: Icon,
   label,
   primary = false,
-  dark = false,
 }: {
   href: string;
+  icon: LucideIcon;
   label: string;
   primary?: boolean;
-  dark?: boolean;
 }) {
-  const classes = dark
-    ? "border-[#20242a] bg-[#20242a] text-white hover:bg-[#111318]"
-    : primary
-      ? "border-[#0f766e] bg-[#0f766e] text-white hover:bg-[#145a5a]"
-      : "border-[#d8e0e3] bg-white text-[#20242a] hover:bg-[#f8fafc]";
+  const classes = primary
+    ? "border-[#087a73] bg-[#087a73] text-white hover:bg-[#06645f]"
+    : "border-[#d0d7e0] bg-white text-[#344054] hover:border-[#0d9488] hover:text-[#0d766f]";
   const className = [
-    "inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border px-4 text-sm font-black transition hover:-translate-y-0.5",
+    "inline-flex h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-bold transition",
     classes,
   ].join(" ");
 
   if (href.startsWith("/api/")) {
     return (
       <a href={href} className={className}>
-        <span>{label}</span>
-        <span aria-hidden="true">{">"}</span>
+        <Icon className="h-4 w-4" strokeWidth={2} />
+        {label}
       </a>
     );
   }
 
   return (
     <Link href={href} className={className}>
-      <span>{label}</span>
-      <span aria-hidden="true">{">"}</span>
+      <Icon className="h-4 w-4" strokeWidth={2} />
+      {label}
     </Link>
   );
 }
 
 function MetricCard({
-  label,
-  value,
   detail,
+  icon: Icon,
+  label,
+  tone,
+  value,
   warning = false,
-  tone = "slate",
 }: {
-  label: string;
-  value: string;
   detail: string;
+  icon: LucideIcon;
+  label: string;
+  tone: "gold" | "green" | "red" | "teal";
+  value: string;
   warning?: boolean;
-  tone?: "gold" | "green" | "red" | "slate";
 }) {
   const toneMap = {
-    gold: "border-[#d9c691] bg-[#fbf8ef]",
-    green: "border-[#cce7df] bg-[#eff8f5]",
-    red: "border-rose-200 bg-rose-50",
-    slate: "border-[#d7dce2] bg-white",
-  };
+    gold: {
+      icon: "bg-amber-50 text-amber-700",
+      value: "text-[#101828]",
+    },
+    green: {
+      icon: "bg-emerald-50 text-emerald-700",
+      value: "text-emerald-700",
+    },
+    red: {
+      icon: "bg-red-50 text-red-600",
+      value: "text-red-600",
+    },
+    teal: {
+      icon: "bg-teal-50 text-teal-700",
+      value: "text-[#101828]",
+    },
+  }[warning ? "red" : tone];
 
   return (
-    <div
-      className={[
-        "relative overflow-hidden rounded-[22px] border p-4 shadow-[0_10px_24px_rgba(15,23,42,0.06)]",
-        warning ? "border-red-200 bg-red-50" : toneMap[tone],
-      ].join(" ")}
-    >
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.95),transparent)]" />
-      <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#687080]">
-        {label}
+    <article className="min-w-0 rounded-lg border border-[#d8dee6] bg-white p-4 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
+      <div className="flex items-center gap-3">
+        <span className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-full", toneMap.icon].join(" ")}>
+          <Icon className="h-5 w-5" strokeWidth={1.8} />
+        </span>
+        <p className="min-w-0 text-sm font-medium text-[#344054]">{label}</p>
+      </div>
+      <p className={["mt-4 whitespace-nowrap text-[22px] font-black leading-none 2xl:text-2xl", toneMap.value].join(" ")}>
+        {value}
       </p>
-      <p className="mt-2 text-2xl font-black tracking-tight text-[#20242a]">{value}</p>
-      <p className="mt-2 text-sm font-semibold text-[#687080]">{detail}</p>
-    </div>
+      <p className="mt-3 text-xs font-medium leading-5 text-[#667085]">{detail}</p>
+    </article>
   );
 }
 
@@ -758,11 +752,11 @@ function MiniMetric({
   detail: string;
 }) {
   return (
-    <div className="rounded-[18px] border border-[#d7dce2] bg-[#f8fafc] px-4 py-3">
-      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#687080]">{label}</p>
-      <div className="text-right">
-        <p className="mt-1 text-xl font-black text-[#20242a]">{value}</p>
-        <p className="mt-1 text-xs font-semibold text-[#687080]">{detail}</p>
+    <div className="rounded-lg border border-[#d8dee6] bg-white px-4 py-3">
+      <p className="text-[10px] font-bold uppercase text-[#667085]">{label}</p>
+      <div className="mt-1 flex items-end justify-between gap-3">
+        <p className="text-lg font-black text-[#101828]">{value}</p>
+        <p className="text-right text-xs text-[#667085]">{detail}</p>
       </div>
     </div>
   );
@@ -803,20 +797,20 @@ function BucketCard({
   const selectedTone = toneMap[tone];
 
   return (
-    <div className={["rounded-[24px] border p-4", selectedTone.card].join(" ")}>
-      <p className={["text-[10px] font-black uppercase tracking-[0.22em]", selectedTone.text].join(" ")}>
+    <div className={["rounded-lg border p-4", selectedTone.card].join(" ")}>
+      <p className={["text-[10px] font-bold uppercase", selectedTone.text].join(" ")}>
         {title}
       </p>
-      <p className="mt-1 text-xs font-semibold text-[#687080]">{subtitle}</p>
-      <p className="mt-4 text-3xl font-black text-[#20242a]">{clients}</p>
-      <p className="mt-2 text-sm font-semibold text-[#687080]">{money(value)}</p>
-      <div className="mt-4 h-2 overflow-hidden rounded-full bg-white">
+      <p className="mt-1 text-xs text-[#667085]">{subtitle}</p>
+      <p className="mt-3 text-2xl font-black text-[#101828]">{clients}</p>
+      <p className="mt-1 text-sm font-semibold text-[#475467]">{money(value)}</p>
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white">
         <div
           className={["h-full rounded-full", selectedTone.bar].join(" ")}
           style={{ width: `${Math.min(100, Math.max(0, percentValue))}%` }}
         />
       </div>
-      <p className="mt-2 text-xs font-bold text-[#687080]">{percent(percentValue)} del saldo</p>
+      <p className="mt-2 text-xs font-semibold text-[#667085]">{percent(percentValue)} del saldo</p>
     </div>
   );
 }

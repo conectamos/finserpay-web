@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Eye, Megaphone, Send } from "lucide-react";
 
 type BulkPushFilter =
   | "MORA"
@@ -108,16 +109,17 @@ export default function PushMassivePanel() {
   };
 
   return (
-    <section className="rounded-[28px] border border-[#d7dce2] bg-white p-5 shadow-[0_14px_36px_rgba(17,19,24,0.06)]">
+    <section className="h-full rounded-lg border border-[#d8dee6] bg-white p-5 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0f766e]">
-              Push clientes
-            </p>
-            <h2 className="mt-2 text-2xl font-black tracking-tight text-[#20242a]">
-              Gestion masiva
-            </h2>
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-50 text-[#0d766f]">
+              <Megaphone className="h-5 w-5" strokeWidth={1.8} />
+            </span>
+            <div>
+              <p className="text-xs font-bold uppercase text-[#0d766f]">Push clientes</p>
+              <h2 className="mt-1 text-xl font-black text-[#101828]">Gestion masiva</h2>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-2 lg:justify-end">
@@ -125,28 +127,30 @@ export default function PushMassivePanel() {
               type="button"
               onClick={() => void runPush(true)}
               disabled={running !== null}
-              className="h-11 rounded-2xl border border-[#cce7df] bg-white px-4 text-sm font-black text-[#0f766e] transition hover:-translate-y-0.5 hover:bg-[#eff8f5] disabled:opacity-70"
+              className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#cce4e1] bg-white px-3 text-sm font-bold text-[#0d766f] transition hover:border-[#0d9488] hover:bg-[#f5fbfa] disabled:opacity-70"
             >
+              <Eye className="h-4 w-4" strokeWidth={2} />
               {running === "preview" ? "Revisando..." : "Previsualizar"}
             </button>
             <button
               type="button"
               onClick={() => void runPush(false)}
               disabled={running !== null || !preview}
-              className="h-11 rounded-2xl border border-[#20242a] bg-[#20242a] px-4 text-sm font-black text-white transition hover:-translate-y-0.5 hover:bg-[#111318] disabled:opacity-70"
+              className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#17202b] px-3 text-sm font-bold text-white transition hover:bg-[#0d131c] disabled:opacity-50"
             >
+              <Send className="h-4 w-4" strokeWidth={2} />
               {running === "send" ? "Enviando..." : "Enviar masivo"}
             </button>
           </div>
         </div>
 
-        <div className="grid gap-3 border-t border-[#d7dce2] pt-4 md:grid-cols-2">
-          <label className="grid min-w-0 gap-2 text-sm font-semibold text-[#20242a]">
+        <div className="grid gap-3 border-t border-[#e4e9ef] pt-4 md:grid-cols-2">
+          <label className="grid min-w-0 gap-1.5 text-sm font-semibold text-[#344054]">
             Grupo
             <select
               value={filter}
               onChange={(event) => setFilter(event.target.value as BulkPushFilter)}
-              className="h-12 w-full min-w-0 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
+              className="h-11 w-full min-w-0 rounded-lg border border-[#d0d7e0] bg-[#f7f9fb] px-3 text-sm font-semibold outline-none transition focus:border-[#0d9488] focus:bg-white focus:ring-4 focus:ring-[#0d9488]/10"
             >
               {FILTER_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -156,12 +160,12 @@ export default function PushMassivePanel() {
             </select>
           </label>
 
-          <label className="grid min-w-0 gap-2 text-sm font-semibold text-[#20242a]">
+          <label className="grid min-w-0 gap-1.5 text-sm font-semibold text-[#344054]">
             Mensaje
             <select
               value={preset}
               onChange={(event) => setPreset(event.target.value as ManualPushPreset)}
-              className="h-12 w-full min-w-0 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
+              className="h-11 w-full min-w-0 rounded-lg border border-[#d0d7e0] bg-[#f7f9fb] px-3 text-sm font-semibold outline-none transition focus:border-[#0d9488] focus:bg-white focus:ring-4 focus:ring-[#0d9488]/10"
             >
               {PRESET_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -171,22 +175,22 @@ export default function PushMassivePanel() {
             </select>
           </label>
 
-          <label className="grid min-w-0 gap-2 text-sm font-semibold text-[#20242a]">
+          <label className="grid min-w-0 gap-1.5 text-sm font-semibold text-[#344054]">
             Titulo
             <input
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              className="h-12 w-full min-w-0 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
+              className="h-11 w-full min-w-0 rounded-lg border border-[#d0d7e0] bg-[#f7f9fb] px-3 text-sm font-semibold outline-none transition focus:border-[#0d9488] focus:bg-white focus:ring-4 focus:ring-[#0d9488]/10"
             />
           </label>
 
-          <label className="grid min-w-0 gap-2 text-sm font-semibold text-[#20242a]">
+          <label className="grid min-w-0 gap-1.5 text-sm font-semibold text-[#344054]">
             Personalizado
             <input
               value={body}
               onChange={(event) => setBody(event.target.value)}
               placeholder="Solo si eliges Personalizado"
-              className="h-12 w-full min-w-0 rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 text-sm font-semibold outline-none transition focus:border-[#0f766e] focus:bg-white focus:ring-4 focus:ring-[#0f766e]/10"
+              className="h-11 w-full min-w-0 rounded-lg border border-[#d0d7e0] bg-[#f7f9fb] px-3 text-sm font-semibold outline-none transition focus:border-[#0d9488] focus:bg-white focus:ring-4 focus:ring-[#0d9488]/10"
             />
           </label>
         </div>
@@ -194,25 +198,25 @@ export default function PushMassivePanel() {
 
       {preview ? (
         <div className="mt-4 grid gap-3 text-sm sm:grid-cols-4">
-          <div className="rounded-2xl border border-[#d7dce2] bg-[#f8fafc] px-4 py-3">
+          <div className="rounded-lg border border-[#d8dee6] bg-[#f7f9fb] px-4 py-3">
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#687080]">
               Creditos
             </p>
             <p className="mt-1 text-xl font-black">{preview.targetCredits}</p>
           </div>
-          <div className="rounded-2xl border border-[#b9e5d3] bg-[#ecfdf5] px-4 py-3">
+          <div className="rounded-lg border border-[#b9e5d3] bg-[#ecfdf5] px-4 py-3">
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#0f766e]">
               Con app
             </p>
             <p className="mt-1 text-xl font-black">{preview.wouldSend || preview.sent}</p>
           </div>
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
               Sin app
             </p>
             <p className="mt-1 text-xl font-black">{preview.noToken}</p>
           </div>
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-red-700">
               Fallidos
             </p>
@@ -222,7 +226,7 @@ export default function PushMassivePanel() {
       ) : null}
 
       {status ? (
-        <p className="mt-4 rounded-2xl border border-[#d7dce2] bg-[#f8fbfa] px-4 py-3 text-sm font-semibold text-[#20242a]">
+        <p className="mt-4 rounded-lg border border-[#d8dee6] bg-[#f8fbfa] px-4 py-3 text-sm font-semibold text-[#344054]">
           {status}
         </p>
       ) : null}
