@@ -7,14 +7,18 @@ import {
   Bell,
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronRight,
+  CircleHelp,
   CircleUserRound,
   CreditCard,
   Headphones,
   Home,
+  LockKeyhole,
   MoreHorizontal,
   ReceiptText,
   Smartphone,
+  UserRound,
   WalletCards,
   History as HistoryIconLucide,
 } from "lucide-react";
@@ -989,23 +993,84 @@ export default function ClienteConsultaPage() {
 
   if (!items.length) {
     return (
-      <main className="min-h-screen bg-[#f5f6f8] text-[#171b22]">
-        <div className="mx-auto flex min-h-screen w-full max-w-[440px] flex-col px-5 py-7">
-          <header className="flex items-center justify-between">
-            <AppLogo />
-            <span className="rounded-md bg-white px-3 py-2 text-xs font-black text-[#626976] shadow-sm">
-              Clientes
-            </span>
-          </header>
+      <main className="min-h-[100svh] bg-[#090b0d] text-[#f7f8f8]">
+        <div className="mx-auto min-h-[100svh] w-full max-w-[460px] overflow-hidden bg-[#090b0d] shadow-[0_0_60px_rgba(0,0,0,0.28)]">
+          <section className="relative min-h-[610px] overflow-hidden px-7 pb-12 pt-[max(2rem,env(safe-area-inset-top))] sm:px-9">
+            <header className="flex items-center justify-between">
+              <div
+                aria-label="FINSER PAY"
+                className="flex items-baseline text-[26px] font-black leading-none tracking-[0.08em] text-white"
+              >
+                <span>FINSER</span>
+                <span className="ml-2 text-[#a7a9ad]">PAY</span>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setNotice({
+                    text: "Ingresa tu cedula para consultar tu credito. Si necesitas apoyo, comunicate con FINSER PAY.",
+                    tone: "emerald",
+                  })
+                }
+                aria-label="Ayuda para ingresar"
+                className="grid h-12 w-12 place-items-center rounded-full border border-[#bfc2c6] text-[#f6f7f8] transition hover:border-[#a9df35] hover:text-[#a9df35]"
+              >
+                <CircleHelp className="h-7 w-7" strokeWidth={1.7} />
+              </button>
+            </header>
 
-          <section className="flex flex-1 flex-col justify-center py-8">
-            <AppLogo large />
-            <div className="mt-8 text-center">
-              <h1 className="text-2xl font-black leading-tight text-[#171b22]">
-                Consulta tu credito
+            <div className="mt-20">
+              <div className="flex items-center gap-3 text-[13px] font-semibold uppercase tracking-[0.22em] text-[#c9cbd0]">
+                <span className="h-3 w-3 rounded-full bg-[#a9df35] shadow-[0_0_18px_rgba(169,223,53,0.48)]" />
+                Portal de clientes
+              </div>
+              <h1 className="mt-5 max-w-[360px] text-[42px] font-black leading-[1.05] tracking-[0.01em] text-white sm:text-[46px]">
+                Tu credito,
+                <br />
+                siempre contigo.
               </h1>
-              <p className="mx-auto mt-3 max-w-[280px] text-sm font-semibold leading-6 text-[#6d7480]">
-                Entra con tu cedula para ver cuotas, pagos y medios disponibles.
+              <p className="mt-5 max-w-[310px] text-[19px] font-medium leading-8 text-[#b8bbc1]">
+                Consulta tus cuotas, pagos y saldo cuando quieras.
+              </p>
+            </div>
+
+            <div className="relative mx-auto mt-12 h-[215px] w-[92%]">
+              <div className="absolute inset-x-2 top-3 h-[180px] rotate-[-7deg] overflow-hidden rounded-lg border border-[#7d828a] bg-[#181b20] shadow-[0_26px_42px_rgba(0,0,0,0.6)]">
+                <div className="flex h-full items-center px-7">
+                  <Image
+                    src="/icons/finserpay-client-512.png"
+                    alt="Emblema FINSER PAY"
+                    width={88}
+                    height={88}
+                    priority
+                    className="h-[76px] w-[76px] shrink-0 rounded-lg object-cover shadow-[0_10px_26px_rgba(0,0,0,0.55)]"
+                  />
+                  <div className="mx-6 h-24 w-px shrink-0 bg-[#70757d]" />
+                  <div className="min-w-0 rotate-[0.5deg]">
+                    <p className="text-[14px] font-semibold text-[#aeb2b9]">Proxima cuota</p>
+                    <p className="mt-2 whitespace-nowrap text-[29px] font-semibold leading-none text-white">
+                      $286.033
+                    </p>
+                    <div className="mt-4 flex items-center gap-2 text-[14px] font-semibold text-[#a9df35]">
+                      <span className="grid h-6 w-6 place-items-center rounded-full border border-[#a9df35]">
+                        <Check className="h-4 w-4" strokeWidth={2.2} />
+                      </span>
+                      Al dia
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="absolute bottom-1 left-1/2 h-8 w-[82%] -translate-x-1/2 rounded-[50%] bg-[#20242a] opacity-70 blur-xl" />
+            </div>
+          </section>
+
+          <section className="relative z-10 -mt-6 rounded-t-[42px] bg-[#f8f8f7] px-7 pb-[max(2rem,env(safe-area-inset-bottom))] pt-12 text-[#121417] sm:px-9">
+            <div>
+              <h2 className="text-[31px] font-black leading-tight tracking-[0.01em]">
+                Consulta tu credito
+              </h2>
+              <p className="mt-3 text-[15px] font-medium leading-6 text-[#666a71]">
+                Ingresa tu numero de documento para continuar.
               </p>
             </div>
 
@@ -1016,18 +1081,19 @@ export default function ClienteConsultaPage() {
                 const formDocument = String(formData.get("documento") || documento);
                 void consultar(formDocument);
               }}
-              className="mt-8 rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-[0_16px_36px_rgba(17,19,23,0.08)]"
+              className="mt-8"
             >
               <label
                 htmlFor="documento"
-                className="block text-xs font-black uppercase text-[#737b88]"
+                className="block text-[12px] font-black uppercase tracking-[0.08em] text-[#656970]"
               >
                 Documento de identidad
               </label>
-              <div className="mt-3 flex min-h-14 items-center rounded-lg border border-[#dfe3ea] bg-[#f8f9fb] px-3">
-                <span className="mr-3 rounded-md bg-white px-2 py-1 text-sm font-black text-[#303743] shadow-sm">
+              <div className="mt-3 flex h-[72px] items-center rounded-lg border border-[#cfd2d6] bg-white px-3 shadow-[0_8px_22px_rgba(18,20,23,0.04)] focus-within:border-[#171a1e] focus-within:ring-1 focus-within:ring-[#171a1e]">
+                <div className="flex h-12 shrink-0 items-center gap-2 rounded-md border border-[#e2e4e7] bg-[#fafafa] px-3 text-[17px] font-black text-[#24272c]">
                   CC
-                </span>
+                  <ChevronDown className="h-4 w-4" strokeWidth={2.2} />
+                </div>
                 <input
                   id="documento"
                   name="documento"
@@ -1039,34 +1105,62 @@ export default function ClienteConsultaPage() {
                     }
                   }}
                   inputMode="numeric"
+                  autoComplete="off"
                   placeholder="Numero de cedula"
-                  className="min-w-0 flex-1 bg-transparent text-lg font-black text-[#1f2430] outline-none placeholder:text-[#a0a7b2]"
+                  className="min-w-0 flex-1 bg-transparent px-4 text-[18px] font-bold text-[#1f2328] outline-none placeholder:font-semibold placeholder:text-[#a3a6ac]"
                 />
+                <UserRound className="h-7 w-7 shrink-0 text-[#24282e]" strokeWidth={1.7} />
               </div>
-              <div className="mt-4">
-                <PrimaryButton disabled={!canSubmit} type="submit">
-                  {loading ? "Consultando..." : "Continuar"}
-                </PrimaryButton>
-              </div>
+
+              <button
+                disabled={!canSubmit}
+                type="submit"
+                className="mt-5 flex h-16 w-full items-center justify-between rounded-lg bg-[#15181b] px-6 text-[18px] font-black text-white shadow-[0_14px_28px_rgba(18,20,23,0.16)] transition hover:bg-[#23272b] disabled:cursor-wait disabled:opacity-60"
+              >
+                <span>{loading ? "Consultando..." : "Continuar"}</span>
+                <ArrowRight className="h-8 w-8 text-[#a9df35]" strokeWidth={1.8} />
+              </button>
             </form>
 
             {notice ? (
               <div
+                role={notice.tone === "red" ? "alert" : "status"}
                 className={[
-                  "mt-4 rounded-lg border px-4 py-3 text-sm font-bold",
+                  "mt-4 rounded-lg border px-4 py-3 text-sm font-bold leading-5",
                   notice.tone === "emerald"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    ? "border-[#d5e8b0] bg-[#f2f8e8] text-[#43631f]"
                     : "border-red-200 bg-red-50 text-red-700",
                 ].join(" ")}
               >
                 {notice.text}
               </div>
             ) : null}
-          </section>
 
-          <footer className="pb-2 text-center text-xs font-bold text-[#88909c]">
-            Portal clientes FINSER PAY
-          </footer>
+            <div className="mt-6 flex items-center justify-center gap-3 text-[13px] font-semibold text-[#656970]">
+              <LockKeyhole className="h-5 w-5" strokeWidth={1.7} />
+              Tus datos estan protegidos
+            </div>
+
+            <footer className="mt-9 border-t border-[#e1e3e5] pt-6 text-center">
+              <button
+                type="button"
+                onClick={() =>
+                  setNotice({
+                    text: "Ingresa tu cedula para consultar tu credito. Si necesitas apoyo, comunicate con FINSER PAY.",
+                    tone: "emerald",
+                  })
+                }
+                className="text-[15px] font-semibold text-[#24272c] underline decoration-[#8d9197] underline-offset-4"
+              >
+                Necesitas ayuda?
+              </button>
+              <p className="mt-6 text-[13px] font-semibold text-[#8a8e94]">
+                <span className="font-black tracking-[0.04em]">FINSER PAY</span>
+                <span className="px-2">·</span>
+                Portal seguro
+              </p>
+            </footer>
+          </section>
         </div>
       </main>
     );
