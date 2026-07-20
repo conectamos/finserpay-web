@@ -969,7 +969,8 @@ export default function ClienteConsultaPage() {
   const confirmPaymentReference =
     confirmCredit?.clienteDocumento || activeDocumento || documento;
   const activePayoff = activeCredit?.liquidacionAnticipada || null;
-  const canPayToday = Boolean(activePayoff?.disponible);
+  const canPayToday =
+    activeCredit?.estadoPago === "AL_DIA" && Boolean(activePayoff?.disponible);
   const profileInitials = activeCredit
     ? clientInitials(activeCredit.clienteNombre)
     : "FP";
@@ -1237,6 +1238,34 @@ export default function ClienteConsultaPage() {
                     <ArrowRight className="h-7 w-7" />
                   </button>
                 </div>
+
+                {canPayToday && activePayoff ? (
+                  <button
+                    type="button"
+                    onClick={() => openWompiConfirm(activeCredit, "PAYOFF")}
+                    disabled={payingCreditId === activeCredit.id}
+                    className="mt-3 flex min-h-[58px] w-full items-center justify-between gap-4 rounded-2xl border border-[#b8f25d]/45 bg-[#b8f25d]/[0.08] px-4 text-left text-white transition active:bg-[#b8f25d]/15 disabled:opacity-50"
+                  >
+                    <span className="flex min-w-0 items-center gap-3">
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#b8f25d] text-[#111317]">
+                        <WalletCards className="h-5 w-5" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-[15px] font-black uppercase">
+                          Recoger deuda
+                        </span>
+                        <span className="mt-0.5 block text-xs font-medium text-white/62">
+                          Liquidar el capital pendiente
+                        </span>
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-right text-[16px] font-black text-[#b8f25d]">
+                      {payingCreditId === activeCredit.id
+                        ? "Abriendo"
+                        : money(activePayoff.capitalPendiente)}
+                    </span>
+                  </button>
+                ) : null}
 
                 <div className="mt-6">
                   <div
@@ -1721,7 +1750,7 @@ export default function ClienteConsultaPage() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <p className="text-xs font-black uppercase text-[#4f8735]">
-                                  Pagar hoy
+                                  Recoger deuda
                                 </p>
                                 <p className="mt-1 text-3xl font-black leading-none text-[#171b22]">
                                   {money(activePayoff.capitalPendiente)}
@@ -1730,11 +1759,6 @@ export default function ClienteConsultaPage() {
                                   Liquida el capital pendiente y cierra el credito.
                                 </p>
                               </div>
-                              {activePayoff.condonacion > 0 ? (
-                                <span className="shrink-0 rounded-md bg-white px-2 py-1 text-xs font-black text-[#4f8735]">
-                                  Ahorro {money(activePayoff.condonacion)}
-                                </span>
-                              ) : null}
                             </div>
                             <div className="mt-4">
                               <PrimaryButton
@@ -1743,7 +1767,7 @@ export default function ClienteConsultaPage() {
                               >
                                 {payingCreditId === activeCredit.id
                                   ? "Abriendo Wompi..."
-                                  : `Pagar hoy ${money(activePayoff.capitalPendiente)}`}
+                                  : `Recoger deuda ${money(activePayoff.capitalPendiente)}`}
                               </PrimaryButton>
                             </div>
                           </div>
