@@ -4,6 +4,7 @@ import Link from "next/link";
 import NextImage from "next/image";
 import { usePathname } from "next/navigation";
 import QRCode from "qrcode";
+import { ArrowRight, RotateCcw, Search, UserSearch } from "lucide-react";
 import {
   useEffect,
   useMemo,
@@ -1980,6 +1981,7 @@ export default function CreditFactoryConsole({
   entryMode = "default",
   devicePlatform = null,
   chooseDevicePlatform = false,
+  embeddedLookup = false,
 }: {
   initialSession: SessionUser;
   initialSeller?: SellerSessionProfile;
@@ -1990,6 +1992,7 @@ export default function CreditFactoryConsole({
   entryMode?: "default" | "create-client" | "delivery" | "simulator";
   devicePlatform?: DevicePlatform | null;
   chooseDevicePlatform?: boolean;
+  embeddedLookup?: boolean;
 }) {
   const canAdmin = String(initialSession.rolNombre || "").toUpperCase() === "ADMIN";
   const canSeeInternalPricing =
@@ -2003,6 +2006,7 @@ export default function CreditFactoryConsole({
   const simulatorMode = !paymentsView && !lookupView && entryMode === "simulator";
   const lookupMode = (lookupView && canViewSavedCredits) || deliveryMode;
   const clientLookupMode = lookupView && canViewSavedCredits;
+  const embeddedClientLookup = clientLookupMode && embeddedLookup;
   const canAdminMoveFreelyInFactory = canAdmin && !paymentsView && !lookupMode;
   const adminFactoryAssistAvailable = canAdmin && createClientMode;
   const pathname = usePathname();
@@ -7543,7 +7547,8 @@ export default function CreditFactoryConsole({
   return (
     <div
       className={[
-        "fp-shell min-h-screen px-4 py-6 text-slate-950",
+        "fp-shell text-slate-950",
+        embeddedClientLookup ? "fp-client-lookup-embedded" : "min-h-screen px-4 py-6",
         paymentsView ? "" : clientLookupMode ? "fp-client-lookup" : "fp-seller-app",
       ].join(" ")}
     >
@@ -7552,7 +7557,9 @@ export default function CreditFactoryConsole({
           paymentsView
             ? "mx-auto max-w-[1180px]"
             : clientLookupMode
-              ? "mx-auto max-w-[1060px]"
+              ? embeddedClientLookup
+                ? "w-full"
+                : "mx-auto max-w-[1180px]"
               : "mx-auto max-w-7xl"
         }
       >
@@ -7593,7 +7600,7 @@ export default function CreditFactoryConsole({
               </div>
             </div>
           </section>
-        ) : (
+        ) : embeddedClientLookup ? null : (
           <section
             className={
               clientLookupMode
@@ -7813,7 +7820,9 @@ export default function CreditFactoryConsole({
               : deliveryMode
                 ? "fp-surface mt-6 rounded-[28px] p-5"
               : clientLookupMode
-                ? "fp-client-lookup-search"
+                ? embeddedClientLookup
+                  ? "fp-client-lookup-search fp-client-lookup-search-embedded"
+                  : "fp-client-lookup-search"
               : adminFactoryAssistMode
                 ? "fp-surface mt-4 rounded-[24px] p-4"
                 : "fp-surface mt-6 rounded-[28px] p-6"
@@ -7881,33 +7890,45 @@ export default function CreditFactoryConsole({
                   : "mt-6 flex flex-col gap-3 lg:flex-row"
             }
           >
-            <input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  void searchCredits();
+            <div className="relative min-w-0 flex-1">
+              <Search
+                className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"
+                strokeWidth={1.8}
+              />
+              <input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void searchCredits();
+                  }
+                }}
+                aria-label="Buscar cliente o expediente"
+                placeholder={
+                  deliveryMode || adminFactoryAssistMode
+                    ? "Cedula o IMEI"
+                    : paymentsView
+                      ? "Cedula, telefono, folio o IMEI"
+                      : "Cedula, telefono, nombre, folio o IMEI"
                 }
-              }}
-              placeholder={
-                deliveryMode || adminFactoryAssistMode
-                  ? "Cedula o IMEI"
-                  : paymentsView
-                    ? "Cedula, telefono, folio o IMEI"
-                    : "Cedula, telefono, nombre, folio o IMEI"
-              }
-               className={[
-                 "flex-1 border bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100",
-                 paymentsView ? "rounded-[20px] border-slate-200 shadow-inner" : clientLookupMode ? "rounded-[18px] border-transparent bg-transparent focus:border-transparent focus:ring-0" : "rounded-[18px] border-emerald-950/14",
-               ].join(" ")}
-            />
+                className={[
+                  "w-full border bg-white py-3 pl-11 pr-4 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100",
+                  paymentsView
+                    ? "rounded-[20px] border-slate-200 shadow-inner"
+                    : clientLookupMode
+                      ? "rounded-md border-transparent bg-transparent focus:border-transparent focus:ring-0"
+                      : "rounded-[18px] border-emerald-950/14",
+                ].join(" ")}
+              />
+            </div>
 
             <button
               type="button"
               onClick={() => void searchCredits()}
               disabled={loadingList || loadingDrafts}
-              className={clientLookupMode ? "rounded-[16px] bg-[#111318] px-6 py-3 text-sm font-black text-white transition hover:bg-[#2a2d33] disabled:opacity-70" : "fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"}
+              className={clientLookupMode ? "inline-flex items-center justify-center gap-2 rounded-md bg-[#087a73] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#06645f] disabled:opacity-70" : "fp-action rounded-[18px] px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"}
             >
+              {clientLookupMode ? <Search className="h-4 w-4" strokeWidth={2} /> : null}
               {loadingList || loadingDrafts
                 ? "Buscando..."
                 : deliveryMode
@@ -7923,43 +7944,87 @@ export default function CreditFactoryConsole({
               type="button"
               onClick={() => void clearSearch()}
               disabled={(loadingList || loadingDrafts) && !activeSearch}
-              className={clientLookupMode ? "rounded-[16px] border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-70" : "rounded-[18px] border border-emerald-950/14 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-emerald-50 disabled:opacity-70"}
+              className={clientLookupMode ? "inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-600 transition hover:border-slate-400 hover:bg-slate-50 disabled:opacity-70" : "rounded-[18px] border border-emerald-950/14 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-emerald-50 disabled:opacity-70"}
             >
+              {clientLookupMode ? <RotateCcw className="h-4 w-4" strokeWidth={1.9} /> : null}
               {paymentsView ? "Nueva busqueda" : "Limpiar"}
             </button>
           </div>
 
-          {clientLookupMode && activeSearch && !selectedCredit && !loadingList ? (
-            <div className="mt-4 border-t border-slate-200 pt-3">
-              {!credits.length ? (
-                <p className="text-sm text-slate-500">
+          {clientLookupMode && !activeSearch && !selectedCredit ? (
+            <div className="mt-5 flex min-h-44 flex-col items-center justify-center border-t border-slate-200 px-4 pt-5 text-center">
+              <span className="grid h-11 w-11 place-items-center rounded-lg bg-[#e7f5f3] text-[#087a73]">
+                <UserSearch className="h-5 w-5" strokeWidth={1.8} />
+              </span>
+              <p className="mt-3 text-sm font-bold text-slate-700">Sin consulta activa</p>
+              <p className="mt-1 text-sm text-slate-500">Ingresa un dato para ver las coincidencias.</p>
+            </div>
+          ) : null}
+
+          {clientLookupMode && activeSearch && !selectedCredit ? (
+            <div className="mt-5 overflow-hidden border-t border-slate-200 pt-5">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-slate-900">Resultados</p>
+                  <p className="mt-0.5 text-xs text-slate-500">Coincidencias para &quot;{activeSearch}&quot;</p>
+                </div>
+                {!loadingList ? (
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-600">
+                    {credits.length} {credits.length === 1 ? "registro" : "registros"}
+                  </span>
+                ) : null}
+              </div>
+
+              {loadingList ? (
+                <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                  Buscando coincidencias...
+                </div>
+              ) : !credits.length ? (
+                <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
                   No encontramos clientes o creditos con ese criterio.
-                </p>
+                </div>
               ) : (
-                <div className="divide-y divide-slate-200">
-                  {credits.map((credit) => (
-                    <button
-                      key={`lookup-inline-${credit.id}`}
-                      type="button"
-                      onClick={() => openLookupCredit(credit.id)}
-                      className="grid w-full gap-2 py-3 text-left transition hover:text-slate-950 md:grid-cols-[1.3fr_1fr_auto] md:items-center"
-                    >
-                      <span>
-                        <span className="block text-sm font-black text-slate-950">
-                          {credit.clienteNombre}
+                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <div className="hidden min-w-[920px] grid-cols-[1.35fr_1fr_1.2fr_0.75fr_0.8fr_40px] gap-4 bg-[#101820] px-4 py-3 text-[11px] font-bold uppercase text-white md:grid">
+                    <span>Cliente</span>
+                    <span>Credito</span>
+                    <span>Equipo</span>
+                    <span>Sede</span>
+                    <span>Saldo</span>
+                    <span aria-hidden="true" />
+                  </div>
+                  <div className="min-w-0 divide-y divide-slate-200 md:min-w-[920px]">
+                    {credits.map((credit) => (
+                      <button
+                        key={`lookup-inline-${credit.id}`}
+                        type="button"
+                        onClick={() => openLookupCredit(credit.id)}
+                        className="grid w-full gap-3 bg-white px-4 py-4 text-left transition hover:bg-[#f1f8f7] md:grid-cols-[1.35fr_1fr_1.2fr_0.75fr_0.8fr_40px] md:items-center md:gap-4"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-bold text-slate-950">
+                            {credit.clienteNombre}
+                          </span>
+                          <span className="mt-0.5 block truncate text-xs text-slate-500">
+                            {credit.clienteDocumento || credit.clienteTelefono || "Sin dato principal"}
+                          </span>
                         </span>
-                        <span className="mt-0.5 block text-xs font-semibold text-slate-500">
-                          {credit.folio} | {credit.clienteDocumento || credit.clienteTelefono || "Sin dato principal"}
+                        <span className="min-w-0 text-sm font-semibold text-slate-700">
+                          <span className="block truncate">{credit.folio}</span>
+                          <span className="mt-0.5 block text-xs font-normal text-slate-500">{credit.estado}</span>
                         </span>
-                      </span>
-                      <span className="text-sm font-semibold text-slate-600">
-                        {credit.referenciaEquipo || credit.imei || "Sin equipo"}
-                      </span>
-                      <span className="text-sm font-black text-slate-950">
-                        {currency(credit.saldoPendiente)}
-                      </span>
-                    </button>
-                  ))}
+                        <span className="min-w-0 text-sm text-slate-600">
+                          <span className="block truncate">{credit.referenciaEquipo || "Sin referencia"}</span>
+                          <span className="mt-0.5 block truncate text-xs text-slate-500">{credit.imei || "Sin IMEI"}</span>
+                        </span>
+                        <span className="text-sm font-semibold text-slate-600">{credit.sede.nombre}</span>
+                        <span className="text-sm font-bold text-slate-950">{currency(credit.saldoPendiente)}</span>
+                        <span className="hidden h-8 w-8 place-items-center rounded-md border border-slate-200 bg-white text-[#087a73] md:grid">
+                          <ArrowRight className="h-4 w-4" strokeWidth={2} />
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
