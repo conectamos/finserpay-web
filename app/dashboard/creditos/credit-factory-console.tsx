@@ -10,6 +10,7 @@ import {
   CircleDollarSign,
   History,
   RotateCcw,
+  ScanFace,
   Search,
   UserSearch,
   WalletCards,
@@ -1755,7 +1756,7 @@ function VideoEvidenceCard({
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
 }) {
   return (
-    <div className="rounded-[24px] border border-[#cbe4e8] bg-[#f6fcfd] p-4">
+    <div className="fp-evidence-card rounded-[24px] border border-[#cbe4e8] bg-[#f6fcfd] p-4">
       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
         {title}
       </p>
@@ -1790,7 +1791,7 @@ function VideoEvidenceCard({
         </button>
       </div>
 
-      <div className="mt-4 rounded-[22px] border border-dashed border-[#d8c9b1] bg-white p-3">
+      <div className="fp-evidence-preview mt-4 rounded-[22px] border border-dashed border-[#d8c9b1] bg-white p-3">
         <VideoEvidencePreview
           value={value}
           emptyLabel="Aun no hay video registrado."
@@ -1921,7 +1922,7 @@ function EvidenceCaptureCard({
         : "border-[#cbe4e8] bg-[#f6fcfd]";
 
   return (
-    <div className={["rounded-[24px] border p-4", toneClasses].join(" ")}>
+    <div className={["fp-evidence-card rounded-[24px] border p-4", toneClasses].join(" ")}>
       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
         {title}
       </p>
@@ -1956,7 +1957,7 @@ function EvidenceCaptureCard({
         </button>
       </div>
 
-      <div className="mt-4 rounded-[22px] border border-dashed border-[#d8c9b1] bg-white p-3">
+      <div className="fp-evidence-preview mt-4 rounded-[22px] border border-dashed border-[#d8c9b1] bg-white p-3">
         {value ? (
           <img
             src={value}
@@ -7563,6 +7564,7 @@ export default function CreditFactoryConsole({
               "fp-shell text-slate-950",
               embeddedClientLookup ? "fp-client-lookup-embedded" : "min-h-screen px-4 py-6",
               clientLookupMode ? "fp-client-lookup" : "fp-seller-app",
+              createClientMode ? "fp-credit-factory" : "",
             ].join(" ")
       }
     >
@@ -7582,7 +7584,9 @@ export default function CreditFactoryConsole({
               ? embeddedClientLookup
                 ? "w-full"
                 : "mx-auto max-w-[1180px]"
-              : "mx-auto max-w-7xl"
+              : createClientMode
+                ? "fp-credit-factory-frame mx-auto"
+                : "mx-auto max-w-7xl"
         }
       >
         {paymentsView ? (
@@ -7704,11 +7708,14 @@ export default function CreditFactoryConsole({
                 <div className={lookupMode || createClientMode ? "max-w-2xl" : "max-w-3xl"}>
                   <FinserBrand
                     compact={lookupMode || createClientMode}
+                    dark={createClientMode}
                     showTagline={!lookupMode && !createClientMode}
                   />
-                  {!lookupMode && !createClientMode ? (
-                    <div className="mt-4 inline-flex rounded-full border border-[#c7dbe0] bg-[#f7fbfa] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#145a5a]">
-                      {heroEyebrow}
+                  {!lookupMode ? (
+                    <div className="fp-factory-context mt-4 inline-flex rounded-full border border-[#c7dbe0] bg-[#f7fbfa] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#145a5a]">
+                      {createClientMode
+                        ? `Fabrica ${iphoneFactory ? "iPhone" : "Android"}`
+                        : heroEyebrow}
                     </div>
                   ) : null}
                   <h1
@@ -7733,7 +7740,7 @@ export default function CreditFactoryConsole({
                   </p>
                 </div>
 
-                <div className="flex flex-col gap-3 lg:items-end">
+                <div className="fp-factory-hero-actions flex flex-col gap-3 lg:items-end">
                   <div className="flex flex-wrap gap-2">
                     <Link
                       href="/dashboard"
@@ -8140,15 +8147,14 @@ export default function CreditFactoryConsole({
           }
         >
           <div
-            className={[
-              "fp-surface fp-seller-panel rounded-[24px] p-4 sm:p-5",
+              className={[
+                "fp-surface fp-seller-panel rounded-[24px] p-4 sm:p-5",
               lookupMode ? "hidden" : "",
             ].join(" ")}
           >
             <div
               className={[
                 "fp-flow-header fp-seller-flow-intro relative overflow-hidden rounded-[24px] border border-[#cfe5e2] bg-white/72 p-4 sm:p-5",
-                createClientMode ? "hidden" : "",
               ].join(" ")}
             >
               <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -8172,7 +8178,7 @@ export default function CreditFactoryConsole({
 
                 <div
                   className={[
-                    "min-w-[260px] rounded-[20px] border border-[#d8e6e5] bg-white/88 px-4 py-3",
+                    "fp-factory-progress min-w-[260px] rounded-[20px] border border-[#d8e6e5] bg-white/88 px-4 py-3",
                     simulatorMode ? "hidden" : "",
                   ].join(" ")}
                 >
@@ -8194,7 +8200,9 @@ export default function CreditFactoryConsole({
 
             <div
               className={
-                simulatorMode ? "mt-4" : "mt-4 grid gap-4 xl:grid-cols-[220px_1fr] xl:items-start"
+                simulatorMode
+                  ? "mt-4"
+                  : "fp-credit-factory-layout mt-4 grid gap-4 xl:grid-cols-[220px_1fr] xl:items-start"
               }
             >
               <aside
@@ -8407,7 +8415,7 @@ export default function CreditFactoryConsole({
                             <img
                               src={veriffQrDataUrl}
                               alt="QR de validacion de identidad"
-                              className="h-72 w-72 rounded-[18px] bg-white p-2"
+                              className="h-60 w-60 rounded-[18px] bg-white p-2 sm:h-64 sm:w-64"
                             />
                           </div>
                         ) : (
@@ -8418,13 +8426,23 @@ export default function CreditFactoryConsole({
                               void validateIdentityWithVeriff();
                             }}
                             disabled={veriffSubmitting || !veriffConfig.configured}
-                            className="group w-full max-w-[22rem] overflow-hidden rounded-[28px] border border-slate-950 bg-slate-950 shadow-[0_18px_42px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_48px_rgba(15,23,42,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
+                            className="fp-identity-launch group flex w-full max-w-[28rem] items-center gap-4 rounded-[28px] border border-slate-950 bg-slate-950 px-5 py-5 text-left text-white shadow-[0_18px_42px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-[#152129] disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            <img
-                              src="/assets/veriff-start-validation.png"
-                              alt="Iniciar validacion de identidad"
-                              className="block aspect-square w-full object-cover transition duration-300 group-hover:scale-[1.02]"
-                            />
+                            <span className="grid h-14 w-14 shrink-0 place-items-center rounded-lg border border-[#4ade80]/30 bg-[#4ade80]/10 text-[#4ade80]">
+                              <ScanFace className="h-7 w-7" strokeWidth={1.7} />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-[11px] font-bold uppercase text-[#4ade80]">
+                                Validacion segura
+                              </span>
+                              <span className="mt-1 block text-lg font-black">
+                                Iniciar validacion de identidad
+                              </span>
+                              <span className="mt-1 block text-sm font-medium leading-5 text-slate-400">
+                                Genera el QR para continuar desde el celular del cliente.
+                              </span>
+                            </span>
+                            <ArrowRight className="h-5 w-5 shrink-0 text-[#4ade80] transition group-hover:translate-x-1" strokeWidth={2} />
                           </button>
                         )}
                         <div className="flex min-w-0 flex-1 flex-col gap-3">

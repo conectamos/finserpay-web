@@ -640,6 +640,408 @@ body {
   }
 }
 
+/* Credit factory workspace */
+.fp-credit-factory {
+  min-height: 100vh;
+  padding: 0 !important;
+  background: #edf1f3;
+  color: #101828;
+}
+
+.fp-credit-factory * {
+  letter-spacing: 0 !important;
+}
+
+.fp-credit-factory > .fp-credit-factory-frame {
+  width: 100%;
+  max-width: 1680px !important;
+  padding: 24px 32px 64px;
+}
+
+.fp-credit-factory .fp-seller-hero {
+  overflow: hidden;
+  border: 1px solid #24333c !important;
+  border-radius: 8px !important;
+  background: #0b1116 !important;
+  padding: 24px 28px !important;
+  box-shadow: 0 16px 40px rgba(10, 16, 20, 0.16) !important;
+}
+
+.fp-credit-factory .fp-seller-hero [class*="rounded-[24px]"] {
+  border-radius: 8px !important;
+}
+
+.fp-credit-factory .fp-seller-hero > div > div:first-child {
+  display: grid;
+  max-width: none;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "brand context"
+    "brand title"
+    "brand description";
+  column-gap: 20px;
+  align-items: center;
+}
+
+.fp-credit-factory .fp-seller-hero > div > div:first-child > div:first-child {
+  grid-area: brand;
+}
+
+.fp-credit-factory .fp-seller-hero > div > div:first-child > div:first-child p:first-child {
+  color: #ffffff !important;
+}
+
+.fp-credit-factory .fp-seller-hero .fp-factory-context {
+  grid-area: context;
+  width: fit-content;
+  margin-top: 0;
+}
+
+.fp-credit-factory .fp-seller-hero h1 {
+  grid-area: title;
+  margin-top: 6px;
+  color: #ffffff !important;
+  font-size: 2rem;
+  line-height: 1.05;
+}
+
+.fp-credit-factory .fp-seller-hero p {
+  color: #a9b5bd !important;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.fp-credit-factory .fp-seller-hero > div > div:first-child > p:last-child {
+  grid-area: description;
+  margin-top: 3px;
+}
+
+.fp-credit-factory .fp-factory-context {
+  border-color: rgba(74, 222, 128, 0.32) !important;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.08) !important;
+  color: #67e58e !important;
+}
+
+.fp-credit-factory .fp-seller-hero a,
+.fp-credit-factory .fp-seller-hero button {
+  min-width: 136px !important;
+  min-height: 42px;
+  border-color: #34444e !important;
+  border-radius: 6px !important;
+  background: #111a20 !important;
+  color: #e8edf0 !important;
+  box-shadow: none !important;
+}
+
+.fp-credit-factory .fp-seller-hero a:hover,
+.fp-credit-factory .fp-seller-hero button:hover {
+  border-color: #4ade80 !important;
+  background: #18242b !important;
+  color: #ffffff !important;
+}
+
+.fp-credit-factory .fp-seller-workbench {
+  margin-top: 20px;
+}
+
+.fp-credit-factory .fp-seller-panel {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+.fp-credit-factory .fp-seller-flow-intro {
+  border: 1px solid #24333c !important;
+  border-radius: 8px !important;
+  background: #101820 !important;
+  padding: 18px 20px !important;
+  box-shadow: 0 10px 24px rgba(10, 16, 20, 0.12) !important;
+}
+
+.fp-credit-factory .fp-seller-flow-intro h2 {
+  color: #ffffff !important;
+  font-size: 1.5rem;
+}
+
+.fp-credit-factory .fp-seller-flow-intro p {
+  color: #9eabb4 !important;
+}
+
+.fp-credit-factory .fp-seller-flow-intro p span {
+  color: #ffffff !important;
+}
+
+.fp-credit-factory .fp-factory-progress {
+  border-color: #31414b !important;
+  border-radius: 6px !important;
+  background: #172129 !important;
+}
+
+.fp-credit-factory .fp-factory-progress p {
+  color: #ffffff !important;
+}
+
+.fp-credit-factory .fp-factory-progress .bg-slate-200 {
+  background: #34434d !important;
+}
+
+.fp-credit-factory .fp-flow-progress,
+.fp-credit-factory .fp-form-meter {
+  background: #42c66c !important;
+}
+
+@media (min-width: 1280px) {
+  .fp-credit-factory .fp-credit-factory-layout {
+    grid-template-columns: 252px minmax(0, 1fr) !important;
+    gap: 20px !important;
+  }
+}
+
+.fp-credit-factory .fp-step-rail {
+  top: 20px;
+  border: 1px solid #24333c !important;
+  border-radius: 8px !important;
+  background: #0f171d !important;
+  padding: 10px !important;
+  box-shadow: 0 12px 28px rgba(10, 16, 20, 0.14) !important;
+}
+
+.fp-credit-factory .fp-seller-step-button {
+  min-height: 70px;
+  border-radius: 6px !important;
+  color: #b7c1c8 !important;
+  outline: none;
+}
+
+.fp-credit-factory .fp-seller-step-button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(66, 198, 108, 0.3) !important;
+}
+
+.fp-credit-factory .fp-seller-step-button.fp-step-active {
+  border-color: #1e7460 !important;
+  background: #0e6559 !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.fp-credit-factory .fp-seller-step-button:not(.fp-step-active):hover {
+  border-color: #30414b !important;
+  background: #172129 !important;
+  color: #ffffff !important;
+}
+
+.fp-credit-factory .fp-seller-step-button > span:first-child {
+  border-radius: 6px !important;
+  background: #172129;
+}
+
+.fp-credit-factory .fp-seller-step-button:not(.fp-step-active) span:last-child span:last-child {
+  color: #7f909b !important;
+}
+
+.fp-credit-factory .fp-seller-form-card {
+  border: 1px solid #d7dee3 !important;
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  padding: 26px !important;
+  box-shadow: 0 10px 28px rgba(16, 24, 32, 0.07) !important;
+}
+
+.fp-credit-factory .fp-form-redesign {
+  background: #ffffff !important;
+  background-size: auto !important;
+}
+
+.fp-credit-factory .fp-seller-form-card h3 {
+  color: #101820 !important;
+  font-size: 1.65rem;
+  line-height: 1.15;
+}
+
+.fp-credit-factory .fp-seller-form-card h4 {
+  color: #18232a !important;
+}
+
+.fp-credit-factory .fp-seller-form-card [class*="rounded-[28px]"],
+.fp-credit-factory .fp-seller-form-card [class*="rounded-[24px]"],
+.fp-credit-factory .fp-seller-form-card [class*="rounded-[22px]"],
+.fp-credit-factory .fp-seller-form-card [class*="rounded-[20px]"],
+.fp-credit-factory .fp-seller-form-card [class*="rounded-[18px]"],
+.fp-credit-factory .fp-seller-form-card [class*="rounded-[16px]"] {
+  border-radius: 8px !important;
+  box-shadow: none;
+}
+
+.fp-credit-factory .fp-seller-form-card [class*="bg-[#fcfaf6]"],
+.fp-credit-factory .fp-seller-form-card [class*="bg-[#faf7ef]"],
+.fp-credit-factory .fp-seller-form-card [class*="bg-[#fffaf2]"] {
+  background: #f7f9fa !important;
+}
+
+.fp-credit-factory .fp-seller-form-card input:not([type="checkbox"]),
+.fp-credit-factory .fp-seller-form-card select,
+.fp-credit-factory .fp-seller-form-card textarea {
+  min-height: 46px;
+  border-color: #cbd5dc !important;
+  border-radius: 6px !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.fp-credit-factory .fp-seller-form-card input:not([type="checkbox"]):focus,
+.fp-credit-factory .fp-seller-form-card select:focus,
+.fp-credit-factory .fp-seller-form-card textarea:focus {
+  border-color: #0e7a6f !important;
+  box-shadow: 0 0 0 3px rgba(14, 122, 111, 0.12) !important;
+  transform: none;
+}
+
+.fp-credit-factory .fp-seller-form-card button,
+.fp-credit-factory .fp-seller-form-card label:has(input[type="file"]),
+.fp-credit-factory .fp-flow-actions button {
+  border-radius: 6px !important;
+}
+
+.fp-credit-factory .fp-evidence-card {
+  border-color: #d7dee3 !important;
+  background: #f8fafb !important;
+}
+
+.fp-credit-factory .fp-evidence-preview {
+  border-color: #cbd5dc !important;
+  background: #ffffff !important;
+}
+
+.fp-credit-factory .fp-identity-launch {
+  max-width: 460px;
+  border-color: #263740 !important;
+  background: #101820 !important;
+  box-shadow: none !important;
+}
+
+.fp-credit-factory .fp-identity-launch:hover:not(:disabled) {
+  border-color: #42c66c !important;
+  background: #162128 !important;
+}
+
+.fp-credit-factory .fp-flow-actions {
+  bottom: 16px;
+  border: 1px solid #cfd8de !important;
+  border-radius: 8px !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  padding: 12px !important;
+  box-shadow: 0 14px 34px rgba(16, 24, 32, 0.12) !important;
+}
+
+.fp-credit-factory .fp-flow-actions .fp-action {
+  background: #0e7a6f !important;
+  box-shadow: none !important;
+}
+
+.fp-credit-factory .fp-flow-actions .fp-action:hover:not(:disabled) {
+  background: #0a655d !important;
+  transform: none;
+}
+
+@media (max-width: 1279px) {
+  .fp-credit-factory .fp-step-rail {
+    position: static;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+  }
+
+  .fp-credit-factory .fp-seller-step-button {
+    min-width: 190px;
+    margin-bottom: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .fp-credit-factory > .fp-credit-factory-frame {
+    padding: 12px 12px 44px;
+  }
+
+  .fp-credit-factory .fp-seller-hero {
+    padding: 18px !important;
+  }
+
+  .fp-credit-factory .fp-seller-hero h1 {
+    font-size: 1.75rem;
+  }
+
+  .fp-credit-factory .fp-seller-hero a,
+  .fp-credit-factory .fp-seller-hero button {
+    min-width: 0 !important;
+  }
+
+  .fp-credit-factory .fp-factory-hero-actions {
+    width: 100%;
+  }
+
+  .fp-credit-factory .fp-factory-hero-actions > div:first-child {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .fp-credit-factory .fp-factory-hero-actions a,
+  .fp-credit-factory .fp-factory-hero-actions button {
+    width: 100%;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .fp-credit-factory .fp-seller-flow-intro {
+    padding: 16px !important;
+  }
+
+  .fp-credit-factory .fp-factory-progress {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .fp-credit-factory .fp-step-rail {
+    margin-bottom: 12px;
+  }
+
+  .fp-credit-factory .fp-seller-step-button {
+    min-width: 166px;
+    min-height: 64px;
+    padding: 9px !important;
+  }
+
+  .fp-credit-factory .fp-seller-step-button > span:first-child {
+    width: 34px;
+    height: 34px;
+  }
+
+  .fp-credit-factory .fp-seller-form-card {
+    padding: 18px !important;
+  }
+
+  .fp-credit-factory .fp-seller-form-card h3 {
+    font-size: 1.4rem;
+  }
+
+  .fp-credit-factory .fp-identity-launch {
+    max-width: none;
+    padding: 16px !important;
+  }
+
+  .fp-credit-factory .fp-flow-actions {
+    position: static !important;
+    bottom: 8px;
+  }
+
+  .fp-credit-factory .fp-flow-actions button {
+    flex: 1 1 auto;
+  }
+}
+
 .fp-client-query {
   position: relative;
   overflow: hidden;
