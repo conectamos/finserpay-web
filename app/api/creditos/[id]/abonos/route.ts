@@ -103,6 +103,16 @@ function parseInstallmentNumbers(value: CreditPaymentBody["cuotaNumeros"]) {
   return [...new Set(numbers)].sort((a, b) => a - b);
 }
 
+function safeIsoDate(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+
+  const parsed = new Date(String(value || ""));
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 type PaymentWithRelations = {
   createdAt: Date;
   creditoId: number;
@@ -114,21 +124,38 @@ type PaymentWithRelations = {
   anuladoAt?: Date | null;
   anulacionMotivo?: string | null;
   anuladoPorUsuarioId?: number | null;
-  sede: {
+  sede?: {
     id: number;
     nombre: string;
-  };
-  usuario: {
+  } | null;
+  usuario?: {
     id: number;
     nombre: string;
     usuario: string;
-  };
+  } | null;
   valor: number | string;
   vendedor?: {
     documento: string | null;
     id: number;
     nombre: string;
   } | null;
+};
+
+type RawPaymentItem = {
+  anuladoAt: Date | null;
+  anulacionMotivo: string | null;
+  anuladoPorUsuarioId: number | null;
+  createdAt: Date;
+  creditoId: number;
+  estado: string;
+  fechaAbono: Date;
+  id: number;
+  metodoPago: string;
+  observacion: string | null;
+  sedeId: number;
+  usuarioId: number;
+  valor: number | string;
+  vendedorId: number | null;
 };
 
 function serializePayment(item: PaymentWithRelations) {
@@ -139,15 +166,15 @@ function serializePayment(item: PaymentWithRelations) {
     metodoPago: item.metodoPago,
     observacion: item.observacion,
     estado: item.estado || "ACTIVO",
-    anuladoAt: item.anuladoAt?.toISOString() || null,
+    anuladoAt: safeIsoDate(item.anuladoAt),
     anulacionMotivo: item.anulacionMotivo || null,
     anuladoPorUsuarioId: item.anuladoPorUsuarioId || null,
-    fechaAbono: item.fechaAbono.toISOString(),
-    createdAt: item.createdAt.toISOString(),
+    fechaAbono: safeIsoDate(item.fechaAbono) || safeIsoDate(item.createdAt) || "",
+    createdAt: safeIsoDate(item.createdAt) || "",
     usuario: {
-      id: item.vendedor?.id || item.usuario.id,
-      nombre: item.vendedor?.nombre || item.usuario.nombre,
-      usuario: item.vendedor?.documento || item.usuario.usuario,
+      id: item.vendedor?.id || item.usuario?.id || 0,
+      nombre: item.vendedor?.nombre || item.usuario?.nombre || "Sin usuario",
+      usuario: item.vendedor?.documento || item.usuario?.usuario || "",
     },
     vendedor: item.vendedor
       ? {
@@ -157,10 +184,59 @@ function serializePayment(item: PaymentWithRelations) {
         }
       : null,
     sede: {
-      id: item.sede.id,
-      nombre: item.sede.nombre,
+      id: item.sede?.id || 0,
+      nombre: item.sede?.nombre || "Sin sede",
     },
   };
+}
+
+async function hydratePaymentRelations(items: RawPaymentItem[]) {
+  const usuarioIds = [...new Set(items.map((item) => item.usuarioId).filter(Boolean))];
+  const vendedorIds = [
+    ...new Set(
+      items
+        .map((item) => item.vendedorId)
+        .filter((item): item is number => typeof item === "number" && item > 0)
+    ),
+  ];
+  const sedeIds = [...new Set(items.map((item) => item.sedeId).filter(Boolean))];
+  const [usuarios, vendedores, sedes] = await Promise.all([
+    usuarioIds.length
+      ? prisma.usuario.findMany({
+          where: { id: { in: usuarioIds } },
+          select: { id: true, nombre: true, usuario: true },
+        })
+      : [],
+    vendedorIds.length
+      ? prisma.vendedor.findMany({
+          where: { id: { in: vendedorIds } },
+          select: { id: true, nombre: true, documento: true },
+        })
+      : [],
+    sedeIds.length
+      ? prisma.sede.findMany({
+          where: { id: { in: sedeIds } },
+          select: { id: true, nombre: true },
+        })
+      : [],
+  ]);
+  const usuarioMap = new Map(usuarios.map((item) => [item.id, item]));
+  const vendedorMap = new Map(vendedores.map((item) => [item.id, item]));
+  const sedeMap = new Map(sedes.map((item) => [item.id, item]));
+
+  return items.map((item) => ({
+    ...item,
+    usuario: usuarioMap.get(item.usuarioId) || {
+      id: item.usuarioId,
+      nombre: "Sin usuario",
+      usuario: "",
+    },
+    vendedor: item.vendedorId ? vendedorMap.get(item.vendedorId) || null : null,
+    sede: sedeMap.get(item.sedeId) || {
+      id: item.sedeId,
+      nombre: "Sin sede",
+    },
+  }));
 }
 
 async function loadCredit(
@@ -510,37 +586,32 @@ export async function GET(
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
     }
 
-    const items = await prisma.creditoAbono.findMany({
+    const rawItems = await prisma.creditoAbono.findMany({
       where: {
         creditoId: credit.id,
       },
-      include: {
-        usuario: {
-          select: {
-            id: true,
-            nombre: true,
-            usuario: true,
-          },
-        },
-        vendedor: {
-          select: {
-            id: true,
-            nombre: true,
-            documento: true,
-          },
-        },
-        sede: {
-          select: {
-            id: true,
-            nombre: true,
-          },
-        },
+      select: {
+        anuladoAt: true,
+        anulacionMotivo: true,
+        anuladoPorUsuarioId: true,
+        createdAt: true,
+        creditoId: true,
+        estado: true,
+        fechaAbono: true,
+        id: true,
+        metodoPago: true,
+        observacion: true,
+        sedeId: true,
+        usuarioId: true,
+        valor: true,
+        vendedorId: true,
       },
       orderBy: {
         fechaAbono: "desc",
       },
       take: 50,
     });
+    const items = await hydratePaymentRelations(rawItems);
 
     const summary = await loadPaymentSummary(
       credit.id,
