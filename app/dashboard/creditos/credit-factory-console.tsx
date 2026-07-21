@@ -12418,6 +12418,32 @@ export default function CreditFactoryConsole({
                               {firmaSeguroRefreshing ? "Consultando FirmaSeguro" : "Ver FirmaSeguro"}
                               <ChevronRight className="ml-auto h-4 w-4" strokeWidth={1.8} />
                             </button>
+                            {(canAdmin || canSupervisor) ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const actionLabel = selectedCredit.bloqueoMora
+                                    ? "desbloquear mora"
+                                    : "bloquear por mora";
+
+                                  if (window.confirm(`Confirma la accion: ${actionLabel}.`)) {
+                                    void runCommand("toggle-mora-lock");
+                                  }
+                                }}
+                                disabled={runningCommand !== null}
+                                aria-busy={runningCommand === "toggle-mora-lock"}
+                              >
+                                <LockKeyhole className="h-4 w-4" strokeWidth={1.8} />
+                                {runningCommand === "toggle-mora-lock"
+                                  ? selectedCredit.bloqueoMora
+                                    ? "Desbloqueando mora..."
+                                    : "Bloqueando por mora..."
+                                  : selectedCredit.bloqueoMora
+                                    ? "Desbloquear mora"
+                                    : "Bloquear por mora"}
+                                <ChevronRight className="ml-auto h-4 w-4" strokeWidth={1.8} />
+                              </button>
+                            ) : null}
                           </div>
                           <div className="mt-5 border-t border-[#e5e9ee] pt-5">
                             <div className="flex items-start gap-3 rounded-lg border border-[#c9df91] bg-[#f7fbe9] p-4">
