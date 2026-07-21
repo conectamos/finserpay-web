@@ -7,6 +7,7 @@ import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { resolveCreditPaymentSummary, sanitizeSearch } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
 
 type PaymentAggregate = {
   abonosCount: number;
@@ -53,6 +54,16 @@ function parseDate(value: string | null, endOfDay = false) {
   }
 
   return parsed;
+}
+
+function safeIsoDate(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+
+  const parsed = new Date(String(value || ""));
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 async function buildPaymentSummaryMap(creditIds: number[]) {
@@ -157,29 +168,44 @@ export async function GET(req: Request) {
       );
     }
 
-    const where: Prisma.CreditoWhereInput = {
-      ...(admin && selectedAliadoId
-        ? {
-            sede: {
-              aliadoId: selectedAliadoId,
-            },
-          }
-        : {}),
-      ...(sedeId ? { sedeId } : {}),
-      ...(from || to
-        ? {
-            fechaCredito: {
-              ...(from ? { gte: from } : {}),
-              ...(to ? { lte: to } : {}),
-            },
-          }
-        : {}),
-      ...(search
-        ? {
-            OR: searchConditions,
-          }
-        : {}),
-    };
+    const supervisor = sellerSession?.tipoPerfil === "SUPERVISOR";
+    const accessWhere = buildCreditAccessWhere({
+      admin,
+      adminCentral,
+      aliadoId: selectedAliadoId || user.aliadoAccesoId,
+      sedeId: user.sedeId,
+      sellerSedeId: sellerSession?.sedeId,
+      supervisor,
+    });
+    const whereParts: Prisma.CreditoWhereInput[] = [accessWhere];
+
+    if (adminCentral && selectedAliadoId) {
+      whereParts.push({
+        sede: {
+          aliadoId: selectedAliadoId,
+        },
+      });
+    }
+
+    if (sedeId) {
+      whereParts.push({ sedeId });
+    }
+
+    if (from || to) {
+      whereParts.push({
+        fechaCredito: {
+          ...(from ? { gte: from } : {}),
+          ...(to ? { lte: to } : {}),
+        },
+      });
+    }
+
+    if (search) {
+      whereParts.push({ OR: searchConditions });
+    }
+
+    const where: Prisma.CreditoWhereInput =
+      whereParts.length > 1 ? { AND: whereParts } : whereParts[0] || {};
 
     const items = await prisma.credito.findMany({
       where,
@@ -234,6 +260,24 @@ export async function GET(req: Request) {
         abonosCount: payment.abonosCount,
       });
 
+      const usuario = item.vendedor
+        ? {
+            id: item.vendedor.id,
+            nombre: item.vendedor.nombre || item.usuario?.nombre || "Sin vendedor",
+            usuario: item.vendedor.documento || item.usuario?.usuario || "",
+          }
+        : {
+            id: item.usuario?.id || 0,
+            nombre: item.usuario?.nombre || "Sin vendedor",
+            usuario: item.usuario?.usuario || "",
+          };
+      const sede = item.sede || {
+        id: 0,
+        nombre: "Sin sede",
+        aliadoId: null,
+        aliado: null,
+      };
+
       return {
         id: item.id,
         folio: item.folio,
@@ -261,17 +305,11 @@ export async function GET(req: Request) {
         saldoPendiente: summary.saldoPendiente,
         totalRecaudado: summary.totalRecaudado,
         abonosCount: summary.abonosCount,
-        fechaCredito: item.fechaCredito.toISOString(),
-        fechaPrimerPago: item.fechaPrimerPago?.toISOString() || null,
-        fechaProximoPago: item.fechaProximoPago?.toISOString() || null,
-        usuario: item.vendedor
-          ? {
-              id: item.vendedor.id,
-              nombre: item.vendedor.nombre,
-              usuario: item.vendedor.documento || item.usuario.usuario,
-            }
-          : item.usuario,
-        sede: item.sede,
+        fechaCredito: safeIsoDate(item.fechaCredito) || safeIsoDate(item.createdAt) || "",
+        fechaPrimerPago: safeIsoDate(item.fechaPrimerPago),
+        fechaProximoPago: safeIsoDate(item.fechaProximoPago),
+        usuario,
+        sede,
       };
     });
 
