@@ -12445,6 +12445,92 @@ export default function CreditFactoryConsole({
                               </button>
                             ) : null}
                           </div>
+                          {(canAdmin || canSupervisor) ? (
+                            <div className="mt-4 space-y-4 rounded-lg border border-[#d8dee5] bg-[#f8fafb] p-4">
+                              <div>
+                                <p className="text-xs font-black uppercase tracking-[0.14em] text-[#5c7a13]">
+                                  Fechas de pago
+                                </p>
+                                <label className="mt-3 grid gap-2 text-xs font-bold text-[#475467]">
+                                  Proximo pago
+                                  <input
+                                    type="date"
+                                    value={nextDueDate}
+                                    onChange={(event) => setNextDueDate(event.target.value)}
+                                    className="h-11 rounded-lg border border-[#ccd7dd] bg-white px-3 text-sm font-bold text-[#151a21] outline-none transition focus:border-[#a6d51f] focus:ring-4 focus:ring-[#a6d51f]/15"
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => void runCommand("update-due-date")}
+                                  disabled={!nextDueDate || runningCommand !== null}
+                                  className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#111820] bg-[#111820] px-4 text-sm font-black text-white transition hover:bg-[#05070a] disabled:cursor-not-allowed disabled:border-[#d0d5dd] disabled:bg-[#e5e9ee] disabled:text-[#8a95a3]"
+                                >
+                                  <CalendarDays className="h-4 w-4" strokeWidth={1.8} />
+                                  {runningCommand === "update-due-date"
+                                    ? "Actualizando fecha..."
+                                    : "Actualizar fecha de pago"}
+                                </button>
+                              </div>
+
+                              <div className="border-t border-[#e5e9ee] pt-4">
+                                <p className="text-xs font-black uppercase tracking-[0.14em] text-[#5c7a13]">
+                                  Plan de pagos
+                                </p>
+                                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                  <label className="grid gap-2 text-xs font-bold text-[#475467]">
+                                    Cuotas
+                                    <select
+                                      value={planInstallments}
+                                      onChange={(event) => setPlanInstallments(event.target.value)}
+                                      className="h-11 rounded-lg border border-[#ccd7dd] bg-white px-3 text-sm font-bold text-[#151a21] outline-none transition focus:border-[#a6d51f] focus:ring-4 focus:ring-[#a6d51f]/15"
+                                    >
+                                      {Array.from(
+                                        { length: MAX_CREDIT_INSTALLMENTS },
+                                        (_, index) => String(index + 1)
+                                      ).map((option) => (
+                                        <option key={`client-plan-${option}`} value={option}>
+                                          {option}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="grid gap-2 text-xs font-bold text-[#475467]">
+                                    Frecuencia
+                                    <select
+                                      value={planFrequency}
+                                      onChange={(event) => setPlanFrequency(event.target.value)}
+                                      className="h-11 rounded-lg border border-[#ccd7dd] bg-white px-3 text-sm font-bold text-[#151a21] outline-none transition focus:border-[#a6d51f] focus:ring-4 focus:ring-[#a6d51f]/15"
+                                    >
+                                      {PAYMENT_FREQUENCY_OPTIONS.map((option) => (
+                                        <option key={`client-plan-${option.value}`} value={option.value}>
+                                          {option.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                </div>
+                                <label className="mt-3 grid gap-2 text-xs font-bold text-[#475467]">
+                                  Primer pago
+                                  <input
+                                    type="date"
+                                    value={planFirstPaymentDate}
+                                    onChange={(event) => setPlanFirstPaymentDate(event.target.value)}
+                                    className="h-11 rounded-lg border border-[#ccd7dd] bg-white px-3 text-sm font-bold text-[#151a21] outline-none transition focus:border-[#a6d51f] focus:ring-4 focus:ring-[#a6d51f]/15"
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => void updateCreditPlan()}
+                                  disabled={updatingPlan || runningCommand !== null}
+                                  className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#5c7a13] bg-[#a6d51f] px-4 text-sm font-black text-[#111820] transition hover:bg-[#b8eb24] disabled:cursor-not-allowed disabled:border-[#d0d5dd] disabled:bg-[#e5e9ee] disabled:text-[#8a95a3]"
+                                >
+                                  <CalendarDays className="h-4 w-4" strokeWidth={1.8} />
+                                  {updatingPlan ? "Guardando plan..." : "Ajustar plan de pagos"}
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
                           <div className="mt-5 border-t border-[#e5e9ee] pt-5">
                             <div className="flex items-start gap-3 rounded-lg border border-[#c9df91] bg-[#f7fbe9] p-4">
                               <ShieldCheck className="h-6 w-6 shrink-0 text-[#5c7a13]" strokeWidth={1.8} />
