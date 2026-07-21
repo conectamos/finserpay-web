@@ -256,19 +256,19 @@ function SummaryCard({
 }: {
   label: string;
   value: string;
-  tone?: "slate" | "teal" | "amber";
+  tone?: "slate" | "green" | "amber";
 }) {
   const toneClasses =
-    tone === "teal"
-      ? "border-teal-200 bg-teal-50 text-[#145a5a]"
+    tone === "green"
+      ? "border-[#d9e8ad] bg-[#fbfdf5] text-[#3f6212]"
       : tone === "amber"
-        ? "border-amber-200 bg-amber-50 text-amber-700"
-        : "border-slate-200 bg-white text-slate-900";
+        ? "border-[#fedf89] bg-[#fffaeb] text-[#b54708]"
+        : "border-[#e4e7ec] bg-white text-[#151a21]";
 
   return (
-    <div className={["rounded-[24px] border px-5 py-5 shadow-sm", toneClasses].join(" ")}>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">{label}</p>
-      <p className="mt-4 text-3xl font-black tracking-tight">{value}</p>
+    <div className={["rounded-lg border px-4 py-4 shadow-[0_3px_12px_rgba(16,24,40,0.04)]", toneClasses].join(" ")}>
+      <p className="text-[11px] font-bold uppercase tracking-[0.14em]">{label}</p>
+      <p className="mt-3 text-2xl font-black">{value}</p>
     </div>
   );
 }
@@ -473,38 +473,37 @@ export default function ReporteAbonosPage({
   };
 
   return (
-    <div className="min-h-screen bg-[#eef2f7] px-3 py-6 lg:px-6 lg:py-8">
-      <div className="mx-auto w-full max-w-[1680px]">
-        <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <main className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
+        <div className="flex flex-col gap-4 border-b border-[#e4e7ec] pb-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <div className="inline-flex rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#145a5a]">
-              {isAdmin ? "Reportes admin" : "Reportes de sede"}
+            <div className="text-[11px] font-black uppercase tracking-[0.14em] text-[#5c7a13]">
+              {isAdmin ? "Operacion financiera" : "Operacion de sede"}
             </div>
-            <h1 className="mt-4 text-4xl font-black tracking-tight text-slate-950">
-              Tabla de abonos
+            <h1 className="mt-2 text-3xl font-black text-[#151a21]">
+              Reporte de recaudos
             </h1>
-            <p className="mt-2 text-sm text-slate-600">
+            <p className="mt-1.5 text-sm text-[#667085]">
               {isAdmin
-                ? "Consulta recaudo dia a dia, quien recibio cada pago y cuanto sigue pendiente por cobrar en la cartera."
-                : "Consulta recaudo dia a dia solo para tu sede asignada."}
+                ? "Consulta pagos registrados, responsables de recaudo y saldos pendientes por cobrar."
+                : "Consulta los pagos registrados en tu sede asignada."}
             </p>
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row">
             <Link
               href="/dashboard/reportes"
-              className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-center text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              className="fp-ui-button is-secondary"
             >
               Volver a reportes
             </Link>
           </div>
         </div>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <section className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <SummaryCard
             label="Abonos del periodo"
             value={loading ? "..." : String(summary?.totalAbonos || 0)}
-            tone="teal"
+            tone="green"
           />
           <SummaryCard
             label="Recaudado del periodo"
@@ -525,27 +524,27 @@ export default function ReporteAbonosPage({
           />
         </section>
 
-        <section className="mt-6 rounded-[30px] bg-white p-4 shadow-sm ring-1 ring-slate-200 lg:p-6">
+        <section className="mt-4 rounded-lg border border-[#e4e7ec] bg-white p-3 shadow-[0_4px_18px_rgba(16,24,40,0.05)] lg:p-4">
           <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-[minmax(260px,1.45fr)_150px_150px_minmax(175px,0.8fr)_minmax(175px,0.85fr)_150px_150px]">
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Buscar por cliente, documento, folio, sede o vendedor"
-              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+              className="fp-ui-input"
             />
 
             <input
               type="date"
               value={from}
               onChange={(event) => setFrom(event.target.value)}
-              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+              className="fp-ui-input"
             />
 
             <input
               type="date"
               value={to}
               onChange={(event) => setTo(event.target.value)}
-              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+              className="fp-ui-input"
             />
 
             {isAdmin ? (
@@ -556,7 +555,7 @@ export default function ReporteAbonosPage({
                     setAliadoId(event.target.value);
                     setSedeId("");
                   }}
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                  className="fp-ui-input"
                 >
                   <option value="">Todos los aliados</option>
                   {aliados.map((aliado) => (
@@ -569,7 +568,7 @@ export default function ReporteAbonosPage({
                 <select
                   value={sedeId}
                   onChange={(event) => setSedeId(event.target.value)}
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                  className="fp-ui-input"
                 >
                   <option value="">Todas las sedes</option>
                   {sedesFiltradas.map((sede) => (
@@ -580,7 +579,7 @@ export default function ReporteAbonosPage({
                 </select>
               </>
             ) : (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
+              <div className="flex min-h-11 items-center rounded-md border border-[#d0d5dd] bg-[#f8fafb] px-3 text-sm font-semibold text-[#475467]">
                 {user?.sedeNombre || sedes[0]?.nombre || "Sede asignada"}
               </div>
             )}
@@ -588,7 +587,7 @@ export default function ReporteAbonosPage({
             <button
               type="button"
               onClick={() => void loadReport()}
-              className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+              className="fp-ui-button is-primary"
             >
               Aplicar filtros
             </button>
@@ -597,27 +596,27 @@ export default function ReporteAbonosPage({
               type="button"
               onClick={() => exportPaymentsToExcel(items, byDay)}
               disabled={!items.length || loading}
-              className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-semibold text-[#145a5a] transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+              className="fp-ui-button is-secondary"
             >
               Exportar Excel
             </button>
           </div>
 
           {message && (
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            <div className="mt-4 rounded-lg border border-[#d0d5dd] bg-[#f8fafb] px-4 py-3 text-sm text-[#344054]" role="status">
               {message}
             </div>
           )}
 
-          <div className="mt-6 grid gap-4">
-            <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4 lg:max-w-3xl">
-              <h2 className="text-lg font-black tracking-tight text-slate-950">
+          <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(300px,.34fr)_minmax(0,1fr)]">
+            <div className="overflow-hidden rounded-lg border border-[#e4e7ec] bg-white">
+              <h2 className="border-b border-[#e4e7ec] px-4 py-3 text-base font-black text-[#151a21]">
                 Recaudo dia a dia
               </h2>
 
-              <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <div className="max-h-[560px] overflow-auto">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-slate-100 text-slate-700">
+                  <thead className="sticky top-0 bg-[#f8fafb] text-[#475467]">
                     <tr>
                       <th className="px-4 py-3 text-left font-semibold">Fecha</th>
                       <th className="px-4 py-3 text-left font-semibold">Abonos</th>
@@ -644,7 +643,7 @@ export default function ReporteAbonosPage({
               </div>
             </div>
 
-            <div className="overflow-x-auto rounded-[24px] border border-slate-200 bg-white">
+            <div className="overflow-x-auto rounded-lg border border-[#e4e7ec] bg-white">
               <table className="w-full min-w-[1320px] table-fixed text-[12px] xl:text-[13px]">
                 <colgroup>
                   <col className="w-[11%]" />
@@ -658,7 +657,7 @@ export default function ReporteAbonosPage({
                   <col className="w-[9%]" />
                   <col className="w-[9%]" />
                 </colgroup>
-                <thead className="bg-[#111318] text-white">
+                <thead className="bg-[#f8fafb] text-[#475467]">
                   <tr>
                     <th className="px-3 py-3 text-left font-semibold">Fecha</th>
                     <th className="px-3 py-3 text-left font-semibold">Cliente</th>
@@ -704,10 +703,10 @@ export default function ReporteAbonosPage({
                         <td className="px-3 py-3 align-top">
                           <span
                             className={[
-                              "inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em]",
+                              "inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase",
                               isAnnulled
-                                ? "border-rose-200 bg-rose-100 text-rose-700"
-                                : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                                ? "border-[#fecdca] bg-[#fff1f0] text-[#b42318]"
+                                : "border-[#c7df8d] bg-[#f2f9df] text-[#3f6212]",
                             ].join(" ")}
                           >
                             {isAnnulled ? "Anulado" : "Activo"}
@@ -727,7 +726,7 @@ export default function ReporteAbonosPage({
                                   type="button"
                                   onClick={() => void annulPayment(item)}
                                   disabled={annullingId === item.id || deletingId === item.id}
-                                  className="inline-flex max-w-full items-center justify-center rounded-xl border border-rose-200 bg-white px-3 py-2 text-[11px] font-black text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  className="inline-flex max-w-full items-center justify-center rounded-md border border-[#fedf89] bg-white px-3 py-2 text-[11px] font-bold text-[#b54708] transition hover:bg-[#fffaeb] disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   {annullingId === item.id ? "Anulando..." : "Anular"}
                                 </button>
@@ -737,7 +736,7 @@ export default function ReporteAbonosPage({
                                   type="button"
                                   onClick={() => void deletePayment(item)}
                                   disabled={deletingId === item.id || annullingId === item.id}
-                                  className="inline-flex max-w-full items-center justify-center rounded-xl border border-red-700 bg-red-700 px-3 py-2 text-[11px] font-black text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                  className="inline-flex max-w-full items-center justify-center rounded-md border border-[#d92d20] bg-[#d92d20] px-3 py-2 text-[11px] font-bold text-white transition hover:bg-[#b42318] disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   {deletingId === item.id ? "Eliminando..." : "Eliminar"}
                                 </button>
@@ -762,7 +761,6 @@ export default function ReporteAbonosPage({
             </div>
           </div>
         </section>
-      </div>
-    </div>
+    </main>
   );
 }

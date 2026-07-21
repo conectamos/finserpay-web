@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { KeyRound, MapPin, Store } from "lucide-react";
+import { MetricCard, PageHeader } from "@/app/_components/finser-ui";
 
 type SessionUser = {
   id: number;
@@ -115,6 +117,7 @@ export default function GestionSedesPage() {
         : sedes,
     [esAdminCentral, nuevoAliadoId, sedes]
   );
+  const accesosActivos = sedesVisibles.filter((sede) => sede.acceso?.activo).length;
   const aliadoNuevaSede = useMemo(
     () =>
       esAdminCentral
@@ -334,14 +337,9 @@ export default function GestionSedesPage() {
 
   if (cargando) {
     return (
-      <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
-        <div className="mx-auto max-w-7xl rounded-[32px] bg-white px-8 py-12 shadow-sm ring-1 ring-slate-200">
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Sedes
-          </p>
-          <h1 className="mt-3 text-3xl font-black text-slate-950">
-            Cargando gestion de sedes...
-          </h1>
+      <div className="mx-auto w-full max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
+        <div className="rounded-lg border border-[#e4e7ec] bg-white px-6 py-12 text-center text-sm font-semibold text-[#667085]">
+          Cargando gestion de sedes...
         </div>
       </div>
     );
@@ -349,8 +347,8 @@ export default function GestionSedesPage() {
 
   if (!esAdmin) {
     return (
-      <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
-        <div className="mx-auto max-w-4xl rounded-[32px] bg-white p-8 shadow-sm ring-1 ring-slate-200">
+      <div className="mx-auto w-full max-w-4xl px-4 py-8">
+        <div className="rounded-lg border border-[#e4e7ec] bg-white p-8 shadow-sm">
           <div className="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-red-700">
             Acceso restringido
           </div>
@@ -363,7 +361,7 @@ export default function GestionSedesPage() {
           <div className="mt-6">
             <Link
               href="/dashboard"
-              className="inline-flex rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+              className="fp-ui-button is-primary"
             >
               Volver al dashboard
             </Link>
@@ -374,48 +372,32 @@ export default function GestionSedesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
-      <div className="mx-auto max-w-7xl">
-        <section className="overflow-hidden rounded-[36px] bg-[linear-gradient(135deg,#0f172a_0%,#111827_48%,#7f1d1d_100%)] px-6 py-7 text-white shadow-[0_24px_80px_rgba(15,23,42,0.24)] md:px-8">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-3xl">
-              <div className="inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/90">
-                Administracion
-              </div>
+    <main className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
+        <PageHeader
+          eyebrow="Administracion"
+          title="Sedes y accesos"
+          description="Crea puntos de venta y administra sus credenciales de ingreso."
+        />
 
-              <h1 className="mt-4 text-4xl font-black tracking-tight md:text-5xl">
-                Gestion de sedes
-              </h1>
-
-              <p className="mt-3 text-sm leading-6 text-slate-200 md:text-base">
-                Crea sedes nuevas, asigna su usuario de acceso y cambia la clave de las sedes existentes.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Link
-                href="/dashboard"
-                className="rounded-2xl border border-white/10 bg-white/10 px-5 py-3 text-center text-sm font-semibold text-white transition hover:bg-white/15"
-              >
-                Volver al dashboard
-              </Link>
-            </div>
-          </div>
+        <section className="mt-4 grid gap-3 sm:grid-cols-3">
+          <MetricCard className="!rounded-lg !p-4" label={<span className="flex items-center gap-2"><Store className="h-4 w-4 text-[#5c7a13]" /> Sedes registradas</span>} value={<span className="!text-2xl">{sedesVisibles.length}</span>} detail={aliadoSeleccionado?.nombre || aliadoActualNombre} />
+          <MetricCard className="!rounded-lg !p-4" label={<span className="flex items-center gap-2"><KeyRound className="h-4 w-4 text-[#5c7a13]" /> Accesos activos</span>} value={<span className="!text-2xl">{accesosActivos}</span>} detail="Credenciales habilitadas" />
+          <MetricCard className="!rounded-lg !p-4" label={<span className="flex items-center gap-2"><MapPin className="h-4 w-4 text-[#b54708]" /> Sin acceso</span>} value={<span className="!text-2xl">{sedesVisibles.length - accesosActivos}</span>} detail="Requieren configuracion" />
         </section>
 
         {mensaje && (
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm font-medium text-slate-700 shadow-sm">
+          <div className="mt-4 rounded-lg border border-[#d0d5dd] bg-white px-4 py-3 text-sm font-medium text-[#344054]" role="status">
             {mensaje}
           </div>
         )}
 
-        <section className="mt-6 rounded-[30px] bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <section className="mt-4 rounded-lg border border-[#e4e7ec] bg-white p-5 shadow-[0_4px_18px_rgba(16,24,40,0.05)]">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+              <div className="text-[11px] font-black uppercase tracking-[0.14em] text-[#5c7a13]">
                 Nueva sede
               </div>
-              <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
+              <h2 className="mt-2 text-xl font-black text-[#151a21]">
                 Crear sede con acceso
               </h2>
               <p className="mt-2 text-sm text-slate-500">
@@ -438,7 +420,7 @@ export default function GestionSedesPage() {
                 value={nuevaSedeNombre}
                 onChange={(event) => setNuevaSedeNombre(event.target.value)}
                 placeholder="Ej: Stand PuntoNet"
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                className="fp-ui-input"
               />
             </label>
 
@@ -448,7 +430,7 @@ export default function GestionSedesPage() {
                 <select
                   value={nuevoAliadoId}
                   onChange={(event) => setNuevoAliadoId(event.target.value)}
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                  className="fp-ui-input"
                 >
                   {aliados.map((aliado) => (
                     <option key={aliado.id} value={aliado.id}>
@@ -458,8 +440,8 @@ export default function GestionSedesPage() {
                 </select>
               </label>
             ) : (
-              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-900">
-                <span className="block text-[11px] uppercase tracking-[0.2em] text-emerald-700">
+              <div className="rounded-md border border-[#d9e8ad] bg-[#fbfdf5] px-4 py-3 text-sm font-bold text-[#344054]">
+                <span className="block text-[11px] uppercase tracking-[0.14em] text-[#5c7a13]">
                   Aliado
                 </span>
                 {aliadoActualNombre}
@@ -472,7 +454,7 @@ export default function GestionSedesPage() {
                 value={nuevaSedeCodigo}
                 onChange={(event) => setNuevaSedeCodigo(event.target.value)}
                 placeholder="Opcional"
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                className="fp-ui-input"
               />
             </label>
 
@@ -486,7 +468,7 @@ export default function GestionSedesPage() {
                     ? usuarioSugeridoSede(aliadoNuevaSede, "principal")
                     : "aliado.principal"
                 }
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                className="fp-ui-input"
               />
             </label>
 
@@ -497,7 +479,7 @@ export default function GestionSedesPage() {
                 value={nuevaClave}
                 onChange={(event) => setNuevaClave(event.target.value)}
                 placeholder="Asignar clave"
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                className="fp-ui-input"
               />
             </label>
 
@@ -506,7 +488,7 @@ export default function GestionSedesPage() {
                 type="button"
                 onClick={() => void crearSede()}
                 disabled={guardandoNueva || (esAdminCentral && !nuevoAliadoId)}
-                className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                className="fp-ui-button is-primary w-full"
               >
                 {guardandoNueva ? "Creando..." : "Crear sede"}
               </button>
@@ -514,22 +496,22 @@ export default function GestionSedesPage() {
           </div>
         </section>
 
-        <section className="mt-6 rounded-[30px] bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <section className="mt-4 rounded-lg border border-[#e4e7ec] bg-white shadow-[0_4px_18px_rgba(16,24,40,0.05)]">
           <div>
-            <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+            <div className="px-5 pt-5 text-[11px] font-black uppercase tracking-[0.14em] text-[#5c7a13]">
               Accesos existentes
             </div>
-            <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
+            <h2 className="mt-2 px-5 text-xl font-black text-[#151a21]">
               Sedes registradas
             </h2>
-            <p className="mt-2 text-sm text-slate-500">
+            <p className="mt-1.5 px-5 pb-5 text-sm text-[#667085]">
               {esAdminCentral && aliadoSeleccionado
                 ? `Mostrando sedes de ${aliadoSeleccionado.nombre}. Puedes cambiar nombre, codigo, usuario de acceso y asignar una nueva clave.`
                 : "Puedes cambiar nombre, codigo, usuario de acceso y asignar una nueva clave."}
             </p>
           </div>
 
-          <div className="mt-6 grid gap-4 xl:grid-cols-2">
+          <div className="divide-y divide-[#e4e7ec] border-t border-[#e4e7ec]">
             {sedesVisibles.map((sede) => {
               const edicion = ediciones[sede.id] || {
                 nombre: sede.nombre,
@@ -542,14 +524,14 @@ export default function GestionSedesPage() {
               return (
                 <section
                   key={sede.id}
-                  className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-5"
+                  className="p-5"
                 >
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div>
-                      <div className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                      <div className="text-[11px] font-black uppercase tracking-[0.14em] text-[#667085]">
                         Sede #{sede.id}
                       </div>
-                      <h3 className="mt-3 text-2xl font-black text-slate-950">
+                      <h3 className="mt-2 text-xl font-black text-[#151a21]">
                         {sede.nombre}
                       </h3>
                       <p className="mt-2 text-sm text-slate-500">
@@ -557,12 +539,12 @@ export default function GestionSedesPage() {
                           ? `Acceso actual: ${sede.acceso.usuario}`
                           : "Esta sede aun no tiene usuario de acceso."}
                       </p>
-                      <p className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">
+                      <p className="mt-1 text-xs font-bold uppercase tracking-[0.12em] text-[#5c7a13]">
                         {sede.aliado?.nombre || "Sin aliado"}
                       </p>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                    <div className="rounded-md border border-[#d0d5dd] bg-[#f8fafb] px-4 py-3 text-sm">
                       <p className="font-semibold text-slate-900">
                         {sede.acceso ? "Acceso activo" : "Sin acceso"}
                       </p>
@@ -572,7 +554,7 @@ export default function GestionSedesPage() {
                     </div>
                   </div>
 
-                  <div className="mt-5 grid gap-4 md:grid-cols-2">
+                  <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                     <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
                       Nombre de sede
                       <input
@@ -580,7 +562,7 @@ export default function GestionSedesPage() {
                         onChange={(event) =>
                           actualizarEdicion(sede.id, "nombre", event.target.value)
                         }
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        className="fp-ui-input"
                       />
                     </label>
 
@@ -592,7 +574,7 @@ export default function GestionSedesPage() {
                           actualizarEdicion(sede.id, "codigo", event.target.value.toUpperCase())
                         }
                         placeholder="Opcional"
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        className="fp-ui-input"
                       />
                     </label>
 
@@ -604,7 +586,7 @@ export default function GestionSedesPage() {
                           onChange={(event) =>
                             actualizarEdicion(sede.id, "aliadoId", event.target.value)
                           }
-                          className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          className="fp-ui-input"
                         >
                           <option value="">Seleccionar aliado</option>
                           {aliados.map((aliado) => (
@@ -628,7 +610,7 @@ export default function GestionSedesPage() {
                           )
                         }
                         placeholder="usuario de login"
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        className="fp-ui-input"
                       />
                     </label>
 
@@ -643,7 +625,7 @@ export default function GestionSedesPage() {
                         placeholder={
                           sede.acceso ? "Dejar vacio para conservarla" : "Clave inicial"
                         }
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        className="fp-ui-input"
                       />
                     </label>
                   </div>
@@ -653,7 +635,7 @@ export default function GestionSedesPage() {
                       type="button"
                       onClick={() => void eliminarSede(sede)}
                       disabled={procesandoId === sede.id}
-                      className="rounded-2xl border border-red-200 bg-white px-5 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      className="fp-ui-button is-danger"
                     >
                       Eliminar sede
                     </button>
@@ -661,7 +643,7 @@ export default function GestionSedesPage() {
                       type="button"
                       onClick={() => void guardarSede(sede.id)}
                       disabled={procesandoId === sede.id}
-                      className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                      className="fp-ui-button is-primary"
                     >
                       {procesandoId === sede.id
                         ? "Guardando..."
@@ -674,13 +656,12 @@ export default function GestionSedesPage() {
               );
             })}
             {!sedesVisibles.length && (
-              <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm text-slate-500 xl:col-span-2">
+              <div className="m-5 rounded-lg border border-dashed border-[#d0d5dd] bg-[#f8fafb] px-5 py-8 text-sm text-[#667085]">
                 Este aliado aun no tiene sedes registradas.
               </div>
             )}
           </div>
         </section>
-      </div>
-    </div>
+    </main>
   );
 }

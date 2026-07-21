@@ -3,6 +3,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { ShieldCheck, UserCog, UserRound } from "lucide-react";
+import { MetricCard, PageHeader } from "@/app/_components/finser-ui";
 import {
   type AvatarPerfilKey,
   type TipoPerfilVendedor,
@@ -162,7 +164,7 @@ function AvatarBadge({
   return (
     <div
       className={[
-        "shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm",
+        "shrink-0 overflow-hidden rounded-lg border border-[#e4e7ec] bg-white shadow-sm",
         dimensions,
       ].join(" ")}
     >
@@ -187,7 +189,7 @@ function AvatarSelector({
   const opciones = obtenerOpcionesAvatarPorTipo(tipoPerfil);
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+    <div className="rounded-lg border border-[#e4e7ec] bg-[#f8fafb] p-4">
       <p className="text-sm font-semibold text-slate-700">Avatar del perfil</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         {opciones.map((opcion) => (
@@ -196,10 +198,10 @@ function AvatarSelector({
             type="button"
             onClick={() => onChange(opcion.value)}
             className={[
-              "flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition",
+              "flex items-center gap-3 rounded-md border px-3 py-3 text-left transition",
               avatarKey === opcion.value
-                ? "border-slate-950 bg-slate-50"
-                : "border-slate-200 bg-white hover:border-slate-400",
+                ? "border-[#7ca613] bg-[#fbfdf5]"
+                : "border-[#d0d5dd] bg-white hover:border-[#98a2b3]",
             ].join(" ")}
           >
             <AvatarBadge avatarKey={opcion.value} label={opcion.label} />
@@ -225,14 +227,14 @@ function SedeTransferBoard({
 
   return (
     <div className="grid gap-4 xl:grid-cols-2">
-      <section className="rounded-[28px] border border-slate-300 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-[#d0d5dd] bg-white p-4">
         <p className="text-sm font-semibold text-slate-700">Sedes disponibles</p>
         <div className="mt-4 max-h-72 space-y-2 overflow-y-auto pr-1">
           {available.length ? (
             available.map((sede) => (
               <label
                 key={sede.id}
-                className="flex cursor-pointer items-center gap-3 rounded-2xl bg-[#eef9fb] px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-[#e4f4f8]"
+                className="flex cursor-pointer items-center gap-3 rounded-md border border-[#e4e7ec] bg-[#f8fafb] px-4 py-3 text-sm font-semibold text-[#344054] transition hover:border-[#c7df8d] hover:bg-[#fbfdf5]"
               >
                 <input
                   type="checkbox"
@@ -244,7 +246,7 @@ function SedeTransferBoard({
               </label>
             ))
           ) : (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+            <div className="rounded-md border border-dashed border-[#d0d5dd] bg-[#f8fafb] px-4 py-5 text-sm text-[#667085]">
               {sedes.length
                 ? "Todas las sedes ya quedaron asignadas."
                 : "Este aliado aun no tiene sedes disponibles."}
@@ -253,14 +255,14 @@ function SedeTransferBoard({
         </div>
       </section>
 
-      <section className="rounded-[28px] border border-slate-300 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-[#d0d5dd] bg-white p-4">
         <p className="text-sm font-semibold text-slate-700">Sedes asignadas</p>
         <div className="mt-4 max-h-72 space-y-2 overflow-y-auto pr-1">
           {selected.length ? (
             selected.map((sede) => (
               <label
                 key={sede.id}
-                className="flex cursor-pointer items-center gap-3 rounded-2xl bg-[#eef9fb] px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-[#e4f4f8]"
+                className="flex cursor-pointer items-center gap-3 rounded-md border border-[#c7df8d] bg-[#fbfdf5] px-4 py-3 text-sm font-semibold text-[#344054] transition hover:bg-[#f2f9df]"
               >
                 <input
                   type="checkbox"
@@ -272,7 +274,7 @@ function SedeTransferBoard({
               </label>
             ))
           ) : (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+            <div className="rounded-md border border-dashed border-[#d0d5dd] bg-[#f8fafb] px-4 py-5 text-sm text-[#667085]">
               Selecciona una o varias sedes para este usuario.
             </div>
           )}
@@ -294,7 +296,7 @@ function ProfileColumn({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-4">
+    <section className="rounded-lg border border-[#e4e7ec] bg-[#f8fafb] p-4">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-lg font-black text-slate-950">{title}</h3>
         <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-600">
@@ -305,7 +307,7 @@ function ProfileColumn({
         {count ? (
           children
         ) : (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-5 text-sm text-slate-500">
+          <div className="rounded-md border border-dashed border-[#d0d5dd] bg-white px-4 py-5 text-sm text-[#667085]">
             {empty}
           </div>
         )}
@@ -328,10 +330,10 @@ function SellerProfileButton({
       type="button"
       onClick={onClick}
       className={[
-        "w-full rounded-2xl border px-4 py-4 text-left transition",
+        "w-full rounded-md border px-4 py-4 text-left transition",
         selected
-          ? "border-slate-950 bg-white shadow-[0_12px_24px_rgba(15,23,42,0.10)]"
-          : "border-slate-200 bg-white hover:border-slate-400",
+          ? "border-[#7ca613] bg-[#fbfdf5] shadow-[0_6px_16px_rgba(16,24,40,0.08)]"
+          : "border-[#e4e7ec] bg-white hover:border-[#98a2b3]",
       ].join(" ")}
     >
       <div className="flex items-start justify-between gap-3">
@@ -348,7 +350,7 @@ function SellerProfileButton({
           className={[
             "rounded-full px-2.5 py-1 text-[11px] font-bold",
             seller.activo
-              ? "bg-emerald-50 text-emerald-700"
+              ? "bg-[#f2f9df] text-[#3f6212]"
               : "bg-slate-100 text-slate-500",
           ].join(" ")}
         >
@@ -378,10 +380,10 @@ function AdminProfileButton({
       type="button"
       onClick={onClick}
       className={[
-        "w-full rounded-2xl border px-4 py-4 text-left transition",
+        "w-full rounded-md border px-4 py-4 text-left transition",
         selected
-          ? "border-slate-950 bg-white shadow-[0_12px_24px_rgba(15,23,42,0.10)]"
-          : "border-slate-200 bg-white hover:border-slate-400",
+          ? "border-[#7ca613] bg-[#fbfdf5] shadow-[0_6px_16px_rgba(16,24,40,0.08)]"
+          : "border-[#e4e7ec] bg-white hover:border-[#98a2b3]",
       ].join(" ")}
     >
       <div className="flex items-start justify-between gap-3">
@@ -398,7 +400,7 @@ function AdminProfileButton({
           className={[
             "rounded-full px-2.5 py-1 text-[11px] font-bold",
             admin.activo
-              ? "bg-emerald-50 text-emerald-700"
+              ? "bg-[#f2f9df] text-[#3f6212]"
               : "bg-slate-100 text-slate-500",
           ].join(" ")}
         >
@@ -824,14 +826,9 @@ export default function GestionVendedoresPage() {
 
   if (cargando) {
     return (
-      <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
-        <div className="mx-auto max-w-7xl rounded-[32px] bg-white px-8 py-12 shadow-sm ring-1 ring-slate-200">
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Usuarios
-          </p>
-          <h1 className="mt-3 text-3xl font-black text-slate-950">
-            Cargando gestion de usuarios...
-          </h1>
+      <div className="mx-auto w-full max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
+        <div className="rounded-lg border border-[#e4e7ec] bg-white px-6 py-12 text-center text-sm font-semibold text-[#667085]">
+          Cargando gestion de usuarios...
         </div>
       </div>
     );
@@ -839,8 +836,8 @@ export default function GestionVendedoresPage() {
 
   if (!esAdmin) {
     return (
-      <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
-        <div className="mx-auto max-w-4xl rounded-[32px] bg-white p-8 shadow-sm ring-1 ring-slate-200">
+      <div className="mx-auto w-full max-w-4xl px-4 py-8">
+        <div className="rounded-lg border border-[#e4e7ec] bg-white p-8 shadow-sm">
           <div className="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-red-700">
             Acceso restringido
           </div>
@@ -853,7 +850,7 @@ export default function GestionVendedoresPage() {
           <div className="mt-6">
             <Link
               href="/dashboard"
-              className="inline-flex rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+              className="fp-ui-button is-primary"
             >
               Volver al dashboard
             </Link>
@@ -864,46 +861,32 @@ export default function GestionVendedoresPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#eef2f7] px-4 py-8">
-      <div className="mx-auto max-w-7xl">
-        <section className="overflow-hidden rounded-[36px] bg-[linear-gradient(135deg,#111827_0%,#0f172a_48%,#145a5a_100%)] px-6 py-7 text-white shadow-[0_24px_80px_rgba(15,23,42,0.24)] md:px-8">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-3xl">
-              <div className="inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/90">
-                Administracion
-              </div>
+    <main className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
+        <PageHeader
+          eyebrow="Administracion"
+          title="Usuarios y perfiles"
+          description="Administra vendedores, supervisores, accesos y cobertura por sede."
+        />
 
-              <h1 className="mt-4 text-4xl font-black tracking-tight md:text-5xl">
-                Usuarios por sede
-              </h1>
-
-              <p className="mt-3 text-sm leading-6 text-slate-200 md:text-base">
-                El acceso a la sede se hace con usuario y clave. Luego cada perfil entra con PIN propio y puede cambiarlo despues.
-              </p>
-            </div>
-
-            <Link
-              href="/dashboard"
-              className="rounded-2xl border border-white/10 bg-white/10 px-5 py-3 text-center text-sm font-semibold text-white transition hover:bg-white/15"
-            >
-              Volver al dashboard
-            </Link>
-          </div>
+        <section className="mt-4 grid gap-3 sm:grid-cols-3">
+          <MetricCard className="!rounded-lg !p-4" label={<span className="flex items-center gap-2"><UserRound className="h-4 w-4 text-[#5c7a13]" /> Vendedores</span>} value={<span className="!text-2xl">{vendedoresOperativosFiltrados.length}</span>} detail="Perfiles comerciales" />
+          <MetricCard className="!rounded-lg !p-4" label={<span className="flex items-center gap-2"><UserCog className="h-4 w-4 text-[#5c7a13]" /> Supervisores</span>} value={<span className="!text-2xl">{supervisoresFiltrados.length}</span>} detail="Perfiles de control" />
+          <MetricCard className="!rounded-lg !p-4" label={<span className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-[#5c7a13]" /> Administradores</span>} value={<span className="!text-2xl">{administradoresFiltrados.length}</span>} detail="Accesos administrativos" />
         </section>
 
         {mensaje && (
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm font-medium text-slate-700 shadow-sm">
+          <div className="mt-4 rounded-lg border border-[#d0d5dd] bg-white px-4 py-3 text-sm font-medium text-[#344054]" role="status">
             {mensaje}
           </div>
         )}
 
-        <section className="mt-6 rounded-[30px] bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <section className="mt-4 rounded-lg border border-[#e4e7ec] bg-white p-5 shadow-[0_4px_18px_rgba(16,24,40,0.05)]">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+              <div className="text-[11px] font-black uppercase tracking-[0.14em] text-[#5c7a13]">
                 Nuevo usuario
               </div>
-              <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
+              <h2 className="mt-2 text-xl font-black text-[#151a21]">
                 {nuevoEsAdmin ? "Crear administrador" : "Crear perfil con PIN"}
               </h2>
               <p className="mt-2 text-sm text-slate-500">
@@ -921,7 +904,7 @@ export default function GestionVendedoresPage() {
                 <select
                   value={aliadoSeleccionadoId}
                   onChange={(event) => setAliadoSeleccionadoId(event.target.value)}
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                  className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 >
                   {aliados.map((aliado) => (
                     <option key={aliado.id} value={aliado.id}>
@@ -938,7 +921,7 @@ export default function GestionVendedoresPage() {
                 value={nuevo.nombre}
                 onChange={(event) => actualizarNuevo("nombre", event.target.value)}
                 placeholder="Ej: Juan Gomez"
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               />
             </label>
 
@@ -949,7 +932,7 @@ export default function GestionVendedoresPage() {
                 onChange={(event) =>
                   actualizarNuevoTipo(event.target.value as TipoPerfilFormulario)
                 }
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               >
                 <option value="VENDEDOR">Vendedor</option>
                 <option value="SUPERVISOR">Supervisor</option>
@@ -967,7 +950,7 @@ export default function GestionVendedoresPage() {
                       actualizarNuevo("usuario", sanitizeUsername(event.target.value))
                     }
                     placeholder="admin.sede"
-                    className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                   />
                 </label>
 
@@ -981,7 +964,7 @@ export default function GestionVendedoresPage() {
                         event.target.value ? [Number(event.target.value)] : []
                       )
                     }
-                    className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                   >
                     <option value="">Seleccionar sede</option>
                     {sedesDelAliado.map((sede) => (
@@ -1001,7 +984,7 @@ export default function GestionVendedoresPage() {
                     actualizarNuevo("documento", sanitizeDocument(event.target.value))
                   }
                   placeholder="Cedula del usuario"
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                  className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 />
               </label>
             )}
@@ -1015,7 +998,7 @@ export default function GestionVendedoresPage() {
                   actualizarNuevo("telefono", sanitizePhone(event.target.value))
                 }
                 placeholder="+573001112233"
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               />
             </label>
             )}
@@ -1028,7 +1011,7 @@ export default function GestionVendedoresPage() {
                 value={nuevo.email}
                 onChange={(event) => actualizarNuevo("email", event.target.value)}
                 placeholder="correo@finserpay.com"
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               />
             </label>
             )}
@@ -1045,11 +1028,11 @@ export default function GestionVendedoresPage() {
                   )
                 }
                 placeholder={nuevoEsAdmin ? "Clave de acceso" : "4 a 6 digitos"}
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               />
             </label>
 
-            <label className="flex items-end gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+            <label className="flex items-end gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
               <input
                 type="checkbox"
                 checked={nuevo.activo}
@@ -1095,20 +1078,20 @@ export default function GestionVendedoresPage() {
               type="button"
               onClick={() => void crearVendedor()}
               disabled={guardandoNuevo || (esAdminCentral && !aliadoSeleccionadoId)}
-              className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+              className="fp-ui-button is-primary"
             >
               {guardandoNuevo ? "Creando..." : "Crear usuario"}
             </button>
           </div>
         </section>
 
-        <section className="mt-6 rounded-[30px] bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <section className="mt-4 rounded-lg border border-[#e4e7ec] bg-white p-5 shadow-[0_4px_18px_rgba(16,24,40,0.05)]">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+              <div className="text-[11px] font-black uppercase tracking-[0.14em] text-[#5c7a13]">
                 Perfiles creados
               </div>
-              <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
+              <h2 className="mt-2 text-xl font-black text-[#151a21]">
                 Directorio de usuarios
               </h2>
               <p className="mt-2 text-sm text-slate-500">
@@ -1121,7 +1104,7 @@ export default function GestionVendedoresPage() {
             <select
               value={filtroSede}
               onChange={(event) => setFiltroSede(event.target.value)}
-              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+              className="fp-ui-input max-w-xs"
             >
               <option value="">Todas las sedes</option>
               {sedesDelAliado.map((sede) => (
@@ -1193,13 +1176,13 @@ export default function GestionVendedoresPage() {
           </div>
 
           {!selectedProfile && (
-            <div className="mt-6 rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm text-slate-500">
+            <div className="mt-6 rounded-lg border border-dashed border-[#d0d5dd] bg-[#f8fafb] px-5 py-8 text-sm text-[#667085]">
               Haz clic en un supervisor, vendedor o administrador para abrir su informacion.
             </div>
           )}
 
           {selectedAdmin && (
-            <section className="mt-6 rounded-[28px] border border-slate-200 bg-slate-50/70 p-5">
+            <section className="mt-6 rounded-lg border border-[#e4e7ec] bg-[#f8fafb] p-5">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div>
                   <div className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
@@ -1213,7 +1196,7 @@ export default function GestionVendedoresPage() {
                   </p>
                 </div>
 
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
                   <p className="font-semibold text-slate-900">
                     {selectedAdmin.activo ? "Perfil activo" : "Perfil inactivo"}
                   </p>
@@ -1222,7 +1205,7 @@ export default function GestionVendedoresPage() {
               </div>
 
               <div className="mt-5 grid gap-4 md:grid-cols-3">
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                <div className="rounded-lg border border-slate-200 bg-white px-4 py-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                     Sede base
                   </p>
@@ -1230,7 +1213,7 @@ export default function GestionVendedoresPage() {
                     {selectedAdmin.sede.nombre}
                   </p>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                <div className="rounded-lg border border-slate-200 bg-white px-4 py-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                     Creado
                   </p>
@@ -1238,7 +1221,7 @@ export default function GestionVendedoresPage() {
                     {formatDate(selectedAdmin.createdAt)}
                   </p>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                <div className="rounded-lg border border-slate-200 bg-white px-4 py-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                     Actualizado
                   </p>
@@ -1261,7 +1244,7 @@ export default function GestionVendedoresPage() {
               return (
                 <section
                   key={vendedor.id}
-                  className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-5"
+                  className="rounded-lg border border-[#e4e7ec] bg-[#f8fafb] p-5"
                 >
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div className="flex gap-4">
@@ -1286,7 +1269,7 @@ export default function GestionVendedoresPage() {
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
                       <p className="font-semibold text-slate-900">
                         {vendedor.activo ? "Perfil activo" : "Perfil inactivo"}
                       </p>
@@ -1306,7 +1289,7 @@ export default function GestionVendedoresPage() {
                         onChange={(event) =>
                           actualizarEdicion(vendedor.id, "nombre", event.target.value)
                         }
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                       />
                     </label>
 
@@ -1321,7 +1304,7 @@ export default function GestionVendedoresPage() {
                             sanitizeDocument(event.target.value)
                           )
                         }
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                       />
                     </label>
 
@@ -1335,7 +1318,7 @@ export default function GestionVendedoresPage() {
                             event.target.value as TipoPerfilVendedor
                           )
                         }
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                       >
                         <option value="VENDEDOR">Vendedor</option>
                         <option value="SUPERVISOR">Supervisor</option>
@@ -1353,7 +1336,7 @@ export default function GestionVendedoresPage() {
                             sanitizePhone(event.target.value)
                           )
                         }
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                       />
                     </label>
 
@@ -1365,7 +1348,7 @@ export default function GestionVendedoresPage() {
                         onChange={(event) =>
                           actualizarEdicion(vendedor.id, "email", event.target.value)
                         }
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                       />
                     </label>
 
@@ -1378,11 +1361,11 @@ export default function GestionVendedoresPage() {
                           actualizarEdicion(vendedor.id, "pin", sanitizePin(event.target.value))
                         }
                         placeholder="Solo si deseas cambiarlo"
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                        className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                       />
                     </label>
 
-                    <label className="flex items-end gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700">
+                    <label className="flex items-end gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700">
                       <input
                         type="checkbox"
                         checked={draft.activo}
@@ -1429,7 +1412,7 @@ export default function GestionVendedoresPage() {
                           type="button"
                           onClick={() => void eliminarVendedor(vendedor)}
                           disabled={procesandoId === vendedor.id}
-                          className="rounded-2xl border border-red-200 bg-white px-5 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-70"
+                          className="fp-ui-button is-danger"
                         >
                           Eliminar usuario
                         </button>
@@ -1438,7 +1421,7 @@ export default function GestionVendedoresPage() {
                           type="button"
                           onClick={() => void guardarVendedor(vendedor.id)}
                           disabled={procesandoId === vendedor.id}
-                          className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                          className="fp-ui-button is-primary"
                         >
                           {procesandoId === vendedor.id ? "Guardando..." : "Guardar cambios"}
                         </button>
@@ -1449,13 +1432,12 @@ export default function GestionVendedoresPage() {
             })}
 
             {selectedProfile && !selectedSeller && !selectedAdmin && (
-              <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm text-slate-500">
+              <div className="rounded-lg border border-dashed border-[#d0d5dd] bg-[#f8fafb] px-5 py-8 text-sm text-[#667085]">
                 No se encontro informacion para el perfil seleccionado.
               </div>
             )}
           </div>
         </section>
-      </div>
-    </div>
+    </main>
   );
 }

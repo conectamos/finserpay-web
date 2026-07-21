@@ -1,3 +1,7 @@
+import { AppShell } from "@/app/_components/finser-ui";
+import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
+import AdminWorkspaceTopbar from "@/app/dashboard/_components/admin-workspace-topbar";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { requireAdminOrSupervisorDashboardAccess } from "@/lib/dashboard-access";
 import ReporteCreditosPage from "./reporte-creditos-client";
 
@@ -27,14 +31,32 @@ export const metadata = {
 };
 
 export default async function ReporteCreditosRoute({ searchParams }: { searchParams: SearchParams }) {
-  await requireAdminOrSupervisorDashboardAccess();
+  const { admin, session } = await requireAdminOrSupervisorDashboardAccess();
+  const adminCentral = admin && isFinserPayCentralAlly(session.aliadoAccesoCodigo);
   const params = await searchParams;
 
   return (
-    <ReporteCreditosPage
-      initialFrom={dateValue(params.from)}
-      initialTo={dateValue(params.to)}
-      initialSedeId={idValue(params.sedeId)}
-    />
+    <AppShell
+      sidebar={
+        <AdminSidebar
+          activeHref="/dashboard/reportes"
+          adminCentral={adminCentral}
+          nombreUsuario={session.nombre}
+          rolUsuario={session.rolNombre}
+        />
+      }
+    >
+      <AdminWorkspaceTopbar
+        parent="Reportes"
+        current="Creditos"
+        userName={session.nombre}
+        userRole={session.rolNombre}
+      />
+      <ReporteCreditosPage
+        initialFrom={dateValue(params.from)}
+        initialTo={dateValue(params.to)}
+        initialSedeId={idValue(params.sedeId)}
+      />
+    </AppShell>
   );
 }
