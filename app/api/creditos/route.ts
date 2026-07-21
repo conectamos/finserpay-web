@@ -222,6 +222,16 @@ type PaymentAggregate = {
   ultimoAbonoAt: Date | null;
 };
 
+function safeIsoDate(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+
+  const parsed = new Date(String(value || ""));
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 const creditListInclude = {
   usuario: {
     select: {
@@ -351,9 +361,9 @@ function serializeCredit(
     fianzaPorcentaje: item.fianzaPorcentaje,
     valorFianza: item.valorFianza,
     valorCuota: item.valorCuota,
-    fechaCredito: item.fechaCredito.toISOString(),
-    fechaPrimerPago: item.fechaPrimerPago?.toISOString() || null,
-    fechaProximoPago: item.fechaProximoPago?.toISOString() || null,
+    fechaCredito: safeIsoDate(item.fechaCredito) || safeIsoDate(item.createdAt) || "",
+    fechaPrimerPago: safeIsoDate(item.fechaPrimerPago),
+    fechaProximoPago: safeIsoDate(item.fechaProximoPago),
     referenciaPago: item.referenciaPago,
     estado: item.estado,
     deliverableLabel: item.deliverableLabel,
@@ -361,17 +371,17 @@ function serializeCredit(
     equalityState: item.equalityState,
     equalityService: item.equalityService,
     equalityPayload: item.equalityPayload,
-    equalityLastCheckAt: item.equalityLastCheckAt?.toISOString() || null,
-    graceUntil: item.graceUntil?.toISOString() || null,
-    warrantyUntil: item.warrantyUntil?.toISOString() || null,
+    equalityLastCheckAt: safeIsoDate(item.equalityLastCheckAt),
+    graceUntil: safeIsoDate(item.graceUntil),
+    warrantyUntil: safeIsoDate(item.warrantyUntil),
     bloqueoRobo: item.bloqueoRobo,
-    bloqueoRoboAt: item.bloqueoRoboAt?.toISOString() || null,
+    bloqueoRoboAt: safeIsoDate(item.bloqueoRoboAt),
     bloqueoMora: item.bloqueoMora,
-    bloqueoMoraAt: item.bloqueoMoraAt?.toISOString() || null,
-    pazYSalvoEmitidoAt: item.pazYSalvoEmitidoAt?.toISOString() || null,
+    bloqueoMoraAt: safeIsoDate(item.bloqueoMoraAt),
+    pazYSalvoEmitidoAt: safeIsoDate(item.pazYSalvoEmitidoAt),
     observacionAdmin: item.observacionAdmin,
-    contratoAceptadoAt: item.contratoAceptadoAt?.toISOString() || null,
-    pagareAceptadoAt: item.pagareAceptadoAt?.toISOString() || null,
+    contratoAceptadoAt: safeIsoDate(item.contratoAceptadoAt),
+    pagareAceptadoAt: safeIsoDate(item.pagareAceptadoAt),
     contratoIp: item.contratoIp,
     contratoFotoDataUrl: item.contratoFotoDataUrl,
     contratoSelfieDataUrl: item.contratoSelfieDataUrl,
@@ -388,7 +398,7 @@ function serializeCredit(
     ),
     contratoOtpCanal: item.contratoOtpCanal,
     contratoOtpDestino: item.contratoOtpDestino,
-    contratoOtpVerificadoAt: item.contratoOtpVerificadoAt?.toISOString() || null,
+    contratoOtpVerificadoAt: safeIsoDate(item.contratoOtpVerificadoAt),
     referenciasFamiliares: extractFamilyReferences(item.contratoSnapshot),
     totalAbonado: paymentSummary.totalAbonado,
     saldoPendiente: paymentSummary.saldoPendiente,
@@ -406,13 +416,13 @@ function serializeCredit(
     cuotasPendientes: paymentPlan.pendingCount,
     cuotasEnMora: paymentPlan.overdueCount,
     abonosCount: paymentSummary.abonosCount,
-    ultimoAbonoAt: payment.ultimoAbonoAt?.toISOString() || null,
-    createdAt: item.createdAt.toISOString(),
-    updatedAt: item.updatedAt.toISOString(),
+    ultimoAbonoAt: safeIsoDate(payment.ultimoAbonoAt),
+    createdAt: safeIsoDate(item.createdAt) || "",
+    updatedAt: safeIsoDate(item.updatedAt) || "",
     usuario: {
-      id: item.vendedor?.id || item.usuario.id,
-      nombre: item.vendedor?.nombre || item.usuario.nombre,
-      usuario: item.vendedor?.documento || item.usuario.usuario,
+      id: item.vendedor?.id || item.usuario?.id || 0,
+      nombre: item.vendedor?.nombre || item.usuario?.nombre || "Sin vendedor",
+      usuario: item.vendedor?.documento || item.usuario?.usuario || "",
     },
     vendedor: item.vendedor
       ? {
@@ -422,8 +432,8 @@ function serializeCredit(
         }
       : null,
     sede: {
-      id: item.sede.id,
-      nombre: item.sede.nombre,
+      id: item.sede?.id || 0,
+      nombre: item.sede?.nombre || "Sin sede",
     },
   };
 }
