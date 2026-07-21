@@ -1,14 +1,49 @@
 "use client";
 
-import Link from "next/link";
 import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
+  type ComponentType,
+  type DragEvent,
   type HTMLInputTypeAttribute,
+  type ReactNode,
 } from "react";
+import {
+  AlertCircle,
+  Building2,
+  Check,
+  ChevronDown,
+  CircleCheck,
+  Download,
+  FileCheck2,
+  FileSpreadsheet,
+  Info,
+  LoaderCircle,
+  RefreshCw,
+  Smartphone,
+  Store,
+  Trash2,
+  UploadCloud,
+  UserRound,
+  UsersRound,
+  WalletCards,
+} from "lucide-react";
+import {
+  Badge,
+  Button,
+  Card,
+  DataTable,
+  EmptyState,
+  Input,
+  PageHeader,
+  Select,
+  Tabs,
+} from "@/app/_components/finser-ui";
+import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 
 type MassCreditInputRow = {
   aliado: string;
@@ -85,6 +120,12 @@ type CatalogResponse = {
 type CatalogSede = NonNullable<CatalogResponse["sedes"]>[number];
 type FieldKey = keyof MassCreditInputRow;
 type InputMode = "bulk" | "single";
+type PreviewFilter = "all" | "errors" | "valid";
+type AssignmentDefaults = Pick<MassCreditInputRow, "aliado" | "sede" | "vendedor">;
+type LoadedFile = { name: string; selectedAt: Date; size: number };
+
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_IMPORT_ROWS = 250;
 
 const FIELD_ORDER: FieldKey[] = [
   "fecha",
@@ -152,17 +193,17 @@ const HEADER_ALIASES: Record<string, FieldKey> = {
   ccdocumento: "cedula",
   cliente: "cliente",
   cuota: "cuota",
+  fecha: "fecha",
   fechadepago: "fechaPago",
   fechapago: "fechaPago",
-  fecha: "fecha",
   frecuencia: "frecuencia",
   imei: "imei",
   inicial: "inicial",
   plazo: "plazo",
   referencia: "referencia",
   sede: "sede",
-  telefono: "telefono",
   tel: "telefono",
+  telefono: "telefono",
   valorcredito: "valorCredito",
   valordelcredito: "valorCredito",
   vendedor: "vendedor",
@@ -256,10 +297,7 @@ function defaultManualRow(): MassCreditInputRow {
 
 function hasManualCreditData(row: MassCreditInputRow) {
   return FIELD_ORDER.some((field) => {
-    if (field === "fecha" || field === "frecuencia" || field === "inicial") {
-      return false;
-    }
-
+    if (field === "fecha" || field === "frecuencia" || field === "inicial") return false;
     return String(row[field] || "").trim();
   });
 }
@@ -270,9 +308,7 @@ function parseRows(raw: string) {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  if (!lines.length) {
-    return [];
-  }
+  if (!lines.length) return [];
 
   const delimiter = detectDelimiter(lines[0]);
   const firstCells = parseDelimitedLine(lines[0], delimiter);
@@ -287,9 +323,7 @@ function parseRows(raw: string) {
       const row = emptyRow();
 
       positions.forEach((field, index) => {
-        if (field) {
-          row[field] = cells[index] || "";
-        }
+        if (field) row[field] = cells[index] || "";
       });
 
       return row;
@@ -301,23 +335,29 @@ function money(value: number) {
   return `$ ${Math.round(Number(value || 0)).toLocaleString("es-CO")}`;
 }
 
-function statusClasses(ok: boolean) {
-  return ok
-    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-    : "border-red-200 bg-red-50 text-red-800";
+function inputMoney(value: unknown) {
+  const normalized = String(value || "").replace(/[^\d]/g, "");
+  return Number(normalized || 0);
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? "");
+  return /[;"\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 async function postRows(rows: MassCreditInputRow[], commit: boolean) {
   const response = await fetch("/api/creditos/masivos", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ commit, rows }),
   });
-  const data = (await response.json().catch(() => null)) as
-    | ValidationResponse
-    | null;
+  const data = (await response.json().catch(() => null)) as ValidationResponse | null;
 
   if (!response.ok || !data) {
     throw new Error(data?.error || "No se pudo procesar la carga");
@@ -327,154 +367,139 @@ async function postRows(rows: MassCreditInputRow[], commit: boolean) {
 }
 
 export default function MassCreditImportConsole() {
-  const [mode, setMode] = useState<InputMode>("single");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [mode, setMode] = useState<InputMode>("bulk");
   const [rawText, setRawText] = useState(TEMPLATE_HEADER);
-  const [manualRow, setManualRow] = useState<MassCreditInputRow>(
-    defaultManualRow()
-  );
-  const [validation, setValidation] = useState<ValidationResponse | null>(null);
+  const [fileInfo, setFileInfo] = useState<LoadedFile | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [bulkDefaults, setBulkDefaults] = useState<AssignmentDefaults>({
+    aliado: "",
+    sede: "",
+    vendedor: "",
+  });
+  const [manualRow, setManualRow] = useState<MassCreditInputRow>(defaultManualRow());
+  const [validations, setValidations] = useState<Record<InputMode, ValidationResponse | null>>({
+    bulk: null,
+    single: null,
+  });
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
-  const [loading, setLoading] = useState<"catalog" | "validate" | "create" | null>(
-    null
-  );
+  const [loading, setLoading] = useState<"catalog" | "create" | "file" | "validate" | null>(null);
   const [notice, setNotice] = useState("");
+  const [previewFilter, setPreviewFilter] = useState<PreviewFilter>("all");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
   const parsedRows = useMemo(() => parseRows(rawText), [rawText]);
-  const activeRows =
-    mode === "single"
-      ? hasManualCreditData(manualRow)
-        ? [manualRow]
-        : []
-      : parsedRows;
+  const bulkRows = useMemo(
+    () =>
+      parsedRows.map((row) => ({
+        ...row,
+        aliado: row.aliado || bulkDefaults.aliado,
+        sede: row.sede || bulkDefaults.sede,
+        vendedor: row.vendedor || bulkDefaults.vendedor,
+      })),
+    [bulkDefaults, parsedRows]
+  );
+  const activeRows = mode === "single" ? (hasManualCreditData(manualRow) ? [manualRow] : []) : bulkRows;
+  const validation = validations[mode];
+  const totalAmount = activeRows.reduce((sum, row) => sum + inputMoney(row.valorCredito), 0);
+  const assignmentValues = mode === "bulk" ? bulkDefaults : manualRow;
+
+  const setModeValidation = (target: InputMode, value: ValidationResponse | null) => {
+    setValidations((current) => ({ ...current, [target]: value }));
+  };
+
+  const sedesById = useMemo(() => {
+    const map = new Map<number, CatalogSede>();
+    for (const sede of catalog?.sedes || []) map.set(sede.id, sede);
+    return map;
+  }, [catalog?.sedes]);
+
+  const selectedAliado = useMemo(() => {
+    const current = normalizeOption(assignmentValues.aliado);
+    if (!current) return null;
+    return (
+      catalog?.aliados?.find(
+        (aliado) =>
+          normalizeOption(aliado.nombre) === current || normalizeOption(aliado.codigo) === current
+      ) || null
+    );
+  }, [assignmentValues.aliado, catalog?.aliados]);
+
+  const availableSedes = useMemo(() => {
+    if (!selectedAliado) return [];
+    return (catalog?.sedes || []).filter((sede) => sede.aliadoId === selectedAliado.id);
+  }, [catalog?.sedes, selectedAliado]);
+
+  const selectedSede = useMemo(() => {
+    const current = normalizeOption(assignmentValues.sede);
+    if (!current) return null;
+    return availableSedes.find((sede) => normalizeOption(sede.nombre) === current) || null;
+  }, [assignmentValues.sede, availableSedes]);
+
+  const availableVendedores = useMemo(() => {
+    if (!selectedAliado) return [];
+    const sedeIds = new Set(
+      selectedSede ? [selectedSede.id] : availableSedes.map((sede) => sede.id)
+    );
+    return (catalog?.vendedores || []).filter((vendedor) => sedeIds.has(vendedor.sedeId));
+  }, [availableSedes, catalog?.vendedores, selectedAliado, selectedSede]);
+
   const canCreate =
     Boolean(validation) &&
     validation?.summary.invalid === 0 &&
     validation?.summary.total === activeRows.length &&
     activeRows.length > 0 &&
     !validation?.commit;
-  const totalAmount = activeRows.reduce((sum, row) => {
-    const raw = String(row.valorCredito || "").replace(/\D/g, "");
-    return sum + Number(raw || 0);
-  }, 0);
-  const sedesById = useMemo(() => {
-    const map = new Map<number, CatalogSede>();
 
-    for (const sede of catalog?.sedes || []) {
-      map.set(sede.id, sede);
-    }
+  const bulkStage = validation?.commit
+    ? 4
+    : validation?.summary.invalid
+      ? 3
+      : validation?.summary.valid
+        ? 4
+        : parsedRows.length
+          ? 2
+          : 1;
 
-    return map;
-  }, [catalog?.sedes]);
-  const selectedAliado = useMemo(() => {
-    const current = normalizeOption(manualRow.aliado);
+  const visibleRows = useMemo(() => {
+    const rows = validation?.rows || [];
+    if (previewFilter === "valid") return rows.filter((row) => row.ok);
+    if (previewFilter === "errors") return rows.filter((row) => !row.ok);
+    return rows;
+  }, [previewFilter, validation?.rows]);
 
-    if (!current) {
-      return null;
-    }
+  const involvedAllies = new Set(activeRows.map((row) => normalizeOption(row.aliado)).filter(Boolean)).size;
+  const involvedStores = new Set(activeRows.map((row) => normalizeOption(row.sede)).filter(Boolean)).size;
 
-    return (
-      catalog?.aliados?.find(
-        (aliado) =>
-          normalizeOption(aliado.nombre) === current ||
-          normalizeOption(aliado.codigo) === current
-      ) || null
-    );
-  }, [catalog?.aliados, manualRow.aliado]);
-  const availableSedes = useMemo(() => {
-    if (!selectedAliado) {
-      return [];
-    }
+  const validationDisabledReason = !activeRows.length
+    ? mode === "bulk"
+      ? "Carga un archivo CSV para continuar."
+      : "Completa los datos del credito para continuar."
+    : mode === "bulk" && activeRows.length > MAX_IMPORT_ROWS
+      ? `El lote supera el limite de ${MAX_IMPORT_ROWS} registros.`
+      : loading
+        ? "Hay un proceso en curso."
+        : "";
 
-    return (catalog?.sedes || []).filter(
-      (sede) => sede.aliadoId === selectedAliado.id
-    );
-  }, [catalog?.sedes, selectedAliado]);
-  const selectedSede = useMemo(() => {
-    const current = normalizeOption(manualRow.sede);
-
-    if (!current) {
-      return null;
-    }
-
-    return (
-      availableSedes.find((sede) => normalizeOption(sede.nombre) === current) ||
-      null
-    );
-  }, [availableSedes, manualRow.sede]);
-  const availableVendedores = useMemo(() => {
-    if (!selectedAliado) {
-      return [];
-    }
-
-    const sedeIds = new Set(
-      selectedSede
-        ? [selectedSede.id]
-        : availableSedes.map((sede) => sede.id)
-    );
-
-    return (catalog?.vendedores || []).filter((vendedor) =>
-      sedeIds.has(vendedor.sedeId)
-    );
-  }, [availableSedes, catalog?.vendedores, selectedAliado, selectedSede]);
-
-  const switchMode = (nextMode: InputMode) => {
-    setMode(nextMode);
-    setValidation(null);
-    setNotice("");
-  };
-
-  const updateManualField = (field: FieldKey, value: string) => {
-    setManualRow((current) => ({
-      ...current,
-      [field]: value,
-    }));
-    setValidation(null);
-  };
-
-  const selectAliado = (value: string) => {
-    setManualRow((current) => ({
-      ...current,
-      aliado: value,
-      sede: "",
-      vendedor: "",
-    }));
-    setValidation(null);
-  };
-
-  const selectSede = (value: string) => {
-    setManualRow((current) => ({
-      ...current,
-      sede: value,
-      vendedor: "",
-    }));
-    setValidation(null);
-  };
-
-  const selectVendedor = (value: string) => {
-    setManualRow((current) => ({
-      ...current,
-      vendedor: value,
-    }));
-    setValidation(null);
-  };
+  const createDisabledReason = validation?.commit
+    ? "Este lote ya fue creado."
+    : !validation
+      ? "Primero valida la informacion."
+      : validation.summary.invalid > 0
+        ? "Corrige los errores y valida nuevamente."
+        : !validation.summary.valid
+          ? "No hay filas validas para crear."
+          : "";
 
   const loadCatalog = useCallback(async (showNotice = true) => {
     try {
       setLoading("catalog");
-      const response = await fetch("/api/creditos/masivos", {
-        cache: "no-store",
-      });
-      const data = (await response.json().catch(() => null)) as CatalogResponse & {
-        error?: string;
-      };
+      const response = await fetch("/api/creditos/masivos", { cache: "no-store" });
+      const data = (await response.json().catch(() => null)) as CatalogResponse & { error?: string };
 
-      if (!response.ok) {
-        throw new Error(data?.error || "No se pudo cargar el catalogo");
-      }
-
+      if (!response.ok) throw new Error(data?.error || "No se pudo cargar el catalogo");
       setCatalog(data);
-      if (showNotice) {
-        setNotice("Catalogo actualizado");
-      }
+      if (showNotice) setNotice("Catalogo actualizado.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Error cargando catalogo");
     } finally {
@@ -486,19 +511,113 @@ export default function MassCreditImportConsole() {
     void loadCatalog(false);
   }, [loadCatalog]);
 
+  const switchMode = (nextMode: InputMode) => {
+    if (loading || nextMode === mode) return;
+    setMode(nextMode);
+    setPreviewFilter("all");
+    setNotice("");
+  };
+
+  const updateManualField = (field: FieldKey, value: string) => {
+    setManualRow((current) => ({ ...current, [field]: value }));
+    setModeValidation("single", null);
+  };
+
+  const updateAssignment = (field: keyof AssignmentDefaults, value: string) => {
+    const patch: Partial<AssignmentDefaults> = { [field]: value };
+    if (field === "aliado") {
+      patch.sede = "";
+      patch.vendedor = "";
+    } else if (field === "sede") {
+      patch.vendedor = "";
+    }
+
+    if (mode === "bulk") {
+      setBulkDefaults((current) => ({ ...current, ...patch }));
+      setModeValidation("bulk", null);
+    } else {
+      setManualRow((current) => ({ ...current, ...patch }));
+      setModeValidation("single", null);
+    }
+  };
+
+  const processFile = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      setNotice("El archivo debe estar en formato CSV.");
+      return;
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      setNotice("El archivo supera el limite de 5 MB.");
+      return;
+    }
+
+    try {
+      setLoading("file");
+      setNotice("");
+      const text = await file.text();
+      const rows = parseRows(text);
+
+      if (!rows.length) throw new Error("El archivo no contiene registros para validar.");
+      if (rows.length > MAX_IMPORT_ROWS) {
+        throw new Error(`Solo puedes cargar hasta ${MAX_IMPORT_ROWS} creditos por lote.`);
+      }
+
+      setRawText(text);
+      setFileInfo({ name: file.name, selectedAt: new Date(), size: file.size });
+      setModeValidation("bulk", null);
+      setMode("bulk");
+      setPreviewFilter("all");
+      setNotice(`${file.name} cargado correctamente.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo leer el archivo.");
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const loadFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) void processFile(file);
+    event.target.value = "";
+  };
+
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file && !loading) void processFile(file);
+  };
+
+  const loadExample = () => {
+    setRawText(TEMPLATE_ROWS);
+    setFileInfo({ name: "ejemplo-creditos-masivos.csv", selectedAt: new Date(), size: TEMPLATE_ROWS.length });
+    setModeValidation("bulk", null);
+    setNotice("Ejemplo cargado. Reemplaza sus datos antes de crear creditos.");
+  };
+
+  const removeBulkFile = () => {
+    setRawText(TEMPLATE_HEADER);
+    setFileInfo(null);
+    setModeValidation("bulk", null);
+    setNotice("");
+    setPreviewFilter("all");
+  };
+
   const validate = async () => {
+    if (validationDisabledReason) return;
     try {
       setLoading("validate");
       setNotice("");
       const data = await postRows(activeRows, false);
-      setValidation(data);
+      setModeValidation(mode, data);
+      setPreviewFilter(data.summary.invalid ? "errors" : "all");
       setNotice(
         data.summary.invalid
-          ? `${data.summary.invalid} fila(s) con error`
-          : `${data.summary.valid} fila(s) listas para crear`
+          ? `${data.summary.invalid} fila(s) requieren correccion.`
+          : `${data.summary.valid} fila(s) listas para crear.`
       );
     } catch (error) {
-      setValidation(null);
+      setModeValidation(mode, null);
       setNotice(error instanceof Error ? error.message : "No se pudo validar");
     } finally {
       setLoading(null);
@@ -506,31 +625,23 @@ export default function MassCreditImportConsole() {
   };
 
   const createCredits = async () => {
-    const label = mode === "single" ? "credito" : "credito(s) masivo(s)";
-
-    if (!window.confirm(`Crear ${activeRows.length} ${label}?`)) {
-      return;
-    }
-
+    if (!canCreate) return;
     try {
       setLoading("create");
       setNotice("");
       const data = await postRows(activeRows, true);
-      setValidation(data);
-      setNotice(
-        `Lote ${data.batchId || ""}: ${data.created || 0} credito(s) creados`
-      );
+      setModeValidation(mode, data);
+      setNotice(`Lote ${data.batchId || ""}: ${data.created || 0} credito(s) creados.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudo crear");
     } finally {
       setLoading(null);
+      setConfirmOpen(false);
     }
   };
 
   const downloadTemplate = () => {
-    const blob = new Blob([TEMPLATE_CSV], {
-      type: "text/csv;charset=utf-8",
-    });
+    const blob = new Blob([TEMPLATE_CSV], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -540,474 +651,556 @@ export default function MassCreditImportConsole() {
     setNotice("Plantilla descargada: plantilla-creditos-masivos.csv");
   };
 
-  const loadFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-
-    if (!file) {
-      return;
-    }
-
-    setRawText(await file.text());
-    setMode("bulk");
-    setValidation(null);
-    setNotice(`${file.name} cargado`);
+  const downloadResult = () => {
+    if (!validation?.rows.length) return;
+    const header = ["FILA", "ESTADO", "FOLIO", "CLIENTE", "CEDULA", "SEDE", "VENDEDOR", "CREDITO", "CUOTA", "NOTAS"];
+    const rows = validation.rows.map((row) => [
+      row.rowNumber,
+      row.createdFolio ? "CREADO" : row.ok ? "VALIDO" : "ERROR",
+      row.createdFolio || "",
+      row.normalized.cliente,
+      row.normalized.cedula,
+      row.normalized.sede,
+      row.normalized.vendedor,
+      row.normalized.valorCredito,
+      row.normalized.cuota,
+      [...row.errors, ...row.warnings].join(" | "),
+    ]);
+    const content = [header, ...rows].map((row) => row.map(csvCell).join(";")).join("\n");
+    const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `resultado-creditos-${validation.batchId || "validacion"}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
-  const visibleRows = validation?.rows || [];
+  const clearCurrentMode = () => {
+    if (mode === "bulk") {
+      removeBulkFile();
+      setBulkDefaults({ aliado: "", sede: "", vendedor: "" });
+    } else {
+      setManualRow(defaultManualRow());
+      setModeValidation("single", null);
+      setNotice("");
+    }
+  };
+
+  const noticeDanger = /error|no se pudo|debe|supera|solo puedes|corrige/i.test(notice);
 
   return (
-    <div className="min-h-screen bg-[#f3f6f7] px-4 py-5 text-[#182025] sm:px-6">
-      <main className="mx-auto max-w-[1440px]">
-        <header className="border-b border-[#d5dde2] pb-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <span className="inline-flex rounded-md border border-[#b9ded9] bg-[#edf8f5] px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-[#0b6d63]">
-                Admin FINSER PAY
-              </span>
-              <h1 className="mt-3 text-3xl font-black tracking-tight text-[#101418] sm:text-4xl">
-                Creditos masivos
-              </h1>
-            </div>
+    <main className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
+      <PageHeader
+        eyebrow="Creacion de creditos"
+        title="Creditos masivos"
+        description="Carga, valida y crea multiples creditos en un solo proceso."
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => void loadCatalog()} disabled={loading !== null}>
+              <RefreshCw className={loading === "catalog" ? "h-4 w-4 animate-spin" : "h-4 w-4"} strokeWidth={1.8} />
+              {loading === "catalog" ? "Actualizando" : "Catalogo"}
+            </Button>
+            <Button variant="secondary" onClick={downloadTemplate}>
+              <Download className="h-4 w-4" strokeWidth={1.8} />
+              Descargar plantilla CSV
+            </Button>
+          </>
+        }
+      />
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void loadCatalog()}
-                disabled={loading !== null}
-                className="h-10 rounded-lg border border-[#cdd7dd] bg-white px-4 text-sm font-black text-[#182025] transition hover:border-[#9fb2bd] disabled:opacity-50"
-              >
-                {loading === "catalog" ? "Cargando" : "Catalogo"}
-              </button>
-              <button
-                type="button"
-                onClick={downloadTemplate}
-                className="h-10 rounded-lg border border-[#cdd7dd] bg-white px-4 text-sm font-black text-[#182025] transition hover:border-[#9fb2bd]"
-              >
-                Plantilla CSV
-              </button>
-              <Link
-                href="/dashboard"
-                className="inline-flex h-10 items-center rounded-lg border border-[#101418] bg-[#101418] px-4 text-sm font-black text-white"
-              >
-                Dashboard
-              </Link>
-            </div>
-          </div>
-        </header>
+      <Tabs className="mt-4" aria-label="Modo de creacion">
+        <button type="button" role="tab" aria-selected={mode === "bulk"} onClick={() => switchMode("bulk")}>
+          Carga CSV
+        </button>
+        <button type="button" role="tab" aria-selected={mode === "single"} onClick={() => switchMode("single")}>
+          Credito individual
+        </button>
+      </Tabs>
 
-        <section className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="overflow-hidden rounded-lg border border-[#d5dde2] bg-white shadow-sm">
-            <div className="flex flex-col gap-3 border-b border-[#e1e7ea] px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="inline-grid grid-cols-2 rounded-lg border border-[#d5dde2] bg-[#f7fafb] p-1">
-                <button
-                  type="button"
-                  onClick={() => switchMode("single")}
-                  className={[
-                    "h-10 rounded-md px-4 text-sm font-black transition",
-                    mode === "single"
-                      ? "bg-[#101418] text-white shadow-sm"
-                      : "text-[#53616b] hover:text-[#101418]",
-                  ].join(" ")}
-                >
-                  Credito individual
-                </button>
-                <button
-                  type="button"
-                  onClick={() => switchMode("bulk")}
-                  className={[
-                    "h-10 rounded-md px-4 text-sm font-black transition",
-                    mode === "bulk"
-                      ? "bg-[#101418] text-white shadow-sm"
-                      : "text-[#53616b] hover:text-[#101418]",
-                  ].join(" ")}
-                >
-                  Carga CSV
-                </button>
-              </div>
+      {mode === "bulk" ? <BulkStepper stage={bulkStage} committed={Boolean(validation?.commit)} /> : null}
 
-              {mode === "bulk" ? (
-                <div className="flex flex-wrap gap-2">
-                  <label className="inline-flex h-10 cursor-pointer items-center rounded-lg border border-[#cdd7dd] bg-white px-4 text-sm font-black text-[#182025] transition hover:border-[#9fb2bd]">
-                    Subir CSV
-                    <input
-                      type="file"
-                      accept=".csv,.tsv,.txt"
-                      onChange={loadFile}
-                      className="sr-only"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRawText(TEMPLATE_ROWS);
-                      setValidation(null);
-                      setNotice("Ejemplo cargado");
-                    }}
-                    className="h-10 rounded-lg border border-[#cdd7dd] bg-white px-4 text-sm font-black text-[#182025] transition hover:border-[#9fb2bd]"
-                  >
+      <section className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
+        <Card className="!rounded-lg !p-0">
+          {mode === "bulk" ? (
+            <>
+              <div className="p-5 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-black text-[#151a21]">Carga de archivo</h2>
+                    <p className="mt-1 text-sm text-[#667085]">Importa la informacion con la plantilla oficial.</p>
+                  </div>
+                  <button type="button" onClick={loadExample} className="text-sm font-bold text-[#526f0e] underline underline-offset-4">
                     Ver ejemplo
                   </button>
                 </div>
-              ) : null}
-            </div>
 
-            {mode === "single" ? (
-              <div className="p-5">
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  <ManualField
-                    label="Fecha"
-                    type="date"
-                    value={manualRow.fecha}
-                    onChange={(value) => updateManualField("fecha", value)}
-                  />
-                  <ManualField
-                    label="Cedula"
-                    inputMode="numeric"
-                    value={manualRow.cedula}
-                    onChange={(value) => updateManualField("cedula", value)}
-                  />
-                  <ManualField
-                    label="Cliente"
-                    value={manualRow.cliente}
-                    onChange={(value) => updateManualField("cliente", value)}
-                  />
-                  <ManualField
-                    label="Telefono"
-                    inputMode="tel"
-                    value={manualRow.telefono}
-                    onChange={(value) => updateManualField("telefono", value)}
-                  />
-                  <ManualField
-                    label="Referencia"
-                    value={manualRow.referencia}
-                    onChange={(value) => updateManualField("referencia", value)}
-                  />
-                  <ManualField
-                    label="IMEI"
-                    inputMode="numeric"
-                    value={manualRow.imei}
-                    onChange={(value) => updateManualField("imei", value)}
-                  />
-                  <ManualSelect
-                    label="Aliado"
-                    value={manualRow.aliado}
-                    onChange={selectAliado}
-                    disabled={!catalog?.aliados?.length || loading === "catalog"}
-                    placeholder={
-                      loading === "catalog"
-                        ? "Cargando aliados..."
-                        : "Selecciona aliado"
-                    }
-                    options={(catalog?.aliados || []).map((aliado) => ({
-                      value: aliado.nombre,
-                      label: aliado.codigo
-                        ? `${aliado.nombre} (${aliado.codigo})`
-                        : aliado.nombre,
-                    }))}
-                  />
-                  <ManualSelect
-                    label="Sede"
-                    value={manualRow.sede}
-                    onChange={selectSede}
-                    disabled={!selectedAliado || !availableSedes.length}
-                    placeholder={
-                      selectedAliado
-                        ? availableSedes.length
-                          ? "Selecciona sede"
-                          : "Sin sedes disponibles"
-                        : "Selecciona aliado primero"
-                    }
-                    options={availableSedes.map((sede) => ({
-                      value: sede.nombre,
-                      label: sede.nombre,
-                    }))}
-                  />
-                  <ManualSelect
-                    label="Vendedor"
-                    value={manualRow.vendedor}
-                    onChange={selectVendedor}
-                    disabled={!selectedAliado || !availableVendedores.length}
-                    placeholder={
-                      selectedAliado
-                        ? availableVendedores.length
-                          ? "Selecciona vendedor"
-                          : "Sin vendedores disponibles"
-                        : "Selecciona aliado primero"
-                    }
-                    options={availableVendedores.map((vendedor) => ({
-                      key: `${vendedor.sedeId}-${vendedor.id}`,
-                      value: vendedor.nombre,
-                      label: selectedSede
-                        ? vendedor.nombre
-                        : `${vendedor.nombre} - ${
-                            sedesById.get(vendedor.sedeId)?.nombre || "Sede"
-                          }`,
-                    }))}
-                  />
-                  <ManualField
-                    label="Inicial"
-                    inputMode="numeric"
-                    value={manualRow.inicial}
-                    onChange={(value) => updateManualField("inicial", value)}
-                  />
-                  <ManualField
-                    label="Valor del credito"
-                    inputMode="numeric"
-                    value={manualRow.valorCredito}
-                    onChange={(value) => updateManualField("valorCredito", value)}
-                  />
-                  <ManualField
-                    label="Cuota"
-                    inputMode="numeric"
-                    value={manualRow.cuota}
-                    onChange={(value) => updateManualField("cuota", value)}
-                  />
-                  <ManualField
-                    label="Plazo"
-                    inputMode="numeric"
-                    value={manualRow.plazo}
-                    onChange={(value) => updateManualField("plazo", value)}
-                  />
-                  <label className="grid gap-1">
-                    <span className="text-[10px] font-black uppercase tracking-[0.16em] text-[#64717b]">
-                      Frecuencia
-                    </span>
-                    <select
-                      value={manualRow.frecuencia}
-                      onChange={(event) =>
-                        updateManualField("frecuencia", event.target.value)
-                      }
-                      className="h-11 rounded-lg border border-[#cdd7dd] bg-white px-3 text-sm font-bold text-[#182025] outline-none transition focus:border-[#0f766e] focus:ring-2 focus:ring-[#0f766e]/10"
-                    >
-                      <option value="CATORCENAL">Catorcenal</option>
-                      <option value="MENSUAL">Mensual</option>
-                    </select>
-                  </label>
-                  <ManualField
-                    label="Fecha de pago"
-                    type="date"
-                    value={manualRow.fechaPago}
-                    onChange={(value) => updateManualField("fechaPago", value)}
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="p-5">
-                <textarea
-                  value={rawText}
-                  onChange={(event) => {
-                    setRawText(event.target.value);
-                    setValidation(null);
+                <div
+                  className={[
+                    "mt-5 grid min-h-56 place-items-center border border-dashed px-5 py-8 text-center transition",
+                    dragging ? "border-[#8caf27] bg-[#f7fbe9]" : "border-[#cfd6de] bg-[#fbfcfd]",
+                  ].join(" ")}
+                  onDragEnter={(event) => {
+                    event.preventDefault();
+                    setDragging(true);
                   }}
-                  placeholder={TEMPLATE_HEADER}
-                  spellCheck={false}
-                  wrap="off"
-                  className="h-[360px] w-full resize-none rounded-lg border border-[#cdd7dd] bg-[#fbfdfd] p-4 font-mono text-xs leading-5 text-[#182025] outline-none transition focus:border-[#0f766e] focus:ring-2 focus:ring-[#0f766e]/10"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDragLeave={() => setDragging(false)}
+                  onDrop={onDrop}
+                >
+                  {fileInfo ? (
+                    <div className="w-full max-w-xl">
+                      <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-[#eef7da] text-[#6f9417]">
+                        <FileSpreadsheet className="h-7 w-7" strokeWidth={1.7} />
+                      </span>
+                      <h3 className="mt-4 break-all text-base font-black text-[#151a21]">{fileInfo.name}</h3>
+                      <p className="mt-1 text-sm text-[#667085]">
+                        {formatBytes(fileInfo.size)} · {parsedRows.length} registro(s) · seleccionado a las {fileInfo.selectedAt.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                      <div className="mt-5 flex flex-wrap justify-center gap-2">
+                        <Button variant="secondary" onClick={() => fileInputRef.current?.click()} disabled={Boolean(loading)}>
+                          <RefreshCw className="h-4 w-4" strokeWidth={1.8} />
+                          Reemplazar
+                        </Button>
+                        <Button variant="ghost" onClick={removeBulkFile} disabled={Boolean(loading)}>
+                          <Trash2 className="h-4 w-4" strokeWidth={1.8} />
+                          Retirar
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <UploadCloud className="mx-auto h-12 w-12 text-[#344054]" strokeWidth={1.45} />
+                      <h3 className="mt-3 text-base font-black text-[#151a21]">Arrastra tu archivo CSV aqui</h3>
+                      <p className="mt-1 text-sm text-[#667085]">o selecciona un archivo desde tu equipo</p>
+                      <Button className="mt-5" onClick={() => fileInputRef.current?.click()} disabled={Boolean(loading)}>
+                        {loading === "file" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" strokeWidth={1.8} />}
+                        Seleccionar archivo
+                      </Button>
+                    </div>
+                  )}
+                  <input ref={fileInputRef} type="file" accept=".csv,text/csv" onChange={loadFile} className="sr-only" />
+                </div>
+                <p className="mt-3 text-center text-xs font-semibold text-[#667085]">
+                  Formato CSV · Maximo 5 MB · Hasta {MAX_IMPORT_ROWS} registros
+                </p>
+              </div>
+
+              <div className="border-t border-[#e4e7ec] p-5 sm:p-6">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-black text-[#151a21]">Configuracion predeterminada</h3>
+                  <span title="Solo se aplica cuando la fila no incluye el dato.">
+                    <Info className="h-4 w-4 text-[#98a2b3]" strokeWidth={1.8} />
+                  </span>
+                  <p className="text-xs text-[#667085]">Se aplica solo a columnas vacias.</p>
+                </div>
+                <AssignmentFields
+                  className="mt-4"
+                  values={bulkDefaults}
+                  catalog={catalog}
+                  loading={loading}
+                  selectedAliado={selectedAliado}
+                  selectedSede={selectedSede}
+                  availableSedes={availableSedes}
+                  availableVendedores={availableVendedores}
+                  sedesById={sedesById}
+                  onChange={updateAssignment}
                 />
+                {!selectedAliado ? (
+                  <p className="mt-3 text-xs text-[#667085]">Selecciona primero un aliado para habilitar sede y vendedor.</p>
+                ) : null}
+                <details className="group mt-5 border-t border-[#e4e7ec] pt-4">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-bold text-[#344054] [&::-webkit-details-marker]:hidden">
+                    <ChevronDown className="h-4 w-4 transition group-open:rotate-180" strokeWidth={1.8} />
+                    Ver campos requeridos y contenido del CSV
+                  </summary>
+                  <p className="mt-3 text-xs leading-5 text-[#667085]">{FIELD_ORDER.map((field) => FIELD_LABELS[field]).join(" · ")}</p>
+                  <textarea
+                    value={rawText}
+                    onChange={(event) => {
+                      setRawText(event.target.value);
+                      setModeValidation("bulk", null);
+                    }}
+                    spellCheck={false}
+                    wrap="off"
+                    aria-label="Contenido editable del archivo CSV"
+                    className="mt-4 h-56 w-full resize-y rounded-md border border-[#d8dee5] bg-[#fbfcfd] p-3 font-mono text-xs leading-5 text-[#344054] outline-none focus:border-[#8caf27] focus:ring-2 focus:ring-[#b7e63d]/20"
+                  />
+                </details>
               </div>
-            )}
+            </>
+          ) : (
+            <div className="p-5 sm:p-6">
+              <div>
+                <h2 className="text-lg font-black text-[#151a21]">Credito individual</h2>
+                <p className="mt-1 text-sm text-[#667085]">Registra un credito con las mismas validaciones del lote masivo.</p>
+              </div>
 
+              <FormSection icon={UsersRound} title="Cliente" description="Identificacion y datos de contacto.">
+                <ManualField label="Fecha" type="date" value={manualRow.fecha} onChange={(value) => updateManualField("fecha", value)} />
+                <ManualField label="Cedula" inputMode="numeric" value={manualRow.cedula} onChange={(value) => updateManualField("cedula", value)} />
+                <ManualField label="Cliente" value={manualRow.cliente} onChange={(value) => updateManualField("cliente", value)} />
+                <ManualField label="Telefono" inputMode="tel" value={manualRow.telefono} onChange={(value) => updateManualField("telefono", value)} />
+              </FormSection>
+
+              <FormSection icon={Smartphone} title="Equipo" description="Referencia e identificador unico.">
+                <ManualField label="Referencia" value={manualRow.referencia} onChange={(value) => updateManualField("referencia", value)} />
+                <ManualField label="IMEI" inputMode="numeric" value={manualRow.imei} onChange={(value) => updateManualField("imei", value)} />
+              </FormSection>
+
+              <FormSection icon={Store} title="Asignacion comercial" description="Aliado, sede y vendedor responsables.">
+                <AssignmentFields
+                  className="md:col-span-2 xl:col-span-3"
+                  values={manualRow}
+                  catalog={catalog}
+                  loading={loading}
+                  selectedAliado={selectedAliado}
+                  selectedSede={selectedSede}
+                  availableSedes={availableSedes}
+                  availableVendedores={availableVendedores}
+                  sedesById={sedesById}
+                  onChange={updateAssignment}
+                />
+              </FormSection>
+
+              <FormSection icon={WalletCards} title="Condiciones del credito" description="Valores y calendario de recaudo.">
+                <ManualField label="Inicial" inputMode="numeric" value={manualRow.inicial} onChange={(value) => updateManualField("inicial", value)} />
+                <ManualField label="Valor del credito" inputMode="numeric" value={manualRow.valorCredito} onChange={(value) => updateManualField("valorCredito", value)} />
+                <ManualField label="Cuota" inputMode="numeric" value={manualRow.cuota} onChange={(value) => updateManualField("cuota", value)} />
+                <ManualField label="Plazo" inputMode="numeric" value={manualRow.plazo} onChange={(value) => updateManualField("plazo", value)} />
+                <label className="grid gap-1.5">
+                  <span className="text-xs font-bold text-[#475467]">Frecuencia</span>
+                  <Select value={manualRow.frecuencia} onChange={(event) => updateManualField("frecuencia", event.target.value)}>
+                    <option value="CATORCENAL">Catorcenal</option>
+                    <option value="MENSUAL">Mensual</option>
+                  </Select>
+                </label>
+                <ManualField label="Fecha de pago" type="date" value={manualRow.fechaPago} onChange={(value) => updateManualField("fechaPago", value)} />
+              </FormSection>
+            </div>
+          )}
+        </Card>
+
+        <Card className="!rounded-lg !p-5 xl:sticky xl:top-4">
+          <h2 className="text-base font-black text-[#151a21]">Resumen de carga</h2>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <SummaryBox label="Filas" value={String(validation?.summary.total ?? activeRows.length)} />
+            <SummaryBox label="Validas" value={String(validation?.summary.valid ?? 0)} tone="green" />
+            <SummaryBox label="Con errores" value={String(validation?.summary.invalid ?? 0)} tone="red" />
+            <SummaryBox label="Creadas" value={String(validation?.summary.created ?? 0)} />
+          </div>
+          <div className="mt-3 border border-[#d8dee5] bg-[#f8fafb] px-4 py-3">
+            <p className="text-xs font-bold text-[#667085]">Monto total</p>
+            <p className="mt-1 text-2xl font-black text-[#151a21]">{money(totalAmount)}</p>
           </div>
 
-          <aside className="rounded-lg border border-[#d5dde2] bg-white p-5 shadow-sm">
-            <div className="grid grid-cols-2 gap-3">
-              <SummaryBox
-                label="Filas"
-                value={String(validation?.summary.total ?? activeRows.length)}
-              />
-              <SummaryBox
-                label="Validas"
-                value={String(validation?.summary.valid ?? 0)}
-                tone="green"
-              />
-              <SummaryBox
-                label="Errores"
-                value={String(validation?.summary.invalid ?? 0)}
-                tone="red"
-              />
-              <SummaryBox
-                label="Creados"
-                value={String(validation?.summary.created ?? 0)}
-                tone="dark"
-              />
-            </div>
-
-            <div className="mt-5 rounded-lg border border-[#d5dde2] bg-[#f8fbfa] px-4 py-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#64717b]">
-                Monto
-              </p>
-              <p className="mt-1 text-2xl font-black text-[#101418]">
-                {money(totalAmount)}
-              </p>
-            </div>
-
-            <div className="mt-5 grid gap-2">
-              <button
-                type="button"
-                onClick={validate}
-                disabled={!activeRows.length || loading !== null}
-                className="h-11 rounded-lg border border-[#0f766e] bg-[#0f766e] px-4 text-sm font-black text-white transition hover:bg-[#115e59] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading === "validate" ? "Validando" : "Validar"}
-              </button>
-              <button
-                type="button"
-                onClick={createCredits}
-                disabled={!canCreate || loading !== null}
-                className="h-11 rounded-lg border border-[#101418] bg-[#101418] px-4 text-sm font-black text-white transition hover:bg-[#242b31] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading === "create"
-                  ? "Creando"
-                  : mode === "single"
-                    ? "Crear credito"
-                    : "Crear creditos"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (mode === "single") {
-                    setManualRow(defaultManualRow());
-                  } else {
-                    setRawText("");
-                  }
-                  setValidation(null);
-                  setNotice("");
-                }}
-                className="h-11 rounded-lg border border-[#cdd7dd] bg-white px-4 text-sm font-black text-[#182025] transition hover:border-[#9fb2bd]"
-              >
-                Limpiar
-              </button>
-            </div>
-
-            {catalog ? (
-              <div className="mt-5 grid grid-cols-3 gap-2">
-                <MiniBox label="Aliados" value={String(catalog.aliados?.length || 0)} />
-                <MiniBox label="Sedes" value={String(catalog.sedes?.length || 0)} />
-                <MiniBox label="Vendedores" value={String(catalog.vendedores?.length || 0)} />
-              </div>
+          <div className="mt-4 grid gap-2">
+            <Button onClick={() => void validate()} disabled={Boolean(validationDisabledReason)} title={validationDisabledReason || undefined}>
+              {loading === "validate" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" strokeWidth={1.8} />}
+              {loading === "validate" ? "Validando" : mode === "bulk" ? "Validar archivo" : "Validar credito"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setConfirmOpen(true)}
+              disabled={!canCreate || loading !== null}
+              title={createDisabledReason || undefined}
+            >
+              {loading === "create" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" strokeWidth={1.8} />}
+              {loading === "create" ? "Creando" : mode === "bulk" ? "Crear creditos" : "Crear credito"}
+            </Button>
+            <Button variant="ghost" onClick={clearCurrentMode} disabled={Boolean(loading)}>
+              <Trash2 className="h-4 w-4" strokeWidth={1.8} />
+              Limpiar
+            </Button>
+            {validation?.rows.length ? (
+              <Button variant="ghost" onClick={downloadResult}>
+                <Download className="h-4 w-4" strokeWidth={1.8} />
+                Descargar resultado
+              </Button>
             ) : null}
-
-            {notice ? (
-              <div className="mt-5 rounded-lg border border-[#d5dde2] bg-white px-4 py-3 text-sm font-bold text-[#182025]">
-                {notice}
-              </div>
-            ) : null}
-          </aside>
-        </section>
-
-        <section className="mt-5 overflow-hidden rounded-lg border border-[#d5dde2] bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-[#e1e7ea] px-5 py-4">
-            <h2 className="text-sm font-black uppercase tracking-[0.16em] text-[#101418]">
-              Validacion
-            </h2>
-            <span className="text-sm font-bold text-[#64717b]">
-              {visibleRows.length} resultados
-            </span>
           </div>
-          <div className="max-h-[420px] overflow-auto">
-            <table className="min-w-[1040px] w-full text-left text-xs">
-              <thead className="sticky top-0 bg-[#101418] text-white">
+
+          {validationDisabledReason || createDisabledReason ? (
+            <p className="mt-3 text-center text-xs text-[#667085]">{validationDisabledReason || createDisabledReason}</p>
+          ) : null}
+
+          <div className="mt-5 grid grid-cols-3 border-t border-[#e4e7ec] pt-4 text-center">
+            <CatalogMetric icon={Building2} label="aliados" value={catalog?.aliados?.length || 0} />
+            <CatalogMetric icon={Store} label="sedes" value={catalog?.sedes?.length || 0} />
+            <CatalogMetric icon={UserRound} label="vendedores" value={catalog?.vendedores?.length || 0} />
+          </div>
+
+          {notice ? (
+            <div className={[
+              "mt-4 flex items-start gap-2 border px-3 py-3 text-sm font-semibold",
+              noticeDanger ? "border-[#f3b7b2] bg-[#fff1f0] text-[#b42318]" : "border-[#c9df91] bg-[#f5fae9] text-[#4f6f0c]",
+            ].join(" ")} role="status" aria-live="polite">
+              {noticeDanger ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" />}
+              <span>{notice}</span>
+            </div>
+          ) : null}
+        </Card>
+      </section>
+
+      <Card className="mt-4 !overflow-hidden !rounded-lg !p-0">
+        <div className="flex flex-col gap-3 border-b border-[#e4e7ec] px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-black text-[#151a21]">Vista previa y validacion</h2>
+              <Badge>{validation?.summary.total || 0} registros</Badge>
+            </div>
+            <p className="mt-1 text-sm text-[#667085]">La API conserva las reglas vigentes de validacion y duplicidad.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {(["all", "valid", "errors"] as PreviewFilter[]).map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                onClick={() => setPreviewFilter(filter)}
+                aria-pressed={previewFilter === filter}
+                className={[
+                  "min-h-10 rounded-md border px-3 text-xs font-bold transition",
+                  previewFilter === filter
+                    ? "border-[#151a21] bg-[#151a21] text-white"
+                    : filter === "errors"
+                      ? "border-[#f3b7b2] bg-white text-[#b42318]"
+                      : filter === "valid"
+                        ? "border-[#c9df91] bg-white text-[#4f6f0c]"
+                        : "border-[#d8dee5] bg-white text-[#475467]",
+                ].join(" ")}
+              >
+                {filter === "all" ? "Todos" : filter === "valid" ? "Validos" : "Con errores"}
+              </button>
+            ))}
+            <Button onClick={() => setConfirmOpen(true)} disabled={!canCreate || loading !== null} title={createDisabledReason || undefined}>
+              Crear {validation?.summary.valid || 0} credito(s)
+            </Button>
+          </div>
+        </div>
+
+        {validation?.rows.length ? (
+          <DataTable className="!rounded-none !border-0">
+            <table className="min-w-[1120px] w-full text-left text-xs">
+              <thead className="bg-[#f5f7f8] text-[#475467]">
                 <tr>
-                  <th className="px-4 py-3 font-black">Fila</th>
-                  <th className="px-4 py-3 font-black">Estado</th>
-                  <th className="px-4 py-3 font-black">Cliente</th>
-                  <th className="px-4 py-3 font-black">Cedula</th>
-                  <th className="px-4 py-3 font-black">Sede</th>
-                  <th className="px-4 py-3 font-black">Vendedor</th>
-                  <th className="px-4 py-3 font-black">Credito</th>
-                  <th className="px-4 py-3 font-black">Cuota</th>
-                  <th className="px-4 py-3 font-black">Notas</th>
+                  {['Fila', 'Estado', 'Cliente', 'Cedula', 'Sede', 'Vendedor', 'Credito', 'Cuota', 'Notas'].map((label) => (
+                    <th key={label} className="border-b border-[#d8dee5] px-4 py-3 font-black">{label}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.length ? (
-                  visibleRows.map((row) => (
-                    <tr
-                      key={row.rowNumber}
-                      className="border-b border-[#edf1f3] last:border-0"
-                    >
-                      <td className="px-4 py-3 font-black">{row.rowNumber}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={[
-                            "rounded-md border px-2 py-1 text-[11px] font-black",
-                            statusClasses(row.ok),
-                          ].join(" ")}
-                        >
-                          {row.createdFolio || (row.ok ? "OK" : "ERROR")}
-                        </span>
+                {visibleRows.map((row) => {
+                  const warning = row.ok && row.warnings.length > 0;
+                  return (
+                    <tr key={row.rowNumber} className={row.ok ? (warning ? "bg-[#fffbeb]" : "bg-white") : "bg-[#fff7f6]"}>
+                      <td className="border-b border-[#e4e7ec] px-4 py-3 font-black">{row.rowNumber}</td>
+                      <td className="border-b border-[#e4e7ec] px-4 py-3">
+                        <Badge tone={row.ok ? (warning ? "warning" : "positive") : "danger"}>
+                          {row.createdFolio || (row.ok ? (warning ? "Advertencia" : "Valido") : "Error")}
+                        </Badge>
                       </td>
-                      <td className="px-4 py-3 font-bold text-[#20242a]">
-                        {row.normalized.cliente || "-"}
-                      </td>
-                      <td className="px-4 py-3">{row.normalized.cedula || "-"}</td>
-                      <td className="px-4 py-3">{row.normalized.sede || "-"}</td>
-                      <td className="px-4 py-3">{row.normalized.vendedor || "-"}</td>
-                      <td className="px-4 py-3 font-black">
-                        {money(row.normalized.valorCredito)}
-                      </td>
-                      <td className="px-4 py-3">
-                        {money(row.normalized.cuota)} / {row.normalized.plazo}
-                      </td>
-                      <td className="px-4 py-3">
-                        {[...row.errors, ...row.warnings].join(" | ") || "-"}
-                      </td>
+                      <td className="border-b border-[#e4e7ec] px-4 py-3 font-bold text-[#151a21]">{row.normalized.cliente || "-"}</td>
+                      <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.cedula || "-"}</td>
+                      <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.sede || "-"}</td>
+                      <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.vendedor || "-"}</td>
+                      <td className="border-b border-[#e4e7ec] px-4 py-3 font-black">{money(row.normalized.valorCredito)}</td>
+                      <td className="border-b border-[#e4e7ec] px-4 py-3">{money(row.normalized.cuota)} · {row.normalized.plazo} pagos</td>
+                      <td className="max-w-sm border-b border-[#e4e7ec] px-4 py-3 leading-5 text-[#475467]">{[...row.errors, ...row.warnings].join(" | ") || "Sin novedades"}</td>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td
-                      colSpan={9}
-                      className="px-4 py-12 text-center text-sm font-semibold text-[#687080]"
-                    >
-                      Sin validacion.
-                    </td>
-                  </tr>
-                )}
+                  );
+                })}
               </tbody>
             </table>
-          </div>
-        </section>
-      </main>
+          </DataTable>
+        ) : (
+          <EmptyState
+            className="!min-h-56 !rounded-none !border-0"
+            title="Aun no hay registros"
+            description={mode === "bulk" ? "Carga un archivo CSV para revisar y validar la informacion." : "Completa y valida el credito individual para ver el resultado."}
+            action={<FileCheck2 className="h-9 w-9 text-[#98a2b3]" strokeWidth={1.5} />}
+          />
+        )}
+      </Card>
+
+      <div className="mt-4 flex items-center gap-2 border border-[#cfd9e3] bg-[#f6f9fc] px-4 py-3 text-sm text-[#475467]">
+        <Info className="h-4 w-4 shrink-0 text-[#4f6f0c]" strokeWidth={1.8} />
+        <span>Corrige el CSV y vuelve a cargarlo cuando existan errores. La creacion se habilita solo tras una validacion completa.</span>
+      </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Confirmar creacion de creditos"
+        description={`Se crearan ${validation?.summary.valid || activeRows.length} credito(s) por ${money(totalAmount)}, distribuidos en ${involvedAllies} aliado(s) y ${involvedStores} sede(s). Esta es una operacion financiera y no debe repetirse.`}
+        confirmLabel="Crear creditos"
+        busy={loading === "create"}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => void createCredits()}
+      />
+    </main>
+  );
+}
+
+function BulkStepper({ stage, committed }: { stage: number; committed: boolean }) {
+  const steps = [
+    ["Cargar archivo", "Sube tu archivo CSV"],
+    ["Validar informacion", "Revisamos los datos"],
+    ["Corregir errores", "Ajusta los datos invalidos"],
+    ["Crear creditos", "Genera los creditos validos"],
+  ];
+
+  return (
+    <ol className="mt-4 grid gap-2 md:grid-cols-4" aria-label="Progreso de la carga">
+      {steps.map(([title, description], index) => {
+        const number = index + 1;
+        const complete = committed || number < stage;
+        const active = !committed && number === stage;
+        return (
+          <li key={title} className="relative flex min-h-16 items-center gap-3 border-b border-[#d8dee5] px-2 py-2">
+            <span className={[
+              "grid h-9 w-9 shrink-0 place-items-center rounded-full border text-sm font-black",
+              complete
+                ? "border-[#8caf27] bg-[#8caf27] text-white"
+                : active
+                  ? "border-[#b7e63d] bg-[#151a21] text-white shadow-[0_0_0_3px_rgba(183,230,61,0.18)]"
+                  : "border-[#d8dee5] bg-[#eef1f4] text-[#667085]",
+            ].join(" ")}>
+              {complete ? <Check className="h-4 w-4" strokeWidth={2.2} /> : number}
+            </span>
+            <span className="min-w-0">
+              <strong className="block text-sm text-[#151a21]">{title}</strong>
+              <small className="mt-0.5 block text-xs text-[#667085]">{description}</small>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function FormSection({
+  children,
+  description,
+  icon: Icon,
+  title,
+}: {
+  children: ReactNode;
+  description: string;
+  icon: ComponentType<{ className?: string; strokeWidth?: number }>;
+  title: string;
+}) {
+  return (
+    <section className="mt-6 border-t border-[#e4e7ec] pt-5">
+      <div className="flex items-center gap-3">
+        <span className="grid h-9 w-9 place-items-center rounded-full bg-[#eef7da] text-[#5f7f12]">
+          <Icon className="h-4 w-4" strokeWidth={1.8} />
+        </span>
+        <span>
+          <h3 className="text-sm font-black text-[#151a21]">{title}</h3>
+          <p className="mt-0.5 text-xs text-[#667085]">{description}</p>
+        </span>
+      </div>
+      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{children}</div>
+    </section>
+  );
+}
+
+function AssignmentFields({
+  availableSedes,
+  availableVendedores,
+  catalog,
+  className,
+  loading,
+  onChange,
+  sedesById,
+  selectedAliado,
+  selectedSede,
+  values,
+}: {
+  availableSedes: NonNullable<CatalogResponse["sedes"]>;
+  availableVendedores: NonNullable<CatalogResponse["vendedores"]>;
+  catalog: CatalogResponse | null;
+  className?: string;
+  loading: "catalog" | "create" | "file" | "validate" | null;
+  onChange: (field: keyof AssignmentDefaults, value: string) => void;
+  sedesById: Map<number, CatalogSede>;
+  selectedAliado: NonNullable<CatalogResponse["aliados"]>[number] | null;
+  selectedSede: CatalogSede | null;
+  values: AssignmentDefaults;
+}) {
+  return (
+    <div className={["grid gap-4 md:grid-cols-3", className].filter(Boolean).join(" ")}>
+      <ManualSelect
+        label="Aliado"
+        value={values.aliado}
+        onChange={(value) => onChange("aliado", value)}
+        disabled={!catalog?.aliados?.length || loading === "catalog"}
+        placeholder={loading === "catalog" ? "Cargando aliados..." : "Selecciona un aliado"}
+        options={(catalog?.aliados || []).map((aliado) => ({
+          value: aliado.nombre,
+          label: aliado.codigo ? `${aliado.nombre} (${aliado.codigo})` : aliado.nombre,
+        }))}
+      />
+      <ManualSelect
+        label="Sede"
+        value={values.sede}
+        onChange={(value) => onChange("sede", value)}
+        disabled={!selectedAliado || !availableSedes.length}
+        placeholder={
+          selectedAliado
+            ? availableSedes.length
+              ? "Selecciona una sede"
+              : "Sin sedes disponibles"
+            : "Primero selecciona aliado"
+        }
+        options={availableSedes.map((sede) => ({ value: sede.nombre, label: sede.nombre }))}
+      />
+      <ManualSelect
+        label="Vendedor"
+        value={values.vendedor}
+        onChange={(value) => onChange("vendedor", value)}
+        disabled={!selectedSede || !availableVendedores.length}
+        placeholder={
+          !selectedAliado
+            ? "Primero selecciona aliado"
+            : !selectedSede
+              ? "Primero selecciona sede"
+              : availableVendedores.length
+                ? "Selecciona un vendedor"
+                : "Sin vendedores disponibles"
+        }
+        options={availableVendedores.map((vendedor) => ({
+          key: `${vendedor.sedeId}-${vendedor.id}`,
+          value: vendedor.nombre,
+          label: selectedSede
+            ? vendedor.nombre
+            : `${vendedor.nombre} - ${sedesById.get(vendedor.sedeId)?.nombre || "Sede"}`,
+        }))}
+      />
     </div>
   );
 }
 
-function SummaryBox({
-  label,
-  value,
-  tone = "default",
-}: {
-  label: string;
-  value: string;
-  tone?: "default" | "green" | "red" | "dark";
-}) {
+function SummaryBox({ label, tone = "default", value }: { label: string; tone?: "default" | "green" | "red"; value: string }) {
   const toneClass =
     tone === "green"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+      ? "border-[#c9df91] bg-[#f5fae9] text-[#4f6f0c]"
       : tone === "red"
-        ? "border-red-200 bg-red-50 text-red-900"
-        : tone === "dark"
-          ? "border-[#111318] bg-[#111318] text-white"
-          : "border-[#d8e0e3] bg-[#f8fbfa] text-[#20242a]";
-
+        ? "border-[#f3b7b2] bg-[#fff1f0] text-[#b42318]"
+        : "border-[#d8dee5] bg-[#f8fafb] text-[#151a21]";
   return (
-    <div className={["rounded-lg border px-3 py-3", toneClass].join(" ")}>
-      <p className="text-[10px] font-black uppercase tracking-[0.16em] opacity-70">
-        {label}
-      </p>
-      <p className="mt-1 text-2xl font-black">{value}</p>
+    <div className={["border px-3 py-3", toneClass].join(" ")}>
+      <p className="text-xs font-bold opacity-75">{label}</p>
+      <p className="mt-1 text-xl font-black">{value}</p>
     </div>
   );
 }
 
-function MiniBox({ label, value }: { label: string; value: string }) {
+function CatalogMetric({ icon: Icon, label, value }: { icon: ComponentType<{ className?: string; strokeWidth?: number }>; label: string; value: number }) {
   return (
-    <div className="rounded-lg border border-[#d8e0e3] bg-white px-3 py-3">
-      <p className="text-[9px] font-black uppercase tracking-[0.12em] text-[#687080]">
-        {label}
-      </p>
-      <p className="mt-1 text-xl font-black text-[#20242a]">{value}</p>
+    <div className="border-r border-[#e4e7ec] px-2 last:border-0">
+      <Icon className="mx-auto h-4 w-4 text-[#667085]" strokeWidth={1.7} />
+      <strong className="mt-1 block text-base text-[#151a21]">{value}</strong>
+      <span className="block text-[11px] text-[#667085]">{label}</span>
     </div>
   );
 }
@@ -1015,39 +1208,20 @@ function MiniBox({ label, value }: { label: string; value: string }) {
 function ManualField({
   inputMode,
   label,
-  list,
   onChange,
   type = "text",
   value,
 }: {
-  inputMode?:
-    | "decimal"
-    | "email"
-    | "none"
-    | "numeric"
-    | "search"
-    | "tel"
-    | "text"
-    | "url";
+  inputMode?: "decimal" | "email" | "none" | "numeric" | "search" | "tel" | "text" | "url";
   label: string;
-  list?: string;
   onChange: (value: string) => void;
   type?: HTMLInputTypeAttribute;
   value: string;
 }) {
   return (
-    <label className="grid gap-1">
-      <span className="text-[10px] font-black uppercase tracking-[0.16em] text-[#64717b]">
-        {label}
-      </span>
-      <input
-        type={type}
-        inputMode={inputMode}
-        list={list}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-11 rounded-lg border border-[#cdd7dd] bg-white px-3 text-sm font-bold text-[#182025] outline-none transition focus:border-[#0f766e] focus:ring-2 focus:ring-[#0f766e]/10"
-      />
+    <label className="grid gap-1.5">
+      <span className="text-xs font-bold text-[#475467]">{label}</span>
+      <Input type={type} inputMode={inputMode} value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }
@@ -1068,23 +1242,14 @@ function ManualSelect({
   value: string;
 }) {
   return (
-    <label className="grid gap-1">
-      <span className="text-[10px] font-black uppercase tracking-[0.16em] text-[#64717b]">
-        {label}
-      </span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={disabled}
-        className="h-11 rounded-lg border border-[#cdd7dd] bg-white px-3 text-sm font-bold text-[#182025] outline-none transition focus:border-[#0f766e] focus:ring-2 focus:ring-[#0f766e]/10 disabled:cursor-not-allowed disabled:bg-[#eef3f6] disabled:text-[#8a969e]"
-      >
+    <label className="grid gap-1.5">
+      <span className="text-xs font-bold text-[#475467]">{label}</span>
+      <Select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled}>
         <option value="">{placeholder}</option>
         {options.map((option) => (
-          <option key={option.key || option.value} value={option.value}>
-            {option.label}
-          </option>
+          <option key={option.key || option.value} value={option.value}>{option.label}</option>
         ))}
-      </select>
+      </Select>
     </label>
   );
 }

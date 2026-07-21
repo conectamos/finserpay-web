@@ -1,3 +1,6 @@
+import { AppShell } from "@/app/_components/finser-ui";
+import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
+import AdminWorkspaceTopbar from "@/app/dashboard/_components/admin-workspace-topbar";
 import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import MassCreditImportConsole from "./mass-credit-import-console";
 
@@ -7,7 +10,27 @@ export const metadata = {
 };
 
 export default async function CreditosMasivosPage() {
-  await requireCentralAdminDashboardAccess();
+  const { session } = await requireCentralAdminDashboardAccess();
 
-  return <MassCreditImportConsole />;
+  return (
+    <AppShell
+      sidebar={
+        <AdminSidebar
+          activeHref="/dashboard/creditos-masivos"
+          adminCentral
+          nombreUsuario={session.nombre}
+          rolUsuario={session.rolNombre}
+        />
+      }
+    >
+      <AdminWorkspaceTopbar
+        parent="Creditos"
+        current="Creditos masivos"
+        userName={session.nombre}
+        userRole={session.rolNombre}
+        accentAvatar
+      />
+      <MassCreditImportConsole />
+    </AppShell>
+  );
 }

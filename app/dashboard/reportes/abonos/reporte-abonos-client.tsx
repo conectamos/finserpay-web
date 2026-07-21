@@ -273,7 +273,15 @@ function SummaryCard({
   );
 }
 
-export default function ReporteAbonosPage() {
+export default function ReporteAbonosPage({
+  initialFrom = "",
+  initialSedeId = "",
+  initialTo = "",
+}: {
+  initialFrom?: string;
+  initialSedeId?: string;
+  initialTo?: string;
+}) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [sedes, setSedes] = useState<SedeItem[]>([]);
   const [aliados, setAliados] = useState<AliadoItem[]>([]);
@@ -286,10 +294,10 @@ export default function ReporteAbonosPage() {
   const [message, setMessage] = useState("");
 
   const [search, setSearch] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useState(initialFrom);
+  const [to, setTo] = useState(initialTo);
   const [aliadoId, setAliadoId] = useState("");
-  const [sedeId, setSedeId] = useState("");
+  const [sedeId, setSedeId] = useState(initialSedeId);
   const isAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
   const isCentralAdmin = isAdmin && isFinserPayCentral(user?.aliadoAccesoCodigo);
   const sedesFiltradas = aliadoId
@@ -372,6 +380,8 @@ export default function ReporteAbonosPage() {
     };
 
     void init();
+    // The route-provided filters are intentionally captured only for the initial load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const annulPayment = async (item: PaymentReportItem) => {
