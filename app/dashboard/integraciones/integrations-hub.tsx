@@ -382,19 +382,19 @@ export default function IntegrationsHub({
   const busy = loading || isPending;
 
   return (
-    <div className="min-h-screen bg-[#f6f7f3] px-4 py-6 text-slate-950">
-      <main className="mx-auto max-w-5xl">
-        <section className="rounded-[32px] border border-[#e1d8ca] bg-white px-5 py-5 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:px-7">
+    <div className="px-6 py-7 text-[#111820] lg:px-8">
+      <main className="mx-auto max-w-7xl space-y-5">
+        <section className="rounded-lg border border-[#d8dee5] bg-white p-6 shadow-[0_10px_28px_rgba(16,24,40,0.06)]">
           <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div className="max-w-2xl">
-              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
-                Control de equipos
+              <span className="inline-flex rounded-full border border-[#d9ec9d] bg-[#f5fadf] px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-[#5c7a13]">
+                Centro de integraciones
               </span>
-              <h1 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">
-                Consulta, inscribe y valida
+              <h1 className="mt-4 text-3xl font-black tracking-tight text-[#111820] sm:text-4xl">
+                Control de equipos y firma digital
               </h1>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                Una pantalla simple para saber si el equipo puede entregarse.
+              <p className="mt-3 text-sm leading-6 text-[#667085]">
+                Consulta el estado remoto, valida entregas Zero Touch y revisa la conexion de FirmaSeguro.
               </p>
             </div>
 
@@ -403,22 +403,22 @@ export default function IntegrationsHub({
                 type="button"
                 onClick={() => void loadSnapshot("manual")}
                 disabled={busy}
-                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 transition hover:border-[#116b61] disabled:opacity-70"
+                className="rounded-lg border border-[#ccd7dd] bg-white px-5 py-3 text-sm font-black text-[#111820] transition hover:border-[#5c7a13] disabled:opacity-70"
               >
                 {busy ? "Actualizando..." : "Actualizar"}
               </button>
 
               <Link
                 href="/dashboard"
-                className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white transition hover:bg-slate-800"
+                className="rounded-lg bg-[#111820] px-5 py-3 text-sm font-black text-white transition hover:bg-[#05070a]"
               >
                 Dashboard
               </Link>
             </div>
           </div>
 
-          <div className="mt-5 grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
-            <div className={["rounded-[22px] border px-4 py-4", statusClasses(status.tone)].join(" ")}>
+          <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_260px] lg:items-stretch">
+            <div className={["rounded-lg border px-5 py-5", statusClasses(status.tone)].join(" ")}>
               <p className="text-[11px] font-black uppercase tracking-[0.18em]">
                 Estado Zero Touch
               </p>
@@ -426,11 +426,11 @@ export default function IntegrationsHub({
               <p className="mt-1 text-sm leading-6">{status.detail}</p>
             </div>
 
-            <div className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+            <div className="rounded-lg border border-[#d8dee5] bg-[#f7f9fb] px-5 py-5 text-sm text-[#667085]">
               <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
                 Ultima lectura
               </p>
-              <p className="mt-2 text-lg font-black text-slate-950">
+              <p className="mt-2 text-lg font-black text-[#111820]">
                 {formatTime(snapshot?.loadedAt || null)}
               </p>
               <p className="mt-1 text-xs">
@@ -440,7 +440,7 @@ export default function IntegrationsHub({
           </div>
 
           {canAdmin && (
-            <div className="mt-5 rounded-[26px] border border-slate-200 bg-slate-50 p-4">
+            <div className="mt-5 rounded-lg border border-[#d8dee5] bg-[#f7f9fb] p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
@@ -463,7 +463,7 @@ export default function IntegrationsHub({
                   type="button"
                   onClick={() => void runFirmaSeguroDiagnostic()}
                   disabled={firmaSeguroLoading}
-                  className="rounded-2xl bg-[#116b61] px-5 py-3 text-sm font-black text-white transition hover:bg-[#0d5750] disabled:opacity-70"
+                  className="rounded-lg bg-[#111820] px-5 py-3 text-sm font-black text-white transition hover:bg-[#05070a] disabled:opacity-70"
                 >
                   {firmaSeguroLoading ? "Probando..." : "Probar token"}
                 </button>
@@ -587,13 +587,13 @@ export default function IntegrationsHub({
         </section>
 
         {message && (
-          <div className="mt-5 rounded-[22px] border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
+          <div className="rounded-lg border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
             {message}
           </div>
         )}
 
         {copyMessage && (
-          <div className="mt-5 rounded-[22px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-bold text-emerald-700">
+          <div className="rounded-lg border border-[#bfe66f] bg-[#f5fadf] px-5 py-4 text-sm font-bold text-[#5c7a13]">
             {copyMessage}
           </div>
         )}
@@ -601,7 +601,7 @@ export default function IntegrationsHub({
         <DeviceOperationsConsole canAdmin={canAdmin} />
 
         {canAdmin && (
-          <details className="mt-6 rounded-[28px] border border-[#e1d8ca] bg-white px-5 py-4 shadow-[0_14px_45px_rgba(15,23,42,0.05)]">
+          <details className="rounded-lg border border-[#d8dee5] bg-white px-5 py-4 shadow-[0_8px_22px_rgba(16,24,40,0.04)]">
             <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.14em] text-slate-700">
               API para comercios
             </summary>

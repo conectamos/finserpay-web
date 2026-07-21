@@ -45,7 +45,7 @@ function sanitizeDeviceInput(value: string) {
 function noticeClasses(tone: NoticeTone) {
   switch (tone) {
     case "emerald":
-      return "border-emerald-200 bg-emerald-50 text-emerald-800";
+      return "border-[#bfe66f] bg-[#f5fadf] text-[#4f6f0c]";
     case "amber":
       return "border-amber-200 bg-amber-50 text-amber-800";
     case "red":
@@ -58,7 +58,7 @@ function noticeClasses(tone: NoticeTone) {
 function resultClasses(tone: ResultTone) {
   switch (tone) {
     case "emerald":
-      return "border-emerald-200 bg-emerald-50 text-emerald-950";
+      return "border-[#bfe66f] bg-[#f5fadf] text-[#111820]";
     case "amber":
       return "border-amber-200 bg-amber-50 text-amber-950";
     case "red":
@@ -215,10 +215,10 @@ function ActionButton({
   tone?: "danger" | "primary" | "secondary" | "success" | "warning";
 }) {
   const tones = {
-    danger: "bg-red-600 text-white hover:bg-red-700",
-    primary: "bg-slate-950 text-white hover:bg-slate-800",
-    secondary: "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
-    success: "bg-[#116b61] text-white hover:bg-[#0d5850]",
+    danger: "border border-red-200 bg-white text-red-700 hover:bg-red-50",
+    primary: "bg-[#111820] text-white hover:bg-[#05070a]",
+    secondary: "border border-[#ccd7dd] bg-white text-[#111820] hover:bg-[#f7f9fb]",
+    success: "bg-[#a6d51f] text-[#111820] hover:bg-[#b8eb24]",
     warning: "bg-amber-500 text-white hover:bg-amber-600",
   };
 
@@ -228,7 +228,7 @@ function ActionButton({
       onClick={onClick}
       disabled={disabled}
       className={[
-        "rounded-[18px] px-4 py-3 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-70",
+        "inline-flex h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-70",
         tones[tone],
       ].join(" ")}
     >
@@ -363,17 +363,17 @@ export default function DeviceOperationsConsole({
   };
 
   return (
-    <section className="mt-6 rounded-[30px] border border-[#e1d8ca] bg-white p-5 shadow-[0_18px_55px_rgba(15,23,42,0.06)]">
-      <div className="grid gap-5 lg:grid-cols-[1fr_0.8fr] lg:items-start">
-        <div>
-          <span className="inline-flex rounded-full border border-[#e7dccb] bg-[#faf7f1] px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600">
-            Equipo
+    <section className="rounded-lg border border-[#d8dee5] bg-white shadow-[0_10px_28px_rgba(16,24,40,0.06)]">
+      <div className="grid lg:grid-cols-[1fr_420px]">
+        <div className="p-6">
+          <span className="inline-flex rounded-full border border-[#d9ec9d] bg-[#f5fadf] px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-[#5c7a13]">
+            Operacion Zero Touch
           </span>
-          <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">
-            Buscar IMEI
+          <h2 className="mt-4 text-3xl font-black tracking-tight text-[#111820]">
+            Consultar equipo
           </h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Consulta el equipo y usa solo la accion que necesitas.
+          <p className="mt-2 text-sm leading-6 text-[#667085]">
+            Ingresa el IMEI para consultar, inscribir o validar la entregabilidad del dispositivo.
           </p>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
@@ -388,7 +388,7 @@ export default function DeviceOperationsConsole({
                 }
               }}
               placeholder="IMEI del equipo"
-              className="w-full rounded-[20px] border border-slate-200 bg-[#fbfcfb] px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#116b61] focus:ring-4 focus:ring-emerald-100"
+              className="h-12 w-full rounded-lg border border-[#ccd7dd] bg-white px-4 text-base text-[#111820] outline-none transition focus:border-[#a6d51f] focus:ring-4 focus:ring-[#a6d51f]/15"
             />
 
             <ActionButton
@@ -403,7 +403,7 @@ export default function DeviceOperationsConsole({
           {notice && (
             <div
               className={[
-                "mt-4 rounded-[20px] border px-4 py-4 text-sm font-bold",
+                "mt-4 rounded-lg border px-4 py-4 text-sm font-bold",
                 noticeClasses(notice.tone),
               ].join(" ")}
             >
@@ -411,7 +411,7 @@ export default function DeviceOperationsConsole({
             </div>
           )}
 
-          <div className="mt-5 flex flex-wrap gap-3">
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:max-w-lg">
             <ActionButton
               tone="success"
               disabled={processing !== null}
@@ -432,7 +432,7 @@ export default function DeviceOperationsConsole({
 
         <article
           className={[
-            "rounded-[26px] border p-5",
+            "border-t p-6 lg:border-l lg:border-t-0",
             resultClasses(commercialResult.tone),
           ].join(" ")}
         >
@@ -445,7 +445,7 @@ export default function DeviceOperationsConsole({
           <p className="mt-3 text-sm leading-6">{commercialResult.detail}</p>
 
           <div className="mt-5 grid gap-3">
-            <div className="rounded-[20px] border border-white/60 bg-white/70 px-4 py-3">
+            <div className="rounded-lg border border-white/70 bg-white/75 px-4 py-3">
               <p className="text-[11px] font-black uppercase tracking-[0.16em] opacity-60">
                 Equipo
               </p>
@@ -453,7 +453,7 @@ export default function DeviceOperationsConsole({
                 {friendlyStateLabel(equalityResult?.deviceState)}
               </p>
             </div>
-            <div className="rounded-[20px] border border-white/60 bg-white/70 px-4 py-3">
+            <div className="rounded-lg border border-white/70 bg-white/75 px-4 py-3">
               <p className="text-[11px] font-black uppercase tracking-[0.16em] opacity-60">
                 Servicio
               </p>
@@ -466,8 +466,8 @@ export default function DeviceOperationsConsole({
       </div>
 
       {canAdmin && (
-        <details className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4">
-          <summary className="cursor-pointer text-sm font-black text-slate-800">
+        <details className="border-t border-[#d8dee5] bg-[#f7f9fb] px-6 py-4">
+          <summary className="cursor-pointer text-sm font-black text-[#111820]">
             Acciones especiales
           </summary>
           <div className="mt-4 flex flex-wrap gap-3">
@@ -497,8 +497,8 @@ export default function DeviceOperationsConsole({
       )}
 
       {canAdmin && equalityResult && (
-        <details className="mt-4 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-          <summary className="cursor-pointer font-black text-slate-800">
+        <details className="border-t border-[#d8dee5] bg-white px-6 py-4 text-sm text-[#667085]">
+          <summary className="cursor-pointer font-black text-[#111820]">
             Ver detalle avanzado
           </summary>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
