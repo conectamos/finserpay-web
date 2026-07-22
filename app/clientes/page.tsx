@@ -6,7 +6,6 @@ import {
   ArrowRight,
   Bell,
   CalendarDays,
-  Check,
   ChevronDown,
   ChevronRight,
   CircleHelp,
@@ -15,12 +14,9 @@ import {
   Headphones,
   Home,
   LockKeyhole,
-  MoreHorizontal,
   ReceiptText,
   Smartphone,
   UserRound,
-  WalletCards,
-  History as HistoryIconLucide,
 } from "lucide-react";
 
 type ClientInstallment = {
@@ -101,13 +97,6 @@ type PaymentReturnNotice = {
 
 type ExplorerPanel = "payments" | "pending" | "history" | null;
 type ClientPaymentMode = "INSTALLMENTS" | "PAYOFF";
-type ClientNoticeTone = "red" | "green" | "blue" | "gray";
-
-type ClientNotice = {
-  title: string;
-  detail: string;
-  tone: ClientNoticeTone;
-};
 
 declare global {
   interface Window {
@@ -118,6 +107,7 @@ declare global {
 }
 
 const STORAGE_KEY = "finserpay.cliente.documento";
+const WHATSAPP_HELP_URL = "https://wa.me/573144201136?text=NECESITO%20AYUDA";
 
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -226,70 +216,6 @@ function creditTitle(credit: ClientCredit) {
   return credit.referenciaEquipo || `Credito ${credit.folio}`;
 }
 
-function noticeToneClasses(tone: ClientNoticeTone) {
-  if (tone === "red") return "bg-[#fff5f2] text-[#b63b20]";
-  if (tone === "green") return "bg-[#f1fbeb] text-[#3f7d2d]";
-  if (tone === "blue") return "bg-[#eef9fb] text-[#087989]";
-  return "bg-[#f5f6f8] text-[#626976]";
-}
-
-function buildClientNotices(
-  credit: ClientCredit,
-  nextInstallment: ClientInstallment | null
-) {
-  const notices: ClientNotice[] = [];
-  const overdueCount = credit.cuotas.filter(
-    (item) => item.saldoPendiente > 0 && item.estaEnMora
-  ).length;
-  const lastPayment = credit.abonos[0] || null;
-
-  if (overdueCount) {
-    notices.push({
-      title: "Tienes cuotas vencidas",
-      detail: `${overdueCount} ${overdueCount === 1 ? "cuota" : "cuotas"} en mora.`,
-      tone: "red",
-    });
-  } else if (credit.estadoPago === "PAGADO" || !nextInstallment) {
-    notices.push({
-      title: "Credito al dia",
-      detail: "No tienes cuotas pendientes en este momento.",
-      tone: "green",
-    });
-  } else {
-    notices.push({
-      title: "Proxima cuota",
-      detail: `${dateLabel(nextInstallment.fechaVencimiento)} por ${money(
-        nextInstallment.saldoPendiente
-      )}.`,
-      tone: "green",
-    });
-  }
-
-  if (nextInstallment) {
-    notices.push({
-      title: "Cuota a pagar",
-      detail: `Cuota ${nextInstallment.numero} de ${credit.cuotas.length}.`,
-      tone: overdueCount ? "red" : "blue",
-    });
-  }
-
-  notices.push(
-    lastPayment
-      ? {
-          title: "Ultimo pago",
-          detail: `${dateLabel(lastPayment.fechaAbono)} por ${money(lastPayment.valor)}.`,
-          tone: "gray",
-        }
-      : {
-          title: "Sin pagos registrados",
-          detail: "Cuando pagues, veras el movimiento en historial.",
-          tone: "gray",
-        }
-  );
-
-  return notices.slice(0, 3);
-}
-
 function scrollToSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
 }
@@ -340,10 +266,10 @@ function AppLogo({ large = false }: { large?: boolean }) {
     return (
       <div
         aria-label="FINSER PAY"
-        className="flex items-baseline text-[23px] font-black leading-none text-[#111317]"
+        className="flex items-baseline text-[24px] font-black leading-none tracking-[0.05em] text-white"
       >
         <span>FINSER</span>
-        <span className="ml-1.5 text-[#747983]">PAY</span>
+        <span className="ml-2 text-[#A8F34A]">PAY</span>
       </div>
     );
   }
@@ -396,100 +322,6 @@ function SectionTitle({
       <h2 className="text-lg font-black text-[#171b22]">{title}</h2>
       {aside ? <div className="shrink-0">{aside}</div> : null}
     </div>
-  );
-}
-
-function QuickAction({
-  label,
-  children,
-  onClick,
-}: {
-  label: string;
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex min-h-16 items-center gap-3 rounded-lg border border-[#e6e8ee] bg-white px-3 text-left shadow-sm active:bg-[#f6f7f9]"
-    >
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[#f1f3f7] text-[#111317]">
-        {children}
-      </span>
-      <span className="min-w-0 text-sm font-black leading-4 text-[#323744]">
-        {label}
-      </span>
-    </button>
-  );
-}
-
-function HomeIcon() {
-  return (
-    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none">
-      <path
-        d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5Z"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="2"
-      />
-    </svg>
-  );
-}
-
-function CardIcon() {
-  return (
-    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none">
-      <path
-        d="M3 7.5A2.5 2.5 0 0 1 5.5 5h13A2.5 2.5 0 0 1 21 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9Z"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-      <path d="M3 10h18M7 15h4" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
-    </svg>
-  );
-}
-
-function CalendarIcon() {
-  return (
-    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none">
-      <path
-        d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="2"
-      />
-    </svg>
-  );
-}
-
-function HistoryIcon() {
-  return (
-    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none">
-      <path
-        d="M4 4v6h6M5.2 15a7.5 7.5 0 1 0 1.7-7.9L4 10"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="2"
-      />
-      <path d="M12 8v5l3 2" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
-    </svg>
-  );
-}
-
-function PaymentsIcon() {
-  return (
-    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none">
-      <path
-        d="M5 6h14M5 12h14M5 18h14"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="2"
-      />
-    </svg>
   );
 }
 
@@ -933,9 +765,6 @@ export default function ClienteConsultaPage() {
   const futureInstallments = upcomingInstallments.slice(1);
   const pendingAmount = installmentsAmount(payable);
   const overdueAmount = installmentsAmount(overdueInstallments);
-  const clientNotices = activeCredit
-    ? buildClientNotices(activeCredit, nextInstallment)
-    : [];
   const selectedInstallments = activeCredit ? cuotasSeleccionadas(activeCredit) : [];
   const selectedAmount = installmentsAmount(selectedInstallments);
   const selectedPaymentLabel = installmentsRangeLabel(selectedInstallments);
@@ -978,106 +807,84 @@ export default function ClienteConsultaPage() {
   const profileInitials = activeCredit
     ? clientInitials(activeCredit.clienteNombre)
     : "FP";
-  const progressSegments = Math.max(1, Math.min(totalCount || 1, 8));
-  const completedSegments = Math.min(
-    progressSegments,
-    Math.round((progress / 100) * progressSegments)
-  );
-  const deviceImei = activeCredit?.imei || activeCredit?.deviceUid || null;
   const nextDueLabel = nextInstallment
     ? compactDateLabel(nextInstallment.fechaVencimiento)
     : "-";
   const lastPaymentDateLabel = lastHistoryPayment
     ? compactDateLabel(lastHistoryPayment.fechaAbono)
     : "Sin pagos";
+  const progressCircle = 2 * Math.PI * 72;
+  const progressOffset = progressCircle - (progressCircle * Math.min(progress, 100)) / 100;
 
   if (!items.length) {
     return (
-      <main className="min-h-[100svh] bg-[#090b0d] text-[#f7f8f8]">
-        <div className="mx-auto min-h-[100svh] w-full max-w-[460px] overflow-hidden bg-[#090b0d] shadow-[0_0_60px_rgba(0,0,0,0.28)]">
-          <section className="relative min-h-[610px] overflow-hidden px-7 pb-12 pt-[max(2rem,env(safe-area-inset-top))] sm:px-9">
+      <main className="min-h-[100svh] min-w-0 overflow-hidden bg-[#090b0d] text-[#f7f8f8]">
+        <div className="mx-auto flex min-h-[100svh] w-full max-w-[430px] min-w-0 flex-col overflow-hidden bg-[#090b0d] shadow-[0_0_60px_rgba(0,0,0,0.28)]">
+          <section className="relative w-full shrink-0 overflow-hidden px-7 pb-9 pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-8 max-[740px]:px-6 max-[740px]:pb-5 max-[740px]:pt-[max(1rem,env(safe-area-inset-top))]">
+            <div className="pointer-events-none absolute -right-16 top-14 h-48 w-48 rounded-full border border-[#a9df35]/20" />
+            <div className="pointer-events-none absolute -right-10 top-20 h-32 w-32 rounded-full border border-[#a9df35]/10" />
             <header className="flex items-center justify-between">
               <div
                 aria-label="FINSER PAY"
-                className="flex items-baseline text-[26px] font-black leading-none tracking-[0.08em] text-white"
+                className="flex items-baseline text-[25px] font-black leading-none tracking-[0.08em] text-white max-[740px]:text-[22px]"
               >
                 <span>FINSER</span>
-                <span className="ml-2 text-[#a7a9ad]">PAY</span>
+                <span className="ml-2 text-[#A8F34A]">PAY</span>
               </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setNotice({
-                    text: "Ingresa tu cedula para consultar tu credito. Si necesitas apoyo, comunicate con FINSER PAY.",
-                    tone: "emerald",
-                  })
-                }
-                aria-label="Ayuda para ingresar"
-                className="grid h-12 w-12 place-items-center rounded-full border border-[#bfc2c6] text-[#f6f7f8] transition hover:border-[#a9df35] hover:text-[#a9df35]"
+              <a
+                href={WHATSAPP_HELP_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Solicitar ayuda por WhatsApp"
+                className="grid h-12 w-12 place-items-center rounded-full border border-[#d9dde2]/80 text-[#f6f7f8] transition hover:border-[#A8F34A] hover:text-[#A8F34A]"
               >
                 <CircleHelp className="h-7 w-7" strokeWidth={1.7} />
-              </button>
+              </a>
             </header>
 
-            <div className="mt-20">
-              <div className="flex items-center gap-3 text-[13px] font-semibold uppercase tracking-[0.22em] text-[#c9cbd0]">
-                <span className="h-3 w-3 rounded-full bg-[#a9df35] shadow-[0_0_18px_rgba(169,223,53,0.48)]" />
+            <div className="mt-14 max-[740px]:mt-8">
+              <div className="flex items-center gap-3 text-[12px] font-black uppercase tracking-[0.26em] text-[#A8F34A] max-[740px]:text-[11px]">
+                <span className="h-3 w-3 rounded-full bg-[#A8F34A] shadow-[0_0_18px_rgba(168,243,74,0.65)]" />
                 Portal de clientes
               </div>
-              <h1 className="mt-5 max-w-[360px] text-[42px] font-black leading-[1.05] tracking-[0.01em] text-white sm:text-[46px]">
-                Tu credito,
+              <h1 className="mt-5 max-w-[350px] font-serif text-[42px] font-black leading-[0.98] tracking-[-0.03em] text-white sm:text-[46px] max-[740px]:mt-4 max-[740px]:text-[33px]">
+                Tu crédito,
                 <br />
                 siempre contigo.
               </h1>
-              <p className="mt-5 max-w-[310px] text-[19px] font-medium leading-8 text-[#b8bbc1]">
+              <p className="mt-5 max-w-[260px] text-[18px] font-medium leading-7 text-[#b8bbc1] max-[740px]:mt-3 max-[740px]:text-[15px] max-[740px]:leading-6">
                 Consulta tus cuotas, pagos y saldo cuando quieras.
               </p>
             </div>
 
-            <div className="relative mx-auto mt-12 h-[215px] w-[92%]">
-              <div className="absolute inset-x-2 top-3 h-[180px] rotate-[-7deg] overflow-hidden rounded-lg border border-[#7d828a] bg-[#181b20] shadow-[0_26px_42px_rgba(0,0,0,0.6)]">
-                <div className="flex h-full items-center px-7">
+            <div className="absolute bottom-6 right-8 grid place-items-center max-[740px]:bottom-3 max-[740px]:right-7">
+              <div className="relative grid h-[142px] w-[142px] place-items-center rounded-full border border-[#A8F34A]/45 max-[740px]:h-[86px] max-[740px]:w-[86px]">
+                <div className="absolute -right-1 top-9 h-3 w-3 rounded-full bg-[#A8F34A] shadow-[0_0_14px_rgba(168,243,74,0.8)] max-[740px]:hidden" />
+                <div className="grid h-[86px] w-[86px] place-items-center rounded-full bg-white/5 max-[740px]:h-[54px] max-[740px]:w-[54px]">
                   <Image
                     src="/icons/finserpay-client-512.png"
                     alt="Emblema FINSER PAY"
-                    width={88}
-                    height={88}
+                    width={72}
+                    height={72}
                     priority
-                    className="h-[76px] w-[76px] shrink-0 rounded-lg object-cover shadow-[0_10px_26px_rgba(0,0,0,0.55)]"
+                    className="h-[62px] w-[62px] rounded-full object-cover max-[740px]:h-[42px] max-[740px]:w-[42px]"
                   />
-                  <div className="mx-6 h-24 w-px shrink-0 bg-[#70757d]" />
-                  <div className="min-w-0 rotate-[0.5deg]">
-                    <div className="flex items-center gap-3">
-                      <span className="grid h-12 w-10 shrink-0 place-items-center rounded-lg border border-[#747a83] bg-[#20242a] text-white">
-                        <Smartphone className="h-7 w-7" strokeWidth={1.7} />
-                      </span>
-                      <div>
-                        <p className="text-[13px] font-semibold text-[#aeb2b9]">Portal movil</p>
-                        <p className="mt-1 text-[19px] font-semibold leading-tight text-white">
-                          Tu credito
-                        </p>
-                      </div>
-                    </div>
-                    <div className="mt-4 flex items-center gap-2 text-[14px] font-semibold text-[#a9df35]">
-                      <span className="grid h-6 w-6 place-items-center rounded-full border border-[#a9df35]">
-                        <Check className="h-4 w-4" strokeWidth={2.2} />
-                      </span>
-                      Siempre contigo
-                    </div>
-                  </div>
                 </div>
               </div>
-              <div className="absolute bottom-1 left-1/2 h-8 w-[82%] -translate-x-1/2 rounded-[50%] bg-[#20242a] opacity-70 blur-xl" />
+              <div className="mt-3 flex items-center gap-2 text-[14px] font-medium text-white/72 max-[740px]:hidden">
+                <LockKeyhole className="h-4 w-4" />
+                Acceso seguro
+              </div>
             </div>
           </section>
 
-          <section className="relative z-10 -mt-6 rounded-t-[42px] bg-[#f8f8f7] px-7 pb-[max(2rem,env(safe-area-inset-bottom))] pt-12 text-[#121417] sm:px-9">
+          <section className="relative z-10 -mt-1 flex-1 w-full max-w-full overflow-hidden rounded-t-[38px] bg-[#f8f8f7] px-6 pb-[max(1.4rem,env(safe-area-inset-bottom))] pt-9 text-[#121417] sm:px-8 max-[740px]:px-5 max-[740px]:pt-6">
             <div>
-              <h2 className="text-[31px] font-black leading-tight tracking-[0.01em]">
-                Consulta tu credito
+              <h2 className="text-[30px] font-black leading-tight tracking-[0.01em] max-[740px]:text-[26px]">
+                Consulta tu crédito
               </h2>
-              <p className="mt-3 text-[15px] font-medium leading-6 text-[#666a71]">
-                Ingresa tu numero de documento para continuar.
+              <p className="mt-3 text-[15px] font-medium leading-6 text-[#666a71] max-[740px]:mt-2 max-[740px]:text-[14px]">
+                Ingresa tu número de documento para continuar.
               </p>
             </div>
 
@@ -1088,16 +895,16 @@ export default function ClienteConsultaPage() {
                 const formDocument = String(formData.get("documento") || documento);
                 void consultar(formDocument);
               }}
-              className="mt-8"
+              className="mt-7 max-[740px]:mt-5"
             >
               <label
                 htmlFor="documento"
-                className="block text-[12px] font-black uppercase tracking-[0.08em] text-[#656970]"
+                className="sr-only"
               >
                 Documento de identidad
               </label>
-              <div className="mt-3 flex h-[72px] items-center rounded-lg border border-[#cfd2d6] bg-white px-3 shadow-[0_8px_22px_rgba(18,20,23,0.04)] focus-within:border-[#171a1e] focus-within:ring-1 focus-within:ring-[#171a1e]">
-                <div className="flex h-12 shrink-0 items-center gap-2 rounded-md border border-[#e2e4e7] bg-[#fafafa] px-3 text-[17px] font-black text-[#24272c]">
+              <div className="flex h-[66px] w-full max-w-full items-center rounded-lg border border-[#cfd2d6] bg-white px-3 shadow-[0_8px_22px_rgba(18,20,23,0.04)] focus-within:border-[#171a1e] focus-within:ring-1 focus-within:ring-[#171a1e] max-[740px]:h-[58px] max-[740px]:px-2">
+                <div className="flex h-12 shrink-0 items-center gap-2 border-r border-[#d7d9dd] px-3 text-[17px] font-black text-[#24272c] max-[740px]:h-11 max-[740px]:px-2.5">
                   CC
                   <ChevronDown className="h-4 w-4" strokeWidth={2.2} />
                 </div>
@@ -1113,8 +920,8 @@ export default function ClienteConsultaPage() {
                   }}
                   inputMode="numeric"
                   autoComplete="off"
-                  placeholder="Numero de cedula"
-                  className="min-w-0 flex-1 bg-transparent px-4 text-[18px] font-bold text-[#1f2328] outline-none placeholder:font-semibold placeholder:text-[#a3a6ac]"
+                  placeholder="Número de cédula"
+                  className="min-w-0 flex-1 bg-transparent px-4 text-[18px] font-bold text-[#1f2328] outline-none placeholder:font-semibold placeholder:text-[#a3a6ac] max-[740px]:px-3 max-[740px]:text-[16px]"
                 />
                 <UserRound className="h-7 w-7 shrink-0 text-[#24282e]" strokeWidth={1.7} />
               </div>
@@ -1122,10 +929,10 @@ export default function ClienteConsultaPage() {
               <button
                 disabled={!canSubmit}
                 type="submit"
-                className="mt-5 flex h-16 w-full items-center justify-between rounded-lg bg-[#15181b] px-6 text-[18px] font-black text-white shadow-[0_14px_28px_rgba(18,20,23,0.16)] transition hover:bg-[#23272b] disabled:cursor-wait disabled:opacity-60"
+                className="mt-5 flex h-16 w-full max-w-full min-w-0 items-center justify-between rounded-lg bg-[#A8F34A] px-6 text-[21px] font-black text-[#0D1112] shadow-[0_14px_28px_rgba(168,243,74,0.22)] transition hover:bg-[#b7ff5c] disabled:cursor-wait disabled:opacity-60 max-[740px]:mt-4 max-[740px]:h-[58px] max-[740px]:px-5"
               >
                 <span>{loading ? "Consultando..." : "Continuar"}</span>
-                <ArrowRight className="h-8 w-8 text-[#a9df35]" strokeWidth={1.8} />
+                <ArrowRight className="h-9 w-9 text-[#0D1112]" strokeWidth={1.8} />
               </button>
             </form>
 
@@ -1143,25 +950,22 @@ export default function ClienteConsultaPage() {
               </div>
             ) : null}
 
-            <div className="mt-6 flex items-center justify-center gap-3 text-[13px] font-semibold text-[#656970]">
+            <div className="mt-6 flex items-center justify-center gap-3 text-[15px] font-medium text-[#656970] max-[740px]:mt-4 max-[740px]:text-[13px]">
               <LockKeyhole className="h-5 w-5" strokeWidth={1.7} />
-              Tus datos estan protegidos
+              Tus datos están protegidos
             </div>
 
-            <footer className="mt-9 border-t border-[#e1e3e5] pt-6 text-center">
-              <button
-                type="button"
-                onClick={() =>
-                  setNotice({
-                    text: "Ingresa tu cedula para consultar tu credito. Si necesitas apoyo, comunicate con FINSER PAY.",
-                    tone: "emerald",
-                  })
-                }
-                className="text-[15px] font-semibold text-[#24272c] underline decoration-[#8d9197] underline-offset-4"
+            <footer className="mt-8 border-t border-[#d9d8d2] pt-6 text-center max-[740px]:mt-5 max-[740px]:pt-4">
+              <a
+                href={WHATSAPP_HELP_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Solicitar ayuda por WhatsApp"
+                className="text-[18px] font-medium text-[#24272c] underline decoration-[#A8F34A] decoration-2 underline-offset-4 max-[740px]:text-[15px]"
               >
-                Necesitas ayuda?
-              </button>
-              <p className="mt-6 text-[13px] font-semibold text-[#8a8e94]">
+                ¿Necesitas ayuda?
+              </a>
+              <p className="mt-6 text-[14px] font-semibold text-[#8a8e94] max-[740px]:mt-4 max-[740px]:text-[12px]">
                 <span className="font-black tracking-[0.04em]">FINSER PAY</span>
                 <span className="px-2">·</span>
                 Portal seguro
@@ -1176,24 +980,26 @@ export default function ClienteConsultaPage() {
   return (
     <main
       id="cliente-dashboard"
-      className="min-h-screen bg-[#f7f7f6] text-[#111317]"
+      className="min-h-[100svh] overflow-x-hidden bg-[#F4F3EE] text-[#111317]"
     >
-      <div className="mx-auto min-h-screen w-full max-w-[430px] px-5 pb-[calc(126px+env(safe-area-inset-bottom))] pt-[calc(18px+env(safe-area-inset-top))]">
-        <header className="flex items-center justify-between gap-4">
+      <div className="mx-auto min-h-[100svh] w-full max-w-[430px] bg-[#F4F3EE] px-5 pb-[calc(126px+env(safe-area-inset-bottom))] pt-[calc(18px+env(safe-area-inset-top))] shadow-[0_0_60px_rgba(13,17,18,0.16)]">
+        <header className="-mx-5 -mt-[calc(18px+env(safe-area-inset-top))] flex items-center justify-between gap-4 bg-[#0D1112] px-6 pb-5 pt-[calc(28px+env(safe-area-inset-top))]">
           <AppLogo />
           <div className="flex items-center gap-3">
             <button
               type="button"
               aria-label="Notificaciones"
-              className="grid h-11 w-11 place-items-center rounded-full text-[#111317] active:bg-black/5"
+              onClick={() => openPanel("history")}
+              className="relative grid h-11 w-11 place-items-center rounded-full text-white active:bg-white/10"
             >
               <Bell className="h-7 w-7 stroke-[2.1]" />
+              <span className="absolute right-2 top-2 h-3 w-3 rounded-full bg-[#A8F34A] shadow-[0_0_14px_rgba(168,243,74,0.8)]" />
             </button>
             <button
               type="button"
               aria-label="Cambiar cliente"
               onClick={forgetDocument}
-              className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#111418] text-base font-bold text-white shadow-[0_10px_22px_rgba(17,20,24,0.18)]"
+              className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-white/10 text-[18px] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] active:bg-white/15"
             >
               {profileInitials}
             </button>
@@ -1258,151 +1064,120 @@ export default function ClienteConsultaPage() {
 
           {activeCredit ? (
             <>
-              <section className="mb-6">
-                <h1 className="text-[23px] font-medium leading-tight text-[#111317]">
+              <section className="-mx-5 bg-[#0D1112] px-6 pb-2 pt-4">
+                <h1 className="text-[27px] font-medium leading-tight text-white/68">
                   Hola, {firstName}
                 </h1>
                 <span
                   className={[
-                    "mt-3 inline-flex min-h-10 items-center gap-3 rounded-xl border bg-white px-3.5 text-[15px] font-medium shadow-[0_8px_18px_rgba(17,20,24,0.04)]",
+                    "mt-5 inline-flex min-h-11 items-center gap-3 text-[18px] font-medium",
                     activeCredit.estadoPago === "MORA"
-                      ? "border-red-100 text-red-700"
-                      : "border-[#dfe7d8] text-[#1f242b]",
+                      ? "text-red-200"
+                      : "text-[#A8F34A]",
                   ].join(" ")}
                 >
                   <span
                     className={[
-                      "h-3 w-3 rounded-full shadow-[0_0_0_5px_rgba(166,231,96,0.14)]",
+                      "h-4 w-4 rounded-full",
                       activeCredit.estadoPago === "MORA"
-                        ? "bg-red-500"
-                        : "bg-[#62b52b]",
+                        ? "bg-red-400 shadow-[0_0_18px_rgba(248,113,113,0.55)]"
+                        : "bg-[#A8F34A] shadow-[0_0_18px_rgba(168,243,74,0.75)]",
                     ].join(" ")}
                   />
                   {creditStatusText(activeCredit.estadoPago)}
                 </span>
               </section>
 
-              <section className="rounded-[20px] bg-[#121519] p-5 text-white shadow-[0_20px_44px_rgba(17,20,24,0.22)]">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-3">
-                      <p className="text-[18px] font-medium text-white/72">
-                        Proxima cuota
-                      </p>
-                      <span className="rounded-lg border border-white/16 bg-white/[0.03] px-2.5 py-1 text-[13px] font-semibold text-white">
-                        {nextInstallment ? nextInstallment.numero : paidCount} de{" "}
-                        {totalCount || 0}
-                      </span>
+              <section className="-mx-5 overflow-hidden rounded-b-[42px] bg-[#0D1112] px-6 pb-20 pt-7 text-white shadow-[0_20px_44px_rgba(13,17,18,0.22)]">
+                <div className="grid grid-cols-[minmax(138px,0.92fr)_minmax(0,1fr)] items-center gap-5">
+                  <div className="relative mx-auto h-[166px] w-[166px]">
+                    <svg
+                      viewBox="0 0 168 168"
+                      className="h-full w-full -rotate-90"
+                      aria-hidden="true"
+                    >
+                      <circle
+                        cx="84"
+                        cy="84"
+                        r="72"
+                        fill="none"
+                        stroke="rgba(255,255,255,0.13)"
+                        strokeWidth="12"
+                      />
+                      <circle
+                        cx="84"
+                        cy="84"
+                        r="72"
+                        fill="none"
+                        stroke="#A8F34A"
+                        strokeLinecap="round"
+                        strokeWidth="12"
+                        strokeDasharray={progressCircle}
+                        strokeDashoffset={progressOffset}
+                        className="drop-shadow-[0_0_14px_rgba(168,243,74,0.55)]"
+                      />
+                    </svg>
+                    <div className="absolute inset-0 grid place-items-center text-center">
+                      <div>
+                        <p className="font-serif text-[56px] leading-none tracking-[-0.04em] text-[#fbfaf5]">
+                          {progress}
+                          <span className="ml-1 font-sans text-[23px]">%</span>
+                        </p>
+                        <p className="mt-2 text-[18px] font-semibold text-white/58">
+                          {paidCount} de {totalCount} cuotas
+                        </p>
+                      </div>
                     </div>
-                    <p className="mt-4 font-serif text-[46px] font-black leading-none text-white">
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-[14px] font-semibold uppercase tracking-[0.05em] text-white/42">
+                      Proxima cuota
+                    </p>
+                    <p className="mt-4 break-words font-serif text-[50px] leading-none tracking-[-0.04em] text-[#fbfaf5]">
                       {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
                     </p>
-                  </div>
-                  <MoreHorizontal className="mt-1 h-6 w-6 shrink-0 text-white/82" />
-                </div>
-
-                <div className="mt-6 grid grid-cols-[1fr_auto_1fr] items-center gap-4">
-                  <div>
-                    <p className="text-[15px] font-medium text-white/72">Vence</p>
-                    <p className="mt-1.5 text-[21px] font-black">
-                      {nextDueLabel}
-                    </p>
-                  </div>
-                  <span className="h-12 w-px bg-white/18" />
-                  <div>
-                    <p className="text-[15px] font-medium text-white/72">
-                      Saldo pendiente
-                    </p>
-                    <p className="mt-1.5 text-[21px] font-black">
-                      {money(activeCredit.saldoPendiente)}
+                    <p className="mt-4 text-[21px] font-medium text-white/58">
+                      Vence{" "}
+                      <span className="font-black text-[#A8F34A]">
+                        {nextDueLabel.toLowerCase()}
+                      </span>
                     </p>
                   </div>
                 </div>
 
-                <div className="mt-6 grid grid-cols-[1fr_58px] items-center gap-4">
+                <div className="relative z-10 mt-10 text-center">
                   <button
                     type="button"
                     onClick={() => openWompiConfirm(activeCredit)}
                     disabled={!payable.length || payingCreditId === activeCredit.id}
-                    className="inline-flex min-h-[52px] items-center justify-center gap-3 rounded-2xl bg-[#b8f25d] px-5 text-[17px] font-semibold text-[#111317] shadow-[0_14px_28px_rgba(184,242,93,0.24)] disabled:bg-white/20 disabled:text-white/45"
+                    className="mx-auto inline-flex min-h-[64px] w-full max-w-[308px] items-center justify-center gap-5 rounded-full bg-[#A8F34A] px-6 text-[22px] font-black text-[#0D1112] shadow-[0_18px_44px_rgba(168,243,74,0.34)] transition active:scale-[0.98] disabled:bg-white/18 disabled:text-white/45"
                   >
-                    <CreditCard className="h-6 w-6" />
+                    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#0D1112] text-[#A8F34A]">
+                      <CreditCard className="h-7 w-7" />
+                    </span>
                     {payingCreditId === activeCredit.id ? "Abriendo" : "Pagar ahora"}
                   </button>
-                  <button
-                    type="button"
-                    aria-label="Pagar ahora"
-                    onClick={() => openWompiConfirm(activeCredit)}
-                    disabled={!payable.length || payingCreditId === activeCredit.id}
-                    className="grid h-[58px] w-[58px] place-items-center rounded-full border border-white/16 bg-white/[0.02] text-white active:bg-white/10 disabled:text-white/30"
-                  >
-                    <ArrowRight className="h-7 w-7" />
-                  </button>
-                </div>
 
-                {canPayToday && activePayoff ? (
-                  <button
-                    type="button"
-                    onClick={() => openWompiConfirm(activeCredit, "PAYOFF")}
-                    disabled={payingCreditId === activeCredit.id}
-                    className="mt-3 flex min-h-[58px] w-full items-center justify-between gap-4 rounded-2xl border border-[#b8f25d]/45 bg-[#b8f25d]/[0.08] px-4 text-left text-white transition active:bg-[#b8f25d]/15 disabled:opacity-50"
-                  >
-                    <span className="flex min-w-0 items-center gap-3">
-                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#b8f25d] text-[#111317]">
-                        <WalletCards className="h-5 w-5" />
+                  {canPayToday && activePayoff ? (
+                    <button
+                      type="button"
+                      onClick={() => openWompiConfirm(activeCredit, "PAYOFF")}
+                      disabled={payingCreditId === activeCredit.id}
+                      className="mt-5 min-h-11 text-[16px] font-medium text-white/54 underline decoration-[#A8F34A] decoration-dotted underline-offset-4 disabled:opacity-50"
+                    >
+                      Liquidar por{" "}
+                      <span className="font-black text-[#A8F34A]">
+                        {money(activePayoff.capitalPendiente)}
                       </span>
-                      <span className="min-w-0">
-                        <span className="block text-[15px] font-black uppercase">
-                          Recoger deuda
-                        </span>
-                        <span className="mt-0.5 block text-xs font-medium text-white/62">
-                          Liquidar el capital pendiente
-                        </span>
-                      </span>
-                    </span>
-                    <span className="shrink-0 text-right text-[16px] font-black text-[#b8f25d]">
-                      {payingCreditId === activeCredit.id
-                        ? "Abriendo"
-                        : money(activePayoff.capitalPendiente)}
-                    </span>
-                  </button>
-                ) : null}
-
-                <div className="mt-6">
-                  <div
-                    className="grid gap-1.5"
-                    style={{ gridTemplateColumns: `repeat(${progressSegments}, minmax(0, 1fr))` }}
-                  >
-                    {Array.from({ length: progressSegments }).map((_, index) => (
-                      <span
-                        key={index}
-                        className={[
-                          "h-1.5 rounded-full",
-                          index < completedSegments ? "bg-[#b8f25d]" : "bg-white/14",
-                        ].join(" ")}
-                      />
-                    ))}
-                  </div>
-                  <div className="mt-3 flex justify-between gap-4 text-[14px] font-medium text-white/72">
-                    <span>
-                      {paidCount} de {totalCount} cuotas pagadas
-                    </span>
-                    <span>{progress}% completado</span>
-                  </div>
+                    </button>
+                  ) : null}
                 </div>
               </section>
 
               {items.length > 1 ? (
-                <section className="mt-5 rounded-[18px] border border-[#dfe8dc] bg-white p-4 shadow-[0_10px_24px_rgba(17,20,24,0.05)]">
-                  <SectionTitle
-                    title="Creditos vigentes"
-                    aside={
-                      <span className="rounded-full bg-[#effbe6] px-3 py-1 text-xs font-black text-[#3f7d2d]">
-                        {items.length} activos
-                      </span>
-                    }
-                  />
-                  <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+                <section className="-mt-10 mb-7">
+                  <div className="flex gap-3 overflow-x-auto pb-1">
                     {items.map((credit, index) => {
                       const isActive = credit.id === activeCredit.id;
                       const creditPaid = getPaidInstallments(credit).length;
@@ -1415,38 +1190,38 @@ export default function ClienteConsultaPage() {
                           type="button"
                           onClick={() => selectCredit(credit.id)}
                           className={[
-                            "grid min-h-20 min-w-[270px] grid-cols-[1fr_auto] gap-3 rounded-xl border px-4 py-3 text-left transition active:scale-[0.99]",
+                            "grid min-h-[74px] min-w-[210px] grid-cols-[1fr_auto] gap-3 rounded-[22px] px-4 py-3 text-left transition active:scale-[0.99]",
                             isActive
-                              ? "border-[#a7e66f] bg-[#f5ffef] shadow-[0_10px_22px_rgba(111,194,70,0.14)]"
-                              : "border-[#edf0f4] bg-[#fbfcfd]",
+                              ? "bg-[#0D1112] text-white"
+                              : "bg-white/70 text-[#171b22]",
                           ].join(" ")}
                         >
                           <span className="min-w-0">
-                            <span className="block text-[11px] font-black uppercase text-[#7d8490]">
+                            <span className="block text-[11px] font-black uppercase tracking-[0.12em] text-[#A8F34A]">
                               Credito {index + 1}
                             </span>
-                            <span className="mt-1 block truncate text-sm font-black text-[#171b22]">
+                            <span className="mt-1 block truncate text-sm font-black">
                               {creditTitle(credit)}
                             </span>
-                            <span className="mt-1 block truncate text-xs font-bold text-[#848c98]">
+                            <span className="mt-1 block truncate text-xs font-semibold opacity-65">
                               {maskedImeiLabel(credit.imei || credit.deviceUid)}
                             </span>
                           </span>
                           <span className="shrink-0 text-right">
                             <span
                               className={[
-                                "inline-flex rounded-md px-2 py-1 text-[11px] font-black",
+                                "inline-flex rounded-full px-2.5 py-1 text-[11px] font-black",
                                 isActive
-                                  ? "bg-[#a7e66f] text-[#102316]"
+                                  ? "bg-[#A8F34A] text-[#0D1112]"
                                   : "bg-[#eef1f5] text-[#626976]",
                               ].join(" ")}
                             >
                               {isActive ? "Activo" : "Ver"}
                             </span>
-                            <span className="mt-2 block text-xs font-black text-[#252a35]">
+                            <span className="mt-2 block text-xs font-black">
                               {creditPaid}/{creditTotal}
                             </span>
-                            <span className="mt-1 block text-xs font-bold text-[#7d8490]">
+                            <span className="mt-1 block text-xs font-bold opacity-70">
                               {creditNext ? money(creditNext.saldoPendiente) : "Al dia"}
                             </span>
                           </span>
@@ -1460,123 +1235,109 @@ export default function ClienteConsultaPage() {
               <button
                 type="button"
                 onClick={() => openPanel("pending")}
-                className="mt-5 grid min-h-[76px] w-full grid-cols-[52px_minmax(0,1fr)_auto] items-center gap-3 rounded-[18px] border border-[#e4e6e8] bg-white px-3.5 text-left shadow-[0_12px_30px_rgba(17,20,24,0.07)] active:scale-[0.99]"
+                className="mt-7 grid min-h-[112px] w-full grid-cols-[82px_minmax(0,1fr)_44px] items-center gap-5 text-left active:scale-[0.99]"
               >
-                <span className="grid h-11 w-11 place-items-center rounded-full bg-[#f0f0ed] text-[#52575f]">
-                  <Smartphone className="h-6 w-6 stroke-[1.8]" />
+                <span className="grid h-[82px] w-[82px] place-items-center rounded-[22px] bg-white shadow-[0_14px_30px_rgba(13,17,18,0.06)]">
+                  <Smartphone className="h-10 w-10 text-[#0D1112] stroke-[1.6]" />
                 </span>
                 <span className="min-w-0">
-                  <span className="block truncate text-[17px] font-black leading-tight text-[#111317]">
+                  <span className="block text-[23px] font-medium text-[#5c5b57]">
+                    Tu credito
+                  </span>
+                  <span className="mt-2 block truncate text-[22px] font-black uppercase leading-tight text-[#0D1112]">
                     {creditTitle(activeCredit)}
                   </span>
-                  <span className="mt-1 block truncate text-[14px] font-medium text-[#747985]">
-                    {maskedImeiLabel(deviceImei)}
+                  <span className="mt-2 block truncate text-[18px] font-medium text-[#6b6964]">
+                    Saldo{" "}
+                    <strong className="font-serif text-[23px] text-[#0D1112]">
+                      {money(activeCredit.saldoPendiente)}
+                    </strong>
                   </span>
                 </span>
-                <span className="inline-flex items-center gap-1 text-[14px] font-bold text-[#111317]">
-                  Ver credito
-                  <ChevronRight className="h-5 w-5 text-[#7b8088]" />
+                <span className="grid h-11 w-11 place-items-center rounded-full bg-white/70 text-[#0D1112]">
+                  <ChevronRight className="h-7 w-7" />
                 </span>
               </button>
 
-              <section className="mt-8">
-                <h2 className="text-[20px] font-semibold text-[#111317]">
-                  Tu proximo movimiento
-                </h2>
-                <div className="mt-4 overflow-hidden rounded-[18px] border border-[#e4e6e8] bg-white shadow-[0_12px_30px_rgba(17,20,24,0.06)]">
+              <section className="mt-9">
+                <div className="flex items-center justify-between gap-4">
+                  <h2 className="text-[30px] font-black tracking-[-0.02em] text-[#0D1112]">
+                    Actividad
+                  </h2>
+                  <div className="flex items-center gap-3 text-[16px] font-medium text-[#222524]">
+                    <button
+                      type="button"
+                      onClick={() => openPanel("pending")}
+                      className="inline-flex min-h-11 items-center gap-2"
+                    >
+                      <CalendarDays className="h-6 w-6" />
+                      Calendario
+                    </button>
+                    <span className="h-6 w-px bg-[#cfccc4]" />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setNotice({
+                          tone: "emerald",
+                          text: "Comunicate con FINSER PAY por tus canales registrados.",
+                        })
+                      }
+                      className="inline-flex min-h-11 items-center gap-2"
+                    >
+                      <Headphones className="h-6 w-6" />
+                      Soporte
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-7 grid gap-0">
                   <button
                     type="button"
                     onClick={() => openPanel("pending")}
-                    className="grid min-h-[82px] w-full grid-cols-[50px_minmax(0,1fr)_auto] items-center gap-3 px-3.5 text-left active:bg-[#f7f8f6]"
+                    className="grid min-h-[86px] grid-cols-[54px_minmax(0,1fr)_auto] gap-4 text-left"
                   >
-                    <span className="grid h-10 w-10 place-items-center rounded-full bg-[#edf8de] text-[#477d26]">
-                      <CalendarDays className="h-6 w-6" />
+                    <span className="relative flex justify-center">
+                      <span className="absolute top-9 h-[86px] w-px bg-[#d8d5cc]" />
+                      <span className="relative z-10 mt-1 grid h-9 w-9 place-items-center rounded-full border-4 border-[#F4F3EE] bg-[#A8F34A] ring-2 ring-[#76b82f]" />
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-[16px] font-black text-[#111317]">
-                        {nextDueLabel} - Cuota {nextInstallment?.numero || paidCount}
+                      <span className="block truncate text-[21px] font-black text-[#0D1112]">
+                        {nextDueLabel.toLowerCase()} · Cuota{" "}
+                        {nextInstallment?.numero || paidCount}
                       </span>
-                      <span className="mt-1 block text-[14px] font-medium text-[#7a808a]">
+                      <span className="mt-2 block text-[17px] font-medium text-[#6d6a64]">
                         {nextInstallment?.estaEnMora ? "En mora" : "Programada"}
                       </span>
                     </span>
-                    <span className="inline-flex items-center gap-1 text-[16px] font-semibold text-[#111317]">
+                    <span className="pt-2 text-right font-serif text-[24px] font-black text-[#0D1112]">
                       {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
-                      <ChevronRight className="h-5 w-5 text-[#7b8088]" />
                     </span>
                   </button>
+
                   <button
                     type="button"
-                    onClick={() => openPanel("pending")}
-                    className="grid min-h-[56px] w-full grid-cols-[50px_1fr_auto] items-center gap-3 border-t border-[#eceef0] px-3.5 text-left active:bg-[#f7f8f6]"
+                    onClick={() => openPanel("history")}
+                    className="grid min-h-[86px] grid-cols-[54px_minmax(0,1fr)_auto] gap-4 text-left"
                   >
-                    <span />
-                    <span className="text-[15px] font-semibold text-[#4d535d]">
-                      Ver calendario
+                    <span className="flex justify-center">
+                      <span className="mt-1 grid h-9 w-9 place-items-center rounded-full border-4 border-[#F4F3EE] bg-[#d7d5cf] ring-2 ring-[#858580]">
+                        <span className="h-4 w-4 rounded-full bg-[#F4F3EE]" />
+                      </span>
                     </span>
-                    <ChevronRight className="h-5 w-5 text-[#7b8088]" />
+                    <span className="min-w-0">
+                      <span className="block truncate text-[21px] font-black text-[#0D1112]">
+                        {lastPaymentDateLabel.toLowerCase()}
+                        {lastHistoryPayment ? ` · ${lastHistoryPayment.metodoPago}` : ""}
+                      </span>
+                      <span className="mt-2 block text-[17px] font-medium text-[#4f8f22]">
+                        {lastHistoryPayment ? "Pago confirmado" : "Sin pagos registrados"}
+                      </span>
+                    </span>
+                    <span className="pt-2 text-right font-serif text-[24px] font-black text-[#0D1112]">
+                      {lastHistoryPayment ? money(lastHistoryPayment.valor) : money(0)}
+                    </span>
                   </button>
                 </div>
-              </section>
-
-              <section className="mt-8">
-                <h2 className="text-[20px] font-semibold text-[#111317]">
-                  Ultimo pago
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => openPanel("history")}
-                  className="mt-4 grid min-h-[82px] w-full grid-cols-[50px_minmax(0,1fr)_auto] items-center gap-3 rounded-[18px] border border-[#e4e6e8] bg-white px-3.5 text-left shadow-[0_12px_30px_rgba(17,20,24,0.06)] active:bg-[#f7f8f6]"
-                >
-                  <span className="grid h-10 w-10 place-items-center rounded-full bg-[#eef8df] text-[#3e8d27]">
-                    <Check className="h-6 w-6 stroke-[2.4]" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-[16px] font-black text-[#111317]">
-                      {lastPaymentDateLabel}
-                      {lastHistoryPayment ? ` - ${lastHistoryPayment.metodoPago}` : ""}
-                    </span>
-                    <span className="mt-1 block text-[14px] font-medium text-[#3e8d27]">
-                      {lastHistoryPayment ? "Pago confirmado" : "Sin pagos registrados"}
-                    </span>
-                  </span>
-                  <span className="inline-flex items-center gap-1 text-[16px] font-semibold text-[#111317]">
-                    {lastHistoryPayment ? money(lastHistoryPayment.valor) : money(0)}
-                    <ChevronRight className="h-5 w-5 text-[#7b8088]" />
-                  </span>
-                </button>
-              </section>
-
-              <section className="mt-8 grid grid-cols-3 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => openPanel("payments")}
-                  className="grid min-h-[70px] place-items-center gap-1.5 text-[#111317]"
-                >
-                  <WalletCards className="h-7 w-7 stroke-[2.1]" />
-                  <span className="text-[14px] font-medium">Medios</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openPanel("history")}
-                  className="grid min-h-[70px] place-items-center gap-1.5 border-x border-[#dde0e4] text-[#111317]"
-                >
-                  <HistoryIconLucide className="h-7 w-7 stroke-[2.1]" />
-                  <span className="text-[14px] font-medium">Historial</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setNotice({
-                      tone: "emerald",
-                      text: "Comunicate con FINSER PAY por tus canales registrados.",
-                    })
-                  }
-                  className="grid min-h-[70px] place-items-center gap-1.5 text-[#111317]"
-                >
-                  <Headphones className="h-7 w-7 stroke-[2.1]" />
-                  <span className="text-[14px] font-medium">Soporte</span>
-                </button>
               </section>
 
               {activePanel ? (
