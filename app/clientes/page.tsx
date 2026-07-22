@@ -16,7 +16,6 @@ import {
   Home,
   LockKeyhole,
   ReceiptText,
-  Smartphone,
   UserRound,
 } from "lucide-react";
 
@@ -214,6 +213,13 @@ function installmentsRangeLabel(items: ClientInstallment[]) {
 
 function creditTitle(credit: ClientCredit) {
   return credit.referenciaEquipo || `Credito ${credit.folio}`;
+}
+
+function creditDeviceImage(credit: ClientCredit) {
+  const reference = String(credit.referenciaEquipo || "").toUpperCase();
+  return /IPHONE|APPLE|IOS/.test(reference)
+    ? "/assets/creditos/iphone-choice-light.png"
+    : "/assets/creditos/android-choice-light.png";
 }
 
 function scrollToSection(id: string) {
@@ -818,9 +824,9 @@ export default function ClienteConsultaPage() {
 
   if (!items.length) {
     return (
-      <main className="min-h-[100svh] min-w-0 overflow-hidden bg-[#090b0d] text-[#f7f8f8]">
-        <div className="mx-auto flex min-h-[100svh] w-full max-w-[430px] min-w-0 flex-col overflow-hidden bg-[#090b0d] shadow-[0_0_60px_rgba(0,0,0,0.28)]">
-          <section className="relative w-full shrink-0 overflow-hidden px-7 pb-9 pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-8 max-[740px]:px-6 max-[740px]:pb-5 max-[740px]:pt-[max(1rem,env(safe-area-inset-top))]">
+      <main className="client-login-page min-h-[100dvh] min-w-0 overflow-x-hidden bg-[#f8f8f7] text-[#f7f8f8]">
+        <div className="mx-auto w-full max-w-[430px] min-w-0 overflow-x-hidden bg-[#090b0d] shadow-[0_0_60px_rgba(0,0,0,0.28)]">
+          <section className="client-login-hero relative h-[54dvh] w-full overflow-hidden px-6 pb-5 pt-[max(1rem,env(safe-area-inset-top))] [@media(max-height:779px)]:h-[49dvh] [@media(min-height:900px)]:h-[55dvh]">
             <div className="pointer-events-none absolute -right-16 top-14 h-48 w-48 rounded-full border border-[#a9df35]/20" />
             <div className="pointer-events-none absolute -right-10 top-20 h-32 w-32 rounded-full border border-[#a9df35]/10" />
             <header className="flex items-center justify-between">
@@ -838,48 +844,48 @@ export default function ClienteConsultaPage() {
               </FinserSupportLink>
             </header>
 
-            <div className="mt-14 max-[740px]:mt-8">
+            <div className="client-login-hero-copy mt-8 [@media(max-height:779px)]:mt-5">
               <div className="flex items-center gap-3 text-[12px] font-black uppercase tracking-[0.26em] text-[#A8F34A] max-[740px]:text-[11px]">
                 <span className="h-3 w-3 rounded-full bg-[#A8F34A] shadow-[0_0_18px_rgba(168,243,74,0.65)]" />
                 Portal de clientes
               </div>
-              <h1 className="mt-5 max-w-[350px] font-serif text-[42px] font-black leading-[0.98] tracking-[-0.03em] text-white sm:text-[46px] max-[740px]:mt-4 max-[740px]:text-[33px]">
+              <h1 className="client-login-title mt-4 max-w-[350px] font-serif text-[33px] font-black leading-[0.98] tracking-[-0.03em] text-white [@media(max-height:779px)]:mt-3 [@media(max-height:779px)]:text-[30px]">
                 Tu crédito,
                 <br />
                 siempre contigo.
               </h1>
-              <p className="mt-5 max-w-[260px] text-[18px] font-medium leading-7 text-[#b8bbc1] max-[740px]:mt-3 max-[740px]:text-[15px] max-[740px]:leading-6">
+              <p className="client-login-description mt-3 max-w-[230px] text-[15px] font-medium leading-6 text-[#b8bbc1] [@media(max-height:779px)]:mt-2 [@media(max-height:779px)]:text-[14px] [@media(max-height:779px)]:leading-5">
                 Consulta tus cuotas, pagos y saldo cuando quieras.
               </p>
             </div>
 
-            <div className="absolute bottom-6 right-8 grid place-items-center max-[740px]:bottom-3 max-[740px]:right-7">
-              <div className="relative grid h-[142px] w-[142px] place-items-center rounded-full border border-[#A8F34A]/45 max-[740px]:h-[86px] max-[740px]:w-[86px]">
-                <div className="absolute -right-1 top-9 h-3 w-3 rounded-full bg-[#A8F34A] shadow-[0_0_14px_rgba(168,243,74,0.8)] max-[740px]:hidden" />
-                <div className="grid h-[86px] w-[86px] place-items-center rounded-full bg-white/5 max-[740px]:h-[54px] max-[740px]:w-[54px]">
+            <div className="client-login-shield-wrap absolute bottom-3 right-7 grid place-items-center [@media(max-height:779px)]:bottom-2 [@media(max-height:779px)]:right-6">
+              <div className="client-login-shield relative grid h-[94px] w-[94px] place-items-center rounded-full border border-[#A8F34A]/45 [@media(max-height:779px)]:h-[76px] [@media(max-height:779px)]:w-[76px]">
+                <div className="absolute -right-1 top-6 h-2.5 w-2.5 rounded-full bg-[#A8F34A] shadow-[0_0_14px_rgba(168,243,74,0.8)]" />
+                <div className="client-login-shield-core grid h-[58px] w-[58px] place-items-center rounded-full bg-white/5 [@media(max-height:779px)]:h-[48px] [@media(max-height:779px)]:w-[48px]">
                   <Image
                     src="/icons/finserpay-client-512.png"
                     alt="Emblema FINSER PAY"
                     width={72}
                     height={72}
                     priority
-                    className="h-[62px] w-[62px] rounded-full object-cover max-[740px]:h-[42px] max-[740px]:w-[42px]"
+                    className="client-login-shield-image h-[46px] w-[46px] rounded-full object-cover [@media(max-height:779px)]:h-[38px] [@media(max-height:779px)]:w-[38px]"
                   />
                 </div>
               </div>
-              <div className="mt-3 flex items-center gap-2 text-[14px] font-medium text-white/72 max-[740px]:hidden">
-                <LockKeyhole className="h-4 w-4" />
+              <div className="client-login-secure mt-2 flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-white/72 [@media(max-height:779px)]:mt-1.5 [@media(max-height:779px)]:text-[10px]">
+                <LockKeyhole className="h-3.5 w-3.5" />
                 Acceso seguro
               </div>
             </div>
           </section>
 
-          <section className="relative z-10 -mt-1 flex-1 w-full max-w-full overflow-hidden rounded-t-[38px] bg-[#f8f8f7] px-6 pb-[max(1.4rem,env(safe-area-inset-bottom))] pt-9 text-[#121417] sm:px-8 max-[740px]:px-5 max-[740px]:pt-6">
+          <section className="client-login-sheet relative z-10 -mt-5 w-full max-w-full rounded-t-[38px] bg-[#f8f8f7] px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 text-[#121417] [@media(max-height:779px)]:pt-5 [@media(min-height:900px)]:pt-7">
             <div>
-              <h2 className="text-[30px] font-black leading-tight tracking-[0.01em] max-[740px]:text-[26px]">
+              <h2 className="text-[26px] font-black leading-tight tracking-[0.01em] [@media(min-height:900px)]:text-[28px]">
                 Consulta tu crédito
               </h2>
-              <p className="mt-3 text-[15px] font-medium leading-6 text-[#666a71] max-[740px]:mt-2 max-[740px]:text-[14px]">
+              <p className="mt-2 text-[14px] font-medium leading-6 text-[#666a71]">
                 Ingresa tu número de documento para continuar.
               </p>
             </div>
@@ -891,7 +897,7 @@ export default function ClienteConsultaPage() {
                 const formDocument = String(formData.get("documento") || documento);
                 void consultar(formDocument);
               }}
-              className="mt-7 max-[740px]:mt-5"
+              className="client-login-form mt-5 [@media(min-height:900px)]:mt-6"
             >
               <label
                 htmlFor="documento"
@@ -899,8 +905,8 @@ export default function ClienteConsultaPage() {
               >
                 Documento de identidad
               </label>
-              <div className="flex h-[66px] w-full max-w-full items-center rounded-lg border border-[#cfd2d6] bg-white px-3 shadow-[0_8px_22px_rgba(18,20,23,0.04)] focus-within:border-[#171a1e] focus-within:ring-1 focus-within:ring-[#171a1e] max-[740px]:h-[58px] max-[740px]:px-2">
-                <div className="flex h-12 shrink-0 items-center gap-2 border-r border-[#d7d9dd] px-3 text-[17px] font-black text-[#24272c] max-[740px]:h-11 max-[740px]:px-2.5">
+              <div className="client-login-field flex h-[58px] w-full max-w-full items-center rounded-lg border border-[#cfd2d6] bg-white px-2 shadow-[0_8px_22px_rgba(18,20,23,0.04)] focus-within:border-[#171a1e] focus-within:ring-1 focus-within:ring-[#171a1e] [@media(min-height:900px)]:h-[62px]">
+                <div className="flex h-11 shrink-0 items-center gap-2 border-r border-[#d7d9dd] px-2.5 text-[17px] font-black text-[#24272c]">
                   CC
                   <ChevronDown className="h-4 w-4" strokeWidth={2.2} />
                 </div>
@@ -917,7 +923,7 @@ export default function ClienteConsultaPage() {
                   inputMode="numeric"
                   autoComplete="off"
                   placeholder="Número de cédula"
-                  className="min-w-0 flex-1 bg-transparent px-4 text-[18px] font-bold text-[#1f2328] outline-none placeholder:font-semibold placeholder:text-[#a3a6ac] max-[740px]:px-3 max-[740px]:text-[16px]"
+                  className="min-w-0 flex-1 bg-transparent px-3 text-[16px] font-bold text-[#1f2328] outline-none placeholder:font-semibold placeholder:text-[#a3a6ac]"
                 />
                 <UserRound className="h-7 w-7 shrink-0 text-[#24282e]" strokeWidth={1.7} />
               </div>
@@ -925,7 +931,7 @@ export default function ClienteConsultaPage() {
               <button
                 disabled={!canSubmit}
                 type="submit"
-                className="mt-5 flex h-16 w-full max-w-full min-w-0 items-center justify-between rounded-lg bg-[#A8F34A] px-6 text-[21px] font-black text-[#0D1112] shadow-[0_14px_28px_rgba(168,243,74,0.22)] transition hover:bg-[#b7ff5c] disabled:cursor-wait disabled:opacity-60 max-[740px]:mt-4 max-[740px]:h-[58px] max-[740px]:px-5"
+                className="client-login-submit mt-4 flex h-[58px] w-full max-w-full min-w-0 items-center justify-between rounded-lg bg-[#A8F34A] px-5 text-[21px] font-black text-[#0D1112] shadow-[0_14px_28px_rgba(168,243,74,0.22)] transition hover:bg-[#b7ff5c] disabled:cursor-wait disabled:opacity-60 [@media(min-height:900px)]:h-[62px]"
               >
                 <span>{loading ? "Consultando..." : "Continuar"}</span>
                 <ArrowRight className="h-9 w-9 text-[#0D1112]" strokeWidth={1.8} />
@@ -946,18 +952,18 @@ export default function ClienteConsultaPage() {
               </div>
             ) : null}
 
-            <div className="mt-6 flex items-center justify-center gap-3 text-[15px] font-medium text-[#656970] max-[740px]:mt-4 max-[740px]:text-[13px]">
+            <div className="client-login-protection mt-4 flex items-center justify-center gap-3 text-[13px] font-medium text-[#656970] [@media(min-height:900px)]:mt-5">
               <LockKeyhole className="h-5 w-5" strokeWidth={1.7} />
               Tus datos están protegidos
             </div>
 
-            <footer className="mt-8 border-t border-[#d9d8d2] pt-6 text-center max-[740px]:mt-5 max-[740px]:pt-4">
+            <footer className="client-login-footer mt-5 border-t border-[#d9d8d2] pt-4 text-center [@media(min-height:900px)]:mt-6 [@media(min-height:900px)]:pt-5">
               <FinserSupportLink
-                className="text-[18px] font-medium text-[#24272c] underline decoration-[#A8F34A] decoration-2 underline-offset-4 max-[740px]:text-[15px]"
+                className="text-[15px] font-medium text-[#24272c] underline decoration-[#A8F34A] decoration-2 underline-offset-4 [@media(min-height:900px)]:text-[16px]"
               >
                 ¿Necesitas ayuda?
               </FinserSupportLink>
-              <p className="mt-6 text-[14px] font-semibold text-[#8a8e94] max-[740px]:mt-4 max-[740px]:text-[12px]">
+              <p className="client-login-brand mt-4 text-[12px] font-semibold text-[#8a8e94]">
                 <span className="font-black tracking-[0.04em]">FINSER PAY</span>
                 <span className="px-2">·</span>
                 Portal seguro
@@ -998,11 +1004,11 @@ export default function ClienteConsultaPage() {
           </div>
         </header>
 
-        <div className="pt-6">
+        <div>
           {notice ? (
             <div
               className={[
-                "rounded-lg border px-4 py-3 text-sm font-bold",
+                "mt-4 rounded-lg border px-4 py-3 text-sm font-bold",
                 notice.tone === "emerald"
                   ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                   : "border-red-200 bg-red-50 text-red-700",
@@ -1013,7 +1019,7 @@ export default function ClienteConsultaPage() {
           ) : null}
 
           {paymentReturn ? (
-            <section className="rounded-lg border border-[#dfece0] bg-white p-4 shadow-sm">
+            <section className="mt-4 rounded-lg border border-[#dfece0] bg-white p-4 shadow-sm">
               <div className="grid grid-cols-[38px_1fr] gap-3">
                 <span className="grid h-9 w-9 place-items-center rounded-md bg-[#f1fbeb] text-sm font-black text-[#3f7d2d]">
                   W
@@ -1229,8 +1235,15 @@ export default function ClienteConsultaPage() {
                 onClick={() => openPanel("pending")}
                 className="mt-7 grid min-h-[112px] w-full grid-cols-[82px_minmax(0,1fr)_44px] items-center gap-5 text-left active:scale-[0.99]"
               >
-                <span className="grid h-[82px] w-[82px] place-items-center rounded-[22px] bg-white shadow-[0_14px_30px_rgba(13,17,18,0.06)]">
-                  <Smartphone className="h-10 w-10 text-[#0D1112] stroke-[1.6]" />
+                <span className="grid h-[82px] w-[82px] place-items-center overflow-hidden rounded-[22px] bg-white shadow-[0_14px_30px_rgba(13,17,18,0.06)]">
+                  <Image
+                    src={creditDeviceImage(activeCredit)}
+                    alt=""
+                    width={76}
+                    height={76}
+                    aria-hidden="true"
+                    className="h-[76px] w-[76px] object-contain"
+                  />
                 </span>
                 <span className="min-w-0">
                   <span className="block text-[23px] font-medium text-[#5c5b57]">
