@@ -1299,7 +1299,7 @@ export default function ClienteConsultaPage() {
                       <span className="relative z-10 mt-1 grid h-9 w-9 place-items-center rounded-full border-4 border-[#F4F3EE] bg-[#A8F34A] ring-2 ring-[#76b82f]" />
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-[18px] font-black text-[#0D1112] min-[400px]:text-[20px]">
+                      <span className="block whitespace-normal text-[18px] font-black leading-tight text-[#0D1112] min-[400px]:text-[19px]">
                         {nextDueLabel.toLowerCase()} · Cuota{" "}
                         {nextInstallment?.numero || paidCount}
                       </span>
@@ -1307,7 +1307,7 @@ export default function ClienteConsultaPage() {
                         {nextInstallment?.estaEnMora ? "En mora" : "Programada"}
                       </span>
                     </span>
-                    <span className="pt-2 text-right font-serif text-[20px] font-black text-[#0D1112] min-[400px]:text-[22px]">
+                    <span className="pt-2 text-right font-serif text-[20px] font-black text-[#0D1112] min-[400px]:text-[21px]">
                       {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
                     </span>
                   </button>
@@ -1323,7 +1323,7 @@ export default function ClienteConsultaPage() {
                       </span>
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-[18px] font-black text-[#0D1112] min-[400px]:text-[20px]">
+                      <span className="block whitespace-normal text-[18px] font-black leading-tight text-[#0D1112] min-[400px]:text-[19px]">
                         {lastPaymentDateLabel.toLowerCase()}
                         {lastHistoryPayment ? ` · ${lastHistoryPayment.metodoPago}` : ""}
                       </span>
@@ -1331,7 +1331,7 @@ export default function ClienteConsultaPage() {
                         {lastHistoryPayment ? "Pago confirmado" : "Sin pagos registrados"}
                       </span>
                     </span>
-                    <span className="pt-2 text-right font-serif text-[20px] font-black text-[#0D1112] min-[400px]:text-[22px]">
+                    <span className="pt-2 text-right font-serif text-[20px] font-black text-[#0D1112] min-[400px]:text-[21px]">
                       {lastHistoryPayment ? money(lastHistoryPayment.valor) : money(0)}
                     </span>
                   </button>
