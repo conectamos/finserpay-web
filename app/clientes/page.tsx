@@ -11,11 +11,11 @@ import {
   ChevronRight,
   CircleHelp,
   CircleUserRound,
+  Clock3,
   CreditCard,
   Headphones,
   Home,
   LockKeyhole,
-  ReceiptText,
   UserRound,
 } from "lucide-react";
 
@@ -981,7 +981,7 @@ export default function ClienteConsultaPage() {
       className="min-h-[100svh] overflow-x-hidden bg-[#F4F3EE] text-[#111317]"
     >
       <div className="mx-auto min-h-[100svh] w-full max-w-[430px] bg-[#F4F3EE] px-5 pb-[calc(126px+env(safe-area-inset-bottom))] pt-[calc(18px+env(safe-area-inset-top))] shadow-[0_0_60px_rgba(13,17,18,0.16)]">
-        <header className="-mx-5 -mt-[calc(18px+env(safe-area-inset-top))] flex items-center justify-between gap-4 bg-[#0D1112] px-6 pb-3 pt-[calc(20px+env(safe-area-inset-top))]">
+        <header className="-mx-5 -mt-[calc(18px+env(safe-area-inset-top))] flex items-center justify-between gap-4 bg-[#0D1112] px-6 pb-0 pt-[calc(18px+env(safe-area-inset-top))]">
           <AppLogo />
           <div className="flex items-center gap-3">
             <button
@@ -997,7 +997,7 @@ export default function ClienteConsultaPage() {
               type="button"
               aria-label="Cambiar cliente"
               onClick={forgetDocument}
-              className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-white/10 text-[17px] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] active:bg-white/15"
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/10 text-[16px] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] active:bg-white/15"
             >
               {profileInitials}
             </button>
@@ -1233,7 +1233,7 @@ export default function ClienteConsultaPage() {
               <button
                 type="button"
                 onClick={() => openPanel("pending")}
-                className="mt-7 grid min-h-[112px] w-full grid-cols-[82px_minmax(0,1fr)_44px] items-center gap-5 text-left active:scale-[0.99]"
+                className="mt-7 grid min-h-[112px] w-full grid-cols-[82px_minmax(0,1fr)_44px] items-center gap-3 text-left active:scale-[0.99]"
               >
                 <span className="grid h-[82px] w-[82px] place-items-center overflow-hidden rounded-[22px] bg-white shadow-[0_14px_30px_rgba(13,17,18,0.06)]">
                   <Image
@@ -1246,13 +1246,13 @@ export default function ClienteConsultaPage() {
                   />
                 </span>
                 <span className="min-w-0">
-                  <span className="block text-[23px] font-medium text-[#5c5b57]">
+                  <span className="block text-[23px] font-medium leading-tight text-[#5c5b57]">
                     Tu credito
                   </span>
-                  <span className="mt-2 block truncate text-[22px] font-black uppercase leading-tight text-[#0D1112]">
+                  <span className="mt-0.5 block break-words text-[20px] font-black uppercase leading-tight text-[#0D1112] min-[400px]:text-[21px]">
                     {creditTitle(activeCredit)}
                   </span>
-                  <span className="mt-2 block truncate text-[18px] font-medium text-[#6b6964]">
+                  <span className="mt-1 block truncate text-[18px] font-medium text-[#6b6964]">
                     Saldo{" "}
                     <strong className="font-serif text-[23px] text-[#0D1112]">
                       {money(activeCredit.saldoPendiente)}
@@ -1791,22 +1791,21 @@ export default function ClienteConsultaPage() {
             <button
               type="button"
               onClick={() => openPanel("pending")}
-              className="grid min-h-[58px] place-items-center gap-1 text-[#757b84] active:text-[#111317]"
+              className="-mt-9 grid min-h-[78px] place-items-center gap-1 text-[#111317]"
             >
-              <ReceiptText className="h-7 w-7 stroke-[2.1]" />
+              <span className="grid h-[66px] w-[66px] place-items-center rounded-full bg-[#A8F34A] text-[#0D1112] shadow-[0_12px_28px_rgba(168,243,74,0.34)]">
+                <CreditCard className="h-8 w-8 stroke-[2.1]" />
+              </span>
               <span className="text-[13px] font-medium">Pagos</span>
             </button>
 
             <button
               type="button"
-              onClick={() => activeCredit && openWompiConfirm(activeCredit)}
-              disabled={!activeCredit || !payable.length || payingCreditId === activeCredit.id}
-              className="-mt-9 grid min-h-[78px] place-items-center gap-1 text-[#111317] disabled:text-[#8e949c]"
+              onClick={() => openPanel("history")}
+              className="grid min-h-[58px] place-items-center gap-1 text-[#757b84] active:text-[#111317]"
             >
-              <span className="grid h-[66px] w-[66px] place-items-center rounded-full bg-[#111418] text-white shadow-[0_12px_26px_rgba(17,20,24,0.26)]">
-                <CreditCard className="h-8 w-8 stroke-[2.1]" />
-              </span>
-              <span className="text-[13px] font-medium">Pagar</span>
+              <Clock3 className="h-7 w-7 stroke-[2.1]" />
+              <span className="text-[13px] font-medium">Historial</span>
             </button>
 
             <button
