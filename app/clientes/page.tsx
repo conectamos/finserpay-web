@@ -981,7 +981,7 @@ export default function ClienteConsultaPage() {
       className="min-h-[100svh] overflow-x-hidden bg-[#F4F3EE] text-[#111317]"
     >
       <div className="mx-auto min-h-[100svh] w-full max-w-[430px] bg-[#F4F3EE] px-5 pb-[calc(126px+env(safe-area-inset-bottom))] pt-[calc(18px+env(safe-area-inset-top))] shadow-[0_0_60px_rgba(13,17,18,0.16)]">
-        <header className="-mx-5 -mt-[calc(18px+env(safe-area-inset-top))] flex items-center justify-between gap-4 bg-[#0D1112] px-6 pb-5 pt-[calc(28px+env(safe-area-inset-top))]">
+        <header className="-mx-5 -mt-[calc(18px+env(safe-area-inset-top))] flex items-center justify-between gap-4 bg-[#0D1112] px-6 pb-3 pt-[calc(20px+env(safe-area-inset-top))]">
           <AppLogo />
           <div className="flex items-center gap-3">
             <button
@@ -997,7 +997,7 @@ export default function ClienteConsultaPage() {
               type="button"
               aria-label="Cambiar cliente"
               onClick={forgetDocument}
-              className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-white/10 text-[18px] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] active:bg-white/15"
+              className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-white/10 text-[17px] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] active:bg-white/15"
             >
               {profileInitials}
             </button>
@@ -1068,7 +1068,7 @@ export default function ClienteConsultaPage() {
                 </h1>
                 <span
                   className={[
-                    "mt-5 inline-flex min-h-11 items-center gap-3 text-[18px] font-medium",
+                    "mt-2 inline-flex min-h-10 items-center gap-3 text-[18px] font-medium",
                     activeCredit.estadoPago === "MORA"
                       ? "text-red-200"
                       : "text-[#A8F34A]",
@@ -1086,9 +1086,9 @@ export default function ClienteConsultaPage() {
                 </span>
               </section>
 
-              <section className="-mx-5 overflow-hidden rounded-b-[42px] bg-[#0D1112] px-6 pb-20 pt-7 text-white shadow-[0_20px_44px_rgba(13,17,18,0.22)]">
-                <div className="grid grid-cols-[minmax(138px,0.92fr)_minmax(0,1fr)] items-center gap-5">
-                  <div className="relative mx-auto h-[166px] w-[166px]">
+              <section className="-mx-5 overflow-hidden rounded-b-[42px] bg-[#0D1112] px-6 pb-10 pt-4 text-white shadow-[0_20px_44px_rgba(13,17,18,0.22)]">
+                <div className="grid grid-cols-[minmax(140px,0.9fr)_minmax(0,1fr)] items-center gap-3">
+                  <div className="relative mx-auto h-[146px] w-[146px] min-[400px]:h-[158px] min-[400px]:w-[158px]">
                     <svg
                       viewBox="0 0 168 168"
                       className="h-full w-full -rotate-90"
@@ -1132,7 +1132,7 @@ export default function ClienteConsultaPage() {
                     <p className="text-[14px] font-semibold uppercase tracking-[0.05em] text-white/42">
                       Proxima cuota
                     </p>
-                    <p className="mt-4 break-words font-serif text-[50px] leading-none tracking-[-0.04em] text-[#fbfaf5]">
+                    <p className="mt-3 whitespace-nowrap font-serif text-[42px] leading-none tracking-normal text-[#fbfaf5] min-[400px]:text-[46px]">
                       {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
                     </p>
                     <p className="mt-4 text-[21px] font-medium text-white/58">
@@ -1144,7 +1144,7 @@ export default function ClienteConsultaPage() {
                   </div>
                 </div>
 
-                <div className="relative z-10 mt-10 text-center">
+                <div className="relative z-10 mt-6 text-center">
                   <button
                     type="button"
                     onClick={() => openWompiConfirm(activeCredit)}
