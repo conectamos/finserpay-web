@@ -6,6 +6,8 @@ App Android liviana para abrir el portal de clientes:
 https://finserpay.com/clientes
 ```
 
+Version actual: `1.0.2` (codigo `3`), compilada para Android API 36.
+
 ## Generar APK de prueba
 
 El APK se genera desde GitHub Actions en el workflow `Android APK Clientes`.
@@ -15,11 +17,39 @@ El APK se genera desde GitHub Actions en el workflow `Android APK Clientes`.
 3. Ejecuta `Run workflow`.
 4. Descarga el artefacto `finserpay-clientes-debug-apk`.
 
-El archivo generado es de prueba (`debug`). Para publicar en Play Store se debe crear una firma de release.
+El artefacto `finserpay-clientes-debug-apk` es de prueba y no se publica en
+Google Play.
 
 ## Generar AAB para Play Store
 
-La publicacion en Google Play usa un Android App Bundle (`.aab`) firmado con una llave de subida. La llave y sus claves no deben guardarse en el repositorio.
+La publicacion en Google Play usa un Android App Bundle (`.aab`) firmado con
+la misma llave de subida de las versiones anteriores. La llave y sus claves no
+deben guardarse en el repositorio.
+
+Secrets requeridos en GitHub:
+
+```text
+FINSERPAY_RELEASE_KEYSTORE_BASE64=Contenido Base64 de la llave .jks existente
+FINSERPAY_RELEASE_STORE_PASSWORD=Clave del keystore
+FINSERPAY_RELEASE_KEY_ALIAS=Alias de la llave
+FINSERPAY_RELEASE_KEY_PASSWORD=Clave de la llave
+```
+
+En Windows, el contenido Base64 se puede llevar al portapapeles sin modificar
+la llave:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\ruta\finserpay-upload.jks")) | Set-Clipboard
+```
+
+Cuando los cuatro secrets existen, el workflow genera el artefacto
+`finserpay-clientes-play-aab`, que contiene
+`finserpay-clientes-1.0.2.aab`.
+
+No se debe crear una llave nueva: Google Play exige conservar la llave de
+subida asociada a `com.finserpay.clientes`.
+
+### Compilacion local
 
 Variables requeridas para compilar release:
 

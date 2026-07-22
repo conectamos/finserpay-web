@@ -12,8 +12,8 @@ on:
       - "public/branding/finserpay-logo.jpg"
 
 jobs:
-  build-apk:
-    name: Build APK
+  build-android:
+    name: Build Android
     runs-on: ubuntu-latest
 
     steps:
@@ -30,12 +30,12 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Android platform
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.10.2"
+          gradle-version: "8.11.1"
 
       - name: Restaurar Firebase config
         env:
@@ -43,6 +43,24 @@ jobs:
         run: |
           if [ -n "${GOOGLE_SERVICES_JSON:-}" ]; then
             printf '%s' "$GOOGLE_SERVICES_JSON" > android-client/app/google-services.json
+          fi
+
+      - name: Restaurar llave de firma Play
+        id: release-signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.FINSERPAY_RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.FINSERPAY_RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.FINSERPAY_RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.FINSERPAY_RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -n "${RELEASE_KEYSTORE_BASE64:-}" ] \
+            && [ -n "${RELEASE_STORE_PASSWORD:-}" ] \
+            && [ -n "${RELEASE_KEY_ALIAS:-}" ] \
+            && [ -n "${RELEASE_KEY_PASSWORD:-}" ]; then
+            printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/finserpay-upload.jks"
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build debug APK
@@ -57,3 +75,35 @@ jobs:
         with:
           name: finserpay-clientes-debug-apk
           path: android-client/app/build/outputs/apk/debug/finserpay-clientes-debug.apk
+
+      - name: Build signed Play Store AAB
+        if: steps.release-signing.outputs.available == 'true'
+        working-directory: android-client
+        env:
+          FINSERPAY_RELEASE_STORE_FILE: ${{ runner.temp }}/finserpay-upload.jks
+          FINSERPAY_RELEASE_STORE_PASSWORD: ${{ secrets.FINSERPAY_RELEASE_STORE_PASSWORD }}
+          FINSERPAY_RELEASE_KEY_ALIAS: ${{ secrets.FINSERPAY_RELEASE_KEY_ALIAS }}
+          FINSERPAY_RELEASE_KEY_PASSWORD: ${{ secrets.FINSERPAY_RELEASE_KEY_PASSWORD }}
+        run: gradle :app:bundleRelease --no-daemon --stacktrace
+
+      - name: Rename AAB
+        if: steps.release-signing.outputs.available == 'true'
+        run: cp android-client/app/build/outputs/bundle/release/app-release.aab android-client/app/build/outputs/bundle/release/finserpay-clientes-1.0.2.aab
+
+      - name: Upload Play Store AAB
+        if: steps.release-signing.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: finserpay-clientes-play-aab
+          path: android-client/app/build/outputs/bundle/release/finserpay-clientes-1.0.2.aab
+
+      - name: Build summary
+        run: |
+          echo "## FINSER PAY Clientes 1.0.2" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Android objetivo: API 36" >> "$GITHUB_STEP_SUMMARY"
+          echo "- APK de prueba: generado" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.release-signing.outputs.available }}" = "true" ]; then
+            echo "- AAB firmado para Play Store: generado" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- AAB firmado: omitido porque faltan secretos de la llave de subida" >> "$GITHUB_STEP_SUMMARY"
+          fi

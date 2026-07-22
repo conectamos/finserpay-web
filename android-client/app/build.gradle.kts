@@ -8,7 +8,7 @@ if (file("google-services.json").exists()) {
 
 android {
     namespace = "com.finserpay.clientes"
-    compileSdk = 35
+    compileSdk = 36
 
     val releaseStoreFile = providers.environmentVariable("FINSERPAY_RELEASE_STORE_FILE")
     val releaseStorePassword = providers.environmentVariable("FINSERPAY_RELEASE_STORE_PASSWORD")
@@ -22,9 +22,9 @@ android {
     defaultConfig {
         applicationId = "com.finserpay.clientes"
         minSdk = 23
-        targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        targetSdk = 36
+        versionCode = 3
+        versionName = "1.0.2"
     }
 
     signingConfigs {
