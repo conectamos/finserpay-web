@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
+import FinserSupportLink from "@/app/_components/finser-support-link";
 import {
   ArrowRight,
   Bell,
@@ -107,7 +108,6 @@ declare global {
 }
 
 const STORAGE_KEY = "finserpay.cliente.documento";
-const WHATSAPP_HELP_URL = "https://wa.me/573144201136?text=NECESITO%20AYUDA";
 
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -831,15 +831,11 @@ export default function ClienteConsultaPage() {
                 <span>FINSER</span>
                 <span className="ml-2 text-[#A8F34A]">PAY</span>
               </div>
-              <a
-                href={WHATSAPP_HELP_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Solicitar ayuda por WhatsApp"
+              <FinserSupportLink
                 className="grid h-12 w-12 place-items-center rounded-full border border-[#d9dde2]/80 text-[#f6f7f8] transition hover:border-[#A8F34A] hover:text-[#A8F34A]"
               >
                 <CircleHelp className="h-7 w-7" strokeWidth={1.7} />
-              </a>
+              </FinserSupportLink>
             </header>
 
             <div className="mt-14 max-[740px]:mt-8">
@@ -956,15 +952,11 @@ export default function ClienteConsultaPage() {
             </div>
 
             <footer className="mt-8 border-t border-[#d9d8d2] pt-6 text-center max-[740px]:mt-5 max-[740px]:pt-4">
-              <a
-                href={WHATSAPP_HELP_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Solicitar ayuda por WhatsApp"
+              <FinserSupportLink
                 className="text-[18px] font-medium text-[#24272c] underline decoration-[#A8F34A] decoration-2 underline-offset-4 max-[740px]:text-[15px]"
               >
                 ¿Necesitas ayuda?
-              </a>
+              </FinserSupportLink>
               <p className="mt-6 text-[14px] font-semibold text-[#8a8e94] max-[740px]:mt-4 max-[740px]:text-[12px]">
                 <span className="font-black tracking-[0.04em]">FINSER PAY</span>
                 <span className="px-2">·</span>
@@ -1274,19 +1266,12 @@ export default function ClienteConsultaPage() {
                       Calendario
                     </button>
                     <span className="h-6 w-px bg-[#cfccc4]" />
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setNotice({
-                          tone: "emerald",
-                          text: "Comunicate con FINSER PAY por tus canales registrados.",
-                        })
-                      }
+                    <FinserSupportLink
                       className="inline-flex min-h-11 items-center gap-2"
                     >
                       <Headphones className="h-6 w-6" />
                       Soporte
-                    </button>
+                    </FinserSupportLink>
                   </div>
                 </div>
 

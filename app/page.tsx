@@ -16,6 +16,7 @@ import {
   UserRound,
 } from "lucide-react";
 import FinserBrand from "./_components/finser-brand";
+import FinserSupportLink from "./_components/finser-support-link";
 
 const REMEMBERED_USER_KEY = "finserpay-remembered-user";
 
@@ -81,11 +82,6 @@ export default function Home() {
     } finally {
       setCargando(false);
     }
-  };
-
-  const mostrarAyuda = () => {
-    setMensajeTipo("info");
-    setMensaje("Solicita apoyo al administrador asignado a tu sede.");
   };
 
   return (
@@ -180,13 +176,11 @@ export default function Home() {
                 />
                 Recordar usuario
               </label>
-              <button
-                type="button"
-                onClick={mostrarAyuda}
+              <FinserSupportLink
                 className="font-semibold underline decoration-[#aeb1b6] underline-offset-4 hover:text-[#15171b]"
               >
-                Necesitas ayuda?
-              </button>
+                ¿Necesitas ayuda?
+              </FinserSupportLink>
             </div>
 
             <button

@@ -11,6 +11,7 @@ import {
   UserCheck,
 } from "lucide-react";
 import FinserBrand from "@/app/_components/finser-brand";
+import FinserSupportLink from "@/app/_components/finser-support-link";
 import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
 
 type CreditPlatformSelectorProps = {
@@ -154,9 +155,9 @@ export default function CreditPlatformSelector({
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="grid h-9 w-9 place-items-center rounded-full border border-[#d6dadd] text-[#5f6870]">
+            <FinserSupportLink className="grid h-11 w-11 place-items-center rounded-full border border-[#d6dadd] text-[#5f6870] transition hover:border-[#87b90c] hover:text-[#5f7f0a]">
               <CircleHelp className="h-4 w-4" strokeWidth={1.8} />
-            </span>
+            </FinserSupportLink>
             <div className="hidden h-8 w-px bg-[#e2e5e7] sm:block" />
             <span className="grid h-9 w-9 place-items-center rounded-full bg-[#142331] text-xs font-bold text-white">
               {getInitials(nombreUsuario)}

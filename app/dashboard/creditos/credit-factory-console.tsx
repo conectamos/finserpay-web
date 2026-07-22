@@ -53,6 +53,7 @@ import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import { ProgressBar, Tabs } from "@/app/_components/finser-ui";
 import RecaudoSidebar from "@/app/dashboard/abonos/recaudo-sidebar";
 import AdminWorkspaceTopbar from "@/app/dashboard/_components/admin-workspace-topbar";
+import FinserSupportLink from "@/app/_components/finser-support-link";
 import {
   calculateCreditCharges,
   calculateFinancedBalance,
@@ -8690,23 +8691,10 @@ export default function CreditFactoryConsole({
                       </p>
 
                       <div className="fp-identity-support-row">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (adminFactoryAssistAvailable) {
-                              setShowAdminAssist(true);
-                            } else {
-                              setNotice({
-                                text: "Verifica la conexion y genera un nuevo codigo. Si el problema continua, contacta al administrador.",
-                                tone: "slate",
-                              });
-                            }
-                          }}
-                          aria-expanded={adminFactoryAssistAvailable ? showAdminAssist : undefined}
-                        >
+                        <FinserSupportLink>
                           <CircleHelp className="h-4 w-4" strokeWidth={1.9} />
                           Problemas con la validacion
-                        </button>
+                        </FinserSupportLink>
                         {veriffValidation?.id && !veriffHasFinalDecision ? (
                           <button
                             type="button"

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Bell, ChevronRight, CircleHelp, Home } from "lucide-react";
+import FinserSupportLink from "@/app/_components/finser-support-link";
 
 function initials(value: string) {
   const parts = String(value || "")
@@ -40,10 +41,10 @@ export default function AdminWorkspaceTopbar({
       </nav>
 
       <div className="flex items-center gap-3 sm:gap-5">
-        <span className="hidden items-center gap-2 text-sm font-semibold text-[#475467] xl:inline-flex">
+        <FinserSupportLink className="hidden min-h-11 items-center gap-2 rounded-md px-2 text-sm font-semibold text-[#475467] transition hover:bg-[#f2f4f7] hover:text-[#151a21] xl:inline-flex">
           <CircleHelp className="h-5 w-5" strokeWidth={1.8} />
           Ayuda
-        </span>
+        </FinserSupportLink>
         <span className="hidden h-7 w-px bg-[#e4e7ec] sm:block" aria-hidden="true" />
         <span className="grid h-9 w-9 place-items-center rounded-full text-[#151a21]" aria-label="Notificaciones">
           <Bell className="h-5 w-5" strokeWidth={1.8} />

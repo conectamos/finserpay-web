@@ -3256,6 +3256,7 @@ body {
 }
 
 .fp-credit-factory .fp-identity-support-row button,
+.fp-credit-factory .fp-identity-support-row a,
 .fp-identity-open-link {
   display: inline-flex;
   min-width: auto !important;
@@ -3273,6 +3274,7 @@ body {
 }
 
 .fp-credit-factory .fp-identity-support-row button:hover,
+.fp-credit-factory .fp-identity-support-row a:hover,
 .fp-identity-open-link:hover {
   color: #1c2227 !important;
 }
