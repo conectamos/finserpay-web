@@ -584,6 +584,7 @@ export default function ReporteCreditosPage({
           </StatusPill>
         </div>
 
+        {/* Both responsive views expose the same report fields and credit actions. */}
         <div className="divide-y divide-[#e4e7ec] lg:hidden" aria-busy={loading}>
           {loading ? (
             <div className="px-4 py-12 text-center text-sm text-[#667085]">
