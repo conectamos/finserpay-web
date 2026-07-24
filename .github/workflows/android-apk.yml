@@ -88,18 +88,18 @@ jobs:
 
       - name: Rename AAB
         if: steps.release-signing.outputs.available == 'true'
-        run: cp android-client/app/build/outputs/bundle/release/app-release.aab android-client/app/build/outputs/bundle/release/finserpay-clientes-1.0.2.aab
+        run: cp android-client/app/build/outputs/bundle/release/app-release.aab android-client/app/build/outputs/bundle/release/finserpay-clientes-1.0.3.aab
 
       - name: Upload Play Store AAB
         if: steps.release-signing.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: finserpay-clientes-play-aab
-          path: android-client/app/build/outputs/bundle/release/finserpay-clientes-1.0.2.aab
+          path: android-client/app/build/outputs/bundle/release/finserpay-clientes-1.0.3.aab
 
       - name: Build summary
         run: |
-          echo "## FINSER PAY Clientes 1.0.2" >> "$GITHUB_STEP_SUMMARY"
+          echo "## FINSER PAY Clientes 1.0.3" >> "$GITHUB_STEP_SUMMARY"
           echo "- Android objetivo: API 36" >> "$GITHUB_STEP_SUMMARY"
           echo "- APK de prueba: generado" >> "$GITHUB_STEP_SUMMARY"
           if [ "${{ steps.release-signing.outputs.available }}" = "true" ]; then
