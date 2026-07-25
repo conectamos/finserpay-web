@@ -2,15 +2,31 @@
 
 import Link from "next/link";
 import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
+  Activity,
+  ArrowLeft,
+  ChevronDown,
+  CircleAlert,
+  CircleCheck,
+  LoaderCircle,
+  LockKeyhole,
+  PackageCheck,
+  RefreshCw,
+  Search,
+  Server,
+  ShieldCheck,
+  Smartphone,
+  UnlockKeyhole,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  PageHeader,
+  StatusPill,
+} from "@/app/_components/finser-ui";
 import { useLiveRefresh } from "@/lib/use-live-refresh";
-import FinserBrand from "@/app/_components/finser-brand";
 
 type EqualityResponse = {
   configured: boolean;
@@ -53,23 +69,13 @@ type EqualityAction =
   | "unlock";
 
 type DeliveryTone = "amber" | "emerald" | "red" | "sky" | "slate";
-
 type NoticeTone = "amber" | "emerald" | "red" | "slate";
+type UiTone = "danger" | "neutral" | "positive" | "warning";
 
 type ConsoleNotice = {
   text: string;
   tone: NoticeTone;
 };
-
-const dashboardVars = {
-  "--zt-bg": "#f4efe7",
-  "--zt-card": "#fffdfa",
-  "--zt-ink": "#102136",
-  "--zt-line": "#e5dac9",
-  "--zt-night": "#12161d",
-  "--zt-muted": "#5f6f81",
-  "--zt-gold": "#c79a57",
-} as CSSProperties;
 
 function formatoFecha(valor: string | null) {
   if (!valor) {
@@ -129,61 +135,32 @@ function resolveTone(result: EqualityResponse | null) {
   return "sky" as const;
 }
 
-function toneStyles(tone: DeliveryTone) {
-  switch (tone) {
-    case "emerald":
-      return {
-        badge: "border-emerald-200 bg-emerald-50 text-emerald-700",
-        panel: "border-emerald-200 bg-[linear-gradient(180deg,#f4fff7_0%,#e7f9ee_100%)] text-emerald-950",
-        soft: "border-emerald-200 bg-emerald-50",
-        strong: "bg-emerald-600 text-white",
-        accent: "bg-emerald-500",
-      };
-    case "amber":
-      return {
-        badge: "border-amber-200 bg-amber-50 text-amber-700",
-        panel: "border-amber-200 bg-[linear-gradient(180deg,#fff9ef_0%,#fff0cf_100%)] text-amber-950",
-        soft: "border-amber-200 bg-amber-50",
-        strong: "bg-amber-500 text-white",
-        accent: "bg-amber-500",
-      };
-    case "red":
-      return {
-        badge: "border-red-200 bg-red-50 text-red-700",
-        panel: "border-red-200 bg-[linear-gradient(180deg,#fff5f5_0%,#ffe2e2_100%)] text-red-950",
-        soft: "border-red-200 bg-red-50",
-        strong: "bg-red-600 text-white",
-        accent: "bg-red-500",
-      };
-    case "sky":
-      return {
-        badge: "border-sky-200 bg-sky-50 text-sky-700",
-        panel: "border-sky-200 bg-[linear-gradient(180deg,#f4fbff_0%,#ddefff_100%)] text-sky-950",
-        soft: "border-sky-200 bg-sky-50",
-        strong: "bg-sky-600 text-white",
-        accent: "bg-sky-500",
-      };
-    default:
-      return {
-        badge: "border-slate-200 bg-slate-50 text-slate-700",
-        panel: "border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f5f7fa_100%)] text-slate-900",
-        soft: "border-slate-200 bg-slate-50",
-        strong: "bg-slate-800 text-white",
-        accent: "bg-slate-400",
-      };
+function statusTone(tone: DeliveryTone): UiTone {
+  if (tone === "emerald") {
+    return "positive";
   }
+
+  if (tone === "amber") {
+    return "warning";
+  }
+
+  if (tone === "red") {
+    return "danger";
+  }
+
+  return "neutral";
 }
 
 function noticeStyles(tone: NoticeTone) {
   switch (tone) {
     case "emerald":
-      return "border-emerald-200 bg-emerald-50 text-emerald-900";
+      return "border-[#c9df91] bg-[var(--fp-lime-soft)] text-[#4f6f0c]";
     case "amber":
-      return "border-amber-200 bg-amber-50 text-amber-900";
+      return "border-[#f0d28d] bg-[var(--fp-amber-soft)] text-[var(--fp-amber)]";
     case "red":
-      return "border-red-200 bg-red-50 text-red-900";
+      return "border-[#f3b7b2] bg-[var(--fp-danger-soft)] text-[var(--fp-danger)]";
     default:
-      return "border-slate-200 bg-white text-slate-700";
+      return "border-[var(--fp-border)] bg-white text-[var(--fp-muted)]";
   }
 }
 
@@ -192,34 +169,32 @@ function readinessCopy(result: EqualityResponse | null) {
     return {
       eyebrow: "Sin lectura activa",
       title: "Consulta un equipo para empezar",
-      detail:
-        "Ingresa un IMEI o deviceUid y el dashboard te dira si el equipo ya esta listo para entrega o si aun falta gestionarlo.",
+      detail: "Ingresa un IMEI o Device UID para conocer su estado comercial.",
     };
   }
 
   if (!result.configured) {
     return {
       eyebrow: "Configuracion pendiente",
-      title: "Zero Touch aun no esta habilitado",
-      detail:
-        "Debes configurar el token del proveedor para poder consultar, inscribir o administrar equipos.",
+      title: "Equality no esta disponible",
+      detail: "El servicio debe configurarse en el servidor antes de operar equipos.",
     };
   }
 
   if (result.probe) {
     return {
-      eyebrow: "Conectividad validada",
+      eyebrow: "Servicio conectado",
       title: "La integracion esta respondiendo",
       detail:
         result.resultMessage ||
-        "El API de Zero Touch respondio correctamente a la prueba tecnica.",
+        "Equality Zero Touch respondio correctamente a la prueba.",
     };
   }
 
   if (result.deliveryStatus?.ready) {
     return {
       eyebrow: result.deliveryStatus.label,
-      title: "Si, lo puedes entregar",
+      title: "Puedes entregar el equipo",
       detail: result.deliveryStatus.detail,
     };
   }
@@ -227,7 +202,7 @@ function readinessCopy(result: EqualityResponse | null) {
   if (result.deliveryStatus) {
     return {
       eyebrow: result.deliveryStatus.label,
-      title: "No lo entregues todavia",
+      title: "No entregues el equipo todavia",
       detail: result.deliveryStatus.detail,
     };
   }
@@ -237,115 +212,36 @@ function readinessCopy(result: EqualityResponse | null) {
     title: "Revisa el estado remoto",
     detail:
       result.resultMessage ||
-      "La API respondio, pero no devolvio una clasificacion de entregabilidad.",
+      "Equality respondio, pero no devolvio una clasificacion de entrega.",
   };
 }
 
-function SectionShell({
-  children,
-  eyebrow,
-  title,
-}: {
-  children: ReactNode;
-  eyebrow: string;
-  title: string;
-}) {
-  return (
-    <section className="rounded-[30px] border border-[var(--zt-line)] bg-[var(--zt-card)] p-6 shadow-[0_18px_55px_rgba(16,33,54,0.08)]">
-      <div className="inline-flex rounded-full border border-[#eadfce] bg-[#faf6ef] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--zt-muted)]">
-        {eyebrow}
-      </div>
-      <h2 className="mt-4 text-2xl font-black tracking-tight text-[var(--zt-ink)]">
-        {title}
-      </h2>
-      <div className="mt-5">{children}</div>
-    </section>
-  );
-}
-
-function ActionButton({
-  children,
-  disabled,
-  onClick,
-  tone = "secondary",
-}: {
-  children: ReactNode;
-  disabled?: boolean;
-  onClick: () => void;
-  tone?: "danger" | "primary" | "secondary" | "success" | "warning";
-}) {
-  const tones = {
-    danger: "bg-[#d92d20] text-white hover:bg-[#b42318]",
-    primary: "bg-[var(--zt-night)] text-white hover:bg-[#1c2430]",
-    secondary:
-      "border border-[var(--zt-line)] bg-white text-[var(--zt-ink)] hover:bg-[#f7f2ea]",
-    success: "bg-[#067647] text-white hover:bg-[#085d3a]",
-    warning: "bg-[#dc6803] text-white hover:bg-[#b54708]",
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={[
-        "rounded-2xl px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-70",
-        tones[tone],
-      ].join(" ")}
-    >
-      {children}
-    </button>
-  );
-}
-
-function MetricCard({
-  detail,
-  label,
-  value,
-}: {
+function serviceCopy(result: EqualityResponse | null): {
   detail: string;
   label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-[24px] border border-white/10 bg-white/7 px-4 py-4 backdrop-blur">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#d8dbe1]">
-        {label}
-      </p>
-      <p className="mt-3 text-2xl font-black tracking-tight text-white">{value}</p>
-      <p className="mt-2 text-sm leading-6 text-[#d8dbe1]">{detail}</p>
-    </div>
-  );
-}
+  tone: UiTone;
+} {
+  if (!result) {
+    return {
+      detail: "Prueba la conexion o consulta un equipo para validar el servicio.",
+      label: "Servicio sin verificar",
+      tone: "neutral",
+    };
+  }
 
-function DataPoint({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail?: string;
-}) {
-  return (
-    <div className="rounded-[24px] border border-[var(--zt-line)] bg-[#fcfaf6] px-4 py-4">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--zt-muted)]">
-        {label}
-      </p>
-      <p className="mt-2 text-lg font-black leading-tight text-[var(--zt-ink)]">
-        {value}
-      </p>
-      {detail && <p className="mt-2 text-sm leading-6 text-[var(--zt-muted)]">{detail}</p>}
-    </div>
-  );
-}
+  if (!result.configured) {
+    return {
+      detail: "La integracion debe configurarse en el servidor.",
+      label: "Configuracion pendiente",
+      tone: "warning",
+    };
+  }
 
-function TransitionChip({ value }: { value: string }) {
-  return (
-    <span className="rounded-full border border-[var(--zt-line)] bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--zt-ink)]">
-      {value}
-    </span>
-  );
+  return {
+    detail: "Equality Zero Touch esta disponible para operar equipos.",
+    label: "Servicio conectado",
+    tone: "positive",
+  };
 }
 
 export default function EqualityZeroTouchConsole({
@@ -387,7 +283,7 @@ export default function EqualityZeroTouchConsole({
       if (!probe && !nextDeviceUid) {
         if (!silent) {
           setNotice({
-            text: "Debes ingresar un deviceUid o IMEI para consultar.",
+            text: "Debes ingresar un Device UID o IMEI para consultar.",
             tone: "red",
           });
         }
@@ -489,7 +385,7 @@ export default function EqualityZeroTouchConsole({
 
     if (!nextDeviceUid) {
       setNotice({
-        text: "Debes ingresar un deviceUid antes de ejecutar acciones.",
+        text: "Debes ingresar un Device UID antes de ejecutar acciones.",
         tone: "red",
       });
       return;
@@ -542,365 +438,479 @@ export default function EqualityZeroTouchConsole({
     }
   };
 
-  const tone = resolveTone(result);
-  const toneSet = toneStyles(tone);
   const readiness = readinessCopy(result);
+  const service = serviceCopy(result);
   const snapshot = result?.deviceSnapshot;
   const visibleDeviceUid = compactText(result?.deviceUid || deviceUid, "Sin consulta");
-  const deviceName = [snapshot?.deviceManufacturer, snapshot?.deviceMarketName || snapshot?.deviceModel]
+  const deviceName = [
+    snapshot?.deviceManufacturer,
+    snapshot?.deviceMarketName || snapshot?.deviceModel,
+  ]
     .filter(Boolean)
     .join(" ");
+  const busy = loading || processing !== null;
 
   return (
-    <div
-      className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8ea_0%,transparent_28%),linear-gradient(180deg,var(--zt-bg)_0%,#eef3f7_100%)] px-4 py-6 text-[var(--zt-ink)]"
-      style={{
-        ...dashboardVars,
-        fontFamily: '"Trebuchet MS", "Segoe UI", sans-serif',
-      }}
-    >
-      <div className="mx-auto max-w-7xl space-y-6">
-        <section className="relative overflow-hidden rounded-[38px] border border-[#222a35] bg-[linear-gradient(135deg,#0f141b_0%,#17202b_58%,#222c39_100%)] px-6 py-7 text-white shadow-[0_30px_90px_rgba(16,33,54,0.22)] sm:px-8">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(199,154,87,0.28),transparent_22%),radial-gradient(circle_at_12%_10%,rgba(255,255,255,0.08),transparent_24%)]" />
+    <main className="mx-auto w-full max-w-[1240px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+      <PageHeader
+        eyebrow="Control de equipos"
+        title="Equality Zero Touch"
+        description="Consulta un equipo y administra su estado remoto desde una sola vista."
+        actions={
+          <Link
+            href="/dashboard/integraciones"
+            className="fp-ui-button is-secondary"
+          >
+            <ArrowLeft aria-hidden="true" size={17} />
+            Integraciones
+          </Link>
+        }
+      />
 
-          <div className="relative flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-            <div className="max-w-3xl">
-              <div className="mb-5">
-                <FinserBrand dark />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-[#f1d19c]">
-                  Zero Touch Dashboard
-                </span>
-                <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
-                  Rol: {roleName}
-                </span>
-              </div>
-
-              <h1
-                className="mt-5 text-4xl font-black tracking-tight sm:text-5xl"
-                style={{ fontFamily: '"Arial Black", "Trebuchet MS", sans-serif' }}
-              >
-                Equality HBM
-              </h1>
-
-              <div className="mt-4 h-[3px] w-20 rounded-full bg-[var(--zt-gold)]" />
-
-              <p className="mt-5 max-w-2xl text-sm leading-7 text-slate-300 sm:text-base">
-                {canAdmin
-                  ? "Panel operativo para consultar, inscribir, bloquear, desbloquear y liberar equipos sin mezclar otros proveedores."
-                  : "Panel de vendedor para consultar el equipo, inscribirlo y confirmar si ya se puede entregar al cliente."}
-              </p>
-
-              <div className="mt-5 flex flex-wrap gap-2">
-                <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
-                  Device UID: {visibleDeviceUid}
-                </span>
-                <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
-                  Estado: {compactText(result?.deviceState, "Sin lectura")}
-                </span>
-                <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
-                  Servicio: {compactText(result?.serviceDetails, "Pendiente")}
-                </span>
-              </div>
+      <Card className="mt-5 flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <span
+            className={[
+              "grid h-10 w-10 shrink-0 place-items-center rounded-lg",
+              service.tone === "positive"
+                ? "bg-[var(--fp-lime-soft)] text-[var(--fp-lime-strong)]"
+                : service.tone === "warning"
+                  ? "bg-[var(--fp-amber-soft)] text-[var(--fp-amber)]"
+                  : "bg-[#eef1f4] text-[var(--fp-muted)]",
+            ].join(" ")}
+          >
+            {loading && !result ? (
+              <LoaderCircle aria-hidden="true" className="animate-spin" size={19} />
+            ) : service.tone === "positive" ? (
+              <CircleCheck aria-hidden="true" size={19} />
+            ) : service.tone === "warning" ? (
+              <CircleAlert aria-hidden="true" size={19} />
+            ) : (
+              <Activity aria-hidden="true" size={19} />
+            )}
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-extrabold text-[var(--fp-graphite)]">
+                {service.label}
+              </h2>
+              <StatusPill tone={service.tone}>
+                {result?.remoteStatusCode ? `HTTP ${result.remoteStatusCode}` : "Equality"}
+              </StatusPill>
             </div>
+            <p className="mt-1 text-sm text-[var(--fp-muted)]">{service.detail}</p>
+          </div>
+        </div>
 
-            <div className="flex flex-wrap gap-3">
-              <Link
-                href="/dashboard/integraciones"
-                className="rounded-2xl border border-white/12 bg-white px-5 py-3 text-sm font-semibold text-[var(--zt-ink)] transition hover:bg-[#f4ede3]"
-              >
-                Centro Zero Touch
-              </Link>
-              <Link
-                href="/dashboard"
-                className="rounded-2xl border border-white/12 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/16"
-              >
-                Volver al dashboard
-              </Link>
-            </div>
+        <Button
+          variant="secondary"
+          className="h-11 shrink-0"
+          disabled={busy}
+          onClick={() => void consultar({ probe: true })}
+        >
+          {loading ? (
+            <LoaderCircle aria-hidden="true" className="animate-spin" size={17} />
+          ) : (
+            <RefreshCw aria-hidden="true" size={17} />
+          )}
+          Probar conexion
+        </Button>
+      </Card>
+
+      {notice && (
+        <div
+          className={[
+            "mt-4 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm font-semibold",
+            noticeStyles(notice.tone),
+          ].join(" ")}
+          role="status"
+          aria-live="polite"
+        >
+          {notice.tone === "red" || notice.tone === "amber" ? (
+            <CircleAlert aria-hidden="true" className="mt-0.5 shrink-0" size={18} />
+          ) : (
+            <CircleCheck aria-hidden="true" className="mt-0.5 shrink-0" size={18} />
+          )}
+          <span>{notice.text}</span>
+        </div>
+      )}
+
+      <Card className="mt-5 overflow-hidden">
+        <section className="border-b border-[var(--fp-border)] p-5 sm:p-6">
+          <div>
+            <p className="fp-ui-eyebrow">Consulta principal</p>
+            <h2 className="mt-1 text-xl font-extrabold text-[var(--fp-graphite)]">
+              Buscar equipo
+            </h2>
+            <p className="mt-1 text-sm text-[var(--fp-muted)]">
+              Ingresa el IMEI o Device UID exacto del dispositivo.
+            </p>
           </div>
 
-          <div className="relative mt-8 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-            <div className="grid gap-4 md:grid-cols-3">
-              <MetricCard
-                label="Decision"
-                value={result?.deliveryStatus?.ready ? "Entregable" : "Pendiente"}
-                detail="La lectura comercial se actualiza cada vez que consultas o ejecutas una accion."
+          <form
+            className="mt-5 flex flex-col gap-3 sm:flex-row"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void consultar({ deviceUid });
+            }}
+          >
+            <label className="sr-only" htmlFor="equality-device-uid">
+              IMEI o Device UID
+            </label>
+            <div className="relative min-w-0 flex-1">
+              <Smartphone
+                aria-hidden="true"
+                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--fp-muted)]"
+                size={19}
               />
-              <MetricCard
-                label="HTTP remoto"
-                value={String(result?.remoteStatusCode ?? "-")}
-                detail="Codigo de respuesta recibido desde Equality."
-              />
-              <MetricCard
-                label="Equipo"
-                value={deviceName || "Sin identificar"}
-                detail="Marca y nombre comercial reportados por Zero Touch."
+              <Input
+                id="equality-device-uid"
+                value={deviceUid}
+                onChange={(event) =>
+                  setDeviceUid(sanitizeDeviceUid(event.target.value))
+                }
+                placeholder="IMEI o Device UID"
+                autoComplete="off"
+                className="h-12 !pl-11"
               />
             </div>
-
-            <div className={["rounded-[30px] border p-6 shadow-[0_18px_50px_rgba(16,33,54,0.12)]", toneSet.panel].join(" ")}>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em]">
-                    {readiness.eyebrow}
-                  </p>
-                  <h2 className="mt-3 text-3xl font-black tracking-tight">
-                    {readiness.title}
-                  </h2>
-                </div>
-                <span className={["mt-1 h-14 w-1.5 rounded-full shadow-sm", toneSet.accent].join(" ")} />
-              </div>
-              <p className="mt-4 text-sm leading-7">{readiness.detail}</p>
-            </div>
-          </div>
+            <Button
+              type="submit"
+              className="h-12 min-w-[136px]"
+              disabled={busy}
+            >
+              {loading ? (
+                <LoaderCircle aria-hidden="true" className="animate-spin" size={18} />
+              ) : (
+                <Search aria-hidden="true" size={18} />
+              )}
+              {loading ? "Consultando" : "Consultar"}
+            </Button>
+          </form>
         </section>
 
-        {notice && (
-          <div className={["rounded-[26px] border px-5 py-4 text-sm font-medium shadow-sm", noticeStyles(notice.tone)].join(" ")}>
-            {notice.text}
+        {result && !result.probe ? (
+          <div
+            className="grid lg:grid-cols-[minmax(0,1.2fr)_minmax(290px,0.8fr)]"
+            aria-live="polite"
+          >
+            <section className="p-5 sm:p-6 lg:p-8">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex min-w-0 items-start gap-4">
+                  <span
+                    className={[
+                      "grid h-12 w-12 shrink-0 place-items-center rounded-lg",
+                      statusTone(resolveTone(result)) === "positive"
+                        ? "bg-[var(--fp-lime-soft)] text-[var(--fp-lime-strong)]"
+                        : statusTone(resolveTone(result)) === "warning"
+                          ? "bg-[var(--fp-amber-soft)] text-[var(--fp-amber)]"
+                          : statusTone(resolveTone(result)) === "danger"
+                            ? "bg-[var(--fp-danger-soft)] text-[var(--fp-danger)]"
+                            : "bg-[#eef1f4] text-[var(--fp-muted)]",
+                    ].join(" ")}
+                  >
+                    {result.deliveryStatus?.ready ? (
+                      <ShieldCheck aria-hidden="true" size={24} />
+                    ) : (
+                      <CircleAlert aria-hidden="true" size={24} />
+                    )}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="fp-ui-eyebrow">Resultado de entrega</p>
+                    <h2 className="mt-1 text-2xl font-black leading-tight text-[var(--fp-graphite)] sm:text-3xl">
+                      {readiness.title}
+                    </h2>
+                  </div>
+                </div>
+                <StatusPill
+                  tone={statusTone(resolveTone(result))}
+                  className="shrink-0 self-start"
+                >
+                  {readiness.eyebrow}
+                </StatusPill>
+              </div>
+
+              <p className="mt-5 max-w-2xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
+                {readiness.detail}
+              </p>
+            </section>
+
+            <aside className="border-t border-[var(--fp-border)] bg-[#fafbfa] p-5 sm:p-6 lg:border-l lg:border-t-0">
+              <p className="text-xs font-extrabold uppercase text-[var(--fp-muted)]">
+                Equipo consultado
+              </p>
+              <h3 className="mt-2 break-words text-lg font-black text-[var(--fp-graphite)]">
+                {deviceName || "Equipo sin identificar"}
+              </h3>
+
+              <dl className="mt-5 divide-y divide-[var(--fp-border)] text-sm">
+                <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 py-3 first:pt-0">
+                  <dt className="text-[var(--fp-muted)]">Identificador</dt>
+                  <dd className="break-all text-right font-bold text-[var(--fp-graphite)]">
+                    {visibleDeviceUid}
+                  </dd>
+                </div>
+                <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 py-3">
+                  <dt className="text-[var(--fp-muted)]">Estado remoto</dt>
+                  <dd className="break-words text-right font-bold text-[var(--fp-graphite)]">
+                    {compactText(result.deviceState, "Sin estado")}
+                  </dd>
+                </div>
+                <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 py-3">
+                  <dt className="text-[var(--fp-muted)]">Servicio</dt>
+                  <dd className="break-words text-right font-bold text-[var(--fp-graphite)]">
+                    {compactText(
+                      result.serviceDetails || snapshot?.serviceDetails,
+                      "Sin informacion"
+                    )}
+                  </dd>
+                </div>
+                <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 py-3 last:pb-0">
+                  <dt className="text-[var(--fp-muted)]">Ultimo contacto</dt>
+                  <dd className="text-right font-bold text-[var(--fp-graphite)]">
+                    {formatoFecha(snapshot?.lastCheckIn || null)}
+                  </dd>
+                </div>
+              </dl>
+            </aside>
+          </div>
+        ) : (
+          <div className="p-5 sm:p-6">
+            <EmptyState
+              className="min-h-[190px] border-0 shadow-none"
+              title="Consulta un equipo para ver su estado"
+              description="Aqui aparecera el veredicto de entrega y la informacion esencial del dispositivo."
+            />
           </div>
         )}
 
-        <SectionShell eyebrow="Control principal" title="Consulta y acciones">
-          <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <section className="border-t border-[var(--fp-border)] bg-[#fafbfa] p-5 sm:p-6">
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <label className="mb-2 block text-sm font-semibold text-[var(--zt-ink)]">
-                Device UID o IMEI
-              </label>
-              <input
-                value={deviceUid}
-                onChange={(event) => setDeviceUid(sanitizeDeviceUid(event.target.value))}
-                placeholder="Ejemplo: 355043750428782"
-                className="w-full rounded-[24px] border border-[var(--zt-line)] bg-white px-4 py-4 text-base text-[var(--zt-ink)] outline-none transition focus:border-[var(--zt-gold)] focus:ring-2 focus:ring-[#f4e3c8]"
-              />
-              <p className="mt-3 text-sm leading-6 text-[var(--zt-muted)]">
-                Usa un solo dato de entrada. El panel consulta directo en Zero Touch y
-                te devuelve el veredicto comercial del equipo.
+              <h2 className="font-extrabold text-[var(--fp-graphite)]">
+                Acciones del equipo
+              </h2>
+              <p className="mt-1 text-sm text-[var(--fp-muted)]">
+                Las acciones se ejecutan sobre el identificador ingresado.
               </p>
             </div>
 
-            <div className="rounded-[28px] border border-[var(--zt-line)] bg-[#fcfaf6] p-5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--zt-muted)]">
-                Flujo recomendado
-              </p>
-              <p className="mt-3 text-lg font-black text-[var(--zt-ink)]">
-                {canAdmin
-                  ? "Consultar, inscribir y luego administrar el ciclo de vida."
-                  : "Consultar, inscribir y validar si si se puede entregar."}
-              </p>
-              <p className="mt-3 text-sm leading-6 text-[var(--zt-muted)]">
-                `Inscribir equipo` ya hace la alta completa del equipo. No necesitas
-                botones separados para inventario o activacion.
-              </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                className="h-11"
+                disabled={busy}
+                onClick={() => void ejecutarAccion("enroll")}
+              >
+                {processing === "enroll" ? (
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="animate-spin"
+                    size={17}
+                  />
+                ) : (
+                  <PackageCheck aria-hidden="true" size={17} />
+                )}
+                {processing === "enroll" ? "Inscribiendo" : "Inscribir"}
+              </Button>
+
+              {canAdmin && (
+                <>
+                  <span
+                    className="mx-1 hidden h-8 w-px self-center bg-[var(--fp-border)] sm:block"
+                    aria-hidden="true"
+                  />
+                  <Button
+                    variant="danger"
+                    className="h-11"
+                    disabled={busy}
+                    onClick={() => void ejecutarAccion("lock")}
+                  >
+                    {processing === "lock" ? (
+                      <LoaderCircle
+                        aria-hidden="true"
+                        className="animate-spin"
+                        size={17}
+                      />
+                    ) : (
+                      <LockKeyhole aria-hidden="true" size={17} />
+                    )}
+                    {processing === "lock" ? "Bloqueando" : "Bloquear"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    className="h-11"
+                    disabled={busy}
+                    onClick={() => void ejecutarAccion("unlock")}
+                  >
+                    {processing === "unlock" ? (
+                      <LoaderCircle
+                        aria-hidden="true"
+                        className="animate-spin"
+                        size={17}
+                      />
+                    ) : (
+                      <UnlockKeyhole aria-hidden="true" size={17} />
+                    )}
+                    {processing === "unlock" ? "Desbloqueando" : "Desbloquear"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    className="h-11"
+                    disabled={busy}
+                    onClick={() => void ejecutarAccion("release")}
+                  >
+                    {processing === "release" ? (
+                      <LoaderCircle
+                        aria-hidden="true"
+                        className="animate-spin"
+                        size={17}
+                      />
+                    ) : (
+                      <ShieldCheck aria-hidden="true" size={17} />
+                    )}
+                    {processing === "release" ? "Liberando" : "Liberar"}
+                  </Button>
+                </>
+              )}
             </div>
-          </div>
-
-          <div className="mt-6 flex flex-wrap gap-3">
-            <ActionButton
-              tone="primary"
-              disabled={loading || processing !== null}
-              onClick={() => void consultar({ deviceUid })}
-            >
-              {loading ? "Consultando..." : "Consultar equipo"}
-            </ActionButton>
-
-            <ActionButton
-              tone="secondary"
-              disabled={loading || processing !== null}
-              onClick={() => void consultar({ probe: true })}
-            >
-              {loading ? "Probando..." : "Probar conectividad"}
-            </ActionButton>
-
-            <ActionButton
-              tone="success"
-              disabled={loading || processing !== null}
-              onClick={() => void ejecutarAccion("enroll")}
-            >
-              {processing === "enroll" ? "Inscribiendo..." : "Inscribir equipo"}
-            </ActionButton>
-
-            {canAdmin && (
-              <>
-                <ActionButton
-                  tone="danger"
-                  disabled={loading || processing !== null}
-                  onClick={() => void ejecutarAccion("lock")}
-                >
-                  {processing === "lock" ? "Bloqueando..." : "Bloquear"}
-                </ActionButton>
-
-                <ActionButton
-                  tone="success"
-                  disabled={loading || processing !== null}
-                  onClick={() => void ejecutarAccion("unlock")}
-                >
-                  {processing === "unlock" ? "Desbloqueando..." : "Desbloquear"}
-                </ActionButton>
-
-                <ActionButton
-                  tone="warning"
-                  disabled={loading || processing !== null}
-                  onClick={() => void ejecutarAccion("release")}
-                >
-                  {processing === "release" ? "Liberando..." : "Liberar"}
-                </ActionButton>
-              </>
-            )}
           </div>
 
           {!canAdmin && (
-            <div className="mt-5 rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-900">
-              Vista de {roleName}: este dashboard queda limitado a inscripcion y verificacion de entregabilidad.
-            </div>
+            <p className="mt-4 border-t border-[var(--fp-border)] pt-4 text-sm text-[var(--fp-muted)]">
+              Perfil {roleName}: puedes consultar e inscribir equipos. Las acciones
+              administrativas estan restringidas.
+            </p>
           )}
-        </SectionShell>
+        </section>
+      </Card>
 
-        {result && !result.configured && (
-          <div className="rounded-[28px] border border-amber-200 bg-amber-50 p-6 text-sm leading-6 text-amber-900 shadow-sm">
-            Falta configurar <span className="font-semibold">EQUALITY_HBM_ACCESS_TOKEN</span> en el entorno del servidor para activar Equality Zero Touch.
-          </div>
-        )}
-
-        <div className="grid gap-6 xl:grid-cols-[1fr_0.95fr]">
-          <SectionShell eyebrow="Decision comercial" title="Veredicto de entrega">
-            {!result ? (
-              <div className="rounded-[26px] border border-dashed border-[var(--zt-line)] bg-[#faf7f1] px-5 py-8 text-sm leading-6 text-[var(--zt-muted)]">
-                Aun no hay una lectura del equipo. Ejecuta una consulta para ver si el dispositivo ya esta 100% entregable.
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className={["rounded-[28px] border p-5", toneSet.panel].join(" ")}>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">
-                        Estado comercial
-                      </p>
-                      <h3 className="mt-2 text-3xl font-black tracking-tight">
-                        {result.deliveryStatus?.ready
-                          ? "Si, lo puedes entregar"
-                          : result.deliveryStatus?.label || result.resultCode || "Sin resultCode"}
-                      </h3>
-                    </div>
-
-                    <span className={["inline-flex rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]", toneSet.strong].join(" ")}>
-                      {result.deliveryStatus?.label || "Lectura disponible"}
-                    </span>
-                  </div>
-
-                  <p className="mt-4 text-sm leading-7">
-                    {result.deliveryStatus?.detail ||
-                      result.resultMessage ||
-                      "La respuesta no incluyo un mensaje descriptivo."}
-                  </p>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <DataPoint
-                    label="Device UID"
-                    value={compactText(result.deviceUid)}
-                    detail="Identificador consultado en la plataforma."
-                  />
-                  <DataPoint
-                    label="Entregabilidad"
-                    value={result.deliveryStatus?.ready ? "100% entregable" : "Aun no lista"}
-                    detail="La decision de entrega usa el estado comercial derivado del API."
-                  />
-                  <DataPoint
-                    label="Estado remoto"
-                    value={compactText(result.deviceState, result.probe ? "Prueba de conectividad" : "Consulta real")}
-                  />
-                  <DataPoint
-                    label="Servicio"
-                    value={compactText(result.serviceDetails, result.canManage ? "Disponible" : "Restringida")}
-                  />
-                </div>
-              </div>
-            )}
-          </SectionShell>
-
-          <SectionShell eyebrow="Resumen tecnico" title="Lectura operativa">
-            <div className="grid gap-3 md:grid-cols-2">
-              <DataPoint
-                label="HTTP remoto"
-                value={String(result?.remoteStatusCode ?? "-")}
-                detail="Codigo devuelto por Equality."
-              />
-              <DataPoint
-                label="Ultimo check-in"
-                value={formatoFecha(snapshot?.lastCheckIn || null)}
-                detail="Ultimo contacto reportado por el equipo."
-              />
-              <DataPoint
-                label="Ultimo cambio"
-                value={formatoFecha(snapshot?.lastChanged || null)}
-                detail="Cambio de estado mas reciente reportado."
-              />
-              <DataPoint
-                label="Transicion activa"
-                value={compactText(snapshot?.transitionState)}
-                detail="Estado de transicion reportado por el hub."
-              />
-            </div>
-
-            <div className="mt-4 rounded-[24px] border border-[var(--zt-line)] bg-[#fcfaf6] px-4 py-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--zt-muted)]">
-                Cola de transiciones
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {snapshot?.transitionQueue?.length ? (
-                  snapshot.transitionQueue.map((item) => (
-                    <TransitionChip key={`${visibleDeviceUid}-${item}`} value={item} />
-                  ))
-                ) : (
-                  <span className="text-sm text-[var(--zt-muted)]">
-                    No hay transiciones pendientes para este equipo.
+      {result && !result.probe && (
+        <Card className="mt-4 overflow-hidden">
+          <details className="group">
+            <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 marker:hidden sm:px-6">
+              <span className="flex min-w-0 items-center gap-3">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[#eef1f4] text-[var(--fp-muted)]">
+                  <Server aria-hidden="true" size={18} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block font-extrabold text-[var(--fp-graphite)]">
+                    Detalle tecnico
                   </span>
-                )}
+                  <span className="block text-sm text-[var(--fp-muted)]">
+                    Diagnostico y respuesta remota
+                  </span>
+                </span>
+              </span>
+              <ChevronDown
+                aria-hidden="true"
+                className="shrink-0 text-[var(--fp-muted)] transition group-open:rotate-180"
+                size={20}
+              />
+            </summary>
+
+            <div className="border-t border-[var(--fp-border)] p-5 sm:p-6">
+              <dl className="grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
+                <div>
+                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    HTTP remoto
+                  </dt>
+                  <dd className="mt-1 font-bold text-[var(--fp-graphite)]">
+                    {String(result.remoteStatusCode ?? "-")}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    Codigo
+                  </dt>
+                  <dd className="mt-1 break-words font-bold text-[var(--fp-graphite)]">
+                    {compactText(result.resultCode)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    Tenant
+                  </dt>
+                  <dd className="mt-1 break-words font-bold text-[var(--fp-graphite)]">
+                    {compactText(snapshot?.tenantName)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    Modelo
+                  </dt>
+                  <dd className="mt-1 break-words font-bold text-[var(--fp-graphite)]">
+                    {compactText(
+                      snapshot?.deviceModel || snapshot?.deviceMarketName
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    Creado
+                  </dt>
+                  <dd className="mt-1 text-sm font-bold text-[var(--fp-graphite)]">
+                    {formatoFecha(snapshot?.createdTimeStamp || null)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    Ultimo cambio
+                  </dt>
+                  <dd className="mt-1 text-sm font-bold text-[var(--fp-graphite)]">
+                    {formatoFecha(snapshot?.lastChanged || null)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    Transicion
+                  </dt>
+                  <dd className="mt-1 break-words font-bold text-[var(--fp-graphite)]">
+                    {compactText(snapshot?.transitionState)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    Permisos
+                  </dt>
+                  <dd className="mt-1 font-bold text-[var(--fp-graphite)]">
+                    {result.canManage ? "Administracion" : "Solo consulta"}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="mt-6 border-t border-[var(--fp-border)] pt-5">
+                <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                  Cola de transiciones
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {snapshot?.transitionQueue?.length ? (
+                    snapshot.transitionQueue.map((item) => (
+                      <StatusPill key={`${visibleDeviceUid}-${item}`}>
+                        {item}
+                      </StatusPill>
+                    ))
+                  ) : (
+                    <span className="text-sm text-[var(--fp-muted)]">
+                      Sin transiciones pendientes.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-6 overflow-hidden rounded-lg border border-[#2b333d] bg-[#11161c]">
+                <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 text-xs font-bold uppercase text-slate-400">
+                  <Server aria-hidden="true" size={15} />
+                  Respuesta remota
+                </div>
+                <pre className="max-h-72 overflow-auto p-4 text-xs leading-6 text-slate-200">
+                  {prettyJson(result.response)}
+                </pre>
               </div>
             </div>
-          </SectionShell>
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-          <SectionShell eyebrow="Perfil del equipo" title="Identidad del dispositivo">
-            <div className="grid gap-3 md:grid-cols-2">
-              <DataPoint
-                label="Equipo"
-                value={deviceName || "Sin identificar"}
-                detail="Marca y referencia comercial."
-              />
-              <DataPoint
-                label="Tenant"
-                value={compactText(snapshot?.tenantName)}
-                detail="Cliente o tenant asociado en Zero Touch."
-              />
-              <DataPoint
-                label="Modelo"
-                value={compactText(snapshot?.deviceModel || snapshot?.deviceMarketName)}
-              />
-              <DataPoint
-                label="Creado"
-                value={formatoFecha(snapshot?.createdTimeStamp || null)}
-                detail="Momento en que Zero Touch registró el dispositivo."
-              />
-            </div>
-          </SectionShell>
-
-          <SectionShell eyebrow="Respuesta tecnica" title="Payload devuelto por Zero Touch">
-            <div className="rounded-[26px] border border-[#1d2430] bg-[#0f141b] p-4 text-slate-100 shadow-[0_18px_45px_rgba(16,33,54,0.12)]">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                Payload crudo
-              </p>
-              <pre className="mt-3 overflow-x-auto text-xs leading-6 text-slate-200">
-                {prettyJson(result?.response)}
-              </pre>
-            </div>
-          </SectionShell>
-        </div>
-      </div>
-    </div>
+          </details>
+        </Card>
+      )}
+    </main>
   );
 }
