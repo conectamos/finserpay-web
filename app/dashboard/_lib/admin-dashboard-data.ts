@@ -6,6 +6,7 @@ type RiskBucket = "alDia" | "temprana" | "critica";
 
 export type AdminDashboardDailyPoint = {
   day: number;
+  creditCount: number;
   colocacion: number;
   recaudo: number;
 };
@@ -32,7 +33,9 @@ export type AdminDashboardOverview = {
   earlyPercent: number;
   monthLabel: string;
   monthlyCollection: number;
+  monthlyCreditCount: number;
   monthlyPaymentCount: number;
+  monthlyPlacement: number;
   sedes: AdminDashboardSedePoint[];
 };
 
@@ -235,6 +238,7 @@ export async function getAdminDashboardOverview({
   const dueToday = activePortfolio.reduce((sum, credit) => sum + credit.dueToday, 0);
   const daily = Array.from({ length: daysInMonth }, (_, index) => ({
     day: index + 1,
+    creditCount: 0,
     colocacion: 0,
     recaudo: 0,
   }));
@@ -254,6 +258,7 @@ export async function getAdminDashboardOverview({
       const point = daily[day - 1];
 
       if (point) {
+        point.creditCount += 1;
         point.colocacion += Number(credit.montoCredito || 0);
       }
     }
@@ -274,6 +279,14 @@ export async function getAdminDashboardOverview({
     .slice(0, 5);
   const monthlyCollection = monthPayments.reduce(
     (sum, payment) => sum + Number(payment.valor || 0),
+    0
+  );
+  const monthlyCreditCount = daily.reduce(
+    (sum, point) => sum + point.creditCount,
+    0
+  );
+  const monthlyPlacement = daily.reduce(
+    (sum, point) => sum + point.colocacion,
     0
   );
   const earlyPercent = ratio(earlyBalance, totalPortfolio);
@@ -301,7 +314,9 @@ export async function getAdminDashboardOverview({
       year: "numeric",
     }).format(today),
     monthlyCollection,
+    monthlyCreditCount,
     monthlyPaymentCount: monthPayments.length,
+    monthlyPlacement,
     sedes,
   };
 }

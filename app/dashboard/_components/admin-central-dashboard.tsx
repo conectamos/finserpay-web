@@ -88,6 +88,26 @@ function titleCase(value: string) {
   return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : value;
 }
 
+function chartMaximum(value: number) {
+  const amount = Math.max(1, Number(value || 0) * 1.08);
+  const magnitude = 10 ** Math.floor(Math.log10(amount));
+  const normalized = amount / magnitude;
+  const ceiling =
+    normalized <= 1
+      ? 1
+      : normalized <= 2
+        ? 2
+        : normalized <= 2.5
+          ? 2.5
+          : normalized <= 5
+            ? 5
+            : normalized <= 7.5
+              ? 7.5
+              : 10;
+
+  return ceiling * magnitude;
+}
+
 function MetricCard({ detail, icon: Icon, label, tone, value }: MetricCardProps) {
   const tones = {
     green: {
@@ -121,26 +141,24 @@ function MetricCard({ detail, icon: Icon, label, tone, value }: MetricCardProps)
 }
 
 function CollectionChart({
-  data,
-  monthLabel,
+  overview,
 }: {
-  data: AdminDashboardOverview["daily"];
-  monthLabel: string;
+  overview: AdminDashboardOverview;
 }) {
-  const width = 760;
-  const height = 230;
-  const top = 14;
-  const bottom = 194;
-  const left = 14;
-  const right = 746;
+  const data = overview.daily;
+  const width = 780;
+  const height = 270;
+  const top = 18;
+  const bottom = 226;
+  const left = 76;
+  const right = 766;
   const plotHeight = bottom - top;
   const plotWidth = right - left;
-  const maxValue = Math.max(
-    1,
-    ...data.flatMap((point) => [point.colocacion, point.recaudo])
+  const maxValue = chartMaximum(
+    Math.max(1, ...data.flatMap((point) => [point.colocacion, point.recaudo]))
   );
   const step = data.length > 1 ? plotWidth / (data.length - 1) : plotWidth;
-  const barWidth = Math.max(5, Math.min(11, step * 0.44));
+  const barWidth = Math.max(6, Math.min(13, step * 0.54));
   const linePoints = data
     .map((point, index) => {
       const x = left + index * step;
@@ -151,40 +169,102 @@ function CollectionChart({
   const ticks = data.filter(
     (point) => point.day === 1 || point.day % 5 === 0 || point.day === data.length
   );
-  const monthShort = titleCase(monthLabel.slice(0, 3));
+  const monthShort = titleCase(overview.monthLabel.slice(0, 3));
+  const yAxisTicks = [0, 0.25, 0.5, 0.75, 1];
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs font-medium text-[#475467]">
-        <span className="inline-flex items-center gap-2">
-          <span className="h-0.5 w-6 bg-[#0d9488]" />
-          Recaudo del mes
-        </span>
+      <div className="grid grid-cols-2 border-y border-[#e4e9ef] sm:grid-cols-4">
+        {[
+          {
+            label: "Ventas del mes",
+            value: String(overview.monthlyCreditCount),
+          },
+          {
+            label: "Monto colocado",
+            value: money(overview.monthlyPlacement),
+          },
+          {
+            label: "Recaudo del mes",
+            value: money(overview.monthlyCollection),
+          },
+          {
+            label: "Abonos registrados",
+            value: String(overview.monthlyPaymentCount),
+          },
+        ].map((metric, index) => (
+          <div
+            key={metric.label}
+            className={[
+              "min-w-0 px-3 py-3",
+              index % 2 === 1 ? "border-l border-[#e4e9ef]" : "",
+              index >= 2 ? "border-t border-[#e4e9ef] sm:border-t-0" : "",
+              index >= 1 ? "sm:border-l sm:border-[#e4e9ef]" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            <span className="block text-[11px] font-bold uppercase text-[#667085]">
+              {metric.label}
+            </span>
+            <strong className="mt-1 block whitespace-nowrap text-base font-black tabular-nums text-[#101828] 2xl:text-lg">
+              {metric.value}
+            </strong>
+          </div>
+        ))}
+      </div>
+
+      <div className="mb-2 mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs font-semibold text-[#475467]">
         <span className="inline-flex items-center gap-2">
           <span className="h-3 w-5 rounded-sm bg-[#0b213f]" />
-          Creditos desembolsados
+          Monto colocado
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="h-0.5 w-6 bg-[#78a016]" />
+          Recaudo diario
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="grid h-5 w-5 place-items-center border border-[#cbd5df] bg-white text-[10px] font-black text-[#0b213f]">
+            #
+          </span>
+          Ventas del dia
         </span>
       </div>
 
-      <div className="min-h-[230px] w-full overflow-hidden">
+      <div className="min-h-[270px] w-full overflow-hidden">
         <svg
           viewBox={`0 0 ${width} ${height}`}
-          className="block h-auto min-h-[220px] w-full"
+          className="block h-auto min-h-[250px] w-full"
           role="img"
-          aria-label="Recaudo y creditos desembolsados por dia del mes"
+          aria-label={`${overview.monthlyCreditCount} ventas, ${money(
+            overview.monthlyPlacement
+          )} colocados y ${money(overview.monthlyCollection)} recaudados en ${
+            overview.monthLabel
+          }`}
         >
-          {[0, 0.25, 0.5, 0.75, 1].map((ratioValue) => {
+          {yAxisTicks.map((ratioValue) => {
             const y = bottom - ratioValue * plotHeight;
             return (
-              <line
-                key={ratioValue}
-                x1={left}
-                x2={right}
-                y1={y}
-                y2={y}
-                stroke="#e4e9ef"
-                strokeWidth="1"
-              />
+              <g key={ratioValue}>
+                <line
+                  x1={left}
+                  x2={right}
+                  y1={y}
+                  y2={y}
+                  stroke="#e4e9ef"
+                  strokeWidth="1"
+                />
+                <text
+                  x={left - 10}
+                  y={y + 4}
+                  fill="#667085"
+                  fontSize="10"
+                  fontWeight="600"
+                  textAnchor="end"
+                >
+                  {compactMoney(maxValue * ratioValue)}
+                </text>
+              </g>
             );
           })}
 
@@ -193,23 +273,42 @@ function CollectionChart({
             const x = left + index * step - barWidth / 2;
 
             return (
-              <rect
-                key={`bar-${point.day}`}
-                x={x}
-                y={bottom - barHeight}
-                width={barWidth}
-                height={barHeight}
-                rx="2"
-                fill="#0b213f"
-              />
+              <g key={`bar-${point.day}`}>
+                <rect
+                  x={x}
+                  y={bottom - barHeight}
+                  width={barWidth}
+                  height={barHeight}
+                  rx="2"
+                  fill="#0b213f"
+                >
+                  <title>
+                    {`${point.day} ${monthShort}: ${point.creditCount} ${
+                      point.creditCount === 1 ? "venta" : "ventas"
+                    }, ${money(point.colocacion)} colocados`}
+                  </title>
+                </rect>
+                {point.creditCount > 0 ? (
+                  <text
+                    x={x + barWidth / 2}
+                    y={Math.max(11, bottom - barHeight - 6)}
+                    fill="#0b213f"
+                    fontSize="10"
+                    fontWeight="800"
+                    textAnchor="middle"
+                  >
+                    {point.creditCount}
+                  </text>
+                ) : null}
+              </g>
             );
           })}
 
           <polyline
             points={linePoints}
             fill="none"
-            stroke="#0d9488"
-            strokeWidth="4"
+            stroke="#78a016"
+            strokeWidth="3.5"
             strokeLinecap="round"
             strokeLinejoin="round"
           />
@@ -223,20 +322,35 @@ function CollectionChart({
                 key={`point-${point.day}`}
                 cx={x}
                 cy={y}
-                r="3.5"
-                fill="#0d9488"
+                r={point.recaudo > 0 ? "4" : "2.5"}
+                fill="#78a016"
                 stroke="white"
                 strokeWidth="1.5"
-              />
+              >
+                <title>{`${point.day} ${monthShort}: ${money(point.recaudo)} recaudados`}</title>
+              </circle>
+            );
+          })}
+
+          {ticks.map((point) => {
+            const index = data.indexOf(point);
+            const x = left + index * step;
+
+            return (
+              <text
+                key={`tick-${point.day}`}
+                x={x}
+                y={252}
+                fill="#667085"
+                fontSize="10"
+                fontWeight="600"
+                textAnchor="middle"
+              >
+                {point.day} {monthShort}
+              </text>
             );
           })}
         </svg>
-      </div>
-
-      <div className="grid grid-flow-col auto-cols-fr text-center text-[11px] font-medium text-[#667085]">
-        {ticks.map((point) => (
-          <span key={`tick-${point.day}`}>{point.day} {monthShort}</span>
-        ))}
       </div>
     </div>
   );
@@ -401,8 +515,11 @@ export default function AdminCentralDashboard({
         <section className="mt-4 grid gap-4 xl:grid-cols-[1.3fr_1fr]">
           <section className="min-w-0 rounded-lg border border-[#d8dee6] bg-white p-5 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
             <h2 className="text-xl font-black text-[#101828]">Recaudo y colocacion</h2>
+            <p className="mt-1 text-sm text-[#667085]">
+              Ventas financiadas y recaudo diario de {titleCase(data.monthLabel)}.
+            </p>
             <div className="mt-5">
-              <CollectionChart data={data.daily} monthLabel={data.monthLabel} />
+              <CollectionChart overview={data} />
             </div>
           </section>
           <HealthPanel data={data} />
