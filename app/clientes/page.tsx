@@ -1252,12 +1252,6 @@ export default function ClienteConsultaPage() {
                   <span className="mt-0.5 block break-words text-[20px] font-black uppercase leading-tight text-[#0D1112] min-[400px]:text-[21px]">
                     {creditTitle(activeCredit)}
                   </span>
-                  <span className="mt-1 block truncate text-[18px] font-medium text-[#6b6964]">
-                    Saldo{" "}
-                    <strong className="font-serif text-[23px] text-[#0D1112]">
-                      {money(activeCredit.saldoPendiente)}
-                    </strong>
-                  </span>
                 </span>
                 <span className="grid h-11 w-11 place-items-center rounded-full bg-white/70 text-[#0D1112]">
                   <ChevronRight className="h-7 w-7" />
