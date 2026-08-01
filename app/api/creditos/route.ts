@@ -680,6 +680,7 @@ export async function POST(req: Request) {
     }
 
     const admin = isAdminRole(user.rolNombre);
+    const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
 
     let body: CreditCreateBody;
@@ -1302,7 +1303,7 @@ export async function POST(req: Request) {
         );
       }
 
-      if (!sameSede && !sameAlly) {
+      if (!adminCentral && !sameSede && !sameAlly) {
         return NextResponse.json(
           {
             error:
