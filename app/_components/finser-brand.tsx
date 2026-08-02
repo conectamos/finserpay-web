@@ -1,12 +1,16 @@
 type FinserBrandProps = {
+  accentPay?: boolean;
   compact?: boolean;
   dark?: boolean;
+  mini?: boolean;
   showTagline?: boolean;
 };
 
 export default function FinserBrand({
+  accentPay = false,
   compact = false,
   dark = false,
+  mini = false,
   showTagline = true,
 }: FinserBrandProps) {
   const titleClass = dark ? "text-white" : "text-slate-950";
@@ -16,18 +20,23 @@ export default function FinserBrand({
     : "border-[#d8dde5] bg-[linear-gradient(180deg,#ffffff_0%,#eef3f8_100%)] shadow-[0_18px_40px_rgba(15,23,42,0.10)]";
 
   return (
-    <div className={["flex items-center", compact ? "gap-3" : "gap-4"].join(" ")}>
+    <div
+      className={[
+        "flex items-center",
+        mini ? "gap-2" : compact ? "gap-3" : "gap-4",
+      ].join(" ")}
+    >
       <div
         className={[
           "relative flex shrink-0 items-center justify-center overflow-hidden rounded-[24px] border",
-          compact ? "h-14 w-14" : "h-16 w-16",
+          mini ? "h-10 w-10 rounded-[15px]" : compact ? "h-14 w-14" : "h-16 w-16",
           iconShell,
         ].join(" ")}
       >
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.48),transparent_45%)]" />
         <svg
           viewBox="0 0 88 96"
-          className={compact ? "h-10 w-10" : "h-12 w-12"}
+          className={mini ? "h-7 w-7" : compact ? "h-10 w-10" : "h-12 w-12"}
           aria-hidden="true"
         >
           <path
@@ -56,12 +65,15 @@ export default function FinserBrand({
         <p
           className={[
             "font-black tracking-[0.08em]",
-            compact ? "text-lg" : "text-2xl",
+            mini ? "text-[19px]" : compact ? "text-lg" : "text-2xl",
             titleClass,
           ].join(" ")}
           style={{ fontFamily: '"Arial Black", "Trebuchet MS", sans-serif' }}
         >
-          FINSER PAY
+          FINSER{" "}
+          <span className={accentPay ? "text-[var(--fp-lime)]" : undefined}>
+            PAY
+          </span>
         </p>
         {showTagline && (
           <p className={["mt-1 text-sm", subtitleClass].join(" ")}>

@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import FinserSupportLink from "@/app/_components/finser-support-link";
+import PaidCreditDashboard from "@/app/clientes/paid-credit-dashboard";
 import {
   ArrowRight,
   Bell,
@@ -983,6 +984,25 @@ export default function ClienteConsultaPage() {
           </section>
         </div>
       </main>
+    );
+  }
+
+  if (activeCredit && isPaidCredit) {
+    return (
+      <PaidCreditDashboard
+        activePanel={activePanel}
+        credit={activeCredit}
+        credits={items}
+        firstName={firstName}
+        newCreditSupportMessage={NEW_CREDIT_SUPPORT_MESSAGE}
+        notice={notice}
+        onForgetDocument={forgetDocument}
+        onHome={returnHome}
+        onOpenPanel={openPanel}
+        onSelectCredit={selectCredit}
+        pazYSalvoHref={pazYSalvoHref}
+        profileInitials={profileInitials}
+      />
     );
   }
 
