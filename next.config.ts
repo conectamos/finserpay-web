@@ -23,7 +23,7 @@ function resolveAllowedDevOrigins() {
 const nextConfig: NextConfig = {
   output: "standalone",
   allowedDevOrigins: resolveAllowedDevOrigins(),
-  serverExternalPackages: ["ssh2-sftp-client", "ssh2"],
+  serverExternalPackages: ["ssh2-sftp-client", "ssh2", "pdfkit"],
   experimental: {
     proxyClientMaxBodySize: "80mb",
   },
