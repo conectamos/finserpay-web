@@ -1,82 +1,48 @@
 import { NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/auth";
-import { getSellerSessionUser } from "@/lib/seller-auth";
-import prisma from "@/lib/prisma";
 import {
   resolveCreditPaymentSummary,
   resolveCreditState,
+  sanitizeSearch,
 } from "@/lib/credit-factory";
-import { isAdminRole } from "@/lib/roles";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
-import {
-  buildCreditAccessWhere,
-  buildCreditLookupWhere,
-  parseCreditRouteLookup,
-} from "@/lib/credit-route-lookup";
-import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditPazYSalvoPdf } from "@/lib/credit-paz-y-salvo-pdf";
+import prisma from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function parseCreditId(value: string) {
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
 export async function GET(
-  _req: Request,
+  req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await getSessionUser();
+    const params = await context.params;
+    const creditId = parseCreditId(params.id);
+    const documento = sanitizeSearch(
+      new URL(req.url).searchParams.get("documento")
+    ).replace(/\D/g, "");
 
-    if (!user) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    }
-
-    await ensureCreditAbonoAuditColumns();
-
-    const admin = isAdminRole(user.rolNombre);
-    const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
-    const sellerSession = admin ? null : await getSellerSessionUser(user);
-    const supervisor = sellerSession?.tipoPerfil === "SUPERVISOR";
-
-    if (!admin && !supervisor) {
+    if (!creditId || !/^\d{5,20}$/.test(documento)) {
       return NextResponse.json(
-        { error: "Solo supervisor o administrador puede descargar paz y salvo" },
-        { status: 403 }
+        { error: "Credito o documento invalido" },
+        { status: 400 }
       );
     }
 
-    const params = await context.params;
-    const creditLookup = parseCreditRouteLookup(params.id);
-
-    if (!creditLookup.id && !creditLookup.folio) {
-      return NextResponse.json({ error: "Credito invalido" }, { status: 400 });
-    }
-
-    const lookupWhere = buildCreditLookupWhere(creditLookup);
-    const accessWhere = buildCreditAccessWhere({
-      admin,
-      adminCentral,
-      aliadoId: user.aliadoAccesoId,
-      sedeId: user.sedeId,
-      sellerSedeId: sellerSession?.sedeId,
-      supervisor,
-    });
-
-    const candidate = await prisma.credito.findFirst({
-      where: {
-        AND: [lookupWhere, accessWhere],
-      },
-      select: { id: true },
-    });
-
-    if (!candidate) {
-      return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
-    }
+    await ensureCreditAbonoAuditColumns();
 
     const resolved = await prisma.$transaction(async (tx) => {
       const locked = await tx.$queryRaw<Array<{ id: number }>>`
         SELECT "id"
         FROM "Credito"
-        WHERE "id" = ${candidate.id}
+        WHERE "id" = ${creditId}
+          AND "clienteDocumento" = ${documento}
+          AND "estado" <> 'ANULADO'
         FOR UPDATE
       `;
 
@@ -86,17 +52,22 @@ export async function GET(
 
       const credito = await tx.credito.findFirst({
         where: {
-          id: candidate.id,
-          AND: [accessWhere],
-          estado: { not: "ANULADO" },
-        },
-        include: {
-          usuario: {
-            select: {
-              nombre: true,
-              usuario: true,
-            },
+          id: creditId,
+          clienteDocumento: documento,
+          estado: {
+            not: "ANULADO",
           },
+        },
+        select: {
+          clienteDocumento: true,
+          clienteNombre: true,
+          cuotaInicial: true,
+          deliverableLabel: true,
+          folio: true,
+          id: true,
+          montoCredito: true,
+          pazYSalvoEmitidoAt: true,
+          referenciaEquipo: true,
           sede: {
             select: {
               nombre: true,
@@ -112,7 +83,9 @@ export async function GET(
       const aggregate = await tx.creditoAbono.aggregate({
         where: {
           creditoId: credito.id,
-          estado: { not: "ANULADO" },
+          estado: {
+            not: "ANULADO",
+          },
         },
         _count: { _all: true },
         _sum: { valor: true },
@@ -133,6 +106,7 @@ export async function GET(
       await tx.credito.updateMany({
         where: {
           id: credito.id,
+          clienteDocumento: documento,
           pazYSalvoEmitidoAt: null,
           estado: { not: "ANULADO" },
         },
@@ -144,8 +118,12 @@ export async function GET(
         },
       });
 
-      const issued = await tx.credito.findUnique({
-        where: { id: credito.id },
+      const issued = await tx.credito.findFirst({
+        where: {
+          id: credito.id,
+          clienteDocumento: documento,
+          estado: { not: "ANULADO" },
+        },
         select: { pazYSalvoEmitidoAt: true },
       });
 
@@ -154,23 +132,23 @@ export async function GET(
       }
 
       return {
+        kind: "READY" as const,
         credito,
         issuedAt: issued.pazYSalvoEmitidoAt,
-        kind: "READY" as const,
       };
     });
 
     if (resolved.kind === "NOT_FOUND") {
-      return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Credito no encontrado para ese documento" },
+        { status: 404 }
+      );
     }
 
     if (resolved.kind === "BALANCE_PENDING") {
       return NextResponse.json(
-        {
-          error:
-            "Solo se puede emitir paz y salvo cuando el saldo pendiente esta en $0",
-        },
-        { status: 400 }
+        { error: "El credito todavia tiene saldo pendiente" },
+        { status: 409 }
       );
     }
 
@@ -187,25 +165,31 @@ export async function GET(
       clienteDocumento: credito.clienteDocumento,
       clienteNombre: credito.clienteNombre,
       deliverableLabel: credito.deliverableLabel,
-      deviceUid: credito.deviceUid,
+      deviceUid: null,
       equipo: credito.referenciaEquipo,
       estado: "PAZ_Y_SALVO",
       folio: credito.folio,
-      imei: credito.imei,
+      imei: null,
       issuedAt,
-      issuer: `${user.nombre} (${user.usuario})`,
-      referenciaPago: credito.referenciaPago,
+      issuer: "FINSER PAY",
+      referenciaPago: null,
       sedeNombre: credito.sede.nombre,
     });
 
+    const safeFolio =
+      credito.folio.replace(/[^A-Za-z0-9_-]/g, "-") || String(credito.id);
+
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
+        "Cache-Control": "private, no-store, max-age=0",
+        "Content-Disposition": `attachment; filename="paz-y-salvo-${safeFolio}.pdf"`,
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="paz-y-salvo-${credito.folio}.pdf"`,
+        "X-Content-Type-Options": "nosniff",
+        "X-Robots-Tag": "noindex, nofollow",
       },
     });
   } catch (error) {
-    console.error("ERROR DESCARGANDO PAZ Y SALVO:", error);
+    console.error("ERROR DESCARGANDO PAZ Y SALVO CLIENTE:", error);
     return NextResponse.json(
       { error: "No se pudo descargar el paz y salvo" },
       { status: 500 }

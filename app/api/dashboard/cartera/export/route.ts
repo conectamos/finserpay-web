@@ -260,6 +260,7 @@ export async function GET(req: Request) {
             valor: Number(abono.valor || 0),
           })),
           today,
+          settled: Boolean(credito.pazYSalvoEmitidoAt),
         });
 
         return {

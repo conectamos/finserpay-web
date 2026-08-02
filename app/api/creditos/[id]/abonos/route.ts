@@ -35,6 +35,10 @@ import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
 import { isMassImportedCredit } from "@/lib/credit-import-flags";
+import {
+  enqueueUnlockForCurrentCredit,
+  processDeviceUnlockCommand,
+} from "@/lib/device-unlock-queue";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -348,6 +352,7 @@ async function loadPaymentPlan(credit: Awaited<ReturnType<typeof loadCredit>>) {
       valor: Number(item.valor || 0),
       fechaAbono: item.fechaAbono,
     })),
+    settled: Boolean(credit.pazYSalvoEmitidoAt),
   });
 }
 
@@ -871,34 +876,92 @@ export async function POST(
       );
     }
 
-    const payment = await prisma.$transaction(async (tx) => {
+    const paymentResult = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: number }>>`
+        SELECT "id"
+        FROM "Credito"
+        WHERE "id" = ${credit.id}
+        FOR UPDATE
+      `;
+      const lockedCredit = await tx.credito.findUnique({
+        where: { id: credit.id },
+        select: {
+          clienteNombre: true,
+          estado: true,
+          fechaPrimerPago: true,
+          fechaProximoPago: true,
+          folio: true,
+          frecuenciaPago: true,
+          id: true,
+          montoCredito: true,
+          observacionAdmin: true,
+          pazYSalvoEmitidoAt: true,
+          plazoMeses: true,
+          saldoBaseFinanciado: true,
+          valorCuota: true,
+          valorFianza: true,
+          valorInteres: true,
+        },
+      });
+
+      if (
+        !lockedCredit ||
+        isAnnulledCreditState(lockedCredit.estado) ||
+        lockedCredit.pazYSalvoEmitidoAt
+      ) {
+        throw new Error("Este credito ya fue finalizado o no permite mas recaudos.");
+      }
+
+      const lockedAbonos = await tx.creditoAbono.findMany({
+        where: {
+          creditoId: lockedCredit.id,
+          estado: {
+            not: "ANULADO",
+          },
+        },
+        select: {
+          valor: true,
+          fechaAbono: true,
+        },
+        orderBy: {
+          fechaAbono: "asc",
+        },
+      });
+      const lockedPlan = buildCreditPaymentPlan({
+        montoCredito: Number(lockedCredit.montoCredito || 0),
+        valorCuota: Number(lockedCredit.valorCuota || 0),
+        plazoMeses: Number(lockedCredit.plazoMeses || 1),
+        frecuenciaPago: lockedCredit.frecuenciaPago,
+        fechaPrimerPago:
+          lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+        abonos: lockedAbonos.map((item) => ({
+          valor: Number(item.valor || 0),
+          fechaAbono: item.fechaAbono,
+        })),
+      });
+      const lockedBalanceInCents = Math.max(
+        0,
+        Math.round(lockedPlan.saldoPendiente * 100)
+      );
+
+      if (lockedBalanceInCents <= 0) {
+        throw new Error("Este credito ya no tiene saldo pendiente.");
+      }
+
       const earlyPayoffInTx = earlyPayoffRequested
         ? calculateCreditEarlyPayoff({
-            saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
-            montoCredito: Number(credit.montoCredito || 0),
-            valorInteres: Number(credit.valorInteres || 0),
-            valorFianza: Number(credit.valorFianza || 0),
-            valorCuota: Number(credit.valorCuota || 0),
-            plazoMeses: Number(credit.plazoMeses || 1),
-            frecuenciaPago: credit.frecuenciaPago,
-            fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
-            abonos: (
-              await tx.creditoAbono.findMany({
-                where: {
-                  creditoId: credit.id,
-                  estado: {
-                    not: "ANULADO",
-                  },
-                },
-                select: {
-                  valor: true,
-                  fechaAbono: true,
-                },
-                orderBy: {
-                  fechaAbono: "asc",
-                },
-              })
-            ).map((item) => ({
+            saldoBaseFinanciado: Number(
+              lockedCredit.saldoBaseFinanciado || 0
+            ),
+            montoCredito: Number(lockedCredit.montoCredito || 0),
+            valorInteres: Number(lockedCredit.valorInteres || 0),
+            valorFianza: Number(lockedCredit.valorFianza || 0),
+            valorCuota: Number(lockedCredit.valorCuota || 0),
+            plazoMeses: Number(lockedCredit.plazoMeses || 1),
+            frecuenciaPago: lockedCredit.frecuenciaPago,
+            fechaPrimerPago:
+              lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+            abonos: lockedAbonos.map((item) => ({
               valor: Number(item.valor || 0),
               fechaAbono: item.fechaAbono,
             })),
@@ -916,6 +979,37 @@ export async function POST(
         Math.round(earlyPayoffInTx.capitalPendiente) !== Math.round(valor)
       ) {
         throw new Error("El valor de liquidacion cambio. Consulta de nuevo el credito.");
+      }
+
+      if (!earlyPayoffInTx) {
+        const lockedSelectedInstallments = selectedNumbers
+          .map(
+            (numero) =>
+              lockedPlan.installments.find((item) => item.numero === numero) ||
+              null
+          )
+          .filter((item): item is NonNullable<typeof item> => Boolean(item));
+        const selectedBalanceInCents = Math.round(
+          lockedSelectedInstallments.reduce(
+            (sum, item) => sum + Math.max(0, Number(item.saldoPendiente || 0)),
+            0
+          ) * 100
+        );
+
+        if (
+          selectedNumbers.length &&
+          (lockedSelectedInstallments.length !== selectedNumbers.length ||
+            selectedBalanceInCents <= 0 ||
+            Math.round(valor * 100) < selectedBalanceInCents)
+        ) {
+          throw new Error(
+            "Las cuotas seleccionadas cambiaron. Consulta de nuevo el credito."
+          );
+        }
+
+        if (Math.round(valor * 100) > lockedBalanceInCents) {
+          throw new Error("El abono supera el saldo pendiente actualizado.");
+        }
       }
 
       const abonoObservation =
@@ -987,36 +1081,57 @@ export async function POST(
       const txPlan = earlyPayoffInTx
         ? null
         : buildCreditPaymentPlan({
-            montoCredito: Number(credit.montoCredito || 0),
-            valorCuota: Number(credit.valorCuota || 0),
-            plazoMeses: Number(credit.plazoMeses || 1),
-            frecuenciaPago: credit.frecuenciaPago,
-            fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+            montoCredito: Number(lockedCredit.montoCredito || 0),
+            valorCuota: Number(lockedCredit.valorCuota || 0),
+            plazoMeses: Number(lockedCredit.plazoMeses || 1),
+            frecuenciaPago: lockedCredit.frecuenciaPago,
+            fechaPrimerPago:
+              lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
             abonos: txAbonos.map((item) => ({
               valor: Number(item.valor || 0),
               fechaAbono: item.fechaAbono,
             })),
           });
+      const paymentCompletesCredit = Boolean(
+        earlyPayoffInTx || (txPlan && txPlan.saldoPendiente <= 0)
+      );
+      const settlementIssuedAt = paymentCompletesCredit ? new Date() : null;
 
       await tx.credito.update({
         where: { id: credit.id },
         data: earlyPayoffInTx
           ? {
+              bloqueoMora: false,
+              bloqueoMoraAt: null,
+              estado: resolveCreditState({
+                pazYSalvoEmitidoAt: settlementIssuedAt,
+              }),
               fechaProximoPago: null,
               montoCredito: earlyPayoffInTx.montoCreditoLiquidado,
               observacionAdmin: [
-                credit.observacionAdmin,
+                lockedCredit.observacionAdmin,
                 `Liquidacion anticipada manual. Condonado intereses/fianza ${earlyPayoffInTx.interesFianzaCondonado}.`,
               ]
                 .filter(Boolean)
                 .join("\n"),
+              pazYSalvoEmitidoAt: settlementIssuedAt,
               valorFianza: earlyPayoffInTx.valorFianzaReconocida,
               valorInteres: earlyPayoffInTx.valorInteresReconocido,
             }
+          : paymentCompletesCredit
+            ? {
+                bloqueoMora: false,
+                bloqueoMoraAt: null,
+                estado: resolveCreditState({
+                  pazYSalvoEmitidoAt: settlementIssuedAt,
+                }),
+                fechaProximoPago: null,
+                pazYSalvoEmitidoAt: settlementIssuedAt,
+              }
           : {
               fechaProximoPago: txPlan?.nextInstallment?.fechaVencimiento
                 ? new Date(`${txPlan.nextInstallment.fechaVencimiento}T12:00:00.000Z`)
-                : credit.fechaProximoPago,
+                : lockedCredit.fechaProximoPago,
             },
       });
 
@@ -1027,8 +1142,8 @@ export async function POST(
           valor,
           descripcion: creditCajaDescription({
             id: created.id,
-            creditoFolio: credit.folio,
-            clienteNombre: credit.clienteNombre,
+            creditoFolio: lockedCredit.folio,
+            clienteNombre: lockedCredit.clienteNombre,
             metodoPago,
             observacion: abonoObservation || observacion,
           }),
@@ -1036,8 +1151,33 @@ export async function POST(
         },
       });
 
-      return created;
+      return {
+        finalized: paymentCompletesCredit,
+        payment: created,
+      };
     });
+
+    const payment = paymentResult.payment;
+    let finalizationUnlock: Awaited<
+      ReturnType<typeof processDeviceUnlockCommand>
+    > | null = null;
+
+    if (paymentResult.finalized) {
+      try {
+        const unlockCommand = await enqueueUnlockForCurrentCredit({
+          commandKey: `MANUAL_PAYMENT:${credit.id}:${payment.id}`,
+          creditoId: credit.id,
+          source: earlyPayoffRequested ? "MANUAL_PAYOFF" : "MANUAL_PAYMENT",
+          sourceReference: credit.folio,
+        });
+
+        if (unlockCommand && unlockCommand.status !== "CONFIRMED") {
+          finalizationUnlock = await processDeviceUnlockCommand(unlockCommand.id);
+        }
+      } catch (error) {
+        console.error("ERROR ENCOLANDO DESBLOQUEO DE CREDITO FINALIZADO:", error);
+      }
+    }
 
     const updatedCredit = await loadCredit(credit.id, creditAccessWhere);
     const summary = await loadPaymentSummary(
@@ -1046,8 +1186,16 @@ export async function POST(
       Number((updatedCredit || credit).cuotaInicial || 0)
     );
     const plan = await loadPaymentPlan(updatedCredit || credit);
-    const automation =
-      updatedCredit && plan
+    const automation = paymentResult.finalized
+      ? {
+          action: finalizationUnlock?.confirmed ? "UNLOCKED" : "QUEUED",
+          credit: updatedCredit || credit,
+          message: finalizationUnlock?.confirmed
+            ? "Credito finalizado y desbloqueo confirmado."
+            : "Credito finalizado; el desbloqueo quedo en conciliacion automatica.",
+          remote: null,
+        }
+      : updatedCredit && plan
         ? await syncMoraAutomation(updatedCredit, plan)
         : {
             action: "UNCHANGED" as const,
@@ -1059,8 +1207,8 @@ export async function POST(
     return NextResponse.json({
       ok: true,
       message:
-        summary.saldoPendiente <= 0
-          ? "Abono registrado. El credito quedo sin saldo pendiente."
+        paymentResult.finalized
+          ? "Pago registrado. El credito quedo finalizado y con paz y salvo."
           : automation.action === "UNLOCKED"
             ? "Abono registrado y mora desbloqueada automaticamente."
             : "Abono registrado correctamente.",

@@ -4,6 +4,7 @@ import {
   buildEarlyPayoffIntentMeta,
   buildEarlyPayoffObservation,
   calculateCreditEarlyPayoff,
+  isEarlyPayoffIntentMeta,
 } from "@/lib/credit-early-payoff";
 import { creditCajaDescription, resolveCreditState } from "@/lib/credit-factory";
 import {
@@ -74,6 +75,38 @@ export type WompiEarlyPayoffRepairResult = {
 };
 
 const WOMPI_PAYOFF_REPAIR_MARKER = "REPARACION_LIQUIDACION_WOMPI";
+const WOMPI_DUPLICATE_REVIEW_STATUS =
+  "APPROVED_DUPLICATE_REVIEW_REQUIRED";
+
+class WompiCreditStateConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WompiCreditStateConflictError";
+  }
+}
+
+function hasDuplicateTransactionReview(value: unknown) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      (value as Record<string, unknown>).reviewReason ===
+        "DUPLICATE_APPROVED_TRANSACTION"
+  );
+}
+
+function buildDuplicateTransactionReviewPayload(options: {
+  duplicatePayload: WompiPaymentEventPayload;
+  duplicateTransactionId: string;
+  originalTransactionId: string;
+}) {
+  return {
+    duplicatePayload: options.duplicatePayload,
+    duplicateTransactionId: options.duplicateTransactionId,
+    originalTransactionId: options.originalTransactionId,
+    reviewReason: "DUPLICATE_APPROVED_TRANSACTION",
+  } as Prisma.InputJsonValue;
+}
 
 function parseCuotaNumeros(value: unknown) {
   return (Array.isArray(value) ? value : [])
@@ -93,6 +126,29 @@ function resolveStaleProcessingCutoff() {
 
 function appendObservation(current: string | null, next: string) {
   return [current, next].filter(Boolean).join("\n");
+}
+
+function buildRepairedPayoffPaymentObservation(options: {
+  current: string | null;
+  payoffObservation?: string | null;
+  reference: string;
+}) {
+  const current = String(options.current || "").trim();
+
+  if (/liquidacion anticipada/i.test(current)) {
+    return current;
+  }
+
+  const withoutInstallments = current
+    .replace(/\s+-\s+Cuotas?\s+\d+(?:\s*,\s*\d+)*(?=\s+-|$)/i, "")
+    .trim();
+  const base =
+    withoutInstallments || `Pago Wompi automatico ${options.reference}`;
+  const payoffObservation =
+    String(options.payoffObservation || "").trim() ||
+    `Liquidacion anticipada Wompi ${options.reference}`;
+
+  return [base, payoffObservation].join(" - ");
 }
 
 function wasWompiPayoffFinalized(
@@ -177,24 +233,6 @@ export async function repairProcessedWompiEarlyPayoffIntent(
 
     const intent = await tx.wompiPaymentIntent.findUnique({
       where: { id: intentId },
-      include: {
-        credito: {
-          select: {
-            id: true,
-            fechaPrimerPago: true,
-            fechaProximoPago: true,
-            frecuenciaPago: true,
-            montoCredito: true,
-            observacionAdmin: true,
-            pazYSalvoEmitidoAt: true,
-            plazoMeses: true,
-            saldoBaseFinanciado: true,
-            valorCuota: true,
-            valorFianza: true,
-            valorInteres: true,
-          },
-        },
-      },
     });
 
     if (!intent) {
@@ -219,10 +257,49 @@ export async function repairProcessedWompiEarlyPayoffIntent(
       };
     }
 
-    if (!intent.processedAbonoId || intent.status !== "APPROVED") {
+    if (
+      !intent.processedAbonoId ||
+      ![
+        "APPROVED",
+        "APPROVED_DUPLICATE_REVIEW_REQUIRED",
+      ].includes(intent.status)
+    ) {
       return {
         ...baseResult,
         action: "NOT_PROCESSED" as const,
+      };
+    }
+
+    const lockedCreditRow = await tx.$queryRaw<Array<{ id: number }>>`
+      SELECT "id"
+      FROM "Credito"
+      WHERE "id" = ${intent.creditoId}
+      FOR UPDATE
+    `;
+    const lockedCredit = lockedCreditRow.length
+      ? await tx.credito.findUnique({
+          where: { id: intent.creditoId },
+          select: {
+            fechaPrimerPago: true,
+            fechaProximoPago: true,
+            frecuenciaPago: true,
+            montoCredito: true,
+            observacionAdmin: true,
+            pazYSalvoEmitidoAt: true,
+            plazoMeses: true,
+            saldoBaseFinanciado: true,
+            valorCuota: true,
+            valorFianza: true,
+            valorInteres: true,
+          },
+        })
+      : null;
+
+    if (!lockedCredit) {
+      return {
+        ...baseResult,
+        action: "REVIEW_REQUIRED" as const,
+        reason: "CREDIT_NOT_FOUND",
       };
     }
 
@@ -236,6 +313,7 @@ export async function repairProcessedWompiEarlyPayoffIntent(
       select: {
         fechaAbono: true,
         id: true,
+        observacion: true,
         valor: true,
       },
       orderBy: {
@@ -259,19 +337,19 @@ export async function repairProcessedWompiEarlyPayoffIntent(
       0
     );
     const hasFinalizationMarker = wasWompiPayoffFinalized(
-      intent.credito.observacionAdmin,
+      lockedCredit.observacionAdmin,
       intent.id,
       intent.reference
     );
     const currentBalanceInCents = Math.max(
       0,
-      Math.round((Number(intent.credito.montoCredito || 0) - totalPaid) * 100)
+      Math.round((Number(lockedCredit.montoCredito || 0) - totalPaid) * 100)
     );
 
     if (currentBalanceInCents <= 0) {
-      const issuedAt = intent.credito.pazYSalvoEmitidoAt || new Date();
+      const issuedAt = lockedCredit.pazYSalvoEmitidoAt || new Date();
       const alreadyFinalized = Boolean(
-        hasFinalizationMarker && intent.credito.pazYSalvoEmitidoAt
+        hasFinalizationMarker && lockedCredit.pazYSalvoEmitidoAt
       );
 
       await tx.credito.update({
@@ -282,14 +360,37 @@ export async function repairProcessedWompiEarlyPayoffIntent(
           estado: resolveCreditState({ pazYSalvoEmitidoAt: issuedAt }),
           fechaProximoPago: null,
           observacionAdmin: hasFinalizationMarker
-            ? intent.credito.observacionAdmin
+            ? lockedCredit.observacionAdmin
             : appendObservation(
-                intent.credito.observacionAdmin,
+                lockedCredit.observacionAdmin,
                 `Liquidacion anticipada Wompi ${intent.reference}. ${WOMPI_PAYOFF_REPAIR_MARKER}:${intent.id}.`
               ),
           pazYSalvoEmitidoAt: issuedAt,
         },
       });
+
+      const payoffMeta = isEarlyPayoffIntentMeta(intent.cuotaNumeros)
+        ? intent.cuotaNumeros
+        : null;
+      const repairedObservation = buildRepairedPayoffPaymentObservation({
+        current: processedAbono.observacion,
+        payoffObservation: payoffMeta
+          ? [
+              "Liquidacion anticipada",
+              `Capital pagado hoy ${payoffMeta.capitalPendiente}`,
+              `Saldo anterior ${payoffMeta.saldoObligacion}`,
+              `Condonado intereses/fianza ${payoffMeta.condonacion}`,
+            ].join(" - ")
+          : null,
+        reference: intent.reference,
+      });
+
+      if (repairedObservation !== processedAbono.observacion) {
+        await tx.creditoAbono.update({
+          where: { id: processedAbono.id },
+          data: { observacion: repairedObservation },
+        });
+      }
 
       return {
         ...baseResult,
@@ -303,15 +404,15 @@ export async function repairProcessedWompiEarlyPayoffIntent(
       (item) => item.id !== processedAbono.id
     );
     const earlyPayoff = calculateCreditEarlyPayoff({
-      saldoBaseFinanciado: Number(intent.credito.saldoBaseFinanciado || 0),
-      montoCredito: Number(intent.credito.montoCredito || 0),
-      valorInteres: Number(intent.credito.valorInteres || 0),
-      valorFianza: Number(intent.credito.valorFianza || 0),
-      valorCuota: Number(intent.credito.valorCuota || 0),
-      plazoMeses: Number(intent.credito.plazoMeses || 1),
-      frecuenciaPago: intent.credito.frecuenciaPago,
+      saldoBaseFinanciado: Number(lockedCredit.saldoBaseFinanciado || 0),
+      montoCredito: Number(lockedCredit.montoCredito || 0),
+      valorInteres: Number(lockedCredit.valorInteres || 0),
+      valorFianza: Number(lockedCredit.valorFianza || 0),
+      valorCuota: Number(lockedCredit.valorCuota || 0),
+      plazoMeses: Number(lockedCredit.plazoMeses || 1),
+      frecuenciaPago: lockedCredit.frecuenciaPago,
       fechaPrimerPago:
-        intent.credito.fechaPrimerPago || intent.credito.fechaProximoPago,
+        lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
       today: processedAbono.fechaAbono,
       abonos: previousAbonos.map((item) => ({
         valor: Number(item.valor || 0),
@@ -341,7 +442,7 @@ export async function repairProcessedWompiEarlyPayoffIntent(
       };
     }
 
-    const issuedAt = intent.credito.pazYSalvoEmitidoAt || new Date();
+    const issuedAt = lockedCredit.pazYSalvoEmitidoAt || new Date();
     await tx.credito.update({
       where: { id: intent.creditoId },
       data: {
@@ -351,7 +452,7 @@ export async function repairProcessedWompiEarlyPayoffIntent(
         fechaProximoPago: null,
         montoCredito: earlyPayoff.montoCreditoLiquidado,
         observacionAdmin: appendObservation(
-          intent.credito.observacionAdmin,
+          lockedCredit.observacionAdmin,
           `Liquidacion anticipada Wompi ${intent.reference}. Condonado intereses/fianza ${earlyPayoff.interesFianzaCondonado}. ${WOMPI_PAYOFF_REPAIR_MARKER}:${intent.id}.`
         ),
         pazYSalvoEmitidoAt: issuedAt,
@@ -359,6 +460,18 @@ export async function repairProcessedWompiEarlyPayoffIntent(
         valorInteres: earlyPayoff.valorInteresReconocido,
       },
     });
+    const repairedObservation = buildRepairedPayoffPaymentObservation({
+      current: processedAbono.observacion,
+      payoffObservation: buildEarlyPayoffObservation(earlyPayoff),
+      reference: intent.reference,
+    });
+
+    if (repairedObservation !== processedAbono.observacion) {
+      await tx.creditoAbono.update({
+        where: { id: processedAbono.id },
+        data: { observacion: repairedObservation },
+      });
+    }
     await tx.wompiPaymentIntent.update({
       where: { id: intent.id },
       data: {
@@ -411,7 +524,9 @@ export async function repairRecentProcessedWompiEarlyPayoffs(limit = 200) {
       processedAbonoId: {
         not: null,
       },
-      status: "APPROVED",
+      status: {
+        in: ["APPROVED", "APPROVED_DUPLICATE_REVIEW_REQUIRED"],
+      },
     },
     select: {
       cuotaNumeros: true,
@@ -474,6 +589,7 @@ export async function processApprovedWompiPayment(
           fechaPrimerPago: true,
           fechaProximoPago: true,
           observacionAdmin: true,
+          pazYSalvoEmitidoAt: true,
           usuarioId: true,
           vendedorId: true,
           sedeId: true,
@@ -487,7 +603,39 @@ export async function processApprovedWompiPayment(
     return { applied: false, status: "NOT_FOUND" };
   }
 
-  if (intent.status === "APPROVED" && intent.processedAbonoId) {
+  const receivedTransactionId = String(transaction.id || "").trim();
+  const storedTransactionId = String(intent.transactionId || "").trim();
+
+  if (
+    receivedTransactionId &&
+    storedTransactionId &&
+    receivedTransactionId !== storedTransactionId
+  ) {
+    await prisma.wompiPaymentIntent.update({
+      where: { id: intent.id },
+      data: {
+        ...(intent.processedAbonoId
+          ? { status: WOMPI_DUPLICATE_REVIEW_STATUS }
+          : {}),
+        payload: buildDuplicateTransactionReviewPayload({
+          duplicatePayload: payload,
+          duplicateTransactionId: receivedTransactionId,
+          originalTransactionId: storedTransactionId,
+        }),
+      },
+    });
+
+    return {
+      abonoId: intent.processedAbonoId,
+      alreadyProcessed: Boolean(intent.processedAbonoId),
+      applied: false,
+      intentId: intent.id,
+      reason: "DUPLICATE_APPROVED_TRANSACTION_REQUIRES_REVIEW",
+      status: WOMPI_DUPLICATE_REVIEW_STATUS,
+    };
+  }
+
+  if (intent.processedAbonoId) {
     const repair = isWompiEarlyPayoffIntent(
       intent.cuotaNumeros,
       intent.reference
@@ -510,7 +658,10 @@ export async function processApprovedWompiPayment(
       repairedEarlyPayoff: ["FINALIZED", "REPAIRED"].includes(
         repair?.action || ""
       ),
-      status: "APPROVED",
+      status:
+        intent.status === WOMPI_DUPLICATE_REVIEW_STATUS
+          ? WOMPI_DUPLICATE_REVIEW_STATUS
+          : "APPROVED",
     };
   }
 
@@ -559,7 +710,6 @@ export async function processApprovedWompiPayment(
       transactionId: transaction.id || intent.transactionId,
       paymentMethodType:
         transaction.payment_method_type || intent.paymentMethodType,
-      payload: payload as Prisma.InputJsonValue,
     },
   });
 
@@ -567,10 +717,43 @@ export async function processApprovedWompiPayment(
     const current = await prisma.wompiPaymentIntent.findUnique({
       where: { id: intent.id },
       select: {
+        payload: true,
         processedAbonoId: true,
         status: true,
+        transactionId: true,
       },
     });
+    const currentTransactionId = String(current?.transactionId || "").trim();
+    const duplicateTransaction = Boolean(
+      receivedTransactionId &&
+        currentTransactionId &&
+        receivedTransactionId !== currentTransactionId
+    );
+
+    if (current && duplicateTransaction) {
+      await prisma.wompiPaymentIntent.update({
+        where: { id: intent.id },
+        data: {
+          ...(current.processedAbonoId
+            ? { status: WOMPI_DUPLICATE_REVIEW_STATUS }
+            : {}),
+          payload: buildDuplicateTransactionReviewPayload({
+            duplicatePayload: payload,
+            duplicateTransactionId: receivedTransactionId,
+            originalTransactionId: currentTransactionId,
+          }),
+        },
+      });
+
+      return {
+        abonoId: current.processedAbonoId,
+        alreadyProcessed: Boolean(current.processedAbonoId),
+        applied: false,
+        intentId: intent.id,
+        reason: "DUPLICATE_APPROVED_TRANSACTION_REQUIRES_REVIEW",
+        status: WOMPI_DUPLICATE_REVIEW_STATUS,
+      };
+    }
 
     return {
       abonoId: current?.processedAbonoId || null,
@@ -609,17 +792,45 @@ export async function processApprovedWompiPayment(
   });
 
   if (existingReferencePayment) {
-    await prisma.wompiPaymentIntent.update({
-      where: { id: intent.id },
-      data: {
-        status: "APPROVED",
-        transactionId: transaction.id || intent.transactionId,
-        paymentMethodType:
-          transaction.payment_method_type || intent.paymentMethodType,
-        processedAbonoId: existingReferencePayment.id,
-        payload: payload as Prisma.InputJsonValue,
-        processedAt: new Date(),
-      },
+    const duplicateReviewPending = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: number }>>`
+        SELECT "id"
+        FROM "WompiPaymentIntent"
+        WHERE "id" = ${intent.id}
+        FOR UPDATE
+      `;
+      const current = await tx.wompiPaymentIntent.findUnique({
+        where: { id: intent.id },
+        select: {
+          payload: true,
+          status: true,
+          transactionId: true,
+        },
+      });
+      const duplicateReview = Boolean(
+        current?.status === WOMPI_DUPLICATE_REVIEW_STATUS ||
+          hasDuplicateTransactionReview(current?.payload)
+      );
+
+      await tx.wompiPaymentIntent.update({
+        where: { id: intent.id },
+        data: {
+          status: duplicateReview
+            ? WOMPI_DUPLICATE_REVIEW_STATUS
+            : "APPROVED",
+          transactionId:
+            current?.transactionId || transaction.id || intent.transactionId,
+          paymentMethodType:
+            transaction.payment_method_type || intent.paymentMethodType,
+          processedAbonoId: existingReferencePayment.id,
+          payload: duplicateReview
+            ? (current?.payload as Prisma.InputJsonValue)
+            : (payload as Prisma.InputJsonValue),
+          processedAt: new Date(),
+        },
+      });
+
+      return duplicateReview;
     });
 
     await ensureAndTryApprovedPaymentUnlock({
@@ -634,39 +845,105 @@ export async function processApprovedWompiPayment(
       alreadyProcessed: true,
       applied: false,
       intentId: intent.id,
-      status: "APPROVED",
+      status: duplicateReviewPending
+        ? WOMPI_DUPLICATE_REVIEW_STATUS
+        : "APPROVED",
     };
   }
 
-  const transactionResult = await prisma.$transaction(async (tx) => {
-    const previousAbonos = earlyPayoffIntent
-      ? await tx.creditoAbono.findMany({
-          where: {
-            creditoId: intent.creditoId,
-            estado: {
-              not: "ANULADO",
-            },
-          },
-          select: {
-            valor: true,
-            fechaAbono: true,
-          },
-          orderBy: {
-            fechaAbono: "asc",
-          },
-        })
-      : [];
+  const transactionPromise = prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: number }>>`
+      SELECT "id"
+      FROM "Credito"
+      WHERE "id" = ${intent.creditoId}
+      FOR UPDATE
+    `;
+
+    if (!locked.length) {
+      throw new WompiCreditStateConflictError(
+        "El credito asociado al pago ya no existe."
+      );
+    }
+
+    const lockedCredit = await tx.credito.findUnique({
+      where: { id: intent.creditoId },
+      select: {
+        clienteNombre: true,
+        deviceUid: true,
+        estado: true,
+        fechaPrimerPago: true,
+        fechaProximoPago: true,
+        folio: true,
+        frecuenciaPago: true,
+        id: true,
+        montoCredito: true,
+        observacionAdmin: true,
+        pazYSalvoEmitidoAt: true,
+        plazoMeses: true,
+        saldoBaseFinanciado: true,
+        sedeId: true,
+        usuarioId: true,
+        valorCuota: true,
+        valorFianza: true,
+        valorInteres: true,
+      },
+    });
+
+    if (
+      !lockedCredit ||
+      String(lockedCredit.estado || "").toUpperCase() === "ANULADO" ||
+      lockedCredit.pazYSalvoEmitidoAt
+    ) {
+      throw new WompiCreditStateConflictError(
+        "El credito ya fue finalizado o no admite mas recaudos."
+      );
+    }
+
+    const previousAbonos = await tx.creditoAbono.findMany({
+      where: {
+        creditoId: intent.creditoId,
+        estado: {
+          not: "ANULADO",
+        },
+      },
+      select: {
+        valor: true,
+        fechaAbono: true,
+      },
+      orderBy: {
+        fechaAbono: "asc",
+      },
+    });
+    const currentPlan = buildCreditPaymentPlan({
+      montoCredito: Number(lockedCredit.montoCredito || 0),
+      valorCuota: Number(lockedCredit.valorCuota || 0),
+      plazoMeses: Number(lockedCredit.plazoMeses || 1),
+      frecuenciaPago: lockedCredit.frecuenciaPago,
+      fechaPrimerPago:
+        lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+      abonos: previousAbonos.map((item) => ({
+        valor: Number(item.valor || 0),
+        fechaAbono: item.fechaAbono,
+      })),
+    });
+
+    if (Math.round(currentPlan.saldoPendiente * 100) <= 0) {
+      throw new WompiCreditStateConflictError(
+        "El credito ya no tiene saldo pendiente."
+      );
+    }
+
     const earlyPayoff = earlyPayoffIntent
       ? calculateCreditEarlyPayoff({
-          saldoBaseFinanciado: Number(intent.credito.saldoBaseFinanciado || 0),
-          montoCredito: Number(intent.credito.montoCredito || 0),
-          valorInteres: Number(intent.credito.valorInteres || 0),
-          valorFianza: Number(intent.credito.valorFianza || 0),
-          valorCuota: Number(intent.credito.valorCuota || 0),
-          plazoMeses: Number(intent.credito.plazoMeses || 1),
-          frecuenciaPago: intent.credito.frecuenciaPago,
+          saldoBaseFinanciado: Number(lockedCredit.saldoBaseFinanciado || 0),
+          montoCredito: Number(lockedCredit.montoCredito || 0),
+          valorInteres: Number(lockedCredit.valorInteres || 0),
+          valorFianza: Number(lockedCredit.valorFianza || 0),
+          valorCuota: Number(lockedCredit.valorCuota || 0),
+          plazoMeses: Number(lockedCredit.plazoMeses || 1),
+          frecuenciaPago: lockedCredit.frecuenciaPago,
           fechaPrimerPago:
-            intent.credito.fechaPrimerPago || intent.credito.fechaProximoPago,
+            lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
           abonos: previousAbonos.map((item) => ({
             valor: Number(item.valor || 0),
             fechaAbono: item.fechaAbono,
@@ -675,14 +952,50 @@ export async function processApprovedWompiPayment(
       : null;
 
     if (earlyPayoff && !earlyPayoff.eligible) {
-      throw new Error(earlyPayoff.reason || "La liquidacion anticipada ya no aplica.");
+      throw new WompiCreditStateConflictError(
+        earlyPayoff.reason || "La liquidacion anticipada ya no aplica."
+      );
     }
 
     if (
       earlyPayoff &&
       Math.round(earlyPayoff.capitalPendiente * 100) !== intent.amountInCents
     ) {
-      throw new Error("El valor de liquidacion cambio. Genera un nuevo pago.");
+      throw new WompiCreditStateConflictError(
+        "El valor de liquidacion cambio. Genera un nuevo pago."
+      );
+    }
+
+    if (!earlyPayoff) {
+      const payableNumbers = currentPlan.installments
+        .filter((item) => item.saldoPendiente > 0)
+        .map((item) => item.numero);
+      const maxSelected = cuotas.length ? Math.max(...cuotas) : 0;
+      const expectedNumbers = payableNumbers.filter(
+        (item) => item <= maxSelected
+      );
+      const exactSelection =
+        cuotas.length > 0 &&
+        expectedNumbers.length === cuotas.length &&
+        expectedNumbers.every((item, index) => item === cuotas[index]);
+      const selectedAmountInCents = Math.round(
+        currentPlan.installments
+          .filter((item) => cuotas.includes(item.numero))
+          .reduce(
+            (sum, item) => sum + Math.max(0, Number(item.saldoPendiente || 0)),
+            0
+          ) * 100
+      );
+
+      if (
+        !exactSelection ||
+        selectedAmountInCents <= 0 ||
+        selectedAmountInCents !== intent.amountInCents
+      ) {
+        throw new WompiCreditStateConflictError(
+          "Las cuotas o el saldo cambiaron despues de generar el pago."
+        );
+      }
     }
 
     const paymentObservation = earlyPayoff
@@ -690,21 +1003,21 @@ export async function processApprovedWompiPayment(
           `Pago ${paymentMethod} automatico ${intent.reference}`,
           buildEarlyPayoffObservation(earlyPayoff),
           `Recaudo digital ${digitalSede.nombre}`,
-          `Sede credito ${intent.credito.sedeId}`,
+          `Sede credito ${lockedCredit.sedeId}`,
         ].join(" - ")
       : [
           `Pago ${paymentMethod} automatico ${intent.reference}`,
           `Cuotas ${cuotas.join(", ")}`,
           `Recaudo digital ${digitalSede.nombre}`,
-          `Sede credito ${intent.credito.sedeId}`,
+          `Sede credito ${lockedCredit.sedeId}`,
         ].join(" - ");
     const created = await tx.creditoAbono.create({
       data: {
         creditoId: intent.creditoId,
-        usuarioId: intent.credito.usuarioId,
+        usuarioId: lockedCredit.usuarioId,
         vendedorId: null,
         sedeId: digitalSede.id,
-        valor: intent.amount,
+        valor: intent.amountInCents / 100,
         metodoPago: paymentMethod,
         observacion: paymentObservation,
       },
@@ -728,18 +1041,23 @@ export async function processApprovedWompiPayment(
     const plan = earlyPayoff
       ? null
       : buildCreditPaymentPlan({
-          montoCredito: Number(intent.credito.montoCredito || 0),
-          valorCuota: Number(intent.credito.valorCuota || 0),
-          plazoMeses: Number(intent.credito.plazoMeses || 1),
-          frecuenciaPago: intent.credito.frecuenciaPago,
+          montoCredito: Number(lockedCredit.montoCredito || 0),
+          valorCuota: Number(lockedCredit.valorCuota || 0),
+          plazoMeses: Number(lockedCredit.plazoMeses || 1),
+          frecuenciaPago: lockedCredit.frecuenciaPago,
           fechaPrimerPago:
-            intent.credito.fechaPrimerPago || intent.credito.fechaProximoPago,
+            lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
           abonos: abonos.map((item) => ({
             valor: Number(item.valor || 0),
             fechaAbono: item.fechaAbono,
           })),
         });
-    const payoffIssuedAt = earlyPayoff ? new Date() : null;
+    const paymentCompletesCredit = Boolean(
+      earlyPayoff || (plan && plan.saldoPendiente <= 0)
+    );
+    const payoffIssuedAt = paymentCompletesCredit
+      ? lockedCredit.pazYSalvoEmitidoAt || new Date()
+      : null;
 
     await tx.credito.update({
       where: { id: intent.creditoId },
@@ -753,7 +1071,7 @@ export async function processApprovedWompiPayment(
             fechaProximoPago: null,
             montoCredito: earlyPayoff.montoCreditoLiquidado,
             observacionAdmin: [
-              intent.credito.observacionAdmin,
+              lockedCredit.observacionAdmin,
               `Liquidacion anticipada Wompi ${intent.reference}. Condonado intereses/fianza ${earlyPayoff.interesFianzaCondonado}.`,
             ]
               .filter(Boolean)
@@ -762,37 +1080,77 @@ export async function processApprovedWompiPayment(
             valorFianza: earlyPayoff.valorFianzaReconocida,
             valorInteres: earlyPayoff.valorInteresReconocido,
           }
-        : {
-            fechaProximoPago: plan?.nextInstallment?.fechaVencimiento
-              ? new Date(`${plan.nextInstallment.fechaVencimiento}T12:00:00.000Z`)
-              : intent.credito.fechaProximoPago,
-          },
+        : paymentCompletesCredit
+          ? {
+              bloqueoMora: false,
+              bloqueoMoraAt: null,
+              estado: resolveCreditState({
+                pazYSalvoEmitidoAt: payoffIssuedAt,
+              }),
+              fechaProximoPago: null,
+              observacionAdmin: appendObservation(
+                lockedCredit.observacionAdmin,
+                `Pago total Wompi ${intent.reference}. Paz y salvo emitido.`
+              ),
+              pazYSalvoEmitidoAt: payoffIssuedAt,
+            }
+          : {
+              fechaProximoPago: plan?.nextInstallment?.fechaVencimiento
+                ? new Date(
+                    `${plan.nextInstallment.fechaVencimiento}T12:00:00.000Z`
+                  )
+                : lockedCredit.fechaProximoPago,
+            },
     });
 
     await tx.cajaMovimiento.create({
       data: {
         tipo: "INGRESO",
         concepto: DIGITAL_COLLECTION_CAJA_CONCEPT,
-        valor: intent.amount,
+        valor: intent.amountInCents / 100,
         descripcion: creditCajaDescription({
           id: created.id,
-          creditoFolio: intent.credito.folio,
-          clienteNombre: intent.credito.clienteNombre,
+          creditoFolio: lockedCredit.folio,
+          clienteNombre: lockedCredit.clienteNombre,
           metodoPago: paymentMethod,
-          observacion: `Referencia Wompi ${intent.reference} | Sede credito ${intent.credito.sedeId}`,
+          observacion: `Referencia Wompi ${intent.reference} | Sede credito ${lockedCredit.sedeId}`,
         }),
         sedeId: digitalSede.id,
       },
     });
 
+    await tx.$queryRaw<Array<{ id: number }>>`
+      SELECT "id"
+      FROM "WompiPaymentIntent"
+      WHERE "id" = ${intent.id}
+      FOR UPDATE
+    `;
+    const currentIntentState = await tx.wompiPaymentIntent.findUnique({
+      where: { id: intent.id },
+      select: {
+        payload: true,
+        status: true,
+        transactionId: true,
+      },
+    });
+    const duplicateReviewPending = Boolean(
+      currentIntentState?.status === WOMPI_DUPLICATE_REVIEW_STATUS ||
+        hasDuplicateTransactionReview(currentIntentState?.payload)
+    );
+
     await tx.wompiPaymentIntent.update({
       where: { id: intent.id },
       data: {
-        status: "APPROVED",
-        transactionId: transaction.id || null,
+        status: duplicateReviewPending
+          ? WOMPI_DUPLICATE_REVIEW_STATUS
+          : "APPROVED",
+        transactionId:
+          currentIntentState?.transactionId || transaction.id || null,
         paymentMethodType: transaction.payment_method_type || null,
         processedAbonoId: created.id,
-        payload: payload as Prisma.InputJsonValue,
+        payload: duplicateReviewPending
+          ? (currentIntentState?.payload as Prisma.InputJsonValue)
+          : (payload as Prisma.InputJsonValue),
         processedAt: new Date(),
       },
     });
@@ -803,7 +1161,7 @@ export async function processApprovedWompiPayment(
           client: tx,
           commandKey: `WOMPI:${intent.id}:${created.id}`,
           creditoId: intent.creditoId,
-          deviceUid: intent.credito.deviceUid,
+          deviceUid: lockedCredit.deviceUid,
           source: "WOMPI",
           sourceReference: intent.reference,
         })
@@ -814,6 +1172,63 @@ export async function processApprovedWompiPayment(
       unlockCommandId: unlockCommand?.id || null,
     };
   });
+
+  let transactionResult: Awaited<typeof transactionPromise>;
+
+  try {
+    transactionResult = await transactionPromise;
+  } catch (error) {
+    if (!(error instanceof WompiCreditStateConflictError)) {
+      throw error;
+    }
+
+    const conflictStatus = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: number }>>`
+        SELECT "id"
+        FROM "WompiPaymentIntent"
+        WHERE "id" = ${intent.id}
+        FOR UPDATE
+      `;
+      const current = await tx.wompiPaymentIntent.findUnique({
+        where: { id: intent.id },
+        select: {
+          payload: true,
+          status: true,
+          transactionId: true,
+        },
+      });
+      const duplicateReview = Boolean(
+        current?.status === WOMPI_DUPLICATE_REVIEW_STATUS ||
+          hasDuplicateTransactionReview(current?.payload)
+      );
+      const status = duplicateReview
+        ? WOMPI_DUPLICATE_REVIEW_STATUS
+        : "APPROVED_REVIEW_REQUIRED";
+
+      await tx.wompiPaymentIntent.update({
+        where: { id: intent.id },
+        data: {
+          status,
+          transactionId:
+            current?.transactionId || transaction.id || intent.transactionId,
+          paymentMethodType:
+            transaction.payment_method_type || intent.paymentMethodType,
+          payload: duplicateReview
+            ? (current?.payload as Prisma.InputJsonValue)
+            : (payload as Prisma.InputJsonValue),
+        },
+      });
+
+      return status;
+    });
+
+    return {
+      applied: false,
+      intentId: intent.id,
+      reason: error.message,
+      status: conflictStatus,
+    };
+  }
 
   if (transactionResult.unlockCommandId) {
     try {

@@ -369,6 +369,7 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
         frecuenciaPago: true,
         id: true,
         montoCredito: true,
+        pazYSalvoEmitidoAt: true,
         plazoMeses: true,
         valorCuota: true,
       },
@@ -410,6 +411,7 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
       plazoMeses: credit.plazoMeses,
       today,
       valorCuota: credit.valorCuota,
+      settled: Boolean(credit.pazYSalvoEmitidoAt),
     });
 
     if (plan.saldoPendiente <= 0) continue;

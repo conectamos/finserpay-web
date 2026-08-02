@@ -37,6 +37,14 @@ test("no confunde un pago de cuotas con una liquidacion", () => {
 test("exige que intent, abono y liquidacion coincidan al centavo", () => {
   assert.deepEqual(
     validateWompiEarlyPayoffAmounts({
+      intentAmountInCents: 84_611_092,
+      paymentAmount: 846_110.92,
+      payoffAmount: 846_110.92,
+    }),
+    { reason: null, valid: true }
+  );
+  assert.deepEqual(
+    validateWompiEarlyPayoffAmounts({
       intentAmountInCents: 84_611_100,
       paymentAmount: 846_111,
       payoffAmount: 846_111,

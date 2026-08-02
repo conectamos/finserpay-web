@@ -287,7 +287,8 @@ function buildPlan(
     fechaPrimerPago: Date | null;
     fechaProximoPago: Date | null;
   },
-  abonos: Array<{ valor: number | string; fechaAbono: Date }>
+  abonos: Array<{ valor: number | string; fechaAbono: Date }>,
+  settled = false
 ) {
   return buildCreditPaymentPlan({
     montoCredito: Number(credito.montoCredito || 0),
@@ -299,6 +300,7 @@ function buildPlan(
       valor: Number(item.valor || 0),
       fechaAbono: item.fechaAbono,
     })),
+    settled,
   });
 }
 
@@ -413,7 +415,22 @@ export async function GET(
       const itemTime = item.fechaAbono.getTime();
       return itemTime < abonoTime || (itemTime === abonoTime && item.id <= abono.id);
     });
-    const currentPlan = buildPlan(abono.credito, activeUntilThisPayment);
+    const paymentTotalInCents = Math.round(
+      activeUntilThisPayment.reduce(
+        (sum, item) => sum + Number(item.valor || 0),
+        0
+      ) * 100
+    );
+    const closesCurrentCredit = Boolean(
+      abono.credito.pazYSalvoEmitidoAt &&
+        paymentTotalInCents >=
+          Math.round(Number(abono.credito.montoCredito || 0) * 100)
+    );
+    const currentPlan = buildPlan(
+      abono.credito,
+      activeUntilThisPayment,
+      closesCurrentCredit
+    );
     const isAnnulled = String(abono.estado || "").toUpperCase() === "ANULADO";
     const reciboNumero = `RP-${abono.credito.folio}-${abono.id}`;
     const equipo =

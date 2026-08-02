@@ -57,19 +57,73 @@ function selectTransactionByReference(
 }
 
 export async function reconcileWompiIntent(
-  intent: WompiIntentSnapshot
+  intent: WompiIntentSnapshot,
+  options: { auditProcessedReference?: boolean } = {}
 ): Promise<WompiReconciliationResult> {
-  if (intent.status === "APPROVED" && intent.processedAbonoId) {
+  if (intent.processedAbonoId) {
     const repair = await repairProcessedWompiEarlyPayoffIntent(intent.id);
+
+    if (!options.auditProcessedReference) {
+      return {
+        abonoId: intent.processedAbonoId,
+        alreadyProcessed: true,
+        applied: false,
+        intentId: intent.id,
+        reference: intent.reference,
+        repairedEarlyPayoff: ["FINALIZED", "REPAIRED"].includes(
+          repair.action
+        ),
+        status: intent.status,
+        transactionId: intent.transactionId,
+      };
+    }
+
+    const transactions = await fetchWompiTransactionsByReference(
+      intent.reference
+    );
+    const approvedTransactions = transactions.filter(
+      (transaction) =>
+        sanitizeText(transaction.reference) === intent.reference &&
+        normalizeStatus(transaction.status) === "APPROVED" &&
+        sanitizeText(transaction.id)
+    );
+    const storedTransactionId = sanitizeText(intent.transactionId);
+    const duplicateTransactions = storedTransactionId
+      ? approvedTransactions.filter(
+          (transaction) =>
+            sanitizeText(transaction.id) !== storedTransactionId
+        )
+      : approvedTransactions.slice(1);
+    let duplicateResult: WompiPaymentProcessingResult | null = null;
+
+    if (!storedTransactionId && approvedTransactions.length >= 1) {
+      await prisma.wompiPaymentIntent.updateMany({
+        where: {
+          id: intent.id,
+          transactionId: null,
+        },
+        data: {
+          transactionId: sanitizeText(approvedTransactions[0].id) || null,
+        },
+      });
+    }
+
+    for (const duplicate of duplicateTransactions) {
+      duplicateResult = await processApprovedWompiPayment(
+        duplicate,
+        buildStatusPayload(duplicate)
+      );
+    }
 
     return {
       abonoId: intent.processedAbonoId,
       alreadyProcessed: true,
-      applied: true,
+      applied: false,
       intentId: intent.id,
       reference: intent.reference,
       repairedEarlyPayoff: ["FINALIZED", "REPAIRED"].includes(repair.action),
-      status: "APPROVED",
+      reason: duplicateResult?.reason,
+      status: duplicateResult?.status || intent.status,
       transactionId: intent.transactionId,
     };
   }
@@ -168,45 +222,75 @@ export async function reconcilePendingWompiPayments(limit = 25) {
   const safeLimit = Math.min(Math.max(Math.trunc(limit) || 25, 1), 50);
   const payoffRepairs = await repairRecentProcessedWompiEarlyPayoffs(200);
   const checkoutFallbackCutoff = new Date(Date.now() - 1000 * 60 * 60 * 24 * 14);
-  const intents = await prisma.wompiPaymentIntent.findMany({
-    where: {
-      processedAbonoId: null,
-      OR: [
-        {
-          transactionId: {
-            not: null,
+  const processedAuditCutoff = new Date(
+    Date.now() - 1000 * 60 * 60 * 24 * 90
+  );
+  const [pendingIntents, processedIntents] = await Promise.all([
+    prisma.wompiPaymentIntent.findMany({
+      where: {
+        processedAbonoId: null,
+        OR: [
+          {
+            transactionId: {
+              not: null,
+            },
           },
-        },
-        {
-          createdAt: {
-            gte: checkoutFallbackCutoff,
+          {
+            createdAt: {
+              gte: checkoutFallbackCutoff,
+            },
+            transactionId: null,
           },
-          transactionId: null,
+        ],
+        status: {
+          notIn: ["AMOUNT_MISMATCH", "DECLINED", "ERROR", "VOIDED"],
         },
-      ],
-      status: {
-        notIn: ["AMOUNT_MISMATCH", "DECLINED", "ERROR", "VOIDED"],
       },
-    },
-    select: {
-      id: true,
-      processedAbonoId: true,
-      reference: true,
-      status: true,
-      transactionId: true,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-    take: safeLimit,
-  });
+      select: {
+        id: true,
+        processedAbonoId: true,
+        reference: true,
+        status: true,
+        transactionId: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: safeLimit,
+    }),
+    prisma.wompiPaymentIntent.findMany({
+      where: {
+        createdAt: { gte: processedAuditCutoff },
+        processedAbonoId: { not: null },
+        status: {
+          in: ["APPROVED", "APPROVED_DUPLICATE_REVIEW_REQUIRED"],
+        },
+      },
+      select: {
+        id: true,
+        processedAbonoId: true,
+        reference: true,
+        status: true,
+        transactionId: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: safeLimit,
+    }),
+  ]);
+  const intents = [...pendingIntents, ...processedIntents];
 
   const results: WompiReconciliationResult[] = [];
   const errors: Array<{ error: string; reference: string }> = [];
 
   for (const intent of intents) {
     try {
-      results.push(await reconcileWompiIntent(intent));
+      results.push(
+        await reconcileWompiIntent(intent, {
+          auditProcessedReference: Boolean(intent.processedAbonoId),
+        })
+      );
     } catch (error) {
       console.error("ERROR CONCILIANDO PAGO WOMPI:", {
         error,

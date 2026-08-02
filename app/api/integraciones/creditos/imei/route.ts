@@ -191,6 +191,7 @@ export async function GET(req: Request) {
         fechaPrimerPago: true,
         fechaProximoPago: true,
         estado: true,
+        pazYSalvoEmitidoAt: true,
         deliverableReady: true,
         contratoSnapshot: true,
         sede: {
@@ -239,6 +240,7 @@ export async function GET(req: Request) {
             valor: Number(item.valor || 0),
             fechaAbono: item.fechaAbono,
           })),
+          settled: Boolean(credit.pazYSalvoEmitidoAt),
         });
 
         return { credit, plan };

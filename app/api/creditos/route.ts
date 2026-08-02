@@ -316,6 +316,7 @@ function serializeCredit(
     frecuenciaPago: item.frecuenciaPago,
     fechaPrimerPago: item.fechaPrimerPago || item.fechaProximoPago,
     abonos: payment.totalAbonado > 0 ? [{ valor: payment.totalAbonado }] : [],
+    settled: Boolean(item.pazYSalvoEmitidoAt),
   });
   const earlyPayoff = calculateCreditEarlyPayoff({
     saldoBaseFinanciado: Number(item.saldoBaseFinanciado || 0),

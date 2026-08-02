@@ -13,11 +13,13 @@ import {
   CircleUserRound,
   Clock3,
   CreditCard,
+  Download,
   Headphones,
   Home,
   LockKeyhole,
   UserRound,
 } from "lucide-react";
+import { FINSER_PAY_SUPPORT_DISPLAY } from "@/lib/support";
 
 type ClientInstallment = {
   numero: number;
@@ -108,6 +110,8 @@ declare global {
 }
 
 const STORAGE_KEY = "finserpay.cliente.documento";
+const NEW_CREDIT_SUPPORT_MESSAGE =
+  "Hola, equipo de FINSER PAY 👋 Finalicé mi crédito y quiero solicitar uno nuevo. ¿Podrían orientarme, por favor?";
 
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -786,6 +790,11 @@ export default function ClienteConsultaPage() {
   const canSubmit = !loading;
   const firstName = activeCredit ? getFirstName(activeCredit.clienteNombre) : "";
   const paymentReference = activeCredit?.clienteDocumento || activeDocumento || documento;
+  const pazYSalvoHref = activeCredit
+    ? `/api/clientes/creditos/${activeCredit.id}/paz-y-salvo?documento=${encodeURIComponent(
+        paymentReference
+      )}`
+    : "#";
   const lastHistoryPayment = activeCredit?.abonos[0] || null;
   const historyPaymentCount = activeCredit?.abonos.length || 0;
   const historyPaymentCountLabel = `${historyPaymentCount} ${
@@ -1140,7 +1149,9 @@ export default function ClienteConsultaPage() {
                     <p className="mt-4 text-[21px] font-medium text-white/58">
                       {isPaidCredit ? (
                         <span className="font-black text-[#A8F34A]">
-                          Paz y salvo emitido
+                          {activeCredit.pazYSalvoEmitidoAt
+                            ? "Paz y salvo emitido"
+                            : "Paz y salvo disponible"}
                         </span>
                       ) : (
                         <>
@@ -1155,35 +1166,69 @@ export default function ClienteConsultaPage() {
                 </div>
 
                 <div className="relative z-10 mt-6 text-center">
-                  <button
-                    type="button"
-                    onClick={() => openWompiConfirm(activeCredit)}
-                    disabled={!payable.length || payingCreditId === activeCredit.id}
-                    className="mx-auto inline-flex min-h-[64px] w-full max-w-[308px] items-center justify-center gap-5 rounded-full bg-[#A8F34A] px-6 text-[22px] font-black text-[#0D1112] shadow-[0_18px_44px_rgba(168,243,74,0.34)] transition active:scale-[0.98] disabled:bg-white/18 disabled:text-white/45"
-                  >
-                    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#0D1112] text-[#A8F34A]">
-                      <CreditCard className="h-7 w-7" />
-                    </span>
-                    {payingCreditId === activeCredit.id
-                      ? "Abriendo"
-                      : isPaidCredit
-                        ? "Credito liquidado"
-                        : "Pagar ahora"}
-                  </button>
+                  {isPaidCredit ? (
+                    <div className="mx-auto grid w-full max-w-[330px] gap-3">
+                      <a
+                        href={pazYSalvoHref}
+                        download
+                        aria-label="Descargar paz y salvo del credito"
+                        className="inline-flex min-h-[62px] w-full items-center justify-center gap-4 rounded-full bg-[#A8F34A] px-5 text-[19px] font-black text-[#0D1112] shadow-[0_18px_44px_rgba(168,243,74,0.28)] transition active:scale-[0.98]"
+                      >
+                        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#0D1112] text-[#A8F34A]">
+                          <Download className="h-6 w-6" aria-hidden="true" />
+                        </span>
+                        Descargar paz y salvo
+                      </a>
 
-                  {canPayToday && activePayoff ? (
-                    <button
-                      type="button"
-                      onClick={() => openWompiConfirm(activeCredit, "PAYOFF")}
-                      disabled={payingCreditId === activeCredit.id}
-                      className="mt-5 min-h-11 text-[16px] font-medium text-white/54 underline decoration-[#A8F34A] decoration-dotted underline-offset-4 disabled:opacity-50"
-                    >
-                      Liquidar por{" "}
-                      <span className="font-black text-[#A8F34A]">
-                        {money(activePayoff.capitalPendiente)}
-                      </span>
-                    </button>
-                  ) : null}
+                      <FinserSupportLink
+                        supportMessage={NEW_CREDIT_SUPPORT_MESSAGE}
+                        supportAriaLabel="Solicitar un nuevo credito por WhatsApp"
+                        className="inline-flex min-h-[62px] w-full items-center justify-center gap-4 rounded-full border border-white/22 bg-white/8 px-5 text-left text-white transition active:scale-[0.98] active:bg-white/12"
+                      >
+                        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white text-[#0D1112]">
+                          <Headphones className="h-6 w-6" aria-hidden="true" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[18px] font-black leading-tight">
+                            Solicitar nuevo crédito
+                          </span>
+                          <span className="mt-0.5 block text-[13px] font-semibold text-white/58">
+                            WhatsApp {FINSER_PAY_SUPPORT_DISPLAY}
+                          </span>
+                        </span>
+                      </FinserSupportLink>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => openWompiConfirm(activeCredit)}
+                        disabled={!payable.length || payingCreditId === activeCredit.id}
+                        className="mx-auto inline-flex min-h-[64px] w-full max-w-[308px] items-center justify-center gap-5 rounded-full bg-[#A8F34A] px-6 text-[22px] font-black text-[#0D1112] shadow-[0_18px_44px_rgba(168,243,74,0.34)] transition active:scale-[0.98] disabled:bg-white/18 disabled:text-white/45"
+                      >
+                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#0D1112] text-[#A8F34A]">
+                          <CreditCard className="h-7 w-7" />
+                        </span>
+                        {payingCreditId === activeCredit.id
+                          ? "Abriendo"
+                          : "Pagar ahora"}
+                      </button>
+
+                      {canPayToday && activePayoff ? (
+                        <button
+                          type="button"
+                          onClick={() => openWompiConfirm(activeCredit, "PAYOFF")}
+                          disabled={payingCreditId === activeCredit.id}
+                          className="mt-5 min-h-11 text-[16px] font-medium text-white/54 underline decoration-[#A8F34A] decoration-dotted underline-offset-4 disabled:opacity-50"
+                        >
+                          Liquidar por{" "}
+                          <span className="font-black text-[#A8F34A]">
+                            {money(activePayoff.capitalPendiente)}
+                          </span>
+                        </button>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               </section>
 

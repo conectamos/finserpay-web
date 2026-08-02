@@ -10,6 +10,7 @@ import { getSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
+import { isWompiEarlyPayoffIntent } from "@/lib/wompi-early-payoff-intent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,6 +62,20 @@ export async function PATCH(
     const motivo = sanitizeText(body.motivo) || "Anulacion administrativa";
 
     const result = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: number }>>`
+        SELECT "id"
+        FROM "Credito"
+        WHERE "id" = ${creditId}
+        FOR UPDATE
+      `;
+
+      if (!locked.length) {
+        return {
+          status: 404 as const,
+          body: { error: "Recaudo no encontrado" },
+        };
+      }
+
       const abono = await tx.creditoAbono.findFirst({
         where: {
           id: abonoId,
@@ -79,6 +94,7 @@ export async function PATCH(
               frecuenciaPago: true,
               fechaPrimerPago: true,
               fechaProximoPago: true,
+              pazYSalvoEmitidoAt: true,
               sedeId: true,
               sede: {
                 select: {
@@ -111,6 +127,37 @@ export async function PATCH(
         return {
           status: 400 as const,
           body: { error: "Este recaudo ya fue anulado" },
+        };
+      }
+
+      const linkedWompiIntent = await tx.wompiPaymentIntent.findFirst({
+        where: {
+          processedAbonoId: abono.id,
+          status: "APPROVED",
+        },
+        select: {
+          cuotaNumeros: true,
+          reference: true,
+        },
+      });
+      const isFinalSettlement =
+        Boolean(abono.credito.pazYSalvoEmitidoAt) ||
+        /liquidacion anticipada/i.test(String(abono.observacion || "")) ||
+        Boolean(
+          linkedWompiIntent &&
+            isWompiEarlyPayoffIntent(
+              linkedWompiIntent.cuotaNumeros,
+              linkedWompiIntent.reference
+            )
+        );
+
+      if (isFinalSettlement) {
+        return {
+          status: 409 as const,
+          body: {
+            error:
+              "Un recaudo de un credito finalizado no se puede anular sin una reversa financiera auditada",
+          },
         };
       }
 
@@ -256,6 +303,20 @@ export async function DELETE(
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: number }>>`
+        SELECT "id"
+        FROM "Credito"
+        WHERE "id" = ${creditId}
+        FOR UPDATE
+      `;
+
+      if (!locked.length) {
+        return {
+          status: 404 as const,
+          body: { error: "Recaudo no encontrado" },
+        };
+      }
+
       const abono = await tx.creditoAbono.findFirst({
         where: {
           id: abonoId,
@@ -274,6 +335,7 @@ export async function DELETE(
               frecuenciaPago: true,
               fechaPrimerPago: true,
               fechaProximoPago: true,
+              pazYSalvoEmitidoAt: true,
             },
           },
         },
@@ -283,6 +345,37 @@ export async function DELETE(
         return {
           status: 404 as const,
           body: { error: "Recaudo no encontrado" },
+        };
+      }
+
+      const linkedWompiIntent = await tx.wompiPaymentIntent.findFirst({
+        where: {
+          processedAbonoId: abono.id,
+          status: "APPROVED",
+        },
+        select: {
+          cuotaNumeros: true,
+          reference: true,
+        },
+      });
+      const isFinalSettlement =
+        Boolean(abono.credito.pazYSalvoEmitidoAt) ||
+        /liquidacion anticipada/i.test(String(abono.observacion || "")) ||
+        Boolean(
+          linkedWompiIntent &&
+            isWompiEarlyPayoffIntent(
+              linkedWompiIntent.cuotaNumeros,
+              linkedWompiIntent.reference
+            )
+        );
+
+      if (isFinalSettlement) {
+        return {
+          status: 409 as const,
+          body: {
+            error:
+              "Un recaudo de un credito finalizado no se puede eliminar sin una reversa financiera auditada",
+          },
         };
       }
 

@@ -161,6 +161,7 @@ export async function getAdminDashboardOverview({
         frecuenciaPago: true,
         id: true,
         montoCredito: true,
+        pazYSalvoEmitidoAt: true,
         plazoMeses: true,
         sede: {
           select: {
@@ -193,6 +194,7 @@ export async function getAdminDashboardOverview({
       plazoMeses: credit.plazoMeses,
       today,
       valorCuota: credit.valorCuota,
+      settled: Boolean(credit.pazYSalvoEmitidoAt),
     });
     const overdueInstallments = plan.installments.filter(
       (installment) => installment.estaEnMora && installment.saldoPendiente > 0

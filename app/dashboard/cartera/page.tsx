@@ -252,6 +252,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
         fechaPrimerPago: credito.fechaPrimerPago,
         abonos: credito.abonos,
         today,
+        settled: Boolean(credito.pazYSalvoEmitidoAt),
       });
       const overdueInstallments = plan.installments.filter(
         (installment) => installment.estaEnMora && installment.saldoPendiente > 0
@@ -323,10 +324,15 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   const respaldoDetail = selectedAliado
     ? `${percent(selectedAliado.redescuentoPorcentaje)} de inversion`
     : "Segun porcentaje por aliado";
-  const totalGananciaBruta = activeCredits.reduce(
+  const gananciaProyectadaActiva = activeCredits.reduce(
     (sum, item) => sum + item.gananciaProyectada,
     0
   );
+  const gananciaReconocida = paidCredits.reduce(
+    (sum, item) => sum + item.gananciaProyectada,
+    0
+  );
+  const totalGananciaBruta = gananciaProyectadaActiva + gananciaReconocida;
   const totalGastosOperacion = gastosOperacion.reduce(
     (sum, item) => sum + Number(item.valor || 0),
     0
@@ -497,7 +503,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             value={percent(pctRecuperado)}
           />
           <MetricCard
-            detail={`${money(totalGastosOperacion)} en gastos`}
+            detail={`${money(gananciaReconocida)} reconocida · ${money(totalGastosOperacion)} en gastos`}
             icon={Landmark}
             label="Ganancia estimada"
             tone="gold"

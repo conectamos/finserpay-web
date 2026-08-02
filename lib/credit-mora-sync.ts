@@ -328,6 +328,7 @@ export async function syncCreditMora(
       valor: Number(item.valor || 0),
       fechaAbono: item.fechaAbono,
     })),
+    settled: Boolean(credit.pazYSalvoEmitidoAt),
     today,
   });
   const isInMora = plan.estadoPago === "MORA";

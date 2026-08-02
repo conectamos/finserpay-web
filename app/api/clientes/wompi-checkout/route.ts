@@ -40,6 +40,23 @@ function parseInstallmentNumbers(value: CheckoutBody["cuotaNumeros"]) {
   ].sort((a, b) => a - b);
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(
+        ([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`
+      )
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value) ?? "null";
+}
+
 function buildAbsoluteUrl(req: Request, path: string) {
   const origin =
     process.env.NEXT_PUBLIC_APP_URL ||
@@ -260,7 +277,209 @@ export async function POST(req: Request) {
       );
     }
 
-    const reference = generateWompiReference(credit.id, referenceLabel);
+    const generatedReference = generateWompiReference(
+      credit.id,
+      referenceLabel
+    );
+    const intentResolution = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: number }>>`
+        SELECT "id"
+        FROM "Credito"
+        WHERE "id" = ${credit.id}
+        FOR UPDATE
+      `;
+      const lockedCredit = locked.length
+        ? await tx.credito.findUnique({
+            where: { id: credit.id },
+            select: {
+              estado: true,
+              fechaPrimerPago: true,
+              fechaProximoPago: true,
+              frecuenciaPago: true,
+              montoCredito: true,
+              pazYSalvoEmitidoAt: true,
+              plazoMeses: true,
+              saldoBaseFinanciado: true,
+              valorCuota: true,
+              valorFianza: true,
+              valorInteres: true,
+            },
+          })
+        : null;
+
+      if (
+        !lockedCredit ||
+        String(lockedCredit.estado || "").toUpperCase() === "ANULADO" ||
+        lockedCredit.pazYSalvoEmitidoAt
+      ) {
+        return { kind: "CLOSED" as const };
+      }
+
+      const lockedAbonos = await tx.creditoAbono.findMany({
+        where: {
+          creditoId: credit.id,
+          estado: { not: "ANULADO" },
+        },
+        select: {
+          fechaAbono: true,
+          valor: true,
+        },
+        orderBy: {
+          fechaAbono: "asc",
+        },
+      });
+      const lockedPlan = buildCreditPaymentPlan({
+        montoCredito: Number(lockedCredit.montoCredito || 0),
+        valorCuota: Number(lockedCredit.valorCuota || 0),
+        plazoMeses: Number(lockedCredit.plazoMeses || 1),
+        frecuenciaPago: lockedCredit.frecuenciaPago,
+        fechaPrimerPago:
+          lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+        abonos: lockedAbonos.map((item) => ({
+          valor: Number(item.valor || 0),
+          fechaAbono: item.fechaAbono,
+        })),
+      });
+
+      if (wantsEarlyPayoff) {
+        const lockedEarlyPayoff = calculateCreditEarlyPayoff({
+          saldoBaseFinanciado: Number(
+            lockedCredit.saldoBaseFinanciado || 0
+          ),
+          montoCredito: Number(lockedCredit.montoCredito || 0),
+          valorInteres: Number(lockedCredit.valorInteres || 0),
+          valorFianza: Number(lockedCredit.valorFianza || 0),
+          valorCuota: Number(lockedCredit.valorCuota || 0),
+          plazoMeses: Number(lockedCredit.plazoMeses || 1),
+          frecuenciaPago: lockedCredit.frecuenciaPago,
+          fechaPrimerPago:
+            lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+          abonos: lockedAbonos.map((item) => ({
+            valor: Number(item.valor || 0),
+            fechaAbono: item.fechaAbono,
+          })),
+        });
+
+        if (
+          !lockedEarlyPayoff.eligible ||
+          Math.round(lockedEarlyPayoff.capitalPendiente * 100) !==
+            amountInCents
+        ) {
+          return { kind: "STALE" as const };
+        }
+      } else {
+        const payableNumbers = lockedPlan.installments
+          .filter((item) => item.saldoPendiente > 0)
+          .map((item) => item.numero);
+        const maxSelected = cuotaNumeros.length
+          ? Math.max(...cuotaNumeros)
+          : 0;
+        const expectedNumbers = payableNumbers.filter(
+          (item) => item <= maxSelected
+        );
+        const exactSelection =
+          cuotaNumeros.length > 0 &&
+          expectedNumbers.length === cuotaNumeros.length &&
+          expectedNumbers.every(
+            (item, index) => item === cuotaNumeros[index]
+          );
+        const lockedAmountInCents = Math.round(
+          lockedPlan.installments
+            .filter((item) => cuotaNumeros.includes(item.numero))
+            .reduce(
+              (sum, item) =>
+                sum + Math.max(0, Number(item.saldoPendiente || 0)),
+              0
+            ) * 100
+        );
+
+        if (!exactSelection || lockedAmountInCents !== amountInCents) {
+          return { kind: "STALE" as const };
+        }
+      }
+
+      const activeIntents = await tx.wompiPaymentIntent.findMany({
+        where: {
+          creditoId: credit.id,
+          amountInCents,
+          currency: "COP",
+          processedAbonoId: null,
+          status: {
+            in: [
+              "APPROVED",
+              "CHECKOUT_FALLBACK",
+              "CREATING_NEQUI",
+              "PENDING",
+              "PROCESSING_APPROVED",
+            ],
+          },
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+        take: 20,
+      });
+      const purpose = canonicalJson(intentCuotaNumeros);
+      const reusable = activeIntents.find(
+        (candidate) =>
+          canonicalJson(candidate.cuotaNumeros) === purpose &&
+          (wantsNequiDirect
+            ? candidate.status === "CREATING_NEQUI" ||
+              candidate.paymentMethodType === "NEQUI"
+            : candidate.status !== "CREATING_NEQUI" &&
+              candidate.paymentMethodType !== "NEQUI")
+      );
+
+      if (reusable) {
+        return {
+          kind: "READY" as const,
+          paymentIntent: reusable,
+          reused: true,
+        };
+      }
+
+      const paymentIntent = await tx.wompiPaymentIntent.create({
+        data: {
+          reference: generatedReference,
+          creditoId: credit.id,
+          cuotaNumeros: intentCuotaNumeros,
+          amount,
+          amountInCents,
+          currency: "COP",
+          customerEmail:
+            sanitizeText(credit.clienteCorreo) ||
+            resolveCustomerEmail(credit.clienteCorreo, credit.clienteDocumento),
+          customerDocument: credit.clienteDocumento,
+          status: wantsNequiDirect ? "CREATING_NEQUI" : "PENDING",
+        },
+      });
+
+      return {
+        kind: "READY" as const,
+        paymentIntent,
+        reused: false,
+      };
+    });
+
+    if (intentResolution.kind === "CLOSED") {
+      return NextResponse.json(
+        { error: "Este credito ya fue liquidado y no admite mas pagos" },
+        { status: 409 }
+      );
+    }
+
+    if (intentResolution.kind === "STALE") {
+      return NextResponse.json(
+        {
+          error:
+            "El saldo cambio mientras se preparaba el pago. Consulta nuevamente el credito.",
+        },
+        { status: 409 }
+      );
+    }
+
+    const { paymentIntent, reused } = intentResolution;
+    const reference = paymentIntent.reference;
     const redirectUrl = buildAbsoluteUrl(
       req,
       `/clientes?credito=${credit.id}&wompiReference=${encodeURIComponent(reference)}`
@@ -271,19 +490,6 @@ export async function POST(req: Request) {
       credit.clienteDocumento
     );
     const customerPhone = nequiPhone || sanitizeText(credit.clienteTelefono) || undefined;
-
-    const paymentIntent = await prisma.wompiPaymentIntent.create({
-      data: {
-        reference,
-        creditoId: credit.id,
-        cuotaNumeros: intentCuotaNumeros,
-        amount,
-        amountInCents,
-        currency: "COP",
-        customerEmail: storedCustomerEmail || customerEmail,
-        customerDocument: credit.clienteDocumento,
-      },
-    });
 
     const buildCheckoutResponse = async (directError?: string) => {
       if (directError) {
@@ -345,6 +551,35 @@ export async function POST(req: Request) {
         { status }
       );
     };
+
+    if (
+      reused &&
+      ["APPROVED", "PROCESSING_APPROVED"].includes(paymentIntent.status)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Este pago ya fue aprobado y esta terminando su conciliacion.",
+          reference,
+          status: paymentIntent.status,
+        },
+        { status: 409 }
+      );
+    }
+
+    if (wantsNequiDirect && reused) {
+      return NextResponse.json({
+        ok: true,
+        amount,
+        amountInCents,
+        paymentMode: "NEQUI_DIRECT",
+        reference,
+        reused: true,
+        status: paymentIntent.status,
+        statusMessage: null,
+        transactionId: paymentIntent.transactionId,
+      });
+    }
 
     if (wantsNequiDirect && isWompiDirectApiConfigured()) {
       try {

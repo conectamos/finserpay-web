@@ -3,7 +3,10 @@ import path from "node:path";
 import SftpClient from "ssh2-sftp-client";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
-import { creditCajaDescription } from "@/lib/credit-factory";
+import {
+  creditCajaDescription,
+  resolveCreditState,
+} from "@/lib/credit-factory";
 import { syncCreditMora } from "@/lib/credit-mora-sync";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import {
@@ -11,6 +14,10 @@ import {
   ensureDigitalCollectionSede,
 } from "@/lib/digital-collection-sede";
 import prisma from "@/lib/prisma";
+import {
+  enqueueUnlockForCurrentCredit,
+  processDeviceUnlockCommand,
+} from "@/lib/device-unlock-queue";
 
 const DEFAULT_REMOTE_DIR = "/Salida";
 const DEFAULT_VALID_COMPANIES = ["FINSERPAY"];
@@ -692,18 +699,121 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
   }
 
   const digitalSede = await ensureDigitalCollectionSede();
-  const abono = await prisma.$transaction(async (tx) => {
+  const application = await prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: number }>>`
+      SELECT "id"
+      FROM "Credito"
+      WHERE "id" = ${credit.id}
+      FOR UPDATE
+    `;
+    const lockedImports = await tx.$queryRaw<EfectyImportRow[]>`
+      SELECT id, status, message, "abonoId"
+      FROM "EfectyRecaudoImport"
+      WHERE id = ${importLine.id}
+      FOR UPDATE
+    `;
+    const lockedImport = lockedImports[0] || null;
+
+    if (
+      !lockedImport ||
+      lockedImport.status !== "PROCESANDO" ||
+      lockedImport.abonoId
+    ) {
+      return {
+        abonoId: lockedImport?.abonoId || null,
+        kind: "DUPLICATE" as const,
+        message: lockedImport?.message || "Recaudo Efecty ya procesado.",
+      };
+    }
+
+    const lockedCredit = locked.length
+      ? await tx.credito.findUnique({
+          where: { id: credit.id },
+          select: {
+            clienteNombre: true,
+            estado: true,
+            fechaPrimerPago: true,
+            fechaProximoPago: true,
+            folio: true,
+            frecuenciaPago: true,
+            id: true,
+            montoCredito: true,
+            pazYSalvoEmitidoAt: true,
+            plazoMeses: true,
+            sedeId: true,
+            usuarioId: true,
+            valorCuota: true,
+          },
+        })
+      : null;
+    const previousAbonos = lockedCredit
+      ? await tx.creditoAbono.findMany({
+          where: {
+            creditoId: lockedCredit.id,
+            estado: { not: "ANULADO" },
+          },
+          select: {
+            fechaAbono: true,
+            valor: true,
+          },
+          orderBy: {
+            fechaAbono: "asc",
+          },
+        })
+      : [];
+    const currentPlan = lockedCredit
+      ? buildCreditPaymentPlan({
+          montoCredito: Number(lockedCredit.montoCredito || 0),
+          valorCuota: Number(lockedCredit.valorCuota || 0),
+          plazoMeses: Number(lockedCredit.plazoMeses || 1),
+          frecuenciaPago: lockedCredit.frecuenciaPago,
+          fechaPrimerPago:
+            lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+          abonos: previousAbonos.map((abonoItem) => ({
+            valor: Number(abonoItem.valor || 0),
+            fechaAbono: abonoItem.fechaAbono,
+          })),
+        })
+      : null;
+    const balanceInCents = currentPlan
+      ? Math.max(0, Math.round(currentPlan.saldoPendiente * 100))
+      : 0;
+
+    if (
+      !lockedCredit ||
+      String(lockedCredit.estado || "").toUpperCase() === "ANULADO" ||
+      lockedCredit.pazYSalvoEmitidoAt ||
+      balanceInCents <= 0 ||
+      Math.round(item.value * 100) > balanceInCents
+    ) {
+      const message =
+        "El saldo del credito cambio antes de aplicar el recaudo Efecty.";
+
+      await tx.$executeRaw`
+        UPDATE "EfectyRecaudoImport"
+        SET status = 'VALOR_SUPERA_SALDO',
+            message = ${message},
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE id = ${importLine.id}
+      `;
+
+      return {
+        kind: "REJECTED" as const,
+        message,
+      };
+    }
+
     const observation = [
       `Pago EFECTY automatico ${item.paymentKey}`,
       `Archivo ${sourceFile} linea ${item.lineNumber}`,
       `Referencia ${item.reference}`,
       `Recaudo digital ${digitalSede.nombre}`,
-      `Sede credito ${credit.sedeId}`,
+      `Sede credito ${lockedCredit.sedeId}`,
     ].join(" - ");
     const created = await tx.creditoAbono.create({
       data: {
-        creditoId: credit.id,
-        usuarioId: credit.usuarioId,
+        creditoId: lockedCredit.id,
+        usuarioId: lockedCredit.usuarioId,
         vendedorId: null,
         sedeId: digitalSede.id,
         valor: item.value,
@@ -714,7 +824,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
     });
     const abonos = await tx.creditoAbono.findMany({
       where: {
-        creditoId: credit.id,
+        creditoId: lockedCredit.id,
         estado: {
           not: "ANULADO",
         },
@@ -728,24 +838,37 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
       },
     });
     const plan = buildCreditPaymentPlan({
-      montoCredito: Number(credit.montoCredito || 0),
-      valorCuota: Number(credit.valorCuota || 0),
-      plazoMeses: Number(credit.plazoMeses || 1),
-      frecuenciaPago: credit.frecuenciaPago,
-      fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+      montoCredito: Number(lockedCredit.montoCredito || 0),
+      valorCuota: Number(lockedCredit.valorCuota || 0),
+      plazoMeses: Number(lockedCredit.plazoMeses || 1),
+      frecuenciaPago: lockedCredit.frecuenciaPago,
+      fechaPrimerPago:
+        lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
       abonos: abonos.map((abonoItem) => ({
         valor: Number(abonoItem.valor || 0),
         fechaAbono: abonoItem.fechaAbono,
       })),
     });
+    const finalized = Math.round(plan.saldoPendiente * 100) <= 0;
+    const issuedAt = finalized ? new Date() : null;
 
     await tx.credito.update({
-      where: { id: credit.id },
-      data: {
-        fechaProximoPago: plan.nextInstallment?.fechaVencimiento
-          ? new Date(`${plan.nextInstallment.fechaVencimiento}T12:00:00.000Z`)
-          : credit.fechaProximoPago,
-      },
+      where: { id: lockedCredit.id },
+      data: finalized
+        ? {
+            bloqueoMora: false,
+            bloqueoMoraAt: null,
+            estado: resolveCreditState({ pazYSalvoEmitidoAt: issuedAt }),
+            fechaProximoPago: null,
+            pazYSalvoEmitidoAt: issuedAt,
+          }
+        : {
+            fechaProximoPago: plan.nextInstallment?.fechaVencimiento
+              ? new Date(
+                  `${plan.nextInstallment.fechaVencimiento}T12:00:00.000Z`
+                )
+              : lockedCredit.fechaProximoPago,
+          },
     });
 
     await tx.cajaMovimiento.create({
@@ -755,10 +878,10 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
         valor: item.value,
         descripcion: creditCajaDescription({
           id: created.id,
-          creditoFolio: credit.folio,
-          clienteNombre: credit.clienteNombre,
+          creditoFolio: lockedCredit.folio,
+          clienteNombre: lockedCredit.clienteNombre,
           metodoPago: "EFECTY",
-          observacion: `Referencia Efecty ${item.reference} | Archivo ${sourceFile} | Sede credito ${credit.sedeId}`,
+          observacion: `Referencia Efecty ${item.reference} | Archivo ${sourceFile} | Sede credito ${lockedCredit.sedeId}`,
         }),
         sedeId: digitalSede.id,
       },
@@ -768,14 +891,66 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
       UPDATE "EfectyRecaudoImport"
       SET status = 'APLICADO',
           message = 'Abono aplicado automaticamente',
-          "creditoId" = ${credit.id},
+          "creditoId" = ${lockedCredit.id},
           "abonoId" = ${created.id},
           "updatedAt" = CURRENT_TIMESTAMP
       WHERE id = ${importLine.id}
     `;
 
-    return created;
+    return {
+      abono: created,
+      finalized,
+      kind: "APPLIED" as const,
+    };
   });
+
+  if (application.kind === "REJECTED") {
+    return {
+      action: "VALOR_SUPERA_SALDO",
+      empresa: item.company,
+      file: sourceFile,
+      lineNumber: item.lineNumber,
+      message: application.message,
+      referencia: item.reference,
+      value: item.value,
+    } satisfies EfectyLineResult;
+  }
+
+  if (application.kind === "DUPLICATE") {
+    return {
+      abonoId: application.abonoId,
+      action: "DUPLICADO",
+      empresa: item.company,
+      file: sourceFile,
+      lineNumber: item.lineNumber,
+      message: application.message,
+      referencia: item.reference,
+      value: item.value,
+    } satisfies EfectyLineResult;
+  }
+
+  const abono = application.abono;
+
+  if (application.finalized) {
+    try {
+      const unlockCommand = await enqueueUnlockForCurrentCredit({
+        commandKey: `EFECTY:${importLine.id}:${abono.id}`,
+        creditoId: credit.id,
+        source: "EFECTY",
+        sourceReference: item.paymentKey,
+      });
+
+      if (unlockCommand && unlockCommand.status !== "CONFIRMED") {
+        await processDeviceUnlockCommand(unlockCommand.id);
+      }
+    } catch (error) {
+      console.error(
+        `[efecty-unlock] El credito ${credit.id} quedo pagado; el desbloqueo sigue en cola:`,
+        error
+      );
+    }
+  }
+
   const updatedCredit = await loadCreditForMora(credit.id);
 
   if (updatedCredit) {

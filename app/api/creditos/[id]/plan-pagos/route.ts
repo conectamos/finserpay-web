@@ -93,6 +93,7 @@ export async function GET(
         valor: Number(item.valor || 0),
         fechaAbono: item.fechaAbono,
       })),
+      settled: Boolean(credito.pazYSalvoEmitidoAt),
     });
     const buffer = await buildCreditPaymentPlanPdf({
       folio: credito.folio,
@@ -103,7 +104,7 @@ export async function GET(
       fechaGeneracion: new Date(),
       valorCuota: Number(credito.valorCuota || 0),
       frecuencia: getPaymentFrequencyLabel(credito.frecuenciaPago),
-      saldoContractual: Math.max(0, Number(credito.montoCredito || 0) - plan.totalPaid),
+      saldoContractual: plan.saldoPendiente,
       referenciaEfecty: credito.clienteDocumento || credito.folio,
       convenioEfecty: EFECTY_CONVENIO_FINSER_PAY,
       plan,
