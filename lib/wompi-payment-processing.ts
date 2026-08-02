@@ -69,6 +69,8 @@ export type WompiEarlyPayoffRepairResult = {
   reason?: string;
   reference?: string;
   transactionId?: string | null;
+  unlockReason?: string;
+  unlockStatus?: string;
 };
 
 const WOMPI_PAYOFF_REPAIR_MARKER = "REPARACION_LIQUIDACION_WOMPI";
@@ -120,7 +122,9 @@ async function ensureAndTryApprovedPaymentUnlock(options: {
   });
 
   if (!command || command.status === "CONFIRMED") {
-    return;
+    return {
+      status: command?.status || "NOT_ENQUEUED",
+    };
   }
 
   try {
@@ -132,11 +136,21 @@ async function ensureAndTryApprovedPaymentUnlock(options: {
         result.reason
       );
     }
+
+    return {
+      reason: result.reason,
+      status: result.status,
+    };
   } catch (error) {
     console.error(
       `[wompi-unlock] La orden ${command.id} quedo en cola para reintento:`,
       error
     );
+
+    return {
+      reason: error instanceof Error ? error.message : "Error desconocido",
+      status: "RETRY",
+    };
   }
 }
 
@@ -360,12 +374,16 @@ export async function repairProcessedWompiEarlyPayoffIntent(
     };
   });
 
+  let unlockResult: Awaited<
+    ReturnType<typeof ensureAndTryApprovedPaymentUnlock>
+  > | null = null;
+
   if (
     result.abonoId &&
     result.creditoId &&
     ["ALREADY_FINALIZED", "FINALIZED", "REPAIRED"].includes(result.action)
   ) {
-    await ensureAndTryApprovedPaymentUnlock({
+    unlockResult = await ensureAndTryApprovedPaymentUnlock({
       abonoId: result.abonoId,
       creditoId: result.creditoId,
       intentId,
@@ -373,7 +391,13 @@ export async function repairProcessedWompiEarlyPayoffIntent(
     });
   }
 
-  return result;
+  return unlockResult
+    ? {
+        ...result,
+        unlockReason: unlockResult.reason,
+        unlockStatus: unlockResult.status,
+      }
+    : result;
 }
 
 export async function repairRecentProcessedWompiEarlyPayoffs(limit = 200) {
