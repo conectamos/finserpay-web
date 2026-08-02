@@ -14,6 +14,8 @@ import {
   Clock3,
   CreditCard,
   Download,
+  ExternalLink,
+  FileText,
   Gem,
   Headphones,
   Home,
@@ -30,6 +32,7 @@ export type PaidCreditPanel = "payments" | "pending" | "history" | null;
 export type PaidCreditDashboardCredit = {
   id: number;
   folio: string;
+  clienteDocumento: string | null;
   referenciaEquipo: string | null;
   imei?: string | null;
   deviceUid?: string | null;
@@ -84,6 +87,21 @@ const confetti: Array<CSSProperties> = [
 
 function money(value: number) {
   return moneyFormatter.format(Math.round(Number(value || 0)));
+}
+
+function paymentReceiptHref(
+  creditId: number,
+  paymentId: number,
+  clientDocument: string | null,
+  download = false
+) {
+  const search = new URLSearchParams({
+    documento: clientDocument || "",
+  });
+
+  if (download) search.set("download", "1");
+
+  return `/api/clientes/creditos/${creditId}/abonos/${paymentId}/recibo?${search.toString()}`;
 }
 
 function shortDate(value: string | null | undefined) {
@@ -432,24 +450,64 @@ export default function PaidCreditDashboard({
               {activePanel === "history" ? (
                 <div className="mt-4 grid gap-2">
                   {credit.abonos.length ? (
-                    credit.abonos.map((payment) => (
-                      <div
-                        key={payment.id}
-                        className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-[var(--fp-radius-md)] border border-[#e1e5e8] bg-white px-3 py-3"
-                      >
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-black text-[#171a1d]">
-                            {payment.metodoPago}
-                          </span>
-                          <span className="mt-1 block text-xs font-medium text-[#69727b]">
-                            {shortDate(payment.fechaAbono)} · Pago confirmado
-                          </span>
-                        </span>
-                        <span className="text-sm font-black text-[#171a1d]">
-                          {money(payment.valor)}
-                        </span>
-                      </div>
-                    ))
+                    credit.abonos.map((payment) => {
+                      const receiptHref = paymentReceiptHref(
+                        credit.id,
+                        payment.id,
+                        credit.clienteDocumento
+                      );
+                      const receiptDownloadHref = paymentReceiptHref(
+                        credit.id,
+                        payment.id,
+                        credit.clienteDocumento,
+                        true
+                      );
+                      const receiptDescription = `${payment.metodoPago}, ${shortDate(payment.fechaAbono)}, ${money(payment.valor)}`;
+
+                      return (
+                        <article
+                          key={payment.id}
+                          className="overflow-hidden rounded-[var(--fp-radius-md)] border border-[#e1e5e8] bg-white"
+                        >
+                          <div className="grid grid-cols-[1fr_auto] items-center gap-3 px-3 py-3">
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-black text-[#171a1d]">
+                                {payment.metodoPago}
+                              </span>
+                              <span className="mt-1 block text-xs font-medium text-[#69727b]">
+                                {shortDate(payment.fechaAbono)} · Pago confirmado
+                              </span>
+                            </span>
+                            <span className="text-sm font-black text-[#171a1d]">
+                              {money(payment.valor)}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 border-t border-[#e7eaed]">
+                            <a
+                              href={receiptHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label={`Ver recibo del pago: ${receiptDescription}`}
+                              className="inline-flex min-h-12 items-center justify-center gap-2 border-r border-[#e7eaed] px-2 text-xs font-black text-[#315f0f] transition hover:bg-[#f6faef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#4b8b14]"
+                            >
+                              <FileText className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
+                              Ver recibo
+                              <ExternalLink className="h-3.5 w-3.5" strokeWidth={2.1} aria-hidden="true" />
+                            </a>
+                            <a
+                              href={receiptDownloadHref}
+                              download
+                              aria-label={`Descargar recibo del pago: ${receiptDescription}`}
+                              className="inline-flex min-h-12 items-center justify-center gap-2 px-2 text-xs font-black text-[#171a1d] transition hover:bg-[#f6faef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#4b8b14]"
+                            >
+                              <Download className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
+                              Descargar
+                            </a>
+                          </div>
+                        </article>
+                      );
+                    })
                   ) : (
                     <p className="rounded-[var(--fp-radius-md)] bg-white px-3 py-4 text-sm font-medium text-[#66717b]">
                       No hay pagos registrados.

@@ -1,22 +1,18 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
-import FinserSupportLink from "@/app/_components/finser-support-link";
+import ClientActiveCreditDashboard from "@/app/clientes/client-active-credit-dashboard";
+import ClientCreditPanel, {
+  type ClientCreditPanelName,
+} from "@/app/clientes/client-credit-panel";
 import ClientLoginScreen from "@/app/clientes/client-login-screen";
 import PaidCreditDashboard from "@/app/clientes/paid-credit-dashboard";
 import {
-  Bell,
-  CalendarDays,
-  ChevronRight,
   CircleUserRound,
   Clock3,
   CreditCard,
-  Download,
-  Headphones,
   Home,
 } from "lucide-react";
-import { FINSER_PAY_SUPPORT_DISPLAY } from "@/lib/support";
 
 type ClientInstallment = {
   numero: number;
@@ -95,7 +91,7 @@ type PaymentReturnNotice = {
   checkedAt?: string | null;
 };
 
-type ExplorerPanel = "payments" | "pending" | "history" | null;
+type ExplorerPanel = ClientCreditPanelName | null;
 type ClientPaymentMode = "INSTALLMENTS" | "PAYOFF";
 
 declare global {
@@ -118,13 +114,6 @@ const moneyFormatter = new Intl.NumberFormat("es-CO", {
 
 function money(value: number) {
   return moneyFormatter.format(Math.round(Number(value || 0)));
-}
-
-function dateLabel(value: string | null | undefined) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
 }
 
 function normalizeDocument(value: string) {
@@ -181,28 +170,6 @@ function getFirstName(value: string) {
   return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
 }
 
-function stateLabel(estado: ClientCredit["estadoPago"]) {
-  if (estado === "AL_DIA") return "Al dia";
-  if (estado === "PAGADO") return "Pagado";
-  return "En mora";
-}
-
-function stateClasses(estado: ClientCredit["estadoPago"]) {
-  if (estado === "MORA") return "bg-[#fff1ed] text-[#b63b20]";
-  if (estado === "PAGADO") return "bg-[#e8f7ef] text-[#087a4f]";
-  return "bg-[#e8f7fb] text-[#087989]";
-}
-
-function installmentLabel(item: ClientInstallment) {
-  if (item.saldoPendiente <= 0) return "Pagada";
-  if (item.estaEnMora) return "Atrasada";
-  return "Pendiente";
-}
-
-function installmentAmount(item: ClientInstallment) {
-  return item.saldoPendiente > 0 ? item.saldoPendiente : item.valorProgramado;
-}
-
 function installmentsAmount(items: ClientInstallment[]) {
   return items.reduce((total, item) => total + Math.max(0, item.saldoPendiente), 0);
 }
@@ -250,119 +217,10 @@ function maskedImeiLabel(value?: string | null) {
   return `IMEI terminado en ${normalized.slice(-4)}`;
 }
 
-function creditStatusText(status: ClientCredit["estadoPago"]) {
-  if (status === "MORA") return "Credito en mora";
-  if (status === "PAGADO") return "Credito pagado";
-  return "Credito al dia";
-}
-
-function compactDateLabel(value?: string | null) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return new Intl.DateTimeFormat("es-CO", {
-    day: "2-digit",
-    month: "short",
-  })
-    .format(date)
-    .replace(".", "")
-    .toUpperCase();
-}
-
-function AppLogo({ large = false }: { large?: boolean }) {
-  if (!large) {
-    return (
-      <div
-        aria-label="FINSER PAY"
-        className="flex items-baseline text-[24px] font-black leading-none tracking-[0.05em] text-white"
-      >
-        <span>FINSER</span>
-        <span className="ml-2 text-[#A8F34A]">PAY</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex justify-center">
-      <Image
-        src="/branding/finserpay-logo.jpg"
-        alt="FINSER PAY"
-        width={180}
-        height={64}
-        className="h-auto w-44 object-contain"
-      />
-    </div>
-  );
-}
-
-function PrimaryButton({
-  children,
-  disabled,
-  onClick,
-  type = "button",
-}: {
-  children: React.ReactNode;
-  disabled?: boolean;
-  onClick?: () => void;
-  type?: "button" | "submit";
-}) {
-  return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-[#a7e66f] px-5 py-3 text-sm font-black text-[#102316] shadow-[0_10px_20px_rgba(111,194,70,0.22)] transition active:scale-[0.99] disabled:bg-[#d9dde4] disabled:text-[#7e8490] disabled:shadow-none"
-    >
-      {children}
-    </button>
-  );
-}
-
-function SectionTitle({
-  title,
-  aside,
-}: {
-  title: string;
-  aside?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <h2 className="text-lg font-black text-[#171b22]">{title}</h2>
-      {aside ? <div className="shrink-0">{aside}</div> : null}
-    </div>
-  );
-}
-
-function EfectyLogo() {
-  return (
-    <div className="flex h-11 w-24 items-center justify-center rounded-md bg-[#f6d313] text-[18px] font-black italic text-[#1d2b57]">
-      efecty
-    </div>
-  );
-}
-
-function BancolombiaLogo() {
-  return (
-    <div className="flex h-11 items-center gap-2 text-[#222]">
-      <span className="grid h-8 w-8 gap-1">
-        <span className="block h-2 w-7 -rotate-12 rounded-sm bg-[#222]" />
-        <span className="block h-2 w-7 -rotate-12 rounded-sm bg-[#222]" />
-        <span className="block h-2 w-7 -rotate-12 rounded-sm bg-[#222]" />
-      </span>
-      <span className="text-[22px] font-black tracking-normal">Bancolombia</span>
-    </div>
-  );
-}
-
-function WompiLogo() {
-  return (
-    <div className="flex h-11 items-center gap-2">
-      <span className="grid h-9 w-9 place-items-center rounded-md bg-[#6b35ff] text-sm font-black text-white">
-        W
-      </span>
-      <span className="text-[22px] font-black text-[#171b22]">Wompi</span>
-    </div>
-  );
+function maskedDocumentLabel(value?: string | null) {
+  const normalized = String(value || "").replace(/\D/g, "");
+  if (!normalized) return "Documento no registrado";
+  return `Documento terminado en ${normalized.slice(-4)}`;
 }
 
 export default function ClienteConsultaPage() {
@@ -472,6 +330,7 @@ export default function ClienteConsultaPage() {
     const panelFromUrl = normalizePanel(
       params.get("panel") || params.get("focus") || params.get("accion")
     );
+    const targetPanel = wompiReference ? panelFromUrl || "payments" : panelFromUrl;
 
     if (wompiReference) {
       setPaymentReturn({
@@ -483,7 +342,7 @@ export default function ClienteConsultaPage() {
 
     if (nextDocument) {
       setDocumento(nextDocument);
-      void consultar(nextDocument, true, creditFromUrl, panelFromUrl);
+      void consultar(nextDocument, true, creditFromUrl, targetPanel);
     }
   }, [consultar]);
 
@@ -712,6 +571,14 @@ export default function ClienteConsultaPage() {
             }
           : current
       );
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo verificar el pago en Wompi",
+        tone: "red",
+      });
     } finally {
       setRefreshingPayment(false);
     }
@@ -765,25 +632,11 @@ export default function ClienteConsultaPage() {
   const paidCount = activeCredit ? getPaidInstallments(activeCredit).length : 0;
   const payable = activeCredit ? getPayableInstallments(activeCredit) : [];
   const totalCount = activeCredit?.cuotas.length || 0;
-  const progress = totalCount ? Math.round((paidCount / totalCount) * 100) : 0;
   const nextInstallment = payable[0] || null;
-  const overdueInstallments = payable.filter((item) => item.estaEnMora);
-  const upcomingInstallments = payable.filter((item) => !item.estaEnMora);
-  const nextUpcomingInstallment = upcomingInstallments[0] || null;
-  const futureInstallments = upcomingInstallments.slice(1);
-  const pendingAmount = installmentsAmount(payable);
-  const overdueAmount = installmentsAmount(overdueInstallments);
-  const selectedInstallments = activeCredit ? cuotasSeleccionadas(activeCredit) : [];
-  const selectedAmount = installmentsAmount(selectedInstallments);
-  const selectedPaymentLabel = installmentsRangeLabel(selectedInstallments);
   const selectedPaymentLimit =
     activeCredit && nextInstallment
       ? selectedLimit[activeCredit.id] || nextInstallment.numero
       : 0;
-  const selectedPaymentIndex = payable.findIndex(
-    (item) => item.numero === selectedPaymentLimit
-  );
-  const selectedPaymentStep = selectedPaymentIndex >= 0 ? selectedPaymentIndex : 0;
   const firstName = activeCredit ? getFirstName(activeCredit.clienteNombre) : "";
   const paymentReference = activeCredit?.clienteDocumento || activeDocumento || documento;
   const pazYSalvoHref = activeCredit
@@ -792,12 +645,6 @@ export default function ClienteConsultaPage() {
       )}`
     : "#";
   const lastHistoryPayment = activeCredit?.abonos[0] || null;
-  const historyPaymentCount = activeCredit?.abonos.length || 0;
-  const historyPaymentCountLabel = `${historyPaymentCount} ${
-    historyPaymentCount === 1 ? "pago" : "pagos"
-  }`;
-  const historyTotalPaid = activeCredit?.totalPagado || 0;
-  const historyBalance = activeCredit?.saldoPendiente ?? pendingAmount;
   const confirmCredit =
     items.find((item) => item.id === confirmPaymentCreditId) || null;
   const confirmInstallments = confirmCredit ? cuotasSeleccionadas(confirmCredit) : [];
@@ -820,14 +667,6 @@ export default function ClienteConsultaPage() {
   const profileInitials = activeCredit
     ? clientInitials(activeCredit.clienteNombre)
     : "FP";
-  const nextDueLabel = nextInstallment
-    ? compactDateLabel(nextInstallment.fechaVencimiento)
-    : "-";
-  const lastPaymentDateLabel = lastHistoryPayment
-    ? compactDateLabel(lastHistoryPayment.fechaAbono)
-    : "Sin pagos";
-  const progressCircle = 2 * Math.PI * 72;
-  const progressOffset = progressCircle - (progressCircle * Math.min(progress, 100)) / 100;
 
   if (!items.length) {
     return (
@@ -860,907 +699,179 @@ export default function ClienteConsultaPage() {
   }
 
   return (
-    <main
+    <div
       id="cliente-dashboard"
       className="min-h-[100svh] overflow-x-hidden bg-[#F4F3EE] text-[#111317]"
     >
-      <div className="mx-auto min-h-[100svh] w-full max-w-[430px] bg-[#F4F3EE] px-5 pb-[calc(126px+env(safe-area-inset-bottom))] pt-[calc(18px+env(safe-area-inset-top))] shadow-[0_0_60px_rgba(13,17,18,0.16)]">
-        <header className="-mx-5 -mt-[calc(18px+env(safe-area-inset-top))] flex items-center justify-between gap-4 bg-[#0D1112] px-6 pb-0 pt-[calc(18px+env(safe-area-inset-top))]">
-          <AppLogo />
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              aria-label="Notificaciones"
-              onClick={() => openPanel("history")}
-              className="relative grid h-11 w-11 place-items-center rounded-full text-white active:bg-white/10"
-            >
-              <Bell className="h-7 w-7 stroke-[2.1]" />
-              <span className="absolute right-2 top-2 h-3 w-3 rounded-full bg-[#A8F34A] shadow-[0_0_14px_rgba(168,243,74,0.8)]" />
-            </button>
-            <button
-              type="button"
-              aria-label="Cambiar cliente"
-              onClick={forgetDocument}
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/10 text-[16px] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] active:bg-white/15"
-            >
-              {profileInitials}
-            </button>
-          </div>
-        </header>
-
-        <div>
-          {notice ? (
-            <div
-              className={[
-                "mt-4 rounded-lg border px-4 py-3 text-sm font-bold",
-                notice.tone === "emerald"
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                  : "border-red-200 bg-red-50 text-red-700",
-              ].join(" ")}
-            >
-              {notice.text}
-            </div>
-          ) : null}
-
-          {paymentReturn ? (
-            <section className="mt-4 rounded-lg border border-[#dfece0] bg-white p-4 shadow-sm">
-              <div className="grid grid-cols-[38px_1fr] gap-3">
-                <span className="grid h-9 w-9 place-items-center rounded-md bg-[#f1fbeb] text-sm font-black text-[#3f7d2d]">
-                  W
-                </span>
-                <div className="min-w-0">
-                  <p className="text-sm font-black text-[#171b22]">
-                    Pago enviado a validacion
-                  </p>
-                  <p className="mt-1 text-xs font-bold leading-5 text-[#6d7480]">
-                    La app esta validando Wompi automaticamente. Cuando el pago
-                    quede aprobado, tus cuotas e historial se actualizaran aqui.
-                  </p>
-                  <p className="mt-2 truncate text-[11px] font-black uppercase text-[#8a919d]">
-                    Ref. {paymentReturn.reference}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-3 grid grid-cols-[1fr_auto] items-center gap-3">
-                <p className="min-w-0 truncate text-xs font-bold text-[#7d8490]">
-                  {paymentReturn.checkedAt
-                    ? `Ultima revision ${new Date(
-                        paymentReturn.checkedAt
-                      ).toLocaleTimeString("es-CO", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}`
-                    : "La app revisara automaticamente."}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void refreshPaymentStatus()}
-                  disabled={refreshingPayment || loading}
-                  className="min-h-10 rounded-lg bg-[#a7e66f] px-3 text-xs font-black text-[#102316] disabled:bg-[#d9dde4] disabled:text-[#7e8490]"
-                >
-                  {refreshingPayment ? "Revisando" : "Revisar ahora"}
-                </button>
-              </div>
-            </section>
-          ) : null}
-
-          {activeCredit ? (
-            <>
-              <section className="-mx-5 bg-[#0D1112] px-6 pb-2 pt-4">
-                <h1 className="text-[27px] font-medium leading-tight text-white/68">
-                  Hola, {firstName}
-                </h1>
-                <span
-                  className={[
-                    "mt-2 inline-flex min-h-10 items-center gap-3 text-[18px] font-medium",
-                    activeCredit.estadoPago === "MORA"
-                      ? "text-red-200"
-                      : "text-[#A8F34A]",
-                  ].join(" ")}
-                >
-                  <span
-                    className={[
-                      "h-4 w-4 rounded-full",
-                      activeCredit.estadoPago === "MORA"
-                        ? "bg-red-400 shadow-[0_0_18px_rgba(248,113,113,0.55)]"
-                        : "bg-[#A8F34A] shadow-[0_0_18px_rgba(168,243,74,0.75)]",
-                    ].join(" ")}
-                  />
-                  {creditStatusText(activeCredit.estadoPago)}
-                </span>
-              </section>
-
-              <section className="-mx-5 overflow-hidden rounded-b-[42px] bg-[#0D1112] px-6 pb-10 pt-4 text-white shadow-[0_20px_44px_rgba(13,17,18,0.22)]">
-                <div className="grid grid-cols-[minmax(140px,0.9fr)_minmax(0,1fr)] items-center gap-3">
-                  <div className="relative mx-auto h-[146px] w-[146px] min-[400px]:h-[158px] min-[400px]:w-[158px]">
-                    <svg
-                      viewBox="0 0 168 168"
-                      className="h-full w-full -rotate-90"
-                      aria-hidden="true"
-                    >
-                      <circle
-                        cx="84"
-                        cy="84"
-                        r="72"
-                        fill="none"
-                        stroke="rgba(255,255,255,0.13)"
-                        strokeWidth="12"
-                      />
-                      <circle
-                        cx="84"
-                        cy="84"
-                        r="72"
-                        fill="none"
-                        stroke="#A8F34A"
-                        strokeLinecap="round"
-                        strokeWidth="12"
-                        strokeDasharray={progressCircle}
-                        strokeDashoffset={progressOffset}
-                        className="drop-shadow-[0_0_14px_rgba(168,243,74,0.55)]"
-                      />
-                    </svg>
-                    <div className="absolute inset-0 grid place-items-center text-center">
-                      <div>
-                        <p className="font-serif text-[56px] leading-none tracking-[-0.04em] text-[#fbfaf5]">
-                          {progress}
-                          <span className="ml-1 font-sans text-[23px]">%</span>
-                        </p>
-                        <p className="mt-2 text-[18px] font-semibold text-white/58">
-                          {paidCount} de {totalCount} cuotas
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="text-[14px] font-semibold uppercase tracking-[0.05em] text-white/42">
-                      {isPaidCredit ? "Saldo pendiente" : "Proxima cuota"}
-                    </p>
-                    <p className="mt-3 whitespace-nowrap font-serif text-[42px] leading-none tracking-normal text-[#fbfaf5] min-[400px]:text-[46px]">
-                      {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
-                    </p>
-                    <p className="mt-4 text-[21px] font-medium text-white/58">
-                      {isPaidCredit ? (
-                        <span className="font-black text-[#A8F34A]">
-                          {activeCredit.pazYSalvoEmitidoAt
-                            ? "Paz y salvo emitido"
-                            : "Paz y salvo disponible"}
-                        </span>
-                      ) : (
-                        <>
-                          Vence{" "}
-                          <span className="font-black text-[#A8F34A]">
-                            {nextDueLabel.toLowerCase()}
-                          </span>
-                        </>
-                      )}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="relative z-10 mt-6 text-center">
-                  {isPaidCredit ? (
-                    <div className="mx-auto grid w-full max-w-[330px] gap-3">
-                      <a
-                        href={pazYSalvoHref}
-                        download
-                        aria-label="Descargar paz y salvo del credito"
-                        className="inline-flex min-h-[62px] w-full items-center justify-center gap-4 rounded-full bg-[#A8F34A] px-5 text-[19px] font-black text-[#0D1112] shadow-[0_18px_44px_rgba(168,243,74,0.28)] transition active:scale-[0.98]"
-                      >
-                        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#0D1112] text-[#A8F34A]">
-                          <Download className="h-6 w-6" aria-hidden="true" />
-                        </span>
-                        Descargar paz y salvo
-                      </a>
-
-                      <FinserSupportLink
-                        supportMessage={NEW_CREDIT_SUPPORT_MESSAGE}
-                        supportAriaLabel="Solicitar un nuevo credito por WhatsApp"
-                        className="inline-flex min-h-[62px] w-full items-center justify-center gap-4 rounded-full border border-white/22 bg-white/8 px-5 text-left text-white transition active:scale-[0.98] active:bg-white/12"
-                      >
-                        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white text-[#0D1112]">
-                          <Headphones className="h-6 w-6" aria-hidden="true" />
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block text-[18px] font-black leading-tight">
-                            Solicitar nuevo crédito
-                          </span>
-                          <span className="mt-0.5 block text-[13px] font-semibold text-white/58">
-                            WhatsApp {FINSER_PAY_SUPPORT_DISPLAY}
-                          </span>
-                        </span>
-                      </FinserSupportLink>
-                    </div>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => openWompiConfirm(activeCredit)}
-                        disabled={!payable.length || payingCreditId === activeCredit.id}
-                        className="mx-auto inline-flex min-h-[64px] w-full max-w-[308px] items-center justify-center gap-5 rounded-full bg-[#A8F34A] px-6 text-[22px] font-black text-[#0D1112] shadow-[0_18px_44px_rgba(168,243,74,0.34)] transition active:scale-[0.98] disabled:bg-white/18 disabled:text-white/45"
-                      >
-                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#0D1112] text-[#A8F34A]">
-                          <CreditCard className="h-7 w-7" />
-                        </span>
-                        {payingCreditId === activeCredit.id
-                          ? "Abriendo"
-                          : "Pagar ahora"}
-                      </button>
-
-                      {canPayToday && activePayoff ? (
-                        <button
-                          type="button"
-                          onClick={() => openWompiConfirm(activeCredit, "PAYOFF")}
-                          disabled={payingCreditId === activeCredit.id}
-                          className="mt-5 min-h-11 text-[16px] font-medium text-white/54 underline decoration-[#A8F34A] decoration-dotted underline-offset-4 disabled:opacity-50"
-                        >
-                          Liquidar por{" "}
-                          <span className="font-black text-[#A8F34A]">
-                            {money(activePayoff.capitalPendiente)}
-                          </span>
-                        </button>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              </section>
-
-              {items.length > 1 ? (
-                <section className="-mt-10 mb-7">
-                  <div className="flex gap-3 overflow-x-auto pb-1">
-                    {items.map((credit, index) => {
-                      const isActive = credit.id === activeCredit.id;
-                      const creditPaid = getPaidInstallments(credit).length;
-                      const creditTotal = credit.cuotas.length;
-                      const creditNext = getPayableInstallments(credit)[0] || null;
-
-                      return (
-                        <button
-                          key={credit.id}
-                          type="button"
-                          onClick={() => selectCredit(credit.id)}
-                          className={[
-                            "grid min-h-[74px] min-w-[210px] grid-cols-[1fr_auto] gap-3 rounded-[22px] px-4 py-3 text-left transition active:scale-[0.99]",
-                            isActive
-                              ? "bg-[#0D1112] text-white"
-                              : "bg-white/70 text-[#171b22]",
-                          ].join(" ")}
-                        >
-                          <span className="min-w-0">
-                            <span className="block text-[11px] font-black uppercase tracking-[0.12em] text-[#A8F34A]">
-                              Credito {index + 1}
-                            </span>
-                            <span className="mt-1 block truncate text-sm font-black">
-                              {creditTitle(credit)}
-                            </span>
-                            <span className="mt-1 block truncate text-xs font-semibold opacity-65">
-                              {maskedImeiLabel(credit.imei || credit.deviceUid)}
-                            </span>
-                          </span>
-                          <span className="shrink-0 text-right">
-                            <span
-                              className={[
-                                "inline-flex rounded-full px-2.5 py-1 text-[11px] font-black",
-                                isActive
-                                  ? "bg-[#A8F34A] text-[#0D1112]"
-                                  : "bg-[#eef1f5] text-[#626976]",
-                              ].join(" ")}
-                            >
-                              {isActive ? "Activo" : "Ver"}
-                            </span>
-                            <span className="mt-2 block text-xs font-black">
-                              {creditPaid}/{creditTotal}
-                            </span>
-                            <span className="mt-1 block text-xs font-bold opacity-70">
-                              {creditNext ? money(creditNext.saldoPendiente) : "Al dia"}
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </section>
-              ) : null}
-
-              <button
-                type="button"
-                onClick={() => openPanel("pending")}
-                className="mt-7 grid min-h-[112px] w-full grid-cols-[82px_minmax(0,1fr)_44px] items-center gap-3 text-left active:scale-[0.99]"
-              >
-                <span className="grid h-[82px] w-[82px] place-items-center overflow-hidden rounded-[22px] bg-white shadow-[0_14px_30px_rgba(13,17,18,0.06)]">
-                  <Image
-                    src={creditDeviceImage(activeCredit)}
-                    alt=""
-                    width={76}
-                    height={76}
-                    aria-hidden="true"
-                    className="h-[76px] w-[76px] object-contain"
-                  />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-[23px] font-medium leading-tight text-[#5c5b57]">
-                    Tu credito
-                  </span>
-                  <span className="mt-0.5 block break-words text-[20px] font-black uppercase leading-tight text-[#0D1112] min-[400px]:text-[21px]">
-                    {creditTitle(activeCredit)}
-                  </span>
-                </span>
-                <span className="grid h-11 w-11 place-items-center rounded-full bg-white/70 text-[#0D1112]">
-                  <ChevronRight className="h-7 w-7" />
-                </span>
-              </button>
-
-              <section className="mt-9">
-                <div className="flex items-center justify-between gap-4">
-                  <h2 className="text-[30px] font-black tracking-[-0.02em] text-[#0D1112]">
-                    Actividad
-                  </h2>
-                  <div className="flex items-center gap-3 text-[16px] font-medium text-[#222524]">
-                    <button
-                      type="button"
-                      onClick={() => openPanel("pending")}
-                      className="inline-flex min-h-11 items-center gap-2"
-                    >
-                      <CalendarDays className="h-6 w-6" />
-                      Calendario
-                    </button>
-                    <span className="h-6 w-px bg-[#cfccc4]" />
-                    <FinserSupportLink
-                      className="inline-flex min-h-11 items-center gap-2"
-                    >
-                      <Headphones className="h-6 w-6" />
-                      Soporte
-                    </FinserSupportLink>
-                  </div>
-                </div>
-
-                <div className="mt-7 grid gap-0">
-                  {isPaidCredit ? (
-                    <div className="grid min-h-[86px] grid-cols-[46px_minmax(0,1fr)_auto] gap-3 text-left">
-                      <span className="relative flex justify-center">
-                        <span className="absolute top-9 h-[86px] w-px bg-[#d8d5cc]" />
-                        <span className="relative z-10 mt-1 grid h-9 w-9 place-items-center rounded-full border-4 border-[#F4F3EE] bg-[#A8F34A] ring-2 ring-[#76b82f]" />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block whitespace-normal text-[18px] font-black leading-tight text-[#0D1112] min-[400px]:text-[19px]">
-                          Obligacion liquidada
-                        </span>
-                        <span className="mt-2 block text-[17px] font-medium text-[#4f8f22]">
-                          Paz y salvo emitido
-                        </span>
-                      </span>
-                      <span className="pt-2 text-right font-serif text-[20px] font-black text-[#0D1112] min-[400px]:text-[21px]">
-                        {money(0)}
-                      </span>
-                    </div>
-                  ) : (
-                  <button
-                    type="button"
-                    onClick={() => openPanel("pending")}
-                    className="grid min-h-[86px] grid-cols-[46px_minmax(0,1fr)_auto] gap-3 text-left"
-                  >
-                    <span className="relative flex justify-center">
-                      <span className="absolute top-9 h-[86px] w-px bg-[#d8d5cc]" />
-                      <span className="relative z-10 mt-1 grid h-9 w-9 place-items-center rounded-full border-4 border-[#F4F3EE] bg-[#A8F34A] ring-2 ring-[#76b82f]" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block whitespace-normal text-[18px] font-black leading-tight text-[#0D1112] min-[400px]:text-[19px]">
-                        {nextDueLabel.toLowerCase()} · Cuota{" "}
-                        {nextInstallment?.numero || paidCount}
-                      </span>
-                      <span className="mt-2 block text-[17px] font-medium text-[#6d6a64]">
-                        {nextInstallment?.estaEnMora ? "En mora" : "Programada"}
-                      </span>
-                    </span>
-                    <span className="pt-2 text-right font-serif text-[20px] font-black text-[#0D1112] min-[400px]:text-[21px]">
-                      {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
-                    </span>
-                  </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => openPanel("history")}
-                    className="grid min-h-[86px] grid-cols-[46px_minmax(0,1fr)_auto] gap-3 text-left"
-                  >
-                    <span className="flex justify-center">
-                      <span className="mt-1 grid h-9 w-9 place-items-center rounded-full border-4 border-[#F4F3EE] bg-[#d7d5cf] ring-2 ring-[#858580]">
-                        <span className="h-4 w-4 rounded-full bg-[#F4F3EE]" />
-                      </span>
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block whitespace-normal text-[18px] font-black leading-tight text-[#0D1112] min-[400px]:text-[19px]">
-                        {lastPaymentDateLabel.toLowerCase()}
-                        {lastHistoryPayment ? ` · ${lastHistoryPayment.metodoPago}` : ""}
-                      </span>
-                      <span className="mt-2 block text-[17px] font-medium text-[#4f8f22]">
-                        {lastHistoryPayment ? "Pago confirmado" : "Sin pagos registrados"}
-                      </span>
-                    </span>
-                    <span className="pt-2 text-right font-serif text-[20px] font-black text-[#0D1112] min-[400px]:text-[21px]">
-                      {lastHistoryPayment ? money(lastHistoryPayment.valor) : money(0)}
-                    </span>
-                  </button>
-                </div>
-              </section>
-
-              {activePanel ? (
-                <section
-                  id="explora-panel"
-                  className="mt-5 rounded-lg border border-[#e6e8ee] bg-white p-4 shadow-sm"
-                >
-                  {activePanel === "pending" ? (
-                    <>
-                      <SectionTitle
-                        title="Pagos pendientes"
-                        aside={
-                          <span className="text-xs font-black text-[#7d8490]">
-                            {paidCount}/{totalCount}
-                          </span>
-                        }
-                      />
-                      <div className="mt-3 rounded-lg bg-[#111317] p-4 text-white">
-                        <p className="text-xs font-black uppercase text-white/55">
-                          Saldo pendiente
-                        </p>
-                        <p className="mt-1 text-3xl font-black leading-none">
-                          {money(pendingAmount)}
-                        </p>
-                        <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                          <div className="rounded-md bg-white/8 px-2 py-2">
-                            <p className="text-[11px] font-bold text-white/55">
-                              Vencidas
-                            </p>
-                            <p className="mt-1 text-sm font-black">
-                              {overdueInstallments.length}
-                            </p>
-                          </div>
-                          <div className="rounded-md bg-white/8 px-2 py-2">
-                            <p className="text-[11px] font-bold text-white/55">
-                              Proxima
-                            </p>
-                            <p className="mt-1 truncate text-sm font-black">
-                              {nextUpcomingInstallment
-                                ? dateLabel(nextUpcomingInstallment.fechaVencimiento)
-                                : "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-md bg-white/8 px-2 py-2">
-                            <p className="text-[11px] font-bold text-white/55">
-                              Seleccion
-                            </p>
-                            <p className="mt-1 truncate text-sm font-black">
-                              {selectedPaymentLabel}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {!payable.length ? (
-                        <p className="mt-3 rounded-lg bg-[#f6f7f9] px-4 py-3 text-sm font-bold text-[#626976]">
-                          No tienes pagos pendientes.
-                        </p>
-                      ) : null}
-
-                      {overdueInstallments.length ? (
-                        <div className="mt-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <h3 className="text-sm font-black text-[#b63b20]">
-                              Vencidas
-                            </h3>
-                            <span className="rounded-md bg-[#fff1ed] px-2 py-1 text-xs font-black text-[#b63b20]">
-                              {money(overdueAmount)}
-                            </span>
-                          </div>
-                          <div className="mt-2 grid gap-2">
-                            {overdueInstallments.map((item) => (
-                              <button
-                                key={item.numero}
-                                type="button"
-                                onClick={() =>
-                                  selectPaymentLimit(activeCredit.id, item.numero)
-                                }
-                                className={[
-                                  "grid min-h-16 grid-cols-[1fr_auto] items-center gap-3 rounded-lg border px-3 py-2 text-left",
-                                  item.numero === selectedPaymentLimit
-                                    ? "border-[#a7e66f] bg-[#f5ffef]"
-                                    : "border-[#fde1d8] bg-[#fff8f6]",
-                                ].join(" ")}
-                              >
-                                <span className="min-w-0">
-                                  <span className="block text-sm font-black text-[#252a35]">
-                                    Cuota {item.numero}
-                                  </span>
-                                  <span className="mt-1 block text-xs font-bold text-[#8a919d]">
-                                    {dateLabel(item.fechaVencimiento)} -{" "}
-                                    {installmentLabel(item)}
-                                  </span>
-                                </span>
-                                <span className="shrink-0 text-right text-sm font-black text-[#252a35]">
-                                  {money(installmentAmount(item))}
-                                  {item.numero === selectedPaymentLimit ? (
-                                    <span className="mt-1 block text-[11px] font-black text-[#4f9b35]">
-                                      Seleccionada
-                                    </span>
-                                  ) : null}
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-
-                      {nextUpcomingInstallment ? (
-                        <div className="mt-4">
-                          <h3 className="text-sm font-black text-[#3f7d2d]">
-                            Proxima cuota
-                          </h3>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              selectPaymentLimit(
-                                activeCredit.id,
-                                nextUpcomingInstallment.numero
-                              )
-                            }
-                            className={[
-                              "mt-2 grid min-h-16 w-full grid-cols-[1fr_auto] items-center gap-3 rounded-lg border px-3 py-2 text-left",
-                              nextUpcomingInstallment.numero === selectedPaymentLimit
-                                ? "border-[#a7e66f] bg-[#f5ffef]"
-                                : "border-[#dfece0] bg-[#fbfff8]",
-                            ].join(" ")}
-                          >
-                            <span className="min-w-0">
-                              <span className="block text-sm font-black text-[#252a35]">
-                                Cuota {nextUpcomingInstallment.numero}
-                              </span>
-                              <span className="mt-1 block text-xs font-bold text-[#8a919d]">
-                                {dateLabel(nextUpcomingInstallment.fechaVencimiento)} -{" "}
-                                {installmentLabel(nextUpcomingInstallment)}
-                              </span>
-                            </span>
-                            <span className="shrink-0 text-right text-sm font-black text-[#252a35]">
-                              {money(installmentAmount(nextUpcomingInstallment))}
-                              {nextUpcomingInstallment.numero ===
-                              selectedPaymentLimit ? (
-                                <span className="mt-1 block text-[11px] font-black text-[#4f9b35]">
-                                  Seleccionada
-                                </span>
-                              ) : null}
-                            </span>
-                          </button>
-                        </div>
-                      ) : null}
-
-                      {futureInstallments.length ? (
-                        <div className="mt-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <h3 className="text-sm font-black text-[#252a35]">
-                              Futuras
-                            </h3>
-                            <span className="text-xs font-black text-[#7d8490]">
-                              {futureInstallments.length} cuotas
-                            </span>
-                          </div>
-                          <div className="mt-2 grid grid-cols-3 gap-2">
-                            {futureInstallments.map((item) => (
-                              <button
-                                key={item.numero}
-                                type="button"
-                                onClick={() =>
-                                  selectPaymentLimit(activeCredit.id, item.numero)
-                                }
-                                className={[
-                                  "min-h-16 rounded-lg border px-2 py-2 text-left",
-                                  item.numero === selectedPaymentLimit
-                                    ? "border-[#a7e66f] bg-[#f5ffef]"
-                                    : "border-[#edf0f4] bg-[#fbfcfd]",
-                                ].join(" ")}
-                              >
-                                <span className="block text-xs font-black text-[#252a35]">
-                                  C{item.numero}
-                                </span>
-                                <span className="mt-1 block text-[11px] font-bold text-[#8a919d]">
-                                  {dateLabel(item.fechaVencimiento)}
-                                </span>
-                                <span className="mt-1 block truncate text-[11px] font-black text-[#252a35]">
-                                  {money(installmentAmount(item))}
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
-
-                  {activePanel === "payments" ? (
-                    <>
-                      <SectionTitle title="Medios de pago" />
-                      <div className="mt-3 grid gap-3">
-                        <div className="rounded-lg border border-[#dfece0] bg-[#f8fff4] p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-xs font-black uppercase text-[#5f8f44]">
-                                Valor a pagar
-                              </p>
-                              <p className="mt-1 text-3xl font-black leading-none text-[#171b22]">
-                                {money(selectedAmount)}
-                              </p>
-                              <p className="mt-2 text-sm font-bold text-[#67706b]">
-                                {selectedPaymentLabel}
-                              </p>
-                            </div>
-                            <span
-                              className={[
-                                "shrink-0 rounded-md px-2 py-1 text-xs font-black",
-                                stateClasses(activeCredit.estadoPago),
-                              ].join(" ")}
-                            >
-                              {stateLabel(activeCredit.estadoPago)}
-                            </span>
-                          </div>
-
-                          {payable.length > 1 ? (
-                            <div className="mt-4">
-                              <p className="text-xs font-black uppercase text-[#7d8490]">
-                                Ajustar cuotas
-                              </p>
-                              <div className="mt-2 grid grid-cols-[40px_1fr_40px] items-center gap-2">
-                                <button
-                                  type="button"
-                                  aria-label="Pagar menos cuotas"
-                                  disabled={selectedPaymentStep <= 0}
-                                  onClick={() => {
-                                    const previous = payable[selectedPaymentStep - 1];
-                                    if (previous) {
-                                      selectPaymentLimit(activeCredit.id, previous.numero);
-                                    }
-                                  }}
-                                  className="grid h-10 w-10 place-items-center rounded-lg border border-[#dfe5dd] bg-white text-xl font-black text-[#303743] disabled:text-[#c2c8d0]"
-                                >
-                                  -
-                                </button>
-                                <div className="min-w-0 rounded-lg bg-white px-3 py-2 text-center">
-                                  <p className="truncate text-sm font-black text-[#171b22]">
-                                    {selectedPaymentLabel}
-                                  </p>
-                                  <p className="mt-1 text-[11px] font-bold text-[#7d8490]">
-                                    {selectedInstallments.length}{" "}
-                                    {selectedInstallments.length === 1
-                                      ? "cuota seleccionada"
-                                      : "cuotas seleccionadas"}
-                                  </p>
-                                </div>
-                                <button
-                                  type="button"
-                                  aria-label="Pagar mas cuotas"
-                                  disabled={selectedPaymentStep >= payable.length - 1}
-                                  onClick={() => {
-                                    const next = payable[selectedPaymentStep + 1];
-                                    if (next) {
-                                      selectPaymentLimit(activeCredit.id, next.numero);
-                                    }
-                                  }}
-                                  className="grid h-10 w-10 place-items-center rounded-lg border border-[#a7e66f] bg-[#a7e66f] text-xl font-black text-[#102316] disabled:border-[#dfe5dd] disabled:bg-white disabled:text-[#c2c8d0]"
-                                >
-                                  +
-                                </button>
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-
-                        {canPayToday && activePayoff ? (
-                          <div className="rounded-lg border border-[#cceec0] bg-[#f7fff2] p-4">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="text-xs font-black uppercase text-[#4f8735]">
-                                  Recoger deuda
-                                </p>
-                                <p className="mt-1 text-3xl font-black leading-none text-[#171b22]">
-                                  {money(activePayoff.capitalPendiente)}
-                                </p>
-                                <p className="mt-2 text-sm font-bold text-[#67706b]">
-                                  Liquida el capital pendiente y cierra el credito.
-                                </p>
-                              </div>
-                            </div>
-                            <div className="mt-4">
-                              <PrimaryButton
-                                disabled={payingCreditId === activeCredit.id}
-                                onClick={() => openWompiConfirm(activeCredit, "PAYOFF")}
-                              >
-                                {payingCreditId === activeCredit.id
-                                  ? "Abriendo Wompi..."
-                                  : `Recoger deuda ${money(activePayoff.capitalPendiente)}`}
-                              </PrimaryButton>
-                            </div>
-                          </div>
-                        ) : null}
-
-                        <div className="rounded-lg border border-[#edf0f4] bg-[#fffdf1] p-4">
-                          <EfectyLogo />
-                          <div className="mt-4 grid grid-cols-2 gap-3">
-                            <div>
-                              <p className="text-xs font-black uppercase text-[#7d8490]">
-                                Convenio
-                              </p>
-                              <p className="mt-1 text-lg font-black text-[#171b22]">
-                                113950
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-xs font-black uppercase text-[#7d8490]">
-                                Referencia
-                              </p>
-                              <p className="mt-1 break-all text-lg font-black text-[#171b22]">
-                                {paymentReference}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="rounded-lg border border-[#edf0f4] bg-white p-4">
-                          <BancolombiaLogo />
-                          <div className="mt-4">
-                            <p className="text-xs font-black uppercase text-[#7d8490]">
-                              Cuenta de ahorros
-                            </p>
-                            <p className="mt-1 text-2xl font-black text-[#171b22]">
-                              71800000458
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="rounded-lg border border-[#edf0f4] bg-white p-4">
-                          <WompiLogo />
-                          <p className="mt-3 text-sm font-bold text-[#737b88]">
-                            Pago Nequi por el valor seleccionado.
-                          </p>
-                          <div className="mt-4">
-                            <PrimaryButton
-                              disabled={payingCreditId === activeCredit.id || !payable.length}
-                              onClick={() => openWompiConfirm(activeCredit)}
-                            >
-                              {payingCreditId === activeCredit.id
-                                ? "Abriendo Wompi..."
-                                : `Pagar ${money(selectedAmount)}`}
-                            </PrimaryButton>
-                          </div>
-                        </div>
-                      </div>
-                    </>
-                  ) : null}
-
-                  {activePanel === "history" ? (
-                    <>
-                      <SectionTitle
-                        title="Historial"
-                        aside={
-                          <span className="rounded-md bg-[#effbe6] px-2 py-1 text-xs font-black text-[#3f7d2d]">
-                            {historyPaymentCountLabel}
-                          </span>
-                        }
-                      />
-
-                      <div className="mt-3 rounded-lg bg-[#111317] p-4 text-white">
-                        <p className="text-xs font-black uppercase text-white/55">
-                          Total pagado
-                        </p>
-                        <p className="mt-1 text-3xl font-black leading-none">
-                          {money(historyTotalPaid)}
-                        </p>
-                        <div className="mt-4 grid grid-cols-2 gap-2">
-                          <div className="rounded-md bg-white/8 px-3 py-2">
-                            <p className="text-[11px] font-bold text-white/55">
-                              Ultimo pago
-                            </p>
-                            <p className="mt-1 truncate text-sm font-black">
-                              {lastHistoryPayment
-                                ? dateLabel(lastHistoryPayment.fechaAbono)
-                                : "Sin pagos"}
-                            </p>
-                          </div>
-                          <div className="rounded-md bg-white/8 px-3 py-2">
-                            <p className="text-[11px] font-bold text-white/55">
-                              Saldo
-                            </p>
-                            <p className="mt-1 truncate text-sm font-black">
-                              {money(historyBalance)}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 grid gap-2">
-                        {activeCredit.abonos.length ? (
-                          activeCredit.abonos.map((abono) => (
-                            <div
-                              key={abono.id}
-                              className="grid grid-cols-[44px_1fr_auto] items-center gap-3 rounded-lg bg-[#f9fafb] px-3 py-3"
-                            >
-                              <div className="grid h-11 w-11 place-items-center rounded-md bg-[#eef9fb] text-xs font-black text-[#087989]">
-                                {dateLabel(abono.fechaAbono)}
-                              </div>
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-black text-[#252a35]">
-                                  {abono.metodoPago}
-                                </p>
-                                <p className="mt-1 text-xs font-bold text-[#8a919d]">
-                                  Pago registrado
-                                </p>
-                              </div>
-                              <p className="shrink-0 text-sm font-black text-[#252a35]">
-                                {money(abono.valor)}
-                              </p>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="rounded-lg bg-[#f6f7f9] p-4">
-                            <p className="text-sm font-black text-[#252a35]">
-                              Aun no hay pagos registrados.
-                            </p>
-                            <p className="mt-1 text-xs font-bold text-[#7d8490]">
-                              Cuando hagas un pago, aparecera aqui.
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => openPanel("payments")}
-                              className="mt-3 min-h-11 w-full rounded-lg bg-[#a7e66f] px-4 text-sm font-black text-[#102316]"
-                            >
-                              Ver medios de pago
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  ) : null}
-                </section>
-              ) : null}
-            </>
-          ) : null}
+      <div className="mx-auto min-h-[100svh] w-full max-w-[430px] bg-[#F4F3EE] pb-[calc(88px+env(safe-area-inset-bottom))] shadow-[0_0_60px_rgba(13,17,18,0.16)]">
+        <div
+          aria-hidden={activePanel ? true : undefined}
+          inert={activePanel ? true : undefined}
+        >
+          <ClientActiveCreditDashboard
+          activeCreditId={activeCredit.id}
+          clientFirstName={firstName}
+          creditOptions={items.map((credit, index) => ({
+            id: credit.id,
+            label: `Crédito ${index + 1} · ${creditTitle(credit)}`,
+          }))}
+          device={{
+            imageAlt: "",
+            imageSrc: creditDeviceImage(activeCredit),
+            meta: `${totalCount} cuotas · Equipo financiado`,
+            name: creditTitle(activeCredit),
+          }}
+          lastPayment={
+            lastHistoryPayment
+              ? {
+                  amount: lastHistoryPayment.valor,
+                  date: lastHistoryPayment.fechaAbono,
+                  label: "Pago recibido",
+                  stateLabel: "Confirmado",
+                }
+              : null
+          }
+          nextInstallment={
+            nextInstallment
+              ? {
+                  amount: nextInstallment.saldoPendiente,
+                  dueDate: nextInstallment.fechaVencimiento,
+                  number: nextInstallment.numero,
+                  stateLabel: nextInstallment.estaEnMora ? "En mora" : "Programada",
+                }
+              : null
+          }
+          notice={notice}
+          onOpenDevice={() => openPanel("pending")}
+          onOpenHistory={() => openPanel("history")}
+          onOpenNotifications={() => openPanel("history")}
+          onOpenPaymentMethods={() => openPanel("payments")}
+          onOpenPlan={() => openPanel("pending")}
+          onOpenProfile={forgetDocument}
+          onPayoff={() => openWompiConfirm(activeCredit, "PAYOFF")}
+          onSelectCredit={selectCredit}
+          paidInstallments={paidCount}
+          paying={payingCreditId === activeCredit.id}
+          payoff={
+            activePayoff
+              ? {
+                  amount: activePayoff.capitalPendiente,
+                  available: canPayToday,
+                }
+              : null
+          }
+          profileActionLabel="Cambiar cliente"
+          profileInitials={profileInitials}
+          statusLabel={
+            activeCredit.estadoPago === "MORA" ? "Crédito en mora" : "Crédito al día"
+          }
+          statusTone={activeCredit.estadoPago === "MORA" ? "overdue" : "current"}
+            totalInstallments={totalCount}
+          />
         </div>
 
-        <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-[430px] -translate-x-1/2 px-5 pb-[calc(8px+env(safe-area-inset-bottom))]">
-          <div className="grid min-h-[86px] grid-cols-4 items-end rounded-[20px] border border-[#e7e9eb] bg-white px-2 pb-3 pt-3 shadow-[0_-14px_30px_rgba(17,20,24,0.11)]">
+        {activePanel && activeCredit ? (
+          <ClientCreditPanel
+            credit={activeCredit}
+            notice={notice}
+            onBack={returnHome}
+            onOpenPanel={openPanel}
+            onPayoff={() => openWompiConfirm(activeCredit, "PAYOFF")}
+            onPaySelected={() => openWompiConfirm(activeCredit)}
+            onRefreshPayment={() => void refreshPaymentStatus()}
+            onSelectPaymentLimit={(installmentNumber) =>
+              selectPaymentLimit(activeCredit.id, installmentNumber)
+            }
+            panel={activePanel}
+            pendingPayment={paymentReturn}
+            paying={payingCreditId === activeCredit.id}
+            refreshingPayment={refreshingPayment || loading}
+            selectedPaymentLimit={selectedPaymentLimit}
+          />
+        ) : null}
+
+        <nav
+          aria-label="Navegación del portal"
+          className="fixed bottom-0 left-1/2 z-30 w-full max-w-[430px] -translate-x-1/2 border-t border-[#e5e3de] bg-white/95 px-4 pb-[calc(8px+env(safe-area-inset-bottom))] pt-2 shadow-[0_-14px_34px_rgba(17,20,24,0.09)] backdrop-blur-xl"
+        >
+          <div className="grid min-h-[72px] grid-cols-4 items-center">
             <button
               type="button"
               onClick={returnHome}
-              className="grid min-h-[58px] place-items-center gap-1 text-[#111317]"
+              aria-current={activePanel === null ? "page" : undefined}
+              className={`grid min-h-[60px] place-items-center gap-1 ${
+                activePanel === null ? "text-[#5f8f16]" : "text-[#676d72]"
+              }`}
             >
-              <Home className="h-7 w-7 fill-[#111317] stroke-[2.1]" />
-              <span className="text-[13px] font-medium">Inicio</span>
-              <span className="h-1 w-8 rounded-full bg-[#b8f25d]" />
+              <Home
+                className={`h-7 w-7 stroke-[2] ${
+                  activePanel === null ? "fill-[#77a923]" : "fill-none"
+                }`}
+              />
+              <span className="text-[12px] font-semibold">Inicio</span>
+              <span
+                className={`h-1 w-8 rounded-full ${
+                  activePanel === null ? "bg-[#b7e63d]" : "bg-transparent"
+                }`}
+              />
             </button>
 
             <button
               type="button"
               onClick={() => openPanel("pending")}
-              className="-mt-9 grid min-h-[78px] place-items-center gap-1 text-[#111317]"
+              aria-current={
+                activePanel === "pending" || activePanel === "payments"
+                  ? "page"
+                  : undefined
+              }
+              className={`grid min-h-[60px] place-items-center gap-1 ${
+                activePanel === "pending" || activePanel === "payments"
+                  ? "text-[#111317]"
+                  : "text-[#676d72]"
+              }`}
             >
-              <span className="grid h-[66px] w-[66px] place-items-center rounded-full bg-[#A8F34A] text-[#0D1112] shadow-[0_12px_28px_rgba(168,243,74,0.34)]">
-                <CreditCard className="h-8 w-8 stroke-[2.1]" />
-              </span>
-              <span className="text-[13px] font-medium">Pagos</span>
+              <CreditCard
+                className={`h-7 w-7 stroke-[2] ${
+                  activePanel === "pending" || activePanel === "payments"
+                    ? "fill-[#1b1e20]"
+                    : "fill-none"
+                }`}
+              />
+              <span className="text-[12px] font-semibold">Crédito</span>
+              <span
+                className={`h-1 w-8 rounded-full ${
+                  activePanel === "pending" || activePanel === "payments"
+                    ? "bg-[#b7e63d]"
+                    : "bg-transparent"
+                }`}
+              />
             </button>
 
             <button
               type="button"
               onClick={() => openPanel("history")}
-              className="grid min-h-[58px] place-items-center gap-1 text-[#757b84] active:text-[#111317]"
+              aria-current={activePanel === "history" ? "page" : undefined}
+              className={`grid min-h-[60px] place-items-center gap-1 ${
+                activePanel === "history" ? "text-[#111317]" : "text-[#676d72]"
+              }`}
             >
-              <Clock3 className="h-7 w-7 stroke-[2.1]" />
-              <span className="text-[13px] font-medium">Historial</span>
+              <Clock3 className="h-7 w-7 stroke-[2]" />
+              <span className="text-[12px] font-semibold">Historial</span>
+              <span
+                className={`h-1 w-8 rounded-full ${
+                  activePanel === "history" ? "bg-[#b7e63d]" : "bg-transparent"
+                }`}
+              />
             </button>
 
             <button
               type="button"
               onClick={forgetDocument}
-              className="grid min-h-[58px] place-items-center gap-1 text-[#757b84] active:text-[#111317]"
+              className="grid min-h-[60px] place-items-center gap-1 text-[#676d72] active:text-[#111317]"
             >
-              <CircleUserRound className="h-7 w-7 stroke-[2.1]" />
-              <span className="text-[13px] font-medium">Perfil</span>
+              <CircleUserRound className="h-7 w-7 stroke-[2]" />
+              <span className="text-[12px] font-semibold">Perfil</span>
+              <span className="h-1 w-8 rounded-full bg-transparent" />
             </button>
           </div>
         </nav>
@@ -1819,14 +930,14 @@ export default function ClienteConsultaPage() {
                 </div>
                 <div className="grid grid-cols-[82px_1fr] gap-3">
                   <span className="font-black uppercase text-[#7d8490]">IMEI</span>
-                  <span className="break-all font-black text-[#252a35]">
-                    {confirmCredit.imei || confirmCredit.deviceUid || "No registrado"}
+                  <span className="font-black text-[#252a35]">
+                    {maskedImeiLabel(confirmCredit.imei || confirmCredit.deviceUid)}
                   </span>
                 </div>
                 <div className="grid grid-cols-[82px_1fr] gap-3">
-                  <span className="font-black uppercase text-[#7d8490]">Cedula</span>
+                  <span className="font-black uppercase text-[#7d8490]">Documento</span>
                   <span className="font-black text-[#252a35]">
-                    {confirmPaymentReference}
+                    {maskedDocumentLabel(confirmPaymentReference)}
                   </span>
                 </div>
               </div>
@@ -1913,6 +1024,6 @@ export default function ClienteConsultaPage() {
           </div>
         ) : null}
       </div>
-    </main>
+    </div>
   );
 }
