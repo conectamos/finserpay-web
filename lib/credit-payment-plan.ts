@@ -11,6 +11,7 @@ export type CreditPaymentPlanInput = {
     fechaAbono?: Date | string | null;
   }>;
   today?: Date | string | null;
+  settled?: boolean;
 };
 
 export type CreditPaymentPlanInstallment = {
@@ -100,19 +101,30 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
     }
   );
 
-  const nextInstallment =
-    installments.find((item) => item.saldoPendiente > 0) ||
-    installments[installments.length - 1] ||
-    null;
-  const overdueCount = installments.filter((item) => item.estaEnMora).length;
-  const paidCount = installments.filter((item) => item.estado === "PAGO").length;
-  const pendingCount = installments.filter((item) => item.saldoPendiente > 0).length;
+  const effectiveInstallments = input.settled
+    ? installments.map((item) => ({
+        ...item,
+        estado: "PAGO" as const,
+        estaEnMora: false,
+        saldoPendiente: 0,
+      }))
+    : installments;
+  const nextInstallment = input.settled
+    ? null
+    : effectiveInstallments.find((item) => item.saldoPendiente > 0) ||
+      effectiveInstallments[effectiveInstallments.length - 1] ||
+      null;
+  const overdueCount = effectiveInstallments.filter((item) => item.estaEnMora).length;
+  const paidCount = effectiveInstallments.filter((item) => item.estado === "PAGO").length;
+  const pendingCount = effectiveInstallments.filter(
+    (item) => item.saldoPendiente > 0
+  ).length;
   const saldoPendiente = roundMoney(
-    installments.reduce((sum, item) => sum + item.saldoPendiente, 0)
+    effectiveInstallments.reduce((sum, item) => sum + item.saldoPendiente, 0)
   );
 
   return {
-    installments,
+    installments: effectiveInstallments,
     nextInstallment,
     overdueCount,
     paidCount,

@@ -44,6 +44,7 @@ type ClientCredit = {
   sedeNombre: string;
   estadoPago: "PAGADO" | "AL_DIA" | "MORA";
   saldoPendiente: number;
+  pazYSalvoEmitidoAt?: string | null;
   liquidacionAnticipada?: {
     capitalPendiente: number;
     condonacion: number;
@@ -808,6 +809,7 @@ export default function ClienteConsultaPage() {
   const confirmPaymentReference =
     confirmCredit?.clienteDocumento || activeDocumento || documento;
   const activePayoff = activeCredit?.liquidacionAnticipada || null;
+  const isPaidCredit = activeCredit?.estadoPago === "PAGADO";
   const canPayToday =
     activeCredit?.estadoPago === "AL_DIA" && Boolean(activePayoff?.disponible);
   const profileInitials = activeCredit
@@ -1130,16 +1132,24 @@ export default function ClienteConsultaPage() {
 
                   <div className="min-w-0">
                     <p className="text-[14px] font-semibold uppercase tracking-[0.05em] text-white/42">
-                      Proxima cuota
+                      {isPaidCredit ? "Saldo pendiente" : "Proxima cuota"}
                     </p>
                     <p className="mt-3 whitespace-nowrap font-serif text-[42px] leading-none tracking-normal text-[#fbfaf5] min-[400px]:text-[46px]">
                       {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
                     </p>
                     <p className="mt-4 text-[21px] font-medium text-white/58">
-                      Vence{" "}
-                      <span className="font-black text-[#A8F34A]">
-                        {nextDueLabel.toLowerCase()}
-                      </span>
+                      {isPaidCredit ? (
+                        <span className="font-black text-[#A8F34A]">
+                          Paz y salvo emitido
+                        </span>
+                      ) : (
+                        <>
+                          Vence{" "}
+                          <span className="font-black text-[#A8F34A]">
+                            {nextDueLabel.toLowerCase()}
+                          </span>
+                        </>
+                      )}
                     </p>
                   </div>
                 </div>
@@ -1154,7 +1164,11 @@ export default function ClienteConsultaPage() {
                     <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#0D1112] text-[#A8F34A]">
                       <CreditCard className="h-7 w-7" />
                     </span>
-                    {payingCreditId === activeCredit.id ? "Abriendo" : "Pagar ahora"}
+                    {payingCreditId === activeCredit.id
+                      ? "Abriendo"
+                      : isPaidCredit
+                        ? "Credito liquidado"
+                        : "Pagar ahora"}
                   </button>
 
                   {canPayToday && activePayoff ? (
@@ -1283,6 +1297,25 @@ export default function ClienteConsultaPage() {
                 </div>
 
                 <div className="mt-7 grid gap-0">
+                  {isPaidCredit ? (
+                    <div className="grid min-h-[86px] grid-cols-[46px_minmax(0,1fr)_auto] gap-3 text-left">
+                      <span className="relative flex justify-center">
+                        <span className="absolute top-9 h-[86px] w-px bg-[#d8d5cc]" />
+                        <span className="relative z-10 mt-1 grid h-9 w-9 place-items-center rounded-full border-4 border-[#F4F3EE] bg-[#A8F34A] ring-2 ring-[#76b82f]" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block whitespace-normal text-[18px] font-black leading-tight text-[#0D1112] min-[400px]:text-[19px]">
+                          Obligacion liquidada
+                        </span>
+                        <span className="mt-2 block text-[17px] font-medium text-[#4f8f22]">
+                          Paz y salvo emitido
+                        </span>
+                      </span>
+                      <span className="pt-2 text-right font-serif text-[20px] font-black text-[#0D1112] min-[400px]:text-[21px]">
+                        {money(0)}
+                      </span>
+                    </div>
+                  ) : (
                   <button
                     type="button"
                     onClick={() => openPanel("pending")}
@@ -1305,6 +1338,7 @@ export default function ClienteConsultaPage() {
                       {nextInstallment ? money(nextInstallment.saldoPendiente) : money(0)}
                     </span>
                   </button>
+                  )}
 
                   <button
                     type="button"

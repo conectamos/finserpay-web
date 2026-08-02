@@ -147,6 +147,7 @@ export async function POST(req: Request) {
         frecuenciaPago: true,
         fechaPrimerPago: true,
         fechaProximoPago: true,
+        pazYSalvoEmitidoAt: true,
         abonos: {
           where: {
             estado: {
@@ -168,6 +169,13 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "Credito no encontrado para esa cedula" },
         { status: 404 }
+      );
+    }
+
+    if (credit.pazYSalvoEmitidoAt) {
+      return NextResponse.json(
+        { error: "Este credito ya fue liquidado y no tiene saldo pendiente" },
+        { status: 409 }
       );
     }
 

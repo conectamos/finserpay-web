@@ -50,6 +50,7 @@ export async function GET(req: Request) {
         fechaCredito: true,
         fechaPrimerPago: true,
         fechaProximoPago: true,
+        pazYSalvoEmitidoAt: true,
         sede: {
           select: {
             nombre: true,
@@ -89,6 +90,7 @@ export async function GET(req: Request) {
           valor: Number(item.valor || 0),
           fechaAbono: item.fechaAbono,
         })),
+        settled: Boolean(credit.pazYSalvoEmitidoAt),
       });
       const earlyPayoff = calculateCreditEarlyPayoff({
         saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
@@ -122,6 +124,7 @@ export async function GET(req: Request) {
         sedeNombre: credit.sede.nombre,
         estadoPago: plan.estadoPago,
         saldoPendiente: plan.saldoPendiente,
+        pazYSalvoEmitidoAt: credit.pazYSalvoEmitidoAt?.toISOString() || null,
         liquidacionAnticipada: {
           disponible: earlyPayoff.eligible,
           motivo: earlyPayoff.reason,

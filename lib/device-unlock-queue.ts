@@ -353,6 +353,7 @@ export async function processDeviceUnlockCommand(
       valor: Number(item.valor || 0),
       fechaAbono: item.fechaAbono,
     })),
+    settled: Boolean(credit.pazYSalvoEmitidoAt),
   });
 
   if (plan.estadoPago === "MORA") {
@@ -534,6 +535,7 @@ export async function enqueueUnlockForCurrentCredit(options: {
       fechaProximoPago: true,
       bloqueoRobo: true,
       observacionAdmin: true,
+      pazYSalvoEmitidoAt: true,
       abonos: {
         where: { estado: { not: "ANULADO" } },
         select: { valor: true, fechaAbono: true },
@@ -556,6 +558,7 @@ export async function enqueueUnlockForCurrentCredit(options: {
       valor: Number(item.valor || 0),
       fechaAbono: item.fechaAbono,
     })),
+    settled: Boolean(credit.pazYSalvoEmitidoAt),
   });
 
   if (plan.estadoPago === "MORA") {

@@ -5,9 +5,7 @@ import {
   buildEarlyPayoffObservation,
   calculateCreditEarlyPayoff,
 } from "@/lib/credit-early-payoff";
-import {
-  creditCajaDescription,
-} from "@/lib/credit-factory";
+import { creditCajaDescription, resolveCreditState } from "@/lib/credit-factory";
 import {
   DIGITAL_COLLECTION_CAJA_CONCEPT,
   ensureDigitalCollectionSede,
@@ -257,16 +255,17 @@ export async function repairProcessedWompiEarlyPayoffIntent(
     );
 
     if (currentBalanceInCents <= 0) {
-      if (hasFinalizationMarker && intent.credito.pazYSalvoEmitidoAt) {
-        return {
-          ...baseResult,
-          action: "ALREADY_FINALIZED" as const,
-        };
-      }
+      const issuedAt = intent.credito.pazYSalvoEmitidoAt || new Date();
+      const alreadyFinalized = Boolean(
+        hasFinalizationMarker && intent.credito.pazYSalvoEmitidoAt
+      );
 
       await tx.credito.update({
         where: { id: intent.creditoId },
         data: {
+          bloqueoMora: false,
+          bloqueoMoraAt: null,
+          estado: resolveCreditState({ pazYSalvoEmitidoAt: issuedAt }),
           fechaProximoPago: null,
           observacionAdmin: hasFinalizationMarker
             ? intent.credito.observacionAdmin
@@ -274,13 +273,15 @@ export async function repairProcessedWompiEarlyPayoffIntent(
                 intent.credito.observacionAdmin,
                 `Liquidacion anticipada Wompi ${intent.reference}. ${WOMPI_PAYOFF_REPAIR_MARKER}:${intent.id}.`
               ),
-          pazYSalvoEmitidoAt: intent.credito.pazYSalvoEmitidoAt || new Date(),
+          pazYSalvoEmitidoAt: issuedAt,
         },
       });
 
       return {
         ...baseResult,
-        action: "FINALIZED" as const,
+        action: alreadyFinalized
+          ? ("ALREADY_FINALIZED" as const)
+          : ("FINALIZED" as const),
       };
     }
 
@@ -330,6 +331,9 @@ export async function repairProcessedWompiEarlyPayoffIntent(
     await tx.credito.update({
       where: { id: intent.creditoId },
       data: {
+        bloqueoMora: false,
+        bloqueoMoraAt: null,
+        estado: resolveCreditState({ pazYSalvoEmitidoAt: issuedAt }),
         fechaProximoPago: null,
         montoCredito: earlyPayoff.montoCreditoLiquidado,
         observacionAdmin: appendObservation(
@@ -401,15 +405,14 @@ export async function repairRecentProcessedWompiEarlyPayoffs(limit = 200) {
   const results: WompiEarlyPayoffRepairResult[] = [];
 
   for (const intent of candidates) {
-    const result = await repairProcessedWompiEarlyPayoffIntent(intent.id);
-
-    if (result.action !== "ALREADY_FINALIZED") {
-      results.push(result);
-    }
+    results.push(await repairProcessedWompiEarlyPayoffIntent(intent.id));
   }
 
   return {
     checked: candidates.length,
+    alreadyFinalized: results.filter(
+      (item) => item.action === "ALREADY_FINALIZED"
+    ).length,
     finalized: results.filter((item) => item.action === "FINALIZED").length,
     repaired: results.filter((item) => item.action === "REPAIRED").length,
     reviewRequired: results.filter((item) => item.action === "REVIEW_REQUIRED")
@@ -712,11 +715,17 @@ export async function processApprovedWompiPayment(
             fechaAbono: item.fechaAbono,
           })),
         });
+    const payoffIssuedAt = earlyPayoff ? new Date() : null;
 
     await tx.credito.update({
       where: { id: intent.creditoId },
       data: earlyPayoff
         ? {
+            bloqueoMora: false,
+            bloqueoMoraAt: null,
+            estado: resolveCreditState({
+              pazYSalvoEmitidoAt: payoffIssuedAt,
+            }),
             fechaProximoPago: null,
             montoCredito: earlyPayoff.montoCreditoLiquidado,
             observacionAdmin: [
@@ -725,7 +734,7 @@ export async function processApprovedWompiPayment(
             ]
               .filter(Boolean)
               .join("\n"),
-            pazYSalvoEmitidoAt: new Date(),
+            pazYSalvoEmitidoAt: payoffIssuedAt,
             valorFianza: earlyPayoff.valorFianzaReconocida,
             valorInteres: earlyPayoff.valorInteresReconocido,
           }
