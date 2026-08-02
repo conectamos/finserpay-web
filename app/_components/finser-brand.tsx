@@ -3,6 +3,7 @@ type FinserBrandProps = {
   compact?: boolean;
   dark?: boolean;
   mini?: boolean;
+  plainMark?: boolean;
   showTagline?: boolean;
 };
 
@@ -11,6 +12,7 @@ export default function FinserBrand({
   compact = false,
   dark = false,
   mini = false,
+  plainMark = false,
   showTagline = true,
 }: FinserBrandProps) {
   const titleClass = dark ? "text-white" : "text-slate-950";
@@ -30,10 +32,12 @@ export default function FinserBrand({
         className={[
           "relative flex shrink-0 items-center justify-center overflow-hidden rounded-[24px] border",
           mini ? "h-10 w-10 rounded-[15px]" : compact ? "h-14 w-14" : "h-16 w-16",
-          iconShell,
+          plainMark ? "border-transparent bg-transparent shadow-none" : iconShell,
         ].join(" ")}
       >
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.48),transparent_45%)]" />
+        {!plainMark ? (
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.48),transparent_45%)]" />
+        ) : null}
         <svg
           viewBox="0 0 88 96"
           className={mini ? "h-7 w-7" : compact ? "h-10 w-10" : "h-12 w-12"}
@@ -65,6 +69,7 @@ export default function FinserBrand({
         <p
           className={[
             "font-black tracking-[0.08em]",
+            "whitespace-nowrap",
             mini ? "text-[19px]" : compact ? "text-lg" : "text-2xl",
             titleClass,
           ].join(" ")}
