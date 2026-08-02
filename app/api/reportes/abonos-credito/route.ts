@@ -54,6 +54,18 @@ function parseDate(value: string | null, endOfDay = false) {
   return parsed;
 }
 
+function bogotaDateKey(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Date(date.getTime() - BOGOTA_UTC_OFFSET_MS)
+    .toISOString()
+    .slice(0, 10);
+}
+
 function normalizeText(value: string | null | undefined) {
   return String(value || "").trim().toUpperCase();
 }
@@ -335,7 +347,12 @@ export async function GET(req: Request) {
     const dailyMap = new Map<string, { fecha: string; total: number; cantidad: number }>();
 
     for (const item of activeAbonosRows) {
-      const dayKey = item.fechaAbono.slice(0, 10);
+      const dayKey = bogotaDateKey(item.fechaAbono);
+
+      if (!dayKey) {
+        continue;
+      }
+
       const current = dailyMap.get(dayKey) || {
         fecha: dayKey,
         total: 0,

@@ -110,8 +110,16 @@ function formatDate(value: string | null) {
     return "-";
   }
 
+  const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (dateOnly) {
+    return `${Number(dateOnly[3])}/${Number(dateOnly[2])}/${dateOnly[1]}`;
+  }
+
   try {
-    return new Date(value).toLocaleDateString("es-CO");
+    return new Date(value).toLocaleDateString("es-CO", {
+      timeZone: "America/Bogota",
+    });
   } catch {
     return value;
   }
@@ -123,7 +131,9 @@ function formatDateTime(value: string | null) {
   }
 
   try {
-    return new Date(value).toLocaleString("es-CO");
+    return new Date(value).toLocaleString("es-CO", {
+      timeZone: "America/Bogota",
+    });
   } catch {
     return value;
   }
