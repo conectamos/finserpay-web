@@ -1,9 +1,9 @@
 import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import {
+  buildEarlyPayoffIntentMeta,
   buildEarlyPayoffObservation,
   calculateCreditEarlyPayoff,
-  isEarlyPayoffIntentMeta,
 } from "@/lib/credit-early-payoff";
 import {
   creditCajaDescription,
@@ -20,6 +20,10 @@ import {
 } from "@/lib/device-unlock-queue";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import prisma from "@/lib/prisma";
+import {
+  isWompiEarlyPayoffIntent,
+  validateWompiEarlyPayoffAmounts,
+} from "@/lib/wompi-early-payoff-intent";
 
 export type WompiPaymentTransaction = {
   amount_in_cents?: number | null;
@@ -48,8 +52,28 @@ export type WompiPaymentProcessingResult = {
   applied: boolean;
   intentId?: number;
   reason?: string;
+  repairedEarlyPayoff?: boolean;
   status: string;
 };
+
+export type WompiEarlyPayoffRepairResult = {
+  abonoId?: number | null;
+  action:
+    | "ALREADY_FINALIZED"
+    | "FINALIZED"
+    | "NOT_EARLY_PAYOFF"
+    | "NOT_FOUND"
+    | "NOT_PROCESSED"
+    | "REPAIRED"
+    | "REVIEW_REQUIRED";
+  creditoId?: number;
+  intentId: number;
+  reason?: string;
+  reference?: string;
+  transactionId?: string | null;
+};
+
+const WOMPI_PAYOFF_REPAIR_MARKER = "REPARACION_LIQUIDACION_WOMPI";
 
 function parseCuotaNumeros(value: unknown) {
   return (Array.isArray(value) ? value : [])
@@ -65,6 +89,23 @@ function resolveAutomaticWompiPaymentMethod(value: unknown) {
 
 function resolveStaleProcessingCutoff() {
   return new Date(Date.now() - 5 * 60 * 1000);
+}
+
+function appendObservation(current: string | null, next: string) {
+  return [current, next].filter(Boolean).join("\n");
+}
+
+function wasWompiPayoffFinalized(
+  observation: string | null,
+  intentId: number,
+  reference: string
+) {
+  const normalized = String(observation || "");
+
+  return (
+    normalized.includes(`Liquidacion anticipada Wompi ${reference}.`) ||
+    normalized.includes(`${WOMPI_PAYOFF_REPAIR_MARKER}:${intentId}`)
+  );
 }
 
 async function ensureAndTryApprovedPaymentUnlock(options: {
@@ -99,6 +140,282 @@ async function ensureAndTryApprovedPaymentUnlock(options: {
       error
     );
   }
+}
+
+export async function repairProcessedWompiEarlyPayoffIntent(
+  intentId: number
+): Promise<WompiEarlyPayoffRepairResult> {
+  await ensureCreditAbonoAuditColumns();
+  await ensureDeviceUnlockCommandTable();
+
+  const result: WompiEarlyPayoffRepairResult = await prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: number }>>`
+      SELECT "id"
+      FROM "WompiPaymentIntent"
+      WHERE "id" = ${intentId}
+      FOR UPDATE
+    `;
+
+    if (!locked.length) {
+      return {
+        action: "NOT_FOUND" as const,
+        intentId,
+      };
+    }
+
+    const intent = await tx.wompiPaymentIntent.findUnique({
+      where: { id: intentId },
+      include: {
+        credito: {
+          select: {
+            id: true,
+            fechaPrimerPago: true,
+            fechaProximoPago: true,
+            frecuenciaPago: true,
+            montoCredito: true,
+            observacionAdmin: true,
+            pazYSalvoEmitidoAt: true,
+            plazoMeses: true,
+            saldoBaseFinanciado: true,
+            valorCuota: true,
+            valorFianza: true,
+            valorInteres: true,
+          },
+        },
+      },
+    });
+
+    if (!intent) {
+      return {
+        action: "NOT_FOUND" as const,
+        intentId,
+      };
+    }
+
+    const baseResult = {
+      abonoId: intent.processedAbonoId,
+      creditoId: intent.creditoId,
+      intentId: intent.id,
+      reference: intent.reference,
+      transactionId: intent.transactionId,
+    };
+
+    if (!isWompiEarlyPayoffIntent(intent.cuotaNumeros, intent.reference)) {
+      return {
+        ...baseResult,
+        action: "NOT_EARLY_PAYOFF" as const,
+      };
+    }
+
+    if (!intent.processedAbonoId || intent.status !== "APPROVED") {
+      return {
+        ...baseResult,
+        action: "NOT_PROCESSED" as const,
+      };
+    }
+
+    const activeAbonos = await tx.creditoAbono.findMany({
+      where: {
+        creditoId: intent.creditoId,
+        estado: {
+          not: "ANULADO",
+        },
+      },
+      select: {
+        fechaAbono: true,
+        id: true,
+        valor: true,
+      },
+      orderBy: {
+        fechaAbono: "asc",
+      },
+    });
+    const processedAbono = activeAbonos.find(
+      (item) => item.id === intent.processedAbonoId
+    );
+
+    if (!processedAbono) {
+      return {
+        ...baseResult,
+        action: "REVIEW_REQUIRED" as const,
+        reason: "PROCESSED_ABONO_NOT_ACTIVE",
+      };
+    }
+
+    const totalPaid = activeAbonos.reduce(
+      (sum, item) => sum + Number(item.valor || 0),
+      0
+    );
+    const hasFinalizationMarker = wasWompiPayoffFinalized(
+      intent.credito.observacionAdmin,
+      intent.id,
+      intent.reference
+    );
+    const currentBalanceInCents = Math.max(
+      0,
+      Math.round((Number(intent.credito.montoCredito || 0) - totalPaid) * 100)
+    );
+
+    if (currentBalanceInCents <= 0) {
+      if (hasFinalizationMarker && intent.credito.pazYSalvoEmitidoAt) {
+        return {
+          ...baseResult,
+          action: "ALREADY_FINALIZED" as const,
+        };
+      }
+
+      await tx.credito.update({
+        where: { id: intent.creditoId },
+        data: {
+          fechaProximoPago: null,
+          observacionAdmin: hasFinalizationMarker
+            ? intent.credito.observacionAdmin
+            : appendObservation(
+                intent.credito.observacionAdmin,
+                `Liquidacion anticipada Wompi ${intent.reference}. ${WOMPI_PAYOFF_REPAIR_MARKER}:${intent.id}.`
+              ),
+          pazYSalvoEmitidoAt: intent.credito.pazYSalvoEmitidoAt || new Date(),
+        },
+      });
+
+      return {
+        ...baseResult,
+        action: "FINALIZED" as const,
+      };
+    }
+
+    const previousAbonos = activeAbonos.filter(
+      (item) => item.id !== processedAbono.id
+    );
+    const earlyPayoff = calculateCreditEarlyPayoff({
+      saldoBaseFinanciado: Number(intent.credito.saldoBaseFinanciado || 0),
+      montoCredito: Number(intent.credito.montoCredito || 0),
+      valorInteres: Number(intent.credito.valorInteres || 0),
+      valorFianza: Number(intent.credito.valorFianza || 0),
+      valorCuota: Number(intent.credito.valorCuota || 0),
+      plazoMeses: Number(intent.credito.plazoMeses || 1),
+      frecuenciaPago: intent.credito.frecuenciaPago,
+      fechaPrimerPago:
+        intent.credito.fechaPrimerPago || intent.credito.fechaProximoPago,
+      today: processedAbono.fechaAbono,
+      abonos: previousAbonos.map((item) => ({
+        valor: Number(item.valor || 0),
+        fechaAbono: item.fechaAbono,
+      })),
+    });
+
+    if (!earlyPayoff.eligible) {
+      return {
+        ...baseResult,
+        action: "REVIEW_REQUIRED" as const,
+        reason: earlyPayoff.reason || "EARLY_PAYOFF_NOT_ELIGIBLE",
+      };
+    }
+
+    const amountValidation = validateWompiEarlyPayoffAmounts({
+      intentAmountInCents: intent.amountInCents,
+      paymentAmount: Number(processedAbono.valor || 0),
+      payoffAmount: earlyPayoff.capitalPendiente,
+    });
+
+    if (!amountValidation.valid) {
+      return {
+        ...baseResult,
+        action: "REVIEW_REQUIRED" as const,
+        reason: amountValidation.reason || "AMOUNT_MISMATCH",
+      };
+    }
+
+    const issuedAt = intent.credito.pazYSalvoEmitidoAt || new Date();
+    await tx.credito.update({
+      where: { id: intent.creditoId },
+      data: {
+        fechaProximoPago: null,
+        montoCredito: earlyPayoff.montoCreditoLiquidado,
+        observacionAdmin: appendObservation(
+          intent.credito.observacionAdmin,
+          `Liquidacion anticipada Wompi ${intent.reference}. Condonado intereses/fianza ${earlyPayoff.interesFianzaCondonado}. ${WOMPI_PAYOFF_REPAIR_MARKER}:${intent.id}.`
+        ),
+        pazYSalvoEmitidoAt: issuedAt,
+        valorFianza: earlyPayoff.valorFianzaReconocida,
+        valorInteres: earlyPayoff.valorInteresReconocido,
+      },
+    });
+    await tx.wompiPaymentIntent.update({
+      where: { id: intent.id },
+      data: {
+        cuotaNumeros: buildEarlyPayoffIntentMeta(
+          earlyPayoff
+        ) as Prisma.InputJsonValue,
+      },
+    });
+
+    return {
+      ...baseResult,
+      action: "REPAIRED" as const,
+    };
+  });
+
+  if (
+    result.abonoId &&
+    result.creditoId &&
+    ["ALREADY_FINALIZED", "FINALIZED", "REPAIRED"].includes(result.action)
+  ) {
+    await ensureAndTryApprovedPaymentUnlock({
+      abonoId: result.abonoId,
+      creditoId: result.creditoId,
+      intentId,
+      reference: result.reference || "",
+    });
+  }
+
+  return result;
+}
+
+export async function repairRecentProcessedWompiEarlyPayoffs(limit = 200) {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 200, 1), 500);
+  const cutoff = new Date(Date.now() - 1000 * 60 * 60 * 24 * 90);
+  const intents = await prisma.wompiPaymentIntent.findMany({
+    where: {
+      createdAt: {
+        gte: cutoff,
+      },
+      processedAbonoId: {
+        not: null,
+      },
+      status: "APPROVED",
+    },
+    select: {
+      cuotaNumeros: true,
+      id: true,
+      reference: true,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    take: safeLimit,
+  });
+  const candidates = intents.filter((intent) =>
+    isWompiEarlyPayoffIntent(intent.cuotaNumeros, intent.reference)
+  );
+  const results: WompiEarlyPayoffRepairResult[] = [];
+
+  for (const intent of candidates) {
+    const result = await repairProcessedWompiEarlyPayoffIntent(intent.id);
+
+    if (result.action !== "ALREADY_FINALIZED") {
+      results.push(result);
+    }
+  }
+
+  return {
+    checked: candidates.length,
+    finalized: results.filter((item) => item.action === "FINALIZED").length,
+    repaired: results.filter((item) => item.action === "REPAIRED").length,
+    reviewRequired: results.filter((item) => item.action === "REVIEW_REQUIRED")
+      .length,
+    results,
+  };
 }
 
 export async function processApprovedWompiPayment(
@@ -144,6 +461,13 @@ export async function processApprovedWompiPayment(
   }
 
   if (intent.status === "APPROVED" && intent.processedAbonoId) {
+    const repair = isWompiEarlyPayoffIntent(
+      intent.cuotaNumeros,
+      intent.reference
+    )
+      ? await repairProcessedWompiEarlyPayoffIntent(intent.id)
+      : null;
+
     await ensureAndTryApprovedPaymentUnlock({
       abonoId: intent.processedAbonoId,
       creditoId: intent.creditoId,
@@ -156,6 +480,9 @@ export async function processApprovedWompiPayment(
       alreadyProcessed: true,
       applied: false,
       intentId: intent.id,
+      repairedEarlyPayoff: ["FINALIZED", "REPAIRED"].includes(
+        repair?.action || ""
+      ),
       status: "APPROVED",
     };
   }
@@ -231,7 +558,10 @@ export async function processApprovedWompiPayment(
   }
 
   const cuotas = parseCuotaNumeros(intent.cuotaNumeros);
-  const earlyPayoffIntent = isEarlyPayoffIntentMeta(intent.cuotaNumeros);
+  const earlyPayoffIntent = isWompiEarlyPayoffIntent(
+    intent.cuotaNumeros,
+    intent.reference
+  );
   const digitalSede = await ensureDigitalCollectionSede();
   const paymentMethod = resolveAutomaticWompiPaymentMethod(
     transaction.payment_method_type || intent.paymentMethodType
@@ -395,6 +725,7 @@ export async function processApprovedWompiPayment(
             ]
               .filter(Boolean)
               .join("\n"),
+            pazYSalvoEmitidoAt: new Date(),
             valorFianza: earlyPayoff.valorFianzaReconocida,
             valorInteres: earlyPayoff.valorInteresReconocido,
           }

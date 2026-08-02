@@ -142,7 +142,14 @@ function summarizeReport(payload: unknown) {
   const source = payload as Record<string, unknown>;
   const summary: Record<string, unknown> = {};
 
-  for (const key of ["ok", "generatedAt", "selection", "summary", "today"]) {
+  for (const key of [
+    "ok",
+    "generatedAt",
+    "payoffRepairs",
+    "selection",
+    "summary",
+    "today",
+  ]) {
     if (key in source) {
       summary[key] = source[key];
     }

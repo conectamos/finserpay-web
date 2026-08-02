@@ -7,6 +7,8 @@ import {
 } from "@/lib/wompi";
 import {
   processApprovedWompiPayment,
+  repairProcessedWompiEarlyPayoffIntent,
+  repairRecentProcessedWompiEarlyPayoffs,
   type WompiPaymentEventPayload,
   type WompiPaymentProcessingResult,
   type WompiPaymentTransaction,
@@ -58,12 +60,15 @@ export async function reconcileWompiIntent(
   intent: WompiIntentSnapshot
 ): Promise<WompiReconciliationResult> {
   if (intent.status === "APPROVED" && intent.processedAbonoId) {
+    const repair = await repairProcessedWompiEarlyPayoffIntent(intent.id);
+
     return {
       abonoId: intent.processedAbonoId,
       alreadyProcessed: true,
       applied: true,
       intentId: intent.id,
       reference: intent.reference,
+      repairedEarlyPayoff: ["FINALIZED", "REPAIRED"].includes(repair.action),
       status: "APPROVED",
       transactionId: intent.transactionId,
     };
@@ -161,6 +166,7 @@ export async function reconcileWompiIntentForClient(options: {
 
 export async function reconcilePendingWompiPayments(limit = 25) {
   const safeLimit = Math.min(Math.max(Math.trunc(limit) || 25, 1), 50);
+  const payoffRepairs = await repairRecentProcessedWompiEarlyPayoffs(200);
   const checkoutFallbackCutoff = new Date(Date.now() - 1000 * 60 * 60 * 24 * 14);
   const intents = await prisma.wompiPaymentIntent.findMany({
     where: {
@@ -217,6 +223,7 @@ export async function reconcilePendingWompiPayments(limit = 25) {
     applied: results.filter((item) => item.applied).length,
     checked: intents.length,
     errors,
+    payoffRepairs,
     results,
   };
 }

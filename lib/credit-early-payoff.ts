@@ -1,6 +1,7 @@
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { WOMPI_EARLY_PAYOFF_TYPE } from "@/lib/wompi-early-payoff-intent";
 
-export const EARLY_PAYOFF_PAYMENT_TYPE = "LIQUIDACION_ANTICIPADA";
+export const EARLY_PAYOFF_PAYMENT_TYPE = WOMPI_EARLY_PAYOFF_TYPE;
 
 export type CreditEarlyPayoffInput = {
   abonos?: Array<{
