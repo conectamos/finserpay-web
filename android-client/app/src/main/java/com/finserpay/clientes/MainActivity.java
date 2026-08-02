@@ -3,6 +3,7 @@ package com.finserpay.clientes;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.DownloadManager;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
@@ -12,9 +13,11 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceError;
@@ -22,17 +25,24 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.URLUtil;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.google.firebase.messaging.FirebaseMessaging;
 
 public class MainActivity extends Activity {
     private static final String CLIENT_URL = "https://finserpay.com/clientes";
+    private static final int DOWNLOAD_PERMISSION_REQUEST = 1002;
     private WebView webView;
     private ProgressBar progressBar;
     private TextView offlineMessage;
+    private String pendingDownloadUrl;
+    private String pendingDownloadUserAgent;
+    private String pendingDownloadContentDisposition;
+    private String pendingDownloadMimeType;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -85,6 +95,9 @@ public class MainActivity extends Activity {
 
         webView.addJavascriptInterface(new FinserAndroidBridge(), "FinserPayAndroid");
         webView.setWebViewClient(new FinserWebViewClient());
+        webView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) ->
+                requestDownload(url, userAgent, contentDisposition, mimeType)
+        );
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int progress) {
@@ -95,6 +108,36 @@ public class MainActivity extends Activity {
 
         setupPushNotifications();
         webView.loadUrl(resolveLaunchUrl(getIntent()));
+    }
+
+    @Override
+    public void onRequestPermissionsResult(
+            int requestCode,
+            String[] permissions,
+            int[] grantResults
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode != DOWNLOAD_PERMISSION_REQUEST) {
+            return;
+        }
+
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            enqueueDownload(
+                    pendingDownloadUrl,
+                    pendingDownloadUserAgent,
+                    pendingDownloadContentDisposition,
+                    pendingDownloadMimeType
+            );
+        } else {
+            Toast.makeText(
+                    this,
+                    "Permite guardar archivos para descargar el paz y salvo.",
+                    Toast.LENGTH_LONG
+            ).show();
+        }
+
+        clearPendingDownload();
     }
 
     @Override
@@ -238,6 +281,118 @@ public class MainActivity extends Activity {
         }
 
         requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1001);
+    }
+
+    private void requestDownload(
+            String url,
+            String userAgent,
+            String contentDisposition,
+            String mimeType
+    ) {
+        Uri uri = Uri.parse(url);
+        String host = uri.getHost();
+
+        if (!"https".equalsIgnoreCase(uri.getScheme())
+                || host == null
+                || !(host.equals("finserpay.com") || host.endsWith(".finserpay.com"))) {
+            Toast.makeText(this, "No se pudo validar la descarga.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
+                && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            pendingDownloadUrl = url;
+            pendingDownloadUserAgent = userAgent;
+            pendingDownloadContentDisposition = contentDisposition;
+            pendingDownloadMimeType = mimeType;
+            requestPermissions(
+                    new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                    DOWNLOAD_PERMISSION_REQUEST
+            );
+            return;
+        }
+
+        enqueueDownload(url, userAgent, contentDisposition, mimeType);
+    }
+
+    private void enqueueDownload(
+            String url,
+            String userAgent,
+            String contentDisposition,
+            String mimeType
+    ) {
+        if (url == null || url.trim().isEmpty()) {
+            return;
+        }
+
+        try {
+            String resolvedMimeType = mimeType == null || mimeType.trim().isEmpty()
+                    ? "application/pdf"
+                    : mimeType;
+            String fileName = buildUniqueFileName(URLUtil.guessFileName(
+                    url,
+                    contentDisposition,
+                    resolvedMimeType
+            ));
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            request.setMimeType(resolvedMimeType);
+            request.setTitle(fileName);
+            request.setDescription("Descargando documento FINSER PAY");
+            request.setAllowedOverMetered(true);
+            request.setAllowedOverRoaming(true);
+            request.setNotificationVisibility(
+                    DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+            );
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+
+            String cookies = CookieManager.getInstance().getCookie(url);
+            if (cookies != null && !cookies.trim().isEmpty()) {
+                request.addRequestHeader("Cookie", cookies);
+            }
+            if (userAgent != null && !userAgent.trim().isEmpty()) {
+                request.addRequestHeader("User-Agent", userAgent);
+            }
+
+            DownloadManager manager =
+                    (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+            if (manager == null) {
+                throw new IllegalStateException("DownloadManager no disponible");
+            }
+
+            manager.enqueue(request);
+            Toast.makeText(
+                    this,
+                    "El paz y salvo se esta guardando en Descargas.",
+                    Toast.LENGTH_LONG
+            ).show();
+        } catch (Exception error) {
+            Toast.makeText(
+                    this,
+                    "No se pudo iniciar la descarga. Intenta de nuevo.",
+                    Toast.LENGTH_LONG
+            ).show();
+        }
+    }
+
+    private void clearPendingDownload() {
+        pendingDownloadUrl = null;
+        pendingDownloadUserAgent = null;
+        pendingDownloadContentDisposition = null;
+        pendingDownloadMimeType = null;
+    }
+
+    private String buildUniqueFileName(String fileName) {
+        int extensionIndex = fileName.lastIndexOf('.');
+        String suffix = "-" + System.currentTimeMillis();
+
+        if (extensionIndex <= 0 || extensionIndex == fileName.length() - 1) {
+            return fileName + suffix;
+        }
+
+        return fileName.substring(0, extensionIndex)
+                + suffix
+                + fileName.substring(extensionIndex);
     }
 
     private class FinserAndroidBridge {
