@@ -19,6 +19,14 @@ export type CreditPazYSalvoPdfInput = {
   sedeNombre: string;
 };
 
+export function getCreditPazYSalvoPdfErrorCode(error: unknown) {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+
+  return /^PYS_PDF_[A-Z_]+$/.test(error.message) ? error.message : null;
+}
+
 const windowsFontDir = path.join(process.env.WINDIR || "C:\\Windows", "Fonts");
 const SYSTEM_FONT_REGULAR = path.join(windowsFontDir, "arial.ttf");
 const SYSTEM_FONT_BOLD = path.join(windowsFontDir, "arialbd.ttf");
@@ -192,8 +200,12 @@ async function renderCreditPazYSalvoPdf(
   input: CreditPazYSalvoPdfInput,
   useBrandAssets: boolean
 ) {
-  const fonts = getPdfFonts(useBrandAssets);
-  const doc = new PDFDocument({
+  let renderStage = "FONTS";
+
+  try {
+    const fonts = getPdfFonts(useBrandAssets);
+    renderStage = "DOCUMENT";
+    const doc = new PDFDocument({
     size: "A4",
     margin: 40,
     compress: true,
@@ -203,10 +215,12 @@ async function renderCreditPazYSalvoPdf(
       Author: "FINSER PAY",
     },
   });
-  const bufferPromise = toBuffer(doc);
+    const bufferPromise = toBuffer(doc);
 
+  renderStage = "CANVAS";
   doc.rect(0, 0, 595.28, 841.89).fill(COLORS.porcelain);
 
+  renderStage = "HEADER";
   doc.save().roundedRect(32, 30, 531, 150, 10).fill(COLORS.navy).restore();
   if (useBrandAssets && existsSync(LOGO_PATH)) {
     try {
@@ -256,6 +270,7 @@ async function renderCreditPazYSalvoPdf(
       lineBreak: false,
     });
 
+  renderStage = "SUMMARY";
   doc
     .save()
     .roundedRect(32, 198, 531, 132, 10)
@@ -294,6 +309,7 @@ async function renderCreditPazYSalvoPdf(
     .text("DETALLE DE LA OBLIGACI\u00d3N", 32, 354);
   doc.moveTo(181, 359).lineTo(563, 359).strokeColor(COLORS.border).stroke();
 
+  renderStage = "DETAILS";
   doc
     .save()
     .roundedRect(32, 374, 531, 194, 10)
@@ -334,6 +350,7 @@ async function renderCreditPazYSalvoPdf(
   );
   drawField(doc, fonts, 314, 517, 228, "IMEI / DEVICE UID", identifierLabel(input));
 
+  renderStage = "STATUS";
   doc
     .save()
     .roundedRect(32, 592, 531, 72, 10)
@@ -352,6 +369,7 @@ async function renderCreditPazYSalvoPdf(
     valueOrDash(input.deliverableLabel || "Sin verificacion")
   );
 
+  renderStage = "TRACE";
   doc
     .fillColor(COLORS.limeDark)
     .font(fonts.bold)
@@ -380,9 +398,13 @@ async function renderCreditPazYSalvoPdf(
       align: "right",
     });
 
+  renderStage = "FINALIZE";
   doc.end();
 
-  return bufferPromise;
+    return await bufferPromise;
+  } catch (error) {
+    throw new Error(`PYS_PDF_${renderStage}`, { cause: error });
+  }
 }
 
 export async function buildCreditPazYSalvoPdf(

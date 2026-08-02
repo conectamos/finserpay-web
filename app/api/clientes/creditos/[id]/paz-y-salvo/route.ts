@@ -5,7 +5,10 @@ import {
   sanitizeSearch,
 } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
-import { buildCreditPazYSalvoPdf } from "@/lib/credit-paz-y-salvo-pdf";
+import {
+  buildCreditPazYSalvoPdf,
+  getCreditPazYSalvoPdfErrorCode,
+} from "@/lib/credit-paz-y-salvo-pdf";
 import prisma from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -199,7 +202,8 @@ export async function GET(
       },
     });
   } catch (error) {
-    const errorCode = `PYS_${failureStage}`;
+    const errorCode =
+      getCreditPazYSalvoPdfErrorCode(error) || `PYS_${failureStage}`;
     console.error("ERROR DESCARGANDO PAZ Y SALVO CLIENTE:", {
       error,
       stage: failureStage,
