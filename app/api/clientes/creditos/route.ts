@@ -80,6 +80,7 @@ export async function GET(req: Request) {
     });
 
     const items = credits.map((credit) => {
+      const settled = Boolean(credit.pazYSalvoEmitidoAt);
       const plan = buildCreditPaymentPlan({
         montoCredito: Number(credit.montoCredito || 0),
         valorCuota: Number(credit.valorCuota || 0),
@@ -90,7 +91,7 @@ export async function GET(req: Request) {
           valor: Number(item.valor || 0),
           fechaAbono: item.fechaAbono,
         })),
-        settled: Boolean(credit.pazYSalvoEmitidoAt),
+        settled,
       });
       const earlyPayoff = calculateCreditEarlyPayoff({
         saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
@@ -130,7 +131,7 @@ export async function GET(req: Request) {
           motivo: earlyPayoff.reason,
           capitalPendiente: earlyPayoff.capitalPendiente,
           condonacion: earlyPayoff.interesFianzaCondonado,
-          saldoObligacion: earlyPayoff.saldoObligacion,
+          saldoObligacion: settled ? 0 : earlyPayoff.saldoObligacion,
         },
         saldoDisponible: plan.totalPaid,
         totalPagado: plan.totalPaid,
