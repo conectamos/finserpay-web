@@ -47,7 +47,14 @@ const COLORS = {
   white: "#FFFFFF",
 };
 
-function getPdfFonts() {
+function getPdfFonts(useBrandAssets: boolean) {
+  if (!useBrandAssets) {
+    return {
+      regular: "Helvetica",
+      bold: "Helvetica-Bold",
+    };
+  }
+
   if (existsSync(SYSTEM_FONT_REGULAR) && existsSync(SYSTEM_FONT_BOLD)) {
     return {
       regular: SYSTEM_FONT_REGULAR,
@@ -98,14 +105,42 @@ function identifierLabel(input: CreditPazYSalvoPdfInput) {
 }
 
 function issuedAtLabel(value: Date) {
-  return new Intl.DateTimeFormat("es-CO", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "America/Bogota",
-  }).format(value);
+  const issuedAt = value instanceof Date ? value : new Date(value);
+
+  if (Number.isNaN(issuedAt.getTime())) {
+    return "-";
+  }
+
+  try {
+    return new Intl.DateTimeFormat("es-CO", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: "America/Bogota",
+    }).format(issuedAt);
+  } catch {
+    return issuedAt.toISOString().replace("T", " ").slice(0, 16);
+  }
+}
+
+function drawFallbackBrandMark(
+  doc: PDFKit.PDFDocument,
+  fonts: { regular: string; bold: string }
+) {
+  doc
+    .save()
+    .roundedRect(48, 48, 46, 46, 8)
+    .lineWidth(1.2)
+    .strokeColor("#526272")
+    .stroke()
+    .restore();
+  doc
+    .fillColor(COLORS.white)
+    .font(fonts.bold)
+    .fontSize(15)
+    .text("FP", 48, 64, { width: 46, align: "center" });
 }
 
 function drawCheck(
@@ -153,10 +188,11 @@ function drawField(
     });
 }
 
-export async function buildCreditPazYSalvoPdf(
-  input: CreditPazYSalvoPdfInput
+async function renderCreditPazYSalvoPdf(
+  input: CreditPazYSalvoPdfInput,
+  useBrandAssets: boolean
 ) {
-  const fonts = getPdfFonts();
+  const fonts = getPdfFonts(useBrandAssets);
   const doc = new PDFDocument({
     size: "A4",
     margin: 40,
@@ -172,12 +208,19 @@ export async function buildCreditPazYSalvoPdf(
   doc.rect(0, 0, 595.28, 841.89).fill(COLORS.porcelain);
 
   doc.save().roundedRect(32, 30, 531, 150, 10).fill(COLORS.navy).restore();
-  if (existsSync(LOGO_PATH)) {
-    doc.image(LOGO_PATH, 48, 48, {
-      fit: [46, 46],
-      align: "center",
-      valign: "center",
-    });
+  if (useBrandAssets && existsSync(LOGO_PATH)) {
+    try {
+      doc.image(LOGO_PATH, 48, 48, {
+        fit: [46, 46],
+        align: "center",
+        valign: "center",
+      });
+    } catch (error) {
+      console.error("ERROR CARGANDO LOGO EN PAZ Y SALVO:", error);
+      drawFallbackBrandMark(doc, fonts);
+    }
+  } else {
+    drawFallbackBrandMark(doc, fonts);
   }
 
   doc.fillColor(COLORS.white).font(fonts.bold).fontSize(15).text("FINSER", 108, 50);
@@ -340,4 +383,18 @@ export async function buildCreditPazYSalvoPdf(
   doc.end();
 
   return bufferPromise;
+}
+
+export async function buildCreditPazYSalvoPdf(
+  input: CreditPazYSalvoPdfInput
+) {
+  try {
+    return await renderCreditPazYSalvoPdf(input, true);
+  } catch (error) {
+    console.error(
+      "ERROR RENDERIZANDO PAZ Y SALVO CON RECURSOS DE MARCA:",
+      error
+    );
+    return renderCreditPazYSalvoPdf(input, false);
+  }
 }
