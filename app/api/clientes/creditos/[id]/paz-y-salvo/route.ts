@@ -20,6 +20,8 @@ export async function GET(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  let failureStage = "REQUEST";
+
   try {
     const params = await context.params;
     const creditId = parseCreditId(params.id);
@@ -34,9 +36,11 @@ export async function GET(
       );
     }
 
+    failureStage = "AUDIT_COLUMNS";
     await ensureCreditAbonoAuditColumns();
 
     const resolved = await prisma.$transaction(async (tx) => {
+      failureStage = "LOCK_CREDIT";
       const locked = await tx.$queryRaw<Array<{ id: number }>>`
         SELECT "id"
         FROM "Credito"
@@ -50,6 +54,7 @@ export async function GET(
         return { kind: "NOT_FOUND" as const };
       }
 
+      failureStage = "LOAD_CREDIT";
       const credito = await tx.credito.findFirst({
         where: {
           id: creditId,
@@ -80,6 +85,7 @@ export async function GET(
         return { kind: "NOT_FOUND" as const };
       }
 
+      failureStage = "SUM_PAYMENTS";
       const aggregate = await tx.creditoAbono.aggregate({
         where: {
           creditoId: credito.id,
@@ -103,6 +109,7 @@ export async function GET(
 
       const candidateIssuedAt = credito.pazYSalvoEmitidoAt || new Date();
 
+      failureStage = "MARK_ISSUED";
       await tx.credito.updateMany({
         where: {
           id: credito.id,
@@ -118,6 +125,7 @@ export async function GET(
         },
       });
 
+      failureStage = "CONFIRM_ISSUED";
       const issued = await tx.credito.findFirst({
         where: {
           id: credito.id,
@@ -161,6 +169,7 @@ export async function GET(
 
     const { credito, issuedAt } = resolved;
 
+    failureStage = "RENDER_PDF";
     const buffer = await buildCreditPazYSalvoPdf({
       clienteDocumento: credito.clienteDocumento,
       clienteNombre: credito.clienteNombre,
@@ -179,6 +188,7 @@ export async function GET(
     const safeFolio =
       credito.folio.replace(/[^A-Za-z0-9_-]/g, "-") || String(credito.id);
 
+    failureStage = "RETURN_PDF";
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Cache-Control": "private, no-store, max-age=0",
@@ -189,10 +199,23 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error("ERROR DESCARGANDO PAZ Y SALVO CLIENTE:", error);
+    const errorCode = `PYS_${failureStage}`;
+    console.error("ERROR DESCARGANDO PAZ Y SALVO CLIENTE:", {
+      error,
+      stage: failureStage,
+    });
     return NextResponse.json(
-      { error: "No se pudo descargar el paz y salvo" },
-      { status: 500 }
+      {
+        code: errorCode,
+        error: "No se pudo descargar el paz y salvo",
+      },
+      {
+        headers: {
+          "Cache-Control": "private, no-store, max-age=0",
+          "X-Finser-Error-Code": errorCode,
+        },
+        status: 500,
+      }
     );
   }
 }
