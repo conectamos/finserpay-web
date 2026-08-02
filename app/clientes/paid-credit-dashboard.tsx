@@ -5,6 +5,7 @@ import Image from "next/image";
 import FinserBrand from "@/app/_components/finser-brand";
 import FinserSupportLink from "@/app/_components/finser-support-link";
 import {
+  BadgeCheck,
   Bell,
   CalendarDays,
   Check,
@@ -13,12 +14,14 @@ import {
   Clock3,
   CreditCard,
   Download,
-  Gift,
+  Gem,
   Headphones,
   Home,
-  Medal,
   MessageCircle,
   ShieldCheck,
+  Smartphone,
+  Trophy,
+  WalletCards,
 } from "lucide-react";
 import { FINSER_PAY_SUPPORT_DISPLAY } from "@/lib/support";
 
@@ -69,14 +72,14 @@ const moneyFormatter = new Intl.NumberFormat("es-CO", {
 });
 
 const confetti: Array<CSSProperties> = [
-  { left: "4%", top: "18%", transform: "rotate(28deg)" },
-  { left: "12%", top: "68%", transform: "rotate(72deg)" },
-  { left: "22%", top: "8%", transform: "rotate(-18deg)" },
-  { left: "28%", top: "82%", transform: "rotate(18deg)" },
-  { right: "26%", top: "10%", transform: "rotate(58deg)" },
-  { right: "11%", top: "30%", transform: "rotate(-34deg)" },
-  { right: "5%", top: "67%", transform: "rotate(16deg)" },
-  { right: "23%", top: "86%", transform: "rotate(-62deg)" },
+  { left: "2%", top: "19%", transform: "rotate(26deg)" },
+  { left: "12%", top: "53%", transform: "rotate(70deg)" },
+  { left: "27%", top: "4%", transform: "rotate(-18deg)" },
+  { left: "30%", top: "82%", transform: "rotate(18deg)" },
+  { right: "25%", top: "5%", transform: "rotate(58deg)" },
+  { right: "6%", top: "24%", transform: "rotate(-34deg)" },
+  { right: "1%", top: "65%", transform: "rotate(16deg)" },
+  { right: "20%", top: "86%", transform: "rotate(-62deg)" },
 ];
 
 function money(value: number) {
@@ -135,12 +138,11 @@ export default function PaidCreditDashboard({
   pazYSalvoHref,
   profileInitials,
 }: PaidCreditDashboardProps) {
-  const lastPayment = credit.abonos[0] || null;
-  const completionDate = shortDate(
-    credit.pazYSalvoEmitidoAt || lastPayment?.fechaAbono
-  );
   const paidInstallments = credit.cuotas.filter(
     (item) => item.estado === "PAGO" || item.saldoPendiente <= 0
+  ).length;
+  const openInstallments = credit.cuotas.filter(
+    (item) => item.estado !== "PAGO" && item.saldoPendiente > 0
   ).length;
   const paymentPanelActive =
     activePanel === "payments" || activePanel === "pending";
@@ -148,374 +150,367 @@ export default function PaidCreditDashboard({
   return (
     <main
       id="cliente-dashboard"
-      className="min-h-[100svh] overflow-x-hidden bg-[var(--fp-bg)] text-white"
+      className="min-h-[100svh] overflow-x-hidden bg-[var(--fp-bg)] text-[#111317]"
     >
-      <div className="relative mx-auto min-h-[100svh] w-full max-w-[430px] overflow-hidden bg-[#080b0d] px-5 pb-[calc(122px+env(safe-area-inset-bottom))] pt-[calc(18px+env(safe-area-inset-top))] shadow-[0_0_60px_rgba(13,17,18,0.22)]">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-0 h-[520px] bg-[radial-gradient(circle_at_48%_32%,rgba(183,230,61,0.08),transparent_54%)]"
-        />
-
-        <header className="relative z-10 flex items-center justify-between gap-3">
-          <FinserBrand mini dark accentPay showTagline={false} />
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              aria-label="Ver historial"
-              onClick={() => onOpenPanel("history")}
-              className="relative grid h-12 w-12 place-items-center rounded-full text-white transition hover:bg-white/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]"
-            >
-              <Bell className="h-7 w-7" strokeWidth={1.9} />
-              <span className="absolute right-2.5 top-2 h-3 w-3 rounded-full bg-[var(--fp-lime)] shadow-[0_0_14px_rgba(183,230,61,0.8)]" />
-            </button>
-            <button
-              type="button"
-              aria-label="Cambiar cliente"
-              onClick={onForgetDocument}
-              className="grid h-12 w-12 place-items-center rounded-full border border-white/12 bg-white/7 text-[16px] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition hover:bg-white/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]"
-            >
-              {profileInitials}
-            </button>
-          </div>
-        </header>
-
-        {notice ? (
+      <div className="relative mx-auto min-h-[100svh] w-full max-w-[430px] bg-white shadow-[0_0_60px_rgba(13,17,18,0.2)]">
+        <section
+          aria-labelledby="paid-credit-title"
+          className="relative h-[342px] overflow-hidden bg-[#050708] px-5 pt-[calc(18px+env(safe-area-inset-top))] text-white"
+        >
           <div
-            role={notice.tone === "red" ? "alert" : "status"}
-            className={[
-              "relative z-10 mt-4 rounded-[var(--fp-radius-lg)] border px-4 py-3 text-sm font-bold",
-              notice.tone === "emerald"
-                ? "border-[color-mix(in_srgb,var(--fp-lime)_45%,transparent)] bg-[color-mix(in_srgb,var(--fp-lime)_12%,transparent)] text-[#e5f8aa]"
-                : "border-red-400/30 bg-red-400/10 text-red-100",
-            ].join(" ")}
-          >
-            {notice.text}
-          </div>
-        ) : null}
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_79%_48%,rgba(151,230,36,0.18),transparent_29%),radial-gradient(circle_at_48%_100%,rgba(255,255,255,0.04),transparent_42%)]"
+          />
 
-        <section className="relative z-10 mt-7" aria-labelledby="paid-credit-title">
-          <h1 className="text-[28px] font-medium leading-tight tracking-[-0.02em] text-white">
-            Hola, {firstName}
-          </h1>
-          <p className="mt-3 inline-flex min-h-10 items-center gap-3 text-[18px] font-bold text-[var(--fp-lime)]">
-            <span className="grid h-8 w-8 place-items-center rounded-full bg-[var(--fp-lime)] text-[#0a0d0f] shadow-[0_0_20px_rgba(183,230,61,0.34)]">
-              <Check className="h-5 w-5" strokeWidth={3.2} aria-hidden="true" />
-            </span>
-            Crédito pagado
-          </p>
+          <header className="relative z-20 flex items-center justify-between gap-3">
+            <div className="shrink-0">
+              <FinserBrand mini dark accentPay showTagline={false} />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                aria-label="Ver historial"
+                onClick={() => onOpenPanel("history")}
+                className="relative grid h-11 w-11 place-items-center rounded-full text-white transition hover:bg-white/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]"
+              >
+                <Bell className="h-6 w-6" strokeWidth={1.9} aria-hidden="true" />
+                <span className="absolute right-2 top-1.5 h-3 w-3 rounded-full border-2 border-[#050708] bg-[var(--fp-lime)]" />
+              </button>
+              <button
+                type="button"
+                aria-label={`Cambiar cliente: ${firstName}`}
+                onClick={onForgetDocument}
+                className="grid h-12 w-12 place-items-center rounded-full border border-[color-mix(in_srgb,var(--fp-lime)_45%,transparent)] bg-white/6 text-[16px] font-semibold text-white transition hover:bg-white/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]"
+              >
+                {profileInitials}
+              </button>
+            </div>
+          </header>
 
-          <div className="mt-5 overflow-hidden rounded-[var(--fp-radius-lg)] border border-white/12 bg-[linear-gradient(145deg,rgba(21,26,33,0.88),rgba(6,9,11,0.94))] p-4 shadow-[0_22px_60px_rgba(0,0,0,0.3)]">
-            <div className="grid items-center gap-4 min-[370px]:grid-cols-[160px_minmax(0,1fr)]">
-              <div className="relative mx-auto grid h-[168px] w-[168px] place-items-center" aria-hidden="true">
-                {confetti.map((style, index) => (
-                  <span
-                    key={index}
-                    className={[
-                      "absolute h-2 w-3 rounded-sm",
-                      index % 3 === 0
-                        ? "bg-white/85"
-                        : index % 3 === 1
-                          ? "bg-[var(--fp-lime)]"
-                          : "bg-white/35",
-                    ].join(" ")}
-                    style={style}
-                  />
-                ))}
-                <span className="absolute h-[132px] w-[132px] rounded-full border-[10px] border-[var(--fp-lime)] shadow-[0_0_32px_rgba(183,230,61,0.42),inset_0_0_26px_rgba(183,230,61,0.12)]" />
-                <span className="grid h-[76px] w-[76px] place-items-center rounded-full bg-[var(--fp-lime)] text-white shadow-[0_0_28px_rgba(183,230,61,0.48)]">
-                  <Check className="h-11 w-11" strokeWidth={3.1} />
+          <div className="absolute inset-x-5 bottom-[43px] z-10 grid grid-cols-[minmax(0,1fr)_126px] items-end gap-1 min-[380px]:grid-cols-[minmax(0,1fr)_144px] min-[380px]:gap-2 min-[420px]:grid-cols-[minmax(0,1fr)_164px]">
+            <div className="min-w-0 pb-1">
+              <p className="text-[17px] font-black uppercase leading-tight tracking-[-0.035em] min-[380px]:text-[20px] min-[420px]:text-[22px]">
+                ¡Felicitaciones!
+              </p>
+              <h1
+                id="paid-credit-title"
+                className="mt-2 text-[22px] font-semibold leading-[1.03] tracking-[-0.035em] min-[380px]:text-[24px] min-[420px]:text-[25px]"
+              >
+                Tu crédito ha sido
+                <span className="mt-1 block text-[35px] font-black leading-none tracking-[-0.055em] text-[var(--fp-lime)] min-[380px]:text-[41px] min-[420px]:text-[49px]">
+                  PAGADO
                 </span>
-              </div>
-
-              <div className="text-center min-[370px]:text-left">
-                <p className="text-[17px] font-black uppercase tracking-[-0.02em] text-white">
-                  ¡Felicitaciones!
-                </p>
-                <h2
-                  id="paid-credit-title"
-                  className="mt-2 text-[23px] font-medium leading-[1.06] tracking-[-0.02em] text-white"
-                >
-                  Tu crédito ha sido
-                  <span className="mt-1 block text-[38px] font-black leading-none text-[var(--fp-lime)]">
-                    PAGADO
-                  </span>
-                  <span className="mt-1 block text-[23px] font-semibold">
-                    en su totalidad
-                  </span>
-                </h2>
-                <span className="mx-auto mt-3 block h-0.5 w-20 bg-[var(--fp-lime)] min-[370px]:mx-0" />
-                <p className="mt-4 text-[15px] font-medium leading-5 text-white/72">
-                  Gracias por tu compromiso. Sigue así y accede a
-                  <span className="text-[var(--fp-lime)]"> más beneficios.</span>
-                </p>
-              </div>
+              </h1>
+              <p className="mt-3 max-w-[220px] text-[12.5px] font-medium leading-[1.45] text-white/76 min-[380px]:text-[14px]">
+                Gracias por tu compromiso y por cumplir cada una de tus cuotas.
+                <span className="text-[var(--fp-lime)]"> ¡Lo lograste!</span>
+              </p>
             </div>
 
-            <div className="mt-4 grid grid-cols-3 border-t border-white/10 pt-4">
-              <div className="grid min-w-0 justify-items-center gap-2 px-1 text-center min-[390px]:grid-cols-[28px_1fr] min-[390px]:items-center min-[390px]:text-left">
-                <ShieldCheck className="h-7 w-7 text-[var(--fp-lime)]" aria-hidden="true" />
-                <p className="text-[11px] font-medium leading-4 text-white/82">
-                  Cumpliste <span className="block text-[var(--fp-lime)]">tu compromiso</span>
-                </p>
-              </div>
-              <div className="grid min-w-0 justify-items-center gap-2 border-x border-white/10 px-1 text-center min-[390px]:grid-cols-[28px_1fr] min-[390px]:items-center min-[390px]:text-left">
-                <Medal className="h-7 w-7 text-[var(--fp-lime)]" aria-hidden="true" />
-                <p className="text-[11px] font-medium leading-4 text-white/82">
-                  Eres un cliente <span className="block text-[var(--fp-lime)]">confiable</span>
-                </p>
-              </div>
-              <div className="grid min-w-0 justify-items-center gap-2 px-1 text-center min-[390px]:grid-cols-[28px_1fr] min-[390px]:items-center min-[390px]:text-left">
-                <Gift className="h-7 w-7 text-[var(--fp-lime)]" aria-hidden="true" />
-                <p className="text-[11px] font-medium leading-4 text-white/82">
-                  Accede a mejores <span className="block text-[var(--fp-lime)]">beneficios</span>
-                </p>
-              </div>
+            <div className="relative h-[184px]" aria-hidden="true">
+              {confetti.map((style, index) => (
+                <span
+                  key={index}
+                  className={[
+                    "absolute z-10 h-2 w-3 rounded-sm",
+                    index % 3 === 0
+                      ? "bg-white/90"
+                      : index % 3 === 1
+                        ? "bg-[var(--fp-lime)]"
+                        : "bg-white/42",
+                  ].join(" ")}
+                  style={style}
+                />
+              ))}
+              <span className="absolute bottom-0 left-1/2 h-8 w-[132px] -translate-x-1/2 rounded-[50%] bg-[linear-gradient(180deg,#24282b,#07090a)] shadow-[0_14px_20px_rgba(0,0,0,0.7)] min-[380px]:w-[144px] min-[420px]:w-[164px]" />
+              <span className="absolute bottom-3 left-1/2 h-6 w-[112px] -translate-x-1/2 rounded-[50%] border-t border-white/18 bg-[#0d1012] min-[380px]:w-[130px] min-[420px]:w-[148px]" />
+              <span className="absolute bottom-5 left-1/2 grid h-[116px] w-[116px] -translate-x-1/2 place-items-center rounded-full border-[7px] border-white bg-[radial-gradient(circle_at_50%_42%,#759d2a_0%,#31480f_48%,#132106_78%)] shadow-[0_0_18px_rgba(183,230,61,0.72),0_0_50px_rgba(133,214,27,0.44)] min-[380px]:h-[132px] min-[380px]:w-[132px] min-[420px]:h-[146px] min-[420px]:w-[146px] min-[420px]:border-[8px]">
+                <Check className="h-14 w-14 text-white min-[380px]:h-16 min-[380px]:w-16 min-[420px]:h-[72px] min-[420px]:w-[72px]" strokeWidth={2.7} />
+              </span>
             </div>
           </div>
         </section>
 
-        <section className="relative z-10 mt-4 grid gap-3" aria-label="Acciones del crédito finalizado">
-          <a
-            href={pazYSalvoHref}
-            download
-            aria-label="Descargar paz y salvo del crédito"
-            className="grid min-h-[68px] grid-cols-[48px_minmax(0,1fr)_24px] items-center gap-3 rounded-full bg-[var(--fp-lime)] px-4 text-[#0a0d0f] shadow-[0_18px_42px_rgba(183,230,61,0.22)] transition hover:brightness-105 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#080b0d]"
+        <div className="relative z-20 -mt-[26px] rounded-t-[30px] bg-white px-4 pb-[calc(112px+env(safe-area-inset-bottom))] pt-6 min-[390px]:px-5">
+          {notice ? (
+            <div
+              role={notice.tone === "red" ? "alert" : "status"}
+              className={[
+                "mb-4 rounded-[var(--fp-radius-md)] border px-4 py-3 text-sm font-bold",
+                notice.tone === "emerald"
+                  ? "border-[#b8d88f] bg-[#f2f9df] text-[#315e0f]"
+                  : "border-red-200 bg-red-50 text-red-800",
+              ].join(" ")}
+            >
+              {notice.text}
+            </div>
+          ) : null}
+
+          <section
+            aria-labelledby="preferred-customer-title"
+            className="grid min-h-[104px] grid-cols-[56px_minmax(0,1fr)_46px] items-center gap-3 rounded-[22px] bg-[linear-gradient(105deg,#f2f8e9_0%,#f7faf3_60%,#eff5e7_100%)] px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] min-[390px]:grid-cols-[62px_minmax(0,1fr)_52px]"
           >
-            <span className="grid h-12 w-12 place-items-center rounded-full bg-[#080b0d] text-white">
-              <Download className="h-7 w-7" aria-hidden="true" />
+            <span className="grid h-14 w-14 place-items-center rounded-full bg-[var(--fp-lime)] text-[#122006] shadow-[0_0_24px_rgba(183,230,61,0.48)]">
+              <BadgeCheck className="h-9 w-9" strokeWidth={1.9} aria-hidden="true" />
             </span>
-            <span className="text-[19px] font-black leading-tight">
-              Descargar paz y salvo
-            </span>
-            <ChevronRight className="h-7 w-7" strokeWidth={2.5} aria-hidden="true" />
-          </a>
+            <div className="min-w-0">
+              <h2 id="preferred-customer-title" className="text-[16px] font-black leading-tight text-[#15181b] min-[390px]:text-[17px]">
+                Ahora eres un
+                <span className="mt-1 block text-[16px] leading-tight tracking-[-0.025em] text-[#3f7e0d] min-[390px]:whitespace-nowrap">
+                  CLIENTE PREFERENCIAL
+                </span>
+              </h2>
+              <p className="mt-2 text-[12px] font-medium leading-4 text-[#4d545c] min-[390px]:text-[13px]">
+                Accede a mejores beneficios en tu próximo crédito.
+              </p>
+            </div>
+            <Gem className="h-11 w-11 text-[#4c930f] min-[390px]:h-12 min-[390px]:w-12" strokeWidth={1.45} aria-hidden="true" />
+          </section>
+
+          <section className="mt-4 grid grid-cols-2 gap-3" aria-label="Acciones del crédito finalizado">
+            <a
+              href={pazYSalvoHref}
+              download
+              aria-label="Descargar paz y salvo del crédito"
+              className="grid min-h-[104px] grid-cols-[42px_minmax(0,1fr)] items-center gap-2 rounded-[20px] bg-[var(--fp-lime)] px-3 py-4 text-[#0a0d0f] shadow-[0_14px_30px_rgba(153,205,39,0.18)] transition hover:brightness-105 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#284f0c] focus-visible:ring-offset-2"
+            >
+              <Download className="h-8 w-8 justify-self-center" strokeWidth={2.1} aria-hidden="true" />
+              <span className="text-[15px] font-black leading-[1.25] min-[390px]:text-[16px]">
+                Descargar
+                <span className="block">Paz y Salvo</span>
+              </span>
+            </a>
+
+            <FinserSupportLink
+              supportMessage={newCreditSupportMessage}
+              supportAriaLabel="Solicitar un nuevo crédito por WhatsApp"
+              className="grid min-h-[104px] grid-cols-[38px_minmax(0,1fr)_18px] items-center gap-2 rounded-[20px] border border-[#cdd2d7] bg-white px-3 py-4 text-[#111317] transition hover:border-[#94af70] hover:bg-[#fbfdf8] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4b8b14] focus-visible:ring-offset-2"
+            >
+              <Smartphone className="h-8 w-8 justify-self-center" strokeWidth={1.9} aria-hidden="true" />
+              <span className="text-[15px] font-black leading-[1.25] min-[390px]:text-[16px]">
+                Solicitar nuevo
+                <span className="block">crédito</span>
+              </span>
+              <ChevronRight className="h-5 w-5" strokeWidth={2.4} aria-hidden="true" />
+            </FinserSupportLink>
+          </section>
+
+          {credits.length > 1 ? (
+            <section className="mt-5" aria-label="Seleccionar crédito">
+              <p className="mb-2 text-[11px] font-black uppercase tracking-[0.12em] text-[#53606c]">
+                Tus créditos
+              </p>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {credits.map((item, index) => {
+                  const selected = item.id === credit.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => onSelectCredit(item.id)}
+                      className={[
+                        "min-h-[62px] min-w-[180px] rounded-[var(--fp-radius-md)] border px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4b8b14]",
+                        selected
+                          ? "border-[#76a739] bg-[#f1f8e7]"
+                          : "border-[#dde1e5] bg-white",
+                      ].join(" ")}
+                    >
+                      <span className="block text-[10px] font-black uppercase tracking-[0.1em] text-[#4a8219]">
+                        Crédito {index + 1} · {creditStateLabel(item)}
+                      </span>
+                      <span className="mt-1 block truncate text-sm font-black text-[#171a1d]">
+                        {creditTitle(item)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+
+          <section className="mt-6" aria-labelledby="credit-summary-title">
+            <h2 id="credit-summary-title" className="text-[21px] font-black tracking-[-0.025em] text-[#111317]">
+              Resumen de tu crédito
+            </h2>
+            <dl className="mt-3 grid grid-cols-2 overflow-hidden rounded-[22px] border border-[#e0e3e6] bg-white shadow-[0_10px_30px_rgba(18,24,30,0.035)] min-[380px]:grid-cols-4">
+              <div className="grid min-h-[112px] content-center justify-items-center border-b border-r border-[#e1e4e7] px-2 py-4 text-center min-[380px]:border-b-0">
+                <Check className="h-8 w-8 rounded-full border-2 border-[#4f9b13] p-1 text-[#4f9b13]" strokeWidth={2.8} aria-hidden="true" />
+                <dd className="mt-2 text-[19px] font-black text-[#111317]">100%</dd>
+                <dt className="mt-1 text-[11px] font-medium leading-4 text-[#59616a]">
+                  Crédito pagado
+                  <span className="block">en su totalidad</span>
+                </dt>
+              </div>
+              <div className="grid min-h-[112px] content-center justify-items-center border-b border-[#e1e4e7] px-2 py-4 text-center min-[380px]:border-b-0 min-[380px]:border-r">
+                <CalendarDays className="h-8 w-8 text-[#4f9b13]" strokeWidth={1.8} aria-hidden="true" />
+                <dd className="mt-2 text-[19px] font-black text-[#111317]">{paidInstallments}</dd>
+                <dt className="mt-1 text-[11px] font-medium leading-4 text-[#59616a]">
+                  Cuotas pagadas
+                  <span className="block">de <strong className="text-[#3d790e]">{credit.cuotas.length}</strong></span>
+                </dt>
+              </div>
+              <div className="grid min-h-[112px] content-center justify-items-center border-r border-[#e1e4e7] px-2 py-4 text-center">
+                <WalletCards className="h-8 w-8 text-[#4f9b13]" strokeWidth={1.8} aria-hidden="true" />
+                <dd className="mt-2 whitespace-nowrap text-[14px] font-black tracking-[-0.03em] text-[#111317] min-[400px]:text-[15px]">
+                  {money(credit.totalPagado)}
+                </dd>
+                <dt className="mt-1 text-[11px] font-medium leading-4 text-[#59616a]">
+                  Total <strong className="text-[#3d790e]">cancelado</strong>
+                </dt>
+              </div>
+              <div className="grid min-h-[112px] content-center justify-items-center px-2 py-4 text-center">
+                <ShieldCheck className="h-8 w-8 text-[#4f9b13]" strokeWidth={1.8} aria-hidden="true" />
+                <dd className="mt-2 text-[19px] font-black text-[#111317]">{openInstallments}</dd>
+                <dt className="mt-1 text-[11px] font-medium leading-4 text-[#59616a]">
+                  Pagos en mora
+                  <strong className="block text-[#3d790e]">¡Excelente!</strong>
+                </dt>
+              </div>
+            </dl>
+          </section>
+
+          <section
+            aria-label="Ciclo de crédito completado"
+            className="relative mt-5 min-h-[126px] overflow-hidden rounded-[22px] bg-[linear-gradient(105deg,#f8faf8_0%,#f4f6f4_68%,#f9fbf8_100%)] px-4 py-5 shadow-[0_12px_34px_rgba(18,24,30,0.04)]"
+          >
+            <div className="relative z-10 grid grid-cols-[58px_minmax(0,1fr)_62px] items-center gap-3 min-[390px]:grid-cols-[64px_minmax(0,1fr)_78px]">
+              <span className="grid h-14 w-14 place-items-center rounded-full bg-[#dff2b5] text-[#17200f] min-[390px]:h-16 min-[390px]:w-16">
+                <Trophy className="h-8 w-8 min-[390px]:h-9 min-[390px]:w-9" strokeWidth={1.8} aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-[16px] font-black leading-tight text-[#15181b] min-[390px]:text-[17px]">
+                  Cerraste este ciclo con éxito
+                </h2>
+                <p className="mt-2 text-[12px] font-medium leading-[1.45] text-[#4f565e] min-[390px]:text-[13px]">
+                  Sigue así y continúa construyendo tu historial para lograr más.
+                </p>
+              </div>
+              <div className="relative self-stretch" aria-hidden="true">
+                <span className="absolute bottom-0 left-1/2 h-14 w-20 -translate-x-1/2 rounded-t-full bg-[var(--fp-lime)]/65" />
+                <Image
+                  src={creditDeviceImage(credit)}
+                  alt=""
+                  width={78}
+                  height={106}
+                  loading="eager"
+                  className="absolute bottom-[-14px] left-1/2 h-[105px] w-[72px] -translate-x-1/2 object-contain drop-shadow-[0_8px_12px_rgba(0,0,0,0.18)]"
+                />
+                <span className="absolute right-0 top-0 text-lg text-[var(--fp-lime)]">✦</span>
+                <span className="absolute left-0 top-5 text-sm text-[#67a620]">✦</span>
+              </div>
+            </div>
+          </section>
+
+          {activePanel ? (
+            <section
+              id="explora-panel"
+              className="mt-5 rounded-[22px] border border-[#dfe3e7] bg-[#f8faf8] p-4 shadow-[0_12px_34px_rgba(18,24,30,0.05)]"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.13em] text-[#4c8419]">
+                    Crédito finalizado
+                  </p>
+                  <h2 className="mt-1 text-[19px] font-black text-[#15181b]">
+                    {activePanel === "history"
+                      ? "Historial de pagos"
+                      : activePanel === "pending"
+                        ? "Calendario completado"
+                        : "Obligación cerrada"}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={onHome}
+                  className="min-h-10 rounded-[var(--fp-radius-md)] border border-[#d4d9de] bg-white px-3 text-xs font-black text-[#46505a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4b8b14]"
+                >
+                  Cerrar
+                </button>
+              </div>
+
+              {activePanel === "history" ? (
+                <div className="mt-4 grid gap-2">
+                  {credit.abonos.length ? (
+                    credit.abonos.map((payment) => (
+                      <div
+                        key={payment.id}
+                        className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-[var(--fp-radius-md)] border border-[#e1e5e8] bg-white px-3 py-3"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-black text-[#171a1d]">
+                            {payment.metodoPago}
+                          </span>
+                          <span className="mt-1 block text-xs font-medium text-[#69727b]">
+                            {shortDate(payment.fechaAbono)} · Pago confirmado
+                          </span>
+                        </span>
+                        <span className="text-sm font-black text-[#171a1d]">
+                          {money(payment.valor)}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="rounded-[var(--fp-radius-md)] bg-white px-3 py-4 text-sm font-medium text-[#66717b]">
+                      No hay pagos registrados.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-[var(--fp-radius-md)] bg-white px-2 py-3">
+                    <p className="text-[11px] font-bold text-[#707982]">Cuotas</p>
+                    <p className="mt-1 text-base font-black text-[#171a1d]">
+                      {paidInstallments}/{credit.cuotas.length}
+                    </p>
+                  </div>
+                  <div className="rounded-[var(--fp-radius-md)] bg-white px-2 py-3">
+                    <p className="text-[11px] font-bold text-[#707982]">Saldo</p>
+                    <p className="mt-1 text-base font-black text-[#171a1d]">{money(0)}</p>
+                  </div>
+                  <div className="rounded-[var(--fp-radius-md)] bg-white px-2 py-3">
+                    <p className="text-[11px] font-bold text-[#707982]">Estado</p>
+                    <p className="mt-1 text-base font-black text-[#3d790e]">Pagado</p>
+                  </div>
+                </div>
+              )}
+            </section>
+          ) : null}
 
           <FinserSupportLink
-            supportMessage={newCreditSupportMessage}
-            supportAriaLabel="Solicitar un nuevo crédito por WhatsApp"
-            className="grid min-h-[68px] grid-cols-[48px_minmax(0,1fr)_24px] items-center gap-3 rounded-full border border-white/14 bg-white/5 px-4 text-white transition hover:border-white/24 hover:bg-white/8 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]"
+            className="mt-5 grid min-h-[90px] grid-cols-[48px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-[22px] border border-[#dfe3e7] bg-white px-4 py-4 text-[#111317] shadow-[0_10px_28px_rgba(18,24,30,0.035)] transition hover:border-[#a8bf87] hover:bg-[#fbfdf8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4b8b14] min-[410px]:grid-cols-[48px_minmax(0,1fr)_auto]"
           >
-            <span className="grid h-12 w-12 place-items-center rounded-full border border-white/70 bg-[#25D366] text-white shadow-[0_8px_24px_rgba(37,211,102,0.2)]">
-              <MessageCircle className="h-7 w-7 fill-white/15" aria-hidden="true" />
-            </span>
-            <span className="min-w-0 text-left">
-              <span className="block text-[18px] font-black leading-tight">
-                Solicitar nuevo crédito
-              </span>
-              <span className="mt-1 block text-[14px] font-medium text-white/62">
-                WhatsApp {FINSER_PAY_SUPPORT_DISPLAY}
-              </span>
-            </span>
-            <ChevronRight className="h-7 w-7" strokeWidth={2.2} aria-hidden="true" />
-          </FinserSupportLink>
-        </section>
-
-        {credits.length > 1 ? (
-          <section className="relative z-10 mt-4" aria-label="Seleccionar crédito">
-            <div className="flex gap-3 overflow-x-auto pb-1">
-              {credits.map((item, index) => {
-                const selected = item.id === credit.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => onSelectCredit(item.id)}
-                    className={[
-                      "min-h-[64px] min-w-[190px] rounded-[var(--fp-radius-lg)] border px-4 py-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]",
-                      selected
-                        ? "border-[var(--fp-lime)] bg-[color-mix(in_srgb,var(--fp-lime)_9%,transparent)]"
-                        : "border-white/12 bg-white/4",
-                    ].join(" ")}
-                  >
-                    <span className="block text-[11px] font-black uppercase tracking-[0.12em] text-[var(--fp-lime)]">
-                      Crédito {index + 1} · {creditStateLabel(item)}
-                    </span>
-                    <span className="mt-1 block truncate text-sm font-black text-white">
-                      {creditTitle(item)}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        ) : null}
-
-        <button
-          type="button"
-          onClick={() => onOpenPanel("history")}
-          aria-label={`Ver historial de ${creditTitle(credit)}`}
-          className="relative z-10 mt-4 grid min-h-[88px] w-full grid-cols-[72px_minmax(0,1fr)_28px] items-center gap-3 rounded-[var(--fp-radius-lg)] border border-white/14 bg-white/4 px-3 text-left transition hover:bg-white/7 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]"
-        >
-          <span className="grid h-[72px] w-[72px] place-items-center overflow-hidden rounded-[var(--fp-radius-md)] bg-white/94">
-            <Image
-              src={creditDeviceImage(credit)}
-              alt=""
-              width={68}
-              height={68}
-              aria-hidden="true"
-              className="h-[68px] w-[68px] object-contain"
-            />
-          </span>
-          <span className="min-w-0">
-            <span className="block text-[16px] font-medium text-white/55">Tu crédito</span>
-            <span className="mt-1 block break-words text-[18px] font-black uppercase leading-tight text-white">
-              {creditTitle(credit)}
-            </span>
-          </span>
-          <ChevronRight className="h-7 w-7 text-white/50" aria-hidden="true" />
-        </button>
-
-        <section className="relative z-10 mt-6" aria-labelledby="paid-activity-title">
-          <div className="flex flex-col items-start gap-1 min-[360px]:flex-row min-[360px]:items-center min-[360px]:justify-between min-[360px]:gap-3">
-            <h2 id="paid-activity-title" className="text-[28px] font-black tracking-[-0.02em] text-white">
-              Actividad
-            </h2>
-            <div className="flex w-full items-center justify-between gap-2 text-[13px] font-medium text-white/80 min-[360px]:w-auto min-[360px]:justify-start min-[380px]:gap-3 min-[380px]:text-[14px]">
-              <button
-                type="button"
-                onClick={() => onOpenPanel("pending")}
-                className="inline-flex min-h-11 items-center gap-1.5 rounded-md px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]"
-              >
-                <CalendarDays className="h-5 w-5" aria-hidden="true" />
-                Calendario
-              </button>
-              <span className="h-6 w-px bg-white/12" />
-              <FinserSupportLink className="inline-flex min-h-11 items-center gap-1.5 rounded-md px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]">
-                <Headphones className="h-5 w-5" aria-hidden="true" />
-                Soporte
-              </FinserSupportLink>
-            </div>
-          </div>
-
-          <div className="mt-3 grid min-h-[92px] grid-cols-[48px_minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--fp-radius-lg)] border border-white/12 bg-white/4 px-4 py-3">
-            <span className="grid h-11 w-11 place-items-center rounded-full border-2 border-[var(--fp-lime)] text-[var(--fp-lime)] shadow-[0_0_18px_rgba(183,230,61,0.16)]">
-              <Check className="h-6 w-6" strokeWidth={2.8} aria-hidden="true" />
+            <span className="grid h-12 w-12 place-items-center rounded-full bg-[#f3f5f4] text-[#111317]">
+              <Headphones className="h-7 w-7" strokeWidth={1.9} aria-hidden="true" />
             </span>
             <span className="min-w-0">
-              <span className="block text-[17px] font-black text-white">Crédito finalizado</span>
-              <span className="mt-1 block text-[14px] font-medium leading-5 text-white/62">
-                ¡Lo lograste! Tu crédito fue pagado en su totalidad.
-              </span>
+              <span className="block text-[15px] font-black">¿Necesitas ayuda?</span>
+              <span className="mt-1 block text-[13px] font-medium text-[#6b737b]">Estamos aquí para ti</span>
             </span>
-            <span className="self-start pt-2 text-sm font-black text-[var(--fp-lime)]">
-              {completionDate}
+            <span className="col-start-2 inline-flex min-h-11 items-center gap-2 whitespace-nowrap rounded-full border border-[#e0e4e7] px-3 text-[14px] font-black min-[410px]:col-start-auto">
+              <MessageCircle className="h-7 w-7 fill-[#25D366]/15 text-[#25B85B]" aria-hidden="true" />
+              {FINSER_PAY_SUPPORT_DISPLAY}
+              <ChevronRight className="h-5 w-5" strokeWidth={2.3} aria-hidden="true" />
             </span>
-          </div>
-        </section>
-
-        {activePanel ? (
-          <section
-            id="explora-panel"
-            className="relative z-10 mt-4 rounded-[var(--fp-radius-lg)] border border-white/12 bg-[#101419] p-4 shadow-[0_18px_44px_rgba(0,0,0,0.24)]"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.14em] text-[var(--fp-lime)]">
-                  Crédito finalizado
-                </p>
-                <h2 className="mt-1 text-xl font-black text-white">
-                  {activePanel === "history"
-                    ? "Historial de pagos"
-                    : activePanel === "pending"
-                      ? "Calendario completado"
-                      : "Obligación cerrada"}
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={onHome}
-                className="min-h-10 rounded-[var(--fp-radius-md)] border border-white/12 px-3 text-xs font-black text-white/72 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]"
-              >
-                Cerrar
-              </button>
-            </div>
-
-            {activePanel === "history" ? (
-              <div className="mt-4 grid gap-2">
-                {credit.abonos.length ? (
-                  credit.abonos.map((payment) => (
-                    <div
-                      key={payment.id}
-                      className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-[var(--fp-radius-md)] bg-white/5 px-3 py-3"
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-black text-white">
-                          {payment.metodoPago}
-                        </span>
-                        <span className="mt-1 block text-xs font-medium text-white/48">
-                          {shortDate(payment.fechaAbono)} · Pago confirmado
-                        </span>
-                      </span>
-                      <span className="text-sm font-black text-white">
-                        {money(payment.valor)}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <p className="rounded-[var(--fp-radius-md)] bg-white/5 px-3 py-4 text-sm font-medium text-white/60">
-                    No hay pagos registrados.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-[var(--fp-radius-md)] bg-white/5 px-2 py-3">
-                  <p className="text-[11px] font-bold text-white/48">Cuotas</p>
-                  <p className="mt-1 text-base font-black text-white">
-                    {paidInstallments}/{credit.cuotas.length}
-                  </p>
-                </div>
-                <div className="rounded-[var(--fp-radius-md)] bg-white/5 px-2 py-3">
-                  <p className="text-[11px] font-bold text-white/48">Saldo</p>
-                  <p className="mt-1 text-base font-black text-white">{money(0)}</p>
-                </div>
-                <div className="rounded-[var(--fp-radius-md)] bg-white/5 px-2 py-3">
-                  <p className="text-[11px] font-bold text-white/48">Estado</p>
-                  <p className="mt-1 text-base font-black text-[var(--fp-lime)]">Pagado</p>
-                </div>
-              </div>
-            )}
-          </section>
-        ) : null}
-
-        <section className="relative z-10 mt-4 overflow-hidden rounded-[var(--fp-radius-lg)] border border-white/10 bg-[radial-gradient(circle_at_85%_50%,rgba(183,230,61,0.24),transparent_34%),linear-gradient(110deg,#101519,#07100a)] px-5 py-5" aria-label="Nuevos beneficios">
-          <div className="grid grid-cols-[minmax(0,1fr)_86px] items-center gap-3">
-            <div>
-              <span className="inline-flex rounded-full bg-[color-mix(in_srgb,var(--fp-lime)_16%,transparent)] px-3 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-[var(--fp-lime)]">
-                Nuevos beneficios
-              </span>
-              <p className="mt-3 text-[19px] font-bold leading-6 text-white">
-                Ahora puedes acceder a
-                <span className="block text-[24px] font-black leading-7 text-[var(--fp-lime)]">
-                  mejores oportunidades
-                </span>
-              </p>
-              <p className="mt-2 text-sm font-medium text-white/70">
-                Gracias por ser parte de <span className="font-black text-[var(--fp-lime)]">FINSER PAY</span>
-              </p>
-            </div>
-            <div className="relative grid h-[86px] w-[86px] place-items-center rounded-full bg-[radial-gradient(circle,rgba(183,230,61,0.32),transparent_68%)] text-[var(--fp-lime)]" aria-hidden="true">
-              <Gift className="h-16 w-16 drop-shadow-[0_0_18px_rgba(183,230,61,0.34)]" strokeWidth={1.4} />
-              <span className="absolute left-1 top-3 h-2 w-2 rotate-12 rounded-sm bg-white/80" />
-              <span className="absolute right-0 top-1 h-2 w-3 -rotate-12 rounded-sm bg-[var(--fp-lime)]" />
-              <span className="absolute -right-1 bottom-4 h-2 w-2 rotate-45 rounded-sm bg-white/40" />
-            </div>
-          </div>
-        </section>
+          </FinserSupportLink>
+        </div>
       </div>
 
-      <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-[430px] -translate-x-1/2 px-5 pb-[calc(8px+env(safe-area-inset-bottom))]" aria-label="Navegación principal">
-        <div className="grid min-h-[82px] grid-cols-4 items-center rounded-[28px] border border-white/12 bg-[#15191c]/96 px-2 py-2 shadow-[0_-14px_34px_rgba(0,0,0,0.34)] backdrop-blur-xl">
+      <nav
+        className="fixed bottom-0 left-1/2 z-40 w-full max-w-[430px] -translate-x-1/2 border-t border-[#e5e8eb] bg-white/96 px-3 pb-[calc(7px+env(safe-area-inset-bottom))] pt-2 shadow-[0_-12px_34px_rgba(18,24,30,0.08)] backdrop-blur-xl"
+        aria-label="Navegación principal"
+      >
+        <div className="grid min-h-[74px] grid-cols-4 items-center">
           <button
             type="button"
             onClick={onHome}
             aria-current={activePanel === null ? "page" : undefined}
             className={[
-              "grid min-h-[62px] place-items-center gap-1 rounded-2xl text-[12px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]",
-              activePanel === null ? "text-[var(--fp-lime)]" : "text-white/72",
+              "grid min-h-[60px] place-items-center gap-1 rounded-2xl text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4b8b14]",
+              activePanel === null ? "text-[#4d9513]" : "text-[#171a1d]",
             ].join(" ")}
           >
-            <Home className={activePanel === null ? "h-7 w-7 fill-current" : "h-7 w-7"} strokeWidth={2} />
+            <Home className={activePanel === null ? "h-7 w-7 fill-current" : "h-7 w-7"} strokeWidth={2} aria-hidden="true" />
             Inicio
           </button>
           <button
@@ -523,11 +518,11 @@ export default function PaidCreditDashboard({
             onClick={() => onOpenPanel("payments")}
             aria-current={paymentPanelActive ? "page" : undefined}
             className={[
-              "grid min-h-[62px] place-items-center gap-1 rounded-2xl text-[12px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]",
-              paymentPanelActive ? "text-[var(--fp-lime)]" : "text-white/72",
+              "grid min-h-[60px] place-items-center gap-1 rounded-2xl text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4b8b14]",
+              paymentPanelActive ? "text-[#4d9513]" : "text-[#171a1d]",
             ].join(" ")}
           >
-            <CreditCard className="h-7 w-7" strokeWidth={2} />
+            <CreditCard className="h-7 w-7" strokeWidth={2} aria-hidden="true" />
             Pagos
           </button>
           <button
@@ -535,22 +530,35 @@ export default function PaidCreditDashboard({
             onClick={() => onOpenPanel("history")}
             aria-current={activePanel === "history" ? "page" : undefined}
             className={[
-              "grid min-h-[62px] place-items-center gap-1 rounded-2xl text-[12px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]",
-              activePanel === "history" ? "text-[var(--fp-lime)]" : "text-white/72",
+              "grid min-h-[60px] place-items-center gap-1 rounded-2xl text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4b8b14]",
+              activePanel === "history" ? "text-[#4d9513]" : "text-[#171a1d]",
             ].join(" ")}
           >
-            <Clock3 className="h-7 w-7" strokeWidth={2} />
+            <Clock3 className="h-7 w-7" strokeWidth={2} aria-hidden="true" />
             Historial
           </button>
           <button
             type="button"
             onClick={onForgetDocument}
-            className="grid min-h-[62px] place-items-center gap-1 rounded-2xl text-[12px] font-medium text-white/72 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]"
+            className="grid min-h-[60px] place-items-center gap-1 rounded-2xl text-[11px] font-medium text-[#171a1d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4b8b14]"
           >
-            <CircleUserRound className="h-7 w-7" strokeWidth={2} />
+            <CircleUserRound className="h-7 w-7" strokeWidth={2} aria-hidden="true" />
             Perfil
           </button>
         </div>
+        <span
+          aria-hidden="true"
+          className={[
+            "absolute bottom-[calc(4px+env(safe-area-inset-bottom))] h-1 w-10 rounded-full bg-[var(--fp-lime)] transition-transform",
+            activePanel === null
+              ? "left-[calc(12.5%-20px)]"
+              : paymentPanelActive
+                ? "left-[calc(37.5%-20px)]"
+                : activePanel === "history"
+                  ? "left-[calc(62.5%-20px)]"
+                  : "hidden",
+          ].join(" ")}
+        />
       </nav>
     </main>
   );
