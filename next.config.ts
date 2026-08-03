@@ -24,6 +24,25 @@ const nextConfig: NextConfig = {
   output: "standalone",
   allowedDevOrigins: resolveAllowedDevOrigins(),
   serverExternalPackages: ["ssh2-sftp-client", "ssh2", "pdfkit"],
+  async headers() {
+    const noStoreHeaders = [
+      {
+        key: "Cache-Control",
+        value: "no-cache, no-store, must-revalidate",
+      },
+    ];
+
+    return [
+      {
+        source: "/sw.js",
+        headers: noStoreHeaders,
+      },
+      {
+        source: "/clientes/:path*",
+        headers: noStoreHeaders,
+      },
+    ];
+  },
   experimental: {
     proxyClientMaxBodySize: "80mb",
   },

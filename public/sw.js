@@ -1,6 +1,6 @@
-const CACHE_NAME = "finserpay-client-v2";
+const CACHE_PREFIX = "finserpay-client-";
+const CACHE_NAME = `${CACHE_PREFIX}v3`;
 const STATIC_ASSETS = [
-  "/clientes",
   "/icons/finserpay-client-192.png",
   "/icons/finserpay-client-512.png",
   "/icons/finserpay-client-maskable-512.png",
@@ -23,7 +23,9 @@ self.addEventListener("activate", (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key !== CACHE_NAME)
+            .filter(
+              (key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME
+            )
             .map((key) => caches.delete(key))
         )
       )
@@ -40,26 +42,26 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
 
-  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) {
-    return;
-  }
-
-  if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put("/clientes", clone));
-          return response;
-        })
-        .catch(() => caches.match("/clientes"))
-    );
+  if (url.origin !== self.location.origin) {
     return;
   }
 
   if (STATIC_ASSETS.includes(url.pathname)) {
     event.respondWith(
-      caches.match(request).then((cached) => cached || fetch(request))
+      caches.match(request).then(async (cached) => {
+        if (cached) {
+          return cached;
+        }
+
+        const response = await fetch(request);
+
+        if (response.ok) {
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(request, response.clone());
+        }
+
+        return response;
+      })
     );
   }
 });

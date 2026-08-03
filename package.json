@@ -12,6 +12,7 @@
     "start": "next start",
     "start:standalone": "node .next/standalone/server.js",
     "test:wompi": "node --experimental-strip-types --test tests/wompi-early-payoff-intent.test.mjs tests/credit-payment-plan-settled.test.mjs tests/payment-date-and-rounding.test.mjs",
+    "test:pwa": "node --test tests/pwa-update-policy.test.mjs",
     "cron:efecty": "node scripts/railway-cron.mjs efecty",
     "cron:mora": "node scripts/railway-cron.mjs mora",
     "db:push": "npx prisma db push",
