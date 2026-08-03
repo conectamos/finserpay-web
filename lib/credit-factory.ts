@@ -1,4 +1,5 @@
 import type { EqualityDeliveryStatus } from "@/lib/equality-device-meta";
+import { getColombiaDateParts } from "@/lib/colombia-date";
 
 export type CreditAdminCommand =
   | "consult-device"
@@ -218,25 +219,47 @@ export function getPaymentFrequencyPeriodsPerYear(value: unknown) {
 }
 
 function normalizeDateAtNoon(value: Date | number | string = new Date()) {
+  const normalizedValue = String(value || "").trim();
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(normalizedValue);
+
+  if (dateOnly) {
+    return new Date(
+      Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 12)
+    );
+  }
+
   const baseDate = new Date(value);
   const normalized = Number.isNaN(baseDate.getTime()) ? new Date() : baseDate;
-  normalized.setHours(12, 0, 0, 0);
-  return normalized;
+  return new Date(
+    Date.UTC(
+      normalized.getUTCFullYear(),
+      normalized.getUTCMonth(),
+      normalized.getUTCDate(),
+      12
+    )
+  );
+}
+
+function normalizeColombiaInstantAtNoon(
+  value: Date | number | string = new Date()
+) {
+  const parts = getColombiaDateParts(
+    typeof value === "number" ? new Date(value) : value
+  );
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12));
 }
 
 function createNoonDate(year: number, monthIndex: number, day: number) {
-  const date = new Date(year, monthIndex, day, 12, 0, 0, 0);
-  date.setHours(12, 0, 0, 0);
-  return date;
+  return new Date(Date.UTC(year, monthIndex, day, 12));
 }
 
 export function getQuincenalFirstPaymentDateObject(
   from: Date | number | string = new Date()
 ) {
   const baseDate = normalizeDateAtNoon(from);
-  const creditDay = baseDate.getDate();
-  let dueMonth = baseDate.getMonth();
-  let dueYear = baseDate.getFullYear();
+  const creditDay = baseDate.getUTCDate();
+  let dueMonth = baseDate.getUTCMonth();
+  let dueYear = baseDate.getUTCFullYear();
   let dueDay = 17;
 
   if (creditDay <= 5) {
@@ -250,17 +273,17 @@ export function getQuincenalFirstPaymentDateObject(
   }
 
   const dueDate = createNoonDate(dueYear, dueMonth, dueDay);
-  dueYear = dueDate.getFullYear();
-  dueMonth = dueDate.getMonth();
+  dueYear = dueDate.getUTCFullYear();
+  dueMonth = dueDate.getUTCMonth();
 
   return createNoonDate(dueYear, dueMonth, dueDay);
 }
 
 function addQuincenalPaymentPeriod(date: Date | number | string, periods: number) {
   const baseDate = normalizeDateAtNoon(date);
-  let dueMonth = baseDate.getMonth();
-  let dueYear = baseDate.getFullYear();
-  let dueDay = baseDate.getDate() <= 2 ? 2 : 17;
+  let dueMonth = baseDate.getUTCMonth();
+  let dueYear = baseDate.getUTCFullYear();
+  let dueDay = baseDate.getUTCDate() <= 2 ? 2 : 17;
   const steps = Math.max(0, Math.trunc(Number(periods || 0)));
 
   for (let index = 0; index < steps; index += 1) {
@@ -272,8 +295,8 @@ function addQuincenalPaymentPeriod(date: Date | number | string, periods: number
     }
 
     const normalized = createNoonDate(dueYear, dueMonth, dueDay);
-    dueYear = normalized.getFullYear();
-    dueMonth = normalized.getMonth();
+    dueYear = normalized.getUTCFullYear();
+    dueMonth = normalized.getUTCMonth();
   }
 
   return createNoonDate(dueYear, dueMonth, dueDay);
@@ -292,13 +315,13 @@ export function addPaymentFrequency(
   }
 
   if (frequency === "MENSUAL") {
-    next.setMonth(next.getMonth() + periods);
+    next.setUTCMonth(next.getUTCMonth() + periods);
     return next;
   }
 
   const days =
     PAYMENT_FREQUENCY_OPTIONS.find((option) => option.value === frequency)?.days || 15;
-  next.setDate(next.getDate() + days * periods);
+  next.setUTCDate(next.getUTCDate() + days * periods);
 
   return next;
 }
@@ -455,7 +478,7 @@ export function getDefaultFirstPaymentDate(
   from: Date | number | string = new Date(),
   frequency: unknown = DEFAULT_PAYMENT_FREQUENCY
 ) {
-  const normalized = normalizeDateAtNoon(from);
+  const normalized = normalizeColombiaInstantAtNoon(from);
   const dueDate =
     normalizePaymentFrequency(frequency) === "QUINCENAL"
       ? getQuincenalFirstPaymentDateObject(normalized)
@@ -468,7 +491,7 @@ export function getDefaultFirstPaymentDateObject(
   frequency: unknown = DEFAULT_PAYMENT_FREQUENCY,
   from: Date | number | string = new Date()
 ) {
-  const normalized = normalizeDateAtNoon(from);
+  const normalized = normalizeColombiaInstantAtNoon(from);
 
   if (normalizePaymentFrequency(frequency) === "QUINCENAL") {
     return getQuincenalFirstPaymentDateObject(normalized);

@@ -9,6 +9,10 @@ import {
   CircleCheck,
   CreditCard,
 } from "lucide-react";
+import {
+  COLOMBIA_TIME_ZONE,
+  parseColombiaDate,
+} from "@/lib/colombia-date";
 import styles from "./client-active-credit-dashboard.module.css";
 
 export type ActiveCreditDashboardStatusTone = "current" | "overdue";
@@ -74,41 +78,33 @@ const moneyFormatter = new Intl.NumberFormat("es-CO", {
 const fullDateFormatter = new Intl.DateTimeFormat("es-CO", {
   day: "numeric",
   month: "long",
+  timeZone: COLOMBIA_TIME_ZONE,
+});
+
+const dayFormatter = new Intl.DateTimeFormat("es-CO", {
+  day: "2-digit",
+  timeZone: COLOMBIA_TIME_ZONE,
 });
 
 const shortMonthFormatter = new Intl.DateTimeFormat("es-CO", {
   month: "short",
+  timeZone: COLOMBIA_TIME_ZONE,
 });
 
 function money(value: number) {
   return moneyFormatter.format(Math.round(Number(value || 0)));
 }
 
-function localDate(value: string) {
-  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-
-  if (dateOnly) {
-    return new Date(
-      Number(dateOnly[1]),
-      Number(dateOnly[2]) - 1,
-      Number(dateOnly[3]),
-      12
-    );
-  }
-
-  return new Date(value);
-}
-
 function fullDateLabel(value: string) {
-  const date = localDate(value);
+  const date = parseColombiaDate(value);
   return Number.isNaN(date.getTime()) ? "Fecha por confirmar" : fullDateFormatter.format(date);
 }
 
 function compactDateLabel(value: string) {
-  const date = localDate(value);
+  const date = parseColombiaDate(value);
   if (Number.isNaN(date.getTime())) return "POR CONFIRMAR";
 
-  const day = String(date.getDate()).padStart(2, "0");
+  const day = dayFormatter.format(date);
   const month = shortMonthFormatter.format(date).replace(".", "").toUpperCase();
   return `${day} ${month}`;
 }

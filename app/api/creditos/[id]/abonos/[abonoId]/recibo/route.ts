@@ -15,6 +15,7 @@ import {
   parseCreditRouteLookup,
 } from "@/lib/credit-route-lookup";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
+import { COLOMBIA_TIME_ZONE } from "@/lib/colombia-date";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,6 +97,7 @@ function dateTimeLabel(value: Date | string | null | undefined) {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: COLOMBIA_TIME_ZONE,
   });
 }
 

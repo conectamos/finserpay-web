@@ -26,6 +26,11 @@ import {
   WalletCards,
 } from "lucide-react";
 import { FINSER_PAY_SUPPORT_DISPLAY } from "@/lib/support";
+import {
+  COLOMBIA_TIME_ZONE,
+  isSameColombiaDate,
+  parseColombiaDate,
+} from "@/lib/colombia-date";
 
 export type PaidCreditPanel = "payments" | "pending" | "history" | null;
 
@@ -106,20 +111,18 @@ function paymentReceiptHref(
 
 function shortDate(value: string | null | undefined) {
   if (!value) return "Finalizado";
-  const date = new Date(value);
+  const date = parseColombiaDate(value);
   if (Number.isNaN(date.getTime())) return "Finalizado";
 
   const now = new Date();
-  const isToday =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
+  const isToday = isSameColombiaDate(date, now);
 
   if (isToday) return "Hoy";
 
   return new Intl.DateTimeFormat("es-CO", {
     day: "numeric",
     month: "short",
+    timeZone: COLOMBIA_TIME_ZONE,
   })
     .format(date)
     .replace(".", "");

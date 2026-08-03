@@ -1,4 +1,12 @@
-import { addPaymentFrequency, normalizePaymentFrequency } from "@/lib/credit-factory";
+import {
+  PAYMENT_FREQUENCY_OPTIONS,
+  normalizePaymentFrequency,
+} from "@/lib/credit-factory";
+import {
+  calendarDateKey,
+  getColombiaDateParts,
+  type CalendarDateParts,
+} from "@/lib/colombia-date";
 
 export type CreditPaymentPlanInput = {
   montoCredito?: number | null;
@@ -33,27 +41,87 @@ function normalizePending(value: number) {
   return rounded < 1 ? 0 : rounded;
 }
 
-function normalizeDate(value: Date | string | null | undefined, fallback = new Date()) {
+function normalizeStoredCalendarDate(
+  value: Date | string | null | undefined,
+  fallback = new Date()
+): CalendarDateParts {
   const normalizedValue = String(value || "").trim();
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(normalizedValue)) {
     const [year, month, day] = normalizedValue.split("-").map(Number);
-    return new Date(year, month - 1, day, 12, 0, 0, 0);
+    return { year, month, day };
   }
 
   const date = value instanceof Date ? new Date(value) : new Date(String(value || ""));
 
   if (Number.isNaN(date.getTime())) {
-    return new Date(fallback);
+    return getColombiaDateParts(fallback);
   }
 
-  return date;
+  // Credit due dates are calendar values stored by Prisma as UTC DateTime.
+  // Preserve that stored calendar day instead of projecting it to a timezone.
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  };
 }
 
-function toDateOnlyIso(date: Date) {
-  const normalized = new Date(date);
-  normalized.setHours(12, 0, 0, 0);
-  return normalized.toISOString().slice(0, 10);
+function toUtcCalendarDate(parts: CalendarDateParts) {
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12));
+}
+
+function utcCalendarParts(date: Date): CalendarDateParts {
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  };
+}
+
+function addCalendarPaymentFrequency(
+  start: CalendarDateParts,
+  frequencyValue: unknown,
+  periods: number
+) {
+  const frequency = normalizePaymentFrequency(frequencyValue);
+  const steps = Math.max(0, Math.trunc(Number(periods || 0)));
+
+  if (frequency === "QUINCENAL") {
+    let dueMonth = start.month - 1;
+    let dueYear = start.year;
+    let dueDay = start.day <= 2 ? 2 : 17;
+
+    for (let index = 0; index < steps; index += 1) {
+      if (dueDay === 2) {
+        dueDay = 17;
+      } else {
+        dueDay = 2;
+        dueMonth += 1;
+      }
+
+      const normalized = new Date(Date.UTC(dueYear, dueMonth, dueDay, 12));
+      dueYear = normalized.getUTCFullYear();
+      dueMonth = normalized.getUTCMonth();
+    }
+
+    return utcCalendarParts(
+      new Date(Date.UTC(dueYear, dueMonth, dueDay, 12))
+    );
+  }
+
+  const date = toUtcCalendarDate(start);
+
+  if (frequency === "MENSUAL") {
+    date.setUTCMonth(date.getUTCMonth() + steps);
+  } else {
+    const days =
+      PAYMENT_FREQUENCY_OPTIONS.find((option) => option.value === frequency)
+        ?.days || 15;
+    date.setUTCDate(date.getUTCDate() + days * steps);
+  }
+
+  return utcCalendarParts(date);
 }
 
 export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
@@ -61,9 +129,8 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
   const cuotas = Math.max(1, Math.trunc(Number(input.plazoMeses || 1)));
   const frecuenciaPago = normalizePaymentFrequency(input.frecuenciaPago);
   const defaultQuota = Math.max(0, Number(input.valorCuota || 0));
-  const firstDueDate = normalizeDate(input.fechaPrimerPago);
-  const today = normalizeDate(input.today, new Date());
-  today.setHours(23, 59, 59, 999);
+  const firstDueDate = normalizeStoredCalendarDate(input.fechaPrimerPago);
+  const todayKey = calendarDateKey(getColombiaDateParts(input.today, new Date()));
 
   const totalPaid = roundMoney(
     (input.abonos || []).reduce((sum, item) => sum + Math.max(0, Number(item.valor || 0)), 0)
@@ -84,14 +151,18 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
       const paid = roundMoney(Math.min(programmed, remainingPaid));
       remainingPaid = roundMoney(Math.max(0, remainingPaid - paid));
       const pending = normalizePending(Math.max(0, programmed - paid));
-      const dueDate = addPaymentFrequency(firstDueDate, frecuenciaPago, index);
-      dueDate.setHours(23, 59, 59, 999);
+      const dueDate = addCalendarPaymentFrequency(
+        firstDueDate,
+        frecuenciaPago,
+        index
+      );
+      const dueDateKey = calendarDateKey(dueDate);
       const isPaid = pending <= 0;
-      const isOverdue = !isPaid && dueDate.getTime() < today.getTime();
+      const isOverdue = !isPaid && dueDateKey < todayKey;
 
       return {
         numero,
-        fechaVencimiento: toDateOnlyIso(dueDate),
+        fechaVencimiento: dueDateKey,
         valorProgramado: programmed,
         valorAbonado: paid,
         saldoPendiente: pending,

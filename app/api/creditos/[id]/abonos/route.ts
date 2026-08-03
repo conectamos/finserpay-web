@@ -39,6 +39,7 @@ import {
   enqueueUnlockForCurrentCredit,
   processDeviceUnlockCommand,
 } from "@/lib/device-unlock-queue";
+import { resolveSelectedPaymentAmount } from "@/lib/manual-payment-amount";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,6 +53,8 @@ type CreditPaymentBody = {
   tipoAbono?: string;
   valor?: number | string;
 };
+
+class CreditPaymentConflictError extends Error {}
 
 const copCurrencyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -845,6 +848,8 @@ export async function POST(
           { status: 400 }
         );
       }
+
+      valor = resolveSelectedPaymentAmount(valor, selectedTotal);
     }
 
     if (valor <= 0) {
@@ -904,12 +909,16 @@ export async function POST(
         },
       });
 
+      let transactionValue = valor;
+
       if (
         !lockedCredit ||
         isAnnulledCreditState(lockedCredit.estado) ||
         lockedCredit.pazYSalvoEmitidoAt
       ) {
-        throw new Error("Este credito ya fue finalizado o no permite mas recaudos.");
+        throw new CreditPaymentConflictError(
+          "Este credito ya fue finalizado o no permite mas recaudos."
+        );
       }
 
       const lockedAbonos = await tx.creditoAbono.findMany({
@@ -945,7 +954,9 @@ export async function POST(
       );
 
       if (lockedBalanceInCents <= 0) {
-        throw new Error("Este credito ya no tiene saldo pendiente.");
+        throw new CreditPaymentConflictError(
+          "Este credito ya no tiene saldo pendiente."
+        );
       }
 
       const earlyPayoffInTx = earlyPayoffRequested
@@ -969,7 +980,7 @@ export async function POST(
         : null;
 
       if (earlyPayoffInTx && !earlyPayoffInTx.eligible) {
-        throw new Error(
+        throw new CreditPaymentConflictError(
           earlyPayoffInTx.reason || "La liquidacion anticipada ya no aplica."
         );
       }
@@ -978,7 +989,13 @@ export async function POST(
         earlyPayoffInTx &&
         Math.round(earlyPayoffInTx.capitalPendiente) !== Math.round(valor)
       ) {
-        throw new Error("El valor de liquidacion cambio. Consulta de nuevo el credito.");
+        throw new CreditPaymentConflictError(
+          "El valor de liquidacion cambio. Consulta de nuevo el credito."
+        );
+      }
+
+      if (earlyPayoffInTx) {
+        transactionValue = earlyPayoffInTx.capitalPendiente;
       }
 
       if (!earlyPayoffInTx) {
@@ -989,26 +1006,31 @@ export async function POST(
               null
           )
           .filter((item): item is NonNullable<typeof item> => Boolean(item));
-        const selectedBalanceInCents = Math.round(
-          lockedSelectedInstallments.reduce(
-            (sum, item) => sum + Math.max(0, Number(item.saldoPendiente || 0)),
-            0
-          ) * 100
+        const lockedSelectedBalance = lockedSelectedInstallments.reduce(
+          (sum, item) => sum + Math.max(0, Number(item.saldoPendiente || 0)),
+          0
         );
+        transactionValue = resolveSelectedPaymentAmount(
+          transactionValue,
+          lockedSelectedBalance
+        );
+        const selectedBalanceInCents = Math.round(lockedSelectedBalance * 100);
 
         if (
           selectedNumbers.length &&
           (lockedSelectedInstallments.length !== selectedNumbers.length ||
             selectedBalanceInCents <= 0 ||
-            Math.round(valor * 100) < selectedBalanceInCents)
+            Math.round(transactionValue * 100) < selectedBalanceInCents)
         ) {
-          throw new Error(
+          throw new CreditPaymentConflictError(
             "Las cuotas seleccionadas cambiaron. Consulta de nuevo el credito."
           );
         }
 
-        if (Math.round(valor * 100) > lockedBalanceInCents) {
-          throw new Error("El abono supera el saldo pendiente actualizado.");
+        if (Math.round(transactionValue * 100) > lockedBalanceInCents) {
+          throw new CreditPaymentConflictError(
+            "El abono supera el saldo pendiente actualizado."
+          );
         }
       }
 
@@ -1035,7 +1057,7 @@ export async function POST(
           usuarioId: user.id,
           vendedorId: sellerSession?.id || null,
           sedeId: user.sedeId,
-          valor,
+          valor: transactionValue,
           metodoPago,
           observacion: abonoObservation,
         },
@@ -1139,7 +1161,7 @@ export async function POST(
         data: {
           tipo: "INGRESO",
           concepto: creditCajaConcept(metodoPago),
-          valor,
+          valor: transactionValue,
           descripcion: creditCajaDescription({
             id: created.id,
             creditoFolio: lockedCredit.folio,
@@ -1154,6 +1176,7 @@ export async function POST(
       return {
         finalized: paymentCompletesCredit,
         payment: created,
+        plan: txPlan,
       };
     });
 
@@ -1179,13 +1202,45 @@ export async function POST(
       }
     }
 
-    const updatedCredit = await loadCredit(credit.id, creditAccessWhere);
-    const summary = await loadPaymentSummary(
-      credit.id,
-      Number((updatedCredit || credit).montoCredito || 0),
-      Number((updatedCredit || credit).cuotaInicial || 0)
-    );
-    const plan = await loadPaymentPlan(updatedCredit || credit);
+    let updatedCredit: LoadedCredit | null = null;
+    let summary: Awaited<ReturnType<typeof loadPaymentSummary>> | null = null;
+    let plan: PaymentPlan | null = null;
+
+    try {
+      updatedCredit = await loadCredit(credit.id, creditAccessWhere);
+    } catch (error) {
+      console.error("ERROR RECARGANDO CREDITO DESPUES DEL ABONO:", error);
+    }
+
+    try {
+      summary = await loadPaymentSummary(
+        credit.id,
+        Number((updatedCredit || credit).montoCredito || 0),
+        Number((updatedCredit || credit).cuotaInicial || 0)
+      );
+    } catch (error) {
+      console.error("ERROR RECARGANDO RESUMEN DESPUES DEL ABONO:", error);
+    }
+
+    try {
+      plan = await loadPaymentPlan(updatedCredit || credit);
+    } catch (error) {
+      console.error("ERROR RECARGANDO PLAN DESPUES DEL ABONO:", error);
+    }
+
+    const responsePlan = plan || paymentResult.plan;
+    const paymentValue = Number(payment.valor || 0);
+    const fallbackTotalPaid = Number(currentSummary.totalAbonado || 0) + paymentValue;
+    const responseSummary = summary || {
+      ...currentSummary,
+      abonosCount: Number(currentSummary.abonosCount || 0) + 1,
+      saldoPendiente: paymentResult.finalized
+        ? 0
+        : Math.max(0, Number(currentSummary.saldoPendiente || 0) - paymentValue),
+      totalAbonado: fallbackTotalPaid,
+      totalRecaudado: fallbackTotalPaid,
+      ultimoAbonoAt: safeIsoDate(payment.fechaAbono),
+    };
     const automation = paymentResult.finalized
       ? {
           action: finalizationUnlock?.confirmed ? "UNLOCKED" : "QUEUED",
@@ -1195,12 +1250,13 @@ export async function POST(
             : "Credito finalizado; el desbloqueo quedo en conciliacion automatica.",
           remote: null,
         }
-      : updatedCredit && plan
-        ? await syncMoraAutomation(updatedCredit, plan)
+      : updatedCredit && responsePlan
+        ? await syncMoraAutomation(updatedCredit, responsePlan)
         : {
             action: "UNCHANGED" as const,
             credit: updatedCredit || credit,
-            message: "Sin credito o plan de pagos para sincronizar.",
+            message:
+              "Abono confirmado; la actualizacion operativa se conciliara en la siguiente consulta.",
             remote: null,
           };
 
@@ -1214,18 +1270,23 @@ export async function POST(
             : "Abono registrado correctamente.",
       item: serializePayment(payment),
       summary: {
-        ...summary,
-        estadoPago: plan?.estadoPago || "AL_DIA",
-        nextInstallment: plan?.nextInstallment || null,
-        overdueCount: plan?.overdueCount || 0,
-        paidCount: plan?.paidCount || 0,
-        pendingCount: plan?.pendingCount || 0,
-        plan: plan?.installments || [],
+        ...responseSummary,
+        estadoPago: responsePlan?.estadoPago || "AL_DIA",
+        nextInstallment: responsePlan?.nextInstallment || null,
+        overdueCount: responsePlan?.overdueCount || 0,
+        paidCount: responsePlan?.paidCount || 0,
+        pendingCount: responsePlan?.pendingCount || 0,
+        plan: responsePlan?.installments || [],
       },
       automation: serializeAutomationResult(automation),
     });
   } catch (error) {
     console.error("ERROR REGISTRANDO ABONO DE CREDITO:", error);
+
+    if (error instanceof CreditPaymentConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+
     return NextResponse.json(
       { error: "No se pudo registrar el abono del credito" },
       { status: 500 }

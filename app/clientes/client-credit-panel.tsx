@@ -18,6 +18,10 @@ import {
   Smartphone,
 } from "lucide-react";
 import FinserSupportLink from "@/app/_components/finser-support-link";
+import {
+  COLOMBIA_TIME_ZONE,
+  parseColombiaDate,
+} from "@/lib/colombia-date";
 import styles from "./client-credit-panel.module.css";
 
 export type ClientCreditPanelName = "payments" | "pending" | "history";
@@ -82,45 +86,38 @@ const moneyFormatter = new Intl.NumberFormat("es-CO", {
 
 const shortMonthFormatter = new Intl.DateTimeFormat("es-CO", {
   month: "short",
+  timeZone: COLOMBIA_TIME_ZONE,
 });
 
 const fullDateFormatter = new Intl.DateTimeFormat("es-CO", {
   day: "numeric",
   month: "long",
+  timeZone: COLOMBIA_TIME_ZONE,
+});
+
+const dayFormatter = new Intl.DateTimeFormat("es-CO", {
+  day: "2-digit",
+  timeZone: COLOMBIA_TIME_ZONE,
 });
 
 function money(value: number) {
   return moneyFormatter.format(Math.round(Number(value || 0)));
 }
 
-function localDate(value: string) {
-  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (dateOnly) {
-    return new Date(
-      Number(dateOnly[1]),
-      Number(dateOnly[2]) - 1,
-      Number(dateOnly[3]),
-      12
-    );
-  }
-
-  return new Date(value);
-}
-
 function dayLabel(value: string) {
-  const date = localDate(value);
-  return Number.isNaN(date.getTime()) ? "--" : String(date.getDate()).padStart(2, "0");
+  const date = parseColombiaDate(value);
+  return Number.isNaN(date.getTime()) ? "--" : dayFormatter.format(date);
 }
 
 function monthLabel(value: string) {
-  const date = localDate(value);
+  const date = parseColombiaDate(value);
   return Number.isNaN(date.getTime())
     ? "---"
     : shortMonthFormatter.format(date).replace(".", "").toUpperCase();
 }
 
 function dateLabel(value: string) {
-  const date = localDate(value);
+  const date = parseColombiaDate(value);
   return Number.isNaN(date.getTime()) ? "-" : fullDateFormatter.format(date);
 }
 
@@ -270,6 +267,7 @@ export default function ClientCreditPanel({
                     ).toLocaleTimeString("es-CO", {
                       hour: "2-digit",
                       minute: "2-digit",
+                      timeZone: COLOMBIA_TIME_ZONE,
                     })}`
                   : "La verificación automática está activa."}
               </small>
