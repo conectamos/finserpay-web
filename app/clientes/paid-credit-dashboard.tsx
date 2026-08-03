@@ -1,6 +1,7 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { useRef, useState } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import Image from "next/image";
 import FinserBrand from "@/app/_components/finser-brand";
 import FinserSupportLink from "@/app/_components/finser-support-link";
@@ -26,6 +27,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { FINSER_PAY_SUPPORT_DISPLAY } from "@/lib/support";
+import { fetchClientPdf } from "@/lib/client-document-download";
 import {
   COLOMBIA_TIME_ZONE,
   isSameColombiaDate,
@@ -145,6 +147,18 @@ function creditStateLabel(credit: PaidCreditDashboardCredit) {
   return "Al día";
 }
 
+function triggerBrowserDownload(blob: Blob, filename: string) {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+}
+
 export default function PaidCreditDashboard({
   activePanel,
   credit,
@@ -159,6 +173,12 @@ export default function PaidCreditDashboard({
   pazYSalvoHref,
   profileInitials,
 }: PaidCreditDashboardProps) {
+  const pazYSalvoDownloadLock = useRef(false);
+  const [pazYSalvoDownloading, setPazYSalvoDownloading] = useState(false);
+  const [pazYSalvoFeedback, setPazYSalvoFeedback] = useState<{
+    text: string;
+    tone: "amber" | "emerald" | "red";
+  } | null>(null);
   const paidInstallments = credit.cuotas.filter(
     (item) => item.estado === "PAGO" || item.saldoPendiente <= 0
   ).length;
@@ -167,6 +187,85 @@ export default function PaidCreditDashboard({
   ).length;
   const paymentPanelActive =
     activePanel === "payments" || activePanel === "pending";
+
+  const handlePazYSalvoDownload = async (
+    event: ReactMouseEvent<HTMLAnchorElement>
+  ) => {
+    event.preventDefault();
+
+    if (pazYSalvoDownloadLock.current) {
+      return;
+    }
+
+    pazYSalvoDownloadLock.current = true;
+    const androidBridge = window.FinserPayAndroid;
+    const fallbackFilename = `paz-y-salvo-${credit.folio}.pdf`;
+    const absoluteUrl = new URL(pazYSalvoHref, window.location.origin).toString();
+
+    if (androidBridge && !androidBridge.downloadDocument) {
+      setPazYSalvoFeedback({
+        tone: "amber",
+        text: "Intentando la descarga. Si no inicia, abre finserpay.com/clientes en Chrome o actualiza FINSER PAY.",
+      });
+      const legacyAnchor = document.createElement("a");
+      legacyAnchor.href = absoluteUrl;
+      legacyAnchor.download = fallbackFilename;
+      legacyAnchor.style.display = "none";
+      document.body.appendChild(legacyAnchor);
+      legacyAnchor.click();
+      legacyAnchor.remove();
+      window.setTimeout(() => {
+        pazYSalvoDownloadLock.current = false;
+      }, 3_000);
+      return;
+    }
+
+    if (androidBridge?.downloadDocument) {
+      try {
+        androidBridge.downloadDocument(absoluteUrl, fallbackFilename);
+        setPazYSalvoFeedback({
+          tone: "amber",
+          text: "Solicitud enviada a Android. Revisa la notificación y la carpeta Descargas.",
+        });
+      } catch {
+        setPazYSalvoFeedback({
+          tone: "red",
+          text: "No se pudo iniciar la descarga en la aplicación. Intenta de nuevo.",
+        });
+      } finally {
+        window.setTimeout(() => {
+          pazYSalvoDownloadLock.current = false;
+        }, 3_000);
+      }
+      return;
+    }
+
+    setPazYSalvoDownloading(true);
+    setPazYSalvoFeedback(null);
+
+    try {
+      const clientDocument = await fetchClientPdf(
+        pazYSalvoHref,
+        fallbackFilename
+      );
+      triggerBrowserDownload(clientDocument.blob, clientDocument.filename);
+      setPazYSalvoFeedback({
+        tone: "emerald",
+        text: "Paz y salvo descargado. Revisa la carpeta Descargas.",
+      });
+    } catch (error) {
+      setPazYSalvoFeedback({
+        tone: "red",
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo descargar el paz y salvo. Intenta de nuevo.",
+      });
+    } finally {
+      setPazYSalvoDownloading(false);
+      pazYSalvoDownloadLock.current = false;
+    }
+  };
 
   return (
     <main
@@ -292,12 +391,21 @@ export default function PaidCreditDashboard({
             <a
               href={pazYSalvoHref}
               download
+              onClick={handlePazYSalvoDownload}
+              aria-busy={pazYSalvoDownloading}
               aria-label="Descargar paz y salvo del crédito"
-              className="grid min-h-[104px] grid-cols-[42px_minmax(0,1fr)] items-center gap-2 rounded-[20px] bg-[var(--fp-lime)] px-3 py-4 text-[#0a0d0f] shadow-[0_14px_30px_rgba(153,205,39,0.18)] transition hover:brightness-105 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#284f0c] focus-visible:ring-offset-2"
+              className="grid min-h-[104px] grid-cols-[42px_minmax(0,1fr)] items-center gap-2 rounded-[20px] bg-[var(--fp-lime)] px-3 py-4 text-[#0a0d0f] shadow-[0_14px_30px_rgba(153,205,39,0.18)] transition hover:brightness-105 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#284f0c] focus-visible:ring-offset-2 aria-busy:cursor-wait aria-busy:opacity-70"
             >
-              <Download className="h-8 w-8 justify-self-center" strokeWidth={2.1} aria-hidden="true" />
+              <Download
+                className={[
+                  "h-8 w-8 justify-self-center",
+                  pazYSalvoDownloading ? "animate-bounce" : "",
+                ].join(" ")}
+                strokeWidth={2.1}
+                aria-hidden="true"
+              />
               <span className="text-[15px] font-black leading-[1.25] min-[390px]:text-[16px]">
-                Descargar
+                {pazYSalvoDownloading ? "Preparando" : "Descargar"}
                 <span className="block">Paz y Salvo</span>
               </span>
             </a>
@@ -315,6 +423,22 @@ export default function PaidCreditDashboard({
               <ChevronRight className="h-5 w-5" strokeWidth={2.4} aria-hidden="true" />
             </FinserSupportLink>
           </section>
+
+          {pazYSalvoFeedback ? (
+            <p
+              role={pazYSalvoFeedback.tone === "red" ? "alert" : "status"}
+              className={[
+                "mt-2 rounded-[var(--fp-radius-md)] border px-3 py-2 text-[12px] font-bold leading-4",
+                pazYSalvoFeedback.tone === "emerald"
+                  ? "border-[#b8d88f] bg-[var(--fp-lime-soft)] text-[#315e0f]"
+                  : pazYSalvoFeedback.tone === "amber"
+                    ? "border-amber-200 bg-[var(--fp-amber-soft)] text-amber-900"
+                    : "border-red-200 bg-[var(--fp-danger-soft)] text-red-800",
+              ].join(" ")}
+            >
+              {pazYSalvoFeedback.text}
+            </p>
+          ) : null}
 
           {credits.length > 1 ? (
             <section className="mt-5" aria-label="Seleccionar crédito">

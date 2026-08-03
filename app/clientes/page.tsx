@@ -97,6 +97,7 @@ type ClientPaymentMode = "INSTALLMENTS" | "PAYOFF";
 declare global {
   interface Window {
     FinserPayAndroid?: {
+      downloadDocument?: (url: string, filename: string) => void;
       registerClient?: (documento: string) => void;
     };
   }

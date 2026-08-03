@@ -6,9 +6,9 @@ App Android liviana para abrir el portal de clientes:
 https://finserpay.com/clientes
 ```
 
-Version actual: `1.0.4` (codigo `5`), compilada para Android API 36.
+Version actual: `1.0.5` (codigo `6`), compilada para Android API 36.
 Esta version permite descargar documentos PDF del portal en la carpeta
-`Descargas` del dispositivo.
+`Descargas` del dispositivo mediante una accion nativa solicitada por el portal.
 
 ## Generar APK de prueba
 
@@ -46,7 +46,7 @@ la llave:
 
 Cuando los cuatro secrets existen, el workflow genera el artefacto
 `finserpay-clientes-play-aab`, que contiene
-`finserpay-clientes-1.0.4.aab`.
+`finserpay-clientes-1.0.5.aab`.
 
 No se debe crear una llave nueva: Google Play exige conservar la llave de
 subida asociada a `com.finserpay.clientes`.

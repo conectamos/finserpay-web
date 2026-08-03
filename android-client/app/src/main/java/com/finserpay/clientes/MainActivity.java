@@ -289,6 +289,11 @@ public class MainActivity extends Activity {
             String contentDisposition,
             String mimeType
     ) {
+        if (url == null || url.trim().isEmpty()) {
+            Toast.makeText(this, "No se pudo validar la descarga.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
         Uri uri = Uri.parse(url);
         String host = uri.getHost();
 
@@ -395,7 +400,68 @@ public class MainActivity extends Activity {
                 + fileName.substring(extensionIndex);
     }
 
+    private boolean isAllowedPazYSalvoDownload(String url) {
+        if (url == null || url.trim().isEmpty()) {
+            return false;
+        }
+
+        try {
+            Uri uri = Uri.parse(url.trim());
+            if (!uri.isHierarchical()) {
+                return false;
+            }
+
+            String host = uri.getHost();
+            String path = uri.getPath();
+            String documento = uri.getQueryParameter("documento");
+
+            return "https".equalsIgnoreCase(uri.getScheme())
+                    && host != null
+                    && (host.equals("finserpay.com") || host.endsWith(".finserpay.com"))
+                    && path != null
+                    && path.matches("^/api/clientes/creditos/\\d+/paz-y-salvo$")
+                    && documento != null
+                    && documento.matches("^\\d{5,20}$");
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
     private class FinserAndroidBridge {
+        @JavascriptInterface
+        public void downloadDocument(String url, String suggestedFileName) {
+            if (!isAllowedPazYSalvoDownload(url)) {
+                runOnUiThread(() -> Toast.makeText(
+                        MainActivity.this,
+                        "No se pudo validar la descarga.",
+                        Toast.LENGTH_LONG
+                ).show());
+                return;
+            }
+
+            String safeFileName = suggestedFileName == null
+                    ? "paz-y-salvo.pdf"
+                    : suggestedFileName.replaceAll("[^A-Za-z0-9._-]", "-");
+            if (safeFileName.isEmpty()) {
+                safeFileName = "paz-y-salvo.pdf";
+            }
+            if (!safeFileName.toLowerCase().endsWith(".pdf")) {
+                safeFileName += ".pdf";
+            }
+            if (safeFileName.length() > 120) {
+                safeFileName = safeFileName.substring(0, 116) + ".pdf";
+            }
+            String contentDisposition =
+                    "attachment; filename=\"" + safeFileName + "\"";
+
+            runOnUiThread(() -> requestDownload(
+                    url,
+                    webView.getSettings().getUserAgentString(),
+                    contentDisposition,
+                    "application/pdf"
+            ));
+        }
+
         @JavascriptInterface
         public void registerClient(String documento) {
             FinserPushRegistry.saveDocumentAndSync(MainActivity.this, documento);
