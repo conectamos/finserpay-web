@@ -71,20 +71,11 @@ function getBogotaClock(date = new Date()) {
   };
 }
 
-function previousDateKey(dateKey: string) {
-  const date = new Date(`${dateKey}T12:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() - 1);
-  return date.toISOString().slice(0, 10);
-}
-
-function getMoraEffectiveDate(dateKey: string, timeKey: string) {
-  const [hourValue = "", minuteValue = ""] = timeKey.split(":");
-  const minuteOfDay =
-    Number.parseInt(hourValue, 10) * 60 + Number.parseInt(minuteValue, 10);
-
-  return minuteOfDay >= MORA_WINDOW_START_MINUTE
-    ? dateKey
-    : previousDateKey(dateKey);
+function getMoraEffectiveDate(dateKey: string) {
+  // The payment plan changes state at midnight in Colombia. The cron window
+  // spans midnight, but it must keep the current Colombian calendar date;
+  // carrying the previous day delayed mora automation by almost 24 hours.
+  return dateKey;
 }
 
 function getDueTasks(timeKey: string) {
@@ -235,7 +226,7 @@ async function runScheduledTask(
 async function tick() {
   const { dateKey, timeKey } = getBogotaClock();
   const dueTasks = getDueTasks(timeKey);
-  const moraEffectiveDate = getMoraEffectiveDate(dateKey, timeKey);
+  const moraEffectiveDate = getMoraEffectiveDate(dateKey);
 
   await runScheduledTask(
     "unlock",
@@ -253,7 +244,7 @@ async function tick() {
 
 async function runStartupRecovery() {
   const { dateKey, timeKey } = getBogotaClock();
-  const moraEffectiveDate = getMoraEffectiveDate(dateKey, timeKey);
+  const moraEffectiveDate = getMoraEffectiveDate(dateKey);
 
   try {
     const recovered = await recoverRecentApprovedWompiUnlockCommands({
