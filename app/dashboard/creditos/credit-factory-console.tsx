@@ -842,22 +842,6 @@ function dateOnly(value: string | null | undefined) {
   return parsed ? parsed.toISOString().slice(0, 10) : "";
 }
 
-function maskSensitiveIdentifier(value: string | null | undefined, visibleDigits = 4) {
-  const normalized = String(value || "").trim();
-
-  if (!normalized) {
-    return "-";
-  }
-
-  if (normalized.length <= visibleDigits) {
-    return normalized;
-  }
-
-  return `${"•".repeat(Math.min(4, normalized.length - visibleDigits))} ${normalized.slice(
-    -visibleDigits
-  )}`;
-}
-
 function valueOrDash(value: unknown) {
   const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
   return normalized || "-";
@@ -2370,8 +2354,8 @@ export default function CreditFactoryConsole({
       [selectedCredit.equipoMarca, selectedCredit.equipoModelo].filter(Boolean).join(" ") ||
       "Equipo sin referencia"
     : "-";
-  const selectedCreditMaskedImei = selectedCredit
-    ? maskSensitiveIdentifier(selectedCredit.imei || selectedCredit.deviceUid)
+  const selectedCreditImei = selectedCredit
+    ? valueOrDash(selectedCredit.imei || selectedCredit.deviceUid)
     : "-";
   const selectedCreditAdvisorLabel = selectedCredit
     ? selectedCredit.vendedor?.nombre || selectedCredit.usuario.nombre
@@ -12266,7 +12250,7 @@ export default function CreditFactoryConsole({
                           <p className="text-[11px] font-semibold uppercase text-slate-500">Equipo / ref / IMEI</p>
                           <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCreditEquipmentLabel}</p>
                           <p className="mt-1 text-xs text-slate-500">
-                            IMEI {selectedCreditMaskedImei}
+                            IMEI {selectedCreditImei}
                           </p>
                         </div>
                       </div>
