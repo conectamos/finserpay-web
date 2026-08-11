@@ -40,6 +40,7 @@ import {
   XCircle,
 } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -50,10 +51,18 @@ import {
 } from "react";
 import FinserBrand from "@/app/_components/finser-brand";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
-import { ProgressBar, Tabs } from "@/app/_components/finser-ui";
+import {
+  Button,
+  LoadingState,
+  ProgressBar,
+  Tabs,
+} from "@/app/_components/finser-ui";
 import RecaudoSidebar from "@/app/dashboard/abonos/recaudo-sidebar";
 import AdminWorkspaceTopbar from "@/app/dashboard/_components/admin-workspace-topbar";
 import FinserSupportLink from "@/app/_components/finser-support-link";
+import DatacreditoPrequalificationGate, {
+  type DataCreditoApprovedResult,
+} from "@/app/dashboard/creditos/datacredito-prequalification-gate";
 import {
   calculateCreditCharges,
   calculateFinancedBalance,
@@ -1026,6 +1035,7 @@ async function requestJson<T>(url: string, init?: RequestInit) {
   });
 
   const data = (await response.json().catch(() => null)) as T & {
+    code?: string;
     error?: string;
     warning?: string;
   };
@@ -2044,6 +2054,8 @@ export default function CreditFactoryConsole({
   const deliveryMode = !paymentsView && !lookupView && entryMode === "delivery";
   const simulatorMode = !paymentsView && !lookupView && entryMode === "simulator";
   const lookupMode = (lookupView && canViewSavedCredits) || deliveryMode;
+  const dataCreditoCreditCreationMode =
+    !paymentsView && !lookupMode && !simulatorMode;
   const clientLookupMode = lookupView && canViewSavedCredits;
   const embeddedClientLookup = clientLookupMode && embeddedLookup;
   const canAdminMoveFreelyInFactory = canAdmin && !paymentsView && !lookupMode;
@@ -2062,6 +2074,7 @@ export default function CreditFactoryConsole({
   const currentDevicePlatform: DevicePlatform =
     draftDevicePlatform || devicePlatform || "android";
   const iphoneFactory = currentDevicePlatform === "iphone";
+  const dataCreditoPlatform = iphoneFactory ? "IPHONE" : "ANDROID";
   const shouldShowDeviceChoice =
     chooseDevicePlatform && createClientMode && !initialDraftId;
   const buildCreditPlatformHref = (platform: DevicePlatform) => {
@@ -2082,6 +2095,7 @@ export default function CreditFactoryConsole({
   const [credits, setCredits] = useState<CreditItem[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const noticeRef = useRef<HTMLDivElement | null>(null);
   const [loadingList, setLoadingList] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -2126,6 +2140,13 @@ export default function CreditFactoryConsole({
   const [clienteDepartamento, setClienteDepartamento] = useState("");
   const [clienteCiudad, setClienteCiudad] = useState("");
   const [clienteGenero, setClienteGenero] = useState("");
+  const [dataCreditoAssessmentId, setDataCreditoAssessmentId] = useState<
+    string | null
+  >(null);
+  const [dataCreditoApproval, setDataCreditoApproval] = useState<
+    (DataCreditoApprovedResult & { platform: "ANDROID" | "IPHONE" }) | null
+  >(null);
+  const [dataCreditoBypassed, setDataCreditoBypassed] = useState(false);
   const [referenciaFamiliar1Nombre, setReferenciaFamiliar1Nombre] = useState("");
   const [referenciaFamiliar1Parentesco, setReferenciaFamiliar1Parentesco] =
     useState("");
@@ -2230,6 +2251,8 @@ export default function CreditFactoryConsole({
     configured: false,
     mode: "soft",
   });
+  const [veriffConfigLoaded, setVeriffConfigLoaded] = useState(false);
+  const [veriffConfigLoadFailed, setVeriffConfigLoadFailed] = useState(false);
   const [veriffValidation, setVeriffValidation] =
     useState<VeriffValidationState | null>(null);
   const [veriffQrDataUrl, setVeriffQrDataUrl] = useState("");
@@ -2255,6 +2278,15 @@ export default function CreditFactoryConsole({
   });
   const draftSaveTimerRef = useRef<number | null>(null);
   const applyingDraftRef = useRef(false);
+  const veriffExpectedDraftId = createClientMode ? draftId : undefined;
+  const dataCreditoFlowReady =
+    !dataCreditoCreditCreationMode ||
+    dataCreditoBypassed ||
+    Boolean(dataCreditoApproval);
+  const dataCreditoGatePending =
+    dataCreditoCreditCreationMode && !dataCreditoFlowReady;
+  const dataCreditoDraftLoading =
+    dataCreditoGatePending && Boolean(initialDraftId) && draftStatus === "loading";
 
   const selectedCredit = useMemo(
     () => credits.find((item) => item.id === selectedId) || null,
@@ -2492,9 +2524,13 @@ export default function CreditFactoryConsole({
     iphoneFactory && iphoneMaxFinancedAmount > 0
       ? Math.max(0, valorTotalEquipoNumero - iphoneMaxFinancedAmount)
       : 0;
-  const initialPaymentPercentage =
+  const configuredInitialPaymentPercentage =
     creditSettings.cuotaInicialPorcentaje ??
     (iphoneFactory ? IPHONE_INITIAL_PAYMENT_PERCENTAGE : DEFAULT_INITIAL_PAYMENT_PERCENTAGE);
+  const initialPaymentPercentage =
+    dataCreditoCreditCreationMode && dataCreditoApproval
+      ? dataCreditoApproval.offer.initialPaymentPercentage
+      : configuredInitialPaymentPercentage;
   const cuotaInicialMinimaNumero = calculateRequiredInitialPaymentByPlatform({
     valorTotalEquipo: valorTotalEquipoNumero,
     precioBaseVenta: precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined,
@@ -2521,6 +2557,10 @@ export default function CreditFactoryConsole({
   );
   const tasaInteresEaNumero = Math.max(0, Number(tasaInteresEa || 0));
   const fianzaPorcentajeNumero = Math.max(0, Number(fianzaPorcentaje || 0));
+  const effectiveFianzaPorcentaje =
+    dataCreditoCreditCreationMode && dataCreditoApproval
+      ? dataCreditoApproval.offer.suretyPercentage
+      : fianzaPorcentajeNumero;
   const frecuenciaPagoCredito = iphoneFactory
     ? DEFAULT_PAYMENT_FREQUENCY
     : creditSettings.frecuenciaPago;
@@ -2533,8 +2573,8 @@ export default function CreditFactoryConsole({
     cuotas: plazoMesesNumero,
     tasaInteresEa: tasaInteresEaNumero || DEFAULT_LEGAL_CONSUMER_RATE_EA,
     fianzaPorcentaje:
-      fianzaPorcentajeNumero >= 0
-        ? fianzaPorcentajeNumero
+      effectiveFianzaPorcentaje >= 0
+        ? effectiveFianzaPorcentaje
         : DEFAULT_FIANCO_SURETY_PERCENTAGE,
     frecuenciaPago: frecuenciaPagoCredito,
   });
@@ -2607,6 +2647,7 @@ export default function CreditFactoryConsole({
       contratoCedulaRespaldoCapturedAt:
         contratoCedulaRespaldoAudit?.capturedAt || null,
       contratoCedulaRespaldoSource: contratoCedulaRespaldoAudit?.source || null,
+      dataCreditoAssessmentId,
       veriffValidationId: veriffValidation?.id || null,
       pagareAceptado,
       cartaAceptada,
@@ -2639,6 +2680,7 @@ export default function CreditFactoryConsole({
       contratoFotoAudit?.source,
       contratoFotoDataUrl,
       cuotaInicial,
+      dataCreditoAssessmentId,
       equipoMarca,
       equipoModelo,
       fechaPrimerPago,
@@ -3143,6 +3185,96 @@ export default function CreditFactoryConsole({
     clienteFechaExpedicion,
   ]);
   useEffect(() => {
+    if (!dataCreditoApproval) {
+      return;
+    }
+
+    const currentDocument = clienteDocumento.replace(/\D/g, "");
+    const currentSurname = clientePrimerApellido
+      .normalize("NFKC")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLocaleUpperCase("es-CO");
+    const approvedSurname = dataCreditoApproval.firstSurname
+      .normalize("NFKC")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLocaleUpperCase("es-CO");
+
+    if (
+      currentDocument === dataCreditoApproval.documentNumber.replace(/\D/g, "") &&
+      currentSurname === approvedSurname &&
+      clienteTipoDocumento === "CEDULA_DE_CIUDADANIA" &&
+      dataCreditoPlatform === dataCreditoApproval.platform
+    ) {
+      return;
+    }
+
+    setDataCreditoApproval(null);
+    setDataCreditoAssessmentId(null);
+    setFianzaPorcentaje(
+      String(
+        creditSettings.fianzaPorcentaje ?? DEFAULT_FIANCO_SURETY_PERCENTAGE
+      )
+    );
+    veriffClientFormUnlockedRef.current = false;
+    setVeriffValidation(null);
+    setVeriffQrDataUrl("");
+    setVeriffInlineMessage("");
+    setVeriffMediaItems([]);
+    setVeriffMediaError("");
+    veriffAutoSessionRef.current = false;
+  }, [
+    clienteDocumento,
+    clientePrimerApellido,
+    clienteTipoDocumento,
+    creditSettings.fianzaPorcentaje,
+    dataCreditoApproval,
+    dataCreditoPlatform,
+  ]);
+  useEffect(() => {
+    if (!dataCreditoApproval) {
+      return;
+    }
+
+    let active = true;
+    const expiresAt = Date.parse(dataCreditoApproval.expiresAt);
+    const invalidateExpiredAssessment = () => {
+      if (!active) return;
+
+      setDataCreditoApproval(null);
+      setDataCreditoAssessmentId(null);
+      setFianzaPorcentaje(
+        String(
+          creditSettings.fianzaPorcentaje ?? DEFAULT_FIANCO_SURETY_PERCENTAGE
+        )
+      );
+      veriffClientFormUnlockedRef.current = false;
+      setVeriffValidation(null);
+      setVeriffQrDataUrl('');
+      setVeriffInlineMessage('');
+      setVeriffMediaItems([]);
+      setVeriffMediaError('');
+      veriffAutoSessionRef.current = false;
+      setWizardStep(1);
+      setNotice({
+        text:
+          "La precalificación venció. Realiza una nueva evaluación antes de continuar; esto no corresponde a un rechazo.",
+        tone: "amber",
+      });
+      window.requestAnimationFrame(() => noticeRef.current?.focus());
+    };
+    const delay = Number.isFinite(expiresAt)
+      ? Math.max(0, expiresAt - Date.now() + 250)
+      : 0;
+    const timer = window.setTimeout(invalidateExpiredAssessment, delay);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [creditSettings.fianzaPorcentaje, dataCreditoApproval]);
+  useEffect(() => {
     const now = new Date();
     setDocumentRenderDate(now.toLocaleDateString("es-CO"));
     setDocumentRenderDateTime(now.toLocaleString("es-CO"));
@@ -3182,7 +3314,7 @@ export default function CreditFactoryConsole({
   useEffect(() => {
     if (
       !veriffValidation?.sessionUrl ||
-      veriffApprovalCanUnlockClient(veriffValidation, draftId)
+      veriffApprovalCanUnlockClient(veriffValidation, veriffExpectedDraftId)
     ) {
       setVeriffQrDataUrl("");
       return;
@@ -3213,7 +3345,7 @@ export default function CreditFactoryConsole({
     return () => {
       active = false;
     };
-  }, [draftId, veriffValidation]);
+  }, [veriffExpectedDraftId, veriffValidation]);
   useEffect(() => {
     if (
       wizardStep !== 3 ||
@@ -3242,6 +3374,7 @@ export default function CreditFactoryConsole({
   ]);
   const imeiValido = imeiDigits.length === 15;
   const stepClienteReady =
+    dataCreditoFlowReady &&
     Boolean(clientePrimerNombre.trim()) &&
     Boolean(clientePrimerApellido.trim()) &&
     Boolean(clienteTipoDocumento.trim()) &&
@@ -3265,9 +3398,19 @@ export default function CreditFactoryConsole({
     Boolean(contratoFotoDataUrl) &&
     Boolean(contratoCedulaFrenteDataUrl) &&
     Boolean(contratoCedulaRespaldoDataUrl);
+  const dataCreditoRequiresVeriff =
+    dataCreditoCreditCreationMode && Boolean(dataCreditoApproval);
+  const veriffUnavailableForDataCredito =
+    dataCreditoRequiresVeriff &&
+    veriffConfigLoaded &&
+    (!veriffConfig.configured || veriffConfig.mode === "off");
   const veriffRequired =
-    veriffConfig.configured && veriffConfig.mode === "required";
-  const veriffApproved = veriffApprovalCanUnlockClient(veriffValidation, draftId);
+    dataCreditoRequiresVeriff ||
+    (veriffConfig.configured && veriffConfig.mode === "required");
+  const veriffApproved = veriffApprovalCanUnlockClient(
+    veriffValidation,
+    veriffExpectedDraftId
+  );
   const veriffRejected = Boolean(
     veriffValidation?.status === "DECLINED" ||
       veriffValidation?.status === "ERROR" ||
@@ -3325,13 +3468,15 @@ export default function CreditFactoryConsole({
   const veriffCanGenerateNewQr =
     !veriffSubmitting &&
     veriffConfig.configured &&
+    !veriffUnavailableForDataCredito &&
     !veriffApproved &&
     (!veriffValidation?.sessionUrl || veriffHasFinalDecision || veriffConnectionError);
   const veriffQrValidityLabel = veriffValidation?.createdAt
     ? `Generado ${dateTime(veriffValidation.createdAt)}. La vigencia se actualiza con el estado de Veriff.`
     : "La vigencia del codigo se controla con el estado real de Veriff.";
   const veriffIdentityFlowEnabled =
-    veriffConfig.configured && veriffConfig.mode !== "off";
+    dataCreditoRequiresVeriff ||
+    (veriffConfig.configured && veriffConfig.mode !== "off");
   const hideIdentityWizardStep = veriffIdentityFlowEnabled;
   const clienteFormUnlocked = !veriffIdentityFlowEnabled || veriffApproved;
   const identityStepReady = identityEvidenceReady || veriffApproved;
@@ -4347,15 +4492,28 @@ export default function CreditFactoryConsole({
     }
   };
 
+  const loadVeriffConfig = useCallback(async () => {
+    setVeriffConfigLoaded(false);
+    setVeriffConfigLoadFailed(false);
+
+    try {
+      const result = await requestJson<VeriffResponse>("/api/creditos/veriff");
+      if (!result.ok || !result.data?.veriff) {
+        throw new Error(result.data?.error || "No se pudo consultar Veriff");
+      }
+      setVeriffConfig(result.data.veriff);
+    } catch {
+      setVeriffConfigLoadFailed(true);
+    } finally {
+      setVeriffConfigLoaded(true);
+    }
+  }, []);
+
   useEffect(() => {
     void loadEquipmentCatalog();
     void loadCreditSettings();
-    void requestJson<VeriffResponse>("/api/creditos/veriff").then((result) => {
-      if (result.ok && result.data?.veriff) {
-        setVeriffConfig(result.data.veriff);
-      }
-    });
-  }, []);
+    void loadVeriffConfig();
+  }, [loadVeriffConfig]);
 
   useEffect(() => {
     if (!activeEquipmentCatalog.length || !equipoMarca.trim()) {
@@ -4995,7 +5153,7 @@ export default function CreditFactoryConsole({
       return veriffConfig.configured ? "Pendiente" : "Sin configurar";
     }
 
-    if (veriffApprovalCanUnlockClient(validation, draftId)) {
+    if (veriffApprovalCanUnlockClient(validation, veriffExpectedDraftId)) {
       return "Aprobada";
     }
 
@@ -5058,7 +5216,7 @@ export default function CreditFactoryConsole({
 
   const applyVeriffIdentityData = (
     validation: VeriffValidationState | null,
-    expectedDraftId = draftId
+    expectedDraftId: number | null | undefined = veriffExpectedDraftId
   ) => {
     const identity = validation?.identityData;
     if (!veriffApprovalCanUnlockClient(validation, expectedDraftId) || !identity) {
@@ -5254,7 +5412,10 @@ export default function CreditFactoryConsole({
 
       const validation = result.data.validation || null;
       setVeriffValidation(validation);
-      const expectedDraftId = options.expectedDraftId ?? draftId;
+      const expectedDraftId =
+        options.expectedDraftId !== undefined
+          ? options.expectedDraftId
+          : veriffExpectedDraftId;
       const usableApproval = veriffApprovalCanUnlockClient(
         validation,
         expectedDraftId
@@ -5418,8 +5579,15 @@ export default function CreditFactoryConsole({
           "Se creo la sesion, pero no retorno un enlace para generar el QR."
         );
       }
-      const usableApproval = veriffApprovalCanUnlockClient(validation, currentDraftId);
-      const filledClientData = applyVeriffIdentityData(validation, currentDraftId);
+      const expectedDraftId = createClientMode ? currentDraftId : undefined;
+      const usableApproval = veriffApprovalCanUnlockClient(
+        validation,
+        expectedDraftId
+      );
+      const filledClientData = applyVeriffIdentityData(
+        validation,
+        expectedDraftId
+      );
       setVeriffInlineMessage(
         validation?.status === "DECLINED"
           ? veriffRejectedMessage
@@ -5497,7 +5665,7 @@ export default function CreditFactoryConsole({
       polling = true;
       void refreshVeriffValidationRef
         .current(veriffValidation.id, {
-          expectedDraftId: draftId,
+          expectedDraftId: veriffExpectedDraftId,
           silent: true,
         })
         .finally(() => {
@@ -5514,7 +5682,7 @@ export default function CreditFactoryConsole({
     veriffHasFinalDecision,
     veriffIdentityFlowEnabled,
     veriffValidation?.id,
-    draftId,
+    veriffExpectedDraftId,
   ]);
 
   const clampWizardStep = (targetStep: number) => {
@@ -5529,6 +5697,16 @@ export default function CreditFactoryConsole({
     [...visibleFactorySteps].reverse().find((step) => step.id < currentStep)?.id || 1;
 
   const goToStep = (targetStep: number) => {
+    if (targetStep > 1 && dataCreditoRequiresVeriff && !veriffApproved) {
+      setNotice({
+        text: veriffUnavailableForDataCredito
+          ? "La validación de identidad está temporalmente no disponible. Esto no corresponde a un rechazo crediticio."
+          : "Veriff debe aprobar la identidad antes de continuar con la solicitud.",
+        tone: "amber",
+      });
+      return;
+    }
+
     if (
       targetStep > wizardStep &&
       wizardStep === 2 &&
@@ -5620,6 +5798,16 @@ export default function CreditFactoryConsole({
   };
 
   const advanceToStep = async (targetStep: number) => {
+    if (targetStep > 1 && dataCreditoRequiresVeriff && !veriffApproved) {
+      setNotice({
+        text: veriffUnavailableForDataCredito
+          ? "La validación de identidad está temporalmente no disponible. Esto no corresponde a un rechazo crediticio."
+          : "Veriff debe aprobar la identidad antes de continuar con la solicitud.",
+        tone: "amber",
+      });
+      return;
+    }
+
     if (
       targetStep > wizardStep &&
       wizardStep === 2 &&
@@ -5973,6 +6161,9 @@ export default function CreditFactoryConsole({
     setClienteDepartamento("");
     setClienteCiudad("");
     setClienteGenero("");
+    setDataCreditoAssessmentId(null);
+    setDataCreditoApproval(null);
+    setDataCreditoBypassed(false);
     setReferenciaFamiliar1Nombre("");
     setReferenciaFamiliar1Parentesco("");
     setReferenciaFamiliar1Telefono("");
@@ -5994,7 +6185,11 @@ export default function CreditFactoryConsole({
       )
     );
     setTasaInteresEa(String(creditSettings.tasaInteresEa));
-    setFianzaPorcentaje(String(creditSettings.fianzaPorcentaje));
+    setFianzaPorcentaje(
+      String(
+        creditSettings.fianzaPorcentaje ?? DEFAULT_FIANCO_SURETY_PERCENTAGE
+      )
+    );
     setFechaPrimerPago(
       getDefaultFirstPaymentDate(new Date(), frecuenciaPagoCredito)
     );
@@ -6168,6 +6363,7 @@ export default function CreditFactoryConsole({
     const deliveryReadyForCreate =
       Boolean(options.allowPendingDelivery) || deliveryRequirementReady;
     const readyToCreate =
+      dataCreditoFlowReady &&
       stepClienteReady &&
       stepEquipoReady &&
       stepContratoReady &&
@@ -6178,6 +6374,23 @@ export default function CreditFactoryConsole({
       setNotice({
         text: iphoneInstallmentLimitMessage,
         tone: "red",
+      });
+      return null;
+    }
+
+    if (!dataCreditoFlowReady) {
+      setNotice({
+        text: "Debes obtener una precalificación aprobada antes de finalizar el crédito.",
+        tone: "red",
+      });
+      return null;
+    }
+
+    if (veriffUnavailableForDataCredito) {
+      setNotice({
+        text:
+          "La validación de identidad está temporalmente no disponible. Esto no corresponde a un rechazo crediticio.",
+        tone: "amber",
       });
       return null;
     }
@@ -6223,6 +6436,9 @@ export default function CreditFactoryConsole({
           clienteDepartamento,
           clienteCiudad,
           clienteGenero,
+          dataCreditoAssessmentId: dataCreditoCreditCreationMode
+            ? dataCreditoAssessmentId
+            : null,
           referenciaFamiliar1Nombre,
           referenciaFamiliar1Parentesco,
           referenciaFamiliar1Telefono,
@@ -6276,6 +6492,20 @@ export default function CreditFactoryConsole({
       });
 
       if (!result.ok) {
+        if (
+          result.data?.code === "DATACREDITO_ASSESSMENT_INVALID" ||
+          result.data?.code === "DATACREDITO_ASSESSMENT_REQUIRED"
+        ) {
+          handleDataCreditoAssessmentInvalidated();
+          setWizardStep(1);
+          setNotice({
+            text:
+              "La precalificación venció o ya fue utilizada. Realiza una nueva evaluación para continuar; esto no corresponde a un rechazo.",
+            tone: "amber",
+          });
+          return null;
+        }
+
         throw new Error(result.data?.error || "No se pudo crear el credito");
       }
 
@@ -7078,6 +7308,9 @@ export default function CreditFactoryConsole({
     setClienteDepartamento(value("clienteDepartamento"));
     setClienteCiudad(value("clienteCiudad"));
     setClienteGenero(value("clienteGenero"));
+    setDataCreditoAssessmentId(value("dataCreditoAssessmentId") || null);
+    setDataCreditoApproval(null);
+    setDataCreditoBypassed(false);
     setReferenciaFamiliar1Nombre(value("referenciaFamiliar1Nombre"));
     setReferenciaFamiliar1Parentesco(value("referenciaFamiliar1Parentesco"));
     setReferenciaFamiliar1Telefono(value("referenciaFamiliar1Telefono"));
@@ -7378,6 +7611,33 @@ export default function CreditFactoryConsole({
     simulatorMode,
     wizardStep,
   ]);
+
+  const handleDataCreditoBypass = () => {
+    setDataCreditoAssessmentId(null);
+    setDataCreditoApproval(null);
+    setDataCreditoBypassed(true);
+  };
+
+  const handleDataCreditoAssessmentInvalidated = () => {
+    setDataCreditoAssessmentId(null);
+    setDataCreditoApproval(null);
+    setDataCreditoBypassed(false);
+    setFianzaPorcentaje(String(creditSettings.fianzaPorcentaje));
+  };
+
+  const handleDataCreditoApproved = (result: DataCreditoApprovedResult) => {
+    setDataCreditoAssessmentId(result.assessmentId);
+    setDataCreditoApproval({ ...result, platform: dataCreditoPlatform });
+    setDataCreditoBypassed(false);
+    setClienteTipoDocumento("CEDULA_DE_CIUDADANIA");
+    setClienteDocumento(result.documentNumber);
+    setClientePrimerApellido(result.firstSurname);
+    setFianzaPorcentaje(String(result.offer.suretyPercentage));
+
+    if (wizardStep !== 1) {
+      setWizardStep(1);
+    }
+  };
 
   const openLookupCredit = (creditId: number) => {
     if (!lookupMode) {
@@ -7996,6 +8256,10 @@ export default function CreditFactoryConsole({
 
         {notice && (
           <div
+            ref={noticeRef}
+            tabIndex={-1}
+            role="status"
+            aria-live="polite"
             className={[
               "mt-6 rounded-[24px] border px-5 py-4 text-sm font-medium shadow-sm",
               noticeClasses(notice.tone),
@@ -8528,8 +8792,63 @@ export default function CreditFactoryConsole({
                 createClientMode && wizardStep === 1 ? "fp-identity-workspace" : "",
               ].join(" ")}
             >
+              {dataCreditoGatePending ? (
+                <div className="mx-auto w-full max-w-4xl py-2">
+                  {dataCreditoDraftLoading ? (
+                    <div
+                      className="rounded-[var(--fp-radius-lg)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-6"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <LoadingState label="Cargando la precalificación guardada..." />
+                    </div>
+                  ) : (
+                    <DatacreditoPrequalificationGate
+                      platform={dataCreditoPlatform}
+                      initialAssessmentId={dataCreditoAssessmentId}
+                      initialDocumentNumber={clienteDocumento}
+                      initialFirstSurname={clientePrimerApellido}
+                      onBypass={handleDataCreditoBypass}
+                      onApproved={handleDataCreditoApproved}
+                      onAssessmentInvalidated={
+                        handleDataCreditoAssessmentInvalidated
+                      }
+                    />
+                  )}
+                </div>
+              ) : (
+                <>
               {wizardStep === 1 && (
                 <div className="fp-identity-stage">
+                  {dataCreditoApproval ? (
+                    <div
+                      className="mb-5 flex flex-col gap-3 rounded-[22px] border border-[#c9df91] bg-[#f4f9e8] px-4 py-4 text-slate-900 sm:flex-row sm:items-center sm:justify-between"
+                      role="status"
+                    >
+                      <div className="flex items-start gap-3">
+                        <span
+                          className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#151a21] text-[#b7e63d]"
+                          aria-hidden="true"
+                        >
+                          <BadgeCheck className="h-5 w-5" strokeWidth={2} />
+                        </span>
+                        <div>
+                          <p className="text-sm font-black">Oferta aprobada</p>
+                          <p className="mt-1 text-sm leading-6 text-slate-600">
+                            Continúa con la validación de identidad. El puntaje no se muestra.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-xs font-black uppercase tracking-[0.12em]">
+                        <span className="rounded-full border border-[#c9df91] bg-white px-3 py-2">
+                          Inicial {formatPercent(dataCreditoApproval.offer.initialPaymentPercentage)}
+                        </span>
+                        <span className="rounded-full border border-[#c9df91] bg-white px-3 py-2">
+                          Fianza {formatPercent(dataCreditoApproval.offer.suretyPercentage)}
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="fp-identity-layout">
                     <section className="fp-identity-main">
                       <p className="fp-identity-kicker">Paso {activeFactoryStepNumber}</p>
@@ -8537,6 +8856,54 @@ export default function CreditFactoryConsole({
                       <p className="fp-identity-description">
                         Genera el codigo QR para que el cliente complete la validacion desde su celular.
                       </p>
+
+                      {dataCreditoRequiresVeriff && !veriffConfigLoaded ? (
+                        <div
+                          className="mt-5 flex items-center gap-3 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-4 text-slate-700"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          <LoaderCircle
+                            className="h-5 w-5 shrink-0 animate-spin"
+                            strokeWidth={2}
+                            aria-hidden="true"
+                          />
+                          <p className="text-sm font-semibold">
+                            Verificando la disponibilidad de la validación de identidad...
+                          </p>
+                        </div>
+                      ) : veriffUnavailableForDataCredito ? (
+                        <div
+                          className="mt-5 flex items-start gap-3 rounded-[20px] border border-amber-300 bg-amber-50 px-4 py-4 text-amber-950"
+                          role="alert"
+                        >
+                          <AlertCircle
+                            className="mt-0.5 h-5 w-5 shrink-0"
+                            strokeWidth={2}
+                            aria-hidden="true"
+                          />
+                          <div>
+                            <p className="text-sm font-black">
+                              Validación de identidad no disponible
+                            </p>
+                            <p className="mt-1 text-sm leading-6 text-amber-900">
+                              {veriffConfigLoadFailed
+                                ? "No pudimos verificar la configuración de Veriff. Esto no corresponde a un rechazo crediticio."
+                                : "La configuración técnica de Veriff no permite continuar en este momento. Esto no corresponde a un rechazo crediticio."}
+                            </p>
+                            {veriffConfigLoadFailed ? (
+                              <Button
+                                className="mt-3"
+                                variant="secondary"
+                                onClick={() => void loadVeriffConfig()}
+                              >
+                                <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                                Reintentar verificación
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
 
                       <div className="fp-identity-moments" aria-label="Como funciona la validacion">
                         {[
@@ -9450,6 +9817,22 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
 
+                  {dataCreditoApproval ? (
+                    <div className="mt-5 flex flex-wrap items-center gap-2 rounded-[20px] border border-[#c9df91] bg-[#f4f9e8] px-4 py-3 text-sm text-slate-700">
+                      <span className="font-black text-slate-950">
+                        Oferta DataCrédito
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        Inicial mínima {formatPercent(initialPaymentPercentage)}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        Fianza {formatPercent(financialPlan.fianzaPorcentaje)}
+                      </span>
+                    </div>
+                  ) : null}
+
                   <div className="mt-6 grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
                     <div className="grid gap-4 md:grid-cols-2">
                       <div>
@@ -10128,7 +10511,7 @@ export default function CreditFactoryConsole({
                             type="button"
                             onClick={() =>
                               void refreshVeriffValidation(undefined, {
-                                expectedDraftId: draftId,
+                                expectedDraftId: veriffExpectedDraftId,
                               })
                             }
                             disabled={veriffRefreshing || !veriffValidation?.id}
@@ -11408,9 +11791,11 @@ export default function CreditFactoryConsole({
                   </div>
                 </div>
               )}
+                </>
+              )}
             </div>
 
-            {!simulatorMode && (
+            {!simulatorMode && !dataCreditoGatePending && (
               <div
                 className={[
                   "fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-[24px] border border-[#d8e6e5] bg-white/92 px-4 py-4 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur",
@@ -11485,6 +11870,7 @@ export default function CreditFactoryConsole({
                     disabled={
                       creating ||
                       firmaSeguroSubmitting ||
+                      (dataCreditoRequiresVeriff && !veriffApproved) ||
                       (wizardStep === 4 && !stepDocumentosReady)
                     }
                     onClick={() => {

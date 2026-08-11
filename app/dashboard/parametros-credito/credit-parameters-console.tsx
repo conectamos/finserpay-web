@@ -20,6 +20,7 @@ import {
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
 } from "@/lib/credit-factory";
+import DatacreditoPolicyConsole from "./datacredito-policy-console";
 
 type SessionUser = {
   rolNombre: string;
@@ -883,6 +884,10 @@ export default function CreditParametersConsole() {
             </p>
           </section>
         </div>
+
+        <section className="border-t border-[var(--fp-border)] bg-[var(--fp-bg)] px-6 py-8 sm:px-8">
+          <DatacreditoPolicyConsole />
+        </section>
 
         <section className="border-t border-[#dcebe8] px-6 py-6 sm:px-8">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
