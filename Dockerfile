@@ -34,6 +34,7 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/app/generated/prisma ./app/generated/prisma
 COPY --from=builder /app/scripts/railway-cron.mjs ./scripts/railway-cron.mjs
+COPY --from=builder /app/scripts/setup-datacredito.sql ./scripts/setup-datacredito.sql
  
 EXPOSE 3000
 

@@ -14,10 +14,13 @@
     "test:wompi": "node --experimental-strip-types --test tests/wompi-early-payoff-intent.test.mjs tests/credit-payment-plan-settled.test.mjs tests/payment-date-and-rounding.test.mjs",
     "test:pwa": "node --test tests/pwa-update-policy.test.mjs",
     "test:client-documents": "node --test tests/client-document-download.test.mjs",
+    "test:datacredito": "node --test tests/datacredito-client.test.mjs tests/datacredito-policy.test.mjs tests/datacredito-storage-controls.test.mjs",
     "cron:efecty": "node scripts/railway-cron.mjs efecty",
+    "cron:datacredito-retention": "node scripts/railway-cron.mjs datacredito-retention",
     "cron:mora": "node scripts/railway-cron.mjs mora",
     "db:push": "npx prisma db push",
     "db:setup-aliados": "npx prisma db execute --file scripts/setup-aliado-conectamos.sql",
+    "db:setup-datacredito": "npx prisma db execute --file scripts/setup-datacredito.sql",
     "seed:initial": "npx prisma db execute --file scripts/seed-initial-data.sql",
     "prisma:generate": "npx prisma generate",
     "lint": "eslint"

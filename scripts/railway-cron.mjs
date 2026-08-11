@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 
 const TASKS = {
+  "datacredito-retention": {
+    label: "Aplicar retencion de evaluaciones DataCredito",
+    endpoint: "/api/creditos/datacredito/retencion",
+    tokenNames: ["DATACREDITO_RETENTION_TOKEN", "CRON_SECRET"],
+    body: {},
+    requireHttps: true,
+    timeoutMs: 30_000,
+  },
   efecty: {
     label: "Conciliar recaudos Efecty",
     endpoint: "/api/efecty/sync",
@@ -72,6 +80,8 @@ function summarizePayload(payload) {
     "errors",
     "message",
     "detail",
+    "deleted",
+    "retentionDays",
   ];
 
   for (const key of keys) {
@@ -96,6 +106,10 @@ async function run() {
   const token = getToken(task);
   const url = `${baseUrl}${task.endpoint}`;
 
+  if (task.requireHttps && new URL(url).protocol !== "https:") {
+    throw new Error(`${task.label} requiere FINSERPAY_BASE_URL con HTTPS`);
+  }
+
   console.log(`[${formatBogotaDate()}] ${task.label}`);
   console.log(`URL: ${url}`);
   console.log(`Token: ${token.name}`);
@@ -107,6 +121,7 @@ async function run() {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(task.body),
+    ...(task.timeoutMs ? { signal: AbortSignal.timeout(task.timeoutMs) } : {}),
   });
 
   const text = await response.text();

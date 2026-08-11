@@ -68,6 +68,17 @@ import {
   getVeriffPublicSummary,
   isVeriffRequired,
 } from "@/lib/veriff";
+import { getDataCreditoPublicConfig } from "@/lib/datacredito";
+import {
+  classifyDataCreditoAssessmentForCredit,
+  claimDataCreditoAssessment,
+  consumeDataCreditoAssessment,
+  getApprovedDataCreditoAssessmentForCredit,
+  isDataCreditoAuditConfigured,
+  releaseDataCreditoAssessment,
+  type DataCreditoAssessmentMatchInput,
+  type DataCreditoAssessmentRow,
+} from "@/lib/datacredito/storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -195,6 +206,7 @@ type CreditCreateBody = {
   contratoVideoAprobacionDurationSeconds?: number | string;
   contratoVideoAprobacionSource?: string;
   cuotaInicial?: number | string;
+  dataCreditoAssessmentId?: string | null;
   deviceUid?: string;
   equipoMarca?: string;
   equipoModelo?: string;
@@ -672,7 +684,64 @@ export async function GET(req: Request) {
   }
 }
 
+function dataCreditoRecoveredCreditResponse(
+  item: CreditListItem,
+  warning =
+    "El crédito ya había sido creado con esta precalificación. No realices una nueva consulta."
+) {
+  return NextResponse.json({
+    ok: true,
+    recovered: true,
+    warning,
+    item: serializeCredit(item),
+    deliveryStatus: null,
+    identityValidation: null,
+    equality: null,
+  });
+}
+
+async function recoverDataCreditoCredit(
+  input: DataCreditoAssessmentMatchInput
+) {
+  const classification =
+    await classifyDataCreditoAssessmentForCredit(input);
+
+  if (classification.status === 'CONSUMED') {
+    const created = await prisma.credito.findUnique({
+      where: { id: classification.creditId },
+      include: creditListInclude,
+    });
+
+    if (created) {
+      return dataCreditoRecoveredCreditResponse(created);
+    }
+  }
+
+  if (classification.status === 'IN_PROGRESS') {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: 'DATACREDITO_ASSESSMENT_IN_PROGRESS',
+        error:
+          'La solicitud ya se esta procesando. Espera un momento antes de intentar nuevamente.',
+      },
+      { status: 409 }
+    );
+  }
+
+  return null;
+}
+
 export async function POST(req: Request) {
+  let dataCreditoClaim: {
+    assessmentId: string;
+    claimToken: string;
+  } | null = null;
+  let dataCreditoAssessmentConsumed = false;
+  let dataCreditoAssessmentMatch: DataCreditoAssessmentMatchInput | null =
+    null;
+  let createdCreditId: number | null = null;
+
   try {
     const user = await getSessionUser();
 
@@ -739,6 +808,92 @@ export async function POST(req: Request) {
       .trim()
       .toUpperCase();
     const isIphoneCredit = isIphoneCreditPlatform(plataformaDispositivo);
+    const dataCreditoPlatform = isIphoneCredit ? "IPHONE" : "ANDROID";
+    const dataCreditoProvider = getDataCreditoPublicConfig();
+    const dataCreditoRequired = dataCreditoProvider.enabled;
+    let dataCreditoAssessment: DataCreditoAssessmentRow | null = null;
+
+    if (dataCreditoRequired) {
+      if (!dataCreditoProvider.configured || !isDataCreditoAuditConfigured()) {
+        return NextResponse.json(
+          {
+            error:
+              "La precalificacion de DataCredito esta habilitada, pero su configuracion segura esta incompleta.",
+          },
+          { status: 503 }
+        );
+      }
+
+      if (clienteTipoDocumento !== "CEDULA_DE_CIUDADANIA") {
+        return NextResponse.json(
+          {
+            error:
+              "La precalificacion actual de DataCredito solo admite cedula de ciudadania.",
+          },
+          { status: 409 }
+        );
+      }
+
+      if (!/^\d{3,13}$/.test(clienteDocumento)) {
+        return NextResponse.json(
+          {
+            error:
+              "La cedula debe contener entre 3 y 13 digitos, sin puntos ni espacios.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const assessmentId = sanitizeText(body.dataCreditoAssessmentId);
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          assessmentId
+        )
+      ) {
+        return NextResponse.json(
+          {
+            code: "DATACREDITO_ASSESSMENT_REQUIRED",
+            error:
+              "Debes obtener una precalificacion aprobada antes de continuar con el credito.",
+          },
+          { status: 409 }
+        );
+      }
+
+      dataCreditoAssessmentMatch = {
+        assessmentId,
+        documentNumber: clienteDocumento,
+        firstSurname: clientePrimerApellido,
+        platform: dataCreditoPlatform,
+        userId: user.id,
+        sellerId: sellerSession?.id || null,
+        sedeId: user.sedeId,
+        aliadoId: user.aliadoId || null,
+      };
+      dataCreditoAssessment =
+        await getApprovedDataCreditoAssessmentForCredit(
+          dataCreditoAssessmentMatch
+        );
+
+      if (!dataCreditoAssessment) {
+        const recovery = await recoverDataCreditoCredit(
+          dataCreditoAssessmentMatch
+        );
+        if (recovery) {
+          return recovery;
+        }
+
+        return NextResponse.json(
+          {
+            code: "DATACREDITO_ASSESSMENT_INVALID",
+            error:
+              "La precalificacion no esta aprobada, vencio o no corresponde al titular, asesor, sede y plataforma de este credito.",
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const iphoneManualEnrollmentVerified =
       isIphoneCredit && Boolean(body.iphoneEnrolamientoVerificado);
     const valorEquipoTotalInput = toNumber(body.valorEquipoTotal);
@@ -767,7 +922,38 @@ export async function POST(req: Request) {
       clienteDocumento,
       plataformaDispositivo
     );
-    const creditSettings = effectiveCreditSettings.settings;
+    const dataCreditoInitialPaymentPercentage = Number(
+      dataCreditoAssessment?.offer?.initialPaymentPercentage
+    );
+    const dataCreditoSuretyPercentage = Number(
+      dataCreditoAssessment?.offer?.suretyPercentage
+    );
+    const hasValidDataCreditoOffer =
+      !dataCreditoRequired ||
+      (Number.isFinite(dataCreditoInitialPaymentPercentage) &&
+        dataCreditoInitialPaymentPercentage >= 0 &&
+        dataCreditoInitialPaymentPercentage <= 100 &&
+        Number.isFinite(dataCreditoSuretyPercentage) &&
+        dataCreditoSuretyPercentage >= 0 &&
+        dataCreditoSuretyPercentage <= 100);
+
+    if (!hasValidDataCreditoOffer) {
+      return NextResponse.json(
+        {
+          error:
+            "La oferta de la precalificacion no es valida. Solicita revision de la politica de puntajes.",
+        },
+        { status: 503 }
+      );
+    }
+
+    const creditSettings = dataCreditoAssessment
+      ? {
+          ...effectiveCreditSettings.settings,
+          cuotaInicialPorcentaje: dataCreditoInitialPaymentPercentage,
+          fianzaPorcentaje: dataCreditoSuretyPercentage,
+        }
+      : effectiveCreditSettings.settings;
     const cuotaInicialMinima = calculateRequiredInitialPaymentByPlatform({
       valorTotalEquipo: valorEquipoTotalInput,
       precioBaseVenta: precioBaseVentaCatalogo,
@@ -1231,7 +1417,11 @@ export async function POST(req: Request) {
     }
 
     const veriffValidationId = Math.trunc(toNumber(body.veriffValidationId));
-    const veriffRequired = isVeriffRequired();
+    // The DataCredito prequalification flow always continues through the
+    // existing identity validation before a credit can be created. Keeping
+    // this conditional preserves the previous Veriff mode when the feature is
+    // disabled.
+    const veriffRequired = dataCreditoRequired || isVeriffRequired();
     const veriffSummary = getVeriffPublicSummary();
     let veriffValidation =
       veriffValidationId > 0
@@ -1749,7 +1939,36 @@ export async function POST(req: Request) {
       clausulas: CONTRACT_CLAUSE_LABELS,
     };
 
-    let created = await prisma.credito.create({
+    if (dataCreditoAssessment && dataCreditoAssessmentMatch) {
+      const claimed = await claimDataCreditoAssessment(
+        dataCreditoAssessmentMatch
+      );
+
+      if (!claimed) {
+        const recovery = await recoverDataCreditoCredit(
+          dataCreditoAssessmentMatch
+        );
+        if (recovery) {
+          return recovery;
+        }
+
+        return NextResponse.json(
+          {
+            code: "DATACREDITO_ASSESSMENT_INVALID",
+            error:
+              "La precalificacion ya fue utilizada, vencio o esta siendo procesada en otra solicitud.",
+          },
+          { status: 409 }
+        );
+      }
+
+      dataCreditoClaim = {
+        assessmentId: claimed.assessment.id,
+        claimToken: claimed.claimToken,
+      };
+    }
+
+    const creditCreateArgs = {
       data: {
         folio,
         clienteDireccion: clienteDireccion || null,
@@ -1811,7 +2030,35 @@ export async function POST(req: Request) {
         sedeId: user.sedeId,
       },
       include: creditListInclude,
-    });
+    } satisfies Prisma.CreditoCreateArgs;
+
+    let created;
+    if (dataCreditoClaim) {
+      const claimedAssessment = dataCreditoClaim;
+
+      created = await prisma.$transaction(async (transaction) => {
+        const credit = await transaction.credito.create(creditCreateArgs);
+        const consumed = await consumeDataCreditoAssessment(
+          {
+            assessmentId: claimedAssessment.assessmentId,
+            claimToken: claimedAssessment.claimToken,
+            creditId: credit.id,
+          },
+          transaction
+        );
+
+        if (!consumed) {
+          throw new Error("DATACREDITO_ASSESSMENT_CONSUME_CONFLICT");
+        }
+
+        return credit;
+      });
+      dataCreditoAssessmentConsumed = true;
+      dataCreditoClaim = null;
+    } else {
+      created = await prisma.credito.create(creditCreateArgs);
+    }
+    createdCreditId = created.id;
 
     if (firmaSeguroProcess) {
       await linkFirmaSeguroProcessForCredit(firmaSeguroProcess.processUuid, created.id);
@@ -1855,7 +2102,35 @@ export async function POST(req: Request) {
         : null,
     });
   } catch (error) {
-    console.error("ERROR CREANDO CREDITO:", error);
+    if (dataCreditoClaim && !createdCreditId) {
+      await releaseDataCreditoAssessment(dataCreditoClaim).catch(() => undefined);
+    }
+
+    const rawErrorCode =
+      error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code || "")
+        : "";
+    console.error("ERROR CREANDO CREDITO:", {
+      errorType: error instanceof Error ? error.name : "UnknownError",
+      safeCode: /^[A-Z0-9_]{1,64}$/.test(rawErrorCode) ? rawErrorCode : null,
+      postCommit: dataCreditoAssessmentConsumed,
+    });
+
+    if (dataCreditoAssessmentConsumed && createdCreditId) {
+      const recovered = await prisma.credito
+        .findUnique({
+          where: { id: createdCreditId },
+          include: creditListInclude,
+        })
+        .catch(() => null);
+
+      if (recovered) {
+        return dataCreditoRecoveredCreditResponse(
+          recovered,
+          "El crédito se creó correctamente, pero una vinculación posterior quedó pendiente. No repitas la consulta; revisa el expediente."
+        );
+      }
+    }
 
     return NextResponse.json(
       { error: "No se pudo crear el credito" },
