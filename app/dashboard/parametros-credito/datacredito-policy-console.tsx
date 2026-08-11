@@ -12,6 +12,9 @@ import {
 } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import {
+  DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM,
+} from "@/lib/datacredito/policy-access";
+import {
   Badge,
   Button,
   Card,
@@ -240,11 +243,14 @@ function parseSnapshot(
 }
 
 async function requestPolicy(signal?: AbortSignal) {
-  const response = await fetch("/api/creditos/datacredito/politica", {
-    cache: "no-store",
-    headers: { Accept: "application/json" },
-    signal,
-  });
+  const response = await fetch(
+    `/api/creditos/datacredito/politica?${DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM}=true`,
+    {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+      signal,
+    }
+  );
   const payload = await readJson(response);
 
   if (!response.ok) {

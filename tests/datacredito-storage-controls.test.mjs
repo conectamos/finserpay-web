@@ -11,6 +11,9 @@ const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const { isDataCreditoUniqueViolation } = await jiti.import(
   "../lib/datacredito/database-errors.ts"
 );
+const { shouldLoadDataCreditoPolicy } = await jiti.import(
+  "../lib/datacredito/policy-access.ts"
+);
 
 const [
   storage,
@@ -138,6 +141,51 @@ test("produccion verifica el preflight sin ejecutar DDL en runtime", () => {
   assert.match(policyRoute, /DataCreditoStorageConfigurationError/);
   assert.match(policyRoute, /\{ status: 503 \}/);
   assert.match(evaluationRoute, /\? error\.code/);
+});
+
+test("la bandera apagada restaura ventas y reserva la politica al administrador", () => {
+  assert.equal(
+    shouldLoadDataCreditoPolicy({
+      enabled: false,
+      centralAdmin: true,
+      includeDisabledPolicy: false,
+    }),
+    false
+  );
+  assert.equal(
+    shouldLoadDataCreditoPolicy({
+      enabled: false,
+      centralAdmin: false,
+      includeDisabledPolicy: true,
+    }),
+    false
+  );
+  assert.equal(
+    shouldLoadDataCreditoPolicy({
+      enabled: false,
+      centralAdmin: true,
+      includeDisabledPolicy: true,
+    }),
+    true
+  );
+  assert.equal(
+    shouldLoadDataCreditoPolicy({
+      enabled: true,
+      centralAdmin: false,
+      includeDisabledPolicy: false,
+    }),
+    true
+  );
+  assert.match(policyRoute, /export async function GET\(request: Request\)/);
+  assert.match(policyRoute, /shouldLoadDataCreditoPolicy/);
+  assert.match(
+    policyConsole,
+    /DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM\}=true/
+  );
+  assert.match(
+    prequalificationGate,
+    /policyPayload\.enabled === false[\s\S]*?finishBypass\(\)/
+  );
 });
 
 test("la retencion tiene endpoint protegido y tarea HTTPS con timeout", () => {
