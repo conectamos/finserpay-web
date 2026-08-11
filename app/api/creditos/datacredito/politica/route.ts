@@ -3,6 +3,10 @@ import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
 import {
+  DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM,
+  shouldLoadDataCreditoPolicy,
+} from "@/lib/datacredito/policy-access";
+import {
   DataCreditoPolicyValidationError,
   parseDataCreditoPolicyBands,
 } from "@/lib/datacredito/policy";
@@ -63,7 +67,7 @@ function serializePolicyResponse(input: {
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await getSessionUser();
     if (!user) {
@@ -72,8 +76,18 @@ export async function GET() {
 
     const provider = getDataCreditoPublicConfig();
     const centralAdmin = isCentralAdmin(user);
+    const includeDisabledPolicy =
+      new URL(request.url).searchParams.get(
+        DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM
+      ) === "true";
 
-    if (!provider.enabled && !centralAdmin) {
+    if (
+      !shouldLoadDataCreditoPolicy({
+        enabled: provider.enabled,
+        centralAdmin,
+        includeDisabledPolicy,
+      })
+    ) {
       return NextResponse.json(
         serializePolicyResponse({ centralAdmin: false, policy: null, provider })
       );
