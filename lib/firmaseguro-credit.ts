@@ -29,10 +29,11 @@ import {
   isFirmaSeguroUnauthorizedError,
   summarizeFirmaSeguroDocumentPayload,
 } from "@/lib/firmaseguro";
+import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
 import {
   buildFirmaSeguroCreditPdf,
-  type CreditForFirmaSeguroPdf,
-} from "@/lib/firmaseguro-credit-pdf";
+  buildFirmaSeguroFolioFileName,
+} from "@/lib/firmaseguro-folio-pdf";
 import {
   getFirmaSeguroProcessByUuid,
   getLatestFirmaSeguroProcessByCredit,
@@ -751,7 +752,7 @@ function buildCreateFullByCompanyPayload(
   delivery: ReturnType<typeof getFirmaSeguroDelivery>
 ) {
   const config = getFirmaSeguroConfig();
-  const fileName = `paquete-finserpay-${credito.folio}.pdf`;
+  const fileName = buildFirmaSeguroFolioFileName(credito.folio);
 
   return {
     process: {
@@ -812,7 +813,7 @@ function buildCreateFullPayload(
   delivery: ReturnType<typeof getFirmaSeguroDelivery>
 ) {
   const config = getFirmaSeguroConfig();
-  const fileName = `paquete-finserpay-${credito.folio}.pdf`;
+  const fileName = buildFirmaSeguroFolioFileName(credito.folio);
 
   return {
     processTypeId: config.processTypeId,
