@@ -228,6 +228,14 @@ function dataUrlToBuffer(value: string | null | undefined) {
   }
 }
 
+function hashEvidenceDataUrl(value: string | null | undefined) {
+  const imageBuffer = dataUrlToBuffer(value);
+
+  return imageBuffer
+    ? createHash("sha256").update(imageBuffer).digest("hex")
+    : null;
+}
+
 function addSectionTitle(doc: PDFKit.PDFDocument, title: string, fonts: ReturnType<typeof getPdfFonts>) {
   ensureSpace(doc, 40);
   doc.moveDown(0.6);
@@ -313,13 +321,38 @@ function addEvidenceImage(
   }
 
   const startY = doc.y;
-  doc.save().roundedRect(40, startY, 515, 220, 16).fillAndStroke("#FFFFFF", "#E2E8F0").restore();
-  doc.image(imageBuffer, 52, startY + 12, {
-    fit: [491, 196],
-    align: "center",
-    valign: "center",
-  });
-  doc.y = startY + 228;
+
+  try {
+    doc
+      .save()
+      .roundedRect(40, startY, 515, 220, 16)
+      .fillAndStroke("#FFFFFF", "#E2E8F0")
+      .restore();
+    doc.image(imageBuffer, 52, startY + 12, {
+      fit: [491, 196],
+      align: "center",
+      valign: "center",
+    });
+    doc.y = startY + 228;
+  } catch (error) {
+    console.warn("EVIDENCIA NO RENDERIZABLE EN EXPEDIENTE:", title, error);
+    doc
+      .save()
+      .roundedRect(40, startY, 515, 100, 16)
+      .fillAndStroke("#FFFBEB", "#F59E0B")
+      .restore();
+    doc
+      .font(fonts.regular)
+      .fontSize(10.5)
+      .fillColor("#92400E")
+      .text(
+        "La evidencia esta registrada, pero no se pudo renderizar porque el archivo esta danado o su formato no es compatible.",
+        52,
+        startY + 24,
+        { width: 491 }
+      );
+    doc.y = startY + 108;
+  }
   if (audit) {
     addFieldGrid(
       doc,
@@ -389,6 +422,10 @@ export async function GET(
       where: {
         AND: [lookupWhere, accessWhere],
       },
+      omit: {
+        fotoEntregaDataUrl: false,
+        fotoRemisionDataUrl: false,
+      },
       include: {
         usuario: {
           select: {
@@ -449,8 +486,25 @@ export async function GET(
       credito.contratoSnapshot,
       "cedulaRespaldo"
     );
+    const fotoEntregaAudit = getSnapshotEvidenceAudit(
+      credito.contratoSnapshot,
+      "fotoEntrega"
+    );
+    const fotoRemisionAudit = getSnapshotEvidenceAudit(
+      credito.contratoSnapshot,
+      "fotoRemision"
+    );
+    const deliveryEvidenceHashes = {
+      fotoEntrega: hashEvidenceDataUrl(credito.fotoEntregaDataUrl),
+      fotoRemision: hashEvidenceDataUrl(credito.fotoRemisionDataUrl),
+    };
     const documentHash = createHash("sha256")
-      .update(JSON.stringify(credito.contratoSnapshot || {}))
+      .update(
+        JSON.stringify({
+          contratoSnapshot: credito.contratoSnapshot || {},
+          deliveryEvidenceHashes,
+        })
+      )
       .digest("hex");
 
     doc.save().roundedRect(40, 40, 515, 124, 22).fill("#F8FAFC").restore();
@@ -518,6 +572,22 @@ export async function GET(
           label: "Funcion hash",
           value: documentHash,
         },
+        ...(deliveryEvidenceHashes.fotoEntrega
+          ? [
+              {
+                label: "SHA-256 foto de entrega",
+                value: deliveryEvidenceHashes.fotoEntrega,
+              },
+            ]
+          : []),
+        ...(deliveryEvidenceHashes.fotoRemision
+          ? [
+              {
+                label: "SHA-256 foto de remision",
+                value: deliveryEvidenceHashes.fotoRemision,
+              },
+            ]
+          : []),
       ],
       fonts
     );
@@ -873,6 +943,22 @@ export async function GET(
       cedulaRespaldoAudit,
       fonts
     );
+    if (credito.fotoEntregaDataUrl || credito.fotoRemisionDataUrl) {
+      addEvidenceImage(
+        doc,
+        "Foto de entrega del iPhone",
+        credito.fotoEntregaDataUrl,
+        fotoEntregaAudit,
+        fonts
+      );
+      addEvidenceImage(
+        doc,
+        "Foto de remision",
+        credito.fotoRemisionDataUrl,
+        fotoRemisionAudit,
+        fonts
+      );
+    }
     addEvidenceImage(
       doc,
       "Firma digital",

@@ -1,8 +1,17 @@
 import { PrismaClient } from "@/app/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
+const GLOBAL_OMIT = {
+  credito: {
+    fotoEntregaDataUrl: true,
+    fotoRemisionDataUrl: true,
+  },
+} as const;
+
+export type AppPrismaClient = PrismaClient<never, typeof GLOBAL_OMIT>;
+
 const globalForPrisma = globalThis as unknown as {
-  prisma?: PrismaClient;
+  prisma?: AppPrismaClient;
 };
 
 const REQUIRED_DELEGATES = [
@@ -23,7 +32,7 @@ const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL,
 });
 
-function hasRequiredDelegates(client: PrismaClient | undefined) {
+function hasRequiredDelegates(client: AppPrismaClient | undefined) {
   if (!client) {
     return false;
   }
@@ -43,6 +52,7 @@ const prisma =
   cachedPrisma ??
   new PrismaClient({
     adapter,
+    omit: GLOBAL_OMIT,
   });
 
 if (process.env.NODE_ENV !== "production") {

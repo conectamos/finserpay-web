@@ -11,8 +11,7 @@ import {
   generateCreditFolio,
   generatePaymentReference,
   getDefaultFirstPaymentDateObject,
-  isEquipmentCatalogItemAllowedForPlatform,
-  isIphoneCreditPlatform,
+  resolveCreditEquipmentPlatform,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
   normalizePaymentFrequency,
@@ -23,7 +22,10 @@ import {
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
-import { findEquipmentCatalogItem } from "@/lib/equipment-catalog";
+import {
+  findEquipmentCatalogItem,
+  findEquipmentCatalogItemById,
+} from "@/lib/equipment-catalog";
 import { FirmaSeguroApiError } from "@/lib/firmaseguro";
 import {
   createFirmaSeguroProcessForDraft,
@@ -207,26 +209,45 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
   const imei = sanitizeDeviceValue(payload.imei || payload.deviceUid)
     .replace(/\D/g, "")
     .slice(0, 15);
-  const plataformaDispositivo = isIphoneCreditPlatform(payload.plataformaDispositivo)
-    ? "IPHONE"
-    : "ANDROID";
-  const isIphoneCredit = plataformaDispositivo === "IPHONE";
-  const valorEquipoTotalInput = toNumber(payload.valorEquipoTotal);
-  const catalogItem =
-    equipoMarca && equipoModelo
-      ? await findEquipmentCatalogItem({ marca: equipoMarca, modelo: equipoModelo })
+  const rawEquipmentCatalogId = payload.equipoCatalogoId;
+  const hasEquipmentCatalogId =
+    rawEquipmentCatalogId !== null &&
+    rawEquipmentCatalogId !== undefined &&
+    sanitizeText(rawEquipmentCatalogId) !== "";
+  const parsedEquipmentCatalogId = Number(rawEquipmentCatalogId);
+  const equipoCatalogoId =
+    hasEquipmentCatalogId &&
+    Number.isInteger(parsedEquipmentCatalogId) &&
+    parsedEquipmentCatalogId > 0
+      ? parsedEquipmentCatalogId
       : null;
-  if (
-    catalogItem &&
-    !isEquipmentCatalogItemAllowedForPlatform(catalogItem, plataformaDispositivo)
-  ) {
+
+  if (hasEquipmentCatalogId && !equipoCatalogoId) {
     throw new CreditValidationError(
-      isIphoneCredit
-        ? "En iPhone solo puedes seleccionar equipos del catalogo con marca IPHONE."
-        : "En Android no puedes seleccionar equipos del catalogo con marca IPHONE."
+      "El identificador del equipo de catalogo es invalido."
     );
   }
 
+  const catalogItem = equipoCatalogoId
+    ? await findEquipmentCatalogItemById(equipoCatalogoId)
+    : equipoMarca && equipoModelo
+      ? await findEquipmentCatalogItem({ marca: equipoMarca, modelo: equipoModelo })
+      : null;
+  const platformResolution = resolveCreditEquipmentPlatform({
+    requestedPlatform: payload.plataformaDispositivo,
+    equipoMarca,
+    equipoModelo,
+    catalogItemId: equipoCatalogoId,
+    catalogItem,
+  });
+
+  if (!platformResolution.ok) {
+    throw new CreditValidationError(platformResolution.message);
+  }
+
+  const plataformaDispositivo = platformResolution.platform;
+  const isIphoneCredit = plataformaDispositivo === "IPHONE";
+  const valorEquipoTotalInput = toNumber(payload.valorEquipoTotal);
   const precioBaseVentaCatalogo = catalogItem?.activo
     ? catalogItem.precioBaseVenta
     : null;

@@ -85,6 +85,24 @@ export async function getEquipmentCatalog(options?: { includeInactive?: boolean 
   return rows.map(toCatalogItem);
 }
 
+export async function findEquipmentCatalogItemById(id: number) {
+  if (!Number.isInteger(id) || id <= 0) {
+    return null;
+  }
+
+  await ensureEquipmentCatalogTable();
+
+  const rows = (await prisma.$queryRawUnsafe(
+    `SELECT id, marca, modelo, "precioBaseVenta", activo
+     FROM "CatalogoEquipoModelo"
+     WHERE id = $1
+     LIMIT 1`,
+    id
+  )) as Array<Record<string, unknown>>;
+
+  return rows[0] ? toCatalogItem(rows[0]) : null;
+}
+
 export async function findEquipmentCatalogItem(params: {
   marca: string;
   modelo: string;

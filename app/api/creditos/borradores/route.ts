@@ -199,12 +199,33 @@ async function ensureDraftTable() {
   await draftTableReady;
 }
 
-async function readDrafts(whereSql: string, values: unknown[], take = 20) {
+async function readDrafts(
+  whereSql: string,
+  values: unknown[],
+  take = 20,
+  includeDeliveryEvidence = true
+) {
   const limitIndex = values.length + 1;
+  const payloadSelection = includeDeliveryEvidence
+    ? `d."payload"`
+    : `d."payload" - 'fotoEntregaDataUrl' - 'fotoRemisionDataUrl'`;
   const rows = await prisma.$queryRawUnsafe<DraftRow[]>(
     `
       SELECT
-        d.*,
+        d."id",
+        d."estado",
+        d."usuarioId",
+        d."vendedorId",
+        d."sedeId",
+        d."currentStep",
+        d."clienteNombre",
+        d."clienteDocumento",
+        d."clienteTelefono",
+        d."imei",
+        ${payloadSelection} AS "payload",
+        d."createdAt",
+        d."updatedAt",
+        d."closedAt",
         u."nombre" AS "usuarioNombre",
         u."usuario" AS "usuarioLogin",
         v."nombre" AS "vendedorNombre",
@@ -318,7 +339,7 @@ export async function GET(req: Request) {
     }
 
     where.push(`(${searchWhere.join(" OR ")})`);
-    const rows = await readDrafts(where.join(" AND "), values, take);
+    const rows = await readDrafts(where.join(" AND "), values, take, false);
 
     return NextResponse.json({
       ok: true,

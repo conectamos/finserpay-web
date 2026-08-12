@@ -360,6 +360,30 @@ export function isIphoneCreditPlatform(value: unknown) {
   return normalized === "IPHONE" || normalized === "IOS" || normalized === "APPLE";
 }
 
+export type IphoneDeliveryEvidenceKey = "fotoEntrega" | "fotoRemision";
+
+export function getMissingIphoneDeliveryEvidence(options: {
+  platform?: unknown;
+  fotoEntregaDataUrl?: unknown;
+  fotoRemisionDataUrl?: unknown;
+}): IphoneDeliveryEvidenceKey[] {
+  if (!isIphoneCreditPlatform(options.platform)) {
+    return [];
+  }
+
+  const missing: IphoneDeliveryEvidenceKey[] = [];
+
+  if (!String(options.fotoEntregaDataUrl ?? "").trim()) {
+    missing.push("fotoEntrega");
+  }
+
+  if (!String(options.fotoRemisionDataUrl ?? "").trim()) {
+    missing.push("fotoRemision");
+  }
+
+  return missing;
+}
+
 export function isIphoneEquipmentCatalogBrand(value: unknown) {
   const normalized = sanitizeText(value)
     .normalize("NFD")
@@ -367,7 +391,11 @@ export function isIphoneEquipmentCatalogBrand(value: unknown) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
 
-  return normalized === "IPHONE";
+  return (
+    normalized === "IPHONE" ||
+    normalized === "APPLE" ||
+    normalized === "APPLEIPHONE"
+  );
 }
 
 export function isEquipmentCatalogItemAllowedForPlatform(
@@ -383,6 +411,151 @@ export function isEquipmentCatalogItemAllowedForPlatform(
   return isIphoneCreditPlatform(platform) ? isIphoneBrand : !isIphoneBrand;
 }
 
+export const CREDIT_DEVICE_PLATFORMS = ["ANDROID", "IPHONE"] as const;
+
+export type CreditDevicePlatform = (typeof CREDIT_DEVICE_PLATFORMS)[number];
+
+export type CreditEquipmentPlatformResolution =
+  | { ok: true; platform: CreditDevicePlatform }
+  | {
+      ok: false;
+      code:
+        | "INVALID_DEVICE_PLATFORM"
+        | "EQUIPMENT_CATALOG_NOT_FOUND"
+        | "EQUIPMENT_CATALOG_INACTIVE"
+        | "EQUIPMENT_CATALOG_IDENTITY_MISMATCH"
+        | "EQUIPMENT_PLATFORM_MISMATCH";
+      message: string;
+    };
+
+export function normalizeCreditDevicePlatform(
+  value: unknown
+): CreditDevicePlatform | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+
+  return normalized === "ANDROID" || normalized === "IPHONE"
+    ? normalized
+    : null;
+}
+
+function creditEquipmentIdentityKey(value: unknown) {
+  return sanitizeText(value)
+    .replace(/\s+/g, " ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+}
+
+export function resolveCreditEquipmentPlatform(options: {
+  requestedPlatform?: unknown;
+  equipoMarca?: unknown;
+  equipoModelo?: unknown;
+  catalogItemId?: number | null;
+  catalogItem?: {
+    id?: number | null;
+    marca?: string | null;
+    modelo?: string | null;
+    activo?: boolean | null;
+  } | null;
+}): CreditEquipmentPlatformResolution {
+  const requestedPlatform = normalizeCreditDevicePlatform(
+    options.requestedPlatform
+  );
+
+  if (!requestedPlatform) {
+    return {
+      ok: false,
+      code: "INVALID_DEVICE_PLATFORM",
+      message: "Selecciona una plataforma valida: ANDROID o IPHONE.",
+    };
+  }
+
+  if (options.catalogItemId) {
+    const item = options.catalogItem;
+
+    if (!item || item.id !== options.catalogItemId) {
+      return {
+        ok: false,
+        code: "EQUIPMENT_CATALOG_NOT_FOUND",
+        message: "El equipo seleccionado ya no existe en el catalogo.",
+      };
+    }
+
+    if (item.activo !== true) {
+      return {
+        ok: false,
+        code: "EQUIPMENT_CATALOG_INACTIVE",
+        message: "El equipo seleccionado esta inactivo en el catalogo.",
+      };
+    }
+
+    if (
+      creditEquipmentIdentityKey(item.marca) !==
+        creditEquipmentIdentityKey(options.equipoMarca) ||
+      creditEquipmentIdentityKey(item.modelo) !==
+        creditEquipmentIdentityKey(options.equipoModelo)
+    ) {
+      return {
+        ok: false,
+        code: "EQUIPMENT_CATALOG_IDENTITY_MISMATCH",
+        message:
+          "La marca y el modelo enviados no coinciden con el equipo seleccionado del catalogo.",
+      };
+    }
+
+    const catalogPlatform: CreditDevicePlatform =
+      isIphoneEquipmentCatalogBrand(item.marca) ? "IPHONE" : "ANDROID";
+
+    if (requestedPlatform !== catalogPlatform) {
+      return {
+        ok: false,
+        code: "EQUIPMENT_PLATFORM_MISMATCH",
+        message: `El equipo seleccionado corresponde a ${catalogPlatform} y no puede registrarse como ${requestedPlatform}.`,
+      };
+    }
+
+    return { ok: true, platform: catalogPlatform };
+  }
+
+  const catalogMarcaKey = creditEquipmentIdentityKey(options.catalogItem?.marca);
+  const catalogModeloKey = creditEquipmentIdentityKey(options.catalogItem?.modelo);
+  const activeCatalogItemMatches =
+    options.catalogItem?.activo === true &&
+    Boolean(catalogMarcaKey) &&
+    Boolean(catalogModeloKey) &&
+    catalogMarcaKey === creditEquipmentIdentityKey(options.equipoMarca) &&
+    catalogModeloKey === creditEquipmentIdentityKey(options.equipoModelo);
+
+  if (activeCatalogItemMatches) {
+    const catalogPlatform: CreditDevicePlatform =
+      isIphoneEquipmentCatalogBrand(options.catalogItem?.marca)
+        ? "IPHONE"
+        : "ANDROID";
+
+    if (requestedPlatform !== catalogPlatform) {
+      return {
+        ok: false,
+        code: "EQUIPMENT_PLATFORM_MISMATCH",
+        message: `El equipo corresponde a ${catalogPlatform} y no puede registrarse como ${requestedPlatform}.`,
+      };
+    }
+
+    return { ok: true, platform: catalogPlatform };
+  }
+  if (
+    isIphoneEquipmentCatalogBrand(options.equipoMarca) &&
+    requestedPlatform !== "IPHONE"
+  ) {
+    return {
+      ok: false,
+      code: "EQUIPMENT_PLATFORM_MISMATCH",
+      message:
+        "Los equipos con marca IPHONE deben registrarse en la plataforma IPHONE.",
+    };
+  }
+
+  return { ok: true, platform: requestedPlatform };
+}
 export function normalizeMoneyLimit(value: unknown, fallback: number) {
   const numericValue = Number(value);
   const numericFallback = Number(fallback);

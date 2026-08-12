@@ -210,6 +210,8 @@ model Credito {
   contratoSelfieDataUrl String?
   contratoCedulaFrenteDataUrl String?
   contratoCedulaRespaldoDataUrl String?
+  fotoEntregaDataUrl  String?
+  fotoRemisionDataUrl String?
   contratoOtpCanal   String?
   contratoOtpDestino String?
   contratoOtpVerificadoAt DateTime?
