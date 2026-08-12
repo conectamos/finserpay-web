@@ -463,6 +463,12 @@ export async function POST(
       ...payloadObject(authorized.row.payload),
       firmaSeguroDraftFolio: draftFolio,
     };
+    const firmaSeguroDraftPayload: Record<string, unknown> = {
+      ...payload,
+    };
+    delete firmaSeguroDraftPayload.iphoneSelfieCedulaDataUrl;
+    delete firmaSeguroDraftPayload.iphoneSelfieCedulaCapturedAt;
+    delete firmaSeguroDraftPayload.iphoneSelfieCedulaSource;
 
     credit.folio = draftFolio;
     credit.referenciaPago = generatePaymentReference(
@@ -484,7 +490,7 @@ export async function POST(
     const process = await createFirmaSeguroProcessForDraft(credit, {
       draftId,
       draftFolio,
-      draftPayload: payload,
+      draftPayload: firmaSeguroDraftPayload,
     });
 
     return NextResponse.json({

@@ -17,6 +17,8 @@ import {
   generatePaymentReference,
   getDefaultFirstPaymentDateObject,
   getMissingIphoneDeliveryEvidence,
+  getMissingIphoneIdentityEvidence,
+  hasDuplicateEvidenceValues,
   resolveCreditEquipmentPlatform,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
@@ -218,6 +220,9 @@ type CreditCreateBody = {
   contratoSelfieCapturedAt?: string;
   contratoSelfieDataUrl?: string;
   contratoSelfieSource?: string;
+  iphoneSelfieCedulaCapturedAt?: string;
+  iphoneSelfieCedulaDataUrl?: string;
+  iphoneSelfieCedulaSource?: string;
   contratoVideoAprobacionCapturedAt?: string;
   contratoVideoAprobacionDataUrl?: string;
   contratoVideoAprobacionDurationSeconds?: number | string;
@@ -291,6 +296,7 @@ const creditListInclude = {
 } satisfies Prisma.CreditoInclude;
 
 const creditListOmit = {
+  iphoneSelfieCedulaDataUrl: true,
   fotoEntregaDataUrl: true,
   fotoRemisionDataUrl: true,
 } satisfies Prisma.CreditoOmit;
@@ -1104,22 +1110,38 @@ export async function POST(req: Request) {
     const contratoAceptado =
       Boolean(body.contratoAceptado) || firmaSeguroPasoContratos;
     const contratoFirmaDataUrl = sanitizeImageDataUrl(body.contratoFirmaDataUrl);
-    const contratoFotoDataUrl = sanitizeImageDataUrl(
-      body.contratoSelfieDataUrl || body.contratoFotoDataUrl
-    );
+    const contratoFotoDataUrl = isIphoneCredit
+      ? await sanitizeIphoneDeliveryEvidenceDataUrl(
+          body.contratoSelfieDataUrl || body.contratoFotoDataUrl
+        )
+      : sanitizeImageDataUrl(body.contratoSelfieDataUrl || body.contratoFotoDataUrl);
     const contratoSelfieDataUrl = contratoFotoDataUrl;
-    const contratoCedulaFrenteDataUrl = sanitizeImageDataUrl(
-      body.contratoCedulaFrenteDataUrl
-    );
-    const contratoCedulaRespaldoDataUrl = sanitizeImageDataUrl(
-      body.contratoCedulaRespaldoDataUrl
-    );
+    const contratoCedulaFrenteDataUrl = isIphoneCredit
+      ? await sanitizeIphoneDeliveryEvidenceDataUrl(
+          body.contratoCedulaFrenteDataUrl
+        )
+      : sanitizeImageDataUrl(body.contratoCedulaFrenteDataUrl);
+    const contratoCedulaRespaldoDataUrl = isIphoneCredit
+      ? await sanitizeIphoneDeliveryEvidenceDataUrl(
+          body.contratoCedulaRespaldoDataUrl
+        )
+      : sanitizeImageDataUrl(body.contratoCedulaRespaldoDataUrl);
     const fotoEntregaDataUrl = isIphoneCredit
       ? await sanitizeIphoneDeliveryEvidenceDataUrl(body.fotoEntregaDataUrl)
       : "";
     const fotoRemisionDataUrl = isIphoneCredit
       ? await sanitizeIphoneDeliveryEvidenceDataUrl(body.fotoRemisionDataUrl)
       : "";
+    const iphoneSelfieCedulaDataUrl = isIphoneCredit
+      ? await sanitizeIphoneDeliveryEvidenceDataUrl(
+          body.iphoneSelfieCedulaDataUrl
+        )
+      : "";
+    const iphoneIdentityHashes = [
+      hashImageDataUrl(contratoCedulaFrenteDataUrl),
+      hashImageDataUrl(contratoCedulaRespaldoDataUrl),
+      hashImageDataUrl(iphoneSelfieCedulaDataUrl),
+    ].filter((value): value is string => Boolean(value));
     const fotoEntregaSha256 = hashImageDataUrl(fotoEntregaDataUrl);
     const fotoRemisionSha256 = hashImageDataUrl(fotoRemisionDataUrl);
     const contratoOtpCanal = sanitizeText(body.contratoOtpCanal);
@@ -1188,6 +1210,15 @@ export async function POST(req: Request) {
     const referenciaPago = generatePaymentReference(folio, clienteDocumento);
     const contratoAceptadoAt = new Date();
     const contratoIp = extractRequestIp(req);
+    const iphoneSelfieCedulaCapturedAt = iphoneSelfieCedulaDataUrl
+      ? toNullableDate(body.iphoneSelfieCedulaCapturedAt)?.toISOString() ||
+        contratoAceptadoAt.toISOString()
+      : null;
+    const iphoneSelfieCedulaSource = iphoneSelfieCedulaDataUrl
+      ? sanitizeText(body.iphoneSelfieCedulaSource).toLowerCase() === "camera"
+        ? "camera"
+        : "upload"
+      : null;
     const contratoSelfieCapturedAt =
       toNullableDate(body.contratoSelfieCapturedAt)?.toISOString() ||
       contratoAceptadoAt.toISOString();
@@ -1640,6 +1671,63 @@ export async function POST(req: Request) {
       );
     }
 
+    const missingIphoneIdentityEvidence = getMissingIphoneIdentityEvidence({
+      platform: plataformaDispositivo,
+      cedulaFrenteDataUrl: contratoCedulaFrenteDataUrl,
+      cedulaRespaldoDataUrl: contratoCedulaRespaldoDataUrl,
+      selfieCedulaDataUrl: iphoneSelfieCedulaDataUrl,
+    });
+    const missingIphoneDeliveryEvidence = getMissingIphoneDeliveryEvidence({
+      platform: plataformaDispositivo,
+      fotoEntregaDataUrl,
+      fotoRemisionDataUrl,
+    });
+    const missingIphoneRequiredEvidence = [
+      ...missingIphoneIdentityEvidence,
+      ...missingIphoneDeliveryEvidence,
+    ];
+
+    if (
+      isIphoneCredit &&
+      iphoneIdentityHashes.length === 3 &&
+      hasDuplicateEvidenceValues(iphoneIdentityHashes)
+    ) {
+      return NextResponse.json(
+        {
+          code: "IPHONE_IDENTITY_EVIDENCE_DUPLICATED",
+          error: "Las fotos de la cedula y la selfie con cedula deben ser imagenes diferentes.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (missingIphoneRequiredEvidence.length) {
+      const labels = missingIphoneRequiredEvidence.map((key) =>
+        key === "cedulaFrente"
+          ? "la foto frontal de la cedula"
+          : key === "cedulaRespaldo"
+            ? "la foto posterior de la cedula"
+            : key === "selfieCedula"
+              ? "la selfie con la cedula en la mano"
+              : key === "fotoEntrega"
+                ? "la foto de entrega"
+                : "la foto de remision"
+      );
+      const missingLabel =
+        labels.length > 1
+          ? `${labels.slice(0, -1).join(", ")} y ${labels[labels.length - 1]}`
+          : labels[0];
+
+      return NextResponse.json(
+        {
+          code: "IPHONE_CLOSURE_EVIDENCE_REQUIRED",
+          error: `Debes cargar ${missingLabel} antes de finalizar el credito iPhone.`,
+          missing: missingIphoneRequiredEvidence,
+        },
+        { status: 400 }
+      );
+    }
+
     if (!contratoFotoDataUrl && !veriffApprovedForEvidence) {
       return NextResponse.json(
         { error: "Debes tomar la selfie del cliente para el contrato" },
@@ -1681,29 +1769,6 @@ export async function POST(req: Request) {
     if (!autorizacionDatosAceptada) {
       return NextResponse.json(
         { error: "Debes aceptar la autorizacion de tratamiento de datos" },
-        { status: 400 }
-      );
-    }
-
-    const missingIphoneDeliveryEvidence = getMissingIphoneDeliveryEvidence({
-      platform: plataformaDispositivo,
-      fotoEntregaDataUrl,
-      fotoRemisionDataUrl,
-    });
-
-    if (missingIphoneDeliveryEvidence.length) {
-      const missingLabel = missingIphoneDeliveryEvidence
-        .map((key) =>
-          key === "fotoEntrega" ? "foto de entrega" : "foto de remision"
-        )
-        .join(" y la ");
-
-      return NextResponse.json(
-        {
-          code: "IPHONE_DELIVERY_EVIDENCE_REQUIRED",
-          error: `Debes cargar la ${missingLabel} antes de finalizar el credito iPhone.`,
-          missing: missingIphoneDeliveryEvidence,
-        },
         { status: 400 }
       );
     }
@@ -1943,6 +2008,16 @@ export async function POST(req: Request) {
           documento: clienteDocumento,
         },
         identidad: buildVeriffSnapshot(veriffValidation),
+        selfieConCedula: iphoneSelfieCedulaDataUrl
+          ? {
+              registrada: true,
+              capturedAt: iphoneSelfieCedulaCapturedAt,
+              source: iphoneSelfieCedulaSource,
+              ip: contratoIp,
+              email: clienteCorreo,
+              sha256: hashImageDataUrl(iphoneSelfieCedulaDataUrl),
+            }
+          : null,
         selfie: {
           registrada: Boolean(contratoSelfieDataUrl || veriffApprovedForEvidence),
           capturedAt: contratoSelfieCapturedAt,
@@ -2165,6 +2240,7 @@ export async function POST(req: Request) {
         contratoSelfieDataUrl,
         contratoCedulaFrenteDataUrl,
         contratoCedulaRespaldoDataUrl,
+        iphoneSelfieCedulaDataUrl,
         fotoEntregaDataUrl,
         fotoRemisionDataUrl,
         contratoOtpCanal: contratoOtpCanal || null,

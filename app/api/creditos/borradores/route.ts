@@ -208,7 +208,16 @@ async function readDrafts(
   const limitIndex = values.length + 1;
   const payloadSelection = includeDeliveryEvidence
     ? `d."payload"`
-    : `d."payload" - 'fotoEntregaDataUrl' - 'fotoRemisionDataUrl'`;
+    : `d."payload"
+        - 'iphoneSelfieCedulaDataUrl'
+        - 'fotoEntregaDataUrl'
+        - 'fotoRemisionDataUrl'
+        - 'contratoSelfieDataUrl'
+        - 'contratoFotoDataUrl'
+        - 'contratoCedulaFrenteDataUrl'
+        - 'cedulaFrenteDataUrl'
+        - 'contratoCedulaRespaldoDataUrl'
+        - 'cedulaRespaldoDataUrl'`;
   const rows = await prisma.$queryRawUnsafe<DraftRow[]>(
     `
       SELECT

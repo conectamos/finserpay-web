@@ -76,6 +76,7 @@ import {
   DEFAULT_PAYMENT_FREQUENCY,
   generatePagareNumber,
   getMissingIphoneDeliveryEvidence,
+  getMissingIphoneIdentityEvidence,
   getDefaultFirstPaymentDate,
   getCreditInstallmentOptions,
   getPaymentFrequencyLabel,
@@ -732,6 +733,7 @@ type Notice = {
 
 type CaptureSlot =
   | "selfie"
+  | "selfie-cedula"
   | "cedula-frente"
   | "cedula-respaldo"
   | "foto-entrega"
@@ -829,6 +831,22 @@ function deliveryEvidenceDeviceIdentity(options: {
     equipmentCatalogKey(options.brand),
     equipmentCatalogKey(options.model),
     String(options.imei || "").replace(/\D/g, "").slice(0, 15),
+  ].join("|");
+}
+
+function identityEvidenceClientIdentity(options: {
+  document: unknown;
+  firstName: unknown;
+  lastName: unknown;
+  birthDate: unknown;
+  issueDate: unknown;
+}) {
+  return [
+    equipmentCatalogKey(options.document),
+    equipmentCatalogKey(options.firstName),
+    equipmentCatalogKey(options.lastName),
+    String(options.birthDate || "").trim(),
+    String(options.issueDate || "").trim(),
   ].join("|");
 }
 
@@ -1432,6 +1450,7 @@ function CameraCaptureModal({
   const [starting, setStarting] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const selfieWithDocumentSlot = slot === "selfie-cedula";
   const documentSlot =
     slot === "cedula-frente" || slot === "cedula-respaldo";
   const deliveryEvidenceSlot =
@@ -1512,7 +1531,10 @@ function CameraCaptureModal({
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: videoSlot,
           video: {
-            facingMode: slot === "selfie" || videoSlot ? "user" : "environment",
+            facingMode:
+              slot === "selfie" || selfieWithDocumentSlot || videoSlot
+                ? "user"
+                : "environment",
             width: {
               ideal:
                 documentSlot || deliveryEvidenceSlot ? 1920 : videoSlot ? 960 : 1280,
@@ -1553,14 +1575,16 @@ function CameraCaptureModal({
       stopActiveStream();
       setRecording(false);
     };
-  }, [deliveryEvidenceSlot, documentSlot, open, slot, videoSlot]);
+  }, [deliveryEvidenceSlot, documentSlot, open, selfieWithDocumentSlot, slot, videoSlot]);
 
   if (!open || !slot) {
     return null;
   }
 
   const captureLabelClean =
-    slot === "selfie"
+    slot === "selfie-cedula"
+      ? "selfie con la cedula en la mano"
+      : slot === "selfie"
       ? "selfie del cliente"
       : slot === "cedula-frente"
         ? "frente de la cedula"
@@ -1777,6 +1801,8 @@ function CameraCaptureModal({
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
               {videoSlot
                 ? "Graba el video donde el cliente diga: YO [NOMBRE] APRUEBO LA COMPRA CON FINSERPAY."
+                : selfieWithDocumentSlot
+                  ? "Usa la camara frontal. Deben verse claramente el rostro del cliente y la cedula sostenida en su mano."
                 : deliveryEvidenceSlot
                   ? "Usa la camara posterior y procura que la evidencia quede completa, enfocada y legible."
                   : "Se abre la camara del computador para capturar la evidencia y anexarla al contrato digital."}
@@ -2076,6 +2102,7 @@ function EvidenceCaptureCard({
         <button
           type="button"
           onClick={onOpenCamera}
+          aria-label={`Tomar foto para ${title.toLowerCase()}`}
           className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
         >
           Tomar foto
@@ -2084,6 +2111,7 @@ function EvidenceCaptureCard({
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
+          aria-label={`Cargar archivo para ${title.toLowerCase()}`}
           className="inline-flex items-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
         >
           Cargar archivo
@@ -2100,6 +2128,7 @@ function EvidenceCaptureCard({
         <button
           type="button"
           onClick={onRemove}
+          aria-label={`Borrar foto de ${title.toLowerCase()}`}
           disabled={!value}
           className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
         >
@@ -2311,6 +2340,9 @@ export default function CreditFactoryConsole({
   const [contratoCedulaFrenteDataUrl, setContratoCedulaFrenteDataUrl] = useState("");
   const [contratoCedulaRespaldoDataUrl, setContratoCedulaRespaldoDataUrl] =
     useState("");
+  const [iphoneSelfieCedulaDataUrl, setIphoneSelfieCedulaDataUrl] = useState("");
+  const [iphoneSelfieCedulaAudit, setIphoneSelfieCedulaAudit] =
+    useState<EvidenceAudit | null>(null);
   const [contratoFotoAudit, setContratoFotoAudit] = useState<EvidenceAudit | null>(null);
   const [contratoCedulaFrenteAudit, setContratoCedulaFrenteAudit] =
     useState<EvidenceAudit | null>(null);
@@ -2418,6 +2450,15 @@ export default function CreditFactoryConsole({
       brand: equipoMarca,
       model: equipoModelo,
       imei,
+    })
+  );
+  const identityEvidenceClientIdentityRef = useRef(
+    identityEvidenceClientIdentity({
+      document: clienteDocumento,
+      firstName: clientePrimerNombre,
+      lastName: clientePrimerApellido,
+      birthDate: clienteFechaNacimiento,
+      issueDate: clienteFechaExpedicion,
     })
   );
   const veriffExpectedDraftId = createClientMode ? draftId : undefined;
@@ -2765,6 +2806,9 @@ export default function CreditFactoryConsole({
       imei: imeiDigits,
       plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
       iphoneEnrolamientoVerificado: iphoneEnrollmentVerified,
+      iphoneSelfieCedulaDataUrl,
+      iphoneSelfieCedulaCapturedAt: iphoneSelfieCedulaAudit?.capturedAt || null,
+      iphoneSelfieCedulaSource: iphoneSelfieCedulaAudit?.source || null,
       fotoEntregaDataUrl,
       fotoEntregaCapturedAt: fotoEntregaAudit?.capturedAt || null,
       fotoEntregaSource: fotoEntregaAudit?.source || null,
@@ -2779,19 +2823,16 @@ export default function CreditFactoryConsole({
       fianzaPorcentaje: financialPlan.fianzaPorcentaje,
       fechaPrimerPago,
       contratoAceptado,
-      contratoFotoDataUrl,
       contratoSelfieDataUrl: contratoFotoDataUrl,
       contratoSelfieCapturedAt: contratoFotoAudit?.capturedAt || null,
       contratoSelfieSource: contratoFotoAudit?.source || null,
       contratoFotoCapturedAt: contratoFotoAudit?.capturedAt || null,
       contratoFotoSource: contratoFotoAudit?.source || null,
       contratoCedulaFrenteDataUrl,
-      cedulaFrenteDataUrl: contratoCedulaFrenteDataUrl,
       contratoCedulaFrenteCapturedAt:
         contratoCedulaFrenteAudit?.capturedAt || null,
       contratoCedulaFrenteSource: contratoCedulaFrenteAudit?.source || null,
       contratoCedulaRespaldoDataUrl,
-      cedulaRespaldoDataUrl: contratoCedulaRespaldoDataUrl,
       contratoCedulaRespaldoCapturedAt:
         contratoCedulaRespaldoAudit?.capturedAt || null,
       contratoCedulaRespaldoSource: contratoCedulaRespaldoAudit?.source || null,
@@ -2824,6 +2865,9 @@ export default function CreditFactoryConsole({
       contratoCedulaRespaldoAudit?.capturedAt,
       contratoCedulaRespaldoAudit?.source,
       contratoCedulaRespaldoDataUrl,
+      iphoneSelfieCedulaAudit?.capturedAt,
+      iphoneSelfieCedulaAudit?.source,
+      iphoneSelfieCedulaDataUrl,
       contratoFotoAudit?.capturedAt,
       contratoFotoAudit?.source,
       contratoFotoDataUrl,
@@ -3667,6 +3711,13 @@ export default function CreditFactoryConsole({
   const entregaSinVerificacionAutorizada = Boolean(
     creditDocumentException?.permiteEntregaSinVerificacion
   );
+  const iphoneSelfieWithDocumentReady = Boolean(iphoneSelfieCedulaDataUrl);
+  const missingIphoneIdentityEvidence = getMissingIphoneIdentityEvidence({
+    platform: currentDevicePlatform,
+    cedulaFrenteDataUrl: contratoCedulaFrenteDataUrl,
+    cedulaRespaldoDataUrl: contratoCedulaRespaldoDataUrl,
+    selfieCedulaDataUrl: iphoneSelfieCedulaDataUrl,
+  });
   const missingIphoneDeliveryEvidence = getMissingIphoneDeliveryEvidence({
     platform: currentDevicePlatform,
     fotoEntregaDataUrl,
@@ -3674,27 +3725,44 @@ export default function CreditFactoryConsole({
   });
   const iphoneDeliveryEvidenceReady =
     missingIphoneDeliveryEvidence.length === 0;
+  const iphoneIdentityEvidenceReady =
+    missingIphoneIdentityEvidence.length === 0;
+  const iphoneRequiredEvidenceReady =
+    iphoneIdentityEvidenceReady && iphoneDeliveryEvidenceReady;
   const iphoneEnrollmentReady =
     iphoneEnrollmentVerified || entregaSinVerificacionAutorizada;
   const iphoneDeliveryVerified =
-    iphoneFactory && iphoneEnrollmentReady && iphoneDeliveryEvidenceReady;
+    iphoneFactory && iphoneEnrollmentReady && iphoneRequiredEvidenceReady;
   const entregaValidada = iphoneFactory
     ? iphoneDeliveryVerified
     : Boolean(
         deliveryValidation?.status?.ready ||
           entregaSinVerificacionAutorizada
       );
-  const missingIphoneDeliveryEvidenceLabel =
-    missingIphoneDeliveryEvidence.length === 2
-      ? "la foto de entrega y la foto de remision"
-      : missingIphoneDeliveryEvidence[0] === "fotoEntrega"
-        ? "la foto de entrega"
-        : "la foto de remision";
+  const missingIphoneRequiredEvidence = [
+    ...missingIphoneIdentityEvidence,
+    ...missingIphoneDeliveryEvidence,
+  ];
+  const missingIphoneRequiredEvidenceLabels = missingIphoneRequiredEvidence.map((key) =>
+    key === "cedulaFrente"
+      ? "la foto frontal de la cedula"
+      : key === "cedulaRespaldo"
+        ? "la foto posterior de la cedula"
+        : key === "selfieCedula"
+          ? "la selfie con la cedula en la mano"
+          : key === "fotoEntrega"
+            ? "la foto de entrega"
+            : "la foto de remision"
+  );
+  const missingIphoneRequiredEvidenceLabel =
+    missingIphoneRequiredEvidenceLabels.length > 1
+      ? `${missingIphoneRequiredEvidenceLabels.slice(0, -1).join(", ")} y ${missingIphoneRequiredEvidenceLabels[missingIphoneRequiredEvidenceLabels.length - 1]}`
+      : missingIphoneRequiredEvidenceLabels[0] || "las evidencias obligatorias";
   const iphoneDeliveryPendingMessage = !iphoneEnrollmentReady
-    ? "Verifica manualmente el enrolamiento del iPhone y adjunta las fotos de entrega y remision antes de finalizar este credito."
-    : !iphoneDeliveryEvidenceReady
+    ? "Verifica manualmente el enrolamiento del iPhone y adjunta las cinco fotos obligatorias antes de finalizar este credito."
+    : !iphoneRequiredEvidenceReady
       ? "Adjunta " +
-        missingIphoneDeliveryEvidenceLabel +
+        missingIphoneRequiredEvidenceLabel +
         " antes de finalizar este credito."
       : "Completa la verificacion de entrega antes de finalizar este credito.";
   const deliveryStatusLabel = iphoneFactory
@@ -3713,12 +3781,12 @@ export default function CreditFactoryConsole({
   const deliveryStatusDetail = iphoneFactory
     ? iphoneDeliveryVerified
       ? iphoneEnrollmentVerified
-        ? "El asesor confirmo el enrolamiento y adjunto las dos evidencias de entrega."
-        : "La excepcion administrativa autoriza el control y las dos evidencias quedaron adjuntas."
+        ? "El asesor confirmo el enrolamiento y adjunto las cinco evidencias obligatorias."
+        : "La excepcion administrativa autoriza el control y las cinco evidencias quedaron adjuntas."
       : !iphoneEnrollmentReady
-        ? "Confirma el enrolamiento del iPhone o usa una excepcion autorizada. Las dos fotos siguen siendo obligatorias."
+        ? "Confirma el enrolamiento del iPhone o usa una excepcion autorizada. Las cinco fotos siguen siendo obligatorias."
         : "Adjunta " +
-          missingIphoneDeliveryEvidenceLabel +
+          missingIphoneRequiredEvidenceLabel +
           " para habilitar el cierre."
     : deliveryValidation?.status?.ready
       ? deliveryValidation.status.detail
@@ -4116,6 +4184,9 @@ export default function CreditFactoryConsole({
       ...(iphoneFactory
         ? [
             { label: "Enrolamiento", ready: iphoneEnrollmentReady },
+            { label: "CC frente", ready: Boolean(contratoCedulaFrenteDataUrl) },
+            { label: "CC posterior", ready: Boolean(contratoCedulaRespaldoDataUrl) },
+            { label: "Selfie con CC", ready: iphoneSelfieWithDocumentReady },
             { label: "Foto entrega", ready: Boolean(fotoEntregaDataUrl) },
             { label: "Foto remision", ready: Boolean(fotoRemisionDataUrl) },
           ]
@@ -4896,6 +4967,43 @@ export default function CreditFactoryConsole({
     imei,
   ]);
 
+  useEffect(() => {
+    const nextIdentity = identityEvidenceClientIdentity({
+      document: clienteDocumento,
+      firstName: clientePrimerNombre,
+      lastName: clientePrimerApellido,
+      birthDate: clienteFechaNacimiento,
+      issueDate: clienteFechaExpedicion,
+    });
+
+    if (identityEvidenceClientIdentityRef.current === nextIdentity) {
+      return;
+    }
+
+    identityEvidenceClientIdentityRef.current = nextIdentity;
+    cancelPendingDraftAutosave();
+
+    if (applyingDraftRef.current) {
+      return;
+    }
+
+    setContratoFotoDataUrl("");
+    setContratoFotoAudit(null);
+    setIphoneSelfieCedulaDataUrl("");
+    setIphoneSelfieCedulaAudit(null);
+    setContratoCedulaFrenteDataUrl("");
+    setContratoCedulaFrenteAudit(null);
+    setContratoCedulaRespaldoDataUrl("");
+    setContratoCedulaRespaldoAudit(null);
+  }, [
+    cancelPendingDraftAutosave,
+    clienteDocumento,
+    clienteFechaExpedicion,
+    clienteFechaNacimiento,
+    clientePrimerApellido,
+    clientePrimerNombre,
+  ]);
+
   const loadPayments = async (creditId: number) => {
     try {
       setLoadingPayments(true);
@@ -5121,13 +5229,16 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    if (slot === "selfie") {
+    if (slot === "selfie" || slot === "selfie-cedula") {
       await processEvidenceDataUrl(
         value,
-        setContratoFotoDataUrl,
-        "Selfie del cliente anexada al contrato.",
-        setContratoFotoAudit,
-        "camera"
+        slot === "selfie-cedula" ? setIphoneSelfieCedulaDataUrl : setContratoFotoDataUrl,
+        slot === "selfie-cedula"
+          ? "Selfie con la cedula en mano capturada correctamente."
+          : "Selfie del cliente anexada al contrato.",
+        slot === "selfie-cedula" ? setIphoneSelfieCedulaAudit : setContratoFotoAudit,
+        "camera",
+        "default"
       );
       return;
     }
@@ -6426,6 +6537,8 @@ export default function CreditFactoryConsole({
     setContratoAceptado(false);
     setContratoFotoDataUrl("");
     setContratoFotoAudit(null);
+    setIphoneSelfieCedulaDataUrl("");
+    setIphoneSelfieCedulaAudit(null);
     setContratoCedulaFrenteDataUrl("");
     setContratoCedulaFrenteAudit(null);
     setContratoCedulaRespaldoDataUrl("");
@@ -6595,7 +6708,7 @@ export default function CreditFactoryConsole({
       ? firmaSeguroProcessSigned
       : stepDocumentosReady;
     const iphoneEvidenceReadyForCreate =
-      !iphoneFactory || iphoneDeliveryEvidenceReady;
+      !iphoneFactory || iphoneRequiredEvidenceReady;
     const deliveryReadyForCreate =
       (Boolean(options.allowPendingDelivery) || deliveryRequirementReady) &&
       iphoneEvidenceReadyForCreate;
@@ -6632,7 +6745,7 @@ export default function CreditFactoryConsole({
       return null;
     }
 
-    if (iphoneFactory && !iphoneDeliveryEvidenceReady) {
+    if (iphoneFactory && !iphoneRequiredEvidenceReady) {
       setNotice({
         text: iphoneDeliveryPendingMessage,
         tone: "amber",
@@ -6698,6 +6811,9 @@ export default function CreditFactoryConsole({
           plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
           iphoneEnrolamientoVerificado:
             options.iphoneEnrolamientoVerificado ?? iphoneEnrollmentVerified,
+          iphoneSelfieCedulaDataUrl,
+          iphoneSelfieCedulaCapturedAt: iphoneSelfieCedulaAudit?.capturedAt || null,
+          iphoneSelfieCedulaSource: iphoneSelfieCedulaAudit?.source || null,
           fotoEntregaDataUrl,
           fotoEntregaCapturedAt: fotoEntregaAudit?.capturedAt || null,
           fotoEntregaSource: fotoEntregaAudit?.source || null,
@@ -7591,6 +7707,17 @@ export default function CreditFactoryConsole({
     setImei(restoredImei);
     setDraftDevicePlatform(restoredDevicePlatform);
     setIphoneEnrollmentVerified(checked("iphoneEnrolamientoVerificado"));
+    setIphoneSelfieCedulaDataUrl(value("iphoneSelfieCedulaDataUrl"));
+    setIphoneSelfieCedulaAudit(
+      value("iphoneSelfieCedulaCapturedAt") || value("iphoneSelfieCedulaSource")
+        ? {
+            capturedAt:
+              value("iphoneSelfieCedulaCapturedAt") || new Date().toISOString(),
+            source:
+              value("iphoneSelfieCedulaSource") === "upload" ? "upload" : "camera",
+          }
+        : null
+    );
     setFotoEntregaDataUrl(value("fotoEntregaDataUrl"));
     setFotoEntregaAudit(
       value("fotoEntregaCapturedAt") || value("fotoEntregaSource")
@@ -11616,31 +11743,123 @@ export default function CreditFactoryConsole({
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div>
                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                              Evidencias de entrega
+                              Evidencias de cierre
                             </p>
                             <h4 className="mt-2 text-xl font-black text-slate-950">
-                              Adjunta las dos fotos obligatorias
+                              Adjunta las cinco fotos obligatorias
                             </h4>
                             <p className="mt-2 text-sm leading-6 text-slate-600">
-                              La excepcion administrativa puede reemplazar la confirmacion
-                              manual, pero nunca estas evidencias.
+                              Incluye la identidad del cliente, el equipo entregado y la remision. Ninguna excepcion reemplaza estas evidencias.
                             </p>
                           </div>
                           <span
                             className={[
                               "inline-flex rounded-full border px-3 py-2 text-xs font-semibold",
-                              iphoneDeliveryEvidenceReady
+                              iphoneRequiredEvidenceReady
                                 ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                                 : "border-amber-200 bg-amber-50 text-amber-700",
                             ].join(" ")}
                           >
-                            {iphoneDeliveryEvidenceReady
+                            {iphoneRequiredEvidenceReady
                               ? "Evidencias listas"
                               : "Faltan evidencias"}
                           </span>
                         </div>
 
-                        <div className="mt-5 grid gap-4 md:grid-cols-2">
+                        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                          <EvidenceCaptureCard
+                            title="Cedula frente"
+                            description="La cara frontal debe quedar completa, enfocada y con los datos legibles."
+                            metaLabel={
+                              contratoCedulaFrenteAudit
+                                ? "Capturada: " +
+                                  evidenceAuditTime(contratoCedulaFrenteAudit.capturedAt) +
+                                  " | Origen: " +
+                                  (contratoCedulaFrenteAudit.source === "camera"
+                                    ? "Camara"
+                                    : "Archivo")
+                                : "Obligatoria para cerrar el credito iPhone."
+                            }
+                            value={contratoCedulaFrenteDataUrl}
+                            tone="amber"
+                            previewFit="contain"
+                            onOpenCamera={() => setCameraSlot("cedula-frente")}
+                            onRemove={() => {
+                              setContratoCedulaFrenteDataUrl("");
+                              setContratoCedulaFrenteAudit(null);
+                            }}
+                            onFileChange={(event) =>
+                              void captureContractPhoto(
+                                event,
+                                setContratoCedulaFrenteDataUrl,
+                                "Frente de la cedula cargado correctamente.",
+                                setContratoCedulaFrenteAudit,
+                                "document"
+                              )
+                            }
+                          />
+                          <EvidenceCaptureCard
+                            title="Cedula posterior"
+                            description="La cara posterior debe quedar completa, enfocada y con los datos legibles."
+                            metaLabel={
+                              contratoCedulaRespaldoAudit
+                                ? "Capturada: " +
+                                  evidenceAuditTime(contratoCedulaRespaldoAudit.capturedAt) +
+                                  " | Origen: " +
+                                  (contratoCedulaRespaldoAudit.source === "camera"
+                                    ? "Camara"
+                                    : "Archivo")
+                                : "Obligatoria para cerrar el credito iPhone."
+                            }
+                            value={contratoCedulaRespaldoDataUrl}
+                            tone="amber"
+                            previewFit="contain"
+                            onOpenCamera={() => setCameraSlot("cedula-respaldo")}
+                            onRemove={() => {
+                              setContratoCedulaRespaldoDataUrl("");
+                              setContratoCedulaRespaldoAudit(null);
+                            }}
+                            onFileChange={(event) =>
+                              void captureContractPhoto(
+                                event,
+                                setContratoCedulaRespaldoDataUrl,
+                                "Posterior de la cedula cargado correctamente.",
+                                setContratoCedulaRespaldoAudit,
+                                "document"
+                              )
+                            }
+                          />
+                          <EvidenceCaptureCard
+                            title="Selfie con cedula en mano"
+                            description="Deben verse claramente el rostro del cliente y la cedula sostenida en su mano."
+                            metaLabel={
+                              iphoneSelfieCedulaAudit
+                                ? "Capturada: " +
+                                  evidenceAuditTime(iphoneSelfieCedulaAudit.capturedAt) +
+                                  " | Origen: " +
+                                  (iphoneSelfieCedulaAudit.source === "camera"
+                                    ? "Camara"
+                                    : "Archivo")
+                                : "Obligatoria para cerrar el credito iPhone."
+                            }
+                            value={iphoneSelfieCedulaDataUrl}
+                            tone="slate"
+                            previewFit="contain"
+                            onOpenCamera={() => setCameraSlot("selfie-cedula")}
+                            onRemove={() => {
+                              setIphoneSelfieCedulaDataUrl("");
+                              setIphoneSelfieCedulaAudit(null);
+                            }}
+                            onFileChange={(event) =>
+                              void captureContractPhoto(
+                                event,
+                                setIphoneSelfieCedulaDataUrl,
+                                "Selfie con la cedula en mano cargada correctamente.",
+                                setIphoneSelfieCedulaAudit,
+                                "default"
+                              )
+                            }
+                          />
                           <EvidenceCaptureCard
                             title="Foto de entrega"
                             description="Debe mostrar el iPhone entregado al cliente y permitir identificar el equipo."
@@ -11721,6 +11940,9 @@ export default function CreditFactoryConsole({
                           ...(iphoneFactory
                             ? [
                                 { label: "Enrolamiento", ready: iphoneEnrollmentReady },
+                                { label: "CC frente", ready: Boolean(contratoCedulaFrenteDataUrl) },
+                                { label: "CC posterior", ready: Boolean(contratoCedulaRespaldoDataUrl) },
+                                { label: "Selfie con CC", ready: iphoneSelfieWithDocumentReady },
                                 { label: "Foto entrega", ready: Boolean(fotoEntregaDataUrl) },
                                 { label: "Foto remision", ready: Boolean(fotoRemisionDataUrl) },
                               ]

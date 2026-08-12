@@ -12,20 +12,26 @@ const projectRoot = path.resolve(
 const readProjectFile = (file) =>
   readFile(path.join(projectRoot, file), "utf8");
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
-const { getMissingIphoneDeliveryEvidence } = await jiti.import(
+const {
+  getMissingIphoneDeliveryEvidence,
+  getMissingIphoneIdentityEvidence,
+  hasDuplicateEvidenceValues,
+} = await jiti.import(
   "../lib/credit-factory.ts"
 );
 const { sanitizeIphoneDeliveryEvidenceDataUrl } = await jiti.import(
   "../lib/iphone-delivery-evidence.ts"
 );
 
-const [factoryConsole, creditRoute, schema, documentsRoute, prismaSource, draftsRoute] = await Promise.all([
+const [factoryConsole, creditRoute, schema, documentsRoute, prismaSource, draftsRoute, commandRoute, firmaSeguroRoute] = await Promise.all([
   readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
   readProjectFile("app/api/creditos/route.ts"),
   readProjectFile("prisma/schema.prisma"),
   readProjectFile("app/api/creditos/[id]/documentos/route.ts"),
   readProjectFile("lib/prisma.ts"),
   readProjectFile("app/api/creditos/borradores/route.ts"),
+  readProjectFile("app/api/creditos/[id]/command/route.ts"),
+  readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts"),
 ]);
 
 const jpegPayload =
@@ -72,6 +78,43 @@ test("exige entrega y remision solo para creditos iPhone", () => {
       []
     );
   }
+});
+
+test("exige cedula por ambos lados y selfie con cedula solo para iPhone", () => {
+  assert.deepEqual(
+    getMissingIphoneIdentityEvidence({ platform: "ANDROID" }),
+    []
+  );
+
+  for (const platform of ["IPHONE", "ios", "Apple"]) {
+    assert.deepEqual(
+      getMissingIphoneIdentityEvidence({ platform }),
+      ["cedulaFrente", "cedulaRespaldo", "selfieCedula"]
+    );
+    assert.deepEqual(
+      getMissingIphoneIdentityEvidence({
+        platform,
+        cedulaFrenteDataUrl: jpeg,
+        cedulaRespaldoDataUrl: png,
+      }),
+      ["selfieCedula"]
+    );
+    assert.deepEqual(
+      getMissingIphoneIdentityEvidence({
+        platform,
+        cedulaFrenteDataUrl: jpeg,
+        cedulaRespaldoDataUrl: png,
+        selfieCedulaDataUrl: jpeg,
+      }),
+      []
+    );
+  }
+});
+
+test("rechaza reutilizar una foto entre las evidencias de identidad", () => {
+  assert.equal(hasDuplicateEvidenceValues(["frente", "respaldo", "selfie"]), false);
+  assert.equal(hasDuplicateEvidenceValues(["frente", "respaldo", "frente"]), true);
+  assert.equal(hasDuplicateEvidenceValues(["", "selfie"]), false);
 });
 
 test("el sanitizador iPhone decodifica imagenes y acepta solo JPEG/PNG", async () => {
@@ -130,20 +173,39 @@ test("el formulario integra HEIC, camara, borrador, cierre y envio final", () =>
   assert.match(factoryConsole, /import\("heic2any"\)/);
   assert.match(factoryConsole, /"foto-entrega"/);
   assert.match(factoryConsole, /"foto-remision"/);
+  assert.match(factoryConsole, /"selfie-cedula"/);
+  assert.match(factoryConsole, /Cedula frente/);
+  assert.match(factoryConsole, /Cedula posterior/);
+  assert.match(factoryConsole, /Selfie con cedula en mano/);
   assert.match(factoryConsole, /Foto de entrega/);
   assert.match(factoryConsole, /Foto de remision/);
+  assert.match(factoryConsole, /iphoneSelfieCedulaDataUrl/);
+  assert.match(factoryConsole, /setIphoneSelfieCedulaDataUrl/);
+  assert.match(factoryConsole, /iphoneSelfieWithDocumentReady/);
+  assert.ok(factoryConsole.includes('aria-label={`Tomar foto para ${title.toLowerCase()}`}'));
   assert.match(factoryConsole, /fotoEntregaDataUrl/);
   assert.match(factoryConsole, /fotoRemisionDataUrl/);
   assert.match(factoryConsole, /setFotoEntregaDataUrl\(""\)/);
   assert.match(factoryConsole, /setFotoRemisionDataUrl\(""\)/);
   assert.match(factoryConsole, /getMissingIphoneDeliveryEvidence/);
+  assert.match(factoryConsole, /getMissingIphoneIdentityEvidence/);
   assert.match(factoryConsole, /iphoneDeliveryEvidenceReady/);
+  assert.match(factoryConsole, /iphoneRequiredEvidenceReady/);
 });
 
-test("la API valida, audita y persiste ambas evidencias", () => {
-  assert.match(creditRoute, /IPHONE_DELIVERY_EVIDENCE_REQUIRED/);
+test("la API exige las cinco evidencias iPhone y conserva la auditoria", () => {
+  assert.match(creditRoute, /IPHONE_CLOSURE_EVIDENCE_REQUIRED/);
   assert.match(creditRoute, /IPHONE_ENROLLMENT_REQUIRED/);
   assert.match(creditRoute, /getMissingIphoneDeliveryEvidence/);
+  assert.match(creditRoute, /getMissingIphoneIdentityEvidence/);
+  assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(\s*body\.iphoneSelfieCedulaDataUrl/);
+  assert.match(creditRoute, /selfieCedulaDataUrl: iphoneSelfieCedulaDataUrl/);
+  assert.match(creditRoute, /IPHONE_IDENTITY_EVIDENCE_DUPLICATED/);
+  assert.match(creditRoute, /hasDuplicateEvidenceValues\(iphoneIdentityHashes\)/);
+  assert.match(creditRoute, /contratoFotoDataUrl = isIphoneCredit/);
+  assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(\s*body\.contratoCedulaFrenteDataUrl/);
+  assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(\s*body\.contratoCedulaRespaldoDataUrl/);
+  assert.match(creditRoute, /\.\.\.missingIphoneIdentityEvidence/);
   assert.match(creditRoute, /fotoEntregaDataUrl = isIphoneCredit/);
   assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(body\.fotoEntregaDataUrl\)/);
   assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(body\.fotoRemisionDataUrl\)/);
@@ -154,7 +216,7 @@ test("la API valida, audita y persiste ambas evidencias", () => {
   assert.match(creditRoute, /fotoEntregaDataUrl,\s*fotoRemisionDataUrl,/);
   assert.match(
     creditRoute,
-    /const creditListOmit = \{\s*fotoEntregaDataUrl: true,\s*fotoRemisionDataUrl: true,\s*\} satisfies Prisma\.CreditoOmit;/
+    /const creditListOmit = \{[\s\S]*?iphoneSelfieCedulaDataUrl: true,[\s\S]*?fotoEntregaDataUrl: true,[\s\S]*?fotoRemisionDataUrl: true,[\s\S]*?\} satisfies Prisma\.CreditoOmit;/
   );
   assert.equal(
     (creditRoute.match(/include: creditListInclude,\s*omit: creditListOmit,/g) || [])
@@ -164,27 +226,49 @@ test("la API valida, audita y persiste ambas evidencias", () => {
   assert.doesNotMatch(creditRoute, /fotoEntregaLista|fotoRemisionLista/);
   assert.match(
     prismaSource,
-    /const GLOBAL_OMIT = \{\s*credito: \{\s*fotoEntregaDataUrl: true,\s*fotoRemisionDataUrl: true,/
+    /const GLOBAL_OMIT = \{[\s\S]*?iphoneSelfieCedulaDataUrl: true,[\s\S]*?fotoEntregaDataUrl: true,[\s\S]*?fotoRemisionDataUrl: true,/
   );
+  assert.match(commandRoute, /iphoneSelfieCedulaDataUrl: true/);
+  assert.match(firmaSeguroRoute, /delete firmaSeguroDraftPayload\.iphoneSelfieCedulaDataUrl/);
+  assert.match(firmaSeguroRoute, /delete firmaSeguroDraftPayload\.iphoneSelfieCedulaCapturedAt/);
+  assert.match(firmaSeguroRoute, /delete firmaSeguroDraftPayload\.iphoneSelfieCedulaSource/);
+  assert.match(firmaSeguroRoute, /draftPayload: firmaSeguroDraftPayload/);
+  assert.match(documentsRoute, /iphoneSelfieCedulaDataUrl: false/);
   assert.match(documentsRoute, /fotoEntregaDataUrl: false/);
   assert.match(documentsRoute, /fotoRemisionDataUrl: false/);
-  assert.match(
-    draftsRoute,
-    /d\."payload" - 'fotoEntregaDataUrl' - 'fotoRemisionDataUrl'/
-  );
+  assert.match(draftsRoute, /- 'fotoEntregaDataUrl'/);
+  assert.match(draftsRoute, /- 'iphoneSelfieCedulaDataUrl'/);
+  assert.match(draftsRoute, /- 'fotoRemisionDataUrl'/);
+  assert.match(draftsRoute, /- 'contratoSelfieDataUrl'/);
+  assert.match(draftsRoute, /- 'contratoCedulaFrenteDataUrl'/);
+  assert.match(draftsRoute, /- 'contratoCedulaRespaldoDataUrl'/);
   assert.match(draftsRoute, /readDrafts\(where\.join\(" AND "\), values, take, false\)/);
 
 
   assert.match(schema, /fotoEntregaDataUrl\s+String\?/);
   assert.match(schema, /fotoRemisionDataUrl\s+String\?/);
+  assert.match(schema, /contratoSelfieDataUrl\s+String\?/);
+  assert.match(schema, /contratoCedulaFrenteDataUrl\s+String\?/);
+  assert.match(schema, /contratoCedulaRespaldoDataUrl\s+String\?/);
+  assert.match(schema, /iphoneSelfieCedulaDataUrl\s+String\?/);
 });
 
-test("el expediente PDF anexa la foto de entrega y la remision", () => {
+test("el expediente PDF anexa las cinco evidencias requeridas", () => {
+  assert.match(documentsRoute, /Selfie del cliente/);
+  assert.match(documentsRoute, /Cedula frente/);
+  assert.match(documentsRoute, /Cedula respaldo/);
+  assert.match(documentsRoute, /Selfie con cedula en mano/);
   assert.match(documentsRoute, /Foto de entrega del iPhone/);
   assert.match(documentsRoute, /Foto de remision/);
+  assert.match(documentsRoute, /credito\.contratoSelfieDataUrl/);
+  assert.match(documentsRoute, /credito\.contratoCedulaFrenteDataUrl/);
+  assert.match(documentsRoute, /credito\.contratoCedulaRespaldoDataUrl/);
+  assert.match(documentsRoute, /credito\.iphoneSelfieCedulaDataUrl/);
   assert.match(documentsRoute, /credito\.fotoEntregaDataUrl/);
   assert.match(documentsRoute, /credito\.fotoRemisionDataUrl/);
   assert.match(documentsRoute, /deliveryEvidenceHashes/);
+  assert.match(documentsRoute, /identityEvidenceHashes/);
+  assert.match(documentsRoute, /"Cache-Control": "private, no-store"/);
   assert.match(documentsRoute, /hashEvidenceDataUrl/);
   assert.match(documentsRoute, /EVIDENCIA NO RENDERIZABLE EN EXPEDIENTE/);
 });

@@ -3,6 +3,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 
 const GLOBAL_OMIT = {
   credito: {
+    iphoneSelfieCedulaDataUrl: true,
     fotoEntregaDataUrl: true,
     fotoRemisionDataUrl: true,
   },
