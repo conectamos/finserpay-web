@@ -47,6 +47,10 @@ import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 
 type StoredFirmaSeguroCredit = Prisma.CreditoGetPayload<{
+  omit: {
+    fotoEntregaDataUrl: true;
+    fotoRemisionDataUrl: true;
+  };
   include: {
     usuario: {
       select: {

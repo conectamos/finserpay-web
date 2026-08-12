@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
@@ -15,8 +16,8 @@ import {
   generatePagareNumber,
   generatePaymentReference,
   getDefaultFirstPaymentDateObject,
-  isEquipmentCatalogItemAllowedForPlatform,
-  isIphoneCreditPlatform,
+  getMissingIphoneDeliveryEvidence,
+  resolveCreditEquipmentPlatform,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
   normalizePaymentFrequency,
@@ -47,7 +48,11 @@ import {
 } from "@/lib/equality-zero-touch";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
-import { findEquipmentCatalogItem } from "@/lib/equipment-catalog";
+import { sanitizeIphoneDeliveryEvidenceDataUrl } from "@/lib/iphone-delivery-evidence";
+import {
+  findEquipmentCatalogItem,
+  findEquipmentCatalogItemById,
+} from "@/lib/equipment-catalog";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
@@ -84,6 +89,18 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION = false;
+
+function hashImageDataUrl(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  const payload = value.slice(value.indexOf(",") + 1);
+
+  return createHash("sha256")
+    .update(Buffer.from(payload, "base64"))
+    .digest("hex");
+}
 
 const CONTRACT_TEMPLATE_TITLE =
   "CONTRATO DE FINANCIACION DE EQUIPO MOVIL, AUTORIZACION DE TRATAMIENTO DE DATOS Y USO DE HERRAMIENTAS TECNOLOGICAS";
@@ -205,6 +222,12 @@ type CreditCreateBody = {
   contratoVideoAprobacionDataUrl?: string;
   contratoVideoAprobacionDurationSeconds?: number | string;
   contratoVideoAprobacionSource?: string;
+  fotoEntregaCapturedAt?: string;
+  fotoEntregaDataUrl?: string;
+  fotoEntregaSource?: string;
+  fotoRemisionCapturedAt?: string;
+  fotoRemisionDataUrl?: string;
+  fotoRemisionSource?: string;
   cuotaInicial?: number | string;
   dataCreditoAssessmentId?: string | null;
   deviceUid?: string;
@@ -267,8 +290,14 @@ const creditListInclude = {
   },
 } satisfies Prisma.CreditoInclude;
 
+const creditListOmit = {
+  fotoEntregaDataUrl: true,
+  fotoRemisionDataUrl: true,
+} satisfies Prisma.CreditoOmit;
+
 type CreditListItem = Prisma.CreditoGetPayload<{
   include: typeof creditListInclude;
+  omit: typeof creditListOmit;
 }>;
 
 function extractFamilyReferences(snapshot: unknown) {
@@ -658,6 +687,7 @@ export async function GET(req: Request) {
     const items = await prisma.credito.findMany({
       where,
       include: creditListInclude,
+      omit: creditListOmit,
       orderBy: {
         createdAt: "desc",
       },
@@ -710,6 +740,7 @@ async function recoverDataCreditoCredit(
     const created = await prisma.credito.findUnique({
       where: { id: classification.creditId },
       include: creditListInclude,
+      omit: creditListOmit,
     });
 
     if (created) {
@@ -804,11 +835,55 @@ export async function POST(req: Request) {
     const deviceUid = sanitizeDeviceValue(body.deviceUid || body.imei)
       .replace(/\D/g, "")
       .slice(0, 15);
-    const plataformaDispositivo = String(body.plataformaDispositivo || "ANDROID")
-      .trim()
-      .toUpperCase();
-    const isIphoneCredit = isIphoneCreditPlatform(plataformaDispositivo);
-    const dataCreditoPlatform = isIphoneCredit ? "IPHONE" : "ANDROID";
+    const rawEquipmentCatalogId = body.equipoCatalogoId;
+    const hasEquipmentCatalogId =
+      rawEquipmentCatalogId !== null &&
+      rawEquipmentCatalogId !== undefined &&
+      sanitizeText(rawEquipmentCatalogId) !== "";
+    const parsedEquipmentCatalogId = Number(rawEquipmentCatalogId);
+    const equipoCatalogoId =
+      hasEquipmentCatalogId &&
+      Number.isInteger(parsedEquipmentCatalogId) &&
+      parsedEquipmentCatalogId > 0
+        ? parsedEquipmentCatalogId
+        : null;
+
+    if (hasEquipmentCatalogId && !equipoCatalogoId) {
+      return NextResponse.json(
+        {
+          code: "INVALID_EQUIPMENT_CATALOG_ID",
+          error: "El identificador del equipo de catalogo es invalido.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const catalogItem = equipoCatalogoId
+      ? await findEquipmentCatalogItemById(equipoCatalogoId)
+      : equipoMarca && equipoModelo
+        ? await findEquipmentCatalogItem({ marca: equipoMarca, modelo: equipoModelo })
+        : null;
+    const platformResolution = resolveCreditEquipmentPlatform({
+      requestedPlatform: body.plataformaDispositivo,
+      equipoMarca,
+      equipoModelo,
+      catalogItemId: equipoCatalogoId,
+      catalogItem,
+    });
+
+    if (!platformResolution.ok) {
+      return NextResponse.json(
+        {
+          code: platformResolution.code,
+          error: platformResolution.message,
+        },
+        { status: 400 }
+      );
+    }
+
+    const plataformaDispositivo = platformResolution.platform;
+    const isIphoneCredit = plataformaDispositivo === "IPHONE";
+    const dataCreditoPlatform = plataformaDispositivo;
     const dataCreditoProvider = getDataCreditoPublicConfig();
     const dataCreditoRequired = dataCreditoProvider.enabled;
     let dataCreditoAssessment: DataCreditoAssessmentRow | null = null;
@@ -897,23 +972,6 @@ export async function POST(req: Request) {
     const iphoneManualEnrollmentVerified =
       isIphoneCredit && Boolean(body.iphoneEnrolamientoVerificado);
     const valorEquipoTotalInput = toNumber(body.valorEquipoTotal);
-    const catalogItem =
-      equipoMarca && equipoModelo
-        ? await findEquipmentCatalogItem({ marca: equipoMarca, modelo: equipoModelo })
-        : null;
-    if (
-      catalogItem &&
-      !isEquipmentCatalogItemAllowedForPlatform(catalogItem, plataformaDispositivo)
-    ) {
-      return NextResponse.json(
-        {
-          error: isIphoneCredit
-            ? "En iPhone solo puedes seleccionar equipos del catalogo con marca IPHONE."
-            : "En Android no puedes seleccionar equipos del catalogo con marca IPHONE.",
-        },
-        { status: 400 }
-      );
-    }
 
     const precioBaseVentaCatalogo = catalogItem?.activo
       ? catalogItem.precioBaseVenta
@@ -1056,6 +1114,14 @@ export async function POST(req: Request) {
     const contratoCedulaRespaldoDataUrl = sanitizeImageDataUrl(
       body.contratoCedulaRespaldoDataUrl
     );
+    const fotoEntregaDataUrl = isIphoneCredit
+      ? await sanitizeIphoneDeliveryEvidenceDataUrl(body.fotoEntregaDataUrl)
+      : "";
+    const fotoRemisionDataUrl = isIphoneCredit
+      ? await sanitizeIphoneDeliveryEvidenceDataUrl(body.fotoRemisionDataUrl)
+      : "";
+    const fotoEntregaSha256 = hashImageDataUrl(fotoEntregaDataUrl);
+    const fotoRemisionSha256 = hashImageDataUrl(fotoRemisionDataUrl);
     const contratoOtpCanal = sanitizeText(body.contratoOtpCanal);
     const contratoOtpDestino = sanitizeText(body.contratoOtpDestino || clienteTelefono);
     const contratoOtpVerificadoAt = toNullableDate(body.contratoOtpVerificadoAt);
@@ -1143,6 +1209,24 @@ export async function POST(req: Request) {
       sanitizeText(body.contratoCedulaRespaldoSource).toLowerCase() === "camera"
         ? "camera"
         : "upload";
+    const fotoEntregaCapturedAt = fotoEntregaDataUrl
+      ? toNullableDate(body.fotoEntregaCapturedAt)?.toISOString() ||
+        contratoAceptadoAt.toISOString()
+      : null;
+    const fotoEntregaSource = fotoEntregaDataUrl
+      ? sanitizeText(body.fotoEntregaSource).toLowerCase() === "camera"
+        ? "camera"
+        : "upload"
+      : null;
+    const fotoRemisionCapturedAt = fotoRemisionDataUrl
+      ? toNullableDate(body.fotoRemisionCapturedAt)?.toISOString() ||
+        contratoAceptadoAt.toISOString()
+      : null;
+    const fotoRemisionSource = fotoRemisionDataUrl
+      ? sanitizeText(body.fotoRemisionSource).toLowerCase() === "camera"
+        ? "camera"
+        : "upload"
+      : null;
     const contratoVideoAprobacionCapturedAt =
       toNullableDate(body.contratoVideoAprobacionCapturedAt)?.toISOString() ||
       contratoAceptadoAt.toISOString();
@@ -1601,6 +1685,43 @@ export async function POST(req: Request) {
       );
     }
 
+    const missingIphoneDeliveryEvidence = getMissingIphoneDeliveryEvidence({
+      platform: plataformaDispositivo,
+      fotoEntregaDataUrl,
+      fotoRemisionDataUrl,
+    });
+
+    if (missingIphoneDeliveryEvidence.length) {
+      const missingLabel = missingIphoneDeliveryEvidence
+        .map((key) =>
+          key === "fotoEntrega" ? "foto de entrega" : "foto de remision"
+        )
+        .join(" y la ");
+
+      return NextResponse.json(
+        {
+          code: "IPHONE_DELIVERY_EVIDENCE_REQUIRED",
+          error: `Debes cargar la ${missingLabel} antes de finalizar el credito iPhone.`,
+          missing: missingIphoneDeliveryEvidence,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      isIphoneCredit &&
+      !iphoneManualEnrollmentVerified &&
+      !documentCanSkipDeliveryVerification
+    ) {
+      return NextResponse.json(
+        {
+          code: "IPHONE_ENROLLMENT_REQUIRED",
+          error: "Debes confirmar el enrolamiento del iPhone antes de finalizar el credito.",
+        },
+        { status: 400 }
+      );
+    }
+
     const allowPendingDeliveryClose =
       ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION ||
       documentCanSkipDeliveryVerification ||
@@ -1811,6 +1932,9 @@ export async function POST(req: Request) {
             "Cedula frente",
             "Cedula respaldo",
             "Firma digital",
+            ...(isIphoneCredit
+              ? ["Foto de entrega", "Foto de remision"]
+              : []),
             ...(veriffValidation ? ["Veriff"] : []),
           ],
           email: clienteCorreo,
@@ -1849,6 +1973,26 @@ export async function POST(req: Request) {
           ip: contratoIp,
           email: clienteCorreo,
         },
+        fotoEntrega: fotoEntregaDataUrl
+          ? {
+              registrada: true,
+              capturedAt: fotoEntregaCapturedAt,
+              source: fotoEntregaSource,
+              ip: contratoIp,
+              email: clienteCorreo,
+              sha256: fotoEntregaSha256,
+            }
+          : null,
+        fotoRemision: fotoRemisionDataUrl
+          ? {
+              registrada: true,
+              capturedAt: fotoRemisionCapturedAt,
+              source: fotoRemisionSource,
+              ip: contratoIp,
+              email: clienteCorreo,
+              sha256: fotoRemisionSha256,
+            }
+          : null,
         videoAprobacion: {
           registrado: Boolean(contratoVideoAprobacionDataUrl),
           capturedAt: contratoVideoAprobacionCapturedAt,
@@ -2021,6 +2165,8 @@ export async function POST(req: Request) {
         contratoSelfieDataUrl,
         contratoCedulaFrenteDataUrl,
         contratoCedulaRespaldoDataUrl,
+        fotoEntregaDataUrl,
+        fotoRemisionDataUrl,
         contratoOtpCanal: contratoOtpCanal || null,
         contratoOtpDestino: contratoOtpDestino || null,
         contratoOtpVerificadoAt,
@@ -2030,6 +2176,7 @@ export async function POST(req: Request) {
         sedeId: user.sedeId,
       },
       include: creditListInclude,
+      omit: creditListOmit,
     } satisfies Prisma.CreditoCreateArgs;
 
     let created;
@@ -2072,6 +2219,7 @@ export async function POST(req: Request) {
       const linkedCredit = await prisma.credito.findUnique({
         where: { id: created.id },
         include: creditListInclude,
+        omit: creditListOmit,
       });
 
       if (linkedCredit) {
@@ -2121,6 +2269,7 @@ export async function POST(req: Request) {
         .findUnique({
           where: { id: createdCreditId },
           include: creditListInclude,
+          omit: creditListOmit,
         })
         .catch(() => null);
 

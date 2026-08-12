@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@/app/generated/prisma/client";
+import type { AppPrismaClient } from "@/lib/prisma";
 
 export const ALIADO_CONECTAMOS = {
   nombre: "CONECTAMOS",
@@ -12,10 +12,10 @@ export const ALIADO_FINSER_PAY = {
 
 export const DEFAULT_REDESCUENTO_PERCENTAGE = 10;
 
-type AliadoClient = Pick<PrismaClient, "aliado">;
-type AliadoBootstrapClient = Pick<PrismaClient, "aliado" | "sede">;
-type AliadoSchemaClient = Pick<PrismaClient, "$executeRawUnsafe">;
-type CentralAdminClient = Pick<PrismaClient, "aliado" | "sede" | "usuario">;
+type AliadoClient = Pick<AppPrismaClient, "aliado">;
+type AliadoBootstrapClient = Pick<AppPrismaClient, "aliado" | "sede">;
+type AliadoSchemaClient = Pick<AppPrismaClient, "$executeRawUnsafe">;
+type CentralAdminClient = Pick<AppPrismaClient, "aliado" | "sede" | "usuario">;
 
 let aliadoSchemaPromise: Promise<void> | null = null;
 

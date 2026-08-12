@@ -81,7 +81,13 @@ type PaymentSummary = {
   ultimoAbonoAt: Date | null;
 };
 
+const CREDIT_DELIVERY_PHOTO_OMIT = {
+  fotoEntregaDataUrl: true,
+  fotoRemisionDataUrl: true,
+} as const;
+
 type SerializedCreditSource = Prisma.CreditoGetPayload<{
+  omit: typeof CREDIT_DELIVERY_PHOTO_OMIT;
   include: {
     usuario: {
       select: {
@@ -264,6 +270,7 @@ function serializeCredit(item: SerializedCreditSource, payment?: PaymentSummary)
 async function loadCredit(id: number) {
   return prisma.credito.findUnique({
     where: { id },
+    omit: CREDIT_DELIVERY_PHOTO_OMIT,
     include: {
       usuario: {
         select: {
@@ -553,6 +560,7 @@ export async function POST(
             valorCuota: financialPlan.valorCuota,
             observacionAdmin: nextObservation,
           },
+          omit: CREDIT_DELIVERY_PHOTO_OMIT,
           include: {
             usuario: {
               select: {
@@ -648,6 +656,7 @@ export async function POST(
             bloqueoRoboAt: null,
             observacionAdmin: nextObservation,
           },
+          omit: CREDIT_DELIVERY_PHOTO_OMIT,
           include: {
             usuario: {
               select: {
@@ -776,6 +785,7 @@ export async function POST(
               : reloaded.bloqueoMoraAt,
         observacionAdmin: observacionAdmin || reloaded.observacionAdmin,
       },
+      omit: CREDIT_DELIVERY_PHOTO_OMIT,
       include: {
         usuario: {
           select: {
@@ -931,6 +941,7 @@ export async function DELETE(
 
       await tx.credito.delete({
         where: { id: current.id },
+        select: { id: true },
       });
 
       return {

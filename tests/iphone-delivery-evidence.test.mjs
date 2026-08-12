@@ -1,0 +1,190 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { createJiti } from "jiti";
+
+const projectRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  ".."
+);
+const readProjectFile = (file) =>
+  readFile(path.join(projectRoot, file), "utf8");
+const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
+const { getMissingIphoneDeliveryEvidence } = await jiti.import(
+  "../lib/credit-factory.ts"
+);
+const { sanitizeIphoneDeliveryEvidenceDataUrl } = await jiti.import(
+  "../lib/iphone-delivery-evidence.ts"
+);
+
+const [factoryConsole, creditRoute, schema, documentsRoute, prismaSource, draftsRoute] = await Promise.all([
+  readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
+  readProjectFile("app/api/creditos/route.ts"),
+  readProjectFile("prisma/schema.prisma"),
+  readProjectFile("app/api/creditos/[id]/documentos/route.ts"),
+  readProjectFile("lib/prisma.ts"),
+  readProjectFile("app/api/creditos/borradores/route.ts"),
+]);
+
+const jpegPayload =
+  "/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAACAAIDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL2AD//Z";
+const pngPayload =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAMAAAAoyzS7AAAAA1BMVEX///+nxBvIAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==";
+const webpPayload =
+  "UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAUAmJaQAA3AA/vz0AAA=";
+const jpeg = `data:image/jpeg;base64,${jpegPayload}`;
+const png = `data:image/png;base64,${pngPayload}`;
+const webp = `data:image/webp;base64,${webpPayload}`;
+
+test("exige entrega y remision solo para creditos iPhone", () => {
+  assert.deepEqual(
+    getMissingIphoneDeliveryEvidence({ platform: "ANDROID" }),
+    []
+  );
+
+  for (const platform of ["IPHONE", "ios", "Apple"]) {
+    assert.deepEqual(
+      getMissingIphoneDeliveryEvidence({ platform }),
+      ["fotoEntrega", "fotoRemision"]
+    );
+    assert.deepEqual(
+      getMissingIphoneDeliveryEvidence({
+        platform,
+        fotoEntregaDataUrl: jpeg,
+      }),
+      ["fotoRemision"]
+    );
+    assert.deepEqual(
+      getMissingIphoneDeliveryEvidence({
+        platform,
+        fotoRemisionDataUrl: png,
+      }),
+      ["fotoEntrega"]
+    );
+    assert.deepEqual(
+      getMissingIphoneDeliveryEvidence({
+        platform,
+        fotoEntregaDataUrl: jpeg,
+        fotoRemisionDataUrl: png,
+      }),
+      []
+    );
+  }
+});
+
+test("el sanitizador iPhone decodifica imagenes y acepta solo JPEG/PNG", async () => {
+  for (const value of [
+    jpeg,
+    `data:image/jpg;base64,${jpegPayload}`,
+    png,
+  ]) {
+    assert.equal(await sanitizeIphoneDeliveryEvidenceDataUrl(value), value);
+  }
+
+  const truncatedJpeg = Buffer.from(jpegPayload, "base64")
+    .subarray(0, -2)
+    .toString("base64");
+  const truncatedPng = Buffer.from(pngPayload, "base64")
+    .subarray(0, -12)
+    .toString("base64");
+  const webpWithInvalidLength = Buffer.from(webpPayload, "base64");
+  webpWithInvalidLength[4] = 0;
+  const fakePng = Buffer.alloc(45);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(fakePng, 0);
+  Buffer.from("IHDR").copy(fakePng, 12);
+  Buffer.from([
+    0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+  ]).copy(fakePng, 33);
+
+
+  for (const value of [
+    "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==",
+    "data:image/svg+xml;base64,PHN2Zy8+",
+    "data:text/plain;base64,AA==",
+    "archivo-no-valido",
+    `data:image/jpeg;base64,${pngPayload}`,
+    `data:image/jpeg;base64,${truncatedJpeg}`,
+    `data:image/png;base64,${truncatedPng}`,
+    `data:image/webp;base64,${webpWithInvalidLength.toString("base64")}`,
+    "data:image/jpeg;base64,/9j/2Q==",
+    webp,
+    `data:image/png;base64,${fakePng.toString("base64")}`,
+    png.replace(/gg==$/, "gh=="),
+    png.replace(",", ",\n"),
+  ]) {
+    assert.equal(await sanitizeIphoneDeliveryEvidenceDataUrl(value), "");
+  }
+
+  assert.equal(
+    await sanitizeIphoneDeliveryEvidenceDataUrl(
+      `data:image/jpeg;base64,${"A".repeat(2_500_000)}`
+    ),
+    ""
+  );
+});
+
+test("el formulario integra HEIC, camara, borrador, cierre y envio final", () => {
+  assert.match(factoryConsole, /import\("heic2any"\)/);
+  assert.match(factoryConsole, /"foto-entrega"/);
+  assert.match(factoryConsole, /"foto-remision"/);
+  assert.match(factoryConsole, /Foto de entrega/);
+  assert.match(factoryConsole, /Foto de remision/);
+  assert.match(factoryConsole, /fotoEntregaDataUrl/);
+  assert.match(factoryConsole, /fotoRemisionDataUrl/);
+  assert.match(factoryConsole, /setFotoEntregaDataUrl\(""\)/);
+  assert.match(factoryConsole, /setFotoRemisionDataUrl\(""\)/);
+  assert.match(factoryConsole, /getMissingIphoneDeliveryEvidence/);
+  assert.match(factoryConsole, /iphoneDeliveryEvidenceReady/);
+});
+
+test("la API valida, audita y persiste ambas evidencias", () => {
+  assert.match(creditRoute, /IPHONE_DELIVERY_EVIDENCE_REQUIRED/);
+  assert.match(creditRoute, /IPHONE_ENROLLMENT_REQUIRED/);
+  assert.match(creditRoute, /getMissingIphoneDeliveryEvidence/);
+  assert.match(creditRoute, /fotoEntregaDataUrl = isIphoneCredit/);
+  assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(body\.fotoEntregaDataUrl\)/);
+  assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(body\.fotoRemisionDataUrl\)/);
+  assert.match(creditRoute, /fotoEntrega:\s*fotoEntregaDataUrl\s*\?/);
+  assert.match(creditRoute, /fotoRemision:\s*fotoRemisionDataUrl\s*\?/);
+  assert.match(creditRoute, /sha256:\s*fotoEntregaSha256/);
+  assert.match(creditRoute, /sha256:\s*fotoRemisionSha256/);
+  assert.match(creditRoute, /fotoEntregaDataUrl,\s*fotoRemisionDataUrl,/);
+  assert.match(
+    creditRoute,
+    /const creditListOmit = \{\s*fotoEntregaDataUrl: true,\s*fotoRemisionDataUrl: true,\s*\} satisfies Prisma\.CreditoOmit;/
+  );
+  assert.equal(
+    (creditRoute.match(/include: creditListInclude,\s*omit: creditListOmit,/g) || [])
+      .length,
+    5
+  );
+  assert.doesNotMatch(creditRoute, /fotoEntregaLista|fotoRemisionLista/);
+  assert.match(
+    prismaSource,
+    /const GLOBAL_OMIT = \{\s*credito: \{\s*fotoEntregaDataUrl: true,\s*fotoRemisionDataUrl: true,/
+  );
+  assert.match(documentsRoute, /fotoEntregaDataUrl: false/);
+  assert.match(documentsRoute, /fotoRemisionDataUrl: false/);
+  assert.match(
+    draftsRoute,
+    /d\."payload" - 'fotoEntregaDataUrl' - 'fotoRemisionDataUrl'/
+  );
+  assert.match(draftsRoute, /readDrafts\(where\.join\(" AND "\), values, take, false\)/);
+
+
+  assert.match(schema, /fotoEntregaDataUrl\s+String\?/);
+  assert.match(schema, /fotoRemisionDataUrl\s+String\?/);
+});
+
+test("el expediente PDF anexa la foto de entrega y la remision", () => {
+  assert.match(documentsRoute, /Foto de entrega del iPhone/);
+  assert.match(documentsRoute, /Foto de remision/);
+  assert.match(documentsRoute, /credito\.fotoEntregaDataUrl/);
+  assert.match(documentsRoute, /credito\.fotoRemisionDataUrl/);
+  assert.match(documentsRoute, /deliveryEvidenceHashes/);
+  assert.match(documentsRoute, /hashEvidenceDataUrl/);
+  assert.match(documentsRoute, /EVIDENCIA NO RENDERIZABLE EN EXPEDIENTE/);
+});

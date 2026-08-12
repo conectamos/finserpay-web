@@ -75,6 +75,7 @@ import {
   DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
   generatePagareNumber,
+  getMissingIphoneDeliveryEvidence,
   getDefaultFirstPaymentDate,
   getCreditInstallmentOptions,
   getPaymentFrequencyLabel,
@@ -733,8 +734,10 @@ type CaptureSlot =
   | "selfie"
   | "cedula-frente"
   | "cedula-respaldo"
+  | "foto-entrega"
+  | "foto-remision"
   | "video-aprobacion";
-type EvidenceProcessingMode = "default" | "document";
+type EvidenceProcessingMode = "default" | "document" | "delivery" | "remission";
 
 type CreditAdminCommand =
   | "consult-device"
@@ -813,6 +816,20 @@ function equipmentCatalogKey(value: unknown) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
+}
+
+function deliveryEvidenceDeviceIdentity(options: {
+  platform: DevicePlatform;
+  brand: unknown;
+  model: unknown;
+  imei: unknown;
+}) {
+  return [
+    options.platform,
+    equipmentCatalogKey(options.brand),
+    equipmentCatalogKey(options.model),
+    String(options.imei || "").replace(/\D/g, "").slice(0, 15),
+  ].join("|");
 }
 
 function parseDisplayDate(value: string | null | undefined) {
@@ -1053,6 +1070,35 @@ async function readFileAsDataUrl(file: File) {
     reader.onload = () => resolve(String(reader.result || ""));
     reader.onerror = () => reject(new Error("No se pudo leer la imagen"));
     reader.readAsDataURL(file);
+  });
+}
+
+const MAX_IMAGE_DATA_URL_LENGTH = 2_500_000;
+const MAX_DELIVERY_EVIDENCE_DATA_URL_LENGTH = 1_600_000;
+
+async function normalizeImageFile(file: File) {
+  const fileType = String(file.type || "").toLowerCase();
+  const fileName = String(file.name || "");
+
+  if (!/(heic|heif)/i.test(fileType) && !/\.(heic|heif)$/i.test(fileName)) {
+    return file;
+  }
+
+  const { default: heic2any } = await import("heic2any");
+  const converted = await heic2any({
+    blob: file,
+    toType: "image/jpeg",
+    quality: 0.92,
+  });
+  const blob = Array.isArray(converted) ? converted[0] : converted;
+
+  if (!(blob instanceof Blob)) {
+    throw new Error("No se pudo convertir la foto HEIC del iPhone.");
+  }
+
+  const safeName = (fileName || "captura").replace(/\.(heic|heif)$/i, "");
+  return new File([blob], safeName + ".jpg", {
+    type: "image/jpeg",
   });
 }
 
@@ -1375,6 +1421,9 @@ function CameraCaptureModal({
   ) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
@@ -1383,8 +1432,47 @@ function CameraCaptureModal({
   const [starting, setStarting] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const documentSlot = slot === "cedula-frente" || slot === "cedula-respaldo";
+  const documentSlot =
+    slot === "cedula-frente" || slot === "cedula-respaldo";
+  const deliveryEvidenceSlot =
+    slot === "foto-entrega" || slot === "foto-remision";
   const videoSlot = slot === "video-aprobacion";
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const focusFrame = window.requestAnimationFrame(() => {
+      closeButtonRef.current?.focus();
+    });
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key === "Escape" &&
+        recorderRef.current?.state !== "recording"
+      ) {
+        event.preventDefault();
+        onCloseRef.current();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", handleKeyDown);
+      previousFocusRef.current?.focus();
+      previousFocusRef.current = null;
+    };
+  }, [open]);
 
   const stopActiveStream = () => {
     if (countdownRef.current) {
@@ -1425,8 +1513,14 @@ function CameraCaptureModal({
           audio: videoSlot,
           video: {
             facingMode: slot === "selfie" || videoSlot ? "user" : "environment",
-            width: { ideal: documentSlot ? 1920 : videoSlot ? 960 : 1280 },
-            height: { ideal: documentSlot ? 1080 : videoSlot ? 540 : 720 },
+            width: {
+              ideal:
+                documentSlot || deliveryEvidenceSlot ? 1920 : videoSlot ? 960 : 1280,
+            },
+            height: {
+              ideal:
+                documentSlot || deliveryEvidenceSlot ? 1080 : videoSlot ? 540 : 720,
+            },
           },
         });
 
@@ -1459,27 +1553,24 @@ function CameraCaptureModal({
       stopActiveStream();
       setRecording(false);
     };
-  }, [documentSlot, open, slot, videoSlot]);
+  }, [deliveryEvidenceSlot, documentSlot, open, slot, videoSlot]);
 
   if (!open || !slot) {
     return null;
   }
-
-  const captureLabel =
-    slot === "selfie"
-      ? "selfie del cliente"
-      : slot === "cedula-frente"
-        ? "frente de la cédula"
-        : "respaldo de la cédula";
 
   const captureLabelClean =
     slot === "selfie"
       ? "selfie del cliente"
       : slot === "cedula-frente"
         ? "frente de la cedula"
-        : slot === "video-aprobacion"
-          ? "video de aprobacion"
-          : "respaldo de la cedula";
+        : slot === "cedula-respaldo"
+          ? "respaldo de la cedula"
+          : slot === "foto-entrega"
+            ? "foto de entrega"
+            : slot === "foto-remision"
+              ? "foto de remision"
+              : "video de aprobacion";
 
   const finishVideoCapture = (durationSeconds: number) => {
     const slotValue = slot;
@@ -1561,7 +1652,7 @@ function CameraCaptureModal({
       return;
     }
 
-    const maxSide = 1280;
+    const maxSide = slot === "foto-remision" ? 1600 : 1280;
     const scale = Math.min(1, maxSide / Math.max(width, height));
     canvas.width = Math.max(1, Math.round(width * scale));
     canvas.height = Math.max(1, Math.round(height * scale));
@@ -1575,7 +1666,13 @@ function CameraCaptureModal({
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    onCapture(canvas.toDataURL("image/jpeg", 0.82), slot);
+    onCapture(
+      canvas.toDataURL(
+        "image/jpeg",
+        slot === "foto-remision" ? 0.9 : slot === "foto-entrega" ? 0.84 : 0.82
+      ),
+      slot
+    );
     onClose();
   };
 
@@ -1659,29 +1756,35 @@ function CameraCaptureModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 px-4 py-6">
-      <div className="w-full max-w-3xl rounded-[28px] border border-white/10 bg-[#0f172a] p-5 text-white shadow-[0_25px_80px_rgba(15,23,42,0.5)]">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="camera-capture-title"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/75 px-4 py-4 sm:items-center sm:py-6"
+    >
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto overscroll-contain rounded-[28px] border border-white/10 bg-[#0f172a] p-5 text-white shadow-[0_25px_80px_rgba(15,23,42,0.5)]">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#f1d19c]">
               Captura guiada
             </p>
-            <h3 className="mt-2 text-2xl font-black tracking-tight">
-              Tomar{" "}
-              {videoSlot
-                ? "video de aprobacion"
-                : captureLabel
-                    .replace("cÃ©dula", "cedula")
-                    .replace("Ã©", "e")}
+            <h3
+              id="camera-capture-title"
+              className="mt-2 text-2xl font-black tracking-tight"
+            >
+              Tomar {captureLabelClean}
             </h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
               {videoSlot
                 ? "Graba el video donde el cliente diga: YO [NOMBRE] APRUEBO LA COMPRA CON FINSERPAY."
-                : "Se abre la camara del computador para capturar la evidencia y anexarla al contrato digital."}
+                : deliveryEvidenceSlot
+                  ? "Usa la camara posterior y procura que la evidencia quede completa, enfocada y legible."
+                  : "Se abre la camara del computador para capturar la evidencia y anexarla al contrato digital."}
             </p>
           </div>
 
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/16"
@@ -1698,7 +1801,7 @@ function CameraCaptureModal({
               muted
               playsInline
               className={[
-                "h-[420px] w-full rounded-[18px] bg-black",
+                "h-[38dvh] min-h-[160px] max-h-[420px] w-full rounded-[18px] bg-black sm:h-[52dvh]",
                 documentSlot ? "object-contain" : "object-cover",
               ].join(" ")}
             />
@@ -1939,6 +2042,7 @@ function EvidenceCaptureCard({
   metaLabel,
   value,
   tone = "teal",
+  previewFit = "cover",
   onOpenCamera,
   onRemove,
   onFileChange,
@@ -1948,10 +2052,12 @@ function EvidenceCaptureCard({
   metaLabel?: string;
   value: string;
   tone?: "teal" | "amber" | "slate";
+  previewFit?: "cover" | "contain";
   onOpenCamera: () => void;
   onRemove: () => void;
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const toneClasses =
     tone === "amber"
       ? "border-[#ead7b8] bg-[#fffaf2]"
@@ -1970,20 +2076,26 @@ function EvidenceCaptureCard({
         <button
           type="button"
           onClick={onOpenCamera}
-          className="rounded-2xl bg-[#145a5a] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a]"
+          className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
         >
           Tomar foto
         </button>
 
-        <label className="inline-flex cursor-pointer items-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="inline-flex items-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+        >
           Cargar archivo
-          <input
-            type="file"
-            accept="image/*"
-            onChange={onFileChange}
-            className="hidden"
-          />
-        </label>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
+          aria-label={`Cargar archivo para ${title.toLowerCase()}`}
+          onChange={onFileChange}
+          className="hidden"
+        />
 
         <button
           type="button"
@@ -2000,7 +2112,10 @@ function EvidenceCaptureCard({
           <img
             src={value}
             alt={title}
-            className="h-52 w-full rounded-[16px] object-cover"
+            className={[
+              "h-52 w-full rounded-[16px]",
+              previewFit === "contain" ? "object-contain" : "object-cover",
+            ].join(" ")}
           />
         ) : (
           <div className="flex h-52 items-center justify-center rounded-[16px] bg-slate-50 text-sm text-slate-500">
@@ -2110,6 +2225,7 @@ export default function CreditFactoryConsole({
     "idle" | "loading" | "saving" | "saved" | "error"
   >(initialDraftId ? "loading" : "idle");
   const [draftLastSavedAt, setDraftLastSavedAt] = useState("");
+  const [draftErrorMessage, setDraftErrorMessage] = useState("");
   const [showPaymentResults, setShowPaymentResults] = useState(false);
   const [paymentsTab, setPaymentsTab] = useState<"pay" | "history">("pay");
   const [showPaymentConfirmation, setShowPaymentConfirmation] = useState(false);
@@ -2200,6 +2316,12 @@ export default function CreditFactoryConsole({
     useState<EvidenceAudit | null>(null);
   const [contratoCedulaRespaldoAudit, setContratoCedulaRespaldoAudit] =
     useState<EvidenceAudit | null>(null);
+  const [fotoEntregaDataUrl, setFotoEntregaDataUrl] = useState("");
+  const [fotoRemisionDataUrl, setFotoRemisionDataUrl] = useState("");
+  const [fotoEntregaAudit, setFotoEntregaAudit] =
+    useState<EvidenceAudit | null>(null);
+  const [fotoRemisionAudit, setFotoRemisionAudit] =
+    useState<EvidenceAudit | null>(null);
   const [contratoVideoAprobacionDataUrl, setContratoVideoAprobacionDataUrl] =
     useState("");
   const [contratoVideoAprobacionAudit, setContratoVideoAprobacionAudit] =
@@ -2277,7 +2399,27 @@ export default function CreditFactoryConsole({
     checks: [],
   });
   const draftSaveTimerRef = useRef<number | null>(null);
+  const draftSaveGenerationRef = useRef(0);
+  const draftSaveAbortControllerRef = useRef<AbortController | null>(null);
   const applyingDraftRef = useRef(false);
+  const cancelPendingDraftAutosave = useCallback(() => {
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+
+    draftSaveGenerationRef.current += 1;
+    draftSaveAbortControllerRef.current?.abort();
+    draftSaveAbortControllerRef.current = null;
+  }, []);
+  const deliveryEvidenceDeviceIdentityRef = useRef(
+    deliveryEvidenceDeviceIdentity({
+      platform: currentDevicePlatform,
+      brand: equipoMarca,
+      model: equipoModelo,
+      imei,
+    })
+  );
   const veriffExpectedDraftId = createClientMode ? draftId : undefined;
   const dataCreditoFlowReady =
     !dataCreditoCreditCreationMode ||
@@ -2623,6 +2765,12 @@ export default function CreditFactoryConsole({
       imei: imeiDigits,
       plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
       iphoneEnrolamientoVerificado: iphoneEnrollmentVerified,
+      fotoEntregaDataUrl,
+      fotoEntregaCapturedAt: fotoEntregaAudit?.capturedAt || null,
+      fotoEntregaSource: fotoEntregaAudit?.source || null,
+      fotoRemisionDataUrl,
+      fotoRemisionCapturedAt: fotoRemisionAudit?.capturedAt || null,
+      fotoRemisionSource: fotoRemisionAudit?.source || null,
       valorEquipoTotal,
       cuotaInicial,
       plazoMeses,
@@ -2684,6 +2832,12 @@ export default function CreditFactoryConsole({
       equipoMarca,
       equipoModelo,
       fechaPrimerPago,
+      fotoEntregaAudit?.capturedAt,
+      fotoEntregaAudit?.source,
+      fotoEntregaDataUrl,
+      fotoRemisionAudit?.capturedAt,
+      fotoRemisionAudit?.source,
+      fotoRemisionDataUrl,
       frecuenciaPagoCredito,
       fianzaPorcentajeNumero,
       financialPlan.fianzaPorcentaje,
@@ -3513,35 +3667,71 @@ export default function CreditFactoryConsole({
   const entregaSinVerificacionAutorizada = Boolean(
     creditDocumentException?.permiteEntregaSinVerificacion
   );
-  const iphoneDeliveryVerified = iphoneFactory && iphoneEnrollmentVerified;
-  const entregaValidada = Boolean(
-    deliveryValidation?.status?.ready ||
-      entregaSinVerificacionAutorizada ||
-      iphoneDeliveryVerified
-  );
-  const deliveryStatusLabel = deliveryValidation?.status?.ready
-    ? deliveryValidation.status.label
-    : iphoneDeliveryVerified
-      ? "Enrolamiento iPhone verificado"
+  const missingIphoneDeliveryEvidence = getMissingIphoneDeliveryEvidence({
+    platform: currentDevicePlatform,
+    fotoEntregaDataUrl,
+    fotoRemisionDataUrl,
+  });
+  const iphoneDeliveryEvidenceReady =
+    missingIphoneDeliveryEvidence.length === 0;
+  const iphoneEnrollmentReady =
+    iphoneEnrollmentVerified || entregaSinVerificacionAutorizada;
+  const iphoneDeliveryVerified =
+    iphoneFactory && iphoneEnrollmentReady && iphoneDeliveryEvidenceReady;
+  const entregaValidada = iphoneFactory
+    ? iphoneDeliveryVerified
+    : Boolean(
+        deliveryValidation?.status?.ready ||
+          entregaSinVerificacionAutorizada
+      );
+  const missingIphoneDeliveryEvidenceLabel =
+    missingIphoneDeliveryEvidence.length === 2
+      ? "la foto de entrega y la foto de remision"
+      : missingIphoneDeliveryEvidence[0] === "fotoEntrega"
+        ? "la foto de entrega"
+        : "la foto de remision";
+  const iphoneDeliveryPendingMessage = !iphoneEnrollmentReady
+    ? "Verifica manualmente el enrolamiento del iPhone y adjunta las fotos de entrega y remision antes de finalizar este credito."
+    : !iphoneDeliveryEvidenceReady
+      ? "Adjunta " +
+        missingIphoneDeliveryEvidenceLabel +
+        " antes de finalizar este credito."
+      : "Completa la verificacion de entrega antes de finalizar este credito.";
+  const deliveryStatusLabel = iphoneFactory
+    ? iphoneDeliveryVerified
+      ? iphoneEnrollmentVerified
+        ? "Enrolamiento y evidencias verificados"
+        : "Entrega autorizada con evidencias"
+      : !iphoneEnrollmentReady
+        ? "Pendiente enrolamiento"
+        : "Pendiente evidencias"
+    : deliveryValidation?.status?.ready
+      ? deliveryValidation.status.label
       : entregaSinVerificacionAutorizada
         ? "Entrega autorizada"
-        : iphoneFactory
-          ? "Pendiente enrolamiento"
-          : deliveryValidation?.status?.label || "Pendiente por validar";
-  const deliveryStatusDetail = deliveryValidation?.status?.ready
-    ? deliveryValidation.status.detail
-    : iphoneDeliveryVerified
-      ? "El asesor confirmo manualmente que el iPhone quedo enrolado."
+        : deliveryValidation?.status?.label || "Pendiente por validar";
+  const deliveryStatusDetail = iphoneFactory
+    ? iphoneDeliveryVerified
+      ? iphoneEnrollmentVerified
+        ? "El asesor confirmo el enrolamiento y adjunto las dos evidencias de entrega."
+        : "La excepcion administrativa autoriza el control y las dos evidencias quedaron adjuntas."
+      : !iphoneEnrollmentReady
+        ? "Confirma el enrolamiento del iPhone o usa una excepcion autorizada. Las dos fotos siguen siendo obligatorias."
+        : "Adjunta " +
+          missingIphoneDeliveryEvidenceLabel +
+          " para habilitar el cierre."
+    : deliveryValidation?.status?.ready
+      ? deliveryValidation.status.detail
       : entregaSinVerificacionAutorizada
         ? "Esta cedula tiene excepcion administrativa para entregar sin verificar dispositivo."
-        : iphoneFactory
-          ? "Confirma manualmente el enrolamiento del iPhone para habilitar el cierre."
-          : deliveryValidation?.status?.detail ||
-            "Aun no se ha ejecutado la validacion final de entrega.";
+        : deliveryValidation?.status?.detail ||
+          "Aun no se ha ejecutado la validacion final de entrega.";
   const deliveryPendingMessage = iphoneFactory
-    ? "Verifica manualmente el enrolamiento del iPhone antes de finalizar este credito."
+    ? iphoneDeliveryPendingMessage
     : "Valida primero la entrega con Zero Touch antes de finalizar este credito.";
-  const deliveryRequirementReady = FLEXIBLE_WIZARD_FOR_TESTING || entregaValidada;
+  const deliveryRequirementReady = iphoneFactory
+    ? entregaValidada
+    : FLEXIBLE_WIZARD_FOR_TESTING || entregaValidada;
   const ventaLista =
     stepClienteReady &&
     stepEquipoReady &&
@@ -3861,7 +4051,7 @@ export default function CreditFactoryConsole({
       : draftStatus === "loading"
         ? "Cargando solicitud"
         : draftStatus === "error"
-          ? "No se pudo guardar"
+          ? draftErrorMessage || "No se pudo guardar"
           : draftId
             ? `Solicitud #${draftId} guardada${draftLastSavedAt ? ` - ${draftLastSavedAt}` : ""}`
             : draftHasMeaningfulData
@@ -3923,7 +4113,13 @@ export default function CreditFactoryConsole({
         ? [{ label: "Identidad", ready: stepContratoReady }]
         : []),
       { label: "Contratos", ready: stepDocumentosReady },
-      { label: iphoneFactory ? "Enrolamiento" : "Entrega", ready: entregaValidada },
+      ...(iphoneFactory
+        ? [
+            { label: "Enrolamiento", ready: iphoneEnrollmentReady },
+            { label: "Foto entrega", ready: Boolean(fotoEntregaDataUrl) },
+            { label: "Foto remision", ready: Boolean(fotoRemisionDataUrl) },
+          ]
+        : [{ label: "Entrega", ready: entregaValidada }]),
     ],
   };
   const activeRequirements = factoryStepRequirements[wizardStep] || [];
@@ -4668,16 +4864,36 @@ export default function CreditFactoryConsole({
   }, [lookupMode, selectedCredit?.id]);
 
   useEffect(() => {
+    const nextIdentity = deliveryEvidenceDeviceIdentity({
+      platform: currentDevicePlatform,
+      brand: equipoMarca,
+      model: equipoModelo,
+      imei,
+    });
+
+    if (deliveryEvidenceDeviceIdentityRef.current === nextIdentity) {
+      return;
+    }
+
+    deliveryEvidenceDeviceIdentityRef.current = nextIdentity;
+    cancelPendingDraftAutosave();
+
+    if (applyingDraftRef.current) {
+      return;
+    }
+
     setDeliveryValidation(null);
     setIphoneEnrollmentVerified(false);
+    setFotoEntregaDataUrl("");
+    setFotoEntregaAudit(null);
+    setFotoRemisionDataUrl("");
+    setFotoRemisionAudit(null);
   }, [
+    cancelPendingDraftAutosave,
     currentDevicePlatform,
     equipoMarca,
     equipoModelo,
-    fechaPrimerPago,
     imei,
-    plazoMeses,
-    valorEquipoTotal,
   ]);
 
   const loadPayments = async (creditId: number) => {
@@ -4750,10 +4966,34 @@ export default function CreditFactoryConsole({
     mode: EvidenceProcessingMode = "default"
   ) => {
     try {
-      const compressedDataUrl =
+      const deliveryEvidenceMode =
+        mode === "delivery" || mode === "remission";
+      const maxDataUrlLength = deliveryEvidenceMode
+        ? MAX_DELIVERY_EVIDENCE_DATA_URL_LENGTH
+        : MAX_IMAGE_DATA_URL_LENGTH;
+      let compressedDataUrl =
         mode === "document"
           ? await compressImageDataUrl(originalDataUrl, 2200, 0.94)
-          : await compressImageDataUrl(originalDataUrl, 960, 0.78);
+          : mode === "remission"
+            ? await compressImageDataUrl(originalDataUrl, 1600, 0.86)
+            : mode === "delivery"
+              ? await compressImageDataUrl(originalDataUrl, 1280, 0.82)
+              : await compressImageDataUrl(originalDataUrl, 960, 0.78);
+
+      if (deliveryEvidenceMode && compressedDataUrl.length > maxDataUrlLength) {
+        compressedDataUrl = await compressImageDataUrl(
+          originalDataUrl,
+          mode === "remission" ? 1400 : 1080,
+          mode === "remission" ? 0.78 : 0.72
+        );
+      }
+
+      if (compressedDataUrl.length > maxDataUrlLength) {
+        throw new Error(
+          "La imagen sigue siendo demasiado pesada. Usa una foto de menor resolucion."
+        );
+      }
+
       onSuccess(compressedDataUrl);
       onAudit?.({
         capturedAt: new Date().toISOString(),
@@ -4786,7 +5026,17 @@ export default function CreditFactoryConsole({
     }
 
     try {
-      const originalDataUrl = await readFileAsDataUrl(file);
+      const normalizedFile = await normalizeImageFile(file);
+      const normalizedType = String(normalizedFile.type || "").toLowerCase();
+
+      if (
+        normalizedType &&
+        !/^image\/(jpe?g|png|webp)$/i.test(normalizedType)
+      ) {
+        throw new Error("Selecciona una imagen JPG, PNG, WEBP, HEIC o HEIF.");
+      }
+
+      const originalDataUrl = await readFileAsDataUrl(normalizedFile);
       await processEvidenceDataUrl(
         originalDataUrl,
         onSuccess,
@@ -4842,55 +5092,6 @@ export default function CreditFactoryConsole({
     }
   };
 
-  const handleCameraCapture = async (value: string, slot: CaptureSlot) => {
-    if (slot === "video-aprobacion") {
-      try {
-        setContratoVideoAprobacionDataUrl(ensureVideoDataUrl(value));
-        setContratoVideoAprobacionAudit({
-          capturedAt: new Date().toISOString(),
-          source: "camera",
-          durationSeconds: undefined,
-        });
-        setNotice({
-          text: "Video de aprobacion capturado correctamente.",
-          tone: "emerald",
-        });
-      } catch (error) {
-        setNotice({
-          text: error instanceof Error ? error.message : "No se pudo procesar el video.",
-          tone: "red",
-        });
-      }
-      return;
-    }
-
-    if (slot === "selfie") {
-      await processEvidenceDataUrl(
-        value,
-        setContratoFotoDataUrl,
-        "Selfie del cliente anexada al contrato.",
-        setContratoFotoAudit,
-        "camera"
-      );
-      return;
-    }
-
-    if (slot === "cedula-frente") {
-      await processEvidenceDataUrl(
-        value,
-        setContratoCedulaFrenteDataUrl,
-        "Frente de la cédula capturado correctamente."
-      );
-      return;
-    }
-
-    await processEvidenceDataUrl(
-      value,
-      setContratoCedulaRespaldoDataUrl,
-      "Respaldo de la cédula capturado correctamente."
-    );
-  };
-
   const handleCameraCaptureWithAudit = async (
     value: string,
     slot: CaptureSlot,
@@ -4927,6 +5128,30 @@ export default function CreditFactoryConsole({
         "Selfie del cliente anexada al contrato.",
         setContratoFotoAudit,
         "camera"
+      );
+      return;
+    }
+
+    if (slot === "foto-entrega") {
+      await processEvidenceDataUrl(
+        value,
+        setFotoEntregaDataUrl,
+        "Foto de entrega capturada correctamente.",
+        setFotoEntregaAudit,
+        "camera",
+        "delivery"
+      );
+      return;
+    }
+
+    if (slot === "foto-remision") {
+      await processEvidenceDataUrl(
+        value,
+        setFotoRemisionDataUrl,
+        "Foto de remision capturada correctamente.",
+        setFotoRemisionAudit,
+        "camera",
+        "remission"
       );
       return;
     }
@@ -6139,15 +6364,20 @@ export default function CreditFactoryConsole({
   };
 
   const resetForm = () => {
-    if (draftSaveTimerRef.current) {
-      window.clearTimeout(draftSaveTimerRef.current);
-      draftSaveTimerRef.current = null;
-    }
+    cancelPendingDraftAutosave();
+    applyingDraftRef.current = false;
+    deliveryEvidenceDeviceIdentityRef.current = deliveryEvidenceDeviceIdentity({
+      platform: devicePlatform || "android",
+      brand: "",
+      model: "",
+      imei: "",
+    });
 
     setWizardStep(1);
     setDraftId(null);
     setDraftStatus("idle");
     setDraftLastSavedAt("");
+    setDraftErrorMessage("");
     setClienteNombre("");
     setClientePrimerNombre("");
     setClientePrimerApellido("");
@@ -6200,6 +6430,10 @@ export default function CreditFactoryConsole({
     setContratoCedulaFrenteAudit(null);
     setContratoCedulaRespaldoDataUrl("");
     setContratoCedulaRespaldoAudit(null);
+    setFotoEntregaDataUrl("");
+    setFotoEntregaAudit(null);
+    setFotoRemisionDataUrl("");
+    setFotoRemisionAudit(null);
     setContratoVideoAprobacionDataUrl("");
     setContratoVideoAprobacionAudit(null);
     setContratoFirmaDataUrl("");
@@ -6360,8 +6594,11 @@ export default function CreditFactoryConsole({
     const documentsReadyForCreate = acceptsByFirmaSeguro
       ? firmaSeguroProcessSigned
       : stepDocumentosReady;
+    const iphoneEvidenceReadyForCreate =
+      !iphoneFactory || iphoneDeliveryEvidenceReady;
     const deliveryReadyForCreate =
-      Boolean(options.allowPendingDelivery) || deliveryRequirementReady;
+      (Boolean(options.allowPendingDelivery) || deliveryRequirementReady) &&
+      iphoneEvidenceReadyForCreate;
     const readyToCreate =
       dataCreditoFlowReady &&
       stepClienteReady &&
@@ -6395,18 +6632,26 @@ export default function CreditFactoryConsole({
       return null;
     }
 
+    if (iphoneFactory && !iphoneDeliveryEvidenceReady) {
+      setNotice({
+        text: iphoneDeliveryPendingMessage,
+        tone: "amber",
+      });
+      return null;
+    }
+
     if (!readyToCreate) {
       setNotice({
         text: acceptsByFirmaSeguro
           ? veriffRequired && !veriffApproved
             ? "Veriff debe aprobar la identidad antes de finalizar el credito."
             : iphoneFactory
-              ? "FirmaSeguro debe reportar firma exitosa y debes verificar el enrolamiento iPhone antes de finalizar el credito."
+              ? "FirmaSeguro debe reportar firma exitosa y debes completar el control iPhone antes de finalizar el credito."
               : "FirmaSeguro debe reportar firma exitosa y debes validar la entrega antes de finalizar el credito."
           : veriffRequired && !veriffApproved
             ? "Veriff debe aprobar la identidad antes de finalizar la venta."
             : iphoneFactory
-              ? "Completa el flujo de cliente, equipo, identidad, contratos y verifica el enrolamiento iPhone antes de finalizar la venta."
+              ? "Completa cliente, equipo, identidad, contratos, control iPhone y evidencias antes de finalizar la venta."
               : "Completa el flujo de cliente, equipo, identidad, contratos y valida el equipo antes de finalizar la venta.",
         tone: "red",
       });
@@ -6453,6 +6698,12 @@ export default function CreditFactoryConsole({
           plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
           iphoneEnrolamientoVerificado:
             options.iphoneEnrolamientoVerificado ?? iphoneEnrollmentVerified,
+          fotoEntregaDataUrl,
+          fotoEntregaCapturedAt: fotoEntregaAudit?.capturedAt || null,
+          fotoEntregaSource: fotoEntregaAudit?.source || null,
+          fotoRemisionDataUrl,
+          fotoRemisionCapturedAt: fotoRemisionAudit?.capturedAt || null,
+          fotoRemisionSource: fotoRemisionAudit?.source || null,
           valorEquipoTotal,
           cuotaInicial,
           plazoMeses,
@@ -7279,6 +7530,7 @@ export default function CreditFactoryConsole({
   };
 
   const applyDraftPayload = (draft: CreditDraftItem) => {
+    cancelPendingDraftAutosave();
     const payload = draft.payload || {};
     const value = (key: string) => {
       const current = payload[key];
@@ -7294,6 +7546,7 @@ export default function CreditFactoryConsole({
     applyingDraftRef.current = true;
     setDraftId(draft.id);
     setDraftStatus("saved");
+    setDraftErrorMessage("");
     setDraftLastSavedAt(draft.updatedAt ? dateTime(draft.updatedAt) : "");
     setClientePrimerNombre(value("clientePrimerNombre"));
     setClientePrimerApellido(value("clientePrimerApellido"));
@@ -7317,18 +7570,49 @@ export default function CreditFactoryConsole({
     setReferenciaFamiliar2Nombre(value("referenciaFamiliar2Nombre"));
     setReferenciaFamiliar2Parentesco(value("referenciaFamiliar2Parentesco"));
     setReferenciaFamiliar2Telefono(value("referenciaFamiliar2Telefono"));
-    setEquipoMarca(value("equipoMarca"));
-    setEquipoModelo(value("equipoModelo"));
-    setImei(value("imei"));
+    const restoredEquipoMarca = value("equipoMarca");
+    const restoredEquipoModelo = value("equipoModelo");
+    const restoredImei = value("imei");
     const payloadPlatform = value("plataformaDispositivo").trim().toUpperCase();
-    setDraftDevicePlatform(
+    const restoredDevicePlatform: DevicePlatform =
       payloadPlatform === "IPHONE" || payloadPlatform === "IOS"
         ? "iphone"
         : payloadPlatform === "ANDROID"
           ? "android"
-          : devicePlatform
-    );
+          : devicePlatform || "android";
+    deliveryEvidenceDeviceIdentityRef.current = deliveryEvidenceDeviceIdentity({
+      platform: restoredDevicePlatform,
+      brand: restoredEquipoMarca,
+      model: restoredEquipoModelo,
+      imei: restoredImei,
+    });
+    setEquipoMarca(restoredEquipoMarca);
+    setEquipoModelo(restoredEquipoModelo);
+    setImei(restoredImei);
+    setDraftDevicePlatform(restoredDevicePlatform);
     setIphoneEnrollmentVerified(checked("iphoneEnrolamientoVerificado"));
+    setFotoEntregaDataUrl(value("fotoEntregaDataUrl"));
+    setFotoEntregaAudit(
+      value("fotoEntregaCapturedAt") || value("fotoEntregaSource")
+        ? {
+            capturedAt:
+              value("fotoEntregaCapturedAt") || new Date().toISOString(),
+            source:
+              value("fotoEntregaSource") === "upload" ? "upload" : "camera",
+          }
+        : null
+    );
+    setFotoRemisionDataUrl(value("fotoRemisionDataUrl"));
+    setFotoRemisionAudit(
+      value("fotoRemisionCapturedAt") || value("fotoRemisionSource")
+        ? {
+            capturedAt:
+              value("fotoRemisionCapturedAt") || new Date().toISOString(),
+            source:
+              value("fotoRemisionSource") === "upload" ? "upload" : "camera",
+          }
+        : null
+    );
     setValorEquipoTotal(value("valorEquipoTotal"));
     setCuotaInicial(value("cuotaInicial"));
     setPlazoMeses(value("plazoMeses") || plazoMeses);
@@ -7410,9 +7694,6 @@ export default function CreditFactoryConsole({
       clampWizardStep(Number(payload.wizardStep || draft.currentStep || wizardStep))
     );
 
-    window.setTimeout(() => {
-      applyingDraftRef.current = false;
-    }, 350);
   };
 
   const createNewSaleFromClient = (creditId?: number | null) => {
@@ -7550,6 +7831,7 @@ export default function CreditFactoryConsole({
 
   useEffect(() => {
     if (!createClientMode || simulatorMode || deliveryMode || !draftHasMeaningfulData) {
+      cancelPendingDraftAutosave();
       return;
     }
 
@@ -7557,14 +7839,18 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    if (draftSaveTimerRef.current) {
-      window.clearTimeout(draftSaveTimerRef.current);
-    }
+    cancelPendingDraftAutosave();
+    const saveGeneration = draftSaveGenerationRef.current;
+    let requestController: AbortController | null = null;
+    const timerId = window.setTimeout(() => {
+      draftSaveTimerRef.current = null;
+      requestController = new AbortController();
+      draftSaveAbortControllerRef.current = requestController;
 
-    draftSaveTimerRef.current = window.setTimeout(() => {
       const saveDraft = async () => {
         try {
           setDraftStatus("saving");
+          setDraftErrorMessage("");
           const result = await requestJson<CreditDraftSingleResponse>(
             "/api/creditos/borradores",
             {
@@ -7572,6 +7858,7 @@ export default function CreditFactoryConsole({
               headers: {
                 "Content-Type": "application/json",
               },
+              signal: requestController?.signal,
               body: JSON.stringify({
                 id: draftId,
                 currentStep: wizardStep,
@@ -7579,6 +7866,13 @@ export default function CreditFactoryConsole({
               }),
             }
           );
+
+          if (
+            requestController?.signal.aborted ||
+            draftSaveGenerationRef.current !== saveGeneration
+          ) {
+            return;
+          }
 
           if (!result.ok || !result.data?.item) {
             throw new Error(result.data?.error || "No se pudo guardar el borrador");
@@ -7589,20 +7883,54 @@ export default function CreditFactoryConsole({
             result.data.item.updatedAt ? dateTime(result.data.item.updatedAt) : ""
           );
           setDraftStatus("saved");
-        } catch {
+          setDraftErrorMessage("");
+        } catch (error) {
+          if (
+            requestController?.signal.aborted ||
+            draftSaveGenerationRef.current !== saveGeneration
+          ) {
+            return;
+          }
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : "No se pudo guardar el borrador";
+
           setDraftStatus("error");
+          setDraftErrorMessage(message);
+          setNotice({
+            text: message,
+            tone: "red",
+          });
+        } finally {
+          if (draftSaveAbortControllerRef.current === requestController) {
+            draftSaveAbortControllerRef.current = null;
+          }
         }
       };
 
       void saveDraft();
     }, 1200);
 
+    draftSaveTimerRef.current = timerId;
+
     return () => {
-      if (draftSaveTimerRef.current) {
-        window.clearTimeout(draftSaveTimerRef.current);
+      if (draftSaveTimerRef.current === timerId) {
+        window.clearTimeout(timerId);
+        draftSaveTimerRef.current = null;
+      }
+
+      requestController?.abort();
+      if (draftSaveAbortControllerRef.current === requestController) {
+        draftSaveAbortControllerRef.current = null;
+      }
+      if (draftSaveGenerationRef.current === saveGeneration) {
+        draftSaveGenerationRef.current += 1;
       }
     };
   }, [
+    cancelPendingDraftAutosave,
     createClientMode,
     deliveryMode,
     draftHasMeaningfulData,
@@ -7611,6 +7939,12 @@ export default function CreditFactoryConsole({
     simulatorMode,
     wizardStep,
   ]);
+
+  useEffect(() => {
+    if (applyingDraftRef.current) {
+      applyingDraftRef.current = false;
+    }
+  });
 
   const handleDataCreditoBypass = () => {
     setDataCreditoAssessmentId(null);
@@ -11241,7 +11575,7 @@ export default function CreditFactoryConsole({
                       <div className="mt-4 space-y-3 text-sm text-slate-700">
                         <p>
                           {iphoneFactory
-                            ? "Confirma en el sistema externo que el iPhone quedo enrolado correctamente. Esta verificacion manual habilita el cierre del credito."
+                            ? "Confirma el control del iPhone y adjunta la foto de entrega y la foto de remision. Las dos evidencias son obligatorias para cerrar."
                             : "Primero inscribe el equipo en Zero Touch. Luego valida la entrega para confirmar si el dispositivo ya permite cerrar el credito."}
                         </p>
                         <div
@@ -11277,11 +11611,106 @@ export default function CreditFactoryConsole({
                       </div>
                     </section>
 
+                    {iphoneFactory && (
+                      <section className="fp-delivery-closure rounded-[24px] border border-[#d7dee3] bg-white px-5 py-5 xl:col-span-2">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                              Evidencias de entrega
+                            </p>
+                            <h4 className="mt-2 text-xl font-black text-slate-950">
+                              Adjunta las dos fotos obligatorias
+                            </h4>
+                            <p className="mt-2 text-sm leading-6 text-slate-600">
+                              La excepcion administrativa puede reemplazar la confirmacion
+                              manual, pero nunca estas evidencias.
+                            </p>
+                          </div>
+                          <span
+                            className={[
+                              "inline-flex rounded-full border px-3 py-2 text-xs font-semibold",
+                              iphoneDeliveryEvidenceReady
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : "border-amber-200 bg-amber-50 text-amber-700",
+                            ].join(" ")}
+                          >
+                            {iphoneDeliveryEvidenceReady
+                              ? "Evidencias listas"
+                              : "Faltan evidencias"}
+                          </span>
+                        </div>
+
+                        <div className="mt-5 grid gap-4 md:grid-cols-2">
+                          <EvidenceCaptureCard
+                            title="Foto de entrega"
+                            description="Debe mostrar el iPhone entregado al cliente y permitir identificar el equipo."
+                            metaLabel={
+                              fotoEntregaAudit
+                                ? "Capturada: " +
+                                  evidenceAuditTime(fotoEntregaAudit.capturedAt) +
+                                  " | Origen: " +
+                                  (fotoEntregaAudit.source === "camera"
+                                    ? "Camara"
+                                    : "Archivo")
+                                : "Obligatoria para cerrar el credito iPhone."
+                            }
+                            value={fotoEntregaDataUrl}
+                            tone="slate"
+                            onOpenCamera={() => setCameraSlot("foto-entrega")}
+                            onRemove={() => {
+                              setFotoEntregaDataUrl("");
+                              setFotoEntregaAudit(null);
+                            }}
+                            onFileChange={(event) =>
+                              void captureContractPhoto(
+                                event,
+                                setFotoEntregaDataUrl,
+                                "Foto de entrega cargada correctamente.",
+                                setFotoEntregaAudit,
+                                "delivery"
+                              )
+                            }
+                          />
+                          <EvidenceCaptureCard
+                            title="Foto de remision"
+                            description="La remision debe verse completa, enfocada y con sus datos legibles."
+                            metaLabel={
+                              fotoRemisionAudit
+                                ? "Capturada: " +
+                                  evidenceAuditTime(fotoRemisionAudit.capturedAt) +
+                                  " | Origen: " +
+                                  (fotoRemisionAudit.source === "camera"
+                                    ? "Camara"
+                                    : "Archivo")
+                                : "Obligatoria para cerrar el credito iPhone."
+                            }
+                            value={fotoRemisionDataUrl}
+                            tone="amber"
+                            previewFit="contain"
+                            onOpenCamera={() => setCameraSlot("foto-remision")}
+                            onRemove={() => {
+                              setFotoRemisionDataUrl("");
+                              setFotoRemisionAudit(null);
+                            }}
+                            onFileChange={(event) =>
+                              void captureContractPhoto(
+                                event,
+                                setFotoRemisionDataUrl,
+                                "Foto de remision cargada correctamente.",
+                                setFotoRemisionAudit,
+                                "remission"
+                              )
+                            }
+                          />
+                        </div>
+                      </section>
+                    )}
+
                     <section className="fp-delivery-closure rounded-[24px] border border-[#e2d6c5] bg-white px-5 py-5 xl:col-span-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                         Flujo de cierre
                       </p>
-                      <div className="fp-delivery-checklist mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                      <div className="fp-delivery-checklist mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                         {[
                           { label: "Cliente", ready: stepClienteReady },
                           { label: "Equipo", ready: stepEquipoReady },
@@ -11289,10 +11718,13 @@ export default function CreditFactoryConsole({
                             ? [{ label: "Identidad", ready: stepContratoReady }]
                             : []),
                           { label: "Contratos", ready: stepDocumentosReady },
-                          {
-                            label: iphoneFactory ? "Enrolado" : "Entregable",
-                            ready: entregaValidada,
-                          },
+                          ...(iphoneFactory
+                            ? [
+                                { label: "Enrolamiento", ready: iphoneEnrollmentReady },
+                                { label: "Foto entrega", ready: Boolean(fotoEntregaDataUrl) },
+                                { label: "Foto remision", ready: Boolean(fotoRemisionDataUrl) },
+                              ]
+                            : [{ label: "Entregable", ready: entregaValidada }]),
                         ].map(({ label, ready }) => (
                           <div
                             key={label}
@@ -11315,7 +11747,7 @@ export default function CreditFactoryConsole({
                       {!entregaValidada && !FLEXIBLE_WIZARD_FOR_TESTING && (
                         <div className="mt-5 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
                           {iphoneFactory
-                            ? "El credito solo se puede finalizar cuando confirmes manualmente el enrolamiento del iPhone."
+                            ? deliveryPendingMessage
                             : "El credito solo se puede finalizar cuando Zero Touch confirme que el equipo esta entregable."}
                         </div>
                       )}
@@ -11928,7 +12360,7 @@ export default function CreditFactoryConsole({
                       : draftStatus === "loading"
                         ? "Cargando borrador..."
                         : draftStatus === "error"
-                          ? "Borrador no guardado"
+                          ? draftErrorMessage || "Borrador no guardado"
                           : draftId
                             ? `Borrador #${draftId} guardado${draftLastSavedAt ? ` - ${draftLastSavedAt}` : ""}`
                             : "Borrador listo para guardar"}
@@ -11944,7 +12376,7 @@ export default function CreditFactoryConsole({
                 {wizardStep === 5 && !ventaLista && !FLEXIBLE_WIZARD_FOR_TESTING && (
                   <span className="text-sm font-medium text-amber-700">
                     {iphoneFactory
-                      ? "Primero verifica el enrolamiento del iPhone para habilitar el cierre."
+                      ? deliveryPendingMessage
                       : "Primero valida la entregabilidad del dispositivo para habilitar el cierre."}
                   </span>
                 )}
