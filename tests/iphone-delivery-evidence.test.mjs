@@ -272,3 +272,26 @@ test("el expediente PDF anexa las cinco evidencias requeridas", () => {
   assert.match(documentsRoute, /hashEvidenceDataUrl/);
   assert.match(documentsRoute, /EVIDENCIA NO RENDERIZABLE EN EXPEDIENTE/);
 });
+
+test("Railway prepara la columna iPhone antes de publicar la aplicacion", async () => {
+  const [schemaGuard, dockerfile, railwayConfig] = await Promise.all([
+    readProjectFile("scripts/ensure-iphone-identity-evidence-column.mjs"),
+    readProjectFile("Dockerfile"),
+    readProjectFile("railway.toml"),
+  ]);
+
+  assert.match(schemaGuard, /ADD COLUMN IF NOT EXISTS "iphoneSelfieCedulaDataUrl" TEXT/);
+  assert.match(schemaGuard, /SET LOCAL lock_timeout = '5s'/);
+  assert.match(schemaGuard, /SET LOCAL statement_timeout = '30s'/);
+  assert.match(schemaGuard, /data_type !== "text"/);
+  assert.match(schemaGuard, /is_nullable !== "YES"/);
+  assert.doesNotMatch(schemaGuard, /DROP\s+(COLUMN|TABLE)|DELETE\s+FROM|TRUNCATE/i);
+  assert.match(
+    dockerfile,
+    /COPY --from=builder \/app\/scripts\/ensure-iphone-identity-evidence-column\.mjs/
+  );
+  assert.match(
+    railwayConfig,
+    /preDeployCommand = \["node scripts\/ensure-iphone-identity-evidence-column\.mjs"\]/
+  );
+});
