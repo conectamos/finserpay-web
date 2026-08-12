@@ -48,6 +48,7 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 
 type StoredFirmaSeguroCredit = Prisma.CreditoGetPayload<{
   omit: {
+    iphoneSelfieCedulaDataUrl: true;
     fotoEntregaDataUrl: true;
     fotoRemisionDataUrl: true;
   };

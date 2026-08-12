@@ -362,6 +362,48 @@ export function isIphoneCreditPlatform(value: unknown) {
 
 export type IphoneDeliveryEvidenceKey = "fotoEntrega" | "fotoRemision";
 
+export type IphoneIdentityEvidenceKey =
+  | "cedulaFrente"
+  | "cedulaRespaldo"
+  | "selfieCedula";
+
+export function getMissingIphoneIdentityEvidence(options: {
+  platform?: unknown;
+  cedulaFrenteDataUrl?: unknown;
+  cedulaRespaldoDataUrl?: unknown;
+  selfieCedulaDataUrl?: unknown;
+}): IphoneIdentityEvidenceKey[] {
+  if (!isIphoneCreditPlatform(options.platform)) {
+    return [];
+  }
+
+  const missing: IphoneIdentityEvidenceKey[] = [];
+
+  if (!String(options.cedulaFrenteDataUrl ?? "").trim()) {
+    missing.push("cedulaFrente");
+  }
+
+  if (!String(options.cedulaRespaldoDataUrl ?? "").trim()) {
+    missing.push("cedulaRespaldo");
+  }
+
+  if (!String(options.selfieCedulaDataUrl ?? "").trim()) {
+    missing.push("selfieCedula");
+  }
+
+  return missing;
+}
+
+export function hasDuplicateEvidenceValues(values: unknown[]) {
+  const normalized = values
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+
+  return (
+    normalized.length > 1 && new Set(normalized).size !== normalized.length
+  );
+}
+
 export function getMissingIphoneDeliveryEvidence(options: {
   platform?: unknown;
   fotoEntregaDataUrl?: unknown;

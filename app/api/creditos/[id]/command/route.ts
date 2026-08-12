@@ -82,6 +82,7 @@ type PaymentSummary = {
 };
 
 const CREDIT_DELIVERY_PHOTO_OMIT = {
+  iphoneSelfieCedulaDataUrl: true,
   fotoEntregaDataUrl: true,
   fotoRemisionDataUrl: true,
 } as const;

@@ -423,6 +423,7 @@ export async function GET(
         AND: [lookupWhere, accessWhere],
       },
       omit: {
+        iphoneSelfieCedulaDataUrl: false,
         fotoEntregaDataUrl: false,
         fotoRemisionDataUrl: false,
       },
@@ -486,6 +487,10 @@ export async function GET(
       credito.contratoSnapshot,
       "cedulaRespaldo"
     );
+    const selfieConCedulaAudit = getSnapshotEvidenceAudit(
+      credito.contratoSnapshot,
+      "selfieConCedula"
+    );
     const fotoEntregaAudit = getSnapshotEvidenceAudit(
       credito.contratoSnapshot,
       "fotoEntrega"
@@ -498,10 +503,17 @@ export async function GET(
       fotoEntrega: hashEvidenceDataUrl(credito.fotoEntregaDataUrl),
       fotoRemision: hashEvidenceDataUrl(credito.fotoRemisionDataUrl),
     };
+    const identityEvidenceHashes = {
+      selfie: hashEvidenceDataUrl(credito.contratoSelfieDataUrl),
+      cedulaFrente: hashEvidenceDataUrl(credito.contratoCedulaFrenteDataUrl),
+      cedulaRespaldo: hashEvidenceDataUrl(credito.contratoCedulaRespaldoDataUrl),
+      selfieConCedula: hashEvidenceDataUrl(credito.iphoneSelfieCedulaDataUrl),
+    };
     const documentHash = createHash("sha256")
       .update(
         JSON.stringify({
           contratoSnapshot: credito.contratoSnapshot || {},
+          identityEvidenceHashes,
           deliveryEvidenceHashes,
         })
       )
@@ -943,6 +955,15 @@ export async function GET(
       cedulaRespaldoAudit,
       fonts
     );
+    if (credito.iphoneSelfieCedulaDataUrl) {
+      addEvidenceImage(
+        doc,
+        "Selfie con cedula en mano",
+        credito.iphoneSelfieCedulaDataUrl,
+        selfieConCedulaAudit,
+        fonts
+      );
+    }
     if (credito.fotoEntregaDataUrl || credito.fotoRemisionDataUrl) {
       addEvidenceImage(
         doc,
@@ -980,6 +1001,7 @@ export async function GET(
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="expediente-${credito.folio}.pdf"`,
+        "Cache-Control": "private, no-store",
       },
     });
   } catch (error) {

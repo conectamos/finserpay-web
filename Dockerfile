@@ -35,6 +35,7 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/app/generated/prisma ./app/generated/prisma
 COPY --from=builder /app/scripts/railway-cron.mjs ./scripts/railway-cron.mjs
 COPY --from=builder /app/scripts/setup-datacredito.sql ./scripts/setup-datacredito.sql
+COPY --from=builder /app/scripts/ensure-iphone-identity-evidence-column.mjs ./scripts/ensure-iphone-identity-evidence-column.mjs
  
 EXPOSE 3000
 
