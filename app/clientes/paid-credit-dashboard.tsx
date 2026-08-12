@@ -16,6 +16,7 @@ import {
   CreditCard,
   Download,
   ExternalLink,
+  FileSignature,
   FileText,
   Gem,
   Headphones,
@@ -66,6 +67,9 @@ type PaidCreditDashboardProps = {
   credits: PaidCreditDashboardCredit[];
   firstName: string;
   newCreditSupportMessage: string;
+  folioFirmadoDisponible?: boolean;
+  folioDownloading?: boolean;
+  onDownloadFolio?: () => void;
   notice?: { text: string; tone: "emerald" | "red" } | null;
   onForgetDocument: () => void;
   onHome: () => void;
@@ -166,6 +170,9 @@ export default function PaidCreditDashboard({
   firstName,
   newCreditSupportMessage,
   notice,
+  folioFirmadoDisponible = false,
+  folioDownloading = false,
+  onDownloadFolio,
   onForgetDocument,
   onHome,
   onOpenPanel,
@@ -440,6 +447,35 @@ export default function PaidCreditDashboard({
             </p>
           ) : null}
 
+          {folioFirmadoDisponible && onDownloadFolio ? (
+            <button
+              type="button"
+              onClick={onDownloadFolio}
+              disabled={folioDownloading}
+              aria-busy={folioDownloading}
+              className="mt-3 flex min-h-[64px] w-full items-center gap-3 rounded-[20px] border border-[#cdd2d7] bg-white px-4 py-3 text-left text-[#15181b] transition hover:border-[#94af70] hover:bg-[#fbfdf8] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4b8b14] focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-65"
+            >
+              <span
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--fp-lime-soft)] text-[#477f13]"
+                aria-hidden="true"
+              >
+                <FileSignature className="h-5 w-5" strokeWidth={2} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <strong className="block text-[14px] font-black leading-5">
+                  Folio firmado
+                </strong>
+                <small className="block text-[11px] font-semibold leading-4 text-[#606870]">
+                  Contrato, pagare y autorizaciones
+                </small>
+              </span>
+              <Download
+                className={folioDownloading ? "h-5 w-5 animate-bounce" : "h-5 w-5"}
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+            </button>
+          ) : null}
           {credits.length > 1 ? (
             <section className="mt-5" aria-label="Seleccionar crédito">
               <p className="mb-2 text-[11px] font-black uppercase tracking-[0.12em] text-[#53606c]">

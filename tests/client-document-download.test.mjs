@@ -96,8 +96,24 @@ test("la app Android expone la descarga nativa en una version nueva", async () =
 
   assert.match(activity, /@JavascriptInterface\s+public void downloadDocument\(/);
   assert.match(activity, /runOnUiThread\(\(\) -> requestDownload\(/);
-  assert.match(activity, /isAllowedPazYSalvoDownload\(url\)/);
-  assert.match(activity, /paz-y-salvo\$"\)/);
-  assert.match(buildConfig, /versionCode\s*=\s*6/);
-  assert.match(buildConfig, /versionName\s*=\s*"1\.0\.5"/);
+  assert.match(activity, /isAllowedClientDocumentDownload\(url\)/);
+  assert.match(activity, /\(\?:paz-y-salvo\|folio-firmado\)/);
+  assert.match(buildConfig, /versionCode\s*=\s*7/);
+  assert.match(buildConfig, /versionName\s*=\s*"1\.0\.6"/);
+});
+
+test("el folio firmado valida propietario y entrega solo un PDF privado", async () => {
+  const route = await readFile(
+    path.join(
+      projectRoot,
+      "app/api/clientes/creditos/[id]/folio-firmado/route.ts"
+    ),
+    "utf8"
+  );
+
+  assert.match(route, /clienteDocumento:\s*documento/);
+  assert.match(route, /estado:\s*\{\s*not:\s*"ANULADO"\s*\}/);
+  assert.match(route, /toString\("ascii"\)\s*!==\s*"%PDF-"/);
+  assert.match(route, /"Cache-Control":\s*"private, no-store, max-age=0"/);
+  assert.match(route, /"X-Content-Type-Options":\s*"nosniff"/);
 });

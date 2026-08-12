@@ -8,6 +8,8 @@ import {
   ChevronRight,
   CircleCheck,
   CreditCard,
+  Download,
+  FileSignature,
 } from "lucide-react";
 import {
   COLOMBIA_TIME_ZONE,
@@ -48,9 +50,12 @@ export type ClientActiveCreditDashboardProps = {
   clientFirstName: string;
   creditOptions?: ActiveCreditDashboardCreditOption[];
   device: ActiveCreditDashboardDevice;
+  folioAvailable?: boolean;
+  folioDownloading?: boolean;
   lastPayment?: ActiveCreditDashboardPayment | null;
   nextInstallment: ActiveCreditDashboardInstallment | null;
   notice?: { text: string; tone: "red" | "emerald" } | null;
+  onDownloadFolio?: () => void;
   onOpenDevice?: () => void;
   onOpenHistory: () => void;
   onOpenNotifications: () => void;
@@ -127,9 +132,12 @@ export default function ClientActiveCreditDashboard({
   clientFirstName,
   creditOptions = [],
   device,
+  folioAvailable = false,
+  folioDownloading = false,
   lastPayment,
   nextInstallment,
   notice,
+  onDownloadFolio,
   onOpenDevice,
   onOpenHistory,
   onOpenNotifications,
@@ -364,6 +372,27 @@ export default function ClientActiveCreditDashboard({
                 <Check aria-hidden="true" /> Aún no registras pagos en este crédito.
               </p>
             )}
+            {folioAvailable && onDownloadFolio ? (
+              <button
+                type="button"
+                className={styles.movement}
+                onClick={onDownloadFolio}
+                disabled={folioDownloading}
+              >
+                <span className={styles.movementIcon} aria-hidden="true">
+                  <FileSignature />
+                </span>
+                <span className={styles.movementCopy}>
+                  <strong>Folio firmado</strong>
+                  <small>Contrato, pagare y autorizaciones</small>
+                </span>
+                <Download
+                  className={styles.movementDownload}
+                  aria-hidden="true"
+                />
+              </button>
+            ) : null}
+
           </div>
         </section>
       </main>

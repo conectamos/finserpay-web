@@ -86,7 +86,7 @@ export async function fetchClientPdf(
   const blob = await response.blob();
 
   if (!blob.size) {
-    throw new Error("El paz y salvo se genero vacio. Intenta de nuevo.");
+    throw new Error("El documento se genero vacio. Intenta de nuevo.");
   }
 
   const signature = new Uint8Array(await blob.slice(0, 5).arrayBuffer());

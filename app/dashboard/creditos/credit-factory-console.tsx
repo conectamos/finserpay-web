@@ -95,6 +95,10 @@ import {
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import {
+  findCreditCreatedAfterConnectionLoss,
+  isCreditCreationNetworkError,
+} from "@/lib/credit-create-recovery";
+import {
   runCedulaValidation,
   type CedulaValidationCheck,
   type CedulaValidationResult,
@@ -1080,6 +1084,47 @@ async function requestJson<T>(url: string, init?: RequestInit) {
     status: response.status,
     data,
   };
+}
+
+const CREDIT_CREATE_RECOVERY_DELAYS_MS = [600, 1_200, 2_400, 4_000];
+
+async function waitForCreditRecovery(delayMs: number) {
+  await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+}
+
+async function recoverCreatedCreditAfterConnectionLoss(input: {
+  documentNumber: string;
+  imei: string;
+  requestedAt: number;
+}) {
+  const lookup = input.imei || input.documentNumber;
+  if (!lookup) return null;
+
+  for (const delayMs of CREDIT_CREATE_RECOVERY_DELAYS_MS) {
+    await waitForCreditRecovery(delayMs);
+
+    try {
+      const params = new URLSearchParams({
+        search: lookup,
+        take: "10",
+      });
+      const result = await requestJson<CreditListResponse>(
+        "/api/creditos?" + params.toString()
+      );
+
+      if (!result.ok || !Array.isArray(result.data?.items)) continue;
+
+      const recovered = findCreditCreatedAfterConnectionLoss(
+        result.data.items,
+        input
+      );
+      if (recovered) return recovered;
+    } catch {
+      // The connection may still be recovering. Continue with the next check.
+    }
+  }
+
+  return null;
 }
 
 async function readFileAsDataUrl(file: File) {
@@ -6771,6 +6816,8 @@ export default function CreditFactoryConsole({
       return null;
     }
 
+    const creditCreateStartedAt = Date.now();
+
     try {
       setCreating(true);
       setNotice(null);
@@ -6918,6 +6965,51 @@ export default function CreditFactoryConsole({
       window.location.assign("/app");
       return createdCredit;
     } catch (error) {
+      if (isCreditCreationNetworkError(error)) {
+        setNotice({
+          text: "La conexion se interrumpio. Estamos confirmando si el credito ya quedo creado.",
+          tone: "amber",
+        });
+
+        const recoveredCredit = await recoverCreatedCreditAfterConnectionLoss({
+          documentNumber: clienteDocumento,
+          imei: imeiDigits,
+          requestedAt: creditCreateStartedAt,
+        });
+
+        if (recoveredCredit) {
+          upsertCredit(recoveredCredit);
+          const closedDraftId = draftId;
+
+          if (closedDraftId) {
+            await requestJson<CreditDraftSingleResponse>(
+              "/api/creditos/borradores",
+              {
+                method: "PATCH",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ id: closedDraftId, estado: "CERRADO" }),
+              }
+            ).catch(() => null);
+          }
+
+          resetForm();
+          setNotice({
+            text: recoveredCredit.folio + " quedo creado correctamente.",
+            tone: "emerald",
+          });
+          window.location.assign("/app");
+          return recoveredCredit;
+        }
+
+        setNotice({
+          text: "No pudimos confirmar el cierre por la conexion. Consulta el IMEI en Creditos antes de volver a finalizar.",
+          tone: "red",
+        });
+        return null;
+      }
+
       setNotice({
         text: error instanceof Error ? error.message : "No se pudo crear el credito",
         tone: "red",
