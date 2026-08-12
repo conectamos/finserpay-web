@@ -132,7 +132,7 @@ public class MainActivity extends Activity {
         } else {
             Toast.makeText(
                     this,
-                    "Permite guardar archivos para descargar el paz y salvo.",
+                    "Permite guardar archivos para descargar el documento.",
                     Toast.LENGTH_LONG
             ).show();
         }
@@ -368,7 +368,7 @@ public class MainActivity extends Activity {
             manager.enqueue(request);
             Toast.makeText(
                     this,
-                    "El paz y salvo se esta guardando en Descargas.",
+                    "El documento se esta guardando en Descargas.",
                     Toast.LENGTH_LONG
             ).show();
         } catch (Exception error) {
@@ -400,7 +400,7 @@ public class MainActivity extends Activity {
                 + fileName.substring(extensionIndex);
     }
 
-    private boolean isAllowedPazYSalvoDownload(String url) {
+    private boolean isAllowedClientDocumentDownload(String url) {
         if (url == null || url.trim().isEmpty()) {
             return false;
         }
@@ -419,7 +419,7 @@ public class MainActivity extends Activity {
                     && host != null
                     && (host.equals("finserpay.com") || host.endsWith(".finserpay.com"))
                     && path != null
-                    && path.matches("^/api/clientes/creditos/\\d+/paz-y-salvo$")
+                    && path.matches("^/api/clientes/creditos/\\d+/(?:paz-y-salvo|folio-firmado)$")
                     && documento != null
                     && documento.matches("^\\d{5,20}$");
         } catch (RuntimeException ignored) {
@@ -430,7 +430,7 @@ public class MainActivity extends Activity {
     private class FinserAndroidBridge {
         @JavascriptInterface
         public void downloadDocument(String url, String suggestedFileName) {
-            if (!isAllowedPazYSalvoDownload(url)) {
+            if (!isAllowedClientDocumentDownload(url)) {
                 runOnUiThread(() -> Toast.makeText(
                         MainActivity.this,
                         "No se pudo validar la descarga.",
@@ -440,10 +440,10 @@ public class MainActivity extends Activity {
             }
 
             String safeFileName = suggestedFileName == null
-                    ? "paz-y-salvo.pdf"
+                    ? "documento-finser-pay.pdf"
                     : suggestedFileName.replaceAll("[^A-Za-z0-9._-]", "-");
             if (safeFileName.isEmpty()) {
-                safeFileName = "paz-y-salvo.pdf";
+                safeFileName = "documento-finser-pay.pdf";
             }
             if (!safeFileName.toLowerCase().endsWith(".pdf")) {
                 safeFileName += ".pdf";

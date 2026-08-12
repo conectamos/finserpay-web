@@ -774,7 +774,6 @@ export async function POST(req: Request) {
     assessmentId: string;
     claimToken: string;
   } | null = null;
-  let dataCreditoAssessmentConsumed = false;
   let dataCreditoAssessmentMatch: DataCreditoAssessmentMatchInput | null =
     null;
   let createdCreditId: number | null = null;
@@ -2276,7 +2275,6 @@ export async function POST(req: Request) {
 
         return credit;
       });
-      dataCreditoAssessmentConsumed = true;
       dataCreditoClaim = null;
     } else {
       created = await prisma.credito.create(creditCreateArgs);
@@ -2337,10 +2335,10 @@ export async function POST(req: Request) {
     console.error("ERROR CREANDO CREDITO:", {
       errorType: error instanceof Error ? error.name : "UnknownError",
       safeCode: /^[A-Z0-9_]{1,64}$/.test(rawErrorCode) ? rawErrorCode : null,
-      postCommit: dataCreditoAssessmentConsumed,
+      postCommit: Boolean(createdCreditId),
     });
 
-    if (dataCreditoAssessmentConsumed && createdCreditId) {
+    if (createdCreditId) {
       const recovered = await prisma.credito
         .findUnique({
           where: { id: createdCreditId },

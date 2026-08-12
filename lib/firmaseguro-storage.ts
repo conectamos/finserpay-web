@@ -257,6 +257,56 @@ export async function getLatestFirmaSeguroProcessByCredit(creditoId: number) {
   return rows[0] || null;
 }
 
+export async function getLatestSignedFirmaSeguroProcessByCredit(
+  creditoId: number
+) {
+  await ensureFirmaSeguroSchema();
+
+  const rows = await prisma.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
+    `
+      SELECT *
+      FROM "FirmaSeguroProcess"
+      WHERE "creditoId" = $1
+        AND COALESCE("signedDocumentBase64", '') <> ''
+      ORDER BY "createdAt" DESC, "id" DESC
+      LIMIT 1
+    `,
+    creditoId
+  );
+
+  return rows[0] || null;
+}
+
+export async function getCreditIdsWithSignedFirmaSeguroDocument(
+  creditIds: number[]
+) {
+  const normalizedIds = Array.from(
+    new Set(
+      creditIds.filter(
+        (creditId) => Number.isInteger(creditId) && creditId > 0
+      )
+    )
+  );
+
+  if (normalizedIds.length === 0) return [];
+
+  await ensureFirmaSeguroSchema();
+  const placeholders = normalizedIds
+    .map((_, index) => `$${index + 1}`)
+    .join(", ");
+  const rows = await prisma.$queryRawUnsafe<Array<{ creditoId: number }>>(
+    `
+      SELECT DISTINCT "creditoId"
+      FROM "FirmaSeguroProcess"
+      WHERE "creditoId" IN (${placeholders})
+        AND COALESCE("signedDocumentBase64", '') <> ''
+    `,
+    ...normalizedIds
+  );
+
+  return rows.map((row) => Number(row.creditoId));
+}
+
 export async function getLatestFirmaSeguroProcessByDraft(draftId: number) {
   await ensureFirmaSeguroSchema();
 

@@ -7,6 +7,7 @@ import ClientCreditPanel, {
 } from "@/app/clientes/client-credit-panel";
 import ClientLoginScreen from "@/app/clientes/client-login-screen";
 import PaidCreditDashboard from "@/app/clientes/paid-credit-dashboard";
+import { fetchClientPdf } from "@/lib/client-document-download";
 import {
   CircleUserRound,
   Clock3,
@@ -34,6 +35,7 @@ type ClientCredit = {
   imei?: string | null;
   deviceUid?: string | null;
   fechaCredito: string;
+  folioFirmadoDisponible?: boolean;
   montoCredito: number;
   valorCuota: number;
   sedeNombre: string;
@@ -196,6 +198,23 @@ function scrollToSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
 }
 
+function triggerBrowserDownload(blob: Blob, filename: string) {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+}
+
+function signedFolioFilename(folio: string) {
+  const safeFolio = folio.replace(/[^A-Za-z0-9_-]/g, "-") || "credito";
+  return `folio-firmado-${safeFolio}.pdf`;
+}
+
 async function requestJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, { cache: "no-store", ...init });
   const data = (await response.json().catch(() => ({}))) as T;
@@ -242,6 +261,9 @@ export default function ClienteConsultaPage() {
   const [paymentReturn, setPaymentReturn] = useState<PaymentReturnNotice | null>(null);
   const [refreshingPayment, setRefreshingPayment] = useState(false);
   const [activePanel, setActivePanel] = useState<ExplorerPanel>(null);
+  const [folioDownloadingId, setFolioDownloadingId] = useState<number | null>(
+    null
+  );
   const [notice, setNotice] = useState<{ text: string; tone: "red" | "emerald" } | null>(
     null
   );
@@ -519,6 +541,59 @@ export default function ClienteConsultaPage() {
     window.setTimeout(() => scrollToSection("cliente-dashboard"), 40);
   };
 
+  const downloadSignedFolio = async (credit: ClientCredit) => {
+    if (!credit.folioFirmadoDisponible || folioDownloadingId !== null) return;
+
+    const clientDocument =
+      credit.clienteDocumento || activeDocumento || documento;
+
+    if (!clientDocument) {
+      setNotice({
+        text: "No se pudo validar el documento del cliente.",
+        tone: "red",
+      });
+      return;
+    }
+
+    const href =
+      `/api/clientes/creditos/${credit.id}/folio-firmado` +
+      `?documento=${encodeURIComponent(clientDocument)}`;
+    const filename = signedFolioFilename(credit.folio);
+
+    try {
+      setFolioDownloadingId(credit.id);
+      setNotice(null);
+
+      if (window.FinserPayAndroid?.downloadDocument) {
+        const absoluteUrl = new URL(href, window.location.origin).toString();
+        window.FinserPayAndroid.downloadDocument(absoluteUrl, filename);
+        setNotice({
+          text:
+            "Folio enviado a Descargas. Si no inicia, actualiza FINSER PAY en Android.",
+          tone: "emerald",
+        });
+        return;
+      }
+
+      const clientPdf = await fetchClientPdf(href, filename);
+      triggerBrowserDownload(clientPdf.blob, clientPdf.filename);
+      setNotice({
+        text: "Folio firmado descargado.",
+        tone: "emerald",
+      });
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo descargar el folio firmado.",
+        tone: "red",
+      });
+    } finally {
+      setFolioDownloadingId(null);
+    }
+  };
+
   const refreshPaymentStatus = useCallback(async () => {
     const targetDocument = activeDocumento || documento;
 
@@ -687,8 +762,13 @@ export default function ClienteConsultaPage() {
         credit={activeCredit}
         credits={items}
         firstName={firstName}
+        folioFirmadoDisponible={Boolean(
+          activeCredit.folioFirmadoDisponible
+        )}
+        folioDownloading={folioDownloadingId === activeCredit.id}
         newCreditSupportMessage={NEW_CREDIT_SUPPORT_MESSAGE}
         notice={notice}
+        onDownloadFolio={() => void downloadSignedFolio(activeCredit)}
         onForgetDocument={forgetDocument}
         onHome={returnHome}
         onOpenPanel={openPanel}
@@ -722,6 +802,8 @@ export default function ClienteConsultaPage() {
             meta: `${totalCount} cuotas · Equipo financiado`,
             name: creditTitle(activeCredit),
           }}
+          folioAvailable={Boolean(activeCredit.folioFirmadoDisponible)}
+          folioDownloading={folioDownloadingId === activeCredit.id}
           lastPayment={
             lastHistoryPayment
               ? {
@@ -744,6 +826,7 @@ export default function ClienteConsultaPage() {
           }
           notice={notice}
           onOpenDevice={() => openPanel("pending")}
+          onDownloadFolio={() => void downloadSignedFolio(activeCredit)}
           onOpenHistory={() => openPanel("history")}
           onOpenNotifications={() => openPanel("history")}
           onOpenPaymentMethods={() => openPanel("payments")}
