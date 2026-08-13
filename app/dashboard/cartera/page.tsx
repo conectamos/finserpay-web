@@ -5,7 +5,9 @@ import {
   Download,
   FileText,
   Filter,
+  History,
   Landmark,
+  ReceiptText,
   RotateCcw,
   TrendingUp,
   TriangleAlert,
@@ -465,9 +467,19 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
               </div>
             </form>
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <ActionLink href={exportHref} icon={Download} label="Excel" primary />
               <ActionLink href="/dashboard/reportes/creditos" icon={FileText} label="Creditos" />
+              <ActionLink
+                href="/dashboard/financiero/cartera"
+                icon={ReceiptText}
+                label="Registrar gasto"
+              />
+              <ActionLink
+                href="/dashboard/financiero/cartera/detalle"
+                icon={History}
+                label="Historial gastos"
+              />
             </div>
           </div>
         </header>
