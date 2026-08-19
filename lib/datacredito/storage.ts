@@ -593,7 +593,7 @@ async function verifyDataCreditoSchema() {
   >(`
     SELECT
       ARRAY(
-        SELECT indexed_attribute.attname
+        SELECT indexed_attribute.attname::text
         FROM unnest(index_state.indkey::smallint[]) WITH ORDINALITY
           AS index_key(attnum, position)
         LEFT JOIN pg_attribute indexed_attribute
