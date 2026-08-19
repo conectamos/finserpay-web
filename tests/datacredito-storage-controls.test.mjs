@@ -136,7 +136,7 @@ test("produccion verifica el preflight sin ejecutar DDL en runtime", () => {
   assert.match(storage, /FROM pg_index/);
   assert.match(storage, /pg_get_indexdef/);
   assert.match(storage, /unnest\(index_state\.indkey::smallint\[\]\)/);
-  assert.match(storage, /indexed_attribute\.attname/);
+  assert.match(storage, /indexed_attribute\.attname::text/);
   assert.match(storage, /matchesDataCreditoSchemaIndex/);
   assert.match(storage, /DataCreditoAssessment_pending_key/);
   assert.match(storage, /SCHEMA_NOT_READY/);
