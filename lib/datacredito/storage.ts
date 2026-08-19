@@ -822,8 +822,8 @@ async function verifyDataCreditoSchema() {
   >(`
     SELECT
       constraint_state.conname AS "constraintName",
-      constraint_state.contype AS "constraintType",
-      constraint_state.confdeltype AS "deleteAction",
+      constraint_state.contype::text AS "constraintType",
+      constraint_state.confdeltype::text AS "deleteAction",
       constraint_state.convalidated AS "isValid",
       referenced_table.relname AS "referencedTable",
       source_table.relname AS "tableName"
