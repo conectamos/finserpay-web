@@ -9,7 +9,9 @@ const jiti = createJiti(import.meta.url, {
   alias: { "@": projectRoot },
 });
 const {
+  DATACREDITO_NO_INFORMATION_SCORE,
   DataCreditoPolicyValidationError,
+  isDataCreditoNoInformationScore,
   normalizeDataCreditoPlatform,
   parseDataCreditoPolicyBands,
   resolveDataCreditoDecision,
@@ -53,6 +55,24 @@ function completeBands() {
       initialPaymentPercentage: 30,
       suretyPercentage: 12,
     },
+    {
+      id: "android-sin-informacion",
+      platform: "ANDROID",
+      scoreMin: DATACREDITO_NO_INFORMATION_SCORE,
+      scoreMax: DATACREDITO_NO_INFORMATION_SCORE,
+      decision: "APROBADO",
+      initialPaymentPercentage: 40,
+      suretyPercentage: 85,
+    },
+    {
+      id: "iphone-sin-informacion",
+      platform: "IPHONE",
+      scoreMin: DATACREDITO_NO_INFORMATION_SCORE,
+      scoreMax: DATACREDITO_NO_INFORMATION_SCORE,
+      decision: "RECHAZADO",
+      initialPaymentPercentage: 45,
+      suretyPercentage: 90,
+    },
   ];
 }
 
@@ -62,13 +82,74 @@ test("normaliza unicamente las plataformas soportadas", () => {
   assert.equal(normalizeDataCreditoPlatform("WEB"), null);
 });
 
-test("acepta una politica con cobertura completa 0 a 950 por plataforma", () => {
+test("acepta una regla sin informacion y cobertura completa por plataforma", () => {
   const parsed = parseDataCreditoPolicyBands(completeBands());
-  assert.equal(parsed.length, 4);
+  assert.equal(parsed.length, 6);
   assert.deepEqual(
     parsed.map((band) => `${band.platform}:${band.scoreMin}-${band.scoreMax}`),
-    ["ANDROID:0-499", "ANDROID:500-950", "IPHONE:0-699", "IPHONE:700-950"]
+    [
+      "ANDROID:-1--1",
+      "ANDROID:0-499",
+      "ANDROID:500-950",
+      "IPHONE:-1--1",
+      "IPHONE:0-699",
+      "IPHONE:700-950",
+    ]
   );
+  assert.equal(isDataCreditoNoInformationScore(-1), true);
+  assert.equal(isDataCreditoNoInformationScore("-1"), true);
+  assert.equal(isDataCreditoNoInformationScore(-2), false);
+});
+
+test("exige exactamente una regla sin informacion por plataforma", () => {
+  const missing = completeBands().filter(
+    (band) => band.id !== "android-sin-informacion"
+  );
+  assert.throws(
+    () => parseDataCreditoPolicyBands(missing),
+    (error) =>
+      error instanceof DataCreditoPolicyValidationError &&
+      error.issues.includes(
+        "Debe existir exactamente una regla sin informacion para ANDROID"
+      )
+  );
+
+  const bands = completeBands();
+  const duplicate = {
+    ...bands.find((band) => band.id === "iphone-sin-informacion"),
+    id: "iphone-sin-informacion-2",
+  };
+  assert.throws(
+    () => parseDataCreditoPolicyBands([...bands, duplicate]),
+    (error) =>
+      error instanceof DataCreditoPolicyValidationError &&
+      error.issues.includes(
+        "Debe existir exactamente una regla sin informacion para IPHONE"
+      )
+  );
+});
+
+test("rechaza negativos del proveedor y rangos mixtos como reglas", () => {
+  for (const replacement of [
+    { scoreMin: -2, scoreMax: -2 },
+    { scoreMin: -1, scoreMax: 0 },
+  ]) {
+    const bands = completeBands();
+    const index = bands.findIndex(
+      (band) => band.id === "android-sin-informacion"
+    );
+    bands[index] = { ...bands[index], ...replacement };
+
+    assert.throws(
+      () => parseDataCreditoPolicyBands(bands),
+      (error) =>
+        error instanceof DataCreditoPolicyValidationError &&
+        error.issues.some(
+          (issue) =>
+            issue.includes("debe ser -1") || issue.includes("exactamente -1")
+        )
+    );
+  }
 });
 
 test("rechaza huecos que producirian decisiones implicitas", () => {
@@ -109,6 +190,21 @@ test("rechaza una politica que omite una plataforma", () => {
 test("resuelve decision y oferta desde la version exacta de politica", () => {
   const policy = { version: 7, bands: parseDataCreditoPolicyBands(completeBands()) };
 
+  assert.deepEqual(
+    resolveDataCreditoDecision(
+      policy,
+      "ANDROID",
+      DATACREDITO_NO_INFORMATION_SCORE
+    ),
+    {
+      decision: "APROBADO",
+      offer: {
+        initialPaymentPercentage: 40,
+        suretyPercentage: 85,
+        policyVersion: 7,
+      },
+    }
+  );
   assert.deepEqual(resolveDataCreditoDecision(policy, "ANDROID", 500), {
     decision: "APROBADO",
     offer: {
@@ -125,6 +221,7 @@ test("resuelve decision y oferta desde la version exacta de politica", () => {
       policyVersion: 7,
     },
   });
+  assert.equal(resolveDataCreditoDecision(policy, "ANDROID", -2), null);
   assert.equal(resolveDataCreditoDecision(policy, "ANDROID", 951), null);
 });
 

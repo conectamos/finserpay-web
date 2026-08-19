@@ -8,6 +8,10 @@ import {
 } from "@/lib/datacredito";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import {
+  DATACREDITO_MAX_SCORE,
+  DATACREDITO_MIN_SCORE,
+  DATACREDITO_NO_INFORMATION_SCORE,
+  isDataCreditoNoInformationScore,
   normalizeDataCreditoPlatform,
   resolveDataCreditoDecision,
 } from "@/lib/datacredito/policy";
@@ -272,12 +276,21 @@ export async function POST(request: Request) {
     const providerStatus = safeProviderValue(result.providerStatus, 64);
     const durationMs = safeDuration(result.durationMs);
 
-    if (
-      !result.hasInformation ||
-      !Number.isInteger(result.score) ||
-      Number(result.score) < 0 ||
-      Number(result.score) > 950
-    ) {
+    const scoredOutcome =
+      result.outcome === "SCORE" &&
+      Number.isInteger(result.score) &&
+      Number(result.score) >= DATACREDITO_MIN_SCORE &&
+      Number(result.score) <= DATACREDITO_MAX_SCORE;
+    const explicitNoInformation =
+      result.outcome === "SIN_INFORMACION" &&
+      isDataCreditoNoInformationScore(result.score);
+    const assessmentScore = explicitNoInformation
+      ? DATACREDITO_NO_INFORMATION_SCORE
+      : scoredOutcome
+        ? Number(result.score)
+        : null;
+
+    if (assessmentScore === null) {
       await failDataCreditoAssessment({
         id: pending.id,
         errorCode: "NO_EVALUABLE_INFORMATION",
@@ -293,7 +306,11 @@ export async function POST(request: Request) {
       });
     }
 
-    const resolution = resolveDataCreditoDecision(policy, platform, result.score);
+    const resolution = resolveDataCreditoDecision(
+      policy,
+      platform,
+      assessmentScore
+    );
     if (!resolution) {
       await failDataCreditoAssessment({
         id: pending.id,
@@ -312,7 +329,7 @@ export async function POST(request: Request) {
 
     const completed = await completeDataCreditoAssessment({
       id: pending.id,
-      score: Number(result.score),
+      score: assessmentScore,
       decision: resolution.decision,
       offer: resolution.offer,
       transactionCode,

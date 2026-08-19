@@ -1,6 +1,18 @@
+import {
+  DATACREDITO_MAX_SCORE,
+  DATACREDITO_MIN_SCORE,
+  DATACREDITO_NO_INFORMATION_SCORE,
+} from "./policy";
+
+export type DataCreditoQueryOutcome =
+  | "SCORE"
+  | "SIN_INFORMACION"
+  | "INVALID";
+
 export type DataCreditoQueryResult = {
   durationMs: number;
   hasInformation: boolean;
+  outcome: DataCreditoQueryOutcome;
   providerStatus: string | null;
   score: number | null;
   transactionCode: string | null;
@@ -16,13 +28,19 @@ function cleanText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function isTrue(value: unknown) {
-  if (value === true || value === 1) {
-    return true;
-  }
+function informationFlag(value: unknown): boolean | null {
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0) return false;
 
   const normalized = cleanText(value).toLowerCase();
-  return ["1", "s", "si", "sí", "true", "yes"].includes(normalized);
+  if (["1", "s", "si", "sí", "true", "yes"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "n", "no", "false"].includes(normalized)) {
+    return false;
+  }
+
+  return null;
 }
 
 function transactionCodeFrom(value: unknown) {
@@ -42,7 +60,8 @@ function transactionCodeFrom(value: unknown) {
 
 function validScore(value: unknown) {
   if (typeof value === "number") {
-    return Number.isSafeInteger(value) && value >= 0 && value <= 950
+    return Number.isSafeInteger(value) && value >= DATACREDITO_MIN_SCORE &&
+        value <= DATACREDITO_MAX_SCORE
       ? value
       : null;
   }
@@ -53,7 +72,8 @@ function validScore(value: unknown) {
   }
 
   const parsed = Number(raw);
-  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 950
+  return Number.isSafeInteger(parsed) && parsed >= DATACREDITO_MIN_SCORE &&
+      parsed <= DATACREDITO_MAX_SCORE
     ? parsed
     : null;
 }
@@ -70,20 +90,36 @@ export function parseDataCreditoQueryResponse(
   const providerStatus = cleanText(root?.status).toUpperCase() || null;
   const transactionCode = transactionCodeFrom(transaction?.codigosRespuesta);
   const score = validScore(risk?.score);
-  const hasInformation = isTrue(risk?.conInformacion);
+  const providerInformation = informationFlag(risk?.conInformacion);
   const acceptedTransaction =
     transactionCode !== null && /^(0[1-8])$/.test(transactionCode);
-  const evaluable =
-    providerStatus === "ACCEPTED" &&
+  const providerAccepted = providerStatus === "ACCEPTED";
+  const hasScore =
+    providerAccepted &&
     acceptedTransaction &&
-    hasInformation &&
+    providerInformation === true &&
     score !== null;
+  const hasExplicitNoInformation =
+    providerAccepted &&
+    (transactionCode === "17" ||
+      (acceptedTransaction && providerInformation === false));
+  const outcome: DataCreditoQueryOutcome = hasScore
+    ? "SCORE"
+    : hasExplicitNoInformation
+      ? "SIN_INFORMACION"
+      : "INVALID";
 
   return {
     durationMs: Math.max(0, Math.round(durationMs)),
-    hasInformation,
+    hasInformation: providerInformation === true,
+    outcome,
     providerStatus,
-    score: evaluable ? score : null,
+    score:
+      outcome === "SCORE"
+        ? score
+        : outcome === "SIN_INFORMACION"
+          ? DATACREDITO_NO_INFORMATION_SCORE
+          : null,
     transactionCode,
   };
 }

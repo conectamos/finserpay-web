@@ -29,6 +29,7 @@ const [
   railwayCron,
   packageJson,
   dockerfile,
+  retentionServiceConfig,
 ] =
   await Promise.all([
     readProjectFile("lib/datacredito/storage.ts"),
@@ -48,6 +49,7 @@ const [
     readProjectFile("scripts/railway-cron.mjs"),
     readProjectFile("package.json"),
     readProjectFile("Dockerfile"),
+    readProjectFile("railway.datacredito-retention.json"),
   ]);
 
 test("reserva reutilizacion, rate limit e insercion bajo locks de base de datos", () => {
@@ -205,6 +207,15 @@ test("la retencion tiene endpoint protegido y tarea HTTPS con timeout", () => {
     scripts["cron:datacredito-retention"],
     "node scripts/railway-cron.mjs datacredito-retention"
   );
+  const cronConfig = JSON.parse(retentionServiceConfig);
+  assert.equal(cronConfig.build.builder, "DOCKERFILE");
+  assert.equal(
+    cronConfig.deploy.startCommand,
+    "npm run cron:datacredito-retention"
+  );
+  assert.equal(cronConfig.deploy.healthcheckPath, null);
+  assert.equal(cronConfig.deploy.cronSchedule, "30 6 * * *");
+  assert.equal(cronConfig.deploy.restartPolicyType, "ON_FAILURE");
 });
 
 test("el credito exige, consume y recupera una precalificacion sin bypass", () => {
@@ -245,7 +256,25 @@ test("la interfaz recupera borradores, vencimientos y conflictos sin repetir con
   assert.match(factoryConsole, /Reintentar verificación/);
   assert.match(policyConsole, /POLICY_VERSION_CONFLICT/);
   assert.match(policyConsole, /hasUnsavedChanges/);
+  assert.match(
+    policyConsole,
+    /disabled=\{saving \|\| !validation\.valid \|\| !hasUnsavedChanges\}/
+  );
+  assert.match(policyConsole, /No hay cambios pendientes por publicar/);
   assert.match(policyConsole, /Descartar y recargar/);
+});
+
+test("la ausencia explicita usa politica y puede consumirse sin exponer el sentinel", () => {
+  assert.match(evaluationRoute, /result\.outcome === "SIN_INFORMACION"/);
+  assert.match(evaluationRoute, /isDataCreditoNoInformationScore/);
+  assert.match(evaluationRoute, /DATACREDITO_NO_INFORMATION_SCORE/);
+  assert.equal(
+    (storage.match(/"score" BETWEEN -1 AND 950/g) || []).length,
+    2
+  );
+  assert.doesNotMatch(prequalificationGate, /scoreMin|scoreMax|score:\s/);
+  assert.match(policyConsole, /DATACREDITO_NO_INFORMATION_SCORE/);
+  assert.match(policyConsole, /Sin información/);
 });
 
 test("la vigencia predeterminada cubre identidad y contratos", () => {

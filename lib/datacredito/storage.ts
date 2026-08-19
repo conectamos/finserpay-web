@@ -1153,7 +1153,7 @@ export async function getApprovedDataCreditoAssessmentForCredit(
         AND "sedeId" = $7
         AND "aliadoId" IS NOT DISTINCT FROM $8
         AND "status" = 'APROBADO'
-        AND "score" BETWEEN 0 AND 950
+        AND "score" BETWEEN -1 AND 950
         AND "offer" IS NOT NULL
         AND "expiresAt" > CURRENT_TIMESTAMP
         AND "consumedAt" IS NULL
@@ -1193,7 +1193,7 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
         AND "sedeId" = $7
         AND "aliadoId" IS NOT DISTINCT FROM $8
         AND "status" = 'APROBADO'
-        AND "score" BETWEEN 0 AND 950
+        AND "score" BETWEEN -1 AND 950
         AND "offer" IS NOT NULL
         AND "expiresAt" > CURRENT_TIMESTAMP
         AND "consumedAt" IS NULL

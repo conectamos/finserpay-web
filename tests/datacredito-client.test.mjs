@@ -13,6 +13,9 @@ const { resolveDataCreditoConfig } = await jiti.import(
 const { parseDataCreditoQueryResponse } = await jiti.import(
   "../lib/datacredito/response.ts"
 );
+const { DATACREDITO_NO_INFORMATION_SCORE } = await jiti.import(
+  "../lib/datacredito/policy.ts"
+);
 
 const baseEnv = Object.freeze({
   DATACREDITO_API_BASE_URL: "https://service-fixture.datacredito.com.co",
@@ -125,6 +128,7 @@ test("autentica con headers privados y envia solo los tres datos requeridos", as
   assert.deepEqual(result, {
     durationMs: 11,
     hasInformation: true,
+    outcome: "SCORE",
     providerStatus: "ACCEPTED",
     score: 731,
     transactionCode: "03",
@@ -284,18 +288,51 @@ test("detiene la consulta despues del segundo 401", async () => {
   assert.equal(queryRequests, 2);
 });
 
-test("clasifica como no evaluable cualquier respuesta incompleta o inconsistente", () => {
-  const cases = [
-    providerPayload({ rootStatus: "PRECONDITION_FAILED" }),
+test("distingue la respuesta explicita sin informacion del puntaje valido", () => {
+  const noInformationCases = [
     providerPayload({ transactionCode: "17" }),
     providerPayload({ hasInformation: false }),
+    providerPayload({ hasInformation: "no" }),
+  ];
+
+  for (const payload of noInformationCases) {
+    const result = parseDataCreditoQueryResponse(payload, 14.6);
+    assert.equal(result.outcome, "SIN_INFORMACION");
+    assert.equal(result.score, DATACREDITO_NO_INFORMATION_SCORE);
+    assert.equal(result.durationMs, 15);
+  }
+
+  const zeroScore = parseDataCreditoQueryResponse(
+    providerPayload({ score: "0" }),
+    3
+  );
+  assert.equal(zeroScore.outcome, "SCORE");
+  assert.equal(zeroScore.score, 0);
+});
+
+test("mantiene cerrados los estados tecnicos o inconsistentes", () => {
+  const missingInformationFlag = providerPayload();
+  delete missingInformationFlag.content.respuesta.informacionRiesgo.conInformacion;
+
+  const cases = [
+    providerPayload({
+      rootStatus: "PRECONDITION_FAILED",
+      transactionCode: "17",
+    }),
+    providerPayload({ transactionCode: "09" }),
+    providerPayload({ hasInformation: false, transactionCode: "09" }),
+    missingInformationFlag,
+    providerPayload({ hasInformation: "desconocido" }),
     providerPayload({ score: "731.5" }),
     providerPayload({ score: "951" }),
     providerPayload({ score: null }),
+    providerPayload({ score: "sin-puntaje" }),
+    providerPayload({ score: "-1" }),
   ];
 
   for (const payload of cases) {
     const result = parseDataCreditoQueryResponse(payload, 14.6);
+    assert.equal(result.outcome, "INVALID");
     assert.equal(result.score, null);
     assert.equal(result.durationMs, 15);
   }

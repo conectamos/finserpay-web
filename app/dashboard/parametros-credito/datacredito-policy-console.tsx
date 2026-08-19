@@ -12,6 +12,11 @@ import {
 } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import {
+  DATACREDITO_MAX_SCORE,
+  DATACREDITO_MIN_SCORE,
+  DATACREDITO_NO_INFORMATION_SCORE,
+} from "@/lib/datacredito/policy";
+import {
   DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM,
 } from "@/lib/datacredito/policy-access";
 import {
@@ -97,7 +102,27 @@ class PolicyRequestError extends Error {
 }
 
 const PLATFORMS: DataCreditoPolicyPlatform[] = ["ANDROID", "IPHONE"];
+const MIN_NUMERIC_SCORE = DATACREDITO_MIN_SCORE;
+const MAX_NUMERIC_SCORE = DATACREDITO_MAX_SCORE;
 let draftSequence = 0;
+
+function isNoInformationBand(
+  band: Pick<DataCreditoPolicyBand, "scoreMin" | "scoreMax"> | EditableBand
+) {
+  const scoreMin =
+    typeof band.scoreMin === "number"
+      ? band.scoreMin
+      : parseInteger(band.scoreMin);
+  const scoreMax =
+    typeof band.scoreMax === "number"
+      ? band.scoreMax
+      : parseInteger(band.scoreMax);
+
+  return (
+    scoreMin === DATACREDITO_NO_INFORMATION_SCORE &&
+    scoreMax === DATACREDITO_NO_INFORMATION_SCORE
+  );
+}
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -293,6 +318,16 @@ function createDraftBand(platform: DataCreditoPolicyPlatform): EditableBand {
   };
 }
 
+function createNoInformationDraftBand(
+  platform: DataCreditoPolicyPlatform
+): EditableBand {
+  return {
+    ...createDraftBand(platform),
+    scoreMin: String(DATACREDITO_NO_INFORMATION_SCORE),
+    scoreMax: String(DATACREDITO_NO_INFORMATION_SCORE),
+  };
+}
+
 function addRowError(
   errors: Record<string, string[]>,
   bandId: string,
@@ -302,7 +337,7 @@ function addRowError(
 }
 
 function parseInteger(value: string) {
-  if (!/^\d+$/.test(value.trim())) return null;
+  if (!/^-?\d+$/.test(value.trim())) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
@@ -319,6 +354,9 @@ function validateDraftBands(bands: EditableBand[]): ValidationResult {
   for (const band of bands) {
     const scoreMin = parseInteger(band.scoreMin);
     const scoreMax = parseInteger(band.scoreMax);
+    const noInformation =
+      scoreMin === DATACREDITO_NO_INFORMATION_SCORE &&
+      scoreMax === DATACREDITO_NO_INFORMATION_SCORE;
     const initialPaymentPercentage = readFiniteNumber(
       band.initialPaymentPercentage
     );
@@ -335,28 +373,49 @@ function validateDraftBands(bands: EditableBand[]): ValidationResult {
     }
     ids.add(band.id);
 
-    if (scoreMin === null || scoreMin < 0 || scoreMin > 950) {
-      addRowError(
-        rowErrors,
-        band.id,
-        "El puntaje mínimo debe ser un entero entre 0 y 950."
-      );
-    }
+    if (!noInformation) {
+      if (
+        (scoreMin !== null && scoreMin < MIN_NUMERIC_SCORE) ||
+        (scoreMax !== null && scoreMax < MIN_NUMERIC_SCORE)
+      ) {
+        addRowError(
+          rowErrors,
+          band.id,
+          "Los rangos solo admiten puntajes de 0 a 950. La regla Sin información no sustituye un puntaje inválido."
+        );
+      } else {
+        if (
+          scoreMin === null ||
+          scoreMin < MIN_NUMERIC_SCORE ||
+          scoreMin > MAX_NUMERIC_SCORE
+        ) {
+          addRowError(
+            rowErrors,
+            band.id,
+            "El puntaje mínimo debe ser un entero entre 0 y 950."
+          );
+        }
 
-    if (scoreMax === null || scoreMax < 0 || scoreMax > 950) {
-      addRowError(
-        rowErrors,
-        band.id,
-        "El puntaje máximo debe ser un entero entre 0 y 950."
-      );
-    }
+        if (
+          scoreMax === null ||
+          scoreMax < MIN_NUMERIC_SCORE ||
+          scoreMax > MAX_NUMERIC_SCORE
+        ) {
+          addRowError(
+            rowErrors,
+            band.id,
+            "El puntaje máximo debe ser un entero entre 0 y 950."
+          );
+        }
+      }
 
-    if (scoreMin !== null && scoreMax !== null && scoreMin > scoreMax) {
-      addRowError(
-        rowErrors,
-        band.id,
-        "El puntaje mínimo no puede superar el máximo."
-      );
+      if (scoreMin !== null && scoreMax !== null && scoreMin > scoreMax) {
+        addRowError(
+          rowErrors,
+          band.id,
+          "El puntaje mínimo no puede superar el máximo."
+        );
+      }
     }
 
     if (!band.decision) {
@@ -410,6 +469,19 @@ function validateDraftBands(bands: EditableBand[]): ValidationResult {
       continue;
     }
 
+    const noInformationDrafts = platformDrafts.filter(isNoInformationBand);
+    if (noInformationDrafts.length === 0) {
+      platformErrors[platform].push(
+        `Agrega la regla Sin información para ${platformLabel(platform)}.`
+      );
+    } else if (noInformationDrafts.length > 1) {
+      const message = `Debe existir una sola regla Sin información para ${platformLabel(platform)}.`;
+      platformErrors[platform].push(message);
+      for (const band of noInformationDrafts) {
+        addRowError(rowErrors, band.id, message);
+      }
+    }
+
     if (platformDrafts.some((band) => rowErrors[band.id]?.length)) {
       platformErrors[platform].push(
         "Corrige las bandas incompletas antes de validar la cobertura."
@@ -418,10 +490,12 @@ function validateDraftBands(bands: EditableBand[]): ValidationResult {
     }
 
     const sorted = canonicalBands
-      .filter((band) => band.platform === platform)
+      .filter(
+        (band) => band.platform === platform && !isNoInformationBand(band)
+      )
       .sort((left, right) => left.scoreMin - right.scoreMin);
 
-    if (sorted[0]?.scoreMin !== 0) {
+    if (sorted[0]?.scoreMin !== MIN_NUMERIC_SCORE) {
       platformErrors[platform].push("La cobertura debe comenzar en 0.");
     }
 
@@ -442,7 +516,7 @@ function validateDraftBands(bands: EditableBand[]): ValidationResult {
       }
     }
 
-    if (sorted.at(-1)?.scoreMax !== 950) {
+    if (sorted.at(-1)?.scoreMax !== MAX_NUMERIC_SCORE) {
       platformErrors[platform].push("La cobertura debe terminar en 950.");
     }
   }
@@ -481,9 +555,16 @@ function platformLabel(platform: DataCreditoPolicyPlatform) {
   return platform === "ANDROID" ? "Android" : "iPhone";
 }
 
+function focusPolicyBandEditor(bandId: string) {
+  window.requestAnimationFrame(() => {
+    document.getElementById(`datacredito-policy-band-${bandId}`)?.focus();
+  });
+}
+
 function PolicyBandRow({
   band,
   index,
+  bandNumber,
   errors,
   disabled,
   onChange,
@@ -491,6 +572,7 @@ function PolicyBandRow({
 }: {
   band: EditableBand;
   index: number;
+  bandNumber: number | null;
   errors: string[];
   disabled: boolean;
   onChange: (bandId: string, field: keyof EditableBand, value: string) => void;
@@ -498,23 +580,37 @@ function PolicyBandRow({
 }) {
   const idPrefix = `datacredito-${band.platform.toLowerCase()}-${index}`;
   const errorId = `${idPrefix}-errors`;
+  const rangeDescriptionId = `${idPrefix}-range-description`;
   const invalid = errors.length > 0;
+  const noInformation = isNoInformationBand(band);
+  const rowLabel = noInformation
+    ? "Sin información"
+    : `Banda ${bandNumber ?? index + 1}`;
+  const rangeDescriptionIds = [
+    noInformation ? rangeDescriptionId : null,
+    invalid ? errorId : null,
+  ]
+    .filter(Boolean)
+    .join(" ") || undefined;
 
   return (
     <div
-      className={`rounded-[var(--fp-radius-md)] border p-4 sm:p-5 ${
+      id={`datacredito-policy-band-${band.id}`}
+      className={`rounded-[var(--fp-radius-md)] border p-4 focus:outline-none focus:ring-2 focus:ring-[var(--fp-lime)] focus:ring-offset-2 sm:p-5 ${
         invalid
           ? "border-[var(--fp-danger)] bg-[var(--fp-danger-soft)]"
           : "border-[var(--fp-border)] bg-[var(--fp-surface)]"
       }`}
+      tabIndex={-1}
       role="group"
-      aria-label={`Banda ${index + 1} para ${platformLabel(band.platform)}`}
+      aria-label={`${rowLabel} para ${platformLabel(band.platform)}`}
     >
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <strong className="text-sm text-[var(--fp-graphite)]">
-            Banda {index + 1}
+            {rowLabel}
           </strong>
+          {noInformation ? <Badge>Regla especial</Badge> : null}
           {band.decision ? (
             <StatusPill tone={band.decision === "APROBADO" ? "positive" : "danger"}>
               {band.decision}
@@ -527,51 +623,96 @@ function PolicyBandRow({
           variant="ghost"
           onClick={() => onRemove(band.id)}
           disabled={disabled}
-          aria-label={`Quitar banda ${index + 1} de ${platformLabel(band.platform)}`}
+          aria-label={`Quitar ${rowLabel.toLowerCase()} de ${platformLabel(band.platform)}`}
         >
           <Trash2 className="h-4 w-4" aria-hidden="true" />
           <span className="hidden sm:inline">Quitar</span>
         </Button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
-          Puntaje mínimo
-          <Input
-            id={`${idPrefix}-min`}
-            type="number"
-            inputMode="numeric"
-            min={0}
-            max={950}
-            step={1}
-            value={band.scoreMin}
-            onChange={(event) =>
-              onChange(band.id, "scoreMin", event.target.value)
-            }
-            disabled={disabled}
-            aria-invalid={invalid}
-            aria-describedby={invalid ? errorId : undefined}
-          />
-        </label>
+      {noInformation ? (
+        <p
+          id={rangeDescriptionId}
+          className="mb-4 text-sm leading-6 text-[var(--fp-muted)]"
+        >
+          Se aplica únicamente cuando Experian responde explícitamente que no
+          hay información para el titular. No cubre puntajes inválidos ni
+          respuestas técnicas incompletas.
+        </p>
+      ) : null}
 
-        <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
-          Puntaje máximo
-          <Input
-            id={`${idPrefix}-max`}
-            type="number"
-            inputMode="numeric"
-            min={0}
-            max={950}
-            step={1}
-            value={band.scoreMax}
-            onChange={(event) =>
-              onChange(band.id, "scoreMax", event.target.value)
-            }
-            disabled={disabled}
-            aria-invalid={invalid}
-            aria-describedby={invalid ? errorId : undefined}
-          />
-        </label>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        {noInformation ? (
+          <>
+            <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
+              Puntaje mínimo
+              <Input
+                id={`${idPrefix}-min`}
+                type="text"
+                value="No aplica"
+                readOnly
+                disabled={disabled}
+                className="bg-[var(--fp-bg)] text-[var(--fp-muted)]"
+                aria-readonly="true"
+                aria-describedby={rangeDescriptionIds}
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
+              Puntaje máximo
+              <Input
+                id={`${idPrefix}-max`}
+                type="text"
+                value="No aplica"
+                readOnly
+                disabled={disabled}
+                className="bg-[var(--fp-bg)] text-[var(--fp-muted)]"
+                aria-readonly="true"
+                aria-describedby={rangeDescriptionIds}
+              />
+            </label>
+          </>
+        ) : (
+          <>
+            <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
+              Puntaje mínimo
+              <Input
+                id={`${idPrefix}-min`}
+                type="number"
+                inputMode="numeric"
+                min={MIN_NUMERIC_SCORE}
+                max={MAX_NUMERIC_SCORE}
+                step={1}
+                value={band.scoreMin}
+                onChange={(event) =>
+                  onChange(band.id, "scoreMin", event.target.value)
+                }
+                disabled={disabled}
+                aria-invalid={invalid}
+                aria-describedby={invalid ? errorId : undefined}
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
+              Puntaje máximo
+              <Input
+                id={`${idPrefix}-max`}
+                type="number"
+                inputMode="numeric"
+                min={MIN_NUMERIC_SCORE}
+                max={MAX_NUMERIC_SCORE}
+                step={1}
+                value={band.scoreMax}
+                onChange={(event) =>
+                  onChange(band.id, "scoreMax", event.target.value)
+                }
+                disabled={disabled}
+                aria-invalid={invalid}
+                aria-describedby={invalid ? errorId : undefined}
+              />
+            </label>
+          </>
+        )}
 
         <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
           Decisión
@@ -656,6 +797,7 @@ function PlatformEditor({
   rowErrors,
   disabled,
   onAdd,
+  onAddNoInformation,
   onChange,
   onRemove,
 }: {
@@ -665,10 +807,16 @@ function PlatformEditor({
   rowErrors: Record<string, string[]>;
   disabled: boolean;
   onAdd: (platform: DataCreditoPolicyPlatform) => void;
+  onAddNoInformation: (platform: DataCreditoPolicyPlatform) => void;
   onChange: (bandId: string, field: keyof EditableBand, value: string) => void;
   onRemove: (bandId: string) => void;
 }) {
   const titleId = `datacredito-${platform.toLowerCase()}-policy-title`;
+  const noInformationBand = bands.find(isNoInformationBand);
+  const hasNoInformation = Boolean(noInformationBand);
+  const noInformationPending = Boolean(
+    noInformationBand && rowErrors[noInformationBand.id]?.length
+  );
 
   return (
     <Card className="p-5 sm:p-6" aria-labelledby={titleId}>
@@ -688,18 +836,37 @@ function PlatformEditor({
               Bandas {platformLabel(platform)}
             </h2>
             <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-              Rangos inclusivos. La cobertura debe ser continua de 0 a 950.
+              Rangos inclusivos con cobertura continua de 0 a 950. Debe existir
+              una regla adicional para Sin información.
             </p>
           </div>
         </div>
-        <Button
-          variant="secondary"
-          onClick={() => onAdd(platform)}
-          disabled={disabled}
-        >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          Agregar banda
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {hasNoInformation ? (
+            <StatusPill tone={noInformationPending ? "neutral" : "positive"}>
+              {noInformationPending
+                ? "Sin información pendiente"
+                : "Sin información configurada"}
+            </StatusPill>
+          ) : (
+            <Button
+              variant="secondary"
+              onClick={() => onAddNoInformation(platform)}
+              disabled={disabled}
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Agregar Sin información
+            </Button>
+          )}
+          <Button
+            variant="secondary"
+            onClick={() => onAdd(platform)}
+            disabled={disabled}
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Agregar banda
+          </Button>
+        </div>
       </div>
 
       {errors.length ? (
@@ -720,6 +887,14 @@ function PlatformEditor({
               key={band.id}
               band={band}
               index={index}
+              bandNumber={
+                isNoInformationBand(band)
+                  ? null
+                  : bands
+                      .slice(0, index + 1)
+                      .filter((candidate) => !isNoInformationBand(candidate))
+                      .length
+              }
               errors={rowErrors[band.id] || []}
               disabled={disabled}
               onChange={onChange}
@@ -812,6 +987,18 @@ export default function DatacreditoPolicyConsole() {
     return () => controller.abort();
   }, [loadPolicy]);
 
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedChanges]);
+
   const requestReload = () => {
     if (hasUnsavedChanges) {
       setReloadConfirmOpen(true);
@@ -822,9 +1009,39 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const addBand = (platform: DataCreditoPolicyPlatform) => {
-    setNotice(null);
+    const nextBand = createDraftBand(platform);
+    setNotice(`Nueva banda agregada para ${platformLabel(platform)}.`);
     setHasUnsavedChanges(true);
-    setBands((current) => [...current, createDraftBand(platform)]);
+    setBands((current) => [...current, nextBand]);
+    focusPolicyBandEditor(nextBand.id);
+  };
+
+  const addNoInformationBand = (platform: DataCreditoPolicyPlatform) => {
+    if (
+      bands.some(
+        (band) => band.platform === platform && isNoInformationBand(band)
+      )
+    ) {
+      return;
+    }
+
+    const nextBand = createNoInformationDraftBand(platform);
+    setNotice(
+      `Regla Sin información agregada para ${platformLabel(platform)}. Completa la decisión y los porcentajes.`
+    );
+    setHasUnsavedChanges(true);
+    setBands((current) => {
+      if (
+        current.some(
+          (band) => band.platform === platform && isNoInformationBand(band)
+        )
+      ) {
+        return current;
+      }
+
+      return [...current, nextBand];
+    });
+    focusPolicyBandEditor(nextBand.id);
   };
 
   const updateBand = (
@@ -852,6 +1069,10 @@ export default function DatacreditoPolicyConsole() {
     setError(null);
 
     if (!validation.valid) return;
+    if (!hasUnsavedChanges) {
+      setNotice("No hay cambios pendientes por publicar.");
+      return;
+    }
     setConfirmOpen(true);
   };
 
@@ -1089,6 +1310,7 @@ export default function DatacreditoPolicyConsole() {
         rowErrors={validation.rowErrors}
         disabled={saving}
         onAdd={addBand}
+        onAddNoInformation={addNoInformationBand}
         onChange={updateBand}
         onRemove={removeBand}
       />
@@ -1100,6 +1322,7 @@ export default function DatacreditoPolicyConsole() {
         rowErrors={validation.rowErrors}
         disabled={saving}
         onAdd={addBand}
+        onAddNoInformation={addNoInformationBand}
         onChange={updateBand}
         onRemove={removeBand}
       />
@@ -1112,21 +1335,23 @@ export default function DatacreditoPolicyConsole() {
                 {validation.valid ? "Cobertura completa" : "Política incompleta"}
               </Badge>
               <span className="text-sm font-semibold text-[var(--fp-muted)]">
-                {bands.length} {bands.length === 1 ? "banda" : "bandas"}
+                {bands.length} {bands.length === 1 ? "regla" : "reglas"}
               </span>
             </div>
             <p
               id="datacredito-policy-save-help"
               className="mt-3 max-w-2xl text-sm leading-6 text-[var(--fp-muted)]"
             >
-              {validation.valid
-                ? "La política cubre todos los puntajes enteros de 0 a 950 sin huecos ni solapamientos para Android e iPhone."
-                : "Completa y corrige ambas plataformas. Guardar permanecerá deshabilitado mientras existan huecos, solapamientos o valores inválidos."}
+              {!validation.valid
+                ? "Completa y corrige ambas plataformas. Guardar permanecerá deshabilitado mientras existan huecos, solapamientos, reglas Sin información ausentes o duplicadas, o valores inválidos."
+                : hasUnsavedChanges
+                  ? "La política cubre todos los puntajes enteros de 0 a 950 sin huecos ni solapamientos para Android e iPhone, con una regla Sin información por plataforma."
+                  : "No hay cambios pendientes por publicar."}
             </p>
           </div>
           <Button
             onClick={openSaveConfirmation}
-            disabled={saving || !validation.valid}
+            disabled={saving || !validation.valid || !hasUnsavedChanges}
             aria-describedby="datacredito-policy-save-help"
           >
             <Save className="h-4 w-4" aria-hidden="true" />
@@ -1138,7 +1363,7 @@ export default function DatacreditoPolicyConsole() {
       <ConfirmDialog
         open={confirmOpen}
         title="Publicar política de evaluación"
-        description={`Se guardarán ${validation.canonicalBands.length} bandas para Android e iPhone. La API verificará la versión ${
+        description={`Se guardarán ${validation.canonicalBands.length} reglas para Android e iPhone. La API verificará la versión ${
           version ?? "inicial"
         } antes de aplicar los cambios.`}
         confirmLabel="Guardar política"
