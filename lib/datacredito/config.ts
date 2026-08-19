@@ -26,6 +26,7 @@ export type DataCreditoPublicConfig = {
   configured: boolean;
   enabled: boolean;
   environment: string;
+  productionReady: boolean;
 };
 
 function cleanText(value: unknown) {
@@ -34,6 +35,34 @@ function cleanText(value: unknown) {
 
 function booleanValue(value: unknown) {
   return ["1", "on", "true", "yes"].includes(cleanText(value).toLowerCase());
+}
+
+const DATACREDITO_PRODUCTION_HOSTNAME = "api.datacredito.com.co";
+
+function isProductionEnvironment(value: string) {
+  return ["prod", "production"].includes(cleanText(value).toLowerCase());
+}
+
+function hasExactProductionHost(value: string) {
+  try {
+    return new URL(value).hostname.toLowerCase() === DATACREDITO_PRODUCTION_HOSTNAME;
+  } catch {
+    return false;
+  }
+}
+
+function isProductionReady(config: DataCreditoConfig) {
+  return (
+    isProductionEnvironment(config.environment) &&
+    hasExactProductionHost(config.apiBaseUrl) &&
+    hasExactProductionHost(config.authBaseUrl)
+  );
+}
+
+export function allowsDataCreditoNonProductionProvider(
+  env: EnvironmentSource = process.env
+) {
+  return booleanValue(env.DATACREDITO_ALLOW_NON_PRODUCTION_PROVIDER);
 }
 
 function publicEnvironment(env: EnvironmentSource) {
@@ -171,15 +200,22 @@ export function isDataCreditoQueryEnabled() {
   return booleanValue(process.env.DATACREDITO_QUERY_ENABLED);
 }
 
-export function getDataCreditoPublicConfig(): DataCreditoPublicConfig {
-  const enabled = isDataCreditoQueryEnabled();
-  const environment = publicEnvironment(process.env);
+export function getDataCreditoPublicConfig(
+  env: EnvironmentSource = process.env
+): DataCreditoPublicConfig {
+  const enabled = booleanValue(env.DATACREDITO_QUERY_ENABLED);
+  const environment = publicEnvironment(env);
 
   try {
-    resolveDataCreditoConfig(process.env);
-    return { configured: true, enabled, environment };
+    const config = resolveDataCreditoConfig(env);
+    return {
+      configured: true,
+      enabled,
+      environment,
+      productionReady: isProductionReady(config),
+    };
   } catch {
-    return { configured: false, enabled, environment };
+    return { configured: false, enabled, environment, productionReady: false };
   }
 }
 

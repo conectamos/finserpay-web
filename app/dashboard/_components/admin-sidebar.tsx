@@ -5,6 +5,7 @@ import {
   ChevronDown,
   CircleDollarSign,
   Equal,
+  FileSearch,
   FileText,
   Files,
   Handshake,
@@ -169,8 +170,21 @@ export default function AdminSidebar({
           {
             label: "Integraciones",
             items: [
-              { href: "/dashboard/integraciones", icon: Plug, label: "Integraciones" },
-              { href: "/dashboard/equality", icon: Equal, label: "Equality Zero Touch" },
+              {
+                href: "/dashboard/integraciones",
+                icon: Plug,
+                label: "Integraciones",
+              },
+              {
+                href: "/dashboard/datacredito",
+                icon: FileSearch,
+                label: "Historial DataCrédito",
+              },
+              {
+                href: "/dashboard/equality",
+                icon: Equal,
+                label: "Equality Zero Touch",
+              },
             ],
           },
         ]

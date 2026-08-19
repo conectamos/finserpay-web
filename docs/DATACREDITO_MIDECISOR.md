@@ -56,6 +56,20 @@ La autenticacion obtiene un JWT con `POST /spla/oauth2/v1/token`, enviando
 El token solo se conserva en memoria, respetando `expires_in`; no se persiste ni
 se registra.
 
+## Separación de ambientes
+
+Las respuestas de DEMO, sandbox, certificación o UAT usan datos de prueba y no
+autorizan ventas reales, aunque MiDecisor devuelva un puntaje o una decisión
+aprobada. En una ejecución con `NODE_ENV=production`, el servidor exige que
+`DATACREDITO_ENVIRONMENT` sea `prod` o `production` antes de consultar al
+proveedor. Este guard está activo por defecto y una discrepancia responde como
+error técnico, no como rechazo.
+
+`DATACREDITO_ALLOW_NON_PRODUCTION_PROVIDER=true` es un override excepcional
+para pruebas controladas de certificación sobre un despliegue construido en modo
+producción. Debe permanecer ausente o en `false` para ventas reales y nunca
+convierte datos DEMO/UAT en información válida para originar créditos.
+
 ## Variables de entorno
 
 Todas son variables exclusivas del servidor. Ninguna debe usar el prefijo
@@ -64,7 +78,8 @@ Todas son variables exclusivas del servidor. Ninguna debe usar el prefijo
 | Variable | Uso |
 | --- | --- |
 | `DATACREDITO_QUERY_ENABLED` | Activa el requisito de precalificacion. Por defecto debe ser `false`. |
-| `DATACREDITO_ENVIRONMENT` | Etiqueta operativa, por ejemplo `uat` o `production`. |
+| `DATACREDITO_ENVIRONMENT` | Ambiente real del proveedor. Solo `prod` o `production` habilitan ventas en una ejecución productiva. |
+| `DATACREDITO_ALLOW_NON_PRODUCTION_PROVIDER` | Override excepcional para certificación controlada sobre un build productivo. Debe quedar ausente o `false` en ventas reales. |
 | `DATACREDITO_AUTH_BASE_URL` | Host HTTPS confirmado para autenticacion. |
 | `DATACREDITO_API_BASE_URL` | Host HTTPS confirmado para MiDecisor. |
 | `DATACREDITO_CLIENT_ID` | Identificador confidencial del cliente. |
@@ -76,14 +91,36 @@ Todas son variables exclusivas del servidor. Ninguna debe usar el prefijo
 | `DATACREDITO_TIMEOUT_MS` | Tiempo maximo por solicitud saliente. |
 | `DATACREDITO_RESPONSE_MAX_BYTES` | Tamano maximo aceptado de una respuesta. |
 | `DATACREDITO_AUDIT_HMAC_SECRET` | Llave aleatoria separada para seudonimizar datos de auditoria. |
+| `DATACREDITO_RECORD_ENCRYPTION_KEYS_JSON` | Keyring JSON servidor, con uno o más identificadores y claves AES de 32 bytes codificadas en base64. |
+| `DATACREDITO_RECORD_ENCRYPTION_ACTIVE_KEY_ID` | Identificador de la clave del keyring usada para cifrar expedientes nuevos. |
 | `DATACREDITO_ASSESSMENT_TTL_MINUTES` | Vigencia de una evaluacion no consumida; predeterminado 120 minutos. |
-| `DATACREDITO_RETENTION_DAYS` | Retencion de auditoria minimizada. |
+| `DATACREDITO_RETENTION_DAYS` | Retención de la evaluación, su expediente cifrado y las auditorías asociadas. |
 | `DATACREDITO_RETENTION_TOKEN` | Token aleatorio de al menos 32 bytes para el cron de eliminacion por retencion. Puede usarse `CRON_SECRET` como respaldo. |
 | `DATACREDITO_RATE_LIMIT_MAX` | Maximo de intentos en 15 minutos por usuario o cedula seudonimizada dentro de la sede. |
 
 `DATACREDITO_AUDIT_HMAC_SECRET` no debe reutilizar la clave de sesion ni otra
 credencial. Debe tener al menos 32 bytes aleatorios y rotarse mediante un plan
 que contemple los hashes historicos.
+
+### Keyring del expediente
+
+El keyring debe configurarse en el gestor de secretos del ambiente antes de
+activar `DATACREDITO_QUERY_ENABLED`. Su formato es un objeto JSON; cada valor es
+una clave aleatoria de exactamente 32 bytes codificada en base64:
+
+```json
+{
+  "dc-2026-08": "<base64 de 32 bytes>",
+  "dc-anterior": "<base64 de 32 bytes>"
+}
+```
+
+`DATACREDITO_RECORD_ENCRYPTION_ACTIVE_KEY_ID` debe coincidir con una clave del
+objeto, por ejemplo `dc-2026-08`. La clave activa cifra registros nuevos; las
+claves anteriores deben conservarse en el keyring mientras existan expedientes
+cifrados con ellas. Retirar una clave antes de que termine la retención hace
+irrecuperables esos expedientes. No se deben imprimir, copiar al repositorio ni
+reutilizar estas claves como HMAC, sesión o credenciales de Experian.
 
 ## Politica dinamica
 
@@ -118,23 +155,36 @@ en pantalla como en el servidor es:
 
 `inicial minima = porcentaje * min(valor equipo, tope efectivo) + max(0, valor equipo - tope efectivo)`.
 
-## Proteccion y auditoria
+## Protección, expediente y auditoría
 
-- No se guarda la respuesta completa de Experian.
-- No se guardan cedula ni apellido en claro dentro de la evaluacion.
-- Se conserva solo hash HMAC, ultimos cuatro digitos, decision, oferta,
-  version de politica y metadatos tecnicos minimizados.
+- La fila operativa de la evaluación no guarda cédula ni apellido en claro:
+  conserva HMAC, últimos cuatro dígitos, decisión, oferta, versión de política y
+  metadatos técnicos minimizados.
+- La cédula completa, el primer apellido y la respuesta de MiDecisor sí se
+  conservan como un expediente separado, cifrado en reposo con AES-256-GCM. El
+  cifrado usa nonce aleatorio, etiqueta de autenticación y datos autenticados
+  asociados al identificador de evaluación, correlación, versión y clave.
+- El expediente solo se descifra bajo demanda para el administrador central de
+  FINSER PAY. El módulo `/dashboard/datacredito` lista consultas con documento
+  enmascarado y permite abrir el detalle completo según la retención vigente.
+- Cada apertura del expediente central genera una auditoría con actor,
+  correlación, resultado del acceso e IP/agente de usuario seudonimizados.
 - IP y agente de usuario se conservan como HMAC, no en claro.
-- El asesor no recibe el puntaje ni los umbrales.
-- Los errores publicos incluyen un identificador de correlacion, no detalles de
-  credenciales ni del proveedor.
-- Una evaluacion se vincula a usuario, asesor, aliado y sede; no puede usarse en
+- El asesor no recibe el puntaje, la respuesta completa ni los umbrales.
+- Los errores públicos incluyen un identificador de correlación, no detalles de
+  credenciales, claves de cifrado ni del proveedor.
+- Una evaluación se vincula a usuario, asesor, aliado y sede; no puede usarse en
   otro contexto ni con otro documento, apellido o plataforma.
-- Las llamadas tienen timeout y limite de bytes. Solo un `401` permite renovar
+- Las llamadas tienen timeout y límite de bytes. Solo un `401` permite renovar
   el token y repetir una vez; no se reintentan consultas ambiguas.
-- En produccion la aplicacion no crea ni altera tablas o indices. Solo verifica
-  mediante catalogos PostgreSQL que el preflight fue aplicado y responde `503`
-  si el esquema no esta listo.
+- En producción la aplicación no crea ni altera tablas o índices. Solo verifica
+  mediante catálogos PostgreSQL que el preflight fue aplicado y responde `503`
+  si el esquema no está listo.
+
+Las evaluaciones creadas antes de habilitar el expediente cifrado mantienen su
+auditoría minimizada, pero su cédula completa y respuesta histórica no se pueden
+recuperar. El módulo central las identifica como históricas sin expediente y no
+ejecuta una nueva consulta pagada para reconstruirlas.
 
 Si el navegador recibe un error despues de enviar el alta final, soporte debe
 buscar primero el credito por folio o borrador antes de reintentar. El credito y
@@ -143,41 +193,50 @@ enlaces posteriores con FirmaSeguro y Veriff pertenecen al flujo existente y
 pueden requerir conciliacion operativa; nunca debe ejecutarse otra consulta
 pagada sin verificar si el credito ya fue creado.
 
-## Activacion segura
+## Activación segura
 
-1. Desplegar el codigo con `DATACREDITO_QUERY_ENABLED=false`.
-   Mantener la bandera apagada mientras se verifica la politica vigente. Si
-   existe una version anterior que no contiene una regla `-1..-1` por
-   plataforma, o si sus bandas no contienen `maxFinancedAmount`, debe publicarse
-   una version compatible mediante una operacion controlada antes de habilitar
-   consultas; de lo contrario la politica antigua no puede cargarse con este
-   contrato.
+1. Desplegar el código con `DATACREDITO_QUERY_ENABLED=false`. Mantener la
+   bandera apagada durante todo el preflight.
 2. Ejecutar `npm run db:setup-datacredito` contra la base del ambiente. El SQL
-   es idempotente y debe finalizar antes de activar la bandera; la preparacion
-   automatica existe solo fuera de produccion y no sustituye este preflight.
-   Debe ejecutarlo la identidad de despliegue/migracion; la aplicacion en
-   produccion no necesita permisos `CREATE`, `ALTER` ni `CREATE INDEX`.
-3. Configurar `DATACREDITO_RETENTION_TOKEN` y un servicio cron diario de
+   es idempotente y debe finalizar antes de activar la bandera; la preparación
+   automática existe solo fuera de producción y no sustituye este preflight.
+   Debe ejecutarlo la identidad de despliegue/migración; la aplicación en
+   producción no necesita permisos `CREATE`, `ALTER` ni `CREATE INDEX`.
+3. Crear el keyring en el gestor de secretos, cargar
+   `DATACREDITO_RECORD_ENCRYPTION_KEYS_JSON` y seleccionar una clave mediante
+   `DATACREDITO_RECORD_ENCRYPTION_ACTIVE_KEY_ID`. Verificar que la clave activa
+   exista, decodifique a 32 bytes y que las claves anteriores necesarias sigan
+   presentes. Sin un keyring válido la consulta debe permanecer deshabilitada.
+4. Configurar `DATACREDITO_RETENTION_TOKEN` y un servicio cron diario de
    Railway usando `railway.datacredito-retention.json` como Config File Path.
    El cron ejecuta `npm run cron:datacredito-retention` a las 06:30 UTC, usa
-   HTTPS, tiene timeout, termina al finalizar y elimina las evaluaciones cuyo
-   `retainedUntil` ya vencio.
-4. Configurar y revisar las bandas desde Parametros de credito.
-5. Cargar en Railway las credenciales y hosts de certificacion, nunca en el
-   repositorio.
-6. Configurar y probar `VERIFF_BASE_URL`, `VERIFF_API_KEY` y
-   `VERIFF_SHARED_SECRET`, junto con el modo de operacion compatible del flujo.
-   Un caso aprobado debe abrir y completar Veriff antes de habilitar consultas
-   pagas para asesores.
-7. Validar casos oficiales de aprobado, rechazado, sin informacion y error.
-8. Confirmar que la ruta, modulos, limites y cobro de consultas coinciden con el
+   HTTPS, tiene timeout, termina al finalizar y elimina evaluaciones, expedientes
+   cifrados y auditorías cuya retención ya venció.
+5. Configurar y revisar las bandas desde Parámetros de crédito. Si existe una
+   versión anterior sin regla `-1..-1` por plataforma o sin
+   `maxFinancedAmount`, publicar primero una versión compatible mediante una
+   operación controlada.
+6. Cargar las credenciales y hosts de certificación, nunca en el repositorio, y
+   fijar `DATACREDITO_ENVIRONMENT=uat` (o la etiqueta no productiva acordada).
+   Confirmar que el guard impide ventas reales. Usar
+   `DATACREDITO_ALLOW_NON_PRODUCTION_PROVIDER=true` solo durante una prueba
+   controlada que requiera un build productivo y retirarlo al terminar.
+7. Configurar y probar `VERIFF_BASE_URL`, `VERIFF_API_KEY` y
+   `VERIFF_SHARED_SECRET`, junto con el modo compatible del flujo. Un caso
+   aprobado debe abrir y completar Veriff antes de habilitar consultas para
+   asesores.
+8. Validar casos oficiales de aprobado, rechazado, sin información y error, y
+   comprobar que el módulo central muestra el expediente y registra su acceso.
+9. Confirmar que la ruta, módulos, límites y cobro de consultas coinciden con el
    contrato de Experian.
-9. Obtener validacion legal escrita del texto, evidencia, finalidad y retencion
-   del consentimiento. Sin esa aprobacion, produccion debe permanecer con
-   `DATACREDITO_QUERY_ENABLED=false`.
-10. Activar la bandera primero en certificacion.
-11. Repetir el proceso con credenciales y hosts de produccion separados.
-
+10. Obtener validación legal escrita del texto, evidencia, finalidad y retención
+    del consentimiento. Sin esa aprobación, producción debe permanecer con
+    `DATACREDITO_QUERY_ENABLED=false`.
+11. Activar la bandera primero en certificación. Los resultados DEMO/UAT solo
+    validan conectividad y reglas; no originan ventas reales.
+12. Repetir todo el preflight con keyring, credenciales y hosts de producción
+    separados. Confirmar `DATACREDITO_ENVIRONMENT=production`, ausencia del
+    override no productivo y acceso central antes de activar la bandera.
 ## Confirmaciones pendientes de Experian
 
 - host canonico de certificacion y host productivo;

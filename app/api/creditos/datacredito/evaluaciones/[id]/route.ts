@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
+import { getDataCreditoPublicConfig } from "@/lib/datacredito";
 import {
   dataCreditoAssessmentMatchesScope,
   getDataCreditoAssessmentById,
@@ -60,6 +61,20 @@ export async function GET(_request: Request, context: RouteContext) {
           code: "ASSESSMENT_CONSUMED",
           error: "Esta evaluacion ya fue utilizada en una solicitud",
           creditId: row.creditId,
+          correlationId: row.correlationId,
+        },
+        { status: 409 }
+      );
+    }
+
+    const provider = getDataCreditoPublicConfig();
+    if (row.providerEnvironment !== provider.environment) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "NO_EVALUADO",
+          code: "ASSESSMENT_ENVIRONMENT_MISMATCH",
+          error: "La evaluacion corresponde a otro ambiente de DataCredito.",
           correlationId: row.correlationId,
         },
         { status: 409 }

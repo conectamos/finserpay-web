@@ -2,7 +2,10 @@
 builder = "DOCKERFILE"
 
 [deploy]
-preDeployCommand = ["node scripts/ensure-iphone-identity-evidence-column.mjs"]
+preDeployCommand = [
+  "node scripts/ensure-iphone-identity-evidence-column.mjs",
+  "node scripts/ensure-datacredito-schema.mjs",
+]
 startCommand = "node server.js"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 300

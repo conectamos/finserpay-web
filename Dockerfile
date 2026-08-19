@@ -7,7 +7,7 @@ RUN npm ci
 
 FROM base AS prisma-deps
 RUN npm init -y \
-  && npm install prisma@7.7.0 dotenv@17.2.3 --omit=dev --ignore-scripts --package-lock=false
+  && npm install prisma@7.7.0 dotenv@17.2.3 pg@8.20.0 --omit=dev --ignore-scripts --package-lock=false
 
 FROM base AS builder
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -36,6 +36,7 @@ COPY --from=builder /app/app/generated/prisma ./app/generated/prisma
 COPY --from=builder /app/scripts/railway-cron.mjs ./scripts/railway-cron.mjs
 COPY --from=builder /app/scripts/setup-datacredito.sql ./scripts/setup-datacredito.sql
 COPY --from=builder /app/scripts/ensure-iphone-identity-evidence-column.mjs ./scripts/ensure-iphone-identity-evidence-column.mjs
+COPY --from=builder /app/scripts/ensure-datacredito-schema.mjs ./scripts/ensure-datacredito-schema.mjs
  
 EXPOSE 3000
 

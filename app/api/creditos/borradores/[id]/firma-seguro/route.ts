@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
-import { getDataCreditoPublicConfig } from "@/lib/datacredito";
+import {
+  allowsDataCreditoNonProductionProvider,
+  getDataCreditoPublicConfig,
+} from "@/lib/datacredito";
 import {
   getApprovedDataCreditoAssessmentForCredit,
   isDataCreditoAuditConfigured,
@@ -217,6 +220,17 @@ async function getDraftDataCreditoOffer(
     );
   }
 
+  if (
+    process.env.NODE_ENV === "production" &&
+    !dataCreditoProvider.productionReady &&
+    !allowsDataCreditoNonProductionProvider()
+  ) {
+    throw new CreditValidationError(
+      "El ambiente de certificacion no puede autorizar ventas reales.",
+      503
+    );
+  }
+
   if (sanitizeText(payload.clienteTipoDocumento) !== "CEDULA_DE_CIUDADANIA") {
     throw new CreditValidationError(
       "La precalificacion actual de DataCredito solo admite cedula de ciudadania.",
@@ -236,6 +250,7 @@ async function getDraftDataCreditoOffer(
     documentNumber,
     firstSurname: sanitizeText(payload.clientePrimerApellido),
     platform,
+    providerEnvironment: dataCreditoProvider.environment,
     userId: row.usuarioId,
     sellerId: row.vendedorId,
     sedeId: row.sedeId,

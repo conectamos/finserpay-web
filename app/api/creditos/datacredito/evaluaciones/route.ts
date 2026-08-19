@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import {
+  allowsDataCreditoNonProductionProvider,
   DataCreditoError,
   getDataCreditoPublicConfig,
   queryDataCreditoNaturalPerson,
@@ -16,8 +17,18 @@ import {
   resolveDataCreditoDecision,
 } from "@/lib/datacredito/policy";
 import {
+  completeDataCreditoAssessmentWithSecureRecord,
+  failDataCreditoAssessmentWithSecureRecord,
+  storePendingDataCreditoSecureRecord,
+} from "@/lib/datacredito/admin-storage";
+import {
+  assertDataCreditoSecureRecordConfigured,
+  DataCreditoSecureRecordConfigurationError,
+  DataCreditoSecureRecordValidationError,
+  encryptDataCreditoSecureRecord,
+} from "@/lib/datacredito/secure-record";
+import {
   buildDataCreditoIdentityHashes,
-  completeDataCreditoAssessment,
   DataCreditoStorageConfigurationError,
   failDataCreditoAssessment,
   getCurrentDataCreditoPolicy,
@@ -193,6 +204,19 @@ export async function POST(request: Request) {
         status: 503,
       });
     }
+    if (
+      process.env.NODE_ENV === "production" &&
+      !provider.productionReady &&
+      !allowsDataCreditoNonProductionProvider()
+    ) {
+      return technicalResponse({
+        correlationId,
+        code: "DATACREDITO_NON_PRODUCTION_PROVIDER",
+        error: "El ambiente de certificacion no puede autorizar ventas reales",
+        status: 503,
+      });
+    }
+    assertDataCreditoSecureRecordConfigured();
 
     const policy = await getCurrentDataCreditoPolicy();
     if (!policy) {
@@ -223,6 +247,7 @@ export async function POST(request: Request) {
         consentAt: new Date(),
         ...metadata,
         policyVersion: policy.version,
+        providerEnvironment: provider.environment,
       });
     } catch (error) {
       if (isDataCreditoUniqueViolation(error)) {
@@ -266,6 +291,19 @@ export async function POST(request: Request) {
     }
     pendingAssessmentId = pending.id;
 
+    const pendingSecure = {
+      assessmentId: pending.id,
+      correlationId,
+      envelope: encryptDataCreditoSecureRecord({
+        assessmentId: pending.id,
+        correlationId,
+        documentNumber,
+        firstSurname,
+        providerPayload: { status: "PENDING" },
+      }),
+    };
+    await storePendingDataCreditoSecureRecord(pendingSecure);
+
     providerStartedAt = Date.now();
     const result = await queryDataCreditoNaturalPerson({
       documentNumber,
@@ -275,6 +313,18 @@ export async function POST(request: Request) {
     const transactionCode = safeProviderValue(result.transactionCode, 32);
     const providerStatus = safeProviderValue(result.providerStatus, 64);
     const durationMs = safeDuration(result.durationMs);
+
+    const completedSecure = {
+      assessmentId: pending.id,
+      correlationId,
+      envelope: encryptDataCreditoSecureRecord({
+        assessmentId: pending.id,
+        correlationId,
+        documentNumber,
+        firstSurname,
+        providerPayload: result.providerPayload,
+      }),
+    };
 
     const scoredOutcome =
       result.outcome === "SCORE" &&
@@ -291,12 +341,13 @@ export async function POST(request: Request) {
         : null;
 
     if (assessmentScore === null) {
-      await failDataCreditoAssessment({
+      await failDataCreditoAssessmentWithSecureRecord({
         id: pending.id,
         errorCode: "NO_EVALUABLE_INFORMATION",
         transactionCode,
         providerStatus,
         durationMs,
+        secure: completedSecure,
       });
       return technicalResponse({
         correlationId,
@@ -312,12 +363,13 @@ export async function POST(request: Request) {
       assessmentScore
     );
     if (!resolution) {
-      await failDataCreditoAssessment({
+      await failDataCreditoAssessmentWithSecureRecord({
         id: pending.id,
         errorCode: "POLICY_NO_MATCH",
         transactionCode,
         providerStatus,
         durationMs,
+        secure: completedSecure,
       });
       return technicalResponse({
         correlationId,
@@ -327,7 +379,7 @@ export async function POST(request: Request) {
       });
     }
 
-    const completed = await completeDataCreditoAssessment({
+    const completed = await completeDataCreditoAssessmentWithSecureRecord({
       id: pending.id,
       score: assessmentScore,
       decision: resolution.decision,
@@ -335,6 +387,7 @@ export async function POST(request: Request) {
       transactionCode,
       providerStatus,
       durationMs,
+      secure: completedSecure,
     });
     if (!completed) {
       throw new Error("No se pudo finalizar la auditoria de evaluacion");
@@ -351,6 +404,10 @@ export async function POST(request: Request) {
         ? safeProviderValue(error.code, 64) || "PROVIDER_ERROR"
         : error instanceof DataCreditoStorageConfigurationError
           ? error.code
+          : error instanceof DataCreditoSecureRecordConfigurationError
+            ? "SECURE_RECORD_NOT_CONFIGURED"
+            : error instanceof DataCreditoSecureRecordValidationError
+              ? "PROVIDER_PAYLOAD_INVALID"
           : "EVALUATION_ERROR";
 
     if (pendingAssessmentId) {
@@ -380,6 +437,10 @@ export async function POST(request: Request) {
           ? clientErrorStatus(error)
           : error instanceof DataCreditoStorageConfigurationError
             ? 503
+            : error instanceof DataCreditoSecureRecordConfigurationError
+              ? 503
+              : error instanceof DataCreditoSecureRecordValidationError
+                ? 502
             : 500,
     });
   }

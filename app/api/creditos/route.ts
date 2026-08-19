@@ -76,7 +76,10 @@ import {
   getVeriffPublicSummary,
   isVeriffRequired,
 } from "@/lib/veriff";
-import { getDataCreditoPublicConfig } from "@/lib/datacredito";
+import {
+  allowsDataCreditoNonProductionProvider,
+  getDataCreditoPublicConfig,
+} from "@/lib/datacredito";
 import {
   classifyDataCreditoAssessmentForCredit,
   claimDataCreditoAssessment,
@@ -906,6 +909,20 @@ export async function POST(req: Request) {
         );
       }
 
+      if (
+        process.env.NODE_ENV === "production" &&
+        !dataCreditoProvider.productionReady &&
+        !allowsDataCreditoNonProductionProvider()
+      ) {
+        return NextResponse.json(
+          {
+            code: "DATACREDITO_NON_PRODUCTION_PROVIDER",
+            error: "El ambiente de certificacion no puede autorizar ventas reales.",
+          },
+          { status: 503 }
+        );
+      }
+
       if (clienteTipoDocumento !== "CEDULA_DE_CIUDADANIA") {
         return NextResponse.json(
           {
@@ -947,6 +964,7 @@ export async function POST(req: Request) {
         documentNumber: clienteDocumento,
         firstSurname: clientePrimerApellido,
         platform: dataCreditoPlatform,
+        providerEnvironment: dataCreditoProvider.environment,
         userId: user.id,
         sellerId: sellerSession?.id || null,
         sedeId: user.sedeId,
