@@ -1,5 +1,8 @@
 export const DATACREDITO_PLATFORMS = ["ANDROID", "IPHONE"] as const;
 export const DATACREDITO_DECISIONS = ["APROBADO", "RECHAZADO"] as const;
+export const DATACREDITO_NO_INFORMATION_SCORE = -1;
+export const DATACREDITO_MIN_SCORE = 0;
+export const DATACREDITO_MAX_SCORE = 950;
 
 export type DataCreditoPlatform = (typeof DATACREDITO_PLATFORMS)[number];
 export type DataCreditoDecision = (typeof DATACREDITO_DECISIONS)[number];
@@ -55,6 +58,10 @@ function finiteNumber(value: unknown) {
   return null;
 }
 
+export function isDataCreditoNoInformationScore(value: unknown) {
+  return finiteNumber(value) === DATACREDITO_NO_INFORMATION_SCORE;
+}
+
 export function normalizeDataCreditoPlatform(
   value: unknown
 ): DataCreditoPlatform | null {
@@ -99,6 +106,9 @@ export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBa
     const decision = normalizeDataCreditoDecision(row.decision);
     const scoreMin = finiteNumber(row.scoreMin);
     const scoreMax = finiteNumber(row.scoreMax);
+    const noInformationBand =
+      isDataCreditoNoInformationScore(scoreMin) &&
+      isDataCreditoNoInformationScore(scoreMax);
     const initialPaymentPercentage = finiteNumber(row.initialPaymentPercentage);
     const suretyPercentage = finiteNumber(row.suretyPercentage);
 
@@ -116,11 +126,28 @@ export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBa
     if (!decision) {
       issues.push(`La banda ${id || index + 1} debe indicar APROBADO o RECHAZADO`);
     }
-    if (!Number.isInteger(scoreMin) || scoreMin! < 0 || scoreMin! > 950) {
-      issues.push(`El puntaje minimo de ${id || `la banda ${index + 1}`} debe estar entre 0 y 950`);
+    if (
+      !Number.isInteger(scoreMin) ||
+      (scoreMin !== DATACREDITO_NO_INFORMATION_SCORE &&
+        (scoreMin! < DATACREDITO_MIN_SCORE ||
+        scoreMin! > DATACREDITO_MAX_SCORE))
+    ) {
+      issues.push(`El puntaje minimo de ${id || `la banda ${index + 1}`} debe ser -1 o estar entre 0 y 950`);
     }
-    if (!Number.isInteger(scoreMax) || scoreMax! < 0 || scoreMax! > 950) {
-      issues.push(`El puntaje maximo de ${id || `la banda ${index + 1}`} debe estar entre 0 y 950`);
+    if (
+      !Number.isInteger(scoreMax) ||
+      (scoreMax !== DATACREDITO_NO_INFORMATION_SCORE &&
+        (scoreMax! < DATACREDITO_MIN_SCORE ||
+        scoreMax! > DATACREDITO_MAX_SCORE))
+    ) {
+      issues.push(`El puntaje maximo de ${id || `la banda ${index + 1}`} debe ser -1 o estar entre 0 y 950`);
+    }
+    if (
+      (scoreMin === DATACREDITO_NO_INFORMATION_SCORE ||
+        scoreMax === DATACREDITO_NO_INFORMATION_SCORE) &&
+      !noInformationBand
+    ) {
+      issues.push(`La regla sin informacion de ${id || `la banda ${index + 1}`} debe usar exactamente -1 en ambos limites`);
     }
     if (scoreMin !== null && scoreMax !== null && scoreMin > scoreMax) {
       issues.push(`El rango de ${id || `la banda ${index + 1}`} esta invertido`);
@@ -171,13 +198,30 @@ export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBa
       continue;
     }
 
-    if (platformBands[0].scoreMin !== 0) {
+    const noInformationBands = platformBands.filter(
+      (band) =>
+        isDataCreditoNoInformationScore(band.scoreMin) &&
+        isDataCreditoNoInformationScore(band.scoreMax)
+    );
+    if (noInformationBands.length !== 1) {
+      issues.push(
+        `Debe existir exactamente una regla sin informacion para ${platform}`
+      );
+    }
+
+    const scoreBands = platformBands.filter(
+      (band) =>
+        !isDataCreditoNoInformationScore(band.scoreMin) &&
+        !isDataCreditoNoInformationScore(band.scoreMax)
+    );
+
+    if (!scoreBands.length || scoreBands[0].scoreMin !== DATACREDITO_MIN_SCORE) {
       issues.push(`Las bandas de ${platform} deben comenzar en el puntaje 0`);
     }
 
-    platformBands.forEach((band, index) => {
+    scoreBands.forEach((band, index) => {
       if (index === 0) return;
-      const previous = platformBands[index - 1];
+      const previous = scoreBands[index - 1];
 
       if (band.scoreMin <= previous.scoreMax) {
         issues.push(`Las bandas ${previous.id} y ${band.id} de ${platform} se superponen`);
@@ -186,7 +230,7 @@ export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBa
       }
     });
 
-    if (platformBands[platformBands.length - 1].scoreMax !== 950) {
+    if (scoreBands.at(-1)?.scoreMax !== DATACREDITO_MAX_SCORE) {
       issues.push(`Las bandas de ${platform} deben terminar en el puntaje 950`);
     }
   }
@@ -210,7 +254,12 @@ export function resolveDataCreditoPolicyBand(
   const platform = normalizeDataCreditoPlatform(platformValue);
   const score = finiteNumber(scoreValue);
 
-  if (!platform || !Number.isInteger(score) || score! < 0 || score! > 950) {
+  const validScore =
+    isDataCreditoNoInformationScore(score) ||
+    (Number.isInteger(score) && score! >= DATACREDITO_MIN_SCORE &&
+      score! <= DATACREDITO_MAX_SCORE);
+
+  if (!platform || !validScore) {
     return null;
   }
 

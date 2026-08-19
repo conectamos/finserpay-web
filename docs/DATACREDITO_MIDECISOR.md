@@ -19,7 +19,8 @@ No forman parte de este alcance:
 1. El asesor elige Android o iPhone.
 2. Registra cedula y primer apellido.
 3. Confirma que el titular autorizo la consulta antes de ejecutarla.
-4. El servidor consulta MiDecisor y extrae unicamente el puntaje validado.
+4. El servidor consulta MiDecisor y valida un puntaje entre 0 y 950 o la
+   respuesta explicita de que no existe informacion.
 5. El servidor resuelve la banda vigente para la plataforma.
 6. Si la banda rechaza, el flujo termina con `NO APROBADO`.
 7. Si la banda aprueba, se fija la cuota inicial y la fianza de esa banda y se
@@ -27,8 +28,11 @@ No forman parte de este alcance:
 8. Al crear el credito, el servidor vuelve a validar y consume la evaluacion;
    el navegador nunca decide ni puede modificar la banda aplicada.
 
-Una falla tecnica, una respuesta parcial o la ausencia de puntaje se presenta
-como `No se pudo evaluar`; nunca se convierte en rechazo.
+Una falla tecnica, una respuesta parcial o un puntaje ausente, malformado o
+fuera de rango se presenta como `No se pudo evaluar`; nunca se convierte en
+aprobacion ni rechazo. Solo una respuesta `ACCEPTED` con codigo `TX=17`, o con
+`TX=01..08` y `conInformacion=false` explicito, activa la regla comercial
+`Sin informacion`.
 
 ## Contrato MiDecisor usado
 
@@ -98,9 +102,12 @@ Cada version contiene bandas separadas para `ANDROID` e `IPHONE`:
 ```
 
 La administracion exige cobertura completa de 0 a 950 para cada plataforma,
-sin huecos ni solapes. Guardar genera una version nueva. No existe una politica
-predeterminada: los umbrales, la decision, la inicial y la fianza son una
-definicion comercial de FINSER PAY.
+sin huecos ni solapes, y exactamente una regla `Sin informacion` adicional por
+plataforma. Esa regla se serializa internamente como el rango `-1..-1`; `-1` no
+es un puntaje de Experian, nunca se acepta desde el campo `score` del proveedor
+y no se muestra al asesor. Guardar genera una version nueva. No existe una
+politica predeterminada: los umbrales, la decision, la inicial y la fianza son
+una definicion comercial de FINSER PAY.
 
 ## Proteccion y auditoria
 
@@ -130,14 +137,22 @@ pagada sin verificar si el credito ya fue creado.
 ## Activacion segura
 
 1. Desplegar el codigo con `DATACREDITO_QUERY_ENABLED=false`.
+   Antes del despliegue, verificar si el ambiente ya tiene una politica de una
+   version anterior. Si existe y no contiene una regla `-1..-1` por plataforma,
+   debe publicarse una version compatible mediante una migracion operativa
+   controlada antes de habilitar consultas; de lo contrario la politica antigua
+   no puede cargarse con este contrato. La tabla de produccion estaba vacia al
+   preparar la primera activacion.
 2. Ejecutar `npm run db:setup-datacredito` contra la base del ambiente. El SQL
    es idempotente y debe finalizar antes de activar la bandera; la preparacion
    automatica existe solo fuera de produccion y no sustituye este preflight.
    Debe ejecutarlo la identidad de despliegue/migracion; la aplicacion en
    produccion no necesita permisos `CREATE`, `ALTER` ni `CREATE INDEX`.
-3. Configurar `DATACREDITO_RETENTION_TOKEN` y un cron diario de Railway con el
-   comando `npm run cron:datacredito-retention`. El cron usa HTTPS, tiene timeout
-   y elimina las evaluaciones cuyo `retainedUntil` ya vencio.
+3. Configurar `DATACREDITO_RETENTION_TOKEN` y un servicio cron diario de
+   Railway usando `railway.datacredito-retention.json` como Config File Path.
+   El cron ejecuta `npm run cron:datacredito-retention` a las 06:30 UTC, usa
+   HTTPS, tiene timeout, termina al finalizar y elimina las evaluaciones cuyo
+   `retainedUntil` ya vencio.
 4. Configurar y revisar las bandas desde Parametros de credito.
 5. Cargar en Railway las credenciales y hosts de certificacion, nunca en el
    repositorio.

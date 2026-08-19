@@ -8,4 +8,7 @@ export {
   queryDataCreditoNaturalPerson,
 } from "./client";
 export type { DataCreditoNaturalPersonQuery } from "./client";
-export type { DataCreditoQueryResult } from "./response";
+export type {
+  DataCreditoQueryOutcome,
+  DataCreditoQueryResult,
+} from "./response";
