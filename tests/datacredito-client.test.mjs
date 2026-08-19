@@ -7,9 +7,11 @@ const {
   createDataCreditoClient,
   DataCreditoError,
 } = await jiti.import("../lib/datacredito/client.ts");
-const { resolveDataCreditoConfig } = await jiti.import(
-  "../lib/datacredito/config.ts"
-);
+const {
+  allowsDataCreditoNonProductionProvider,
+  getDataCreditoPublicConfig,
+  resolveDataCreditoConfig,
+} = await jiti.import("../lib/datacredito/config.ts");
 const { parseDataCreditoQueryResponse } = await jiti.import(
   "../lib/datacredito/response.ts"
 );
@@ -129,6 +131,7 @@ test("autentica con headers privados y envia solo los tres datos requeridos", as
     durationMs: 11,
     hasInformation: true,
     outcome: "SCORE",
+    providerPayload: providerPayload(),
     providerStatus: "ACCEPTED",
     score: 731,
     transactionCode: "03",
@@ -378,6 +381,43 @@ test("rechaza hosts ajenos, HTTP y rutas que puedan cambiar el destino", () => {
       }),
     (error) => error instanceof DataCreditoError && error.code === "CONFIGURATION_ERROR"
   );
+});
+
+test("productionReady exige ambiente y ambos hosts productivos exactos", () => {
+  const productionEnv = {
+    ...baseEnv,
+    DATACREDITO_API_BASE_URL: "https://api.datacredito.com.co",
+    DATACREDITO_AUTH_BASE_URL: "https://api.datacredito.com.co",
+    DATACREDITO_ENVIRONMENT: "production",
+  };
+
+  assert.equal(getDataCreditoPublicConfig(productionEnv).productionReady, true);
+  assert.equal(
+    getDataCreditoPublicConfig({ ...productionEnv, DATACREDITO_ENVIRONMENT: "uat" })
+      .productionReady,
+    false
+  );
+  assert.equal(
+    getDataCreditoPublicConfig({
+      ...productionEnv,
+      DATACREDITO_AUTH_BASE_URL: "https://uat-api.datacredito.com.co",
+    }).productionReady,
+    false
+  );
+  assert.equal(
+    getDataCreditoPublicConfig({
+      ...productionEnv,
+      DATACREDITO_API_BASE_URL: "https://proxy.api.datacredito.com.co",
+    }).productionReady,
+    false
+  );
+  assert.equal(
+    allowsDataCreditoNonProductionProvider({
+      DATACREDITO_ALLOW_NON_PRODUCTION_PROVIDER: "true",
+    }),
+    true
+  );
+  assert.equal(allowsDataCreditoNonProductionProvider({}), false);
 });
 
 test("rechaza redirects sin reenviar credenciales ni datos personales", async () => {

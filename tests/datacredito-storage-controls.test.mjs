@@ -313,6 +313,12 @@ test("el credito exige, consume y recupera una precalificacion sin bypass", () =
   assert.match(creditRoute, /consumeDataCreditoAssessment\([\s\S]*?transaction/);
   assert.match(creditRoute, /dataCreditoRequired \|\| isVeriffRequired\(\)/);
   assert.match(creditRoute, /DATACREDITO_ASSESSMENT_INVALID/);
+  assert.match(creditRoute, /!dataCreditoProvider\.productionReady/);
+  assert.match(creditRoute, /allowsDataCreditoNonProductionProvider/);
+  assert.match(
+    creditRoute,
+    /providerEnvironment:\s*dataCreditoProvider\.environment/
+  );
   assert.match(factoryConsole, /DatacreditoPrequalificationGate/);
   assert.match(factoryConsole, /handleDataCreditoAssessmentInvalidated\(\)/);
   assert.match(
@@ -322,9 +328,17 @@ test("el credito exige, consume y recupera una precalificacion sin bypass", () =
 });
 
 test("la interfaz recupera borradores, vencimientos y conflictos sin repetir consultas", () => {
-  assert.ok(
-    assessmentRoute.indexOf("if (row.consumedAt)") <
-      assessmentRoute.indexOf("const expiresAt")
+  const consumedCheck = assessmentRoute.indexOf("if (row.consumedAt)");
+  const environmentCheck = assessmentRoute.indexOf(
+    "row.providerEnvironment !== provider.environment"
+  );
+  assert.ok(consumedCheck >= 0 && consumedCheck < environmentCheck);
+  assert.match(assessmentRoute, /ASSESSMENT_ENVIRONMENT_MISMATCH/);
+  assert.match(assessmentRoute, /getDataCreditoPublicConfig/);
+  assert.ok(environmentCheck < assessmentRoute.indexOf("const expiresAt"));
+  assert.match(
+    prequalificationGate,
+    /code === "ASSESSMENT_ENVIRONMENT_MISMATCH"/
   );
   assert.match(
     prequalificationGate,
@@ -389,6 +403,14 @@ test("la clasificacion posfallo no filtra evaluaciones fuera de identidad y scop
   }
   assert.match(classifier, /row\.consumedAt/);
   assert.match(classifier, /status: "CONSUMED", creditId/);
+  assert.ok(
+    classifier.indexOf('status: "CONSUMED", creditId') <
+      classifier.indexOf("row.providerEnvironment !== match.providerEnvironment")
+  );
+  assert.match(
+    classifier,
+    /row\.providerEnvironment !== match\.providerEnvironment/
+  );
   assert.match(classifier, /status: "IN_PROGRESS"/);
   assert.match(classifier, /status: "EXPIRED"/);
   assert.match(classifier, /status: "INVALID"/);
@@ -422,6 +444,12 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
   );
   assert.match(offerResolver, /isDataCreditoAuditConfigured/);
   assert.match(offerResolver, /getApprovedDataCreditoAssessmentForCredit/);
+  assert.match(offerResolver, /!dataCreditoProvider\.productionReady/);
+  assert.match(offerResolver, /allowsDataCreditoNonProductionProvider/);
+  assert.match(
+    offerResolver,
+    /providerEnvironment:\s*dataCreditoProvider\.environment/
+  );
   assert.match(offerResolver, /\^\\d\{3,13\}\$/);
   for (const scope of [
     "userId: row.usuarioId",

@@ -29,6 +29,10 @@ export type DataCreditoNaturalPersonQuery = {
   firstSurname: string;
 };
 
+export type DataCreditoNaturalPersonQueryResult = DataCreditoQueryResult & {
+  providerPayload: unknown;
+};
+
 type TokenCache = {
   accessToken: string;
   expiresAt: number;
@@ -462,7 +466,7 @@ export function createDataCreditoClient(
 
   async function queryDataCreditoNaturalPerson(
     rawInput: DataCreditoNaturalPersonQuery
-  ): Promise<DataCreditoQueryResult> {
+  ): Promise<DataCreditoNaturalPersonQueryResult> {
     const correlationId = validateCorrelationId(rawInput?.correlationId);
     const config = resolveDataCreditoConfig(env, correlationId);
 
@@ -507,7 +511,10 @@ export function createDataCreditoClient(
       config.responseMaxBytes,
       correlationId
     );
-    return parseDataCreditoQueryResponse(payload, now() - startedAt);
+    return {
+      ...parseDataCreditoQueryResponse(payload, now() - startedAt),
+      providerPayload: payload,
+    };
   }
 
   return { queryDataCreditoNaturalPerson };

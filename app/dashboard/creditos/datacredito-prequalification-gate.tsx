@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -218,6 +219,7 @@ function isRecoverableInitialAssessmentFailure(
     response.status === 410 ||
     response.status === 422 ||
     code === "ASSESSMENT_EXPIRED" ||
+    code === "ASSESSMENT_ENVIRONMENT_MISMATCH" ||
     (status === "NO_EVALUADO" &&
       [409, 410, 422].includes(response.status) &&
       code !== "EVALUATION_IN_PROGRESS")
@@ -226,6 +228,18 @@ function isRecoverableInitialAssessmentFailure(
 
 function platformLabel(platform: DataCreditoPlatform) {
   return platform === "ANDROID" ? "Android" : "iPhone";
+}
+
+function formatPercentage(value: number) {
+  return `${new Intl.NumberFormat("es-CO", {
+    maximumFractionDigits: 2,
+  }).format(value)} %`;
+}
+
+function formatMoney(value: number) {
+  return `$ ${new Intl.NumberFormat("es-CO", {
+    maximumFractionDigits: 0,
+  }).format(value)}`;
 }
 
 function TechnicalErrorPanel({
@@ -354,11 +368,14 @@ export default function DatacreditoPrequalificationGate({
   const [correlationId, setCorrelationId] = useState<string | null>(null);
   const [consumedCreditId, setConsumedCreditId] = useState<number | null>(null);
   const [retryMode, setRetryMode] = useState<"bootstrap" | "form">("bootstrap");
+  const [approvedResult, setApprovedResult] =
+    useState<DataCreditoApprovedResult | null>(null);
   const bypassCalledRef = useRef(false);
   const approvedAssessmentIdsRef = useRef(new Set<string>());
   const onBypassRef = useRef(onBypass);
   const onApprovedRef = useRef(onApproved);
   const onAssessmentInvalidatedRef = useRef(onAssessmentInvalidated);
+  const approvedHeadingRef = useRef<HTMLHeadingElement>(null);
   const rejectedHeadingRef = useRef<HTMLHeadingElement>(null);
 
   if (
@@ -388,6 +405,7 @@ export default function DatacreditoPrequalificationGate({
   }, [onAssessmentInvalidated]);
 
   useEffect(() => {
+    if (view === "approved") approvedHeadingRef.current?.focus();
     if (view === "rejected") rejectedHeadingRef.current?.focus();
   }, [view]);
 
@@ -399,19 +417,30 @@ export default function DatacreditoPrequalificationGate({
     onBypassRef.current();
   }, []);
 
-  const finishApproved = useCallback((result: DataCreditoApprovedResult) => {
-    if (approvedAssessmentIdsRef.current.has(result.assessmentId)) return;
-
-    approvedAssessmentIdsRef.current.add(result.assessmentId);
+  const showApproved = useCallback((result: DataCreditoApprovedResult) => {
+    setApprovedResult(result);
     setView("approved");
-    onApprovedRef.current(result);
   }, []);
+
+  const continueApproved = useCallback(() => {
+    if (
+      !approvedResult ||
+      approvedAssessmentIdsRef.current.has(approvedResult.assessmentId)
+    ) {
+      return;
+    }
+
+    approvedAssessmentIdsRef.current.add(approvedResult.assessmentId);
+    setView("bypassing");
+    onApprovedRef.current(approvedResult);
+  }, [approvedResult]);
 
   const loadInitialState = useCallback(
     async (signal?: AbortSignal) => {
       setView("loading");
       setCorrelationId(null);
       setConsumedCreditId(null);
+      setApprovedResult(null);
       setRetryMode("bootstrap");
 
       try {
@@ -535,7 +564,7 @@ export default function DatacreditoPrequalificationGate({
             setDocumentNumber(approved.documentNumber);
             setFirstSurname(approved.firstSurname);
             setConsentAccepted(true);
-            finishApproved(approved);
+            showApproved(approved);
             return;
           }
         }
@@ -550,11 +579,11 @@ export default function DatacreditoPrequalificationGate({
       }
     },
     [
-      finishApproved,
       finishBypass,
       initialAssessmentId,
       initialDocumentNumber,
       initialFirstSurname,
+      showApproved,
     ]
   );
 
@@ -646,7 +675,7 @@ export default function DatacreditoPrequalificationGate({
         });
 
         if (result) {
-          finishApproved(result);
+          showApproved(result);
           return;
         }
       }
@@ -668,17 +697,120 @@ export default function DatacreditoPrequalificationGate({
     setView("ready");
   };
 
-  if (view === "loading" || view === "bypassing" || view === "approved") {
+  const startNewAssessment = () => {
+    setDocumentNumber("");
+    setFirstSurname("");
+    setConsentAccepted(false);
+    setFormErrors({});
+    setCorrelationId(null);
+    setConsumedCreditId(null);
+    setApprovedResult(null);
+    setRetryMode("form");
+    onAssessmentInvalidatedRef.current?.();
+    setView("ready");
+  };
+
+  if (view === "loading" || view === "bypassing") {
     const label =
-      view === "approved"
-        ? "Precalificación aprobada. Abriendo validación de identidad..."
-        : view === "bypassing"
-          ? "Continuando con el flujo disponible..."
-          : "Verificando disponibilidad de la evaluación...";
+      view === "bypassing"
+        ? approvedResult
+          ? "Abriendo validación de identidad..."
+          : "Continuando con el flujo disponible..."
+        : "Verificando disponibilidad de la evaluación...";
 
     return (
       <Card className="p-4 sm:p-6" aria-busy="true">
         <LoadingState label={label} />
+      </Card>
+    );
+  }
+
+  if (view === "approved" && approvedResult) {
+    return (
+      <Card
+        className="mx-auto max-w-3xl overflow-hidden"
+        role="status"
+        aria-labelledby="datacredito-approved-title"
+      >
+        <div className="relative h-[300px] overflow-hidden bg-[var(--fp-bg)] sm:h-[390px]">
+          <Image
+            src="/assets/creditos/datacredito-approved-hero.png"
+            alt=""
+            aria-hidden="true"
+            width={941}
+            height={1672}
+            preload
+            sizes="(max-width: 640px) 100vw, 520px"
+            className="absolute left-1/2 top-0 h-auto w-full max-w-[520px] -translate-x-1/2"
+          />
+          <div
+            className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[var(--fp-surface)] to-transparent"
+            aria-hidden="true"
+          />
+        </div>
+
+        <div className="px-5 pb-6 pt-2 text-center sm:px-10 sm:pb-10">
+          <Badge tone="positive">Oferta aprobada</Badge>
+          <h2
+            id="datacredito-approved-title"
+            ref={approvedHeadingRef}
+            tabIndex={-1}
+            className="mt-4 text-3xl font-black tracking-tight text-[var(--fp-graphite)] outline-none sm:text-4xl"
+          >
+            ¡Solicitud aprobada!
+          </h2>
+          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
+            El cliente puede continuar con la validación de identidad. El
+            puntaje consultado permanece oculto.
+          </p>
+
+          <div className="mt-7 grid gap-3 text-left sm:grid-cols-3">
+            <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-lime-strong)] bg-[var(--fp-lime-soft)] p-4">
+              <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
+                Inicial
+              </p>
+              <p className="mt-2 text-3xl font-black text-[var(--fp-graphite)]">
+                {formatPercentage(
+                  approvedResult.offer.initialPaymentPercentage
+                )}
+              </p>
+            </div>
+            <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
+              <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
+                Fianza
+              </p>
+              <p className="mt-2 text-2xl font-black text-[var(--fp-graphite)]">
+                {formatPercentage(approvedResult.offer.suretyPercentage)}
+              </p>
+            </div>
+            <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
+              <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
+                Crédito máximo
+              </p>
+              <p className="mt-2 text-2xl font-black text-[var(--fp-graphite)]">
+                {formatMoney(approvedResult.offer.maxFinancedAmount)}
+              </p>
+            </div>
+          </div>
+
+          <p className="mt-5 text-xs leading-5 text-[var(--fp-muted)]">
+            Si el equipo supera el crédito máximo, el excedente se suma a la
+            cuota inicial.
+          </p>
+
+          <div className="mt-7 flex flex-col gap-3 sm:flex-row-reverse sm:justify-center">
+            <Button onClick={continueApproved}>
+              Continuar a validación
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Link
+              href="/dashboard"
+              className="fp-ui-button is-secondary focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
+            >
+              Cancelar
+            </Link>
+          </div>
+        </div>
       </Card>
     );
   }
@@ -746,30 +878,56 @@ export default function DatacreditoPrequalificationGate({
   if (view === "rejected") {
     return (
       <Card
-        className="border-[var(--fp-danger)] p-6 sm:p-8"
+        className="mx-auto max-w-3xl overflow-hidden border-[var(--fp-danger)]"
         role="status"
         aria-labelledby="datacredito-rejected-title"
       >
-        <StatusPill tone="danger">Resultado de la evaluación</StatusPill>
-        <h2
-          id="datacredito-rejected-title"
-          ref={rejectedHeadingRef}
-          tabIndex={-1}
-          className="mt-5 text-3xl font-black tracking-tight text-[var(--fp-danger)] outline-none sm:text-4xl"
-        >
-          NO APROBADO
-        </h2>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--fp-muted)]">
-          La solicitud no continúa a validación de identidad. El resultado no
-          muestra ni expone el puntaje consultado.
-        </p>
-        <Link
-          href="/dashboard/creditos?mode=create-client"
-          className="fp-ui-button is-secondary mt-6 focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          Volver a créditos
-        </Link>
+        <div className="relative h-[300px] overflow-hidden bg-[var(--fp-bg)] sm:h-[390px]">
+          <Image
+            src="/assets/creditos/datacredito-rejected-hero.png"
+            alt=""
+            aria-hidden="true"
+            width={941}
+            height={1672}
+            preload
+            sizes="(max-width: 640px) 100vw, 520px"
+            className="absolute left-1/2 top-0 h-auto w-full max-w-[520px] -translate-x-1/2"
+          />
+          <div
+            className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[var(--fp-surface)] to-transparent"
+            aria-hidden="true"
+          />
+        </div>
+
+        <div className="px-5 pb-6 pt-2 text-center sm:px-10 sm:pb-10">
+          <StatusPill tone="danger">Resultado de la evaluación</StatusPill>
+          <h2
+            id="datacredito-rejected-title"
+            ref={rejectedHeadingRef}
+            tabIndex={-1}
+            className="mt-4 text-3xl font-black tracking-tight text-[var(--fp-danger)] outline-none sm:text-4xl"
+          >
+            Solicitud no aprobada
+          </h2>
+          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
+            En este momento la solicitud no puede continuar a validación de
+            identidad. El puntaje y los motivos internos no se muestran.
+          </p>
+
+          <div className="mt-7 flex flex-col gap-3 sm:flex-row-reverse sm:justify-center">
+            <Button onClick={startNewAssessment}>
+              <RotateCw className="h-4 w-4" aria-hidden="true" />
+              Realizar nueva consulta
+            </Button>
+            <Link
+              href="/dashboard"
+              className="fp-ui-button is-secondary focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              Volver al inicio
+            </Link>
+          </div>
+        </div>
       </Card>
     );
   }

@@ -82,6 +82,33 @@ function completeBands() {
   ];
 }
 
+function finserCommercialBands() {
+  const rules = [
+    [-1, -1, 40, 85, 600_000],
+    [0, 200, 30, 80, 850_000],
+    [201, 400, 20, 75, 1_000_000],
+    [401, 500, 15, 70, 1_200_000],
+    [501, 700, 10, 60, 1_800_000],
+    [701, 800, 5, 40, 2_200_000],
+    [801, 950, 0, 25, 2_500_000],
+  ];
+
+  return ["ANDROID", "IPHONE"].flatMap((platform) =>
+    rules.map(
+      ([scoreMin, scoreMax, initialPaymentPercentage, suretyPercentage, maxFinancedAmount]) => ({
+        id: platform.toLowerCase() + "-" + scoreMin + "-" + scoreMax,
+        platform,
+        scoreMin,
+        scoreMax,
+        decision: "APROBADO",
+        initialPaymentPercentage,
+        suretyPercentage,
+        maxFinancedAmount,
+      })
+    )
+  );
+}
+
 test("normaliza unicamente las plataformas soportadas", () => {
   assert.equal(normalizeDataCreditoPlatform(" android "), "ANDROID");
   assert.equal(normalizeDataCreditoPlatform("iPhone"), "IPHONE");
@@ -272,4 +299,36 @@ test("exige un tope de credito entero, positivo y acotado por banda", () => {
     parseDataCreditoPolicyBands(bands)[1].maxFinancedAmount,
     100_000_000
   );
+});
+
+test("aplica la política comercial en 885 y todos sus bordes", () => {
+  const policy = {
+    version: 21,
+    bands: parseDataCreditoPolicyBands(finserCommercialBands()),
+  };
+  const cases = [
+    [[-1], 40, 85, 600_000],
+    [[0, 200], 30, 80, 850_000],
+    [[201, 400], 20, 75, 1_000_000],
+    [[401, 500], 15, 70, 1_200_000],
+    [[501, 700], 10, 60, 1_800_000],
+    [[701, 800], 5, 40, 2_200_000],
+    [[801, 885, 950], 0, 25, 2_500_000],
+  ];
+
+  for (const platform of ["ANDROID", "IPHONE"]) {
+    for (const [scores, initial, surety, maximum] of cases) {
+      for (const score of scores) {
+        assert.deepEqual(resolveDataCreditoDecision(policy, platform, score), {
+          decision: "APROBADO",
+          offer: {
+            initialPaymentPercentage: initial,
+            suretyPercentage: surety,
+            maxFinancedAmount: maximum,
+            policyVersion: 21,
+          },
+        });
+      }
+    }
+  }
 });

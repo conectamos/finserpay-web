@@ -1,4 +1,5 @@
 export {
+  allowsDataCreditoNonProductionProvider,
   getDataCreditoPublicConfig,
   isDataCreditoQueryEnabled,
 } from "./config";
