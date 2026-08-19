@@ -884,7 +884,7 @@ export async function reserveDataCreditoAssessment(
   return prisma.$transaction(
     async (transaction) => {
       for (const lockKey of lockKeys) {
-        await transaction.$queryRawUnsafe(
+        await transaction.$executeRawUnsafe(
           `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`,
           lockKey
         );

@@ -62,6 +62,14 @@ const [
 test("reserva reutilizacion, rate limit e insercion bajo locks de base de datos", () => {
   assert.match(storage, /reserveDataCreditoAssessment/);
   assert.match(storage, /pg_advisory_xact_lock/);
+  assert.match(
+    storage,
+    /transaction\.\$executeRawUnsafe\(\s*`SELECT pg_advisory_xact_lock/
+  );
+  assert.doesNotMatch(
+    storage,
+    /transaction\.\$queryRawUnsafe\(\s*`SELECT pg_advisory_xact_lock/
+  );
   assert.match(storage, /datacredito-rate/);
   assert.match(storage, /datacredito-document/);
   assert.match(storage, /return \{ kind: "RATE_LIMITED" \}/);
