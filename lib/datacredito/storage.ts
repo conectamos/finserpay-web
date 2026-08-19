@@ -11,6 +11,10 @@ import {
   type DataCreditoPolicy,
   type DataCreditoPolicyBand,
 } from "@/lib/datacredito/policy";
+import {
+  matchesDataCreditoSchemaIndex,
+  type DataCreditoSchemaIndexMetadata,
+} from "@/lib/datacredito/schema-index";
 
 export const DATACREDITO_CONSENT_VERSION = "v1";
 export const DATACREDITO_CONSENT_TEXT =
@@ -585,16 +589,34 @@ async function verifyDataCreditoSchema() {
   }
 
   const indexRows = await prisma.$queryRawUnsafe<
-    Array<{
-      definition: string;
-      indexName: string;
-      isUnique: boolean;
-      isValid: boolean;
-      predicate: string | null;
-    }>
+    Array<DataCreditoSchemaIndexMetadata & { indexName: string }>
   >(`
     SELECT
-      pg_get_indexdef(index_state.indexrelid) AS "definition",
+      ARRAY(
+        SELECT indexed_attribute.attname
+        FROM unnest(index_state.indkey::smallint[]) WITH ORDINALITY
+          AS index_key(attnum, position)
+        LEFT JOIN pg_attribute indexed_attribute
+          ON indexed_attribute.attrelid = index_state.indrelid
+          AND indexed_attribute.attnum = index_key.attnum
+          AND index_key.attnum > 0
+        WHERE index_key.position <= index_state.indnkeyatts
+        ORDER BY index_key.position
+      ) AS "columnNames",
+      ARRAY(
+        SELECT CASE
+          WHEN index_key.attnum = 0 THEN pg_get_indexdef(
+            index_state.indexrelid,
+            index_key.position::integer,
+            false
+          )
+          ELSE NULL
+        END
+        FROM unnest(index_state.indkey::smallint[]) WITH ORDINALITY
+          AS index_key(attnum, position)
+        WHERE index_key.position <= index_state.indnkeyatts
+        ORDER BY index_key.position
+      ) AS "expressionDefinitions",
       index_class.relname AS "indexName",
       index_state.indisunique AS "isUnique",
       index_state.indisvalid AS "isValid",
@@ -609,40 +631,38 @@ async function verifyDataCreditoSchema() {
     "DataCreditoAssessment_pending_key"
   );
   const pendingIndex = indexes.get("DataCreditoAssessment_pending_document_key");
-  const correlationDefinition = correlationIndex?.definition || "";
-  const identityPendingDefinition =
-    (identityPendingIndex?.definition || "") +
-    " " +
-    (identityPendingIndex?.predicate || "");
-  const pendingDefinition =
-    (pendingIndex?.definition || "") +
-    " " +
-    (pendingIndex?.predicate || "");
 
   if (
     REQUIRED_ASSESSMENT_INDEXES.some((index) => !indexes.get(index)?.isValid) ||
-    !correlationIndex?.isUnique ||
-    !correlationDefinition.includes('\"correlationId\"') ||
-    !identityPendingIndex?.isUnique ||
-    ![
-      '\"documentHash\"',
-      '\"surnameHash\"',
-      '\"platform\"',
-      '\"policyVersion\"',
-      '\"userId\"',
-      '\"sellerId\"',
-      '\"sedeId\"',
-      '\"aliadoId\"',
-      "'PENDING'",
-    ].every((token) => identityPendingDefinition.includes(token)) ||
-    !pendingIndex?.isUnique ||
-    ![
-      '\"documentHash\"',
-      '\"platform\"',
-      '\"sedeId\"',
-      '\"aliadoId\"',
-      "'PENDING'",
-    ].every((token) => pendingDefinition.includes(token))
+    !matchesDataCreditoSchemaIndex(correlationIndex, {
+      keys: [{ column: "correlationId" }],
+      predicate: null,
+      unique: true,
+    }) ||
+    !matchesDataCreditoSchemaIndex(identityPendingIndex, {
+      keys: [
+        { column: "documentHash" },
+        { column: "surnameHash" },
+        { column: "platform" },
+        { column: "policyVersion" },
+        { column: "userId" },
+        { expression: 'COALESCE("sellerId", 0)' },
+        { column: "sedeId" },
+        { expression: 'COALESCE("aliadoId", 0)' },
+      ],
+      predicate: "PENDING_STATUS",
+      unique: true,
+    }) ||
+    !matchesDataCreditoSchemaIndex(pendingIndex, {
+      keys: [
+        { column: "documentHash" },
+        { column: "platform" },
+        { column: "sedeId" },
+        { expression: 'COALESCE("aliadoId", 0)' },
+      ],
+      predicate: "PENDING_STATUS",
+      unique: true,
+    })
   ) {
     throw schemaNotReady();
   }
@@ -1038,6 +1058,7 @@ export function serializeDataCreditoAssessment(row: DataCreditoAssessmentRow) {
       ? {
           initialPaymentPercentage: Number(row.offer?.initialPaymentPercentage),
           suretyPercentage: Number(row.offer?.suretyPercentage),
+          maxFinancedAmount: Number(row.offer?.maxFinancedAmount),
           policyVersion: row.policyVersion,
         }
       : null,

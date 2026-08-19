@@ -19,6 +19,7 @@ import {
   getMissingIphoneDeliveryEvidence,
   getMissingIphoneIdentityEvidence,
   hasDuplicateEvidenceValues,
+  resolveEffectiveDataCreditoFinancingLimit,
   resolveCreditEquipmentPlatform,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
@@ -86,6 +87,7 @@ import {
   type DataCreditoAssessmentMatchInput,
   type DataCreditoAssessmentRow,
 } from "@/lib/datacredito/storage";
+import { DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT } from "@/lib/datacredito/policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -991,6 +993,9 @@ export async function POST(req: Request) {
     const dataCreditoSuretyPercentage = Number(
       dataCreditoAssessment?.offer?.suretyPercentage
     );
+    const dataCreditoMaxFinancedAmount = Number(
+      dataCreditoAssessment?.offer?.maxFinancedAmount
+    );
     const hasValidDataCreditoOffer =
       !dataCreditoRequired ||
       (Number.isFinite(dataCreditoInitialPaymentPercentage) &&
@@ -998,7 +1003,11 @@ export async function POST(req: Request) {
         dataCreditoInitialPaymentPercentage <= 100 &&
         Number.isFinite(dataCreditoSuretyPercentage) &&
         dataCreditoSuretyPercentage >= 0 &&
-        dataCreditoSuretyPercentage <= 100);
+        dataCreditoSuretyPercentage <= 100 &&
+        Number.isSafeInteger(dataCreditoMaxFinancedAmount) &&
+        dataCreditoMaxFinancedAmount > 0 &&
+        dataCreditoMaxFinancedAmount <=
+          DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT);
 
     if (!hasValidDataCreditoOffer) {
       return NextResponse.json(
@@ -1017,12 +1026,23 @@ export async function POST(req: Request) {
           fianzaPorcentaje: dataCreditoSuretyPercentage,
         }
       : effectiveCreditSettings.settings;
+    const dataCreditoEffectiveMaxFinancedAmount = dataCreditoAssessment
+      ? resolveEffectiveDataCreditoFinancingLimit({
+          platform: plataformaDispositivo,
+          precioBaseVenta: precioBaseVentaCatalogo,
+          iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
+          maxFinancedAmount: dataCreditoMaxFinancedAmount,
+        })
+      : 0;
     const cuotaInicialMinima = calculateRequiredInitialPaymentByPlatform({
       valorTotalEquipo: valorEquipoTotalInput,
       precioBaseVenta: precioBaseVentaCatalogo,
       initialPaymentPercentage: creditSettings.cuotaInicialPorcentaje,
       platform: plataformaDispositivo,
       iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
+      maxFinancedAmount: dataCreditoAssessment
+        ? dataCreditoMaxFinancedAmount
+        : undefined,
     });
     const cuotaInicialInput = toNumber(body.cuotaInicial);
     const cuotaInicial =
@@ -1956,6 +1976,14 @@ export async function POST(req: Request) {
         fianzaPorcentaje: financialPlan.fianzaPorcentaje,
         valorFianza: financialPlan.valorFianza,
         valorCuota,
+        dataCredito: dataCreditoAssessment
+          ? {
+              maxFinancedAmount: dataCreditoMaxFinancedAmount,
+              effectiveMaxFinancedAmount:
+                dataCreditoEffectiveMaxFinancedAmount,
+              excessToInitial: Math.max(0, valorEquipoTotal - dataCreditoEffectiveMaxFinancedAmount),
+            }
+          : null,
         valorTotalEquipo: valorEquipoTotal,
         cuotas: plazoMeses,
         frecuenciaPago,

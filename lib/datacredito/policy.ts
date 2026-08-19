@@ -3,6 +3,8 @@ export const DATACREDITO_DECISIONS = ["APROBADO", "RECHAZADO"] as const;
 export const DATACREDITO_NO_INFORMATION_SCORE = -1;
 export const DATACREDITO_MIN_SCORE = 0;
 export const DATACREDITO_MAX_SCORE = 950;
+// Defensive ceiling for an administratively configured credit offer (COP).
+export const DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT = 100_000_000;
 
 export type DataCreditoPlatform = (typeof DATACREDITO_PLATFORMS)[number];
 export type DataCreditoDecision = (typeof DATACREDITO_DECISIONS)[number];
@@ -15,6 +17,7 @@ export type DataCreditoPolicyBand = {
   decision: DataCreditoDecision;
   initialPaymentPercentage: number;
   suretyPercentage: number;
+  maxFinancedAmount: number;
 };
 
 export type DataCreditoPolicy = {
@@ -26,6 +29,7 @@ export type DataCreditoPolicy = {
 export type DataCreditoOffer = {
   initialPaymentPercentage: number;
   suretyPercentage: number;
+  maxFinancedAmount: number;
   policyVersion: number;
 };
 
@@ -111,6 +115,7 @@ export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBa
       isDataCreditoNoInformationScore(scoreMax);
     const initialPaymentPercentage = finiteNumber(row.initialPaymentPercentage);
     const suretyPercentage = finiteNumber(row.suretyPercentage);
+    const maxFinancedAmount = finiteNumber(row.maxFinancedAmount);
 
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id)) {
       issues.push(`La banda ${index + 1} debe tener un id estable y valido`);
@@ -162,6 +167,15 @@ export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBa
     if (suretyPercentage === null || suretyPercentage < 0 || suretyPercentage > 100) {
       issues.push(`La fianza de ${id || `la banda ${index + 1}`} debe estar entre 0 y 100`);
     }
+    if (
+      !Number.isInteger(maxFinancedAmount) ||
+      maxFinancedAmount! <= 0 ||
+      maxFinancedAmount! > DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT
+    ) {
+      issues.push(
+        `El credito maximo de ${id || `la banda ${index + 1}`} debe ser un entero en COP entre 1 y ${DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT}`
+      );
+    }
 
     if (
       !id ||
@@ -170,7 +184,8 @@ export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBa
       scoreMin === null ||
       scoreMax === null ||
       initialPaymentPercentage === null ||
-      suretyPercentage === null
+      suretyPercentage === null ||
+      maxFinancedAmount === null
     ) {
       return [];
     }
@@ -184,6 +199,7 @@ export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBa
         decision,
         initialPaymentPercentage,
         suretyPercentage,
+        maxFinancedAmount,
       } satisfies DataCreditoPolicyBand,
     ];
   });
@@ -284,6 +300,7 @@ export function resolveDataCreditoDecision(
     offer: {
       initialPaymentPercentage: band.initialPaymentPercentage,
       suretyPercentage: band.suretyPercentage,
+      maxFinancedAmount: band.maxFinancedAmount,
       policyVersion: policy.version,
     },
   };

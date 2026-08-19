@@ -41,6 +41,7 @@ export type DataCreditoPolicyBand = {
   decision: DataCreditoPolicyDecision;
   initialPaymentPercentage: number;
   suretyPercentage: number;
+  maxFinancedAmount: number;
 };
 
 export type DataCreditoPolicy = {
@@ -71,6 +72,7 @@ type EditableBand = {
   decision: DataCreditoPolicyDecision | "";
   initialPaymentPercentage: string;
   suretyPercentage: string;
+  maxFinancedAmount: string;
 };
 
 type PolicySnapshot = {
@@ -104,6 +106,7 @@ class PolicyRequestError extends Error {
 const PLATFORMS: DataCreditoPolicyPlatform[] = ["ANDROID", "IPHONE"];
 const MIN_NUMERIC_SCORE = DATACREDITO_MIN_SCORE;
 const MAX_NUMERIC_SCORE = DATACREDITO_MAX_SCORE;
+const MAX_FINANCED_AMOUNT_COP = 100_000_000;
 let draftSequence = 0;
 
 function isNoInformationBand(
@@ -172,6 +175,7 @@ function parseBand(value: unknown, index: number): DataCreditoPolicyBand {
     value.initialPaymentPercentage
   );
   const suretyPercentage = readFiniteNumber(value.suretyPercentage);
+  const maxFinancedAmount = readFiniteNumber(value.maxFinancedAmount);
 
   if (
     !id ||
@@ -180,9 +184,20 @@ function parseBand(value: unknown, index: number): DataCreditoPolicyBand {
     scoreMin === null ||
     scoreMax === null ||
     initialPaymentPercentage === null ||
-    suretyPercentage === null
+    suretyPercentage === null ||
+    maxFinancedAmount === null
   ) {
     throw new PolicyRequestError(`Banda ${index + 1} incompleta.`);
+  }
+
+  if (
+    !Number.isInteger(maxFinancedAmount) ||
+    maxFinancedAmount <= 0 ||
+    maxFinancedAmount > MAX_FINANCED_AMOUNT_COP
+  ) {
+    throw new PolicyRequestError(
+      `Banda ${index + 1} con crédito máximo inválido.`
+    );
   }
 
   return {
@@ -193,6 +208,7 @@ function parseBand(value: unknown, index: number): DataCreditoPolicyBand {
     decision: decision as DataCreditoPolicyDecision,
     initialPaymentPercentage,
     suretyPercentage,
+    maxFinancedAmount,
   };
 }
 
@@ -297,6 +313,7 @@ function toEditableBand(band: DataCreditoPolicyBand): EditableBand {
     decision: band.decision,
     initialPaymentPercentage: String(band.initialPaymentPercentage),
     suretyPercentage: String(band.suretyPercentage),
+    maxFinancedAmount: String(band.maxFinancedAmount),
   };
 }
 
@@ -315,6 +332,7 @@ function createDraftBand(platform: DataCreditoPolicyPlatform): EditableBand {
     decision: "",
     initialPaymentPercentage: "",
     suretyPercentage: "",
+    maxFinancedAmount: "",
   };
 }
 
@@ -361,6 +379,7 @@ function validateDraftBands(bands: EditableBand[]): ValidationResult {
       band.initialPaymentPercentage
     );
     const suretyPercentage = readFiniteNumber(band.suretyPercentage);
+    const maxFinancedAmount = parseInteger(band.maxFinancedAmount);
 
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(band.id)) {
       addRowError(
@@ -446,6 +465,18 @@ function validateDraftBands(bands: EditableBand[]): ValidationResult {
       );
     }
 
+    if (
+      maxFinancedAmount === null ||
+      maxFinancedAmount <= 0 ||
+      maxFinancedAmount > MAX_FINANCED_AMOUNT_COP
+    ) {
+      addRowError(
+        rowErrors,
+        band.id,
+        "El crédito máximo debe ser un entero entre $1 y $100.000.000 COP."
+      );
+    }
+
     if (!rowErrors[band.id]?.length) {
       canonicalBands.push({
         id: band.id,
@@ -455,6 +486,7 @@ function validateDraftBands(bands: EditableBand[]): ValidationResult {
         decision: band.decision as DataCreditoPolicyDecision,
         initialPaymentPercentage: initialPaymentPercentage as number,
         suretyPercentage: suretyPercentage as number,
+        maxFinancedAmount: maxFinancedAmount as number,
       });
     }
   }
@@ -581,6 +613,7 @@ function PolicyBandRow({
   const idPrefix = `datacredito-${band.platform.toLowerCase()}-${index}`;
   const errorId = `${idPrefix}-errors`;
   const rangeDescriptionId = `${idPrefix}-range-description`;
+  const maxFinancedDescriptionId = `${idPrefix}-max-financed-description`;
   const invalid = errors.length > 0;
   const noInformation = isNoInformationBand(band);
   const rowLabel = noInformation
@@ -592,6 +625,12 @@ function PolicyBandRow({
   ]
     .filter(Boolean)
     .join(" ") || undefined;
+  const maxFinancedDescriptionIds = [
+    maxFinancedDescriptionId,
+    invalid ? errorId : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div
@@ -641,7 +680,7 @@ function PolicyBandRow({
         </p>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {noInformation ? (
           <>
             <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
@@ -772,6 +811,31 @@ function PolicyBandRow({
             aria-invalid={invalid}
             aria-describedby={invalid ? errorId : undefined}
           />
+        </label>
+
+        <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
+          Crédito máximo
+          <Input
+            id={`${idPrefix}-max-financed`}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MAX_FINANCED_AMOUNT_COP}
+            step={1}
+            value={band.maxFinancedAmount}
+            onChange={(event) =>
+              onChange(band.id, "maxFinancedAmount", event.target.value)
+            }
+            disabled={disabled}
+            aria-invalid={invalid}
+            aria-describedby={maxFinancedDescriptionIds}
+          />
+          <span
+            id={maxFinancedDescriptionId}
+            className="text-xs font-normal leading-5 text-[var(--fp-muted)]"
+          >
+            Valor entero en COP, hasta $100.000.000.
+          </span>
         </label>
       </div>
 
@@ -1027,7 +1091,7 @@ export default function DatacreditoPolicyConsole() {
 
     const nextBand = createNoInformationDraftBand(platform);
     setNotice(
-      `Regla Sin información agregada para ${platformLabel(platform)}. Completa la decisión y los porcentajes.`
+      `Regla Sin información agregada para ${platformLabel(platform)}. Completa la decisión y las condiciones financieras.`
     );
     setHasUnsavedChanges(true);
     setBands((current) => {
@@ -1215,9 +1279,9 @@ export default function DatacreditoPolicyConsole() {
             Política DataCrédito
           </h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-            Define la decisión, la cuota inicial y la fianza por rango de puntaje
-            para cada plataforma. El puntaje nunca se muestra en el flujo del
-            asesor.
+            Define la decisión, la cuota inicial, la fianza y el crédito máximo
+            por rango de puntaje para cada plataforma. El puntaje nunca se
+            muestra en el flujo del asesor.
           </p>
         </div>
         <Button

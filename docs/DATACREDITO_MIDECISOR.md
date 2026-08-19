@@ -23,8 +23,8 @@ No forman parte de este alcance:
    respuesta explicita de que no existe informacion.
 5. El servidor resuelve la banda vigente para la plataforma.
 6. Si la banda rechaza, el flujo termina con `NO APROBADO`.
-7. Si la banda aprueba, se fija la cuota inicial y la fianza de esa banda y se
-   abre la validacion de identidad existente.
+7. Si la banda aprueba, se fijan la cuota inicial, la fianza y el credito
+   maximo de esa banda; luego se abre la validacion de identidad existente.
 8. Al crear el credito, el servidor vuelve a validar y consume la evaluacion;
    el navegador nunca decide ni puede modificar la banda aplicada.
 
@@ -97,7 +97,8 @@ Cada version contiene bandas separadas para `ANDROID` e `IPHONE`:
   "scoreMax": 950,
   "decision": "APROBADO",
   "initialPaymentPercentage": 20,
-  "suretyPercentage": 60
+  "suretyPercentage": 60,
+  "maxFinancedAmount": 1800000
 }
 ```
 
@@ -106,8 +107,16 @@ sin huecos ni solapes, y exactamente una regla `Sin informacion` adicional por
 plataforma. Esa regla se serializa internamente como el rango `-1..-1`; `-1` no
 es un puntaje de Experian, nunca se acepta desde el campo `score` del proveedor
 y no se muestra al asesor. Guardar genera una version nueva. No existe una
-politica predeterminada: los umbrales, la decision, la inicial y la fianza son
-una definicion comercial de FINSER PAY.
+politica predeterminada: los umbrales, la decision, la inicial, la fianza y el
+credito maximo son una definicion comercial de FINSER PAY.
+
+`maxFinancedAmount` es un entero en pesos colombianos. Cuando el valor del
+equipo supera el tope efectivo, el excedente se suma obligatoriamente a la
+cuota inicial. El tope efectivo es el menor entre la banda DataCredito y la
+salvaguarda vigente de catalogo, plataforma o iPhone. La formula aplicada tanto
+en pantalla como en el servidor es:
+
+`inicial minima = porcentaje * min(valor equipo, tope efectivo) + max(0, valor equipo - tope efectivo)`.
 
 ## Proteccion y auditoria
 
@@ -137,12 +146,12 @@ pagada sin verificar si el credito ya fue creado.
 ## Activacion segura
 
 1. Desplegar el codigo con `DATACREDITO_QUERY_ENABLED=false`.
-   Antes del despliegue, verificar si el ambiente ya tiene una politica de una
-   version anterior. Si existe y no contiene una regla `-1..-1` por plataforma,
-   debe publicarse una version compatible mediante una migracion operativa
-   controlada antes de habilitar consultas; de lo contrario la politica antigua
-   no puede cargarse con este contrato. La tabla de produccion estaba vacia al
-   preparar la primera activacion.
+   Mantener la bandera apagada mientras se verifica la politica vigente. Si
+   existe una version anterior que no contiene una regla `-1..-1` por
+   plataforma, o si sus bandas no contienen `maxFinancedAmount`, debe publicarse
+   una version compatible mediante una operacion controlada antes de habilitar
+   consultas; de lo contrario la politica antigua no puede cargarse con este
+   contrato.
 2. Ejecutar `npm run db:setup-datacredito` contra la base del ambiente. El SQL
    es idempotente y debe finalizar antes de activar la bandera; la preparacion
    automatica existe solo fuera de produccion y no sustituye este preflight.
