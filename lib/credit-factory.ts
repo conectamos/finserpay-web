@@ -613,13 +613,54 @@ export function normalizeMoneyLimit(value: unknown, fallback: number) {
   return 0;
 }
 
+export function resolveEffectiveDataCreditoFinancingLimit(options: {
+  platform?: unknown;
+  precioBaseVenta?: number | null;
+  iphoneMaxFinancedAmount?: number | null | undefined;
+  maxFinancedAmount?: number | null | undefined;
+}) {
+  const policyMaxFinancedAmount = normalizeMoneyLimit(
+    options.maxFinancedAmount,
+    0
+  );
+
+  if (policyMaxFinancedAmount <= 0) {
+    return 0;
+  }
+
+  const existingFinancingLimit = isIphoneCreditPlatform(options.platform)
+    ? normalizeMoneyLimit(
+        options.iphoneMaxFinancedAmount,
+        IPHONE_MAX_FINANCED_AMOUNT
+      )
+    : normalizeMoneyLimit(
+        options.precioBaseVenta,
+        MAX_DEVICE_FINANCING_BASE
+      );
+
+  return Math.min(policyMaxFinancedAmount, existingFinancingLimit);
+}
+
 export function calculateRequiredInitialPaymentByPlatform(options: {
   valorTotalEquipo: number | null | undefined;
   precioBaseVenta?: number | null;
   initialPaymentPercentage?: number | null | undefined;
   platform?: unknown;
   iphoneMaxFinancedAmount?: number | null | undefined;
+  maxFinancedAmount?: number | null | undefined;
 }) {
+  const effectiveFinancingLimit =
+    resolveEffectiveDataCreditoFinancingLimit(options);
+
+  if (effectiveFinancingLimit > 0) {
+
+    return calculateRequiredInitialPayment(
+      options.valorTotalEquipo,
+      effectiveFinancingLimit,
+      options.initialPaymentPercentage ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE
+    );
+  }
+
   if (!isIphoneCreditPlatform(options.platform)) {
     return calculateRequiredInitialPayment(
       options.valorTotalEquipo,

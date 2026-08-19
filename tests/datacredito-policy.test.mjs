@@ -27,6 +27,7 @@ function completeBands() {
       decision: "RECHAZADO",
       initialPaymentPercentage: 40,
       suretyPercentage: 20,
+      maxFinancedAmount: 600_000,
     },
     {
       id: "android-alto",
@@ -36,6 +37,7 @@ function completeBands() {
       decision: "APROBADO",
       initialPaymentPercentage: 15.5,
       suretyPercentage: 7.25,
+      maxFinancedAmount: 1_800_000,
     },
     {
       id: "iphone-bajo",
@@ -45,6 +47,7 @@ function completeBands() {
       decision: "RECHAZADO",
       initialPaymentPercentage: 50,
       suretyPercentage: 25,
+      maxFinancedAmount: 850_000,
     },
     {
       id: "iphone-alto",
@@ -54,6 +57,7 @@ function completeBands() {
       decision: "APROBADO",
       initialPaymentPercentage: 30,
       suretyPercentage: 12,
+      maxFinancedAmount: 2_500_000,
     },
     {
       id: "android-sin-informacion",
@@ -63,6 +67,7 @@ function completeBands() {
       decision: "APROBADO",
       initialPaymentPercentage: 40,
       suretyPercentage: 85,
+      maxFinancedAmount: 600_000,
     },
     {
       id: "iphone-sin-informacion",
@@ -72,6 +77,7 @@ function completeBands() {
       decision: "RECHAZADO",
       initialPaymentPercentage: 45,
       suretyPercentage: 90,
+      maxFinancedAmount: 600_000,
     },
   ];
 }
@@ -201,6 +207,7 @@ test("resuelve decision y oferta desde la version exacta de politica", () => {
       offer: {
         initialPaymentPercentage: 40,
         suretyPercentage: 85,
+        maxFinancedAmount: 600_000,
         policyVersion: 7,
       },
     }
@@ -210,6 +217,7 @@ test("resuelve decision y oferta desde la version exacta de politica", () => {
     offer: {
       initialPaymentPercentage: 15.5,
       suretyPercentage: 7.25,
+      maxFinancedAmount: 1_800_000,
       policyVersion: 7,
     },
   });
@@ -218,6 +226,7 @@ test("resuelve decision y oferta desde la version exacta de politica", () => {
     offer: {
       initialPaymentPercentage: 50,
       suretyPercentage: 25,
+      maxFinancedAmount: 850_000,
       policyVersion: 7,
     },
   });
@@ -241,5 +250,26 @@ test("valida identificadores unicos y porcentajes financieros", () => {
       error.issues.some((issue) => issue.includes("repetido")) &&
       error.issues.some((issue) => issue.includes("cuota inicial")) &&
       error.issues.some((issue) => issue.includes("fianza"))
+  );
+});
+
+test("exige un tope de credito entero, positivo y acotado por banda", () => {
+  for (const maxFinancedAmount of [undefined, 0, -1, 850_000.5, 100_000_001]) {
+    const bands = completeBands();
+    bands[0] = { ...bands[0], maxFinancedAmount };
+
+    assert.throws(
+      () => parseDataCreditoPolicyBands(bands),
+      (error) =>
+        error instanceof DataCreditoPolicyValidationError &&
+        error.issues.some((issue) => issue.includes("credito maximo"))
+    );
+  }
+
+  const bands = completeBands();
+  bands[0] = { ...bands[0], maxFinancedAmount: 100_000_000 };
+  assert.equal(
+    parseDataCreditoPolicyBands(bands)[1].maxFinancedAmount,
+    100_000_000
   );
 });

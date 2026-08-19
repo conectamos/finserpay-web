@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
+import { getDataCreditoPublicConfig } from "@/lib/datacredito";
+import {
+  getApprovedDataCreditoAssessmentForCredit,
+  isDataCreditoAuditConfigured,
+} from "@/lib/datacredito/storage";
+import { DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT } from "@/lib/datacredito/policy";
 import {
   calculateCreditCharges,
   calculateFinancedBalance,
@@ -60,8 +66,20 @@ type DraftRow = {
   sedeAliadoId: number | null;
 };
 
+type DraftDataCreditoOffer = {
+  initialPaymentPercentage: number;
+  suretyPercentage: number;
+  maxFinancedAmount: number;
+};
+
 class CreditValidationError extends Error {
-  status = 400;
+  readonly status: number;
+
+  constructor(message: string, status = 400) {
+    super(message);
+    this.name = "CreditValidationError";
+    this.status = status;
+  }
 }
 
 let draftTableReady: Promise<void> | null = null;
@@ -181,6 +199,86 @@ async function readAuthorizedDraft(draftId: number) {
   return { ok: true as const, row };
 }
 
+async function getDraftDataCreditoOffer(
+  row: DraftRow,
+  payload: DraftPayload,
+  platform: "ANDROID" | "IPHONE"
+): Promise<DraftDataCreditoOffer | null> {
+  const dataCreditoProvider = getDataCreditoPublicConfig();
+
+  if (!dataCreditoProvider.enabled) {
+    return null;
+  }
+
+  if (!dataCreditoProvider.configured || !isDataCreditoAuditConfigured()) {
+    throw new CreditValidationError(
+      "La precalificacion de DataCredito esta habilitada, pero su configuracion segura esta incompleta.",
+      503
+    );
+  }
+
+  if (sanitizeText(payload.clienteTipoDocumento) !== "CEDULA_DE_CIUDADANIA") {
+    throw new CreditValidationError(
+      "La precalificacion actual de DataCredito solo admite cedula de ciudadania.",
+      409
+    );
+  }
+
+  const documentNumber = sanitizeText(payload.clienteDocumento);
+  if (!/^\d{3,13}$/.test(documentNumber)) {
+    throw new CreditValidationError(
+      "La cedula debe contener entre 3 y 13 digitos, sin puntos ni espacios."
+    );
+  }
+
+  const assessment = await getApprovedDataCreditoAssessmentForCredit({
+    assessmentId: sanitizeText(payload.dataCreditoAssessmentId),
+    documentNumber,
+    firstSurname: sanitizeText(payload.clientePrimerApellido),
+    platform,
+    userId: row.usuarioId,
+    sellerId: row.vendedorId,
+    sedeId: row.sedeId,
+    aliadoId: row.sedeAliadoId,
+  });
+
+  if (!assessment) {
+    throw new CreditValidationError(
+      "La precalificacion no esta aprobada, vencio o no corresponde al titular, asesor, sede y plataforma de este credito.",
+      409
+    );
+  }
+
+  const initialPaymentPercentage = Number(
+    assessment.offer?.initialPaymentPercentage
+  );
+  const suretyPercentage = Number(assessment.offer?.suretyPercentage);
+  const maxFinancedAmount = Number(assessment.offer?.maxFinancedAmount);
+  const validOffer =
+    Number.isFinite(initialPaymentPercentage) &&
+    initialPaymentPercentage >= 0 &&
+    initialPaymentPercentage <= 100 &&
+    Number.isFinite(suretyPercentage) &&
+    suretyPercentage >= 0 &&
+    suretyPercentage <= 100 &&
+    Number.isSafeInteger(maxFinancedAmount) &&
+    maxFinancedAmount > 0 &&
+    maxFinancedAmount <= DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT;
+
+  if (!validOffer) {
+    throw new CreditValidationError(
+      "La oferta de la precalificacion no es valida. Solicita revision de la politica de puntajes.",
+      503
+    );
+  }
+
+  return {
+    initialPaymentPercentage,
+    suretyPercentage,
+    maxFinancedAmount,
+  };
+}
+
 async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf> {
   const payload = payloadObject(row.payload);
   const clientePrimerNombre = sanitizeText(payload.clientePrimerNombre);
@@ -255,13 +353,25 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
     clienteDocumento,
     plataformaDispositivo
   );
-  const creditSettings = effectiveCreditSettings.settings;
+  const dataCreditoOffer = await getDraftDataCreditoOffer(
+    row,
+    payload,
+    plataformaDispositivo
+  );
+  const creditSettings = dataCreditoOffer
+    ? {
+        ...effectiveCreditSettings.settings,
+        cuotaInicialPorcentaje: dataCreditoOffer.initialPaymentPercentage,
+        fianzaPorcentaje: dataCreditoOffer.suretyPercentage,
+      }
+    : effectiveCreditSettings.settings;
   const cuotaInicialMinima = calculateRequiredInitialPaymentByPlatform({
     valorTotalEquipo: valorEquipoTotalInput,
     precioBaseVenta: precioBaseVentaCatalogo,
     initialPaymentPercentage: creditSettings.cuotaInicialPorcentaje,
     platform: plataformaDispositivo,
     iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
+    maxFinancedAmount: dataCreditoOffer?.maxFinancedAmount,
   });
   const cuotaInicialInput = toNumber(payload.cuotaInicial);
   const cuotaInicial =

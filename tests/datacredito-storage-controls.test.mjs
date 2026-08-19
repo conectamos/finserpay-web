@@ -14,6 +14,9 @@ const { isDataCreditoUniqueViolation } = await jiti.import(
 const { shouldLoadDataCreditoPolicy } = await jiti.import(
   "../lib/datacredito/policy-access.ts"
 );
+const { matchesDataCreditoSchemaIndex } = await jiti.import(
+  "../lib/datacredito/schema-index.ts"
+);
 
 const [
   storage,
@@ -22,6 +25,7 @@ const [
   policyRoute,
   retentionRoute,
   creditRoute,
+  firmaSeguroDraftRoute,
   factoryConsole,
   prequalificationGate,
   policyConsole,
@@ -38,6 +42,9 @@ const [
     readProjectFile("app/api/creditos/datacredito/politica/route.ts"),
     readProjectFile("app/api/creditos/datacredito/retencion/route.ts"),
     readProjectFile("app/api/creditos/route.ts"),
+    readProjectFile(
+      "app/api/creditos/borradores/[id]/firma-seguro/route.ts"
+    ),
     readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
     readProjectFile(
       "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
@@ -128,6 +135,9 @@ test("produccion verifica el preflight sin ejecutar DDL en runtime", () => {
   assert.match(storage, /a\.attnotnull AS "isNotNull"/);
   assert.match(storage, /FROM pg_index/);
   assert.match(storage, /pg_get_indexdef/);
+  assert.match(storage, /unnest\(index_state\.indkey::smallint\[\]\)/);
+  assert.match(storage, /indexed_attribute\.attname/);
+  assert.match(storage, /matchesDataCreditoSchemaIndex/);
   assert.match(storage, /DataCreditoAssessment_pending_key/);
   assert.match(storage, /SCHEMA_NOT_READY/);
 
@@ -143,6 +153,73 @@ test("produccion verifica el preflight sin ejecutar DDL en runtime", () => {
   assert.match(policyRoute, /DataCreditoStorageConfigurationError/);
   assert.match(policyRoute, /\{ status: 503 \}/);
   assert.match(evaluationRoute, /\? error\.code/);
+});
+
+test("valida indices por catalogo aunque PostgreSQL omita comillas", () => {
+  const productionStylePendingIndex = {
+    columnNames: [
+      "documentHash",
+      "surnameHash",
+      "platform",
+      "policyVersion",
+      "userId",
+      null,
+      "sedeId",
+      null,
+    ],
+    expressionDefinitions: [
+      null,
+      null,
+      null,
+      null,
+      null,
+      'COALESCE("sellerId", 0)',
+      null,
+      'COALESCE("aliadoId", 0)',
+    ],
+    isUnique: true,
+    isValid: true,
+    predicate: "(status = 'PENDING'::text)",
+  };
+  const expectation = {
+    keys: [
+      { column: "documentHash" },
+      { column: "surnameHash" },
+      { column: "platform" },
+      { column: "policyVersion" },
+      { column: "userId" },
+      { expression: 'COALESCE("sellerId", 0)' },
+      { column: "sedeId" },
+      { expression: 'COALESCE("aliadoId", 0)' },
+    ],
+    predicate: "PENDING_STATUS",
+    unique: true,
+  };
+
+  assert.equal(
+    matchesDataCreditoSchemaIndex(productionStylePendingIndex, expectation),
+    true
+  );
+  assert.equal(
+    matchesDataCreditoSchemaIndex(
+      { ...productionStylePendingIndex, predicate: "(status = 'APROBADO'::text)" },
+      expectation
+    ),
+    false
+  );
+  assert.equal(
+    matchesDataCreditoSchemaIndex(
+      {
+        ...productionStylePendingIndex,
+        expressionDefinitions: productionStylePendingIndex.expressionDefinitions.map(
+          (definition, position) =>
+            position === 5 ? 'COALESCE("sellerId", 1)' : definition
+        ),
+      },
+      expectation
+    ),
+    false
+  );
 });
 
 test("la bandera apagada restaura ventas y reserva la politica al administrador", () => {
@@ -307,4 +384,60 @@ test("la clasificacion posfallo no filtra evaluaciones fuera de identidad y scop
   assert.match(classifier, /status: "IN_PROGRESS"/);
   assert.match(classifier, /status: "EXPIRED"/);
   assert.match(classifier, /status: "INVALID"/);
+});
+
+test("la oferta persiste y serializa el tope maximo financiado", () => {
+  assert.match(storage, /JSON\.stringify\(input\.offer\)/);
+  const serializer = storage.match(
+    /export function serializeDataCreditoAssessment\([\s\S]*?\n\}/
+  )?.[0];
+  assert.ok(serializer);
+  assert.match(
+    serializer,
+    /maxFinancedAmount: Number\(row\.offer\?\.maxFinancedAmount\)/
+  );
+});
+
+test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apagado", () => {
+  const offerResolver = firmaSeguroDraftRoute.match(
+    /async function getDraftDataCreditoOffer\([\s\S]*?\n\}/
+  )?.[0];
+  const creditBuilder = firmaSeguroDraftRoute.match(
+    /async function buildDraftCredit\([\s\S]*?\n\}/
+  )?.[0];
+
+  assert.ok(offerResolver);
+  assert.ok(creditBuilder);
+  assert.match(
+    offerResolver,
+    /if \(!dataCreditoProvider\.enabled\) \{\s*return null;\s*\}/
+  );
+  assert.match(offerResolver, /isDataCreditoAuditConfigured/);
+  assert.match(offerResolver, /getApprovedDataCreditoAssessmentForCredit/);
+  assert.match(offerResolver, /\^\\d\{3,13\}\$/);
+  for (const scope of [
+    "userId: row.usuarioId",
+    "sellerId: row.vendedorId",
+    "sedeId: row.sedeId",
+    "aliadoId: row.sedeAliadoId",
+  ]) {
+    assert.ok(offerResolver.includes(scope), `Falta scope de FirmaSeguro: ${scope}`);
+  }
+  assert.match(offerResolver, /Number\.isSafeInteger\(maxFinancedAmount\)/);
+  assert.match(
+    offerResolver,
+    /maxFinancedAmount <= DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT/
+  );
+  assert.match(
+    creditBuilder,
+    /const creditSettings = dataCreditoOffer[\s\S]*?: effectiveCreditSettings\.settings;/
+  );
+  assert.match(
+    creditBuilder,
+    /fianzaPorcentaje: dataCreditoOffer\.suretyPercentage/
+  );
+  assert.match(
+    creditBuilder,
+    /maxFinancedAmount: dataCreditoOffer\?\.maxFinancedAmount/
+  );
 });

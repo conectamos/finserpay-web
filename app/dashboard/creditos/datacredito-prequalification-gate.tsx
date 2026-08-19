@@ -24,6 +24,7 @@ export type DataCreditoPlatform = "ANDROID" | "IPHONE";
 export type DataCreditoOffer = {
   initialPaymentPercentage: number;
   suretyPercentage: number;
+  maxFinancedAmount: number;
   policyVersion?: number;
   [key: string]: unknown;
 };
@@ -159,6 +160,9 @@ function normalizeApprovedAssessment(
     offerSource.initialPaymentPercentage
   );
   const suretyPercentage = readNumber(offerSource.suretyPercentage);
+  const maxFinancedAmount = readNumber(offerSource.maxFinancedAmount);
+  const validMaxFinancedAmount =
+    Number.isSafeInteger(maxFinancedAmount) && Number(maxFinancedAmount) > 0;
 
   if (
     !assessmentId ||
@@ -166,7 +170,8 @@ function normalizeApprovedAssessment(
     !firstSurname ||
     !expiresAt ||
     initialPaymentPercentage === null ||
-    suretyPercentage === null
+    suretyPercentage === null ||
+    !validMaxFinancedAmount
   ) {
     return null;
   }
@@ -183,6 +188,7 @@ function normalizeApprovedAssessment(
       initialPaymentPercentage,
       suretyPercentage,
       ...(policyVersion === null ? {} : { policyVersion }),
+      maxFinancedAmount: Number(maxFinancedAmount),
     },
   };
 }
