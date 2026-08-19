@@ -37,6 +37,7 @@ COPY --from=builder /app/scripts/railway-cron.mjs ./scripts/railway-cron.mjs
 COPY --from=builder /app/scripts/setup-datacredito.sql ./scripts/setup-datacredito.sql
 COPY --from=builder /app/scripts/ensure-iphone-identity-evidence-column.mjs ./scripts/ensure-iphone-identity-evidence-column.mjs
 COPY --from=builder /app/scripts/ensure-datacredito-schema.mjs ./scripts/ensure-datacredito-schema.mjs
+COPY --from=builder /app/scripts/railway-predeploy.mjs ./scripts/railway-predeploy.mjs
  
 EXPOSE 3000
 
