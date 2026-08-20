@@ -160,6 +160,7 @@ function buildWorkbookHtml(rows: string) {
         <th>ALIADO</th>
         <th>SEDE</th>
         <th>Fecha proxima cuota a pagar</th>
+        <th>Cuotas pagadas</th>
         <th>Cuotas pendientes</th>
         <th>Valor cuota</th>
         <th>Saldo obligacion</th>
@@ -318,6 +319,7 @@ export async function GET(req: Request) {
           ${textCell(credito.sede.aliado?.nombre || "")}
           ${textCell(credito.sede.nombre)}
           ${textCell(plan.nextInstallment?.fechaVencimiento || "")}
+          ${numberCell(plan.paidCount)}
           ${numberCell(plan.pendingCount)}
           ${moneyCell(Number(credito.valorCuota || 0))}
           ${moneyCell(plan.saldoPendiente)}
