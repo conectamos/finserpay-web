@@ -3,7 +3,6 @@ import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { calculateCreditEarlyPayoff } from "@/lib/credit-early-payoff";
 import { sanitizeSearch } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
-import { getCreditIdsWithSignedFirmaSeguroDocument } from "@/lib/firmaseguro-storage";
 import prisma from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -80,21 +79,6 @@ export async function GET(req: Request) {
       take: 20,
     });
 
-    let creditsWithSignedFolio = new Set<number>();
-
-    try {
-      creditsWithSignedFolio = new Set(
-        await getCreditIdsWithSignedFirmaSeguroDocument(
-          credits.map((credit) => credit.id)
-        )
-      );
-    } catch (error) {
-      console.error(
-        "ERROR CONSULTANDO DISPONIBILIDAD DE FOLIO FIRMADO:",
-        error
-      );
-    }
-
     const items = credits.map((credit) => {
       const settled = Boolean(credit.pazYSalvoEmitidoAt);
       const plan = buildCreditPaymentPlan({
@@ -137,7 +121,6 @@ export async function GET(req: Request) {
         deviceUid: credit.deviceUid,
         fechaCredito: credit.fechaCredito.toISOString(),
         montoCredito: Number(credit.montoCredito || 0),
-        folioFirmadoDisponible: creditsWithSignedFolio.has(credit.id),
         valorCuota: Number(credit.valorCuota || 0),
         sedeNombre: credit.sede.nombre,
         estadoPago: plan.estadoPago,

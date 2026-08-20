@@ -639,13 +639,6 @@
   white-space: nowrap;
 }
 
-.movementDownload {
-  width: 22px;
-  height: 22px;
-  color: #5f8f16;
-  stroke-width: 2;
-}
-
 .emptyMovement {
   display: flex;
   align-items: center;

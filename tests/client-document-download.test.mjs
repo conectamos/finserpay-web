@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -79,7 +79,7 @@ test("normaliza nombres codificados y evita rutas en el archivo", () => {
   );
 });
 
-test("la app Android expone la descarga nativa en una version nueva", async () => {
+test("la app Android limita la descarga nativa al paz y salvo", async () => {
   const [activity, buildConfig] = await Promise.all([
     readFile(
       path.join(
@@ -96,24 +96,63 @@ test("la app Android expone la descarga nativa en una version nueva", async () =
 
   assert.match(activity, /@JavascriptInterface\s+public void downloadDocument\(/);
   assert.match(activity, /runOnUiThread\(\(\) -> requestDownload\(/);
-  assert.match(activity, /isAllowedClientDocumentDownload\(url\)/);
-  assert.match(activity, /\(\?:paz-y-salvo\|folio-firmado\)/);
-  assert.match(buildConfig, /versionCode\s*=\s*7/);
-  assert.match(buildConfig, /versionName\s*=\s*"1\.0\.6"/);
+  assert.match(activity, /isAllowedPazYSalvoDownload\(url\)/);
+  assert.match(activity, /paz-y-salvo\$/);
+  assert.doesNotMatch(activity, /folio-firmado/);
+  assert.match(buildConfig, /versionCode\s*=\s*8/);
+  assert.match(buildConfig, /versionName\s*=\s*"1\.0\.7"/);
 });
 
-test("el folio firmado valida propietario y entrega solo un PDF privado", async () => {
-  const route = await readFile(
-    path.join(
-      projectRoot,
-      "app/api/clientes/creditos/[id]/folio-firmado/route.ts"
+test("el portal cliente no expone el folio firmado", async () => {
+  const publicFolioRoute = path.join(
+    projectRoot,
+    "app/api/clientes/creditos/[id]/folio-firmado/route.ts"
+  );
+  const [
+    clientCreditsRoute,
+    clientPage,
+    activeDashboard,
+    paidDashboard,
+    adminDocumentRoute,
+  ] = await Promise.all([
+    readFile(
+      path.join(projectRoot, "app/api/clientes/creditos/route.ts"),
+      "utf8"
     ),
-    "utf8"
+    readFile(path.join(projectRoot, "app/clientes/page.tsx"), "utf8"),
+    readFile(
+      path.join(projectRoot, "app/clientes/client-active-credit-dashboard.tsx"),
+      "utf8"
+    ),
+    readFile(
+      path.join(projectRoot, "app/clientes/paid-credit-dashboard.tsx"),
+      "utf8"
+    ),
+    readFile(
+      path.join(
+        projectRoot,
+        "app/api/creditos/[id]/firma-seguro/documento/route.ts"
+      ),
+      "utf8"
+    ),
+  ]);
+
+  await assert.rejects(
+    access(publicFolioRoute),
+    (error) => error && error.code === "ENOENT"
   );
 
-  assert.match(route, /clienteDocumento:\s*documento/);
-  assert.match(route, /estado:\s*\{\s*not:\s*"ANULADO"\s*\}/);
-  assert.match(route, /toString\("ascii"\)\s*!==\s*"%PDF-"/);
-  assert.match(route, /"Cache-Control":\s*"private, no-store, max-age=0"/);
-  assert.match(route, /"X-Content-Type-Options":\s*"nosniff"/);
+  for (const source of [
+    clientCreditsRoute,
+    clientPage,
+    activeDashboard,
+    paidDashboard,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      /folioFirmadoDisponible|folio-firmado|Folio firmado/
+    );
+  }
+
+  assert.match(adminDocumentRoute, /requireSupervisorOrAdmin:\s*true/);
 });
