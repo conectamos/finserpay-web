@@ -9396,7 +9396,6 @@ export default function CreditFactoryConsole({
                       onAssessmentInvalidated={
                         handleDataCreditoAssessmentInvalidated
                       }
-                      showSurety={canSeeInternalPricing}
                     />
                   )}
                 </div>
@@ -9427,11 +9426,6 @@ export default function CreditFactoryConsole({
                         <span className="rounded-full border border-[#c9df91] bg-white px-3 py-2">
                           Inicial {formatPercent(dataCreditoApproval.offer.initialPaymentPercentage)}
                         </span>
-                        {canSeeInternalPricing ? (
-                          <span className="rounded-full border border-[#c9df91] bg-white px-3 py-2">
-                            Fianza {formatPercent(dataCreditoApproval.offer.suretyPercentage)}
-                          </span>
-                        ) : null}
                         <span className="rounded-full border border-[#c9df91] bg-white px-3 py-2">
                           Crédito máximo {currency(dataCreditoApproval.offer.maxFinancedAmount)}
                         </span>
@@ -10415,14 +10409,6 @@ export default function CreditFactoryConsole({
                       <span>
                         Inicial mínima {formatPercent(initialPaymentPercentage)}
                       </span>
-                      {canSeeInternalPricing ? (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <span>
-                            Fianza {formatPercent(financialPlan.fianzaPorcentaje)}
-                          </span>
-                        </>
-                      ) : null}
                       <span aria-hidden="true">·</span>
                       <span>Crédito máximo {currency(dataCreditoMaxFinancedAmount)}</span>
                     </div>
