@@ -21,6 +21,9 @@ export type DataCreditoPolicyBand = {
 };
 
 export type DataCreditoPolicy = {
+  profileId?: string;
+  profileName?: string;
+  revisionId?: string;
   version: number;
   bands: DataCreditoPolicyBand[];
   createdAt?: string;
@@ -41,6 +44,36 @@ export class DataCreditoPolicyValidationError extends Error {
     this.name = "DataCreditoPolicyValidationError";
     this.issues = issues;
   }
+}
+
+export function parseDataCreditoPolicyProfileName(value: unknown) {
+  const name = String(value || "")
+    .normalize("NFKC")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (
+    name.length < 2 ||
+    name.length > 80 ||
+    /[\u0000-\u001f\u007f]/u.test(name)
+  ) {
+    throw new DataCreditoPolicyValidationError([
+      "El nombre de la politica debe tener entre 2 y 80 caracteres validos",
+    ]);
+  }
+  return name;
+}
+
+export function parseDataCreditoPolicyProfileDescription(value: unknown) {
+  const description = String(value || "")
+    .normalize("NFKC")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (description.length > 240 || /[\u0000-\u001f\u007f]/u.test(description)) {
+    throw new DataCreditoPolicyValidationError([
+      "La descripcion de la politica no puede superar 240 caracteres",
+    ]);
+  }
+  return description || null;
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {

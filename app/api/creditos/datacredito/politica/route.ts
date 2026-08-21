@@ -17,7 +17,7 @@ import {
   DATACREDITO_CONSENT_VERSION,
   DataCreditoPolicyConflictError,
   DataCreditoStorageConfigurationError,
-  getCurrentDataCreditoPolicy,
+  getAssignedDataCreditoPolicy,
   isDataCreditoAuditConfigured,
 } from "@/lib/datacredito/storage";
 import { isAdminRole } from "@/lib/roles";
@@ -35,7 +35,7 @@ function isCentralAdmin(user: Awaited<ReturnType<typeof getSessionUser>>) {
 
 function serializePolicyResponse(input: {
   centralAdmin: boolean;
-  policy: Awaited<ReturnType<typeof getCurrentDataCreditoPolicy>>;
+  policy: Awaited<ReturnType<typeof createDataCreditoPolicyVersion>>;
   provider: ReturnType<typeof getDataCreditoPublicConfig>;
 }) {
   const auditConfigured = isDataCreditoAuditConfigured();
@@ -93,7 +93,8 @@ export async function GET(request: Request) {
       );
     }
 
-    const policy = await getCurrentDataCreditoPolicy();
+    const assigned = await getAssignedDataCreditoPolicy(user.aliadoId || null);
+    const policy = assigned.kind === "READY" ? assigned.policy : null;
     return NextResponse.json(
       serializePolicyResponse({ centralAdmin, policy, provider })
     );
@@ -157,8 +158,21 @@ export async function PATCH(request: Request) {
       );
     }
 
+    const assigned = await getAssignedDataCreditoPolicy(user.aliadoId || null);
+    if (assigned.kind !== "READY") {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "POLICY_NOT_ASSIGNED",
+          error: "El aliado central no tiene una politica activa asignada",
+        },
+        { status: 503 }
+      );
+    }
+
     const bands = parseDataCreditoPolicyBands(body.bands);
     const policy = await createDataCreditoPolicyVersion({
+      profileId: assigned.policy.profileId,
       bands,
       createdByUserId: user.id,
       expectedVersion,

@@ -2,7 +2,17 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  FormEvent,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -92,6 +102,45 @@ type AssessmentFallback = {
 
 const CONSENT_ATTESTATION =
   "Confirmo que el titular, antes de esta consulta, autorizó de manera previa, expresa e informada a FINSER PAY S.A.S. para consultar su información crediticia y financiera en DataCrédito Experian con el fin de evaluar esta solicitud de financiación.";
+
+const subscribeToBrowserReady = () => () => undefined;
+const getBrowserReadySnapshot = () => true;
+const getServerReadySnapshot = () => false;
+
+type ResultDialogShellProps = {
+  labelledBy: string;
+  describedBy: string;
+  dialogRef: RefObject<HTMLDivElement | null>;
+  children: ReactNode;
+};
+
+function ResultDialogShell({
+  labelledBy,
+  describedBy,
+  dialogRef,
+  children,
+}: ResultDialogShellProps) {
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="fp-ui-dialog-backdrop overflow-y-auto overscroll-contain"
+      role="presentation"
+    >
+      <div
+        ref={dialogRef}
+        className="w-full max-w-3xl outline-none"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        aria-describedby={describedBy}
+      >
+        {children}
+      </div>
+    </div>,
+    document.body
+  );
+}
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -379,6 +428,12 @@ export default function DatacreditoPrequalificationGate({
   const onAssessmentInvalidatedRef = useRef(onAssessmentInvalidated);
   const approvedHeadingRef = useRef<HTMLHeadingElement>(null);
   const rejectedHeadingRef = useRef<HTMLHeadingElement>(null);
+  const resultDialogRef = useRef<HTMLDivElement>(null);
+  const resultPortalReady = useSyncExternalStore(
+    subscribeToBrowserReady,
+    getBrowserReadySnapshot,
+    getServerReadySnapshot
+  );
 
   if (
     lastInitialIdentity.assessmentId !== initialAssessmentId ||
@@ -406,10 +461,74 @@ export default function DatacreditoPrequalificationGate({
     onAssessmentInvalidatedRef.current = onAssessmentInvalidated;
   }, [onAssessmentInvalidated]);
 
+
   useEffect(() => {
-    if (view === "approved") approvedHeadingRef.current?.focus();
-    if (view === "rejected") rejectedHeadingRef.current?.focus();
-  }, [view]);
+    if (view !== "approved" && view !== "rejected") return;
+
+    const dialog = resultDialogRef.current;
+    const heading =
+      view === "approved"
+        ? approvedHeadingRef.current
+        : rejectedHeadingRef.current;
+    if (!dialog || !heading) return;
+
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    heading.focus();
+
+    const handleDialogKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusableElements = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((element) => !element.hasAttribute("aria-hidden"));
+
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        heading.focus();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      const activeElement = document.activeElement;
+      const activeElementIsFocusable =
+        activeElement instanceof HTMLElement &&
+        focusableElements.includes(activeElement);
+
+      if (
+        event.shiftKey &&
+        (activeElement === firstElement || !activeElementIsFocusable)
+      ) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (
+        !event.shiftKey &&
+        (activeElement === lastElement || !activeElementIsFocusable)
+      ) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleDialogKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleDialogKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [resultPortalReady, view]);
 
   const finishBypass = useCallback(() => {
     if (bypassCalledRef.current) return;
@@ -728,13 +847,16 @@ export default function DatacreditoPrequalificationGate({
   }
 
   if (view === "approved" && approvedResult) {
+    if (!resultPortalReady) return null;
+
     return (
-      <Card
-        className="mx-auto max-w-3xl overflow-hidden"
-        role="status"
-        aria-labelledby="datacredito-approved-title"
+      <ResultDialogShell
+        dialogRef={resultDialogRef}
+        labelledBy="datacredito-approved-title"
+        describedBy="datacredito-approved-description"
       >
-        <div className="relative h-[300px] overflow-hidden bg-[var(--fp-bg)] sm:h-[390px]">
+        <Card className="max-h-[calc(100dvh-2.5rem)] overflow-y-auto overscroll-contain">
+          <div className="relative h-[260px] overflow-hidden bg-[var(--fp-bg)] sm:h-[340px]">
           <Image
             src="/assets/creditos/datacredito-approved-hero.png"
             alt=""
@@ -761,7 +883,10 @@ export default function DatacreditoPrequalificationGate({
           >
             ¡Solicitud aprobada!
           </h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
+          <p
+            id="datacredito-approved-description"
+            className="mx-auto mt-3 max-w-xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base"
+          >
             El cliente puede continuar con la validación de identidad.
           </p>
 
@@ -819,7 +944,8 @@ export default function DatacreditoPrequalificationGate({
             </Link>
           </div>
         </div>
-      </Card>
+        </Card>
+      </ResultDialogShell>
     );
   }
 
@@ -884,13 +1010,16 @@ export default function DatacreditoPrequalificationGate({
   }
 
   if (view === "rejected") {
+    if (!resultPortalReady) return null;
+
     return (
-      <Card
-        className="mx-auto max-w-3xl overflow-hidden border-[var(--fp-danger)]"
-        role="status"
-        aria-labelledby="datacredito-rejected-title"
+      <ResultDialogShell
+        dialogRef={resultDialogRef}
+        labelledBy="datacredito-rejected-title"
+        describedBy="datacredito-rejected-description"
       >
-        <div className="relative h-[300px] overflow-hidden bg-[var(--fp-bg)] sm:h-[390px]">
+        <Card className="max-h-[calc(100dvh-2.5rem)] overflow-y-auto overscroll-contain border-[var(--fp-danger)]">
+          <div className="relative h-[260px] overflow-hidden bg-[var(--fp-bg)] sm:h-[340px]">
           <Image
             src="/assets/creditos/datacredito-rejected-hero.png"
             alt=""
@@ -917,9 +1046,11 @@ export default function DatacreditoPrequalificationGate({
           >
             Solicitud no aprobada
           </h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
-            En este momento la solicitud no puede continuar a validación de
-            identidad. El puntaje y los motivos internos no se muestran.
+          <p
+            id="datacredito-rejected-description"
+            className="mx-auto mt-3 max-w-xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base"
+          >
+            En este momento la solicitud no puede continuar a validación de identidad.
           </p>
 
           <div className="mt-7 flex flex-col gap-3 sm:flex-row-reverse sm:justify-center">
@@ -936,7 +1067,8 @@ export default function DatacreditoPrequalificationGate({
             </Link>
           </div>
         </div>
-      </Card>
+        </Card>
+      </ResultDialogShell>
     );
   }
 

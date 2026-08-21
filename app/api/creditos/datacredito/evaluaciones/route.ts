@@ -31,12 +31,13 @@ import {
   buildDataCreditoIdentityHashes,
   DataCreditoStorageConfigurationError,
   failDataCreditoAssessment,
-  getCurrentDataCreditoPolicy,
+  getAssignedDataCreditoPolicy,
   hashDataCreditoRequestMetadata,
   isDataCreditoAuditConfigured,
   normalizeDataCreditoDocument,
   normalizeDataCreditoSurname,
   reserveDataCreditoAssessment,
+  reuseDataCreditoAssessment,
   serializeDataCreditoAssessment,
   type DataCreditoAssessmentScope,
 } from "@/lib/datacredito/storage";
@@ -188,14 +189,6 @@ export async function POST(request: Request) {
         status: 503,
       });
     }
-    if (!provider.configured) {
-      return technicalResponse({
-        correlationId,
-        code: "DATACREDITO_NOT_CONFIGURED",
-        error: "La evaluacion crediticia aun no esta configurada",
-        status: 503,
-      });
-    }
     if (!isDataCreditoAuditConfigured()) {
       return technicalResponse({
         correlationId,
@@ -204,6 +197,47 @@ export async function POST(request: Request) {
         status: 503,
       });
     }
+
+    const scope: DataCreditoAssessmentScope = {
+      userId: user.id,
+      sellerId: seller?.id || null,
+      sedeId: user.sedeId,
+      aliadoId: user.aliadoId || null,
+    };
+    const hashes = buildDataCreditoIdentityHashes({ documentNumber, firstSurname });
+    const metadata = extractRequestMetadata(request);
+    const consentAt = new Date();
+
+    const assignedPolicy = await getAssignedDataCreditoPolicy(scope.aliadoId);
+    if (assignedPolicy.kind !== "READY") {
+      const policyError =
+        assignedPolicy.kind === "POLICY_INACTIVE"
+          ? {
+              code: "POLICY_INACTIVE",
+              error: "La politica asignada al aliado no esta activa",
+            }
+          : assignedPolicy.kind === "POLICY_NO_REVISION"
+            ? {
+                code: "POLICY_NO_REVISION",
+                error: "La politica asignada al aliado no tiene una revision vigente",
+              }
+            : assignedPolicy.kind === "ALLY_NOT_FOUND"
+              ? {
+                  code: "ALLY_POLICY_NOT_CONFIGURED",
+                  error: "El usuario no tiene un aliado valido para evaluar",
+                }
+              : {
+                  code: "POLICY_NOT_ASSIGNED",
+                  error: "El aliado no tiene una politica de evaluacion asignada",
+                };
+      return technicalResponse({
+        correlationId,
+        ...policyError,
+        status: 503,
+      });
+    }
+    const policy = assignedPolicy.policy;
+
     if (
       process.env.NODE_ENV === "production" &&
       !provider.productionReady &&
@@ -216,27 +250,45 @@ export async function POST(request: Request) {
         status: 503,
       });
     }
-    assertDataCreditoSecureRecordConfigured();
 
-    const policy = await getCurrentDataCreditoPolicy();
-    if (!policy) {
+    // A terminal inquiry for the same CC/tenant/environment is valid for
+    // exactly 15 days. Reuse is attempted before credential readiness and rate
+    // limiting so an outage never causes a duplicate paid query.
+    const cached = await reuseDataCreditoAssessment({
+      platform,
+      ...scope,
+      ...hashes,
+      correlationId,
+      consentAt,
+      ...metadata,
+      providerEnvironment: provider.environment,
+    });
+    if (cached?.kind === "REUSED") {
+      return NextResponse.json({
+        ok: true,
+        reused: true,
+        ...serializeDataCreditoAssessment(cached.assessment),
+      });
+    }
+    if (cached?.kind === "IN_PROGRESS") {
       return technicalResponse({
         correlationId,
-        code: "POLICY_NOT_CONFIGURED",
-        error: "La politica de evaluacion aun no esta configurada",
-        status: 503,
+        code: "EVALUATION_IN_PROGRESS",
+        error: "Ya existe una evaluacion en proceso para esta cedula",
+        status: 409,
       });
     }
 
-    const scope: DataCreditoAssessmentScope = {
-      userId: user.id,
-      sellerId: seller?.id || null,
-      sedeId: user.sedeId,
-      aliadoId: user.aliadoId || null,
-    };
-    const hashes = buildDataCreditoIdentityHashes({ documentNumber, firstSurname });
+    if (!provider.configured) {
+      return technicalResponse({
+        correlationId,
+        code: "DATACREDITO_NOT_CONFIGURED",
+        error: "La evaluacion crediticia aun no esta configurada",
+        status: 503,
+      });
+    }
+    assertDataCreditoSecureRecordConfigured();
 
-    const metadata = extractRequestMetadata(request);
     let reservation;
     try {
       reservation = await reserveDataCreditoAssessment({
@@ -244,9 +296,10 @@ export async function POST(request: Request) {
         ...scope,
         ...hashes,
         correlationId,
-        consentAt: new Date(),
+        consentAt,
         ...metadata,
         policyVersion: policy.version,
+        policyRevisionId: policy.revisionId,
         providerEnvironment: provider.environment,
       });
     } catch (error) {

@@ -93,8 +93,8 @@ Todas son variables exclusivas del servidor. Ninguna debe usar el prefijo
 | `DATACREDITO_AUDIT_HMAC_SECRET` | Llave aleatoria separada para seudonimizar datos de auditoria. |
 | `DATACREDITO_RECORD_ENCRYPTION_KEYS_JSON` | Keyring JSON servidor, con uno o más identificadores y claves AES de 32 bytes codificadas en base64. |
 | `DATACREDITO_RECORD_ENCRYPTION_ACTIVE_KEY_ID` | Identificador de la clave del keyring usada para cifrar expedientes nuevos. |
-| `DATACREDITO_ASSESSMENT_TTL_MINUTES` | Vigencia de una evaluacion no consumida; predeterminado 120 minutos. |
-| `DATACREDITO_RETENTION_DAYS` | Retención de la evaluación, su expediente cifrado y las auditorías asociadas. |
+| `DATACREDITO_ASSESSMENT_TTL_MINUTES` | Variable histórica ignorada por el runtime nuevo. La vigencia contractual es fija: 21.600 minutos (15 días), sin ventana deslizante. |
+| `DATACREDITO_RETENTION_DAYS` | Retención de la evaluación, su expediente cifrado y las auditorías asociadas. Mínimo 15 días; recomendado 90 días. |
 | `DATACREDITO_RETENTION_TOKEN` | Token aleatorio de al menos 32 bytes para el cron de eliminacion por retencion. Puede usarse `CRON_SECRET` como respaldo. |
 | `DATACREDITO_RATE_LIMIT_MAX` | Maximo de intentos en 15 minutos por usuario o cedula seudonimizada dentro de la sede. |
 
@@ -122,9 +122,23 @@ cifrados con ellas. Retirar una clave antes de que termine la retención hace
 irrecuperables esos expedientes. No se deben imprimir, copiar al repositorio ni
 reutilizar estas claves como HMAC, sesión o credenciales de Experian.
 
-## Politica dinamica
+## Perfiles de política por aliado
 
-Cada version contiene bandas separadas para `ANDROID` e `IPHONE`:
+El administrador central puede crear varios perfiles nombrados y asignar
+exactamente uno a cada aliado. Cada guardado crea una revisión inmutable dentro
+del perfil; reasignar un aliado solo afecta consultas futuras. La evaluación
+guarda tanto la versión como el identificador de revisión que emitió la oferta,
+por lo que un crédito ya evaluado no cambia si después se publica o asigna otra
+política.
+
+El perfil fijo `Política general` recibe, de forma idempotente, todas las
+versiones de la tabla global legado y queda asignado a aliados existentes o
+nuevos durante la migración. La tabla legado y un trigger de sincronización se
+conservan durante el despliegue blue-green. Este perfil técnico no inventa una
+oferta: sin una revisión activa y válida, la aplicación responde `503` antes de
+contactar a Experian.
+
+Cada revisión contiene bandas separadas para `ANDROID` e `IPHONE`:
 
 ```json
 {
@@ -143,9 +157,25 @@ La administracion exige cobertura completa de 0 a 950 para cada plataforma,
 sin huecos ni solapes, y exactamente una regla `Sin informacion` adicional por
 plataforma. Esa regla se serializa internamente como el rango `-1..-1`; `-1` no
 es un puntaje de Experian, nunca se acepta desde el campo `score` del proveedor
-y no se muestra al asesor. Guardar genera una version nueva. No existe una
-politica predeterminada: los umbrales, la decision, la inicial, la fianza y el
-credito maximo son una definicion comercial de FINSER PAY.
+y no se muestra al asesor. Guardar genera una revisión nueva. Los umbrales, la decisión, la inicial,
+la fianza y el crédito máximo siguen siendo una definición comercial explícita
+de FINSER PAY; el perfil general solo conserva y asigna esa configuración.
+
+### API administrativa
+
+`GET /api/creditos/datacredito/politicas` devuelve el catálogo completo de
+perfiles, su última revisión, `revisionCreatedAt`, aliados y estado público del
+proveedor. `POST` crea un perfil con su revisión 1 y devuelve
+`createdPolicyId`. `PATCH` admite:
+
+- `SAVE_REVISION` con `policyId`, `expectedVersion` y `bands`;
+- `ASSIGN_ALLY` con `allyId`, `policyId` y `expectedPolicyId`.
+
+Ambas mutaciones usan concurrencia optimista. Los conflictos devuelven `409`
+con `POLICY_VERSION_CONFLICT` o `POLICY_ASSIGNMENT_CONFLICT`. Crear nombres
+duplicados devuelve `POLICY_NAME_CONFLICT`. El catálogo y todas sus mutaciones
+son exclusivos del administrador central; cada reasignación conserva actor,
+perfil anterior, perfil nuevo y fecha en una auditoría inmutable.
 
 `maxFinancedAmount` es un entero en pesos colombianos. Cuando el valor del
 equipo supera el tope efectivo, el excedente se suma obligatoriamente a la
@@ -154,6 +184,23 @@ salvaguarda vigente de catalogo, plataforma o iPhone. La formula aplicada tanto
 en pantalla como en el servidor es:
 
 `inicial minima = porcentaje * min(valor equipo, tope efectivo) + max(0, valor equipo - tope efectivo)`.
+
+## Reutilización de consultas durante 15 días
+
+Una respuesta terminal `APROBADO` o `RECHAZADO` se reutiliza durante 15 días
+para la misma cédula, ambiente de proveedor y aliado, aunque cambien apellido,
+asesor, sede o plataforma. El apellido y el consentimiento se vuelven a exigir.
+Si identidad y scope coinciden exactamente se devuelve el mismo assessment; si
+cambia alguno, se crea una fila operativa actual enlazada al inquiry raíz, sin
+duplicar el expediente cifrado ni llamar otra vez a Experian.
+
+Si cambia Android/iPhone, el servidor toma el puntaje del inquiry raíz y
+recalcula la decisión/oferta con la plataforma solicitada usando la misma
+revisión histórica; conserva el vencimiento original, de modo que reutilizar no
+extiende la ventana. Un cambio de aliado o ambiente no comparte el resultado.
+Un resultado consumido no puede reutilizarse ni reclamarse de nuevo. Claim y
+consumo bloquean y marcan atómicamente todo el grupo raíz/clones para impedir un
+segundo crédito sobre la misma consulta.
 
 ## Protección, expediente y auditoría
 
@@ -173,8 +220,10 @@ en pantalla como en el servidor es:
 - El asesor no recibe el puntaje, la respuesta completa ni los umbrales.
 - Los errores públicos incluyen un identificador de correlación, no detalles de
   credenciales, claves de cifrado ni del proveedor.
-- Una evaluación se vincula a usuario, asesor, aliado y sede; no puede usarse en
-  otro contexto ni con otro documento, apellido o plataforma.
+- Cada evaluación operativa se vincula a usuario, asesor, aliado, sede,
+  apellido y plataforma actuales. La reutilización nunca entrega directamente
+  una fila de otro contexto: crea un clon auditable y reclamable para el scope
+  actual, enlazado al inquiry raíz.
 - Las llamadas tienen timeout y límite de bytes. Solo un `401` permite renovar
   el token y repetir una vez; no se reintentan consultas ambiguas.
 - En producción la aplicación no crea ni altera tablas o índices. Solo verifica
