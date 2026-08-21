@@ -35,6 +35,10 @@ const PUBLIC_API_PREFIXES = [
   "/api/creditos/captura-session/",
 ];
 
+const BEARER_AUTH_API_ROUTES = new Set([
+  "/api/creditos/datacredito/retencion",
+]);
+
 const PROTECTED_API_PREFIXES = [
   "/api/alertas",
   "/api/arqueo",
@@ -98,6 +102,14 @@ function unauthorizedApi() {
   return NextResponse.json({ error: "No autenticado" }, { status: 401 });
 }
 
+function usesDedicatedBearerAuth(request: NextRequest, pathname: string) {
+  return (
+    request.method === "POST" &&
+    BEARER_AUTH_API_ROUTES.has(pathname) &&
+    /^Bearer\s+.+$/i.test(request.headers.get("authorization") || "")
+  );
+}
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
@@ -106,6 +118,10 @@ export function proxy(request: NextRequest) {
   );
 
   if (pathname.startsWith("/api/")) {
+    if (usesDedicatedBearerAuth(request, pathname)) {
+      return NextResponse.next();
+    }
+
     if (pathMatches(pathname, PUBLIC_API_PREFIXES)) {
       return NextResponse.next();
     }

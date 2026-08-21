@@ -17,6 +17,8 @@ const { shouldLoadDataCreditoPolicy } = await jiti.import(
 const { matchesDataCreditoSchemaIndex } = await jiti.import(
   "../lib/datacredito/schema-index.ts"
 );
+const { proxy } = await jiti.import("../proxy.ts");
+const { NextRequest } = await import("next/server.js");
 
 const [
   storage,
@@ -306,6 +308,40 @@ test("la retencion tiene endpoint protegido y tarea HTTPS con timeout", () => {
   assert.equal(cronConfig.deploy.healthcheckPath, null);
   assert.equal(cronConfig.deploy.cronSchedule, "30 6 * * *");
   assert.equal(cronConfig.deploy.restartPolicyType, "ON_FAILURE");
+});
+
+test("el proxy delega solo el POST exacto de retencion con Bearer a la ruta", () => {
+  const retentionUrl =
+    "https://finserpay.com/api/creditos/datacredito/retencion";
+  const delegated = proxy(
+    new NextRequest(retentionUrl, {
+      method: "POST",
+      headers: { authorization: "Bearer token-validado-por-la-ruta" },
+    })
+  );
+
+  assert.equal(delegated.status, 200);
+  assert.equal(delegated.headers.get("x-middleware-next"), "1");
+
+  for (const request of [
+    new NextRequest(retentionUrl, { method: "POST" }),
+    new NextRequest(retentionUrl, {
+      method: "GET",
+      headers: { authorization: "Bearer token-validado-por-la-ruta" },
+    }),
+    new NextRequest(`${retentionUrl}/otra-ruta`, {
+      method: "POST",
+      headers: { authorization: "Bearer token-validado-por-la-ruta" },
+    }),
+    new NextRequest("https://finserpay.com/api/creditos", {
+      method: "POST",
+      headers: { authorization: "Bearer token-validado-por-la-ruta" },
+    }),
+  ]) {
+    const blocked = proxy(request);
+    assert.equal(blocked.status, 401);
+    assert.equal(blocked.headers.get("x-middleware-next"), null);
+  }
 });
 
 test("el credito exige, consume y recupera una precalificacion sin bypass", () => {
