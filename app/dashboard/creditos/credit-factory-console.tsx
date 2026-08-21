@@ -9396,6 +9396,7 @@ export default function CreditFactoryConsole({
                       onAssessmentInvalidated={
                         handleDataCreditoAssessmentInvalidated
                       }
+                      showSurety={canSeeInternalPricing}
                     />
                   )}
                 </div>
@@ -9418,7 +9419,7 @@ export default function CreditFactoryConsole({
                         <div>
                           <p className="text-sm font-black">Oferta aprobada</p>
                           <p className="mt-1 text-sm leading-6 text-slate-600">
-                            Continúa con la validación de identidad. El puntaje no se muestra.
+                            Continúa con la validación de identidad.
                           </p>
                         </div>
                       </div>
@@ -9426,9 +9427,11 @@ export default function CreditFactoryConsole({
                         <span className="rounded-full border border-[#c9df91] bg-white px-3 py-2">
                           Inicial {formatPercent(dataCreditoApproval.offer.initialPaymentPercentage)}
                         </span>
-                        <span className="rounded-full border border-[#c9df91] bg-white px-3 py-2">
-                          Fianza {formatPercent(dataCreditoApproval.offer.suretyPercentage)}
-                        </span>
+                        {canSeeInternalPricing ? (
+                          <span className="rounded-full border border-[#c9df91] bg-white px-3 py-2">
+                            Fianza {formatPercent(dataCreditoApproval.offer.suretyPercentage)}
+                          </span>
+                        ) : null}
                         <span className="rounded-full border border-[#c9df91] bg-white px-3 py-2">
                           Crédito máximo {currency(dataCreditoApproval.offer.maxFinancedAmount)}
                         </span>
@@ -10412,10 +10415,14 @@ export default function CreditFactoryConsole({
                       <span>
                         Inicial mínima {formatPercent(initialPaymentPercentage)}
                       </span>
-                      <span aria-hidden="true">·</span>
-                      <span>
-                        Fianza {formatPercent(financialPlan.fianzaPorcentaje)}
-                      </span>
+                      {canSeeInternalPricing ? (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            Fianza {formatPercent(financialPlan.fianzaPorcentaje)}
+                          </span>
+                        </>
+                      ) : null}
                       <span aria-hidden="true">·</span>
                       <span>Crédito máximo {currency(dataCreditoMaxFinancedAmount)}</span>
                     </div>

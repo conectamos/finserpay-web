@@ -46,6 +46,7 @@ export type DatacreditoPrequalificationGateProps = {
   onBypass: () => void;
   onApproved: (result: DataCreditoApprovedResult) => void;
   onAssessmentInvalidated?: () => void;
+  showSurety?: boolean;
 };
 
 type GateView =
@@ -344,6 +345,7 @@ export default function DatacreditoPrequalificationGate({
   onBypass,
   onApproved,
   onAssessmentInvalidated,
+  showSurety = false,
 }: DatacreditoPrequalificationGateProps) {
   const normalizedInitialDocument = String(initialDocumentNumber || "")
     .replace(/\D/g, "")
@@ -760,11 +762,15 @@ export default function DatacreditoPrequalificationGate({
             ¡Solicitud aprobada!
           </h2>
           <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
-            El cliente puede continuar con la validación de identidad. El
-            puntaje consultado permanece oculto.
+            El cliente puede continuar con la validación de identidad.
           </p>
 
-          <div className="mt-7 grid gap-3 text-left sm:grid-cols-3">
+          <div
+            className={[
+              "mt-7 grid gap-3 text-left",
+              showSurety ? "sm:grid-cols-3" : "sm:grid-cols-2",
+            ].join(" ")}
+          >
             <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-lime-strong)] bg-[var(--fp-lime-soft)] p-4">
               <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
                 Inicial
@@ -775,14 +781,16 @@ export default function DatacreditoPrequalificationGate({
                 )}
               </p>
             </div>
-            <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
-              <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
-                Fianza
-              </p>
-              <p className="mt-2 text-2xl font-black text-[var(--fp-graphite)]">
-                {formatPercentage(approvedResult.offer.suretyPercentage)}
-              </p>
-            </div>
+            {showSurety ? (
+              <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
+                <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
+                  Fianza
+                </p>
+                <p className="mt-2 text-2xl font-black text-[var(--fp-graphite)]">
+                  {formatPercentage(approvedResult.offer.suretyPercentage)}
+                </p>
+              </div>
+            ) : null}
             <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
               <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
                 Crédito máximo

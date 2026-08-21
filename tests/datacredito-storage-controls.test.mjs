@@ -518,3 +518,26 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
     /maxFinancedAmount: dataCreditoOffer\?\.maxFinancedAmount/
   );
 });
+
+test("oculta la fianza DataCredito al asesor y la conserva para el admin central", () => {
+  assert.match(prequalificationGate, /showSurety\?: boolean;/);
+  assert.match(prequalificationGate, /showSurety = false,/);
+  assert.match(factoryConsole, /showSurety=\{canSeeInternalPricing\}/);
+  assert.doesNotMatch(
+    prequalificationGate,
+    /puntaje consultado permanece oculto/
+  );
+  assert.doesNotMatch(factoryConsole, /El puntaje no se muestra/);
+  assert.match(
+    prequalificationGate,
+    /\{showSurety \? \(\s*<div[\s\S]*?Fianza[\s\S]*?offer\.suretyPercentage/
+  );
+  assert.match(
+    factoryConsole,
+    /\{canSeeInternalPricing \? \(\s*<span[\s\S]*?Fianza \{formatPercent\(dataCreditoApproval\.offer\.suretyPercentage\)\}/
+  );
+  assert.match(
+    factoryConsole,
+    /\{canSeeInternalPricing \? \(\s*<>[\s\S]*?Fianza \{formatPercent\(financialPlan\.fianzaPorcentaje\)\}/
+  );
+});
