@@ -11,6 +11,178 @@ CREATE TABLE IF NOT EXISTS "DataCreditoPolicy" (
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- The legacy global table remains in place for blue-green compatibility.
+-- New policy profiles use immutable, profile-scoped revisions.
+CREATE TABLE IF NOT EXISTS "DataCreditoPolicyProfile" (
+  "id" UUID PRIMARY KEY,
+  "name" VARCHAR(80) NOT NULL,
+  "description" VARCHAR(240),
+  "active" BOOLEAN NOT NULL DEFAULT true,
+  "createdByUserId" INTEGER,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO "DataCreditoPolicyProfile" (
+  "id", "name", "description", "active", "createdByUserId"
+)
+VALUES (
+  '00000000-0000-4000-8000-000000000001'::uuid,
+  'Política general',
+  'Política migrada desde la configuración global de DataCrédito.',
+  true,
+  NULL
+)
+ON CONFLICT ("id") DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS "DataCreditoPolicyRevision" (
+  "id" UUID PRIMARY KEY,
+  "profileId" UUID NOT NULL,
+  "version" INTEGER NOT NULL,
+  "policy" JSONB NOT NULL,
+  "createdByUserId" INTEGER NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "DataCreditoPolicyRevision_profile_fkey"
+    FOREIGN KEY ("profileId")
+    REFERENCES "DataCreditoPolicyProfile" ("id")
+    ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "DataCreditoPolicyProfile_name_ci_key"
+  ON "DataCreditoPolicyProfile" (LOWER("name"));
+
+CREATE INDEX IF NOT EXISTS "DataCreditoPolicyProfile_active_idx"
+  ON "DataCreditoPolicyProfile" ("active", "name");
+
+CREATE UNIQUE INDEX IF NOT EXISTS "DataCreditoPolicyRevision_profile_version_key"
+  ON "DataCreditoPolicyRevision" ("profileId", "version");
+
+CREATE INDEX IF NOT EXISTS "DataCreditoPolicyRevision_profile_created_idx"
+  ON "DataCreditoPolicyRevision" ("profileId", "createdAt" DESC);
+
+-- Deterministic UUIDs make the legacy backfill idempotent without extensions.
+INSERT INTO "DataCreditoPolicyRevision" (
+  "id", "profileId", "version", "policy", "createdByUserId", "createdAt"
+)
+SELECT
+  (
+    SUBSTRING(MD5('finserpay-datacredito-general:' || legacy."version"::text), 1, 8)
+    || '-' || SUBSTRING(MD5('finserpay-datacredito-general:' || legacy."version"::text), 9, 4)
+    || '-5' || SUBSTRING(MD5('finserpay-datacredito-general:' || legacy."version"::text), 13, 3)
+    || '-a' || SUBSTRING(MD5('finserpay-datacredito-general:' || legacy."version"::text), 16, 3)
+    || '-' || SUBSTRING(MD5('finserpay-datacredito-general:' || legacy."version"::text), 19, 12)
+  )::uuid,
+  '00000000-0000-4000-8000-000000000001'::uuid,
+  legacy."version",
+  legacy."policy",
+  legacy."createdByUserId",
+  legacy."createdAt"
+FROM "DataCreditoPolicy" legacy
+ON CONFLICT ("profileId", "version") DO NOTHING;
+
+-- A fresh database has no legacy revisions. Seed one deterministic,
+-- fail-closed revision so the required general profile is always usable
+-- by the catalog but can never approve or finance a sale by accident.
+WITH seeded AS (
+  INSERT INTO "DataCreditoPolicyRevision" (
+    "id", "profileId", "version", "policy", "createdByUserId"
+  )
+  SELECT
+    '00000000-0000-5000-a000-000000000001'::uuid,
+    '00000000-0000-4000-8000-000000000001'::uuid,
+    1,
+    $policy$
+    {
+      "bands": [
+        {"id":"bootstrap_android_noinfo","platform":"ANDROID","scoreMin":-1,"scoreMax":-1,"decision":"RECHAZADO","initialPaymentPercentage":0,"suretyPercentage":0,"maxFinancedAmount":1},
+        {"id":"bootstrap_android_all","platform":"ANDROID","scoreMin":0,"scoreMax":950,"decision":"RECHAZADO","initialPaymentPercentage":0,"suretyPercentage":0,"maxFinancedAmount":1},
+        {"id":"bootstrap_iphone_noinfo","platform":"IPHONE","scoreMin":-1,"scoreMax":-1,"decision":"RECHAZADO","initialPaymentPercentage":0,"suretyPercentage":0,"maxFinancedAmount":1},
+        {"id":"bootstrap_iphone_all","platform":"IPHONE","scoreMin":0,"scoreMax":950,"decision":"RECHAZADO","initialPaymentPercentage":0,"suretyPercentage":0,"maxFinancedAmount":1}
+      ]
+    }
+    $policy$::jsonb,
+    0
+  WHERE NOT EXISTS (SELECT 1 FROM "DataCreditoPolicyRevision")
+  ON CONFLICT ("profileId", "version") DO NOTHING
+  RETURNING 1
+)
+UPDATE "DataCreditoPolicyProfile"
+SET "description" = 'Bootstrap fail-closed: rechaza toda solicitud hasta publicar una política comercial.',
+    "updatedAt" = CURRENT_TIMESTAMP
+WHERE "id" = '00000000-0000-4000-8000-000000000001'::uuid
+  AND EXISTS (SELECT 1 FROM seeded);
+
+CREATE OR REPLACE FUNCTION "finser_sync_legacy_datacredito_policy"()
+RETURNS TRIGGER AS $$
+DECLARE
+  digest TEXT;
+BEGIN
+  digest := MD5('finserpay-datacredito-general:' || NEW."version"::text);
+  INSERT INTO "DataCreditoPolicyRevision" (
+    "id", "profileId", "version", "policy", "createdByUserId", "createdAt"
+  ) VALUES (
+    (
+      SUBSTRING(digest, 1, 8) || '-' || SUBSTRING(digest, 9, 4)
+      || '-5' || SUBSTRING(digest, 13, 3)
+      || '-a' || SUBSTRING(digest, 16, 3)
+      || '-' || SUBSTRING(digest, 19, 12)
+    )::uuid,
+    '00000000-0000-4000-8000-000000000001'::uuid,
+    NEW."version", NEW."policy", NEW."createdByUserId", NEW."createdAt"
+  )
+  ON CONFLICT ("profileId", "version") DO NOTHING;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "DataCreditoPolicy_sync_profile_revision" ON "DataCreditoPolicy";
+CREATE TRIGGER "DataCreditoPolicy_sync_profile_revision"
+AFTER INSERT ON "DataCreditoPolicy"
+FOR EACH ROW EXECUTE FUNCTION "finser_sync_legacy_datacredito_policy"();
+
+CREATE OR REPLACE FUNCTION "finser_prevent_datacredito_revision_mutation"()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'Las revisiones de política DataCrédito son inmutables.';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "DataCreditoPolicyRevision_immutable" ON "DataCreditoPolicyRevision";
+CREATE TRIGGER "DataCreditoPolicyRevision_immutable"
+BEFORE UPDATE OR DELETE ON "DataCreditoPolicyRevision"
+FOR EACH ROW EXECUTE FUNCTION "finser_prevent_datacredito_revision_mutation"();
+
+ALTER TABLE "Aliado"
+  ADD COLUMN IF NOT EXISTS "dataCreditoPolicyId" UUID;
+
+UPDATE "Aliado"
+SET "dataCreditoPolicyId" = '00000000-0000-4000-8000-000000000001'::uuid
+WHERE "dataCreditoPolicyId" IS NULL;
+
+ALTER TABLE "Aliado"
+  ALTER COLUMN "dataCreditoPolicyId"
+    SET DEFAULT '00000000-0000-4000-8000-000000000001'::uuid,
+  ALTER COLUMN "dataCreditoPolicyId" SET NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'Aliado_dataCreditoPolicy_fkey'
+      AND conrelid = '"Aliado"'::regclass
+  ) THEN
+    ALTER TABLE "Aliado"
+      ADD CONSTRAINT "Aliado_dataCreditoPolicy_fkey"
+      FOREIGN KEY ("dataCreditoPolicyId")
+      REFERENCES "DataCreditoPolicyProfile" ("id")
+      ON DELETE RESTRICT;
+  END IF;
+END
+$$;
+
+CREATE INDEX IF NOT EXISTS "Aliado_dataCreditoPolicyId_idx"
+  ON "Aliado" ("dataCreditoPolicyId");
+
 CREATE TABLE IF NOT EXISTS "DataCreditoAssessment" (
   "id" UUID PRIMARY KEY,
   "documentHash" CHAR(64) NOT NULL,
@@ -23,6 +195,8 @@ CREATE TABLE IF NOT EXISTS "DataCreditoAssessment" (
   "decision" VARCHAR(16),
   "offer" JSONB,
   "policyVersion" INTEGER NOT NULL,
+  "policyRevisionId" UUID NOT NULL,
+  "reusedFromAssessmentId" UUID,
   "consentVersion" VARCHAR(16) NOT NULL,
   "consentHash" CHAR(64) NOT NULL,
   "consentAt" TIMESTAMP(3) NOT NULL,
@@ -59,6 +233,8 @@ ALTER TABLE "DataCreditoAssessment"
   ADD COLUMN IF NOT EXISTS "decision" VARCHAR(16),
   ADD COLUMN IF NOT EXISTS "offer" JSONB,
   ADD COLUMN IF NOT EXISTS "policyVersion" INTEGER,
+  ADD COLUMN IF NOT EXISTS "policyRevisionId" UUID,
+  ADD COLUMN IF NOT EXISTS "reusedFromAssessmentId" UUID,
   ADD COLUMN IF NOT EXISTS "consentVersion" VARCHAR(16),
   ADD COLUMN IF NOT EXISTS "consentHash" CHAR(64),
   ADD COLUMN IF NOT EXISTS "consentAt" TIMESTAMP(3),
@@ -99,6 +275,20 @@ WHERE
   OR "createdAt" IS NULL
   OR "updatedAt" IS NULL;
 
+-- Existing terminal outcomes receive the new 15-day default from their
+-- original creation time. Re-running this never slides the expiry window.
+UPDATE "DataCreditoAssessment"
+SET "expiresAt" = LEAST("retainedUntil", "createdAt" + INTERVAL '15 days')
+WHERE "status" IN ('APROBADO', 'RECHAZADO')
+  AND "consumedAt" IS NULL;
+
+UPDATE "DataCreditoAssessment" assessment
+SET "policyRevisionId" = revision."id"
+FROM "DataCreditoPolicyRevision" revision
+WHERE assessment."policyRevisionId" IS NULL
+  AND revision."profileId" = '00000000-0000-4000-8000-000000000001'::uuid
+  AND revision."version" = assessment."policyVersion";
+
 -- Fail the preflight instead of accepting a partially upgraded audit table.
 -- Existing incomplete rows must be remediated explicitly before activation.
 ALTER TABLE "DataCreditoAssessment"
@@ -110,6 +300,7 @@ ALTER TABLE "DataCreditoAssessment"
   ALTER COLUMN "providerEnvironment" SET NOT NULL,
   ALTER COLUMN "status" SET NOT NULL,
   ALTER COLUMN "policyVersion" SET NOT NULL,
+  ALTER COLUMN "policyRevisionId" SET NOT NULL,
   ALTER COLUMN "consentVersion" SET NOT NULL,
   ALTER COLUMN "consentHash" SET NOT NULL,
   ALTER COLUMN "consentAt" SET NOT NULL,
@@ -120,6 +311,82 @@ ALTER TABLE "DataCreditoAssessment"
   ALTER COLUMN "retainedUntil" SET NOT NULL,
   ALTER COLUMN "createdAt" SET NOT NULL,
   ALTER COLUMN "updatedAt" SET NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'DataCreditoAssessment_policyRevision_fkey'
+      AND conrelid = '"DataCreditoAssessment"'::regclass
+  ) THEN
+    ALTER TABLE "DataCreditoAssessment"
+      ADD CONSTRAINT "DataCreditoAssessment_policyRevision_fkey"
+      FOREIGN KEY ("policyRevisionId")
+      REFERENCES "DataCreditoPolicyRevision" ("id")
+      ON DELETE RESTRICT;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'DataCreditoAssessment_reusedFrom_fkey'
+      AND conrelid = '"DataCreditoAssessment"'::regclass
+  ) THEN
+    ALTER TABLE "DataCreditoAssessment"
+      ADD CONSTRAINT "DataCreditoAssessment_reusedFrom_fkey"
+      FOREIGN KEY ("reusedFromAssessmentId")
+      REFERENCES "DataCreditoAssessment" ("id")
+      ON DELETE CASCADE;
+  END IF;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION "finser_resolve_legacy_assessment_revision"()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW."policyRevisionId" IS NULL THEN
+    SELECT revision."id"
+    INTO NEW."policyRevisionId"
+    FROM "DataCreditoPolicyRevision" revision
+    WHERE revision."profileId" = '00000000-0000-4000-8000-000000000001'::uuid
+      AND revision."version" = NEW."policyVersion"
+    LIMIT 1;
+  END IF;
+  IF NEW."policyRevisionId" IS NULL THEN
+    RAISE EXCEPTION 'No existe revisión para policyVersion %', NEW."policyVersion";
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "DataCreditoAssessment_resolve_legacy_revision"
+  ON "DataCreditoAssessment";
+CREATE TRIGGER "DataCreditoAssessment_resolve_legacy_revision"
+BEFORE INSERT ON "DataCreditoAssessment"
+FOR EACH ROW EXECUTE FUNCTION "finser_resolve_legacy_assessment_revision"();
+
+-- During a blue-green rollout an old runtime can still reserve with its
+-- historical short TTL. Normalize the root exactly when it becomes terminal;
+-- clones keep the root expiry so reuse never creates a sliding window.
+CREATE OR REPLACE FUNCTION "finser_set_datacredito_terminal_expiry"()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD."status" = 'PENDING'
+    AND NEW."status" IN ('APROBADO', 'RECHAZADO')
+    AND NEW."reusedFromAssessmentId" IS NULL
+  THEN
+    NEW."expiresAt" := LEAST(
+      NEW."retainedUntil",
+      NEW."createdAt" + INTERVAL '15 days'
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "DataCreditoAssessment_terminal_expiry"
+  ON "DataCreditoAssessment";
+CREATE TRIGGER "DataCreditoAssessment_terminal_expiry"
+BEFORE UPDATE OF "status" ON "DataCreditoAssessment"
+FOR EACH ROW EXECUTE FUNCTION "finser_set_datacredito_terminal_expiry"();
 
 CREATE TABLE IF NOT EXISTS "DataCreditoAssessmentSecurePayload" (
   "assessmentId" UUID PRIMARY KEY,
@@ -175,32 +442,59 @@ CREATE TABLE IF NOT EXISTS "DataCreditoAdminAccessAudit" (
     CHECK ("outcome" ~ '^[A-Z][A-Z0-9_]{0,31}$')
 );
 
+CREATE TABLE IF NOT EXISTS "DataCreditoPolicyAssignmentAudit" (
+  "id" UUID PRIMARY KEY,
+  "allyId" INTEGER NOT NULL,
+  "previousPolicyId" UUID NOT NULL,
+  "policyId" UUID NOT NULL,
+  "actorUserId" INTEGER NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "DataCreditoPolicyAssignmentAudit_ally_fkey"
+    FOREIGN KEY ("allyId") REFERENCES "Aliado" ("id") ON DELETE RESTRICT,
+  CONSTRAINT "DataCreditoPolicyAssignmentAudit_previous_fkey"
+    FOREIGN KEY ("previousPolicyId")
+    REFERENCES "DataCreditoPolicyProfile" ("id") ON DELETE RESTRICT,
+  CONSTRAINT "DataCreditoPolicyAssignmentAudit_policy_fkey"
+    FOREIGN KEY ("policyId")
+    REFERENCES "DataCreditoPolicyProfile" ("id") ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS "DataCreditoPolicyAssignmentAudit_ally_created_idx"
+  ON "DataCreditoPolicyAssignmentAudit" ("allyId", "createdAt" DESC);
+
+CREATE INDEX IF NOT EXISTS "DataCreditoPolicyAssignmentAudit_policy_created_idx"
+  ON "DataCreditoPolicyAssignmentAudit" ("policyId", "createdAt" DESC);
+
 CREATE UNIQUE INDEX IF NOT EXISTS "DataCreditoAssessment_correlation_key"
   ON "DataCreditoAssessment" ("correlationId");
 
-CREATE UNIQUE INDEX IF NOT EXISTS "DataCreditoAssessment_pending_key"
+DROP INDEX IF EXISTS "DataCreditoAssessment_pending_key";
+CREATE UNIQUE INDEX "DataCreditoAssessment_pending_key"
   ON "DataCreditoAssessment" (
-    "documentHash", "surnameHash", "platform", "policyVersion", "userId",
+    "documentHash", "surnameHash", "platform", "policyRevisionId", "userId",
     COALESCE("sellerId", 0), "sedeId", COALESCE("aliadoId", 0)
   )
   WHERE "status" = 'PENDING';
 
-CREATE UNIQUE INDEX IF NOT EXISTS "DataCreditoAssessment_pending_document_key"
+DROP INDEX IF EXISTS "DataCreditoAssessment_pending_document_key";
+CREATE UNIQUE INDEX "DataCreditoAssessment_pending_document_key"
   ON "DataCreditoAssessment" (
-    "documentHash", "platform", "sedeId", COALESCE("aliadoId", 0)
+    "documentHash", "providerEnvironment", COALESCE("aliadoId", 0)
   )
   WHERE "status" = 'PENDING';
 
-CREATE INDEX IF NOT EXISTS "DataCreditoAssessment_reuse_idx"
+DROP INDEX IF EXISTS "DataCreditoAssessment_reuse_idx";
+CREATE INDEX "DataCreditoAssessment_reuse_idx"
   ON "DataCreditoAssessment" (
-    "documentHash", "surnameHash", "platform", "policyVersion", "sedeId",
-    "expiresAt" DESC
+    "documentHash", COALESCE("aliadoId", 0),
+    "expiresAt" DESC, "createdAt" DESC
   );
 
-CREATE INDEX IF NOT EXISTS "DataCreditoAssessment_reuse_environment_idx"
+DROP INDEX IF EXISTS "DataCreditoAssessment_reuse_environment_idx";
+CREATE INDEX "DataCreditoAssessment_reuse_environment_idx"
   ON "DataCreditoAssessment" (
-    "documentHash", "surnameHash", "platform", "providerEnvironment",
-    "policyVersion", "sedeId", "expiresAt" DESC
+    "documentHash", "providerEnvironment", COALESCE("aliadoId", 0),
+    "expiresAt" DESC, "createdAt" DESC
   );
 
 CREATE INDEX IF NOT EXISTS "DataCreditoAssessment_rate_idx"

@@ -3,11 +3,17 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
 import {
+  DEFAULT_DATACREDITO_POLICY_PROFILE_ID,
   ensureDataCreditoSchema,
   hmacDataCreditoValue,
   normalizeDataCreditoDocument,
   type DataCreditoAssessmentRow,
 } from "@/lib/datacredito/storage";
+import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
+import {
+  parseDataCreditoPolicyBands,
+  type DataCreditoPolicyBand,
+} from "@/lib/datacredito/policy";
 import {
   decryptDataCreditoSecureRecord,
   type DecryptDataCreditoSecureRecordInput,
@@ -27,6 +33,7 @@ type AdminAssessmentRow = {
   decision: string | null;
   offer: Record<string, unknown> | null;
   policyVersion: number;
+  reusedFromAssessmentId: string | null;
   consentAt: Date;
   userId: number;
   sellerId: number | null;
@@ -50,6 +57,8 @@ type AdminAssessmentRow = {
 };
 
 type AdminAssessmentDetailRow = AdminAssessmentRow & {
+  secureAssessmentId: string | null;
+  secureCorrelationId: string | null;
   algorithm: string | null;
   keyId: string | null;
   aadVersion: number | null;
@@ -93,6 +102,7 @@ const ADMIN_COLUMNS = [
   'assessment."decision"',
   'assessment."offer"',
   'assessment."policyVersion"',
+  'assessment."reusedFromAssessmentId"',
   'assessment."consentAt"',
   'assessment."userId"',
   'assessment."sellerId"',
@@ -167,6 +177,7 @@ function serializeAdminAssessment(row: AdminAssessmentRow) {
     decision: row.decision,
     offer: serializeOffer(row.offer),
     policyVersion: row.policyVersion,
+    reusedFromAssessmentId: row.reusedFromAssessmentId,
     consentAt: iso(row.consentAt),
     actor: {
       userId: row.userId,
@@ -369,10 +380,14 @@ export async function getDataCreditoAssessmentDossierForAdmin(
     'secure."plaintextBytes"',
   ].join(",\n");
   const sql = [
-    "SELECT " + ADMIN_COLUMNS + ",\n" + secureColumns,
+    "SELECT " + ADMIN_COLUMNS + ",\n" + secureColumns + ",",
+    '  COALESCE(origin."id", assessment."id") AS "secureAssessmentId",',
+    '  COALESCE(origin."correlationId", assessment."correlationId") AS "secureCorrelationId"',
     ADMIN_FROM,
+    'LEFT JOIN "DataCreditoAssessment" origin',
+    '  ON origin."id" = assessment."reusedFromAssessmentId"',
     'LEFT JOIN "DataCreditoAssessmentSecurePayload" secure',
-    '  ON secure."assessmentId" = assessment."id"',
+    '  ON secure."assessmentId" = COALESCE(origin."id", assessment."id")',
     'WHERE assessment."id" = $1',
     '  AND assessment."retainedUntil" > CURRENT_TIMESTAMP',
     "LIMIT 1",
@@ -391,8 +406,8 @@ export async function getDataCreditoAssessmentDossierForAdmin(
   }
   try {
     const secureRecord = decryptDataCreditoSecureRecord({
-      assessmentId: row.id,
-      correlationId: row.correlationId,
+      assessmentId: row.secureAssessmentId || row.id,
+      correlationId: row.secureCorrelationId || row.correlationId,
       ...envelope,
     });
     await writeAdminAccessAudit({
@@ -517,5 +532,231 @@ export async function failDataCreditoAssessmentWithSecureRecord(input: {
       input.durationMs
     );
     return rows[0] || null;
+  });
+}
+
+
+type DataCreditoPolicyProfileCatalogRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  revisionId: string | null;
+  version: number | null;
+  policy: unknown;
+  revisionCreatedAt: Date | null;
+  assignedAlliesCount: bigint;
+};
+
+type DataCreditoPolicyAllyCatalogRow = {
+  id: number;
+  name: string;
+  code: string | null;
+  active: boolean;
+  policyId: string;
+  policyName: string;
+};
+
+export class DataCreditoPolicyAssignmentConflictError extends Error {
+  readonly currentPolicyId: string;
+
+  constructor(currentPolicyId: string) {
+    super("El aliado fue asignado a otra politica. Recarga antes de guardar.");
+    this.name = "DataCreditoPolicyAssignmentConflictError";
+    this.currentPolicyId = currentPolicyId;
+  }
+}
+
+export class DataCreditoPolicyProfileNameConflictError extends Error {
+  constructor() {
+    super("Ya existe una politica con ese nombre.");
+    this.name = "DataCreditoPolicyProfileNameConflictError";
+  }
+}
+
+export class DataCreditoPolicyProfileNotFoundError extends Error {
+  constructor() {
+    super("La politica seleccionada no existe.");
+    this.name = "DataCreditoPolicyProfileNotFoundError";
+  }
+}
+
+function policyBandsFromPayload(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return parseDataCreditoPolicyBands(
+    (value as Record<string, unknown>).bands
+  );
+}
+
+export async function listDataCreditoPolicyCatalog() {
+  await ensureDataCreditoSchema();
+  const [profileRows, allyRows] = await Promise.all([
+    prisma.$queryRawUnsafe<DataCreditoPolicyProfileCatalogRow[]>(`
+      SELECT profile."id", profile."name", profile."description",
+        profile."active", profile."createdAt", profile."updatedAt",
+        revision."id" AS "revisionId", revision."version",
+        revision."policy", revision."createdAt" AS "revisionCreatedAt",
+        COUNT(ally."id")::bigint AS "assignedAlliesCount"
+      FROM "DataCreditoPolicyProfile" profile
+      LEFT JOIN LATERAL (
+        SELECT candidate."id", candidate."version", candidate."policy",
+          candidate."createdAt"
+        FROM "DataCreditoPolicyRevision" candidate
+        WHERE candidate."profileId" = profile."id"
+        ORDER BY candidate."version" DESC
+        LIMIT 1
+      ) revision ON true
+      LEFT JOIN "Aliado" ally ON ally."dataCreditoPolicyId" = profile."id"
+      GROUP BY profile."id", profile."name", profile."description",
+        profile."active", profile."createdAt", profile."updatedAt",
+        revision."id", revision."version", revision."policy", revision."createdAt"
+      ORDER BY profile."name" ASC, profile."id" ASC
+    `),
+    prisma.$queryRawUnsafe<DataCreditoPolicyAllyCatalogRow[]>(`
+      SELECT ally."id", ally."nombre" AS "name", ally."codigo" AS "code",
+        ally."activo" AS "active", ally."dataCreditoPolicyId" AS "policyId",
+        profile."name" AS "policyName"
+      FROM "Aliado" ally
+      INNER JOIN "DataCreditoPolicyProfile" profile
+        ON profile."id" = ally."dataCreditoPolicyId"
+      ORDER BY ally."nombre" ASC, ally."id" ASC
+    `),
+  ]);
+
+  return {
+    defaultPolicyId: DEFAULT_DATACREDITO_POLICY_PROFILE_ID,
+    profiles: profileRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      active: row.active,
+      version: row.version,
+      bands: row.policy ? policyBandsFromPayload(row.policy) : [],
+      createdAt: iso(row.createdAt),
+      updatedAt: iso(row.updatedAt),
+      revisionCreatedAt: iso(row.revisionCreatedAt),
+      assignedAlliesCount: Number(row.assignedAlliesCount || 0),
+    })),
+    allies: allyRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      code: row.code || "",
+      active: row.active,
+      policyId: row.policyId,
+      policyName: row.policyName,
+    })),
+  };
+}
+
+export async function createDataCreditoPolicyProfile(input: {
+  name: string;
+  description: string | null;
+  bands: DataCreditoPolicyBand[];
+  actorUserId: number;
+}) {
+  await ensureDataCreditoSchema();
+  const bands = parseDataCreditoPolicyBands(input.bands);
+  const profileId = randomUUID();
+  try {
+    await prisma.$transaction(async (transaction) => {
+      await transaction.$executeRawUnsafe(
+        `
+          INSERT INTO "DataCreditoPolicyProfile" (
+            "id", "name", "description", "active", "createdByUserId"
+          ) VALUES ($1, $2, $3, true, $4)
+        `,
+        profileId,
+        input.name,
+        input.description,
+        input.actorUserId
+      );
+      await transaction.$executeRawUnsafe(
+        `
+          INSERT INTO "DataCreditoPolicyRevision" (
+            "id", "profileId", "version", "policy", "createdByUserId"
+          ) VALUES ($1, $2, 1, $3::jsonb, $4)
+        `,
+        randomUUID(),
+        profileId,
+        JSON.stringify({ bands }),
+        input.actorUserId
+      );
+    });
+  } catch (error) {
+    if (isDataCreditoUniqueViolation(error)) {
+      throw new DataCreditoPolicyProfileNameConflictError();
+    }
+    throw error;
+  }
+  return profileId;
+}
+
+export async function assignDataCreditoPolicyToAlly(input: {
+  allyId: number;
+  policyId: string;
+  expectedPolicyId: string;
+  actorUserId: number;
+}) {
+  await ensureDataCreditoSchema();
+  await prisma.$transaction(async (transaction) => {
+    // Lock the destination profile before the ally. This serializes assignment
+    // with any future lifecycle operation and prevents assigning a profile
+    // that became inactive between validation and UPDATE.
+    const profiles = await transaction.$queryRawUnsafe<
+      Array<{ active: boolean; hasRevision: boolean }>
+    >(
+      `
+        SELECT profile."active",
+          EXISTS (
+            SELECT 1 FROM "DataCreditoPolicyRevision" revision
+            WHERE revision."profileId" = profile."id"
+          ) AS "hasRevision"
+        FROM "DataCreditoPolicyProfile" profile
+        WHERE profile."id" = $1
+        FOR UPDATE
+      `,
+      input.policyId
+    );
+    const profile = profiles[0];
+    if (!profile) throw new DataCreditoPolicyProfileNotFoundError();
+    if (!profile.active || !profile.hasRevision) {
+      throw new Error("DATACREDITO_POLICY_NOT_ASSIGNABLE");
+    }
+
+    const allies = await transaction.$queryRawUnsafe<Array<{ policyId: string }>>(
+      `
+        SELECT "dataCreditoPolicyId" AS "policyId" FROM "Aliado"
+        WHERE "id" = $1 FOR UPDATE
+      `,
+      input.allyId
+    );
+    const currentPolicyId = allies[0]?.policyId;
+    if (!currentPolicyId) throw new Error("DATACREDITO_ALLY_NOT_FOUND");
+    if (currentPolicyId !== input.expectedPolicyId) {
+      throw new DataCreditoPolicyAssignmentConflictError(currentPolicyId);
+    }
+    if (currentPolicyId === input.policyId) return;
+    await transaction.$executeRawUnsafe(
+      `
+        UPDATE "Aliado" SET "dataCreditoPolicyId" = $2,
+          "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1
+      `,
+      input.allyId,
+      input.policyId
+    );
+    await transaction.$executeRawUnsafe(
+      `
+        INSERT INTO "DataCreditoPolicyAssignmentAudit" (
+          "id", "allyId", "previousPolicyId", "policyId", "actorUserId"
+        ) VALUES ($1, $2, $3, $4, $5)
+      `,
+      randomUUID(),
+      input.allyId,
+      currentPolicyId,
+      input.policyId,
+      input.actorUserId
+    );
   });
 }

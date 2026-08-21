@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CircleAlert,
+  Copy,
   Plus,
   RotateCw,
   Save,
   Settings2,
   Smartphone,
   Trash2,
+  Users,
 } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import {
@@ -17,17 +19,16 @@ import {
   DATACREDITO_NO_INFORMATION_SCORE,
 } from "@/lib/datacredito/policy";
 import {
-  DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM,
-} from "@/lib/datacredito/policy-access";
-import {
   Badge,
   Button,
   Card,
+  DataTable,
   EmptyState,
   Input,
   LoadingState,
   Select,
   StatusPill,
+  Tabs,
 } from "@/app/_components/finser-ui";
 
 export type DataCreditoPolicyPlatform = "ANDROID" | "IPHONE";
@@ -44,24 +45,38 @@ export type DataCreditoPolicyBand = {
   maxFinancedAmount: number;
 };
 
-export type DataCreditoPolicy = {
+export type DataCreditoPolicyProfile = {
+  id: string;
+  name: string;
+  description: string | null;
+  active: boolean;
   version: number;
   bands: DataCreditoPolicyBand[];
-  createdAt?: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  revisionCreatedAt: string | null;
+  assignedAlliesCount: number;
 };
 
-export type DataCreditoPolicyPatch = {
-  expectedVersion?: number | null;
-  bands: DataCreditoPolicyBand[];
+export type DataCreditoPolicyAlly = {
+  id: number;
+  name: string;
+  code: string | null;
+  active: boolean;
+  policyId: string;
+  policyName: string;
 };
 
-export type DataCreditoPolicyApiResponse = {
-  ok?: boolean;
-  enabled: boolean;
-  configured: boolean;
-  hasPolicy: boolean;
-  policy: DataCreditoPolicy | null;
-  correlationId?: string;
+type PolicyCatalogSnapshot = {
+  defaultPolicyId: string | null;
+  profiles: DataCreditoPolicyProfile[];
+  allies: DataCreditoPolicyAlly[];
+  provider: {
+    enabled: boolean;
+    configured: boolean;
+    environment: string | null;
+    productionReady: boolean;
+  };
 };
 
 type EditableBand = {
@@ -75,20 +90,16 @@ type EditableBand = {
   maxFinancedAmount: string;
 };
 
-type PolicySnapshot = {
-  enabled: boolean;
-  configured: boolean;
-  hasPolicy: boolean;
-  version: number | null;
-  createdAt: string | null;
-  bands: DataCreditoPolicyBand[];
-};
-
 type ValidationResult = {
   valid: boolean;
   rowErrors: Record<string, string[]>;
   platformErrors: Record<DataCreditoPolicyPlatform, string[]>;
   canonicalBands: DataCreditoPolicyBand[];
+};
+
+type AssignmentChange = {
+  ally: DataCreditoPolicyAlly;
+  policyId: string;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -212,96 +223,136 @@ function parseBand(value: unknown, index: number): DataCreditoPolicyBand {
   };
 }
 
-function parseSnapshot(
+function parsePolicyProfile(
+  value: unknown,
+  index: number
+): DataCreditoPolicyProfile {
+  if (!isRecord(value)) {
+    throw new PolicyRequestError(`Política ${index + 1} inválida.`);
+  }
+
+  const id = readString(value.id);
+  const name = readString(value.name);
+  const version = readFiniteNumber(value.version);
+  const assignedAlliesCount = readFiniteNumber(value.assignedAlliesCount);
+
+  if (
+    !id ||
+    !name ||
+    typeof value.active !== "boolean" ||
+    version === null ||
+    !Number.isInteger(version) ||
+    version < 1 ||
+    assignedAlliesCount === null ||
+    !Number.isInteger(assignedAlliesCount) ||
+    assignedAlliesCount < 0 ||
+    !Array.isArray(value.bands)
+  ) {
+    throw new PolicyRequestError(`Política ${index + 1} incompleta.`);
+  }
+
+  return {
+    id,
+    name,
+    description: readString(value.description),
+    active: value.active,
+    version,
+    bands: value.bands.map(parseBand),
+    createdAt: readString(value.createdAt),
+    updatedAt: readString(value.updatedAt),
+    revisionCreatedAt: readString(value.revisionCreatedAt),
+    assignedAlliesCount,
+  };
+}
+
+function parsePolicyAlly(value: unknown, index: number): DataCreditoPolicyAlly {
+  if (!isRecord(value)) {
+    throw new PolicyRequestError(`Aliado ${index + 1} inválido.`);
+  }
+
+  const id = readFiniteNumber(value.id);
+  const name = readString(value.name);
+  const code = readString(value.code);
+  const policyId = readString(value.policyId);
+  const policyName = readString(value.policyName);
+
+  if (
+    id === null ||
+    !Number.isInteger(id) ||
+    id < 1 ||
+    !name ||
+    !policyId ||
+    !policyName ||
+    typeof value.active !== "boolean"
+  ) {
+    throw new PolicyRequestError(`Aliado ${index + 1} incompleto.`);
+  }
+
+  return {
+    id,
+    name,
+    code,
+    active: value.active,
+    policyId,
+    policyName,
+  };
+}
+
+function parseCatalog(
   payload: JsonRecord,
   response?: Response
-): PolicySnapshot {
+): PolicyCatalogSnapshot {
   if (payload.ok === false) {
     throw new PolicyRequestError(
-      "La API rechazó la solicitud.",
+      readString(payload.error) || "La API rechazó la solicitud.",
       getCorrelationId(payload, response)
     );
   }
 
   const provider = isRecord(payload.provider) ? payload.provider : null;
-  const configuredValue = provider?.configured ?? payload.configured;
-  const policyValue = payload.policy;
-  const policy = isRecord(policyValue) ? policyValue : null;
-  const hasPolicy =
-    typeof payload.hasPolicy === "boolean"
-      ? payload.hasPolicy
-      : policyValue !== null && policyValue !== undefined;
-
-  if (typeof payload.enabled !== "boolean") {
+  if (
+    !provider ||
+    typeof provider.enabled !== "boolean" ||
+    typeof provider.configured !== "boolean" ||
+    typeof provider.productionReady !== "boolean" ||
+    !Array.isArray(payload.profiles) ||
+    !Array.isArray(payload.allies)
+  ) {
     throw new PolicyRequestError(
-      "La respuesta no incluye el estado de la integración.",
-      getCorrelationId(payload, response)
-    );
-  }
-
-  if (typeof configuredValue !== "boolean") {
-    throw new PolicyRequestError(
-      "La respuesta no incluye el estado del proveedor.",
-      getCorrelationId(payload, response)
-    );
-  }
-
-  if (!policy) {
-    return {
-      enabled: payload.enabled,
-      configured: configuredValue,
-      hasPolicy: false,
-      version: null,
-      createdAt: null,
-      bands: [],
-    };
-  }
-
-  const version = readFiniteNumber(policy.version);
-
-  if (version === null || !Number.isInteger(version) || version < 0) {
-    throw new PolicyRequestError(
-      "La política no incluye una versión válida.",
-      getCorrelationId(payload, response)
-    );
-  }
-
-  if (!Array.isArray(policy.bands)) {
-    throw new PolicyRequestError(
-      "La política no incluye las bandas administrativas.",
+      "La respuesta no incluye el catálogo administrativo completo.",
       getCorrelationId(payload, response)
     );
   }
 
   return {
-    enabled: payload.enabled,
-    configured: configuredValue,
-    hasPolicy,
-    version,
-    createdAt: readString(policy.createdAt),
-    bands: policy.bands.map(parseBand),
+    defaultPolicyId: readString(payload.defaultPolicyId),
+    profiles: payload.profiles.map(parsePolicyProfile),
+    allies: payload.allies.map(parsePolicyAlly),
+    provider: {
+      enabled: provider.enabled,
+      configured: provider.configured,
+      environment: readString(provider.environment),
+      productionReady: provider.productionReady,
+    },
   };
 }
 
-async function requestPolicy(signal?: AbortSignal) {
-  const response = await fetch(
-    `/api/creditos/datacredito/politica?${DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM}=true`,
-    {
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-      signal,
-    }
-  );
+async function requestCatalog(signal?: AbortSignal) {
+  const response = await fetch("/api/creditos/datacredito/politicas", {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+    signal,
+  });
   const payload = await readJson(response);
 
   if (!response.ok) {
     throw new PolicyRequestError(
-      "No se pudo cargar la política.",
+      readString(payload.error) || "No se pudo cargar el catálogo de políticas.",
       getCorrelationId(payload, response)
     );
   }
 
-  return parseSnapshot(payload, response);
+  return parseCatalog(payload, response);
 }
 
 function toEditableBand(band: DataCreditoPolicyBand): EditableBand {
@@ -986,73 +1037,165 @@ function PlatformEditor({
   );
 }
 
+type PolicyConsoleTab = "POLICIES" | "ASSIGNMENTS";
+
+function allyDraftKey(allyId: number) {
+  return String(allyId);
+}
+
 export default function DatacreditoPolicyConsole() {
   const [enabled, setEnabled] = useState(false);
   const [configured, setConfigured] = useState(false);
-  const [hasPolicy, setHasPolicy] = useState(false);
+  const [productionReady, setProductionReady] = useState(false);
+  const [providerEnvironment, setProviderEnvironment] = useState<string | null>(null);
+  const [profiles, setProfiles] = useState<DataCreditoPolicyProfile[]>([]);
+  const [allies, setAllies] = useState<DataCreditoPolicyAlly[]>([]);
+  const [defaultPolicyId, setDefaultPolicyId] = useState<string | null>(null);
+  const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null);
   const [version, setVersion] = useState<number | null>(null);
-  const [createdAt, setCreatedAt] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [bands, setBands] = useState<EditableBand[]>([]);
+  const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
+  const [activeTab, setActiveTab] = useState<PolicyConsoleTab>("POLICIES");
+  const [assignmentQuery, setAssignmentQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingAssignments, setSavingAssignments] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [assignmentConfirmOpen, setAssignmentConfirmOpen] = useState(false);
   const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false);
+  const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
+  const [pendingPolicyId, setPendingPolicyId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newPolicyName, setNewPolicyName] = useState("");
+  const [newPolicyDescription, setNewPolicyDescription] = useState("");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [correlationId, setCorrelationId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const validation = useMemo(() => validateDraftBands(bands), [bands]);
+  const selectedProfile = useMemo(
+    () => profiles.find((profile) => profile.id === selectedPolicyId) || null,
+    [profiles, selectedPolicyId]
+  );
+  const assignmentChanges = useMemo<AssignmentChange[]>(
+    () =>
+      allies.flatMap((ally) => {
+        const policyId = assignmentDrafts[allyDraftKey(ally.id)];
+        return policyId && policyId !== ally.policyId ? [{ ally, policyId }] : [];
+      }),
+    [allies, assignmentDrafts]
+  );
+  const hasPendingChanges = hasUnsavedChanges || assignmentChanges.length > 0;
+  const filteredAllies = useMemo(() => {
+    const query = assignmentQuery.trim().toLocaleLowerCase("es-CO");
+    if (!query) return allies;
 
-  const applySnapshot = useCallback((snapshot: PolicySnapshot) => {
-    setEnabled(snapshot.enabled);
-    setConfigured(snapshot.configured);
-    setHasPolicy(snapshot.hasPolicy);
-    setVersion(snapshot.version);
-    setCreatedAt(snapshot.createdAt);
-    setBands(snapshot.bands.map(toEditableBand));
+    return allies.filter((ally) =>
+      [ally.name, ally.code || "", ally.policyName].some((value) =>
+        value.toLocaleLowerCase("es-CO").includes(query)
+      )
+    );
+  }, [allies, assignmentQuery]);
+
+  const applyProfile = useCallback((profile: DataCreditoPolicyProfile | null) => {
+    setSelectedPolicyId(profile?.id || null);
+    setVersion(profile?.version ?? null);
+    setUpdatedAt(profile?.revisionCreatedAt ?? profile?.updatedAt ?? null);
+    setBands((profile?.bands || []).map(toEditableBand));
     setHasUnsavedChanges(false);
   }, []);
 
-  const loadPolicy = useCallback(
-    async (signal?: AbortSignal) => {
+  const applyCatalog = useCallback(
+    (
+      catalog: PolicyCatalogSnapshot,
+      preferredPolicyId?: string | null,
+      preservePolicyDraft = false,
+      preserveAssignmentDrafts = false,
+      confirmedAllyIds: number[] = []
+    ) => {
+      setEnabled(catalog.provider.enabled);
+      setConfigured(catalog.provider.configured);
+      setProductionReady(catalog.provider.productionReady);
+      setProviderEnvironment(catalog.provider.environment);
+      setProfiles(catalog.profiles);
+      setAllies(catalog.allies);
+      setDefaultPolicyId(catalog.defaultPolicyId);
+      const freshAssignmentDrafts = Object.fromEntries(
+        catalog.allies.map((ally) => [allyDraftKey(ally.id), ally.policyId])
+      );
+      const availablePolicyIds = new Set(
+        catalog.profiles.map((profile) => profile.id)
+      );
+      const confirmedAllyIdSet = new Set(confirmedAllyIds);
+      setAssignmentDrafts((current) => {
+        if (!preserveAssignmentDrafts) return freshAssignmentDrafts;
+
+        const next = { ...freshAssignmentDrafts };
+        for (const ally of catalog.allies) {
+          if (confirmedAllyIdSet.has(ally.id)) continue;
+          const key = allyDraftKey(ally.id);
+          const pendingPolicyId = current[key];
+          if (pendingPolicyId && availablePolicyIds.has(pendingPolicyId)) {
+            next[key] = pendingPolicyId;
+          }
+        }
+        return next;
+      });
+
+      const nextProfile =
+        catalog.profiles.find((profile) => profile.id === preferredPolicyId) ||
+        catalog.profiles.find((profile) => profile.id === catalog.defaultPolicyId) ||
+        catalog.profiles[0] ||
+        null;
+
+      if (!preservePolicyDraft || !nextProfile) {
+        applyProfile(nextProfile);
+      }
+    },
+    [applyProfile]
+  );
+
+  const loadCatalog = useCallback(
+    async (signal?: AbortSignal, preferredPolicyId?: string | null) => {
       setLoading(true);
       setError(null);
       setCorrelationId(null);
       setNotice(null);
 
       try {
-        const snapshot = await requestPolicy(signal);
-        applySnapshot(snapshot);
+        const catalog = await requestCatalog(signal);
+        applyCatalog(catalog, preferredPolicyId);
       } catch (requestError) {
-        if (
-          requestError instanceof DOMException &&
-          requestError.name === "AbortError"
-        ) {
+        if (requestError instanceof DOMException && requestError.name === "AbortError") {
           return;
         }
 
-        setError("No se pudo cargar la política de DataCrédito.");
-        setCorrelationId(
+        setError(
           requestError instanceof PolicyRequestError
-            ? requestError.correlationId
-            : null
+            ? requestError.message
+            : "No se pudo cargar el catálogo de políticas de DataCrédito."
+        );
+        setCorrelationId(
+          requestError instanceof PolicyRequestError ? requestError.correlationId : null
         );
       } finally {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [applySnapshot]
+    [applyCatalog]
   );
 
   useEffect(() => {
     const controller = new AbortController();
-    void loadPolicy(controller.signal);
+    void loadCatalog(controller.signal);
     return () => controller.abort();
-  }, [loadPolicy]);
+  }, [loadCatalog]);
 
   useEffect(() => {
-    if (!hasUnsavedChanges) return;
+    if (!hasPendingChanges) return;
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
@@ -1061,15 +1204,34 @@ export default function DatacreditoPolicyConsole() {
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [hasUnsavedChanges]);
+  }, [hasPendingChanges]);
+
+  const selectProfile = (policyId: string) => {
+    const profile = profiles.find((candidate) => candidate.id === policyId);
+    if (!profile) return;
+    setNotice(null);
+    setError(null);
+    applyProfile(profile);
+  };
+
+  const requestProfileSelection = (policyId: string) => {
+    if (policyId === selectedPolicyId) return;
+    if (hasUnsavedChanges) {
+      setPendingPolicyId(policyId);
+      setSwitchConfirmOpen(true);
+      return;
+    }
+
+    selectProfile(policyId);
+  };
 
   const requestReload = () => {
-    if (hasUnsavedChanges) {
+    if (hasPendingChanges) {
       setReloadConfirmOpen(true);
       return;
     }
 
-    void loadPolicy();
+    void loadCatalog(undefined, selectedPolicyId);
   };
 
   const addBand = (platform: DataCreditoPolicyPlatform) => {
@@ -1132,7 +1294,7 @@ export default function DatacreditoPolicyConsole() {
     setNotice(null);
     setError(null);
 
-    if (!validation.valid) return;
+    if (!validation.valid || !selectedProfile) return;
     if (!hasUnsavedChanges) {
       setNotice("No hay cambios pendientes por publicar.");
       return;
@@ -1141,26 +1303,33 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const savePolicy = async () => {
-    if (!validation.valid || saving) return;
+    if (
+      !validation.valid ||
+      !selectedProfile ||
+      version === null ||
+      saving
+    ) {
+      return;
+    }
 
     setSaving(true);
     setError(null);
     setCorrelationId(null);
 
-    const body: DataCreditoPolicyPatch = {
-      expectedVersion: version,
-      bands: validation.canonicalBands,
-    };
-
     try {
-      const response = await fetch("/api/creditos/datacredito/politica", {
+      const response = await fetch("/api/creditos/datacredito/politicas", {
         method: "PATCH",
         cache: "no-store",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          action: "SAVE_REVISION",
+          policyId: selectedProfile.id,
+          expectedVersion: version,
+          bands: validation.canonicalBands,
+        }),
       });
       const payload = await readJson(response);
 
@@ -1170,40 +1339,36 @@ export default function DatacreditoPolicyConsole() {
           const currentVersion = readFiniteNumber(payload.currentVersion);
           throw new PolicyRequestError(
             currentVersion === null
-              ? "Otra persona modificó la política. Recargar te pedirá confirmar antes de reemplazar tu borrador con la versión vigente."
-              : "Otra persona ya publicó la versión " +
-                  currentVersion +
-                  ". Recargar te pedirá confirmar antes de reemplazar tu borrador con la política vigente.",
+              ? "Otra persona publicó una revisión. Recarga antes de volver a guardar."
+              : `Otra persona ya publicó la versión ${currentVersion}. Recarga antes de volver a guardar.`,
             getCorrelationId(payload, response)
           );
         }
 
         throw new PolicyRequestError(
-          "No se pudo guardar la política.",
+          readString(payload.error) || "No se pudo publicar la nueva versión.",
           getCorrelationId(payload, response)
         );
       }
 
-      let snapshot: PolicySnapshot;
-
-      try {
-        snapshot = parseSnapshot(payload, response);
-      } catch {
-        snapshot = await requestPolicy();
-      }
-
-      applySnapshot(snapshot);
+      const catalog = parseCatalog(payload, response);
+      const updatedProfile = catalog.profiles.find(
+        (profile) => profile.id === selectedProfile.id
+      );
+      applyCatalog(catalog, selectedProfile.id, false, true);
       setConfirmOpen(false);
-      setNotice(`Política guardada en la versión ${snapshot.version ?? "nueva"}.`);
+      setNotice(
+        `Nueva revisión publicada${
+          updatedProfile ? `: versión ${updatedProfile.version}` : ""
+        }. Solo se aplicará a consultas futuras.`
+      );
     } catch (requestError) {
       setConfirmOpen(false);
-      if (requestError instanceof PolicyRequestError) {
-        setError(requestError.message);
-        setCorrelationId(requestError.correlationId);
-        return;
-      }
-
-      setError("No se pudo guardar la política de DataCrédito.");
+      setError(
+        requestError instanceof PolicyRequestError
+          ? requestError.message
+          : "No se pudo publicar la política de DataCrédito."
+      );
       setCorrelationId(
         requestError instanceof PolicyRequestError
           ? requestError.correlationId
@@ -1214,15 +1379,206 @@ export default function DatacreditoPolicyConsole() {
     }
   };
 
+  const openCreatePolicy = () => {
+    if (!selectedProfile) return;
+    if (hasUnsavedChanges) {
+      setNotice(
+        "Publica los cambios o recarga para descartarlos antes de duplicar la última versión publicada."
+      );
+      return;
+    }
+    setNewPolicyName(`Copia de ${selectedProfile.name}`.slice(0, 80));
+    setNewPolicyDescription("");
+    setCreateOpen(true);
+    setError(null);
+    setNotice(null);
+  };
+
+  const createPolicy = async () => {
+    if (!selectedProfile || creating) return;
+    if (hasUnsavedChanges) {
+      setError(
+        "Publica o descarta el borrador antes de duplicar la última versión publicada."
+      );
+      return;
+    }
+
+    const name = newPolicyName.trim();
+    const description = newPolicyDescription.trim();
+    if (name.length < 3) {
+      setError("Escribe un nombre de al menos 3 caracteres para la política.");
+      return;
+    }
+
+    setCreating(true);
+    setError(null);
+    setCorrelationId(null);
+
+    try {
+      const response = await fetch("/api/creditos/datacredito/politicas", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name,
+          description: description || undefined,
+          bands: selectedProfile.bands,
+        }),
+      });
+      const payload = await readJson(response);
+
+      if (!response.ok || payload.ok === false) {
+        throw new PolicyRequestError(
+          readString(payload.error) || "No se pudo crear la política.",
+          getCorrelationId(payload, response)
+        );
+      }
+
+      const catalog = parseCatalog(payload, response);
+      const createdPolicyId =
+        readString(payload.createdPolicyId) ||
+        catalog.profiles.find(
+          (profile) =>
+            profile.name.toLocaleLowerCase("es-CO") ===
+            name.toLocaleLowerCase("es-CO")
+        )?.id ||
+        null;
+
+      applyCatalog(catalog, createdPolicyId, false, true);
+      setCreateOpen(false);
+      setNewPolicyName("");
+      setNewPolicyDescription("");
+      setNotice(
+        `Política “${name}” creada como versión 1 a partir de “${selectedProfile.name}”. Aún no cambia ningún aliado.`
+      );
+    } catch (requestError) {
+      setError(
+        requestError instanceof PolicyRequestError
+          ? requestError.message
+          : "No se pudo crear la política de DataCrédito."
+      );
+      setCorrelationId(
+        requestError instanceof PolicyRequestError
+          ? requestError.correlationId
+          : null
+      );
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const openAssignmentConfirmation = () => {
+    setNotice(null);
+    setError(null);
+    if (!assignmentChanges.length) {
+      setNotice("No hay reasignaciones pendientes por guardar.");
+      return;
+    }
+    setAssignmentConfirmOpen(true);
+  };
+
+  const saveAssignments = async () => {
+    if (!assignmentChanges.length || savingAssignments) return;
+
+    setSavingAssignments(true);
+    setError(null);
+    setCorrelationId(null);
+    let completed = 0;
+    const completedAllyIds: number[] = [];
+    let latestCatalog: PolicyCatalogSnapshot | null = null;
+
+    try {
+      for (const change of assignmentChanges) {
+        const response = await fetch("/api/creditos/datacredito/politicas", {
+          method: "PATCH",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "ASSIGN_ALLY",
+            allyId: change.ally.id,
+            policyId: change.policyId,
+            expectedPolicyId: change.ally.policyId,
+          }),
+        });
+        const payload = await readJson(response);
+
+        if (!response.ok || payload.ok === false) {
+          const code = String(payload.code || "").trim().toUpperCase();
+          if (code === "POLICY_ASSIGNMENT_CONFLICT") {
+            throw new PolicyRequestError(
+              `La asignación de ${change.ally.name} cambió en otra sesión. Recarga y revisa antes de intentarlo de nuevo.`,
+              getCorrelationId(payload, response)
+            );
+          }
+
+          throw new PolicyRequestError(
+            readString(payload.error) ||
+              `No se pudo reasignar a ${change.ally.name}.`,
+            getCorrelationId(payload, response)
+          );
+        }
+
+        latestCatalog = parseCatalog(payload, response);
+        completed += 1;
+        completedAllyIds.push(change.ally.id);
+      }
+
+      if (latestCatalog) {
+        applyCatalog(
+          latestCatalog,
+          selectedPolicyId,
+          hasUnsavedChanges,
+          true,
+          completedAllyIds
+        );
+      }
+      setAssignmentConfirmOpen(false);
+      setNotice(
+        `${completed} ${completed === 1 ? "aliado reasignado" : "aliados reasignados"}. Las nuevas políticas solo se aplicarán a consultas futuras.`
+      );
+    } catch (requestError) {
+      setAssignmentConfirmOpen(false);
+      if (latestCatalog) {
+        applyCatalog(
+          latestCatalog,
+          selectedPolicyId,
+          hasUnsavedChanges,
+          true,
+          completedAllyIds
+        );
+      }
+      setError(
+        `${completed ? `${completed} cambio(s) sí se guardaron. ` : ""}${
+          requestError instanceof PolicyRequestError
+            ? requestError.message
+            : "No se pudieron guardar las reasignaciones."
+        }`
+      );
+      setCorrelationId(
+        requestError instanceof PolicyRequestError
+          ? requestError.correlationId
+          : null
+      );
+    } finally {
+      setSavingAssignments(false);
+    }
+  };
+
   if (loading) {
     return (
       <Card className="p-5 sm:p-6" aria-busy="true">
-        <LoadingState label="Cargando política de DataCrédito..." />
+        <LoadingState label="Cargando catálogo de políticas de DataCrédito..." />
       </Card>
     );
   }
 
-  if (error && !version && !bands.length) {
+  if (error && !profiles.length) {
     return (
       <Card className="border-[var(--fp-danger)] p-6" role="alert">
         <div className="flex items-start gap-4">
@@ -1249,7 +1605,7 @@ export default function DatacreditoPolicyConsole() {
         <Button
           className="mt-6"
           variant="secondary"
-          onClick={() => void loadPolicy()}
+          onClick={() => void loadCatalog()}
         >
           <RotateCw className="h-4 w-4" aria-hidden="true" />
           Intentar de nuevo
@@ -1260,6 +1616,7 @@ export default function DatacreditoPolicyConsole() {
 
   const androidBands = bands.filter((band) => band.platform === "ANDROID");
   const iphoneBands = bands.filter((band) => band.platform === "IPHONE");
+  const selectedProfileVersion = selectedProfile?.version ?? version;
 
   return (
     <section
@@ -1276,18 +1633,19 @@ export default function DatacreditoPolicyConsole() {
             id="datacredito-policy-title"
             className="mt-2 text-3xl font-black tracking-tight sm:text-4xl"
           >
-            Política DataCrédito
+            Políticas DataCrédito
           </h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-            Define la decisión, la cuota inicial, la fianza y el crédito máximo
-            por rango de puntaje para cada plataforma. El puntaje nunca se
-            muestra en el flujo del asesor.
+            Crea políticas independientes, publica nuevas revisiones y asigna
+            exactamente una a cada aliado. Los cambios solo afectan consultas
+            futuras; las evaluaciones y ofertas ya emitidas conservan sus
+            condiciones.
           </p>
         </div>
         <Button
           variant="secondary"
           onClick={requestReload}
-          disabled={saving}
+          disabled={saving || savingAssignments || creating}
         >
           <RotateCw className="h-4 w-4" aria-hidden="true" />
           Recargar
@@ -1310,35 +1668,34 @@ export default function DatacreditoPolicyConsole() {
             <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
               Proveedor
             </p>
-            <div className="mt-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <StatusPill tone={configured ? "positive" : "warning"}>
                 {configured ? "Configurado" : "Sin configurar"}
               </StatusPill>
+              {providerEnvironment ? <Badge>{providerEnvironment}</Badge> : null}
             </div>
           </div>
           <div>
             <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-              Política
+              Catálogo
             </p>
             <p className="mt-2 text-lg font-black">
-              {hasPolicy && version !== null ? `Versión ${version}` : "Sin publicar"}
+              {profiles.length} {profiles.length === 1 ? "política" : "políticas"}
             </p>
           </div>
           <div>
             <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-              Publicación
+              Aliados asignados
             </p>
-            <p className="mt-2 text-sm font-semibold text-[var(--fp-muted)]">
-              {formatDate(createdAt)}
-            </p>
+            <p className="mt-2 text-lg font-black">{allies.length}</p>
           </div>
         </div>
 
-        {!enabled ? (
+        {!enabled || !productionReady ? (
           <p className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm leading-6 text-[var(--fp-amber)]">
-            El feature flag está deshabilitado en este ambiente. Su estado es de
-            solo lectura y se administra mediante configuración segura del
-            servidor.
+            {!enabled
+              ? "La integración está deshabilitada. Puedes preparar políticas, pero no se usarán en ventas mientras continúe apagada."
+              : "El proveedor aún no está listo para producción. Revisa la configuración antes de iniciar consultas reales."}
           </p>
         ) : null}
       </Card>
@@ -1367,84 +1724,503 @@ export default function DatacreditoPolicyConsole() {
         </div>
       ) : null}
 
-      <PlatformEditor
-        platform="ANDROID"
-        bands={androidBands}
-        errors={validation.platformErrors.ANDROID}
-        rowErrors={validation.rowErrors}
-        disabled={saving}
-        onAdd={addBand}
-        onAddNoInformation={addNoInformationBand}
-        onChange={updateBand}
-        onRemove={removeBand}
-      />
+      <Tabs aria-label="Gestión de políticas DataCrédito">
+        <button
+          id="datacredito-policies-tab"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "POLICIES"}
+          aria-controls="datacredito-policies-panel"
+          onClick={() => setActiveTab("POLICIES")}
+        >
+          <Copy className="mr-2 inline h-4 w-4" aria-hidden="true" />
+          Políticas
+        </button>
+        <button
+          id="datacredito-assignments-tab"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "ASSIGNMENTS"}
+          aria-controls="datacredito-assignments-panel"
+          onClick={() => setActiveTab("ASSIGNMENTS")}
+        >
+          <Users className="mr-2 inline h-4 w-4" aria-hidden="true" />
+          Asignación a aliados
+          {assignmentChanges.length ? (
+            <Badge tone="warning" className="ml-2">
+              {assignmentChanges.length}
+            </Badge>
+          ) : null}
+        </button>
+      </Tabs>
 
-      <PlatformEditor
-        platform="IPHONE"
-        bands={iphoneBands}
-        errors={validation.platformErrors.IPHONE}
-        rowErrors={validation.rowErrors}
-        disabled={saving}
-        onAdd={addBand}
-        onAddNoInformation={addNoInformationBand}
-        onChange={updateBand}
-        onRemove={removeBand}
-      />
-
-      <Card className="p-5 sm:p-6">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={validation.valid ? "positive" : "warning"}>
-                {validation.valid ? "Cobertura completa" : "Política incompleta"}
-              </Badge>
-              <span className="text-sm font-semibold text-[var(--fp-muted)]">
-                {bands.length} {bands.length === 1 ? "regla" : "reglas"}
-              </span>
+      {activeTab === "POLICIES" ? (
+        <div
+          id="datacredito-policies-panel"
+          role="tabpanel"
+          aria-labelledby="datacredito-policies-tab"
+          className="space-y-6"
+        >
+          <Card className="p-5 sm:p-6">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-xl font-black">Catálogo de políticas</h3>
+                <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
+                  Selecciona una política para revisar sus bandas o publicar una
+                  revisión inmutable.
+                </p>
+                {profiles.length ? (
+                  <label className="mt-4 grid max-w-2xl gap-2 text-sm font-bold">
+                    Política seleccionada
+                    <Select
+                      value={selectedPolicyId || ""}
+                      onChange={(event) =>
+                        requestProfileSelection(event.target.value)
+                      }
+                      disabled={saving || creating}
+                    >
+                      {profiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>
+                          {profile.name} · v{profile.version} ·{" "}
+                          {profile.assignedAlliesCount}{" "}
+                          {profile.assignedAlliesCount === 1
+                            ? "aliado"
+                            : "aliados"}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                ) : null}
+              </div>
+              <div className="lg:max-w-xs">
+                <Button
+                  onClick={openCreatePolicy}
+                  disabled={
+                    !selectedProfile || saving || creating || hasUnsavedChanges
+                  }
+                  aria-describedby={
+                    hasUnsavedChanges
+                      ? "datacredito-create-policy-help"
+                      : undefined
+                  }
+                >
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  Nueva política
+                </Button>
+                {hasUnsavedChanges ? (
+                  <p
+                    id="datacredito-create-policy-help"
+                    className="mt-2 text-xs leading-5 text-[var(--fp-muted)]"
+                  >
+                    Publica los cambios o recarga para descartarlos antes de
+                    duplicar la última versión publicada.
+                  </p>
+                ) : null}
+              </div>
             </div>
-            <p
-              id="datacredito-policy-save-help"
-              className="mt-3 max-w-2xl text-sm leading-6 text-[var(--fp-muted)]"
-            >
-              {!validation.valid
-                ? "Completa y corrige ambas plataformas. Guardar permanecerá deshabilitado mientras existan huecos, solapamientos, reglas Sin información ausentes o duplicadas, o valores inválidos."
-                : hasUnsavedChanges
-                  ? "La política cubre todos los puntajes enteros de 0 a 950 sin huecos ni solapamientos para Android e iPhone, con una regla Sin información por plataforma."
-                  : "No hay cambios pendientes por publicar."}
-            </p>
-          </div>
-          <Button
-            onClick={openSaveConfirmation}
-            disabled={saving || !validation.valid || !hasUnsavedChanges}
-            aria-describedby="datacredito-policy-save-help"
-          >
-            <Save className="h-4 w-4" aria-hidden="true" />
-            {saving ? "Guardando..." : "Guardar política"}
-          </Button>
+
+            {selectedProfile ? (
+              <div className="mt-5 grid gap-4 border-t border-[var(--fp-border)] pt-5 sm:grid-cols-2 xl:grid-cols-4">
+                <div>
+                  <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    Estado
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <StatusPill
+                      tone={selectedProfile.active ? "positive" : "warning"}
+                    >
+                      {selectedProfile.active ? "Activa" : "Inactiva"}
+                    </StatusPill>
+                    {selectedProfile.id === defaultPolicyId ? (
+                      <Badge>Predeterminada</Badge>
+                    ) : null}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    Revisión vigente
+                  </p>
+                  <p className="mt-2 text-lg font-black">
+                    Versión {selectedProfileVersion}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    Aliados
+                  </p>
+                  <p className="mt-2 text-lg font-black">
+                    {selectedProfile.assignedAlliesCount}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                    Última publicación
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-[var(--fp-muted)]">
+                    {formatDate(updatedAt)}
+                  </p>
+                </div>
+                {selectedProfile.description ? (
+                  <p className="text-sm leading-6 text-[var(--fp-muted)] sm:col-span-2 xl:col-span-4">
+                    {selectedProfile.description}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <EmptyState
+                className="mt-5"
+                title="No hay políticas publicadas"
+                description="El catálogo debe tener al menos una política antes de asignar aliados."
+              />
+            )}
+          </Card>
+
+          {createOpen && selectedProfile ? (
+            <Card className="p-5 sm:p-6" aria-labelledby="new-policy-title">
+              <div className="flex items-start gap-3">
+                <span
+                  className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-navy)] text-white"
+                  aria-hidden="true"
+                >
+                  <Copy className="h-5 w-5" />
+                </span>
+                <div>
+                  <h3 id="new-policy-title" className="text-xl font-black">
+                    Duplicar política
+                  </h3>
+                  <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
+                    Se copiará la versión {selectedProfile.version} publicada de
+                    “{selectedProfile.name}”. El nuevo perfil no se asignará a
+                    ningún aliado automáticamente.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <label className="grid gap-2 text-sm font-bold">
+                  Nombre de la nueva política
+                  <Input
+                    value={newPolicyName}
+                    onChange={(event) => setNewPolicyName(event.target.value)}
+                    maxLength={80}
+                    disabled={creating}
+                    autoFocus
+                  />
+                </label>
+                <label className="grid gap-2 text-sm font-bold">
+                  Descripción opcional
+                  <Input
+                    value={newPolicyDescription}
+                    onChange={(event) =>
+                      setNewPolicyDescription(event.target.value)
+                    }
+                    maxLength={240}
+                    disabled={creating}
+                    placeholder="Ej. Condiciones para aliados premium"
+                  />
+                </label>
+              </div>
+              <div className="mt-5 flex flex-wrap justify-end gap-3">
+                <Button
+                  variant="secondary"
+                  onClick={() => setCreateOpen(false)}
+                  disabled={creating}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={() => void createPolicy()}
+                  disabled={
+                    creating ||
+                    hasUnsavedChanges ||
+                    newPolicyName.trim().length < 3
+                  }
+                >
+                  <Copy className="h-4 w-4" aria-hidden="true" />
+                  {creating ? "Creando..." : "Crear copia"}
+                </Button>
+              </div>
+            </Card>
+          ) : null}
+
+          {selectedProfile ? (
+            <>
+              <PlatformEditor
+                platform="ANDROID"
+                bands={androidBands}
+                errors={validation.platformErrors.ANDROID}
+                rowErrors={validation.rowErrors}
+                disabled={saving}
+                onAdd={addBand}
+                onAddNoInformation={addNoInformationBand}
+                onChange={updateBand}
+                onRemove={removeBand}
+              />
+
+              <PlatformEditor
+                platform="IPHONE"
+                bands={iphoneBands}
+                errors={validation.platformErrors.IPHONE}
+                rowErrors={validation.rowErrors}
+                disabled={saving}
+                onAdd={addBand}
+                onAddNoInformation={addNoInformationBand}
+                onChange={updateBand}
+                onRemove={removeBand}
+              />
+
+              <Card className="p-5 sm:p-6">
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge tone={validation.valid ? "positive" : "warning"}>
+                        {validation.valid
+                          ? "Cobertura completa"
+                          : "Política incompleta"}
+                      </Badge>
+                      <span className="text-sm font-semibold text-[var(--fp-muted)]">
+                        {bands.length} {bands.length === 1 ? "regla" : "reglas"}
+                      </span>
+                    </div>
+                    <p
+                      id="datacredito-policy-save-help"
+                      className="mt-3 max-w-2xl text-sm leading-6 text-[var(--fp-muted)]"
+                    >
+                      {!validation.valid
+                        ? "Completa y corrige ambas plataformas. Publicar permanecerá deshabilitado mientras existan huecos, solapamientos, reglas Sin información ausentes o duplicadas, o valores inválidos."
+                        : hasUnsavedChanges
+                          ? `La próxima publicación creará la versión ${(version || 0) + 1}; no reemplazará ni modificará revisiones históricas.`
+                          : "No hay cambios pendientes por publicar."}
+                    </p>
+                  </div>
+                  <Button
+                    onClick={openSaveConfirmation}
+                    disabled={
+                      saving ||
+                      !selectedProfile.active ||
+                      !validation.valid ||
+                      !hasUnsavedChanges
+                    }
+                    aria-describedby="datacredito-policy-save-help"
+                  >
+                    <Save className="h-4 w-4" aria-hidden="true" />
+                    {saving ? "Publicando..." : "Publicar nueva versión"}
+                  </Button>
+                </div>
+              </Card>
+            </>
+          ) : null}
         </div>
-      </Card>
+      ) : (
+        <div
+          id="datacredito-assignments-panel"
+          role="tabpanel"
+          aria-labelledby="datacredito-assignments-tab"
+          className="space-y-6"
+        >
+          <Card className="p-5 sm:p-6">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <h3 className="text-xl font-black">Asignación a aliados</h3>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
+                  Cada aliado debe conservar exactamente una política. Una
+                  reasignación solo cambia las consultas que se creen después
+                  de guardarla.
+                </p>
+              </div>
+              <label className="grid w-full gap-2 text-sm font-bold lg:max-w-sm">
+                Buscar aliado
+                <Input
+                  type="search"
+                  value={assignmentQuery}
+                  onChange={(event) => setAssignmentQuery(event.target.value)}
+                  placeholder="Nombre, código o política"
+                />
+              </label>
+            </div>
+
+            {filteredAllies.length ? (
+              <DataTable className="mt-5">
+                <table className="min-w-[820px]">
+                  <thead>
+                    <tr>
+                      <th scope="col">Aliado</th>
+                      <th scope="col">Estado</th>
+                      <th scope="col">Política asignada</th>
+                      <th scope="col">Versión vigente</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredAllies.map((ally) => {
+                      const draftPolicyId =
+                        assignmentDrafts[allyDraftKey(ally.id)] || ally.policyId;
+                      const draftProfile = profiles.find(
+                        (profile) => profile.id === draftPolicyId
+                      );
+                      const changed = draftPolicyId !== ally.policyId;
+
+                      return (
+                        <tr key={ally.id}>
+                          <td>
+                            <strong className="block text-[var(--fp-graphite)]">
+                              {ally.name}
+                            </strong>
+                            <span className="mt-1 block text-xs text-[var(--fp-muted)]">
+                              {ally.code || "Sin código"}
+                            </span>
+                          </td>
+                          <td>
+                            <StatusPill
+                              tone={ally.active ? "positive" : "neutral"}
+                            >
+                              {ally.active ? "Activo" : "Inactivo"}
+                            </StatusPill>
+                          </td>
+                          <td className="min-w-[300px]">
+                            <Select
+                              aria-label={`Política para ${ally.name}`}
+                              value={draftPolicyId}
+                              onChange={(event) => {
+                                setNotice(null);
+                                setAssignmentDrafts((current) => ({
+                                  ...current,
+                                  [allyDraftKey(ally.id)]: event.target.value,
+                                }));
+                              }}
+                              disabled={savingAssignments}
+                              className={
+                                changed
+                                  ? "border-[var(--fp-lime)] bg-[var(--fp-lime-soft)]"
+                                  : undefined
+                              }
+                            >
+                              {profiles
+                                .filter(
+                                  (profile) =>
+                                    profile.active ||
+                                    profile.id === draftPolicyId
+                                )
+                                .map((profile) => (
+                                  <option key={profile.id} value={profile.id}>
+                                    {profile.name}
+                                  </option>
+                                ))}
+                            </Select>
+                            {changed ? (
+                              <span className="mt-2 block text-xs font-bold text-[#4f6f0c]">
+                                Cambio pendiente
+                              </span>
+                            ) : null}
+                          </td>
+                          <td>
+                            <span className="font-black">
+                              {draftProfile
+                                ? `v${draftProfile.version}`
+                                : "No disponible"}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </DataTable>
+            ) : (
+              <EmptyState
+                className="mt-5"
+                title={allies.length ? "Sin coincidencias" : "No hay aliados"}
+                description={
+                  allies.length
+                    ? "Prueba con otro nombre, código o política."
+                    : "Cuando exista un aliado, su política obligatoria aparecerá aquí."
+                }
+              />
+            )}
+
+            <div className="mt-5 flex flex-col gap-4 border-t border-[var(--fp-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <Badge
+                  tone={assignmentChanges.length ? "warning" : "positive"}
+                >
+                  {assignmentChanges.length
+                    ? `${assignmentChanges.length} cambio(s) pendiente(s)`
+                    : "Asignaciones al día"}
+                </Badge>
+                <p
+                  id="datacredito-assignment-save-help"
+                  className="mt-2 text-sm leading-6 text-[var(--fp-muted)]"
+                >
+                  Las consultas anteriores y las ofertas vigentes no se
+                  recalculan al reasignar una política.
+                </p>
+              </div>
+              <Button
+                onClick={openAssignmentConfirmation}
+                disabled={savingAssignments || !assignmentChanges.length}
+                aria-describedby="datacredito-assignment-save-help"
+              >
+                <Save className="h-4 w-4" aria-hidden="true" />
+                {savingAssignments
+                  ? "Guardando..."
+                  : `Guardar ${assignmentChanges.length || ""} ${
+                      assignmentChanges.length === 1 ? "cambio" : "cambios"
+                    }`}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmOpen}
-        title="Publicar política de evaluación"
-        description={`Se guardarán ${validation.canonicalBands.length} reglas para Android e iPhone. La API verificará la versión ${
-          version ?? "inicial"
-        } antes de aplicar los cambios.`}
-        confirmLabel="Guardar política"
+        title="Publicar nueva revisión"
+        description={`Se publicará la versión ${(version || 0) + 1} de “${
+          selectedProfile?.name || "la política"
+        }” con ${validation.canonicalBands.length} reglas. La usarán ${
+          selectedProfile?.assignedAlliesCount || 0
+        } aliado(s) únicamente en consultas futuras.`}
+        confirmLabel="Publicar versión"
         busy={saving}
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => void savePolicy()}
       />
 
       <ConfirmDialog
+        open={assignmentConfirmOpen}
+        title="Guardar reasignaciones"
+        description={`Se cambiará la política de ${assignmentChanges.length} ${
+          assignmentChanges.length === 1 ? "aliado" : "aliados"
+        }. Las consultas y ofertas ya emitidas conservarán la revisión con la que fueron evaluadas.`}
+        confirmLabel="Guardar asignaciones"
+        busy={savingAssignments}
+        onCancel={() => setAssignmentConfirmOpen(false)}
+        onConfirm={() => void saveAssignments()}
+      />
+
+      <ConfirmDialog
+        open={switchConfirmOpen}
+        title="Descartar borrador y cambiar de política"
+        description="La política seleccionada reemplazará las bandas editadas en este borrador. Las revisiones ya publicadas no se modifican."
+        confirmLabel="Descartar y cambiar"
+        onCancel={() => {
+          setSwitchConfirmOpen(false);
+          setPendingPolicyId(null);
+        }}
+        onConfirm={() => {
+          if (pendingPolicyId) selectProfile(pendingPolicyId);
+          setSwitchConfirmOpen(false);
+          setPendingPolicyId(null);
+        }}
+      />
+
+      <ConfirmDialog
         open={reloadConfirmOpen}
         title="Descartar cambios y recargar"
-        description="La versión vigente reemplazará todas las bandas editadas en este borrador. Esta acción no se puede deshacer."
+        description="El catálogo vigente reemplazará el borrador de bandas y las reasignaciones pendientes. Esta acción no afecta cambios que ya se hayan publicado."
         confirmLabel="Descartar y recargar"
         onCancel={() => setReloadConfirmOpen(false)}
         onConfirm={() => {
           setReloadConfirmOpen(false);
-          void loadPolicy();
+          void loadCatalog(undefined, selectedPolicyId);
         }}
       />
     </section>

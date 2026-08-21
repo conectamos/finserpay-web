@@ -22,11 +22,59 @@ model Aliado {
   codigo                String?  @unique
   activo                Boolean  @default(true)
   redescuentoPorcentaje Float    @default(10)
+  dataCreditoPolicyId   String   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  dataCreditoPolicy     DataCreditoPolicyProfile @relation(fields: [dataCreditoPolicyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  dataCreditoPolicyAssignmentLogs DataCreditoPolicyAssignmentAudit[]
   sedes                 Sede[]
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
   @@index([activo])
+  @@index([dataCreditoPolicyId])
+}
+
+model DataCreditoPolicyProfile {
+  id                     String   @id @db.Uuid
+  name                   String   @db.VarChar(80)
+  description            String?  @db.VarChar(240)
+  active                 Boolean  @default(true)
+  createdByUserId        Int?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  revisions              DataCreditoPolicyRevision[]
+  allies                 Aliado[]
+  previousAssignmentLogs DataCreditoPolicyAssignmentAudit[] @relation("DataCreditoPolicyAssignmentPrevious")
+  assignmentLogs         DataCreditoPolicyAssignmentAudit[] @relation("DataCreditoPolicyAssignmentCurrent")
+
+  @@index([active, name])
+}
+
+model DataCreditoPolicyRevision {
+  id              String   @id @default(uuid()) @db.Uuid
+  profileId       String   @db.Uuid
+  version         Int
+  policy          Json
+  createdByUserId Int
+  createdAt       DateTime @default(now())
+  profile         DataCreditoPolicyProfile @relation(fields: [profileId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([profileId, version])
+  @@index([profileId, createdAt])
+}
+
+model DataCreditoPolicyAssignmentAudit {
+  id               String   @id @default(uuid()) @db.Uuid
+  allyId           Int
+  previousPolicyId String   @db.Uuid
+  policyId         String   @db.Uuid
+  actorUserId      Int
+  createdAt        DateTime @default(now())
+  ally             Aliado   @relation(fields: [allyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  previousPolicy   DataCreditoPolicyProfile @relation("DataCreditoPolicyAssignmentPrevious", fields: [previousPolicyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  policy           DataCreditoPolicyProfile @relation("DataCreditoPolicyAssignmentCurrent", fields: [policyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([allyId, createdAt])
+  @@index([policyId, createdAt])
 }
 
 model Sede {

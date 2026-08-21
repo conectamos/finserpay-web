@@ -80,21 +80,28 @@ test("reserva reutilizacion, rate limit e insercion bajo locks de base de datos"
   assert.doesNotMatch(evaluationRoute, /countRecentDataCreditoAssessments/);
 });
 
-test("el lock documental serializa plataformas que comparten el mismo limite", () => {
+test("el lock documental serializa apellidos y plataformas de la misma cedula", () => {
   const lockDefinition = storage.match(
-    /const documentLockKey = \[([\s\S]*?)\]\.join\(":"\);/
-  )?.[1];
+    /function dataCreditoDocumentLockKey[\s\S]*?(?=export async function reuseDataCreditoAssessment)/
+  )?.[0];
   assert.ok(lockDefinition);
   assert.match(lockDefinition, /input\.documentHash/);
-  assert.doesNotMatch(lockDefinition, /input\.platform/);
+  assert.match(lockDefinition, /input\.providerEnvironment/);
+  assert.match(lockDefinition, /input\.aliadoId/);
+  assert.doesNotMatch(lockDefinition, /input\.(platform|surnameHash)/);
 });
 
-test("solo libera pendientes antiguos del mismo documento, aliado y sede", () => {
+test("solo libera pendientes antiguos de la misma cedula ambiente y aliado", () => {
   assert.match(storage, /maximumProviderSequenceMs = timeoutMs \* 4/);
   assert.match(storage, /Math\.max\(5,/);
-  assert.match(storage, /"documentHash" = \$1/);
-  assert.match(storage, /"sedeId" = \$3/);
-  assert.match(storage, /"aliadoId" IS NOT DISTINCT FROM \$4/);
+  const staleCleanup = storage.match(
+    /UPDATE "DataCreditoAssessment"[\s\S]*?"errorCode" = 'STALE_PENDING'[\s\S]*?createdAt" <[\s\S]*?\n        `/
+  )?.[0];
+  assert.ok(staleCleanup);
+  assert.match(staleCleanup, /"documentHash" = \$1/);
+  assert.match(staleCleanup, /"providerEnvironment" = \$2/);
+  assert.match(staleCleanup, /"aliadoId" IS NOT DISTINCT FROM \$3/);
+  assert.doesNotMatch(staleCleanup, /sedeId|surnameHash|platform/);
   assert.doesNotMatch(storage, /INTERVAL '2 minutes'/);
 });
 
@@ -176,7 +183,7 @@ test("valida indices por catalogo aunque PostgreSQL omita comillas", () => {
       "documentHash",
       "surnameHash",
       "platform",
-      "policyVersion",
+      "policyRevisionId",
       "userId",
       null,
       "sedeId",
@@ -201,7 +208,7 @@ test("valida indices por catalogo aunque PostgreSQL omita comillas", () => {
       { column: "documentHash" },
       { column: "surnameHash" },
       { column: "platform" },
-      { column: "policyVersion" },
+      { column: "policyRevisionId" },
       { column: "userId" },
       { expression: 'COALESCE("sellerId", 0)' },
       { column: "sedeId" },
@@ -272,10 +279,7 @@ test("la bandera apagada restaura ventas y reserva la politica al administrador"
   );
   assert.match(policyRoute, /export async function GET\(request: Request\)/);
   assert.match(policyRoute, /shouldLoadDataCreditoPolicy/);
-  assert.match(
-    policyConsole,
-    /DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM\}=true/
-  );
+  assert.match(policyConsole, /\/api\/creditos\/datacredito\/politicas/);
   assert.match(
     prequalificationGate,
     /policyPayload\.enabled === false[\s\S]*?finishBypass\(\)/
@@ -285,7 +289,11 @@ test("la bandera apagada restaura ventas y reserva la politica al administrador"
 test("la retencion tiene endpoint protegido y tarea HTTPS con timeout", () => {
   assert.match(
     storage,
-    /DATACREDITO_RETENTION_DAYS debe ser un entero entre 1 y 730/
+    /DATACREDITO_RETENTION_DAYS debe ser un entero entre 15 y 730/
+  );
+  assert.match(
+    storage,
+    /readBoundedInteger\("DATACREDITO_RETENTION_DAYS", 90, 15, 730\)/
   );
   assert.match(retentionRoute, /DATACREDITO_RETENTION_TOKEN/);
   assert.match(retentionRoute, /timingSafeEqual/);
@@ -398,7 +406,7 @@ test("la interfaz recupera borradores, vencimientos y conflictos sin repetir con
   assert.match(policyConsole, /hasUnsavedChanges/);
   assert.match(
     policyConsole,
-    /disabled=\{saving \|\| !validation\.valid \|\| !hasUnsavedChanges\}/
+    /disabled=\{[\s\S]{0,120}saving \|\|[\s\S]{0,120}!validation\.valid \|\|[\s\S]{0,120}!hasUnsavedChanges/
   );
   assert.match(policyConsole, /No hay cambios pendientes por publicar/);
   assert.match(policyConsole, /Descartar y recargar/);
@@ -417,11 +425,17 @@ test("la ausencia explicita usa politica y puede consumirse sin exponer el senti
   assert.match(policyConsole, /Sin información/);
 });
 
-test("la vigencia predeterminada cubre identidad y contratos", () => {
+test("la vigencia contractual es exactamente 15 dias y no admite override historico", () => {
   assert.match(
     storage,
-    /readBoundedInteger\("DATACREDITO_ASSESSMENT_TTL_MINUTES", 120, 1, 1_440\)/
+    /DATACREDITO_ASSESSMENT_DEFAULT_TTL_MINUTES = 21_600/
   );
+  const ttlGetter = storage.match(
+    /export function getDataCreditoAssessmentTtlMinutes\(\) \{([\s\S]*?)\n\}/
+  )?.[1];
+  assert.ok(ttlGetter);
+  assert.match(ttlGetter, /return DATACREDITO_ASSESSMENT_DEFAULT_TTL_MINUTES/);
+  assert.doesNotMatch(ttlGetter, /process\.env|readBoundedInteger/);
 });
 
 test("la clasificacion posfallo no filtra evaluaciones fuera de identidad y scope", () => {
@@ -516,6 +530,31 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
   assert.match(
     creditBuilder,
     /maxFinancedAmount: dataCreditoOffer\?\.maxFinancedAmount/
+  );
+});
+
+test("muestra los resultados DataCredito aprobados y rechazados como ventanas emergentes", () => {
+  assert.match(prequalificationGate, /createPortal\(/);
+  assert.match(prequalificationGate, /role="dialog"/);
+  assert.match(prequalificationGate, /aria-modal="true"/);
+  assert.match(prequalificationGate, /fp-ui-dialog-backdrop/);
+  assert.match(
+    prequalificationGate,
+    /document\.body\.style\.overflow = "hidden"/
+  );
+  assert.match(prequalificationGate, /event\.key === "Escape"/);
+  assert.match(prequalificationGate, /event\.key !== "Tab"/);
+  assert.match(
+    prequalificationGate,
+    /labelledBy="datacredito-approved-title"[\s\S]*?describedBy="datacredito-approved-description"/
+  );
+  assert.match(
+    prequalificationGate,
+    /labelledBy="datacredito-rejected-title"[\s\S]*?describedBy="datacredito-rejected-description"/
+  );
+  assert.doesNotMatch(
+    prequalificationGate,
+    /role="status"[\s\S]{0,120}datacredito-(approved|rejected)-title/
   );
 });
 
