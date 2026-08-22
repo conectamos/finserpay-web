@@ -2862,21 +2862,33 @@ export default function CreditFactoryConsole({
       ? ` Tope efectivo por salvaguardas vigentes: ${currency(dataCreditoEffectiveMaxFinancedAmount)}.`
       : "";
   const iphoneMaxInstallmentValue = normalizeMoneyLimit(
-    activeDataCreditoPlatform === "IPHONE" &&
+    !simulatorMode &&
+      activeDataCreditoPlatform === "IPHONE" &&
       activeDataCreditoOffer?.maxInstallmentAmount
       ? activeDataCreditoOffer.maxInstallmentAmount
       : creditSettings.iphoneTopeCuota,
     IPHONE_MAX_INSTALLMENT_VALUE
   );
+  const policySummaryMaxInstallmentValue =
+    simulatorMode && iphoneFactory
+      ? iphoneMaxInstallmentValue
+      : normalizeMoneyLimit(
+          activeDataCreditoOffer?.maxInstallmentAmount,
+          0
+        );
   const iphoneFinancedExcess =
     iphoneFactory && iphoneMaxFinancedAmount > 0
       ? Math.max(0, valorTotalEquipoNumero - iphoneMaxFinancedAmount)
       : 0;
-  const configuredInitialPaymentPercentage =
-    creditSettings.cuotaInicialPorcentaje ??
-    (iphoneFactory ? IPHONE_INITIAL_PAYMENT_PERCENTAGE : DEFAULT_INITIAL_PAYMENT_PERCENTAGE);
+  const configuredInitialPaymentPercentage = iphoneFactory
+    ? creditSettings.iphoneCuotaInicialPorcentaje ??
+      IPHONE_INITIAL_PAYMENT_PERCENTAGE
+    : creditSettings.cuotaInicialPorcentaje ??
+      DEFAULT_INITIAL_PAYMENT_PERCENTAGE;
   const initialPaymentPercentage =
-    activeDataCreditoOffer
+    simulatorMode && iphoneFactory
+      ? configuredInitialPaymentPercentage
+      : activeDataCreditoOffer
       ? activeDataCreditoOffer.initialPaymentPercentage
       : configuredInitialPaymentPercentage;
   const cuotaInicialMinimaNumero = dataCreditoMaxFinancedAmount > 0
@@ -2899,22 +2911,110 @@ export default function CreditFactoryConsole({
     cuotaInicialNumero >= cuotaInicialMinimaNumero &&
     cuotaInicialNumero <= valorTotalEquipoNumero;
   const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
-    dataCreditoInstallmentCount || creditSettings.plazoMaximoCuotas
+    dataCreditoInstallmentCount ||
+      (iphoneFactory
+        ? creditSettings.iphonePlazoMaximoCuotas
+        : creditSettings.plazoMaximoCuotas)
   );
-  const creditInstallmentOptions = useMemo(
+  const dataCreditoLocksInstallmentCount =
+    Boolean(dataCreditoInstallmentCount) && !simulatorMode;
+  const policyInstallmentOptions = useMemo(
     () =>
-      dataCreditoInstallmentCount
+      dataCreditoLocksInstallmentCount
         ? [String(dataCreditoInstallmentCount)]
         : getCreditInstallmentOptions(plazoMaximoCuotas),
-    [dataCreditoInstallmentCount, plazoMaximoCuotas]
+    [
+      dataCreditoInstallmentCount,
+      dataCreditoLocksInstallmentCount,
+      plazoMaximoCuotas,
+    ]
   );
   const plazoMesesNumero =
-    dataCreditoInstallmentCount ||
-    normalizeCreditInstallments(
-      plazoMeses,
-      creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
-      plazoMaximoCuotas
-    );
+    dataCreditoLocksInstallmentCount
+      ? dataCreditoInstallmentCount
+      : normalizeCreditInstallments(
+          plazoMeses,
+          (iphoneFactory
+            ? creditSettings.iphonePlazoCuotas
+            : creditSettings.plazoCuotas) || DEFAULT_CREDIT_INSTALLMENTS,
+          plazoMaximoCuotas
+        );
+  const creditInstallmentOptions = useMemo(() => {
+    if (
+      !simulatorMode ||
+      !iphoneFactory ||
+      !simulationPolicyReady ||
+      !activeDataCreditoOffer ||
+      valorTotalEquipoNumero <= 0 ||
+      cuotaInicialNumero >= valorTotalEquipoNumero ||
+      !fechaPrimerPago ||
+      iphoneMaxInstallmentValue <= 0
+    ) {
+      return policyInstallmentOptions;
+    }
+
+    return policyInstallmentOptions.filter((option) => {
+      try {
+        const candidateInstallments = normalizeCreditInstallments(
+          option,
+          dataCreditoInstallmentCount || IPHONE_DEFAULT_CREDIT_INSTALLMENTS,
+          plazoMaximoCuotas
+        );
+        const candidateFinancialSettings =
+          resolveCreditPolicyFinancialSettings({
+            globalSettings: globalCreditSettings,
+            policyFinancialSettings: activeDataCreditoOffer.financialSettings,
+            legacyOfferSuretyPercentage:
+              activeDataCreditoOffer.suretyPercentage ?? null,
+            numeroCuotas: candidateInstallments,
+          });
+        const candidatePlan = calculateFrenchAmortization({
+          calculoVersion: candidateFinancialSettings.calculoVersion,
+          tasaPeriodoDecimales:
+            candidateFinancialSettings.tasaPeriodoDecimales,
+          redondeoComercial: candidateFinancialSettings.redondeoComercial,
+          valorVenta: valorTotalEquipoNumero,
+          cuotaInicial: cuotaInicialNumero,
+          numeroCuotas: candidateInstallments,
+          tasaInteresEa: Math.max(
+            0,
+            candidateFinancialSettings.tasaInteresEa
+          ),
+          fianzaCuotaPorcentaje: Math.max(
+            0,
+            candidateFinancialSettings.fianzaCuotaPorcentaje
+          ),
+          seguroCuotaPorcentaje: Math.max(
+            0,
+            candidateFinancialSettings.seguroCuotaPorcentaje
+          ),
+          frecuenciaPago: candidateFinancialSettings.frecuenciaPago,
+          fechaPrimerPago,
+        });
+
+        return !validateIphoneInstallmentLimit({
+          platform: "IPHONE",
+          valorCuota: candidatePlan.cuotaTotal,
+          iphoneMaxInstallmentValue,
+        }).exceeded;
+      } catch {
+        return false;
+      }
+    });
+  }, [
+    activeDataCreditoOffer,
+    cuotaInicialNumero,
+    dataCreditoInstallmentCount,
+    fechaPrimerPago,
+    globalCreditSettings,
+    iphoneFactory,
+    iphoneMaxInstallmentValue,
+    plazoMaximoCuotas,
+    policyInstallmentOptions,
+    simulationPolicyReady,
+    simulatorMode,
+    valorTotalEquipoNumero,
+  ]);
   const resolvedPolicyFinancialSettings =
     resolveCreditPolicyFinancialSettings({
       globalSettings: globalCreditSettings,
@@ -2981,6 +3081,9 @@ export default function CreditFactoryConsole({
   });
   const iphoneInstallmentLimitExceeded = iphoneInstallmentLimit.exceeded;
   const iphoneInstallmentLimitMessage = iphoneInstallmentLimit.message;
+  const visibleIphoneInstallmentLimitMessage = canSeeInternalPricing
+    ? iphoneInstallmentLimitMessage
+    : "La cuota supera el limite permitido para iPhone. Aumenta la inicial o ajusta el plazo para continuar.";
   const frecuenciaPagoLabel = getPaymentFrequencyLabel(frecuenciaPagoCredito);
   const creditSettingsScopeLabel = activeDataCreditoOffer
     ? simulatorMode
@@ -5155,6 +5258,24 @@ export default function CreditFactoryConsole({
   ]);
 
   useEffect(() => {
+    if (
+      !simulatorMode ||
+      !iphoneFactory ||
+      creditInstallmentOptions.length === 0 ||
+      creditInstallmentOptions.includes(plazoMeses)
+    ) {
+      return;
+    }
+
+    setPlazoMeses(creditInstallmentOptions[0]);
+  }, [
+    creditInstallmentOptions,
+    iphoneFactory,
+    plazoMeses,
+    simulatorMode,
+  ]);
+
+  useEffect(() => {
     if (!activeEquipmentCatalog.length || !equipoMarca.trim()) {
       return;
     }
@@ -6426,7 +6547,7 @@ export default function CreditFactoryConsole({
       iphoneInstallmentLimitExceeded
     ) {
       setNotice({
-        text: iphoneInstallmentLimitMessage,
+        text: visibleIphoneInstallmentLimitMessage,
         tone: "red",
       });
       return;
@@ -6532,7 +6653,7 @@ export default function CreditFactoryConsole({
       iphoneInstallmentLimitExceeded
     ) {
       setNotice({
-        text: iphoneInstallmentLimitMessage,
+        text: visibleIphoneInstallmentLimitMessage,
         tone: "red",
       });
       return;
@@ -7108,7 +7229,7 @@ export default function CreditFactoryConsole({
 
     if (iphoneInstallmentLimitExceeded) {
       setNotice({
-        text: iphoneInstallmentLimitMessage,
+        text: visibleIphoneInstallmentLimitMessage,
         tone: "red",
       });
       return null;
@@ -7364,7 +7485,7 @@ export default function CreditFactoryConsole({
   const handleFirmaSeguroStepReady = async () => {
     if (iphoneInstallmentLimitExceeded) {
       setNotice({
-        text: iphoneInstallmentLimitMessage,
+        text: visibleIphoneInstallmentLimitMessage,
         tone: "red",
       });
       return;
@@ -10819,13 +10940,17 @@ export default function CreditFactoryConsole({
                       <span aria-hidden="true">·</span>
                       <span>Crédito máximo {currency(dataCreditoMaxFinancedAmount)}</span>
                       <span aria-hidden="true">·</span>
-                      <span>Plazo {dataCreditoInstallmentCount} cuotas</span>
-                      {activeDataCreditoOffer.maxInstallmentAmount ? (
+                      <span>
+                        {simulatorMode ? "Plazo maximo" : "Plazo"}{" "}
+                        {dataCreditoInstallmentCount} cuotas
+                      </span>
+                      {canSeeInternalPricing &&
+                      policySummaryMaxInstallmentValue > 0 ? (
                         <>
                           <span aria-hidden="true">·</span>
                           <span>
                             Tope por cuota{" "}
-                            {currency(activeDataCreditoOffer.maxInstallmentAmount)}
+                            {currency(policySummaryMaxInstallmentValue)}
                           </span>
                         </>
                       ) : null}
@@ -11023,18 +11148,32 @@ export default function CreditFactoryConsole({
                         <select
                           value={plazoMeses}
                           onChange={(event) => setPlazoMeses(event.target.value)}
-                          disabled={Boolean(dataCreditoInstallmentCount)}
+                          disabled={
+                            dataCreditoLocksInstallmentCount ||
+                            (simulatorMode &&
+                              iphoneFactory &&
+                              valorTotalEquipoNumero > 0 &&
+                              creditInstallmentOptions.length === 0)
+                          }
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50 disabled:text-slate-500"
                         >
-                          {creditInstallmentOptions.map((option) => (
-                            <option key={option} value={option}>
-                              {option}
+                          {creditInstallmentOptions.length > 0 ? (
+                            creditInstallmentOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))
+                          ) : (
+                            <option value={plazoMeses}>
+                              Sin plazo dentro del tope
                             </option>
-                          ))}
+                          )}
                         </select>
                         {dataCreditoInstallmentCount ? (
                           <p className="mt-2 text-xs font-medium text-slate-500">
-                            Plazo definido por la política DataCrédito aplicada.
+                            {simulatorMode
+                              ? `Puedes elegir hasta ${dataCreditoInstallmentCount} cuotas. Solo se muestran plazos cuya cuota no supera ${currency(iphoneMaxInstallmentValue)}.`
+                              : "Plazo definido por la política DataCrédito aplicada."}
                           </p>
                         ) : null}
                       </div>
@@ -11155,7 +11294,7 @@ export default function CreditFactoryConsole({
                           <p className="mt-2 text-2xl font-black text-slate-950">
                             {currency(valorCuota)}
                           </p>
-                          {amortizationPlan ? (
+                          {canSeeInternalPricing && amortizationPlan ? (
                             <div className="mt-2 space-y-1 text-xs font-semibold text-slate-500">
                               <p>Exacta: {exactCurrency(amortizationPlan.cuotaTotal)}</p>
                               <p>
@@ -11165,7 +11304,7 @@ export default function CreditFactoryConsole({
                               </p>
                             </div>
                           ) : null}
-                          {iphoneFactory ? (
+                          {canSeeInternalPricing && iphoneFactory ? (
                             <p
                               className={[
                                 "mt-1 text-xs font-bold",
@@ -11181,12 +11320,12 @@ export default function CreditFactoryConsole({
                       </div>
                       {iphoneInstallmentLimitExceeded ? (
                         <div className="rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-700">
-                          {iphoneInstallmentLimitMessage}
+                          {visibleIphoneInstallmentLimitMessage}
                         </div>
                       ) : null}
                     </div>
                   </div>
-                  {amortizationPlan ? (
+                  {canSeeInternalPricing && amortizationPlan ? (
                     <CreditAmortizationTable plan={amortizationPlan} />
                   ) : null}
                 </div>
@@ -11822,7 +11961,9 @@ export default function CreditFactoryConsole({
                           ["Equipo", referenciaEquipo || "-"],
                           ["IMEI", imei || "-"],
                           ["Cuota comercial", currency(valorCuota)],
-                          ["Cuota exacta", exactCurrency(valorCuotaExacta)],
+                          ...(canSeeInternalPricing
+                            ? [["Cuota exacta", exactCurrency(valorCuotaExacta)]]
+                            : []),
                         ].map(([label, value]) => (
                           <div
                             key={label}
@@ -12169,7 +12310,9 @@ export default function CreditFactoryConsole({
                         <div><span>Total financiado</span><strong>{currency(saldoFinanciado)}</strong></div>
                       ) : null}
                       <div><span>Cuota comercial</span><strong>{currency(valorCuota)}</strong></div>
-                      <div><span>Cuota exacta para recaudo</span><strong>{exactCurrency(valorCuotaExacta)}</strong></div>
+                      {canSeeInternalPricing ? (
+                        <div><span>Cuota exacta para recaudo</span><strong>{exactCurrency(valorCuotaExacta)}</strong></div>
+                      ) : null}
                     </div>
                   </section>
 
@@ -12589,7 +12732,9 @@ export default function CreditFactoryConsole({
                           <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
                         ) : null}
                         <p><span className="font-semibold text-slate-950">Cuota comercial:</span> {currency(valorCuota)}</p>
-                        <p><span className="font-semibold text-slate-950">Cuota exacta para recaudo:</span> {exactCurrency(valorCuotaExacta)}</p>
+                        {canSeeInternalPricing ? (
+                          <p><span className="font-semibold text-slate-950">Cuota exacta para recaudo:</span> {exactCurrency(valorCuotaExacta)}</p>
+                        ) : null}
                       </div>
                     </div>
 
@@ -12726,7 +12871,9 @@ export default function CreditFactoryConsole({
                           <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
                         ) : null}
                         <p><span className="font-semibold text-slate-950">Cuota comercial:</span> {currency(valorCuota)}</p>
-                        <p><span className="font-semibold text-slate-950">Cuota exacta para recaudo:</span> {exactCurrency(valorCuotaExacta)}</p>
+                        {canSeeInternalPricing ? (
+                          <p><span className="font-semibold text-slate-950">Cuota exacta para recaudo:</span> {exactCurrency(valorCuotaExacta)}</p>
+                        ) : null}
                       </div>
                     </div>
 
@@ -13406,10 +13553,12 @@ export default function CreditFactoryConsole({
                 <p className="mt-2 text-2xl font-black text-slate-950">
                   {currency(valorCuota)}
                 </p>
-                <p className="mt-1 text-xs font-semibold text-slate-500">
-                  Exacta para recaudo: {exactCurrency(valorCuotaExacta)}
-                </p>
-                {iphoneFactory ? (
+                {canSeeInternalPricing ? (
+                  <p className="mt-1 text-xs font-semibold text-slate-500">
+                    Exacta para recaudo: {exactCurrency(valorCuotaExacta)}
+                  </p>
+                ) : null}
+                {canSeeInternalPricing && iphoneFactory ? (
                   <p
                     className={[
                       "mt-1 text-xs font-bold",
@@ -13433,7 +13582,7 @@ export default function CreditFactoryConsole({
 
             {iphoneInstallmentLimitExceeded ? (
               <div className="mt-4 rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-700">
-                {iphoneInstallmentLimitMessage}
+                {visibleIphoneInstallmentLimitMessage}
               </div>
             ) : null}
 

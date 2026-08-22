@@ -12,7 +12,10 @@ const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const {
   calculateRequiredInitialPaymentForFinancingLimit,
   calculateRequiredInitialPaymentByPlatform,
+  getCreditInstallmentOptions,
+  normalizeCreditInstallments,
   resolveEffectiveDataCreditoFinancingLimit,
+  validateIphoneInstallmentLimit,
 } = await jiti.import(
   "../lib/credit-factory.ts"
 );
@@ -148,5 +151,41 @@ test("resuelve directamente el menor tope por plataforma", () => {
       iphoneMaxFinancedAmount: 3_500_000,
     }),
     3_500_000
+  );
+});
+
+test("el simulador ofrece plazos hasta el maximo de la politica", () => {
+  const options = getCreditInstallmentOptions(24);
+
+  assert.equal(options[0], "1");
+  assert.equal(options.at(-1), "24");
+  assert.equal(options.length, 24);
+  assert.equal(normalizeCreditInstallments(30, 24, 24), 24);
+});
+
+test("el tope iPhone acepta 160000 y bloquea cualquier exceso exacto", () => {
+  assert.equal(
+    validateIphoneInstallmentLimit({
+      platform: "IPHONE",
+      valorCuota: 160_000,
+      iphoneMaxInstallmentValue: 160_000,
+    }).exceeded,
+    false
+  );
+  assert.equal(
+    validateIphoneInstallmentLimit({
+      platform: "IPHONE",
+      valorCuota: 160_000.01,
+      iphoneMaxInstallmentValue: 160_000,
+    }).exceeded,
+    true
+  );
+  assert.equal(
+    validateIphoneInstallmentLimit({
+      platform: "ANDROID",
+      valorCuota: 160_000.01,
+      iphoneMaxInstallmentValue: 160_000,
+    }).exceeded,
+    false
   );
 });
