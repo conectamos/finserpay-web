@@ -18,6 +18,7 @@ const {
   calculateRequiredInitialPaymentByPlatform,
   getCreditInstallmentOptions,
   normalizeCreditInstallments,
+  parseCreditInstallmentSelection,
   resolveEffectiveDataCreditoFinancingLimit,
   validateIphoneInstallmentLimit,
 } = await jiti.import(
@@ -169,6 +170,35 @@ test("el simulador iPhone ofrece plazos hasta 48 cuotas", () => {
   assert.equal(options.at(-1), "48");
   assert.equal(options.length, 48);
   assert.equal(normalizeCreditInstallments(60, 24, 48), 48);
+});
+
+test("cada política DataCredito usa su plazo como máximo y permite uno menor", () => {
+  const policies = [
+    { max: 16, selected: 12 },
+    { max: 24, selected: 16 },
+    { max: 40, selected: 24 },
+    { max: 48, selected: 40 },
+  ];
+
+  for (const { max, selected } of policies) {
+    const options = getCreditInstallmentOptions(max);
+
+    assert.equal(options.length, max);
+    assert.equal(options[0], "1");
+    assert.equal(options.at(-1), String(max));
+    assert.equal(options.includes(String(selected)), true);
+    assert.equal(options.includes(String(max + 1)), false);
+    assert.equal(parseCreditInstallmentSelection(selected, max), selected);
+    assert.equal(parseCreditInstallmentSelection(max, max), max);
+
+    for (const value of [undefined, null, 0, -1, max + 0.5, max + 1, "texto"]) {
+      assert.equal(
+        parseCreditInstallmentSelection(value, max),
+        null,
+        `Debía rechazar ${String(value)} para un máximo de ${max}`
+      );
+    }
+  }
 });
 
 test("la regla comercial iPhone conserva 30%, 3.5M, 48 y 160k", () => {

@@ -578,7 +578,27 @@ test("la oferta persiste y serializa monto, plazo y tope de cuota", () => {
   );
   assert.match(
     creditRoute,
-    /const plazoMeses = dataCreditoFinancingTerms[\s\S]*?dataCreditoFinancingTerms\.installmentCount/
+    /parseCreditInstallmentSelection\(\s*body\.plazoMeses,\s*dataCreditoFinancingTerms\.installmentCount/
+  );
+  assert.match(
+    creditRoute,
+    /selectedDataCreditoInstallmentCount === null[\s\S]{0,300}status: 400/
+  );
+  assert.match(
+    creditRoute,
+    /const plazoMeses = dataCreditoFinancingTerms\s*\? selectedDataCreditoInstallmentCount!/
+  );
+  assert.doesNotMatch(
+    creditRoute,
+    /const plazoMeses = dataCreditoFinancingTerms\s*\? dataCreditoFinancingTerms\.installmentCount/
+  );
+  assert.match(
+    creditRoute,
+    /maxInstallmentCount: dataCreditoFinancingTerms\?\.installmentCount/
+  );
+  assert.match(
+    creditRoute,
+    /selectedInstallmentCount: plazoMeses/
   );
   assert.match(
     creditRoute,
@@ -588,6 +608,33 @@ test("la oferta persiste y serializa monto, plazo y tope de cuota", () => {
   assert.doesNotMatch(firmaSeguroDraftRoute, /forcePaymentFrequency/);
   assert.doesNotMatch(factoryConsole, /forcePaymentFrequency/);
   assert.match(policyRoute, /requireFinancingTerms: true/);
+});
+
+test("separa la cuota exacta contable de la cuota comercial postventa", () => {
+  assert.match(
+    creditRoute,
+    /amortizacion:\s*\{\s*select:\s*\{\s*cuotaComercial: true/
+  );
+  assert.match(
+    creditRoute,
+    /readCommercialInstallmentFromSnapshot\(item\.contratoSnapshot\)/
+  );
+  assert.match(
+    creditRoute,
+    /valorCuota: item\.valorCuota,\s*valorCuotaComercial,/
+  );
+  assert.match(
+    factoryConsole,
+    /selectedCredit\?\.valorCuotaComercial \?\? selectedCredit\?\.valorCuota \?\? 0/
+  );
+  assert.doesNotMatch(
+    factoryConsole,
+    /currency\(selectedCredit\.valorCuota\)/
+  );
+  assert.match(
+    factoryConsole,
+    /label="Cuota comercial"\s*value=\{currency\(selectedCreditCommercialInstallment\)\}/
+  );
 });
 
 test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apagado", () => {
@@ -640,7 +687,27 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
   );
   assert.match(
     creditBuilder,
-    /const plazoMeses = dataCreditoOffer[\s\S]*?dataCreditoOffer\.installmentCount/
+    /parseCreditInstallmentSelection\(\s*payload\.plazoMeses,\s*dataCreditoOffer\.installmentCount/
+  );
+  assert.match(
+    creditBuilder,
+    /selectedDataCreditoInstallmentCount === null[\s\S]{0,200}CreditValidationError/
+  );
+  assert.match(
+    creditBuilder,
+    /const plazoMeses = dataCreditoOffer\s*\? selectedDataCreditoInstallmentCount!/
+  );
+  assert.doesNotMatch(
+    creditBuilder,
+    /const plazoMeses = dataCreditoOffer\s*\? dataCreditoOffer\.installmentCount/
+  );
+  assert.match(
+    creditBuilder,
+    /maxInstallmentCount: dataCreditoOffer\.installmentCount/
+  );
+  assert.match(
+    creditBuilder,
+    /selectedInstallmentCount: plazoMeses/
   );
   assert.match(
     creditBuilder,
@@ -649,6 +716,38 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
   assert.doesNotMatch(
     creditBuilder,
     /effectiveCreditSettings\.documentException/
+  );
+});
+
+test("la fábrica presenta el plazo DataCredito como máximo seleccionable", () => {
+  assert.doesNotMatch(factoryConsole, /dataCreditoLocksInstallmentCount/);
+  assert.match(
+    factoryConsole,
+    /getCreditInstallmentOptions\(plazoMaximoCuotas\)/
+  );
+  assert.match(
+    factoryConsole,
+    /dataCreditoAssessmentId === result\.assessmentId[\s\S]{0,180}parseCreditInstallmentSelection\(plazoMeses, maxInstallmentCount\)/
+  );
+  assert.match(
+    factoryConsole,
+    /policyControlled: Boolean\(value\("dataCreditoAssessmentId"\)\)/
+  );
+  assert.match(
+    factoryConsole,
+    /Plazo máximo \{dataCreditoApproval\.offer\.installmentCount\} cuotas/
+  );
+  assert.match(
+    prequalificationGate,
+    /Plazo máximo autorizado/
+  );
+  assert.match(
+    policyConsole,
+    /Plazo máximo \(cuotas\)/
+  );
+  assert.match(
+    factoryConsole,
+    /Puedes elegir hasta \{plazoMaximoCuotas\} cuotas/
   );
 });
 

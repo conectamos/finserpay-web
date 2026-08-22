@@ -21,6 +21,7 @@ import {
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
   normalizePaymentFrequency,
+  parseCreditInstallmentSelection,
   resolveCreditPaymentSummary,
   resolveCreditState,
   sanitizeDeviceValue,
@@ -313,6 +314,11 @@ const creditListInclude = {
       nombre: true,
     },
   },
+  amortizacion: {
+    select: {
+      cuotaComercial: true,
+    },
+  },
 } satisfies Prisma.CreditoInclude;
 
 const creditListOmit = {
@@ -361,6 +367,52 @@ function extractFamilyReferences(snapshot: unknown) {
     );
 }
 
+function readCommercialInstallmentFromSnapshot(snapshot: unknown) {
+  if (
+    typeof snapshot !== "object" ||
+    snapshot === null ||
+    Array.isArray(snapshot)
+  ) {
+    return null;
+  }
+
+  const financiero = (snapshot as Record<string, unknown>).financiero;
+
+  if (
+    typeof financiero !== "object" ||
+    financiero === null ||
+    Array.isArray(financiero)
+  ) {
+    return null;
+  }
+
+  const cuotaComercial = Number(
+    (financiero as Record<string, unknown>).cuotaComercial
+  );
+
+  return Number.isFinite(cuotaComercial) && cuotaComercial > 0
+    ? cuotaComercial
+    : null;
+}
+
+function resolveCommercialInstallment(item: CreditListItem) {
+  const persistedCommercialInstallment = Number(
+    item.amortizacion?.cuotaComercial
+  );
+
+  if (
+    Number.isFinite(persistedCommercialInstallment) &&
+    persistedCommercialInstallment > 0
+  ) {
+    return persistedCommercialInstallment;
+  }
+
+  return (
+    readCommercialInstallmentFromSnapshot(item.contratoSnapshot) ??
+    Number(item.valorCuota || 0)
+  );
+}
+
 function serializeCredit(
   item: CreditListItem,
   paymentMap?: Map<number, PaymentAggregate>
@@ -396,6 +448,7 @@ function serializeCredit(
     fechaPrimerPago: item.fechaPrimerPago || item.fechaProximoPago,
     abonos: payment.totalAbonado > 0 ? [{ valor: payment.totalAbonado }] : [],
   });
+  const valorCuotaComercial = resolveCommercialInstallment(item);
 
   return {
     id: item.id,
@@ -429,6 +482,7 @@ function serializeCredit(
     fianzaPorcentaje: item.fianzaPorcentaje,
     valorFianza: item.valorFianza,
     valorCuota: item.valorCuota,
+    valorCuotaComercial,
     fechaCredito: safeIsoDate(item.fechaCredito) || safeIsoDate(item.createdAt) || "",
     fechaPrimerPago: safeIsoDate(item.fechaPrimerPago),
     fechaProximoPago: safeIsoDate(item.fechaProximoPago),
@@ -1087,8 +1141,27 @@ export async function POST(req: Request) {
       cuotaInicialInput > 0
         ? Math.max(cuotaInicialMinima, cuotaInicialInput)
         : cuotaInicialMinima;
+    const selectedDataCreditoInstallmentCount = dataCreditoFinancingTerms
+      ? parseCreditInstallmentSelection(
+          body.plazoMeses,
+          dataCreditoFinancingTerms.installmentCount
+        )
+      : null;
+
+    if (
+      dataCreditoFinancingTerms &&
+      selectedDataCreditoInstallmentCount === null
+    ) {
+      return NextResponse.json(
+        {
+          error: `El número de cuotas debe ser un entero entre 1 y ${dataCreditoFinancingTerms.installmentCount}.`,
+        },
+        { status: 400 }
+      );
+    }
+
     const plazoMeses = dataCreditoFinancingTerms
-      ? dataCreditoFinancingTerms.installmentCount
+      ? selectedDataCreditoInstallmentCount!
       : normalizeCreditInstallments(
           Math.trunc(toNumber(body.plazoMeses)),
           creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
@@ -2160,6 +2233,8 @@ export async function POST(req: Request) {
               effectiveMaxFinancedAmount:
                 dataCreditoEffectiveMaxFinancedAmount,
               installmentCount: dataCreditoFinancingTerms?.installmentCount,
+              maxInstallmentCount: dataCreditoFinancingTerms?.installmentCount,
+              selectedInstallmentCount: plazoMeses,
               maxInstallmentAmount:
                 dataCreditoFinancingTerms?.maxInstallmentAmount,
               usedLegacyFinancingTermsFallback:
@@ -2410,6 +2485,10 @@ export async function POST(req: Request) {
         dataCreditoAssessment?.policyRevisionId || null,
       dataCreditoInstallmentCount:
         dataCreditoFinancingTerms?.installmentCount || null,
+      dataCreditoMaxInstallmentCount:
+        dataCreditoFinancingTerms?.installmentCount || null,
+      dataCreditoSelectedInstallmentCount:
+        dataCreditoAssessment ? plazoMeses : null,
       dataCreditoMaxInstallmentAmount:
         dataCreditoFinancingTerms?.maxInstallmentAmount ?? null,
       dataCreditoUsedLegacyFinancingTermsFallback:

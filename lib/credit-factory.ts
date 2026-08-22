@@ -95,6 +95,18 @@ export function normalizeCreditInstallments(
   return Math.max(1, Math.min(max, candidate));
 }
 
+export function parseCreditInstallmentSelection(
+  value: unknown,
+  maxInstallments: unknown
+) {
+  const parsed = Number(value);
+  const max = normalizeCreditInstallmentLimit(maxInstallments);
+
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= max
+    ? parsed
+    : null;
+}
+
 export function getCreditInstallmentOptions(maxInstallments: unknown) {
   return Array.from(
     { length: normalizeCreditInstallmentLimit(maxInstallments) },

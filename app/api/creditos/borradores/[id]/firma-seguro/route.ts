@@ -26,6 +26,7 @@ import {
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
   normalizePaymentFrequency,
+  parseCreditInstallmentSelection,
   sanitizeDeviceValue,
   sanitizeImageDataUrl,
   sanitizeText,
@@ -429,8 +430,19 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
     cuotaInicialInput > 0
       ? Math.max(cuotaInicialMinima, cuotaInicialInput)
       : cuotaInicialMinima;
+  const selectedDataCreditoInstallmentCount = dataCreditoOffer
+    ? parseCreditInstallmentSelection(
+        payload.plazoMeses,
+        dataCreditoOffer.installmentCount
+      )
+    : null;
+  if (dataCreditoOffer && selectedDataCreditoInstallmentCount === null) {
+    throw new CreditValidationError(
+      `El número de cuotas debe ser un entero entre 1 y ${dataCreditoOffer.installmentCount}.`
+    );
+  }
   const plazoMeses = dataCreditoOffer
-    ? dataCreditoOffer.installmentCount
+    ? selectedDataCreditoInstallmentCount!
     : normalizeCreditInstallments(
         toNumber(payload.plazoMeses),
         creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
@@ -526,6 +538,8 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
             policyVersion: dataCreditoOffer.policyVersion,
             policyRevisionId: dataCreditoOffer.policyRevisionId,
             installmentCount: dataCreditoOffer.installmentCount,
+            maxInstallmentCount: dataCreditoOffer.installmentCount,
+            selectedInstallmentCount: plazoMeses,
             maxInstallmentAmount: dataCreditoOffer.maxInstallmentAmount,
             usedLegacyFinancingTermsFallback:
               dataCreditoOffer.usedLegacyFinancingTermsFallback,

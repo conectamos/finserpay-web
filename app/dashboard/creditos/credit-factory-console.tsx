@@ -92,6 +92,7 @@ import {
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
   normalizePaymentFrequency,
+  parseCreditInstallmentSelection,
   PAYMENT_FREQUENCY_OPTIONS,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
@@ -398,6 +399,7 @@ type CreditItem = {
   fianzaPorcentaje: number;
   valorFianza: number;
   valorCuota: number;
+  valorCuotaComercial?: number | null;
   fechaCredito: string;
   fechaPrimerPago: string | null;
   fechaProximoPago: string | null;
@@ -2593,6 +2595,9 @@ export default function CreditFactoryConsole({
     () => credits.find((item) => item.id === selectedId) || null,
     [credits, selectedId]
   );
+  const selectedCreditCommercialInstallment = Number(
+    selectedCredit?.valorCuotaComercial ?? selectedCredit?.valorCuota ?? 0
+  );
   const sameClientCredits = useMemo(() => {
     if (!selectedCredit) {
       return [];
@@ -2925,32 +2930,21 @@ export default function CreditFactoryConsole({
       ? IPHONE_MAX_CREDIT_INSTALLMENTS
       : DEFAULT_MAX_CREDIT_INSTALLMENTS
   );
-  const dataCreditoLocksInstallmentCount =
-    Boolean(dataCreditoInstallmentCount) && !simulatorMode;
   const policyInstallmentOptions = useMemo(
-    () =>
-      dataCreditoLocksInstallmentCount
-        ? [String(dataCreditoInstallmentCount)]
-        : getCreditInstallmentOptions(plazoMaximoCuotas),
-    [
-      dataCreditoInstallmentCount,
-      dataCreditoLocksInstallmentCount,
-      plazoMaximoCuotas,
-    ]
+    () => getCreditInstallmentOptions(plazoMaximoCuotas),
+    [plazoMaximoCuotas]
   );
-  const plazoMesesNumero =
-    dataCreditoLocksInstallmentCount
-      ? dataCreditoInstallmentCount
-      : normalizeCreditInstallments(
-          plazoMeses,
-          (iphoneFactory
-            ? creditSettings.iphonePlazoCuotas
-            : creditSettings.plazoCuotas) || DEFAULT_CREDIT_INSTALLMENTS,
-          plazoMaximoCuotas
-        );
+  const plazoMesesNumero = normalizeCreditInstallments(
+    plazoMeses,
+    dataCreditoInstallmentCount ||
+      (iphoneFactory
+        ? creditSettings.iphonePlazoCuotas
+        : creditSettings.plazoCuotas) ||
+      DEFAULT_CREDIT_INSTALLMENTS,
+    plazoMaximoCuotas
+  );
   const creditInstallmentOptions = useMemo(() => {
     if (
-      !simulatorMode ||
       !iphoneFactory ||
       !simulationPolicyReady ||
       !activeDataCreditoOffer ||
@@ -3021,7 +3015,6 @@ export default function CreditFactoryConsole({
     plazoMaximoCuotas,
     policyInstallmentOptions,
     simulationPolicyReady,
-    simulatorMode,
     valorTotalEquipoNumero,
   ]);
   const resolvedPolicyFinancialSettings =
@@ -5279,9 +5272,9 @@ export default function CreditFactoryConsole({
 
   useEffect(() => {
     if (
-      !simulatorMode ||
       !iphoneFactory ||
       creditInstallmentOptions.length === 0 ||
+      !activeDataCreditoOffer ||
       creditInstallmentOptions.includes(plazoMeses)
     ) {
       return;
@@ -5290,9 +5283,9 @@ export default function CreditFactoryConsole({
     setPlazoMeses(creditInstallmentOptions[0]);
   }, [
     creditInstallmentOptions,
+    activeDataCreditoOffer,
     iphoneFactory,
     plazoMeses,
-    simulatorMode,
   ]);
 
   useEffect(() => {
@@ -8239,6 +8232,7 @@ export default function CreditFactoryConsole({
       plazoMeses: value("plazoMeses"),
       fechaPrimerPago: value("fechaPrimerPago"),
       frecuenciaPago: value("frecuenciaPago"),
+      policyControlled: Boolean(value("dataCreditoAssessmentId")),
     };
     setDraftId(draft.id);
     setDraftStatus("saved");
@@ -8675,11 +8669,16 @@ export default function CreditFactoryConsole({
   };
 
   const handleDataCreditoApproved = (result: DataCreditoApprovedResult) => {
-    const installmentCount = normalizeCreditInstallments(
+    const maxInstallmentCount = normalizeCreditInstallments(
       result.offer.installmentCount,
       DEFAULT_CREDIT_INSTALLMENTS,
       MAX_CREDIT_INSTALLMENTS
     );
+    const restoredInstallmentCount =
+      dataCreditoAssessmentId === result.assessmentId
+        ? parseCreditInstallmentSelection(plazoMeses, maxInstallmentCount)
+        : null;
+    const installmentCount = restoredInstallmentCount ?? maxInstallmentCount;
     const financialSettings = resolveCreditPolicyFinancialSettings({
       globalSettings: globalCreditSettings,
       policyFinancialSettings: result.offer.financialSettings,
@@ -9940,7 +9939,7 @@ export default function CreditFactoryConsole({
                           Crédito máximo {currency(dataCreditoApproval.offer.maxFinancedAmount)}
                         </span>
                         <span className="rounded-full border border-[#c9df91] bg-white px-3 py-2">
-                          Plazo {dataCreditoApproval.offer.installmentCount} cuotas
+                          Plazo máximo {dataCreditoApproval.offer.installmentCount} cuotas
                         </span>
                         {dataCreditoApproval.offer.maxInstallmentAmount ? (
                           <span className="rounded-full border border-[#c9df91] bg-white px-3 py-2">
@@ -10964,11 +10963,7 @@ export default function CreditFactoryConsole({
                       </span>
                       <span aria-hidden="true">·</span>
                       <span>
-                        {simulatorMode ? "Plazo maximo" : "Plazo"}{" "}
-                        {simulatorMode
-                          ? plazoMaximoCuotas
-                          : dataCreditoInstallmentCount}{" "}
-                        cuotas
+                        Plazo máximo {plazoMaximoCuotas} cuotas
                       </span>
                       {canSeeInternalPricing &&
                       policySummaryMaxInstallmentValue > 0 ? (
@@ -11177,11 +11172,10 @@ export default function CreditFactoryConsole({
                           value={plazoMeses}
                           onChange={(event) => setPlazoMeses(event.target.value)}
                           disabled={
-                            dataCreditoLocksInstallmentCount ||
-                            (simulatorMode &&
-                              iphoneFactory &&
-                              valorTotalEquipoNumero > 0 &&
-                              creditInstallmentOptions.length === 0)
+                            iphoneFactory &&
+                            Boolean(activeDataCreditoOffer) &&
+                            valorTotalEquipoNumero > 0 &&
+                            creditInstallmentOptions.length === 0
                           }
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50 disabled:text-slate-500"
                         >
@@ -11199,9 +11193,12 @@ export default function CreditFactoryConsole({
                         </select>
                         {dataCreditoInstallmentCount ? (
                           <p className="mt-2 text-xs font-medium text-slate-500">
-                            {simulatorMode
-                              ? `Puedes elegir hasta ${plazoMaximoCuotas} cuotas. Solo se muestran plazos cuya cuota no supera ${currency(iphoneMaxInstallmentValue)}.`
-                              : "Plazo definido por la política DataCrédito aplicada."}
+                            Puedes elegir hasta {plazoMaximoCuotas} cuotas. No
+                            puedes superar el máximo autorizado por la política
+                            DataCrédito.
+                            {iphoneFactory && iphoneMaxInstallmentValue > 0
+                              ? " Solo se muestran los plazos permitidos por el tope de cuota de la política."
+                              : ""}
                           </p>
                         ) : null}
                       </div>
@@ -14040,7 +14037,7 @@ export default function CreditFactoryConsole({
                         </div>
                         <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
                           <p className="text-[11px] font-semibold uppercase text-slate-500">Proxima cuota</p>
-                          <p className="mt-1 break-words text-base font-black text-slate-950">{currency(selectedCredit.valorCuota)}</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{currency(selectedCreditCommercialInstallment)}</p>
                           <p className="mt-1 text-xs text-slate-500">{dateOnly(selectedCredit.fechaProximoPago)}</p>
                         </div>
                         <div className="px-4 py-3">
@@ -14540,7 +14537,7 @@ export default function CreditFactoryConsole({
                           <DetailRow
                             label="Monto y cuota"
                             value={currency(selectedCredit.montoCredito)}
-                            detail={`Cuota: ${currency(selectedCredit.valorCuota)} | ${selectedCredit.plazoMeses || "-"} cuotas`}
+                            detail={`Cuota comercial: ${currency(selectedCreditCommercialInstallment)} | ${selectedCredit.plazoMeses || "-"} cuotas`}
                           />
                           <DetailRow
                             label="Proximo pago"
@@ -14964,8 +14961,8 @@ export default function CreditFactoryConsole({
                     tone="white"
                   />
                   <InfoTile
-                    label="Cuota"
-                    value={currency(selectedCredit.valorCuota)}
+                    label="Cuota comercial"
+                    value={currency(selectedCreditCommercialInstallment)}
                     detail={`${selectedCredit.plazoMeses || "-"} cuotas | ${getPaymentFrequencyLabel(
                       selectedCredit.frecuenciaPago
                     )}`}

@@ -36,7 +36,7 @@ test("usa una sola vista de edición basada en políticas", () => {
 test("edita monto, plazo y tope de cuota desde cada banda DataCrédito", () => {
   assert.match(consoleSource, /installmentCount: number/);
   assert.match(consoleSource, /maxInstallmentAmount: number \| null/);
-  assert.match(consoleSource, /Plazo \(cuotas\)/);
+  assert.match(consoleSource, /Plazo máximo \(cuotas\)/);
   assert.match(consoleSource, /Monto máximo a financiar/);
   assert.match(consoleSource, /Tope de cuota iPhone/);
   assert.match(
