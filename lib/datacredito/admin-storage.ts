@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
+import { getCreditSettings } from "@/lib/credit-settings";
 import {
   DEFAULT_DATACREDITO_POLICY_PROFILE_ID,
   ensureDataCreditoSchema,
@@ -12,7 +13,9 @@ import {
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import {
   parseDataCreditoPolicyBands,
+  parseDataCreditoPolicyFinancialSettings,
   type DataCreditoPolicyBand,
+  type DataCreditoPolicyFinancialSettings,
 } from "@/lib/datacredito/policy";
 import {
   decryptDataCreditoSecureRecord,
@@ -161,6 +164,10 @@ function serializeOffer(value: Record<string, unknown> | null) {
     initialPaymentPercentage,
     suretyPercentage,
     maxFinancedAmount,
+    financialSettings: parseDataCreditoPolicyFinancialSettings(
+      value.financialSettings,
+      { optional: true }
+    ),
   };
 }
 
@@ -583,16 +590,23 @@ export class DataCreditoPolicyProfileNotFoundError extends Error {
   }
 }
 
-function policyBandsFromPayload(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-  return parseDataCreditoPolicyBands(
-    (value as Record<string, unknown>).bands
-  );
+function policyPayload(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { bands: [], financialSettings: null };
+  }
+  const payload = value as Record<string, unknown>;
+  return {
+    bands: parseDataCreditoPolicyBands(payload.bands),
+    financialSettings: parseDataCreditoPolicyFinancialSettings(
+      payload.financialSettings,
+      { optional: true }
+    ),
+  };
 }
 
 export async function listDataCreditoPolicyCatalog() {
   await ensureDataCreditoSchema();
-  const [profileRows, allyRows] = await Promise.all([
+  const [profileRows, allyRows, creditDefaults] = await Promise.all([
     prisma.$queryRawUnsafe<DataCreditoPolicyProfileCatalogRow[]>(`
       SELECT profile."id", profile."name", profile."description",
         profile."active", profile."createdAt", profile."updatedAt",
@@ -609,6 +623,7 @@ export async function listDataCreditoPolicyCatalog() {
         LIMIT 1
       ) revision ON true
       LEFT JOIN "Aliado" ally ON ally."dataCreditoPolicyId" = profile."id"
+      WHERE profile."active" = true
       GROUP BY profile."id", profile."name", profile."description",
         profile."active", profile."createdAt", profile."updatedAt",
         revision."id", revision."version", revision."policy", revision."createdAt"
@@ -623,22 +638,36 @@ export async function listDataCreditoPolicyCatalog() {
         ON profile."id" = ally."dataCreditoPolicyId"
       ORDER BY ally."nombre" ASC, ally."id" ASC
     `),
+    getCreditSettings(),
   ]);
 
   return {
     defaultPolicyId: DEFAULT_DATACREDITO_POLICY_PROFILE_ID,
-    profiles: profileRows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      active: row.active,
-      version: row.version,
-      bands: row.policy ? policyBandsFromPayload(row.policy) : [],
-      createdAt: iso(row.createdAt),
-      updatedAt: iso(row.updatedAt),
-      revisionCreatedAt: iso(row.revisionCreatedAt),
-      assignedAlliesCount: Number(row.assignedAlliesCount || 0),
-    })),
+    financialDefaults: {
+      calculoVersion: "FRANCES_V1" as const,
+      tasaInteresEa: creditDefaults.tasaInteresEa,
+      fianzaCuotaPorcentaje: creditDefaults.fianzaCuotaPorcentaje,
+      seguroCuotaPorcentaje: creditDefaults.seguroCuotaPorcentaje,
+      frecuenciaPago: creditDefaults.frecuenciaPago,
+    },
+    profiles: profileRows.map((row) => {
+      const payload = row.policy
+        ? policyPayload(row.policy)
+        : { bands: [], financialSettings: null };
+      return {
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        active: row.active,
+        version: row.version,
+        bands: payload.bands,
+        financialSettings: payload.financialSettings,
+        createdAt: iso(row.createdAt),
+        updatedAt: iso(row.updatedAt),
+        revisionCreatedAt: iso(row.revisionCreatedAt),
+        assignedAlliesCount: Number(row.assignedAlliesCount || 0),
+      };
+    }),
     allies: allyRows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -654,10 +683,14 @@ export async function createDataCreditoPolicyProfile(input: {
   name: string;
   description: string | null;
   bands: DataCreditoPolicyBand[];
+  financialSettings: DataCreditoPolicyFinancialSettings;
   actorUserId: number;
 }) {
   await ensureDataCreditoSchema();
   const bands = parseDataCreditoPolicyBands(input.bands);
+  const financialSettings = parseDataCreditoPolicyFinancialSettings(
+    input.financialSettings
+  )!;
   const profileId = randomUUID();
   try {
     await prisma.$transaction(async (transaction) => {
@@ -680,7 +713,7 @@ export async function createDataCreditoPolicyProfile(input: {
         `,
         randomUUID(),
         profileId,
-        JSON.stringify({ bands }),
+        JSON.stringify({ bands, financialSettings }),
         input.actorUserId
       );
     });

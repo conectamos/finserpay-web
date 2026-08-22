@@ -64,7 +64,6 @@ import DatacreditoPrequalificationGate, {
   type DataCreditoApprovedResult,
 } from "@/app/dashboard/creditos/datacredito-prequalification-gate";
 import {
-  calculateCreditCharges,
   calculateFinancedBalance,
   calculateRequiredInitialPaymentByPlatform,
   DEFAULT_CREDIT_INSTALLMENTS,
@@ -92,9 +91,17 @@ import {
   resolveEffectiveDataCreditoFinancingLimit,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
+  normalizePaymentFrequency,
   PAYMENT_FREQUENCY_OPTIONS,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
+import {
+  calculateFrenchAmortization,
+  DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE,
+  DEFAULT_INSTALLMENT_SURETY_PERCENTAGE,
+} from "@/lib/credit-amortization";
+import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
+import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
 import {
   findCreditCreatedAfterConnectionLoss,
   isCreditCreationNetworkError,
@@ -519,6 +526,8 @@ type EquipmentCatalogResponse = {
 type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
+  fianzaCuotaPorcentaje: number;
+  seguroCuotaPorcentaje: number;
   cuotaInicialPorcentaje: number;
   iphoneCuotaInicialPorcentaje: number;
   plazoCuotas: number;
@@ -533,6 +542,12 @@ type CreditSettings = {
 
 type CreditDocumentException = {
   documentoNormalizado: string;
+  tasaInteresEa: number | null;
+  fianzaPorcentaje: number | null;
+  fianzaCuotaPorcentaje: number | null;
+  seguroCuotaPorcentaje: number | null;
+  cuotaInicialPorcentaje: number | null;
+  frecuenciaPago: string | null;
   permiteMultiplesCreditos: boolean;
   permiteEntregaSinVerificacion: boolean;
   activo: boolean;
@@ -541,6 +556,7 @@ type CreditDocumentException = {
 type CreditSettingsResponse = {
   ok?: boolean;
   settings?: CreditSettings;
+  globalSettings?: CreditSettings;
   documentException?: CreditDocumentException | null;
   error?: string;
 };
@@ -801,9 +817,19 @@ const copCurrencyFormatter = new Intl.NumberFormat("es-CO", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 0,
 });
+const copExactCurrencyFormatter = new Intl.NumberFormat("es-CO", {
+  style: "currency",
+  currency: "COP",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 
 function currency(value: number) {
   return copCurrencyFormatter.format(Math.round(Number(value || 0)));
+}
+
+function exactCurrency(value: number) {
+  return copExactCurrencyFormatter.format(Number(value || 0));
 }
 
 function currencyInputValue(value: string | number) {
@@ -2354,6 +2380,8 @@ export default function CreditFactoryConsole({
   const [creditSettings, setCreditSettings] = useState<CreditSettings>({
     tasaInteresEa: DEFAULT_LEGAL_CONSUMER_RATE_EA,
     fianzaPorcentaje: DEFAULT_FIANCO_SURETY_PERCENTAGE,
+    fianzaCuotaPorcentaje: DEFAULT_INSTALLMENT_SURETY_PERCENTAGE,
+    seguroCuotaPorcentaje: DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE,
     cuotaInicialPorcentaje: DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
     iphoneCuotaInicialPorcentaje: IPHONE_INITIAL_PAYMENT_PERCENTAGE,
     plazoCuotas: DEFAULT_CREDIT_INSTALLMENTS,
@@ -2365,6 +2393,23 @@ export default function CreditFactoryConsole({
     frecuenciaPago: DEFAULT_PAYMENT_FREQUENCY,
     updatedAt: null,
   });
+  const [globalCreditSettings, setGlobalCreditSettings] =
+    useState<CreditSettings>({
+      tasaInteresEa: DEFAULT_LEGAL_CONSUMER_RATE_EA,
+      fianzaPorcentaje: DEFAULT_FIANCO_SURETY_PERCENTAGE,
+      fianzaCuotaPorcentaje: DEFAULT_INSTALLMENT_SURETY_PERCENTAGE,
+      seguroCuotaPorcentaje: DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE,
+      cuotaInicialPorcentaje: DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
+      iphoneCuotaInicialPorcentaje: IPHONE_INITIAL_PAYMENT_PERCENTAGE,
+      plazoCuotas: DEFAULT_CREDIT_INSTALLMENTS,
+      plazoMaximoCuotas: DEFAULT_MAX_CREDIT_INSTALLMENTS,
+      iphonePlazoCuotas: IPHONE_DEFAULT_CREDIT_INSTALLMENTS,
+      iphonePlazoMaximoCuotas: IPHONE_MAX_CREDIT_INSTALLMENTS,
+      iphoneTopeFinanciado: IPHONE_MAX_FINANCED_AMOUNT,
+      iphoneTopeCuota: IPHONE_MAX_INSTALLMENT_VALUE,
+      frecuenciaPago: DEFAULT_PAYMENT_FREQUENCY,
+      updatedAt: null,
+    });
   const [creditDocumentException, setCreditDocumentException] =
     useState<CreditDocumentException | null>(null);
   const [creditSettingsDocument, setCreditSettingsDocument] = useState("");
@@ -2479,6 +2524,13 @@ export default function CreditFactoryConsole({
   const draftSaveTimerRef = useRef<number | null>(null);
   const draftSaveGenerationRef = useRef(0);
   const draftSaveAbortControllerRef = useRef<AbortController | null>(null);
+  const pendingDraftFinancialTermsRef = useRef<{
+    documento: string;
+    plazoMeses: string;
+    fechaPrimerPago: string;
+    frecuenciaPago: string;
+  } | null>(null);
+  const creditSettingsRequestGenerationRef = useRef(0);
   const applyingDraftRef = useRef(false);
   const cancelPendingDraftAutosave = useCallback(() => {
     if (draftSaveTimerRef.current) {
@@ -2785,7 +2837,10 @@ export default function CreditFactoryConsole({
     creditSettings.cuotaInicialPorcentaje ??
     (iphoneFactory ? IPHONE_INITIAL_PAYMENT_PERCENTAGE : DEFAULT_INITIAL_PAYMENT_PERCENTAGE);
   const initialPaymentPercentage =
-    dataCreditoCreditCreationMode && dataCreditoApproval
+    creditDocumentException?.cuotaInicialPorcentaje !== null &&
+    creditDocumentException?.cuotaInicialPorcentaje !== undefined
+      ? creditDocumentException.cuotaInicialPorcentaje
+      : dataCreditoCreditCreationMode && dataCreditoApproval
       ? dataCreditoApproval.offer.initialPaymentPercentage
       : configuredInitialPaymentPercentage;
   const cuotaInicialMinimaNumero = calculateRequiredInitialPaymentByPlatform({
@@ -2813,34 +2868,70 @@ export default function CreditFactoryConsole({
     creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
     plazoMaximoCuotas
   );
-  const tasaInteresEaNumero = Math.max(0, Number(tasaInteresEa || 0));
-  const fianzaPorcentajeNumero = Math.max(0, Number(fianzaPorcentaje || 0));
-  const effectiveFianzaPorcentaje =
-    dataCreditoCreditCreationMode && dataCreditoApproval
-      ? dataCreditoApproval.offer.suretyPercentage
-      : fianzaPorcentajeNumero;
-  const frecuenciaPagoCredito = iphoneFactory
-    ? DEFAULT_PAYMENT_FREQUENCY
-    : creditSettings.frecuenciaPago;
+  const resolvedPolicyFinancialSettings =
+    resolveCreditPolicyFinancialSettings({
+      globalSettings: globalCreditSettings,
+      documentException: creditDocumentException,
+      policyFinancialSettings:
+        dataCreditoCreditCreationMode && dataCreditoApproval
+          ? dataCreditoApproval.offer.financialSettings
+          : null,
+      legacyOfferSuretyPercentage:
+        dataCreditoCreditCreationMode && dataCreditoApproval
+          ? dataCreditoApproval.offer.suretyPercentage
+          : null,
+      numeroCuotas: plazoMesesNumero,
+      forcePaymentFrequency: iphoneFactory
+        ? DEFAULT_PAYMENT_FREQUENCY
+        : null,
+    });
+  const tasaInteresEaNumero = Math.max(
+    0,
+    resolvedPolicyFinancialSettings.tasaInteresEa
+  );
+  const effectiveFianzaCuotaPorcentaje =
+    resolvedPolicyFinancialSettings.fianzaCuotaPorcentaje;
+  const frecuenciaPagoCredito =
+    resolvedPolicyFinancialSettings.frecuenciaPago;
   const saldoBaseFinanciado = calculateFinancedBalance(
     valorTotalEquipoNumero,
     cuotaInicialNumero
   );
-  const financialPlan = calculateCreditCharges({
+  const amortizationPlan =
+    valorTotalEquipoNumero > 0 &&
+    cuotaInicialNumero >= 0 &&
+    cuotaInicialNumero < valorTotalEquipoNumero
+      ? calculateFrenchAmortization({
+          valorVenta: valorTotalEquipoNumero,
+          cuotaInicial: cuotaInicialNumero,
+          numeroCuotas: plazoMesesNumero,
+          tasaInteresEa: tasaInteresEaNumero,
+          fianzaCuotaPorcentaje: Math.max(0, effectiveFianzaCuotaPorcentaje),
+          seguroCuotaPorcentaje: Math.max(
+            0,
+            Number(
+              resolvedPolicyFinancialSettings.seguroCuotaPorcentaje
+            )
+          ),
+          frecuenciaPago: frecuenciaPagoCredito,
+          fechaPrimerPago,
+        })
+      : null;
+  const financialPlan = {
     saldoBaseFinanciado,
-    cuotas: plazoMesesNumero,
-    tasaInteresEa: tasaInteresEaNumero || DEFAULT_LEGAL_CONSUMER_RATE_EA,
-    fianzaPorcentaje:
-      effectiveFianzaPorcentaje >= 0
-        ? effectiveFianzaPorcentaje
-        : DEFAULT_FIANCO_SURETY_PERCENTAGE,
-    frecuenciaPago: frecuenciaPagoCredito,
-  });
+    montoCreditoTotal: amortizationPlan?.montoTotal ?? 0,
+    valorCuota: amortizationPlan?.cuotaComercial ?? 0,
+    tasaInteresEa: amortizationPlan?.tasaInteresEa ?? tasaInteresEaNumero,
+    valorInteres: amortizationPlan?.valorInteresTotal ?? 0,
+    fianzaPorcentaje: amortizationPlan
+      ? amortizationPlan.fianzaCuotaPorcentaje * amortizationPlan.numeroCuotas
+      : 0,
+  };
   const saldoFinanciado = financialPlan.montoCreditoTotal;
   const valorCuota = financialPlan.valorCuota;
   const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
     platform: currentDevicePlatform,
-    valorCuota,
+    valorCuota: amortizationPlan?.cuotaTotal ?? valorCuota,
     iphoneMaxInstallmentValue,
   });
   const iphoneInstallmentLimitExceeded = iphoneInstallmentLimit.exceeded;
@@ -2896,6 +2987,16 @@ export default function CreditFactoryConsole({
       frecuenciaPago: frecuenciaPagoCredito,
       tasaInteresEa: financialPlan.tasaInteresEa,
       fianzaPorcentaje: financialPlan.fianzaPorcentaje,
+      fianzaCuotaPorcentaje:
+        amortizationPlan?.fianzaCuotaPorcentaje ??
+        creditSettings.fianzaCuotaPorcentaje,
+      seguroCuotaPorcentaje:
+        amortizationPlan?.seguroCuotaPorcentaje ??
+        creditSettings.seguroCuotaPorcentaje,
+      metodoCalculo: amortizationPlan?.metodo || null,
+      calculoVersion: amortizationPlan?.version || null,
+      cuotaExacta: amortizationPlan?.cuotaTotal ?? 0,
+      cuotaComercial: amortizationPlan?.cuotaComercial ?? 0,
       fechaPrimerPago,
       contratoAceptado,
       contratoSelfieDataUrl: contratoFotoDataUrl,
@@ -2958,9 +3059,16 @@ export default function CreditFactoryConsole({
       fotoRemisionAudit?.source,
       fotoRemisionDataUrl,
       frecuenciaPagoCredito,
-      fianzaPorcentajeNumero,
       financialPlan.fianzaPorcentaje,
       financialPlan.tasaInteresEa,
+      amortizationPlan?.cuotaComercial,
+      amortizationPlan?.cuotaTotal,
+      amortizationPlan?.fianzaCuotaPorcentaje,
+      amortizationPlan?.metodo,
+      amortizationPlan?.seguroCuotaPorcentaje,
+      amortizationPlan?.version,
+      creditSettings.fianzaCuotaPorcentaje,
+      creditSettings.seguroCuotaPorcentaje,
       imeiDigits,
       iphoneEnrollmentVerified,
       iphoneFactory,
@@ -2973,7 +3081,6 @@ export default function CreditFactoryConsole({
       referenciaFamiliar2Parentesco,
       referenciaFamiliar2Telefono,
       selectedEquipmentCatalogItem?.id,
-      tasaInteresEaNumero,
       valorEquipoTotal,
       veriffValidation?.id,
       wizardStep,
@@ -4569,8 +4676,14 @@ export default function CreditFactoryConsole({
 
   const applyCreditSettings = (
     nextSettingsInput: CreditSettings,
+    nextGlobalSettingsInput: CreditSettings | null,
     nextException: CreditDocumentException | null,
-    documentValue: string
+    documentValue: string,
+    preservedTerms?: {
+      plazoMeses: string;
+      fechaPrimerPago: string;
+      frecuenciaPago: string;
+    } | null
   ) => {
     const nextMaxInstallments = normalizeCreditInstallmentLimit(
       nextSettingsInput.plazoMaximoCuotas
@@ -4579,11 +4692,22 @@ export default function CreditFactoryConsole({
       nextSettingsInput.iphonePlazoMaximoCuotas ?? IPHONE_MAX_CREDIT_INSTALLMENTS,
       IPHONE_MAX_CREDIT_INSTALLMENTS
     );
-    const nextFrequency = iphoneFactory
+    const configuredFrequency = iphoneFactory
       ? DEFAULT_PAYMENT_FREQUENCY
       : nextSettingsInput.frecuenciaPago;
+    const nextFrequency = iphoneFactory
+      ? DEFAULT_PAYMENT_FREQUENCY
+      : preservedTerms?.frecuenciaPago
+        ? normalizePaymentFrequency(preservedTerms.frecuenciaPago)
+        : configuredFrequency;
     const nextSettings = {
       ...nextSettingsInput,
+      fianzaCuotaPorcentaje:
+        nextSettingsInput.fianzaCuotaPorcentaje ??
+        DEFAULT_INSTALLMENT_SURETY_PERCENTAGE,
+      seguroCuotaPorcentaje:
+        nextSettingsInput.seguroCuotaPorcentaje ??
+        DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE,
       iphoneCuotaInicialPorcentaje:
         nextSettingsInput.iphoneCuotaInicialPorcentaje ??
         IPHONE_INITIAL_PAYMENT_PERCENTAGE,
@@ -4611,17 +4735,26 @@ export default function CreditFactoryConsole({
     };
 
     setCreditSettings(nextSettings);
+    setGlobalCreditSettings(nextGlobalSettingsInput || nextSettingsInput);
     setCreditDocumentException(nextException);
     setCreditSettingsDocument(documentValue);
     setTasaInteresEa(String(nextSettings.tasaInteresEa));
     setFianzaPorcentaje(String(nextSettings.fianzaPorcentaje));
-    setPlazoMeses(String(nextSettings.plazoCuotas));
+    const restoredInstallments = preservedTerms?.plazoMeses
+      ? normalizeCreditInstallments(
+          preservedTerms.plazoMeses,
+          nextSettings.plazoCuotas,
+          iphoneFactory ? nextIphoneMaxInstallments : nextMaxInstallments
+        )
+      : nextSettings.plazoCuotas;
+    setPlazoMeses(String(restoredInstallments));
     setFechaPrimerPago(
-      getDefaultFirstPaymentDate(new Date(), nextFrequency)
+      preservedTerms?.fechaPrimerPago || getDefaultFirstPaymentDate(new Date(), nextFrequency)
     );
   };
 
   const loadCreditSettings = async (documentValue = "") => {
+    const requestGeneration = ++creditSettingsRequestGenerationRef.current;
     try {
       const normalizedDocument = documentValue.replace(/\D/g, "");
       const params = new URLSearchParams({
@@ -4637,18 +4770,34 @@ export default function CreditFactoryConsole({
         endpoint
       );
 
+      if (requestGeneration !== creditSettingsRequestGenerationRef.current) {
+        return;
+      }
+
       if (!result.ok || !result.data.settings) {
         throw new Error(
           result.data?.error || "No se pudo cargar la configuracion del credito"
         );
       }
 
+      const pendingDraftTerms =
+        pendingDraftFinancialTermsRef.current?.documento === normalizedDocument
+          ? pendingDraftFinancialTermsRef.current
+          : null;
       applyCreditSettings(
         result.data.settings,
+        result.data.globalSettings || null,
         result.data.documentException || null,
-        normalizedDocument
+        normalizedDocument,
+        pendingDraftTerms
       );
+      if (pendingDraftTerms) {
+        pendingDraftFinancialTermsRef.current = null;
+      }
     } catch (error) {
+      if (requestGeneration !== creditSettingsRequestGenerationRef.current) {
+        return;
+      }
       setNotice({
         text:
           error instanceof Error
@@ -7782,6 +7931,12 @@ export default function CreditFactoryConsole({
     const checked = (key: string) => payload[key] === true;
 
     applyingDraftRef.current = true;
+    pendingDraftFinancialTermsRef.current = {
+      documento: value("clienteDocumento").replace(/\D/g, ""),
+      plazoMeses: value("plazoMeses"),
+      fechaPrimerPago: value("fechaPrimerPago"),
+      frecuenciaPago: value("frecuenciaPago"),
+    };
     setDraftId(draft.id);
     setDraftStatus("saved");
     setDraftErrorMessage("");
@@ -7865,8 +8020,8 @@ export default function CreditFactoryConsole({
     setValorEquipoTotal(value("valorEquipoTotal"));
     setCuotaInicial(value("cuotaInicial"));
     setPlazoMeses(value("plazoMeses") || plazoMeses);
-    setTasaInteresEa(value("tasaInteresEa") || tasaInteresEa);
-    setFianzaPorcentaje(value("fianzaPorcentaje") || fianzaPorcentaje);
+    setTasaInteresEa(String(creditSettings.tasaInteresEa));
+    setFianzaPorcentaje(String(creditSettings.fianzaPorcentaje));
     setFechaPrimerPago(value("fechaPrimerPago") || fechaPrimerPago);
     setContratoAceptado(checked("contratoAceptado"));
     setContratoFotoDataUrl(
@@ -10722,11 +10877,21 @@ export default function CreditFactoryConsole({
                         </div>
                         <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Valor por cuota
+                            Cuota comercial
                           </p>
                           <p className="mt-2 text-2xl font-black text-slate-950">
                             {currency(valorCuota)}
                           </p>
+                          {amortizationPlan ? (
+                            <div className="mt-2 space-y-1 text-xs font-semibold text-slate-500">
+                              <p>Exacta: {exactCurrency(amortizationPlan.cuotaTotal)}</p>
+                              <p>
+                                Credito {exactCurrency(amortizationPlan.cuotaCredito)} ·
+                                Fianza {exactCurrency(amortizationPlan.cuotaFianza)} ·
+                                Seguro {exactCurrency(amortizationPlan.cuotaSeguro)}
+                              </p>
+                            </div>
+                          ) : null}
                           {iphoneFactory ? (
                             <p
                               className={[
@@ -10748,6 +10913,9 @@ export default function CreditFactoryConsole({
                       ) : null}
                     </div>
                   </div>
+                  {amortizationPlan ? (
+                    <CreditAmortizationTable plan={amortizationPlan} />
+                  ) : null}
                 </div>
               )}
 

@@ -1,5 +1,11 @@
 export const DATACREDITO_PLATFORMS = ["ANDROID", "IPHONE"] as const;
 export const DATACREDITO_DECISIONS = ["APROBADO", "RECHAZADO"] as const;
+export const DATACREDITO_FINANCIAL_CALCULATION_VERSIONS = ["FRANCES_V1"] as const;
+export const DATACREDITO_FINANCIAL_PAYMENT_FREQUENCIES = [
+  "SEMANAL",
+  "QUINCENAL",
+  "MENSUAL",
+] as const;
 export const DATACREDITO_NO_INFORMATION_SCORE = -1;
 export const DATACREDITO_MIN_SCORE = 0;
 export const DATACREDITO_MAX_SCORE = 950;
@@ -8,6 +14,18 @@ export const DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT = 100_000_000;
 
 export type DataCreditoPlatform = (typeof DATACREDITO_PLATFORMS)[number];
 export type DataCreditoDecision = (typeof DATACREDITO_DECISIONS)[number];
+export type DataCreditoFinancialCalculationVersion =
+  (typeof DATACREDITO_FINANCIAL_CALCULATION_VERSIONS)[number];
+export type DataCreditoFinancialPaymentFrequency =
+  (typeof DATACREDITO_FINANCIAL_PAYMENT_FREQUENCIES)[number];
+
+export type DataCreditoPolicyFinancialSettings = {
+  calculoVersion: DataCreditoFinancialCalculationVersion;
+  tasaInteresEa: number;
+  fianzaCuotaPorcentaje: number;
+  seguroCuotaPorcentaje: number;
+  frecuenciaPago: DataCreditoFinancialPaymentFrequency;
+};
 
 export type DataCreditoPolicyBand = {
   id: string;
@@ -26,6 +44,7 @@ export type DataCreditoPolicy = {
   revisionId?: string;
   version: number;
   bands: DataCreditoPolicyBand[];
+  financialSettings?: DataCreditoPolicyFinancialSettings | null;
   createdAt?: string;
 };
 
@@ -34,6 +53,7 @@ export type DataCreditoOffer = {
   suretyPercentage: number;
   maxFinancedAmount: number;
   policyVersion: number;
+  financialSettings?: DataCreditoPolicyFinancialSettings | null;
 };
 
 export class DataCreditoPolicyValidationError extends Error {
@@ -115,6 +135,82 @@ export function normalizeDataCreditoDecision(
   return DATACREDITO_DECISIONS.includes(normalized as DataCreditoDecision)
     ? (normalized as DataCreditoDecision)
     : null;
+}
+
+export function parseDataCreditoPolicyFinancialSettings(
+  value: unknown,
+  options: { optional?: boolean } = {}
+): DataCreditoPolicyFinancialSettings | null {
+  if ((value === null || value === undefined) && options.optional) {
+    return null;
+  }
+
+  const row = recordValue(value);
+  if (!row) {
+    throw new DataCreditoPolicyValidationError([
+      "Debes configurar los parametros financieros de la politica",
+    ]);
+  }
+
+  const calculoVersion = String(row.calculoVersion || "")
+    .trim()
+    .toUpperCase();
+  const tasaInteresEa = finiteNumber(row.tasaInteresEa);
+  const fianzaCuotaPorcentaje = finiteNumber(row.fianzaCuotaPorcentaje);
+  const seguroCuotaPorcentaje = finiteNumber(row.seguroCuotaPorcentaje);
+  const frecuenciaPago = String(row.frecuenciaPago || "")
+    .trim()
+    .toUpperCase();
+  const issues: string[] = [];
+
+  if (
+    !DATACREDITO_FINANCIAL_CALCULATION_VERSIONS.includes(
+      calculoVersion as DataCreditoFinancialCalculationVersion
+    )
+  ) {
+    issues.push("El sistema de calculo debe ser amortizacion francesa FRANCES_V1");
+  }
+  if (tasaInteresEa === null || tasaInteresEa < 0 || tasaInteresEa > 100) {
+    issues.push("El interes E.A. debe estar entre 0 y 100");
+  }
+  if (
+    fianzaCuotaPorcentaje === null ||
+    fianzaCuotaPorcentaje < 0 ||
+    fianzaCuotaPorcentaje > 100
+  ) {
+    issues.push("La fianza por cuota debe estar entre 0 y 100");
+  }
+  if (
+    seguroCuotaPorcentaje === null ||
+    seguroCuotaPorcentaje < 0 ||
+    seguroCuotaPorcentaje > 100
+  ) {
+    issues.push("El seguro por cuota debe estar entre 0 y 100");
+  }
+  if (
+    !DATACREDITO_FINANCIAL_PAYMENT_FREQUENCIES.includes(
+      frecuenciaPago as DataCreditoFinancialPaymentFrequency
+    )
+  ) {
+    issues.push("La frecuencia debe ser semanal, quincenal o mensual");
+  }
+
+  if (issues.length) {
+    throw new DataCreditoPolicyValidationError(issues);
+  }
+
+  const precise = (numberValue: number) =>
+    Math.round(numberValue * 1_000_000) / 1_000_000;
+
+  return {
+    calculoVersion:
+      calculoVersion as DataCreditoFinancialCalculationVersion,
+    tasaInteresEa: precise(tasaInteresEa!),
+    fianzaCuotaPorcentaje: precise(fianzaCuotaPorcentaje!),
+    seguroCuotaPorcentaje: precise(seguroCuotaPorcentaje!),
+    frecuenciaPago:
+      frecuenciaPago as DataCreditoFinancialPaymentFrequency,
+  };
 }
 
 /**
@@ -321,7 +417,8 @@ export function resolveDataCreditoPolicyBand(
 }
 
 export function resolveDataCreditoDecision(
-  policy: Pick<DataCreditoPolicy, "version" | "bands">,
+  policy: Pick<DataCreditoPolicy, "version" | "bands"> &
+    Partial<Pick<DataCreditoPolicy, "financialSettings">>,
   platform: unknown,
   score: unknown
 ): { decision: DataCreditoDecision; offer: DataCreditoOffer } | null {
@@ -335,6 +432,9 @@ export function resolveDataCreditoDecision(
       suretyPercentage: band.suretyPercentage,
       maxFinancedAmount: band.maxFinancedAmount,
       policyVersion: policy.version,
+      ...(policy.financialSettings
+        ? { financialSettings: policy.financialSettings }
+        : {}),
     },
   };
 }

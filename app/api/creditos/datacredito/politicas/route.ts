@@ -13,6 +13,7 @@ import {
 import {
   DataCreditoPolicyValidationError,
   parseDataCreditoPolicyBands,
+  parseDataCreditoPolicyFinancialSettings,
   parseDataCreditoPolicyProfileDescription,
   parseDataCreditoPolicyProfileName,
 } from "@/lib/datacredito/policy";
@@ -23,6 +24,13 @@ import {
   DataCreditoStorageConfigurationError,
   isDataCreditoAuditConfigured,
 } from "@/lib/datacredito/storage";
+import {
+  DataCreditoPolicyDeleteAssignedError,
+  DataCreditoPolicyDeleteDefaultError,
+  DataCreditoPolicyDeleteNotFoundError,
+  DataCreditoPolicyDeleteVersionConflictError,
+  retireDataCreditoPolicyProfile,
+} from "@/lib/datacredito/policy-deletion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -106,6 +114,41 @@ function policyErrorResponse(error: unknown, correlationId: string) {
       { status: 409, headers: NO_STORE_HEADERS }
     );
   }
+  if (error instanceof DataCreditoPolicyDeleteDefaultError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "POLICY_DELETE_DEFAULT_FORBIDDEN",
+        error: error.message,
+        correlationId,
+      },
+      { status: 409, headers: NO_STORE_HEADERS }
+    );
+  }
+  if (error instanceof DataCreditoPolicyDeleteAssignedError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "POLICY_DELETE_ASSIGNED",
+        error: error.message,
+        assignedAlliesCount: error.assignedAlliesCount,
+        correlationId,
+      },
+      { status: 409, headers: NO_STORE_HEADERS }
+    );
+  }
+  if (error instanceof DataCreditoPolicyDeleteVersionConflictError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "POLICY_DELETE_VERSION_CONFLICT",
+        error: error.message,
+        currentVersion: error.currentVersion,
+        correlationId,
+      },
+      { status: 409, headers: NO_STORE_HEADERS }
+    );
+  }
   if (error instanceof DataCreditoPolicyProfileNameConflictError) {
     return NextResponse.json(
       {
@@ -119,6 +162,7 @@ function policyErrorResponse(error: unknown, correlationId: string) {
   }
   if (
     error instanceof DataCreditoPolicyProfileNotFoundError ||
+    error instanceof DataCreditoPolicyDeleteNotFoundError ||
     error instanceof DataCreditoPolicyNotFoundError ||
     (error instanceof Error && error.message === "DATACREDITO_ALLY_NOT_FOUND")
   ) {
@@ -215,6 +259,9 @@ export async function POST(request: Request) {
       name: parseDataCreditoPolicyProfileName(body.name),
       description: parseDataCreditoPolicyProfileDescription(body.description),
       bands: parseDataCreditoPolicyBands(body.bands),
+      financialSettings: parseDataCreditoPolicyFinancialSettings(
+        body.financialSettings
+      )!,
       actorUserId: access.user.id,
     });
     return NextResponse.json(await catalogPayload({ createdPolicyId }), {
@@ -270,6 +317,9 @@ export async function PATCH(request: Request) {
       await createDataCreditoPolicyRevision({
         profileId: updatedPolicyId,
         bands: parseDataCreditoPolicyBands(body.bands),
+        financialSettings: parseDataCreditoPolicyFinancialSettings(
+          body.financialSettings
+        )!,
         createdByUserId: access.user.id,
         expectedVersion,
       });
@@ -313,6 +363,58 @@ export async function PATCH(request: Request) {
         error: "La accion solicitada no esta habilitada",
       },
       { status: 400, headers: NO_STORE_HEADERS }
+    );
+  } catch (error) {
+    return policyErrorResponse(error, correlationId);
+  }
+}
+
+export async function DELETE(request: Request) {
+  const access = await getDataCreditoCentralAdmin();
+  if (!access.ok) return accessError(access.status);
+
+  const correlationId = randomUUID();
+  try {
+    const body = (await request.json().catch(() => null)) as Record<
+      string,
+      unknown
+    > | null;
+    if (!body || !isUuid(body.policyId)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "INVALID_POLICY_ID",
+          error: "La politica seleccionada no es valida",
+          correlationId,
+        },
+        { status: 400, headers: NO_STORE_HEADERS }
+      );
+    }
+    const expectedVersion = Number(body.expectedVersion);
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "INVALID_POLICY_VERSION",
+          error: "La version esperada no es valida",
+          correlationId,
+        },
+        { status: 400, headers: NO_STORE_HEADERS }
+      );
+    }
+
+    const policy = await retireDataCreditoPolicyProfile({
+      policyId: String(body.policyId),
+      expectedVersion,
+    });
+    return NextResponse.json(
+      {
+        ...(await catalogPayload()),
+        deletionMode: "RETIRED",
+        policy,
+        correlationId,
+      },
+      { headers: NO_STORE_HEADERS }
     );
   } catch (error) {
     return policyErrorResponse(error, correlationId);

@@ -17,6 +17,7 @@ import {
   DATACREDITO_MAX_SCORE,
   DATACREDITO_MIN_SCORE,
   DATACREDITO_NO_INFORMATION_SCORE,
+  type DataCreditoPolicyFinancialSettings,
 } from "@/lib/datacredito/policy";
 import {
   Badge,
@@ -52,6 +53,7 @@ export type DataCreditoPolicyProfile = {
   active: boolean;
   version: number;
   bands: DataCreditoPolicyBand[];
+  financialSettings: DataCreditoPolicyFinancialSettings | null;
   createdAt: string | null;
   updatedAt: string | null;
   revisionCreatedAt: string | null;
@@ -69,6 +71,7 @@ export type DataCreditoPolicyAlly = {
 
 type PolicyCatalogSnapshot = {
   defaultPolicyId: string | null;
+  financialDefaults: DataCreditoPolicyFinancialSettings;
   profiles: DataCreditoPolicyProfile[];
   allies: DataCreditoPolicyAlly[];
   provider: {
@@ -88,6 +91,19 @@ type EditableBand = {
   initialPaymentPercentage: string;
   suretyPercentage: string;
   maxFinancedAmount: string;
+};
+
+type EditableFinancialSettings = {
+  tasaInteresEa: string;
+  fianzaCuotaPorcentaje: string;
+  seguroCuotaPorcentaje: string;
+  frecuenciaPago: DataCreditoPolicyFinancialSettings["frecuenciaPago"];
+};
+
+type FinancialValidationResult = {
+  valid: boolean;
+  issues: string[];
+  canonical: DataCreditoPolicyFinancialSettings | null;
 };
 
 type ValidationResult = {
@@ -118,6 +134,13 @@ const PLATFORMS: DataCreditoPolicyPlatform[] = ["ANDROID", "IPHONE"];
 const MIN_NUMERIC_SCORE = DATACREDITO_MIN_SCORE;
 const MAX_NUMERIC_SCORE = DATACREDITO_MAX_SCORE;
 const MAX_FINANCED_AMOUNT_COP = 100_000_000;
+const DEFAULT_FINANCIAL_SETTINGS: DataCreditoPolicyFinancialSettings = {
+  calculoVersion: "FRANCES_V1",
+  tasaInteresEa: 25,
+  fianzaCuotaPorcentaje: 2.083333,
+  seguroCuotaPorcentaje: 0.03,
+  frecuenciaPago: "QUINCENAL",
+};
 let draftSequence = 0;
 
 function isNoInformationBand(
@@ -223,6 +246,102 @@ function parseBand(value: unknown, index: number): DataCreditoPolicyBand {
   };
 }
 
+function parseFinancialSettings(
+  value: unknown,
+  label: string
+): DataCreditoPolicyFinancialSettings {
+  if (!isRecord(value)) {
+    throw new PolicyRequestError(`${label} no incluye parametros financieros.`);
+  }
+  const calculoVersion = String(value.calculoVersion || "").toUpperCase();
+  const tasaInteresEa = readFiniteNumber(value.tasaInteresEa);
+  const fianzaCuotaPorcentaje = readFiniteNumber(
+    value.fianzaCuotaPorcentaje
+  );
+  const seguroCuotaPorcentaje = readFiniteNumber(
+    value.seguroCuotaPorcentaje
+  );
+  const frecuenciaPago = String(value.frecuenciaPago || "").toUpperCase();
+  if (
+    calculoVersion !== "FRANCES_V1" ||
+    tasaInteresEa === null ||
+    tasaInteresEa < 0 ||
+    tasaInteresEa > 100 ||
+    fianzaCuotaPorcentaje === null ||
+    fianzaCuotaPorcentaje < 0 ||
+    fianzaCuotaPorcentaje > 100 ||
+    seguroCuotaPorcentaje === null ||
+    seguroCuotaPorcentaje < 0 ||
+    seguroCuotaPorcentaje > 100 ||
+    !["SEMANAL", "QUINCENAL", "MENSUAL"].includes(frecuenciaPago)
+  ) {
+    throw new PolicyRequestError(`${label} tiene parametros financieros invalidos.`);
+  }
+  return {
+    calculoVersion: "FRANCES_V1",
+    tasaInteresEa,
+    fianzaCuotaPorcentaje,
+    seguroCuotaPorcentaje,
+    frecuenciaPago:
+      frecuenciaPago as DataCreditoPolicyFinancialSettings["frecuenciaPago"],
+  };
+}
+
+function toEditableFinancialSettings(
+  settings: DataCreditoPolicyFinancialSettings
+): EditableFinancialSettings {
+  return {
+    tasaInteresEa: String(settings.tasaInteresEa),
+    fianzaCuotaPorcentaje: String(settings.fianzaCuotaPorcentaje),
+    seguroCuotaPorcentaje: String(settings.seguroCuotaPorcentaje),
+    frecuenciaPago: settings.frecuenciaPago,
+  };
+}
+
+function validateFinancialSettings(
+  settings: EditableFinancialSettings
+): FinancialValidationResult {
+  const tasaInteresEa = readFiniteNumber(settings.tasaInteresEa);
+  const fianzaCuotaPorcentaje = readFiniteNumber(
+    settings.fianzaCuotaPorcentaje
+  );
+  const seguroCuotaPorcentaje = readFiniteNumber(
+    settings.seguroCuotaPorcentaje
+  );
+  const issues: string[] = [];
+  if (tasaInteresEa === null || tasaInteresEa < 0 || tasaInteresEa > 100) {
+    issues.push("El interes E.A. debe estar entre 0 % y 100 %.");
+  }
+  if (
+    fianzaCuotaPorcentaje === null ||
+    fianzaCuotaPorcentaje < 0 ||
+    fianzaCuotaPorcentaje > 100
+  ) {
+    issues.push("La fianza por cuota debe estar entre 0 % y 100 %.");
+  }
+  if (
+    seguroCuotaPorcentaje === null ||
+    seguroCuotaPorcentaje < 0 ||
+    seguroCuotaPorcentaje > 100
+  ) {
+    issues.push("El seguro por cuota debe estar entre 0 % y 100 %.");
+  }
+  return {
+    valid: issues.length === 0,
+    issues,
+    canonical:
+      issues.length === 0
+        ? {
+            calculoVersion: "FRANCES_V1",
+            tasaInteresEa: tasaInteresEa!,
+            fianzaCuotaPorcentaje: fianzaCuotaPorcentaje!,
+            seguroCuotaPorcentaje: seguroCuotaPorcentaje!,
+            frecuenciaPago: settings.frecuenciaPago,
+          }
+        : null,
+  };
+}
+
 function parsePolicyProfile(
   value: unknown,
   index: number
@@ -258,6 +377,11 @@ function parsePolicyProfile(
     active: value.active,
     version,
     bands: value.bands.map(parseBand),
+    financialSettings:
+      value.financialSettings === null ||
+      value.financialSettings === undefined
+        ? null
+        : parseFinancialSettings(value.financialSettings, `Politica ${index + 1}`),
     createdAt: readString(value.createdAt),
     updatedAt: readString(value.updatedAt),
     revisionCreatedAt: readString(value.revisionCreatedAt),
@@ -326,6 +450,10 @@ function parseCatalog(
 
   return {
     defaultPolicyId: readString(payload.defaultPolicyId),
+    financialDefaults: parseFinancialSettings(
+      payload.financialDefaults,
+      "La configuracion base"
+    ),
     profiles: payload.profiles.map(parsePolicyProfile),
     allies: payload.allies.map(parsePolicyAlly),
     provider: {
@@ -846,7 +974,7 @@ function PolicyBandRow({
         </label>
 
         <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
-          Fianza (%)
+          Fianza total de oferta (%)
           <Input
             id={`${idPrefix}-surety`}
             type="number"
@@ -1051,10 +1179,18 @@ export default function DatacreditoPolicyConsole() {
   const [profiles, setProfiles] = useState<DataCreditoPolicyProfile[]>([]);
   const [allies, setAllies] = useState<DataCreditoPolicyAlly[]>([]);
   const [defaultPolicyId, setDefaultPolicyId] = useState<string | null>(null);
+  const [financialDefaults, setFinancialDefaults] =
+    useState<DataCreditoPolicyFinancialSettings>(
+      DEFAULT_FINANCIAL_SETTINGS
+    );
   const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null);
   const [version, setVersion] = useState<number | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [bands, setBands] = useState<EditableBand[]>([]);
+  const [financialSettings, setFinancialSettings] =
+    useState<EditableFinancialSettings>(
+      toEditableFinancialSettings(DEFAULT_FINANCIAL_SETTINGS)
+    );
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<PolicyConsoleTab>("POLICIES");
   const [assignmentQuery, setAssignmentQuery] = useState("");
@@ -1062,6 +1198,8 @@ export default function DatacreditoPolicyConsole() {
   const [saving, setSaving] = useState(false);
   const [savingAssignments, setSavingAssignments] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [assignmentConfirmOpen, setAssignmentConfirmOpen] = useState(false);
   const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false);
@@ -1070,12 +1208,24 @@ export default function DatacreditoPolicyConsole() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newPolicyName, setNewPolicyName] = useState("");
   const [newPolicyDescription, setNewPolicyDescription] = useState("");
+  const [newPolicyFinancialSettings, setNewPolicyFinancialSettings] =
+    useState<EditableFinancialSettings>(
+      toEditableFinancialSettings(DEFAULT_FINANCIAL_SETTINGS)
+    );
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [correlationId, setCorrelationId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const validation = useMemo(() => validateDraftBands(bands), [bands]);
+  const financialValidation = useMemo(
+    () => validateFinancialSettings(financialSettings),
+    [financialSettings]
+  );
+  const newPolicyFinancialValidation = useMemo(
+    () => validateFinancialSettings(newPolicyFinancialSettings),
+    [newPolicyFinancialSettings]
+  );
   const selectedProfile = useMemo(
     () => profiles.find((profile) => profile.id === selectedPolicyId) || null,
     [profiles, selectedPolicyId]
@@ -1100,13 +1250,24 @@ export default function DatacreditoPolicyConsole() {
     );
   }, [allies, assignmentQuery]);
 
-  const applyProfile = useCallback((profile: DataCreditoPolicyProfile | null) => {
-    setSelectedPolicyId(profile?.id || null);
-    setVersion(profile?.version ?? null);
-    setUpdatedAt(profile?.revisionCreatedAt ?? profile?.updatedAt ?? null);
-    setBands((profile?.bands || []).map(toEditableBand));
-    setHasUnsavedChanges(false);
-  }, []);
+  const applyProfile = useCallback(
+    (
+      profile: DataCreditoPolicyProfile | null,
+      defaults: DataCreditoPolicyFinancialSettings
+    ) => {
+      setSelectedPolicyId(profile?.id || null);
+      setVersion(profile?.version ?? null);
+      setUpdatedAt(profile?.revisionCreatedAt ?? profile?.updatedAt ?? null);
+      setBands((profile?.bands || []).map(toEditableBand));
+      setFinancialSettings(
+        toEditableFinancialSettings(
+          profile?.financialSettings || defaults
+        )
+      );
+      setHasUnsavedChanges(false);
+    },
+    []
+  );
 
   const applyCatalog = useCallback(
     (
@@ -1123,6 +1284,7 @@ export default function DatacreditoPolicyConsole() {
       setProfiles(catalog.profiles);
       setAllies(catalog.allies);
       setDefaultPolicyId(catalog.defaultPolicyId);
+      setFinancialDefaults(catalog.financialDefaults);
       const freshAssignmentDrafts = Object.fromEntries(
         catalog.allies.map((ally) => [allyDraftKey(ally.id), ally.policyId])
       );
@@ -1152,7 +1314,7 @@ export default function DatacreditoPolicyConsole() {
         null;
 
       if (!preservePolicyDraft || !nextProfile) {
-        applyProfile(nextProfile);
+        applyProfile(nextProfile, catalog.financialDefaults);
       }
     },
     [applyProfile]
@@ -1211,7 +1373,7 @@ export default function DatacreditoPolicyConsole() {
     if (!profile) return;
     setNotice(null);
     setError(null);
-    applyProfile(profile);
+    applyProfile(profile, financialDefaults);
   };
 
   const requestProfileSelection = (policyId: string) => {
@@ -1284,6 +1446,28 @@ export default function DatacreditoPolicyConsole() {
     );
   };
 
+  const updateFinancialSetting = (
+    field: keyof EditableFinancialSettings,
+    value: string
+  ) => {
+    setNotice(null);
+    setHasUnsavedChanges(true);
+    setFinancialSettings((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
+  const updateNewPolicyFinancialSetting = (
+    field: keyof EditableFinancialSettings,
+    value: string
+  ) => {
+    setNewPolicyFinancialSettings((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
   const removeBand = (bandId: string) => {
     setNotice(null);
     setHasUnsavedChanges(true);
@@ -1294,7 +1478,9 @@ export default function DatacreditoPolicyConsole() {
     setNotice(null);
     setError(null);
 
-    if (!validation.valid || !selectedProfile) return;
+    if (!validation.valid || !financialValidation.valid || !selectedProfile) {
+      return;
+    }
     if (!hasUnsavedChanges) {
       setNotice("No hay cambios pendientes por publicar.");
       return;
@@ -1305,6 +1491,8 @@ export default function DatacreditoPolicyConsole() {
   const savePolicy = async () => {
     if (
       !validation.valid ||
+      !financialValidation.valid ||
+      !financialValidation.canonical ||
       !selectedProfile ||
       version === null ||
       saving
@@ -1329,6 +1517,7 @@ export default function DatacreditoPolicyConsole() {
           policyId: selectedProfile.id,
           expectedVersion: version,
           bands: validation.canonicalBands,
+          financialSettings: financialValidation.canonical,
         }),
       });
       const payload = await readJson(response);
@@ -1389,6 +1578,11 @@ export default function DatacreditoPolicyConsole() {
     }
     setNewPolicyName(`Copia de ${selectedProfile.name}`.slice(0, 80));
     setNewPolicyDescription("");
+    setNewPolicyFinancialSettings(
+      toEditableFinancialSettings(
+        selectedProfile.financialSettings || financialDefaults
+      )
+    );
     setCreateOpen(true);
     setError(null);
     setNotice(null);
@@ -1409,6 +1603,16 @@ export default function DatacreditoPolicyConsole() {
       setError("Escribe un nombre de al menos 3 caracteres para la política.");
       return;
     }
+    if (
+      !newPolicyFinancialValidation.valid ||
+      !newPolicyFinancialValidation.canonical
+    ) {
+      setError(
+        newPolicyFinancialValidation.issues[0] ||
+          "Revisa los parámetros financieros de la nueva política."
+      );
+      return;
+    }
 
     setCreating(true);
     setError(null);
@@ -1426,6 +1630,7 @@ export default function DatacreditoPolicyConsole() {
           name,
           description: description || undefined,
           bands: selectedProfile.bands,
+          financialSettings: newPolicyFinancialValidation.canonical,
         }),
       });
       const payload = await readJson(response);
@@ -1451,6 +1656,9 @@ export default function DatacreditoPolicyConsole() {
       setCreateOpen(false);
       setNewPolicyName("");
       setNewPolicyDescription("");
+      setNewPolicyFinancialSettings(
+        toEditableFinancialSettings(financialDefaults)
+      );
       setNotice(
         `Política “${name}” creada como versión 1 a partir de “${selectedProfile.name}”. Aún no cambia ningún aliado.`
       );
@@ -1467,6 +1675,67 @@ export default function DatacreditoPolicyConsole() {
       );
     } finally {
       setCreating(false);
+    }
+  };
+
+  const retirePolicy = async () => {
+    if (
+      !selectedProfile ||
+      selectedProfile.id === defaultPolicyId ||
+      selectedProfile.assignedAlliesCount > 0 ||
+      !selectedProfile.active ||
+      deleting
+    ) {
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    setCorrelationId(null);
+    try {
+      const response = await fetch("/api/creditos/datacredito/politicas", {
+        method: "DELETE",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          policyId: selectedProfile.id,
+          expectedVersion: selectedProfile.version,
+        }),
+      });
+      const payload = await readJson(response);
+      if (!response.ok || payload.ok === false) {
+        const assignedAlliesCount = readFiniteNumber(
+          payload.assignedAlliesCount
+        );
+        throw new PolicyRequestError(
+          assignedAlliesCount && assignedAlliesCount > 0
+            ? `Reasigna primero ${assignedAlliesCount} aliado(s) antes de retirar esta politica.`
+            : readString(payload.error) || "No se pudo retirar la politica.",
+          getCorrelationId(payload, response)
+        );
+      }
+      const catalog = parseCatalog(payload, response);
+      applyCatalog(catalog, catalog.defaultPolicyId, false, true);
+      setDeleteConfirmOpen(false);
+      setNotice(
+        `Politica "${selectedProfile.name}" retirada. Sus revisiones, evaluaciones y auditoria historica se conservaron.`
+      );
+    } catch (requestError) {
+      setDeleteConfirmOpen(false);
+      setError(
+        requestError instanceof PolicyRequestError
+          ? requestError.message
+          : "No se pudo retirar la politica de DataCredito."
+      );
+      setCorrelationId(
+        requestError instanceof PolicyRequestError
+          ? requestError.correlationId
+          : null
+      );
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -1793,20 +2062,39 @@ export default function DatacreditoPolicyConsole() {
                 ) : null}
               </div>
               <div className="lg:max-w-xs">
-                <Button
-                  onClick={openCreatePolicy}
-                  disabled={
-                    !selectedProfile || saving || creating || hasUnsavedChanges
-                  }
-                  aria-describedby={
-                    hasUnsavedChanges
-                      ? "datacredito-create-policy-help"
-                      : undefined
-                  }
-                >
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                  Nueva política
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    onClick={openCreatePolicy}
+                    disabled={
+                      !selectedProfile || saving || creating || hasUnsavedChanges
+                    }
+                    aria-describedby={
+                      hasUnsavedChanges
+                        ? "datacredito-create-policy-help"
+                        : undefined
+                    }
+                  >
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                    Nueva política
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={() => setDeleteConfirmOpen(true)}
+                    disabled={
+                      !selectedProfile ||
+                      selectedProfile.id === defaultPolicyId ||
+                      selectedProfile.assignedAlliesCount > 0 ||
+                      !selectedProfile.active ||
+                      saving ||
+                      creating ||
+                      deleting ||
+                      hasUnsavedChanges
+                    }
+                  >
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    Retirar política
+                  </Button>
+                </div>
                 {hasUnsavedChanges ? (
                   <p
                     id="datacredito-create-policy-help"
@@ -1814,6 +2102,16 @@ export default function DatacreditoPolicyConsole() {
                   >
                     Publica los cambios o recarga para descartarlos antes de
                     duplicar la última versión publicada.
+                  </p>
+                ) : null}
+                {selectedProfile?.assignedAlliesCount ? (
+                  <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
+                    Reasigna primero {selectedProfile.assignedAlliesCount}{" "}
+                    aliado(s) en “Asignación a aliados” para poder retirarla.
+                  </p>
+                ) : selectedProfile?.id === defaultPolicyId ? (
+                  <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
+                    La política predeterminada no se puede retirar.
                   </p>
                 ) : null}
               </div>
@@ -1919,6 +2217,100 @@ export default function DatacreditoPolicyConsole() {
                   />
                 </label>
               </div>
+              <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] p-4 sm:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h4 className="font-black">
+                      Condiciones financieras de la nueva política
+                    </h4>
+                    <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
+                      Se precargan desde la política origen, pero puedes definirlas
+                      antes de crear la versión 1.
+                    </p>
+                  </div>
+                  <Badge>Cuota fija · FRANCES_V1</Badge>
+                </div>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <label className="grid gap-2 text-sm font-bold">
+                    Interés E.A. (%)
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      max={100}
+                      step="0.000001"
+                      value={newPolicyFinancialSettings.tasaInteresEa}
+                      onChange={(event) =>
+                        updateNewPolicyFinancialSetting(
+                          "tasaInteresEa",
+                          event.target.value
+                        )
+                      }
+                      disabled={creating}
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold">
+                    Fianza por cuota (%)
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      max={100}
+                      step="0.000001"
+                      value={newPolicyFinancialSettings.fianzaCuotaPorcentaje}
+                      onChange={(event) =>
+                        updateNewPolicyFinancialSetting(
+                          "fianzaCuotaPorcentaje",
+                          event.target.value
+                        )
+                      }
+                      disabled={creating}
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold">
+                    Seguro por cuota (%)
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      max={100}
+                      step="0.000001"
+                      value={newPolicyFinancialSettings.seguroCuotaPorcentaje}
+                      onChange={(event) =>
+                        updateNewPolicyFinancialSetting(
+                          "seguroCuotaPorcentaje",
+                          event.target.value
+                        )
+                      }
+                      disabled={creating}
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold">
+                    Frecuencia de pago
+                    <Select
+                      value={newPolicyFinancialSettings.frecuenciaPago}
+                      onChange={(event) =>
+                        updateNewPolicyFinancialSetting(
+                          "frecuenciaPago",
+                          event.target.value
+                        )
+                      }
+                      disabled={creating}
+                    >
+                      <option value="SEMANAL">Semanal</option>
+                      <option value="QUINCENAL">Quincenal</option>
+                      <option value="MENSUAL">Mensual</option>
+                    </Select>
+                  </label>
+                </div>
+                {newPolicyFinancialValidation.issues.length ? (
+                  <ul className="mt-4 list-disc space-y-1 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-5 py-4 text-sm font-semibold text-[var(--fp-danger)]">
+                    {newPolicyFinancialValidation.issues.map((issue) => (
+                      <li key={issue}>{issue}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
               <div className="mt-5 flex flex-wrap justify-end gap-3">
                 <Button
                   variant="secondary"
@@ -1932,7 +2324,8 @@ export default function DatacreditoPolicyConsole() {
                   disabled={
                     creating ||
                     hasUnsavedChanges ||
-                    newPolicyName.trim().length < 3
+                    newPolicyName.trim().length < 3 ||
+                    !newPolicyFinancialValidation.valid
                   }
                 >
                   <Copy className="h-4 w-4" aria-hidden="true" />
@@ -1944,6 +2337,122 @@ export default function DatacreditoPolicyConsole() {
 
           {selectedProfile ? (
             <>
+              <Card className="p-5 sm:p-6" aria-labelledby="policy-financial-title">
+                <div className="flex items-start gap-3">
+                  <span
+                    className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-navy)] text-white"
+                    aria-hidden="true"
+                  >
+                    <Settings2 className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <h3 id="policy-financial-title" className="text-xl font-black">
+                      Parámetros financieros de la política
+                    </h3>
+                    <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
+                      Estos valores quedan congelados en cada evaluación y
+                      alimentan la cuota fija por sistema francés. Una excepción
+                      explícita por cédula conserva prioridad.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                  <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-lime-soft)] p-4">
+                    <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
+                      Motor de cálculo
+                    </p>
+                    <p className="mt-2 font-black">Cuota fija · francés</p>
+                    <Badge className="mt-2">FRANCES_V1</Badge>
+                  </div>
+                  <label className="grid gap-2 text-sm font-bold">
+                    Interés E.A. (%)
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      max={100}
+                      step="0.000001"
+                      value={financialSettings.tasaInteresEa}
+                      onChange={(event) =>
+                        updateFinancialSetting(
+                          "tasaInteresEa",
+                          event.target.value
+                        )
+                      }
+                      disabled={saving}
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold">
+                    Fianza por cuota (%)
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      max={100}
+                      step="0.000001"
+                      value={financialSettings.fianzaCuotaPorcentaje}
+                      onChange={(event) =>
+                        updateFinancialSetting(
+                          "fianzaCuotaPorcentaje",
+                          event.target.value
+                        )
+                      }
+                      disabled={saving}
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold">
+                    Seguro por cuota (%)
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      max={100}
+                      step="0.000001"
+                      value={financialSettings.seguroCuotaPorcentaje}
+                      onChange={(event) =>
+                        updateFinancialSetting(
+                          "seguroCuotaPorcentaje",
+                          event.target.value
+                        )
+                      }
+                      disabled={saving}
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold">
+                    Frecuencia de pago
+                    <Select
+                      value={financialSettings.frecuenciaPago}
+                      onChange={(event) =>
+                        updateFinancialSetting(
+                          "frecuenciaPago",
+                          event.target.value
+                        )
+                      }
+                      disabled={saving}
+                    >
+                      <option value="SEMANAL">Semanal · 52 periodos/año</option>
+                      <option value="QUINCENAL">Quincenal · 24 periodos/año</option>
+                      <option value="MENSUAL">Mensual · 12 periodos/año</option>
+                    </Select>
+                  </label>
+                </div>
+
+                {financialValidation.issues.length ? (
+                  <ul className="mt-4 list-disc space-y-1 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-5 py-4 text-sm font-semibold text-[var(--fp-danger)]">
+                    {financialValidation.issues.map((issue) => (
+                      <li key={issue}>{issue}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-4 text-sm leading-6 text-[var(--fp-muted)]">
+                    La fianza total de cada banda se conserva para reproducir
+                    políticas históricas; las nuevas revisiones usan la fianza
+                    por cuota definida aquí.
+                  </p>
+                )}
+              </Card>
+
               <PlatformEditor
                 platform="ANDROID"
                 bands={androidBands}
@@ -1972,8 +2481,14 @@ export default function DatacreditoPolicyConsole() {
                 <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone={validation.valid ? "positive" : "warning"}>
-                        {validation.valid
+                      <Badge
+                        tone={
+                          validation.valid && financialValidation.valid
+                            ? "positive"
+                            : "warning"
+                        }
+                      >
+                        {validation.valid && financialValidation.valid
                           ? "Cobertura completa"
                           : "Política incompleta"}
                       </Badge>
@@ -1985,8 +2500,8 @@ export default function DatacreditoPolicyConsole() {
                       id="datacredito-policy-save-help"
                       className="mt-3 max-w-2xl text-sm leading-6 text-[var(--fp-muted)]"
                     >
-                      {!validation.valid
-                        ? "Completa y corrige ambas plataformas. Publicar permanecerá deshabilitado mientras existan huecos, solapamientos, reglas Sin información ausentes o duplicadas, o valores inválidos."
+                      {!validation.valid || !financialValidation.valid
+                        ? "Completa los parámetros financieros y corrige ambas plataformas. Publicar permanecerá deshabilitado mientras existan valores inválidos, huecos, solapamientos o reglas Sin información ausentes o duplicadas."
                         : hasUnsavedChanges
                           ? `La próxima publicación creará la versión ${(version || 0) + 1}; no reemplazará ni modificará revisiones históricas.`
                           : "No hay cambios pendientes por publicar."}
@@ -1998,6 +2513,7 @@ export default function DatacreditoPolicyConsole() {
                       saving ||
                       !selectedProfile.active ||
                       !validation.valid ||
+                      !financialValidation.valid ||
                       !hasUnsavedChanges
                     }
                     aria-describedby="datacredito-policy-save-help"
@@ -2194,6 +2710,17 @@ export default function DatacreditoPolicyConsole() {
         busy={savingAssignments}
         onCancel={() => setAssignmentConfirmOpen(false)}
         onConfirm={() => void saveAssignments()}
+      />
+
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="Retirar política"
+        description="La política dejará de estar disponible para usos futuros. No se borrarán sus revisiones, evaluaciones, ofertas ni auditoría histórica."
+        confirmLabel="Retirar política"
+        busy={deleting}
+        danger
+        onCancel={() => setDeleteConfirmOpen(false)}
+        onConfirm={() => void retirePolicy()}
       />
 
       <ConfirmDialog

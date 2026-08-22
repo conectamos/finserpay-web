@@ -23,6 +23,12 @@ export type CreditForFirmaSeguroPdf = {
   montoCredito?: number | null;
   cuotaInicial?: number | null;
   valorCuota?: number | null;
+  valorCuotaComercial?: number | null;
+  tasaInteresEa?: number | null;
+  tasaPeriodo?: number | null;
+  fianzaCuotaPorcentaje?: number | null;
+  seguroCuotaPorcentaje?: number | null;
+  valorSeguro?: number | null;
   plazoMeses?: number | null;
   frecuenciaPago?: string | null;
   fechaCredito?: Date | string | null;
@@ -99,6 +105,24 @@ function formatCurrency(value: number | null | undefined) {
     currency: "COP",
     maximumFractionDigits: 0,
   }).format(Number(value || 0));
+}
+
+function formatExactCurrency(value: number | null | undefined) {
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0));
+}
+
+function formatPercentage(value: number | null | undefined, digits = 6) {
+  return (
+    new Intl.NumberFormat("es-CO", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: digits,
+    }).format(Number(value || 0)) + "%"
+  );
 }
 
 function getDateValue(value: Date | string | null | undefined) {
@@ -827,7 +851,11 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     "-";
   const marca = valueOrDash(credito.equipoMarca || equipo.split(" ")[0]);
   const modelo = valueOrDash(credito.equipoModelo || equipo);
-  const saldoFinanciado = credito.montoCredito || 0;
+  const capitalFinanciado = Math.max(
+    0,
+    Number(credito.valorEquipoTotal || 0) - Number(credito.cuotaInicial || 0)
+  );
+  const totalObligacion = credito.montoCredito || 0;
   const firmaFechaHora = `${fecha} ${hora}`;
 
   legalHeader(doc, credito, fecha, fonts);
@@ -942,16 +970,40 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     [
       { label: "Valor total del equipo", value: formatCurrency(credito.valorEquipoTotal) },
       { label: "Cuota inicial", value: formatCurrency(credito.cuotaInicial) },
-      { label: "Saldo financiado", value: formatCurrency(saldoFinanciado) },
+      { label: "Capital financiado", value: formatCurrency(capitalFinanciado) },
+      {
+        label: "Total de la obligacion",
+        value: formatExactCurrency(totalObligacion),
+      },
       { label: "Numero de cuotas", value: `${credito.plazoMeses || "-"} cuotas` },
-      { label: "Valor de cada cuota", value: formatCurrency(credito.valorCuota) },
+      { label: "Cuota exacta", value: formatExactCurrency(credito.valorCuota) },
+      {
+        label: "Cuota comercial (referencia)",
+        value: formatCurrency(credito.valorCuotaComercial || credito.valorCuota),
+      },
       { label: "Frecuencia", value: getPaymentFrequencyLabel(credito.frecuenciaPago) },
+      { label: "Primer vencimiento", value: formatDateOnly(credito.fechaPrimerPago) },
+      { label: "TEA", value: formatPercentage(credito.tasaInteresEa, 4) },
+      {
+        label: "Tasa efectiva por periodo",
+        value: formatPercentage(Number(credito.tasaPeriodo || 0) * 100, 6),
+      },
+      {
+        label: "Fianza por cuota",
+        value: formatPercentage(credito.fianzaCuotaPorcentaje, 6),
+      },
+      {
+        label: "Seguro por cuota",
+        value: formatPercentage(credito.seguroCuotaPorcentaje, 6),
+      },
+      { label: "Total fianza", value: formatExactCurrency(credito.valorFianza) },
+      { label: "Total seguro", value: formatExactCurrency(credito.valorSeguro) },
     ],
     fonts
   );
   paragraph(
     doc,
-    "El CLIENTE se obliga a pagar en las fechas acordadas.",
+    "El CLIENTE se obliga a pagar en las fechas acordadas. La cuota comercial es informativa; el plan exacto y el ajuste de centavos de la ultima cuota determinan el recaudo.",
     fonts
   );
   sectionTitle(doc, "Tercera - Mora", fonts);
@@ -1040,17 +1092,17 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
     doc,
     `Yo, ${credito.clienteNombre}, mayor de edad, identificado con cedula de ciudadania No. ${valueOrDash(
       credito.clienteDocumento
-    )}, actuando en nombre propio, me obligo de manera incondicional a pagar a la orden de FINSER PAY S.A.S., NIT 902052909-4, la suma de ${formatCurrency(
-      saldoFinanciado
-    )} pesos colombianos, correspondiente al saldo financiado de la obligacion.`,
+    )}, actuando en nombre propio, me obligo de manera incondicional a pagar a la orden de FINSER PAY S.A.S., NIT 902052909-4, la suma de ${formatExactCurrency(
+      totalObligacion
+    )} pesos colombianos, correspondiente al valor total de la obligacion.`,
     fonts
   );
   sectionTitle(doc, "Primera - Forma de pago", fonts);
   paragraph(
     doc,
-    `La obligacion sera pagada en ${credito.plazoMeses || "-"} cuotas de ${formatCurrency(
+    `La obligacion sera pagada en ${credito.plazoMeses || "-"} cuotas con valor exacto de referencia de ${formatExactCurrency(
       credito.valorCuota
-    )} cada una, conforme al plan pactado.`,
+    )}, conforme al plan pactado. La ultima cuota podra ajustarse por centavos para que el saldo termine exactamente en cero.`,
     fonts
   );
   sectionTitle(doc, "Segunda - Vencimiento anticipado", fonts);
@@ -1396,7 +1448,8 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
       { label: "Referencia", value: equipo },
       { label: "IMEI", value: credito.imei || credito.deviceUid || "-" },
       { label: "Valor equipo", value: formatCurrency(credito.valorEquipoTotal) },
-      { label: "Saldo financiado", value: formatCurrency(saldoFinanciado) },
+      { label: "Capital financiado", value: formatCurrency(capitalFinanciado) },
+      { label: "Total obligacion", value: formatExactCurrency(totalObligacion) },
     ],
     fonts
   );
