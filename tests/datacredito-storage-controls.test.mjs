@@ -558,25 +558,24 @@ test("muestra los resultados DataCredito aprobados y rechazados como ventanas em
   );
 });
 
-test("oculta la fianza DataCredito al asesor y la conserva para el admin central", () => {
-  assert.match(prequalificationGate, /showSurety\?: boolean;/);
-  assert.match(prequalificationGate, /showSurety = false,/);
-  assert.match(factoryConsole, /showSurety=\{canSeeInternalPricing\}/);
+test("oculta visualmente la fianza DataCredito para todos los perfiles", () => {
+  assert.doesNotMatch(prequalificationGate, /showSurety/);
+  assert.doesNotMatch(factoryConsole, /showSurety=/);
   assert.doesNotMatch(
     prequalificationGate,
     /puntaje consultado permanece oculto/
   );
   assert.doesNotMatch(factoryConsole, /El puntaje no se muestra/);
-  assert.match(
+  assert.doesNotMatch(
     prequalificationGate,
-    /\{showSurety \? \(\s*<div[\s\S]*?Fianza[\s\S]*?offer\.suretyPercentage/
+    /formatPercentage\(approvedResult\.offer\.suretyPercentage\)/
   );
-  assert.match(
+  assert.doesNotMatch(
     factoryConsole,
-    /\{canSeeInternalPricing \? \(\s*<span[\s\S]*?Fianza \{formatPercent\(dataCreditoApproval\.offer\.suretyPercentage\)\}/
+    /Fianza \{formatPercent\(dataCreditoApproval\.offer\.suretyPercentage\)\}/
   );
-  assert.match(
+  assert.doesNotMatch(
     factoryConsole,
-    /\{canSeeInternalPricing \? \(\s*<>[\s\S]*?Fianza \{formatPercent\(financialPlan\.fianzaPorcentaje\)\}/
+    /Fianza \{formatPercent\(financialPlan\.fianzaPorcentaje\)\}/
   );
 });

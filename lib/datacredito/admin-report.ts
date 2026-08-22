@@ -183,7 +183,29 @@ export type DataCreditoAdminSectorSummary = DataCreditoAdminNumericIndicators & 
   isTelcos: boolean;
 };
 
+export type DataCreditoAdminTelcoSummary = DataCreditoAdminNumericIndicators & {
+  available: boolean;
+  sector: string | null;
+  delinquencyStatus:
+    | "Con mora vigente agregada en Telcos"
+    | "Sin mora vigente agregada reportada"
+    | "Mora no informada";
+};
+
 export type DataCreditoAdminRiskSummary = {
+  transaction: {
+    providerStatus: string | null;
+    queryDate: string | null;
+    queryTime: string | null;
+    responseCodes: Array<{
+      key: string | null;
+      value: string | null;
+    }>;
+  } | null;
+  validation: {
+    hasInformation: boolean | null;
+    basicDataHasInformation: boolean | null;
+  } | null;
   identity: DataCreditoAdminIdentitySummary | null;
   risk: {
     hasInformation: boolean | null;
@@ -199,8 +221,10 @@ export type DataCreditoAdminRiskSummary = {
       updatedAt: string | null;
     }>;
   } | null;
+  indicatorValuesHaveInformation: boolean | null;
   totals: DataCreditoAdminNumericIndicators | null;
   sectors: DataCreditoAdminSectorSummary[];
+  telcos: DataCreditoAdminTelcoSummary;
   balanceEvolution: Array<{
     period: string | null;
     totalBalance: number | null;
@@ -259,6 +283,30 @@ function boundedArray(value: unknown, maximumLength: number) {
   return Array.isArray(value) ? value.slice(0, maximumLength) : [];
 }
 
+function isTelcosSectorName(value: unknown) {
+  return boundedText(value, 96)?.toLowerCase() === "sector telcos";
+}
+
+function boundedSectorArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const selected = value.slice(0, MAX_SECTORS);
+  if (
+    selected.some((item) =>
+      isTelcosSectorName(allowedValue(asRecord(item), "sector"))
+    )
+  ) {
+    return selected;
+  }
+
+  const telcos = value.find((item) =>
+    isTelcosSectorName(allowedValue(asRecord(item), "sector"))
+  );
+  if (!telcos) return selected;
+  return selected.length < MAX_SECTORS
+    ? [...selected, telcos]
+    : [...selected.slice(0, MAX_SECTORS - 1), telcos];
+}
+
 function providerNumber(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER
@@ -276,6 +324,16 @@ function providerNumber(value: unknown): number | null {
 function providerScore(value: unknown) {
   const score = providerNumber(value);
   return Number.isInteger(score) && score! >= 0 && score! <= 950 ? score : null;
+}
+
+function providerNonNegativeNumber(value: unknown) {
+  const parsed = providerNumber(value);
+  return parsed !== null && parsed >= 0 ? parsed : null;
+}
+
+function providerNonNegativeInteger(value: unknown) {
+  const parsed = providerNonNegativeNumber(value);
+  return parsed !== null && Number.isInteger(parsed) ? parsed : null;
 }
 
 function sanitizeIndicators(record: UnknownRecord | null): DataCreditoAdminProviderIndicators {
@@ -296,20 +354,36 @@ function numericIndicators(
   indicators: DataCreditoAdminProviderIndicators
 ): DataCreditoAdminNumericIndicators {
   return {
-    activeCredits: providerNumber(indicators.creditosVigentes),
-    closedCredits: providerNumber(indicators.creditosCerrados),
-    principalCredits: providerNumber(indicators.totalPrincipal),
-    coDebtorOrOtherCredits: providerNumber(indicators.totalCodeudorOtros),
-    initialAmount: providerNumber(indicators.valorInicial),
-    currentBalance: providerNumber(indicators.saldoActual),
-    installmentAmount: providerNumber(indicators.valorCuota),
-    delinquentBalance: providerNumber(indicators.saldoMora),
-    debtPercentage: providerNumber(indicators.porcentajeDeuda),
+    activeCredits: providerNonNegativeInteger(indicators.creditosVigentes),
+    closedCredits: providerNonNegativeInteger(indicators.creditosCerrados),
+    principalCredits: providerNonNegativeInteger(indicators.totalPrincipal),
+    coDebtorOrOtherCredits: providerNonNegativeInteger(indicators.totalCodeudorOtros),
+    initialAmount: providerNonNegativeNumber(indicators.valorInicial),
+    currentBalance: providerNonNegativeNumber(indicators.saldoActual),
+    installmentAmount: providerNonNegativeNumber(indicators.valorCuota),
+    delinquentBalance: providerNonNegativeNumber(indicators.saldoMora),
+    debtPercentage: providerNonNegativeNumber(indicators.porcentajeDeuda),
   };
 }
 
 function hasIdentityValue(identity: DataCreditoAdminIdentitySummary) {
   return Object.values(identity).some((value) => value !== null);
+}
+
+export function dataCreditoTelcoDelinquencyStatus(
+  value: number | null | undefined
+): DataCreditoAdminTelcoSummary["delinquencyStatus"] {
+  if (
+    value === null ||
+    value === undefined ||
+    !Number.isFinite(value) ||
+    value < 0
+  ) {
+    return "Mora no informada";
+  }
+  return value > 0
+    ? "Con mora vigente agregada en Telcos"
+    : "Sin mora vigente agregada reportada";
 }
 
 /**
@@ -497,9 +571,8 @@ export function sanitizeDataCreditoProviderPayload(
                           allowedValue(indicators, "conInformacion")
                         ),
                         indicadores: sanitizeIndicators(indicators),
-                        sectores: boundedArray(
-                          allowedValue(indicators, "sectores"),
-                          MAX_SECTORS
+                        sectores: boundedSectorArray(
+                          allowedValue(indicators, "sectores")
                         ).map((item) => {
                           const row = asRecord(item);
                           return {
@@ -605,87 +678,181 @@ export function buildDataCreditoAdminRiskSummary(
   if (!sanitized || !content || !answer) return null;
 
   const transaction = content.infoTransaccion;
-  const basics = answer.validacion?.datosBasicos;
+  const validation = answer.validacion;
+  const basics = validation?.datosBasicos;
+  const returnedBasics =
+    validation?.conInformacion === false || basics?.conInformacion === false
+      ? null
+      : basics;
+  const creditBehavior = answer.comportamientoCrediticio;
+  const creditBehaviorHasInformation = creditBehavior?.conInformacion !== false;
   const identity: DataCreditoAdminIdentitySummary = {
     queriedDocumentType: transaction?.tipoIdDigitado || null,
     queriedDocumentNumber: transaction?.numeroIdDigitado || null,
     queriedSurname: transaction?.apellidoDigitado || null,
-    documentType: basics?.tipoDocumento || null,
-    documentNumber: basics?.numeroDocumento || null,
-    fullName: basics?.nombreCompleto || null,
-    firstName: basics?.primerNombre || null,
-    secondName: basics?.segundoNombre || null,
-    firstSurname: basics?.primerApellido || null,
-    secondSurname: basics?.segundoApellido || null,
-    documentStatus: basics?.estadoDocumento || null,
-    ageRange: basics?.rangoEdad || null,
+    documentType: returnedBasics?.tipoDocumento || null,
+    documentNumber: returnedBasics?.numeroDocumento || null,
+    fullName: returnedBasics?.nombreCompleto || null,
+    firstName: returnedBasics?.primerNombre || null,
+    secondName: returnedBasics?.segundoNombre || null,
+    firstSurname: returnedBasics?.primerApellido || null,
+    secondSurname: returnedBasics?.segundoApellido || null,
+    documentStatus: returnedBasics?.estadoDocumento || null,
+    ageRange: returnedBasics?.rangoEdad || null,
   };
-  const indicatorSection = answer.comportamientoCrediticio?.indicadoresValores;
-  const sectors = (indicatorSection?.sectores || []).flatMap((sector) => {
+  const balanceSection = creditBehavior?.evolucionSaldoCuotaPN;
+  const revolvingSection = creditBehavior?.evolucionRoPN;
+  const paymentSection = creditBehavior?.comportamientoPago;
+  const indicatorSection = creditBehavior?.indicadoresValores;
+  const indicatorValuesHaveInformation =
+    creditBehavior?.conInformacion === false
+      ? false
+      : indicatorSection?.conInformacion ?? null;
+  const sectors = (
+    !creditBehaviorHasInformation || indicatorValuesHaveInformation === false
+      ? []
+      : indicatorSection?.sectores || []
+  ).flatMap((sector) => {
     if (!sector.sector) return [];
     return [
       {
         sector: sector.sector,
-        isTelcos: sector.sector.toLowerCase() === "sector telcos",
+        isTelcos: isTelcosSectorName(sector.sector),
         ...numericIndicators(sector),
       },
     ];
   });
+  const telcoSector = sectors.find((sector) => sector.isTelcos) ?? null;
   const risk = answer.informacionRiesgo;
+  const riskHasInformation = risk?.conInformacion !== false;
 
   return {
+    transaction: content.infoTransaccion
+      ? {
+          providerStatus: sanitized.status,
+          queryDate: content.infoTransaccion.fechaConsulta,
+          queryTime: content.infoTransaccion.horaConsulta,
+          responseCodes: content.infoTransaccion.codigosRespuesta.map((code) => ({
+            key: code.clave,
+            value: code.valor,
+          })),
+        }
+      : sanitized.status
+        ? {
+            providerStatus: sanitized.status,
+            queryDate: null,
+            queryTime: null,
+            responseCodes: [],
+          }
+        : null,
+    validation: answer.validacion
+      ? {
+          hasInformation: answer.validacion.conInformacion,
+          basicDataHasInformation:
+            answer.validacion.datosBasicos?.conInformacion ?? null,
+        }
+      : null,
     identity: hasIdentityValue(identity) ? identity : null,
     risk: risk
       ? {
           hasInformation: risk.conInformacion,
-          score: providerScore(risk.score),
-          probabilityText: risk.txtProbabilidad,
-          viability: risk.viabilidad,
-          collectionsRating: risk.ratingRecaudos,
-          collectionsText: risk.txtRecaudos,
-          suggestedAmount: providerNumber(risk.montoSugerido),
-          alerts: risk.alertas.map((alert) => ({
-            description: alert.alerta,
-            placedAt: alert.colocacion,
-            updatedAt: alert.modificacion,
-          })),
+          score: riskHasInformation ? providerScore(risk.score) : null,
+          probabilityText: riskHasInformation ? risk.txtProbabilidad : null,
+          viability: riskHasInformation ? risk.viabilidad : null,
+          collectionsRating: riskHasInformation ? risk.ratingRecaudos : null,
+          collectionsText: riskHasInformation ? risk.txtRecaudos : null,
+          suggestedAmount: riskHasInformation
+            ? providerNonNegativeNumber(risk.montoSugerido)
+            : null,
+          alerts: riskHasInformation
+            ? risk.alertas.map((alert) => ({
+                description: alert.alerta,
+                placedAt: alert.colocacion,
+                updatedAt: alert.modificacion,
+              }))
+            : [],
         }
       : null,
-    totals: indicatorSection
-      ? numericIndicators(indicatorSection.indicadores)
-      : null,
+    indicatorValuesHaveInformation,
+    totals:
+      creditBehaviorHasInformation &&
+      indicatorSection &&
+      indicatorValuesHaveInformation !== false
+        ? numericIndicators(indicatorSection.indicadores)
+        : null,
     sectors,
+    telcos: telcoSector
+      ? {
+          available: true,
+          sector: telcoSector.sector,
+          activeCredits: telcoSector.activeCredits,
+          closedCredits: telcoSector.closedCredits,
+          principalCredits: telcoSector.principalCredits,
+          coDebtorOrOtherCredits: telcoSector.coDebtorOrOtherCredits,
+          initialAmount: telcoSector.initialAmount,
+          currentBalance: telcoSector.currentBalance,
+          installmentAmount: telcoSector.installmentAmount,
+          delinquentBalance: telcoSector.delinquentBalance,
+          debtPercentage: telcoSector.debtPercentage,
+          delinquencyStatus: dataCreditoTelcoDelinquencyStatus(
+            telcoSector.delinquentBalance
+          ),
+        }
+      : {
+          available: false,
+          sector: null,
+          activeCredits: null,
+          closedCredits: null,
+          principalCredits: null,
+          coDebtorOrOtherCredits: null,
+          initialAmount: null,
+          currentBalance: null,
+          installmentAmount: null,
+          delinquentBalance: null,
+          debtPercentage: null,
+          delinquencyStatus: "Mora no informada",
+        },
     balanceEvolution: (
-      answer.comportamientoCrediticio?.evolucionSaldoCuotaPN?.trimestres || []
+      creditBehaviorHasInformation && balanceSection?.conInformacion !== false
+        ? balanceSection?.trimestres || []
+        : []
     ).map((item) => ({
       period: item.trimestre,
-      totalBalance: providerNumber(item.saldoTotal),
-      totalInstallment: providerNumber(item.cuotaTotal),
+      totalBalance: providerNonNegativeNumber(item.saldoTotal),
+      totalInstallment: providerNonNegativeNumber(item.cuotaTotal),
     })),
     revolvingEvolution: (
-      answer.comportamientoCrediticio?.evolucionRoPN?.trimestres || []
+      creditBehaviorHasInformation && revolvingSection?.conInformacion !== false
+        ? revolvingSection?.trimestres || []
+        : []
     ).map((item) => ({
       period: item.trimestre,
-      totalBalance: providerNumber(item.saldoTotal),
-      totalLimit: providerNumber(item.cupoTotal),
-      debtPercentage: providerNumber(item.porcentajeDeuda),
+      totalBalance: providerNonNegativeNumber(item.saldoTotal),
+      totalLimit: providerNonNegativeNumber(item.cupoTotal),
+      debtPercentage: providerNonNegativeNumber(item.porcentajeDeuda),
     })),
     paymentHistory: (
-      answer.comportamientoCrediticio?.comportamientoPago
-        ?.vectorComportamiento || []
+      creditBehaviorHasInformation && paymentSection?.conInformacion !== false
+        ? paymentSection?.vectorComportamiento || []
+        : []
     ).map((item) => ({
       period: item.anioMes,
       code: item.comportamiento,
     })),
-    indebtedness: answer.endeudamiento
-      ? {
-          income: providerNumber(answer.endeudamiento.ingreso),
-          installmentToIncomePercentage: providerNumber(
-            answer.endeudamiento.porcentajeCuotaVsIngreso
-          ),
-        }
-      : null,
-    suggestions: (answer.sugerencias?.vectorSugerencias || []).map(
+    indebtedness:
+      answer.endeudamiento && answer.endeudamiento.conInformacion !== false
+        ? {
+            income: providerNonNegativeNumber(answer.endeudamiento.ingreso),
+            installmentToIncomePercentage: providerNonNegativeNumber(
+              answer.endeudamiento.porcentajeCuotaVsIngreso
+            ),
+          }
+        : null,
+    suggestions: (
+      answer.sugerencias?.conInformacion === false
+        ? []
+        : answer.sugerencias?.vectorSugerencias || []
+    ).map(
       (suggestion) => ({
         title: suggestion.titulo,
         descriptions: suggestion.sugerencia.flatMap((item) =>
