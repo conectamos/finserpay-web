@@ -50,7 +50,23 @@ test("el administrador central ve el simulador en menu y acciones rapidas", () =
 test("el simulador iPhone usa inicial del 30 por ciento y plazo flexible", () => {
   assert.match(
     consoleSource,
+    /const simulatorIphoneRulesActive\s*=\s*simulatorMode && iphoneFactory/
+  );
+  assert.match(
+    consoleSource,
     /simulatorMode && iphoneFactory\s*\? configuredInitialPaymentPercentage/
+  );
+  assert.match(
+    consoleSource,
+    /const dataCreditoEffectiveMaxFinancedAmount\s*=\s*simulatorIphoneRulesActive\s*\? iphoneMaxFinancedAmount\s*:\s*dataCreditoMaxFinancedAmount/
+  );
+  assert.match(
+    consoleSource,
+    /const cuotaInicialMinimaNumero = dataCreditoEffectiveMaxFinancedAmount > 0[\s\S]{0,220}dataCreditoEffectiveMaxFinancedAmount/
+  );
+  assert.match(
+    consoleSource,
+    /const plazoMaximoCuotas = normalizeCreditInstallmentLimit\(\s*simulatorIphoneRulesActive\s*\? creditSettings\.iphonePlazoMaximoCuotas/
   );
   assert.match(
     consoleSource,
@@ -66,7 +82,7 @@ test("el simulador iPhone usa inicial del 30 por ciento y plazo flexible", () =>
   );
   assert.match(
     consoleSource,
-    /Solo se muestran plazos cuya cuota no supera/
+    /Puedes elegir hasta \$\{plazoMaximoCuotas\} cuotas\. Solo se muestran plazos cuya cuota no supera/
   );
 });
 
@@ -78,6 +94,14 @@ test("el simulador iPhone conserva el tope global configurado", () => {
   assert.match(
     consoleSource,
     /simulatorMode && iphoneFactory\s*\? iphoneMaxInstallmentValue/
+  );
+  assert.match(
+    consoleSource,
+    /Crédito máximo\{" "\}[\s\S]{0,120}currency\(dataCreditoEffectiveMaxFinancedAmount\)/
+  );
+  assert.match(
+    consoleSource,
+    /simulatorMode\s*\? plazoMaximoCuotas\s*:\s*dataCreditoInstallmentCount/
   );
   assert.match(consoleSource, /IPHONE_MAX_INSTALLMENT_VALUE/);
 });

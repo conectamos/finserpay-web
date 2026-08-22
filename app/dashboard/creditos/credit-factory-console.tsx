@@ -2845,8 +2845,11 @@ export default function CreditFactoryConsole({
     creditSettings.iphoneTopeFinanciado,
     IPHONE_MAX_FINANCED_AMOUNT
   );
+  const simulatorIphoneRulesActive = simulatorMode && iphoneFactory;
   const dataCreditoEffectiveMaxFinancedAmount =
-    dataCreditoMaxFinancedAmount > 0
+    simulatorIphoneRulesActive
+      ? iphoneMaxFinancedAmount
+      : dataCreditoMaxFinancedAmount > 0
       ? dataCreditoMaxFinancedAmount
       : 0;
   const dataCreditoFinancingExcess =
@@ -2857,6 +2860,7 @@ export default function CreditFactoryConsole({
         )
       : 0;
   const dataCreditoEffectiveLimitSummary =
+    !simulatorIphoneRulesActive &&
     dataCreditoEffectiveMaxFinancedAmount > 0 &&
     dataCreditoEffectiveMaxFinancedAmount < dataCreditoMaxFinancedAmount
       ? ` Tope efectivo por salvaguardas vigentes: ${currency(dataCreditoEffectiveMaxFinancedAmount)}.`
@@ -2891,10 +2895,10 @@ export default function CreditFactoryConsole({
       : activeDataCreditoOffer
       ? activeDataCreditoOffer.initialPaymentPercentage
       : configuredInitialPaymentPercentage;
-  const cuotaInicialMinimaNumero = dataCreditoMaxFinancedAmount > 0
+  const cuotaInicialMinimaNumero = dataCreditoEffectiveMaxFinancedAmount > 0
     ? calculateRequiredInitialPaymentForFinancingLimit(
         valorTotalEquipoNumero,
-        dataCreditoMaxFinancedAmount,
+        dataCreditoEffectiveMaxFinancedAmount,
         initialPaymentPercentage
       )
     : calculateRequiredInitialPaymentByPlatform({
@@ -2911,10 +2915,15 @@ export default function CreditFactoryConsole({
     cuotaInicialNumero >= cuotaInicialMinimaNumero &&
     cuotaInicialNumero <= valorTotalEquipoNumero;
   const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
-    dataCreditoInstallmentCount ||
-      (iphoneFactory
-        ? creditSettings.iphonePlazoMaximoCuotas
-        : creditSettings.plazoMaximoCuotas)
+    simulatorIphoneRulesActive
+      ? creditSettings.iphonePlazoMaximoCuotas
+      : dataCreditoInstallmentCount ||
+          (iphoneFactory
+            ? creditSettings.iphonePlazoMaximoCuotas
+            : creditSettings.plazoMaximoCuotas),
+    iphoneFactory
+      ? IPHONE_MAX_CREDIT_INSTALLMENTS
+      : DEFAULT_MAX_CREDIT_INSTALLMENTS
   );
   const dataCreditoLocksInstallmentCount =
     Boolean(dataCreditoInstallmentCount) && !simulatorMode;
@@ -4897,7 +4906,9 @@ export default function CreditFactoryConsole({
               ? nextIphoneMaxInstallments
               : nextMaxInstallments
         )
-      : nextSettings.plazoCuotas;
+      : iphoneFactory
+        ? nextSettings.iphonePlazoCuotas
+        : nextSettings.plazoCuotas;
     setPlazoMeses(String(restoredInstallments));
     setFechaPrimerPago(
       preservedTerms?.fechaPrimerPago || getDefaultFirstPaymentDate(new Date(), nextFrequency)
@@ -5232,11 +5243,17 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    const installmentCount = normalizeCreditInstallments(
-      offer.installmentCount,
-      DEFAULT_CREDIT_INSTALLMENTS,
-      MAX_CREDIT_INSTALLMENTS
-    );
+    const installmentCount = iphoneFactory
+      ? normalizeCreditInstallments(
+          creditSettings.iphonePlazoCuotas,
+          IPHONE_DEFAULT_CREDIT_INSTALLMENTS,
+          creditSettings.iphonePlazoMaximoCuotas
+        )
+      : normalizeCreditInstallments(
+          offer.installmentCount,
+          DEFAULT_CREDIT_INSTALLMENTS,
+          MAX_CREDIT_INSTALLMENTS
+        );
     const financialSettings = resolveCreditPolicyFinancialSettings({
       globalSettings: globalCreditSettings,
       policyFinancialSettings: offer.financialSettings,
@@ -5251,9 +5268,12 @@ export default function CreditFactoryConsole({
       )
     );
   }, [
+    creditSettings.iphonePlazoCuotas,
+    creditSettings.iphonePlazoMaximoCuotas,
     dataCreditoSimulation,
     dataCreditoSimulationStatus,
     globalCreditSettings,
+    iphoneFactory,
     simulatorMode,
   ]);
 
@@ -10938,11 +10958,17 @@ export default function CreditFactoryConsole({
                         Inicial mínima {formatPercent(initialPaymentPercentage)}
                       </span>
                       <span aria-hidden="true">·</span>
-                      <span>Crédito máximo {currency(dataCreditoMaxFinancedAmount)}</span>
+                      <span>
+                        Crédito máximo{" "}
+                        {currency(dataCreditoEffectiveMaxFinancedAmount)}
+                      </span>
                       <span aria-hidden="true">·</span>
                       <span>
                         {simulatorMode ? "Plazo maximo" : "Plazo"}{" "}
-                        {dataCreditoInstallmentCount} cuotas
+                        {simulatorMode
+                          ? plazoMaximoCuotas
+                          : dataCreditoInstallmentCount}{" "}
+                        cuotas
                       </span>
                       {canSeeInternalPricing &&
                       policySummaryMaxInstallmentValue > 0 ? (
@@ -11086,7 +11112,9 @@ export default function CreditFactoryConsole({
                         {canSeeInternalPricing ? (
                           <p className="mt-2 text-xs font-medium text-slate-500">
                             {activeDataCreditoOffer
-                              ? `Crédito máximo DataCrédito: ${currency(dataCreditoMaxFinancedAmount)}.${dataCreditoEffectiveLimitSummary} Excedente a inicial: ${currency(dataCreditoFinancingExcess)}.`
+                              ? simulatorIphoneRulesActive
+                                ? `Crédito máximo iPhone: ${currency(dataCreditoEffectiveMaxFinancedAmount)}. Excedente a inicial: ${currency(dataCreditoFinancingExcess)}.`
+                                : `Crédito máximo DataCrédito: ${currency(dataCreditoMaxFinancedAmount)}.${dataCreditoEffectiveLimitSummary} Excedente a inicial: ${currency(dataCreditoFinancingExcess)}.`
                               : iphoneFactory
                                 ? `Tope financiado iPhone: ${currency(iphoneMaxFinancedAmount)}.`
                                 : precioBaseVentaCatalogo > 0
@@ -11172,7 +11200,7 @@ export default function CreditFactoryConsole({
                         {dataCreditoInstallmentCount ? (
                           <p className="mt-2 text-xs font-medium text-slate-500">
                             {simulatorMode
-                              ? `Puedes elegir hasta ${dataCreditoInstallmentCount} cuotas. Solo se muestran plazos cuya cuota no supera ${currency(iphoneMaxInstallmentValue)}.`
+                              ? `Puedes elegir hasta ${plazoMaximoCuotas} cuotas. Solo se muestran plazos cuya cuota no supera ${currency(iphoneMaxInstallmentValue)}.`
                               : "Plazo definido por la política DataCrédito aplicada."}
                           </p>
                         ) : null}

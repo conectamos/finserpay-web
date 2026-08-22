@@ -10,6 +10,10 @@ const projectRoot = path.resolve(
 );
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const {
+  IPHONE_INITIAL_PAYMENT_PERCENTAGE,
+  IPHONE_MAX_CREDIT_INSTALLMENTS,
+  IPHONE_MAX_FINANCED_AMOUNT,
+  IPHONE_MAX_INSTALLMENT_VALUE,
   calculateRequiredInitialPaymentForFinancingLimit,
   calculateRequiredInitialPaymentByPlatform,
   getCreditInstallmentOptions,
@@ -19,6 +23,10 @@ const {
 } = await jiti.import(
   "../lib/credit-factory.ts"
 );
+const {
+  ARES_FRENCH_AMORTIZATION_VERSION,
+  calculateFrenchAmortization,
+} = await jiti.import("../lib/credit-amortization.ts");
 
 test("el monto maximo de la oferta limita el saldo realmente financiado", () => {
   assert.equal(
@@ -154,13 +162,52 @@ test("resuelve directamente el menor tope por plataforma", () => {
   );
 });
 
-test("el simulador ofrece plazos hasta el maximo de la politica", () => {
-  const options = getCreditInstallmentOptions(24);
+test("el simulador iPhone ofrece plazos hasta 48 cuotas", () => {
+  const options = getCreditInstallmentOptions(IPHONE_MAX_CREDIT_INSTALLMENTS);
 
   assert.equal(options[0], "1");
-  assert.equal(options.at(-1), "24");
-  assert.equal(options.length, 24);
-  assert.equal(normalizeCreditInstallments(30, 24, 24), 24);
+  assert.equal(options.at(-1), "48");
+  assert.equal(options.length, 48);
+  assert.equal(normalizeCreditInstallments(60, 24, 48), 48);
+});
+
+test("la regla comercial iPhone conserva 30%, 3.5M, 48 y 160k", () => {
+  assert.equal(IPHONE_INITIAL_PAYMENT_PERCENTAGE, 30);
+  assert.equal(IPHONE_MAX_FINANCED_AMOUNT, 3_500_000);
+  assert.equal(IPHONE_MAX_CREDIT_INSTALLMENTS, 48);
+  assert.equal(IPHONE_MAX_INSTALLMENT_VALUE, 160_000);
+
+  const initialPayment = calculateRequiredInitialPaymentForFinancingLimit(
+    5_000_000,
+    IPHONE_MAX_FINANCED_AMOUNT,
+    IPHONE_INITIAL_PAYMENT_PERCENTAGE
+  );
+
+  assert.equal(initialPayment, 1_500_000);
+  assert.equal(5_000_000 - initialPayment, 3_500_000);
+
+  const plan = calculateFrenchAmortization({
+    calculoVersion: ARES_FRENCH_AMORTIZATION_VERSION,
+    valorVenta: 5_000_000,
+    cuotaInicial: initialPayment,
+    numeroCuotas: IPHONE_MAX_CREDIT_INSTALLMENTS,
+    tasaInteresEa: 29.66,
+    fianzaCuotaPorcentaje: 75 / IPHONE_MAX_CREDIT_INSTALLMENTS,
+    seguroCuotaPorcentaje: 0.03,
+    frecuenciaPago: "QUINCENAL",
+    fechaPrimerPago: "2026-09-17",
+  });
+
+  assert.equal(plan.valorFinanciado, IPHONE_MAX_FINANCED_AMOUNT);
+  assert.equal(
+    validateIphoneInstallmentLimit({
+      platform: "IPHONE",
+      valorCuota: plan.cuotaTotal,
+      iphoneMaxInstallmentValue: IPHONE_MAX_INSTALLMENT_VALUE,
+    }).exceeded,
+    false
+  );
+  assert.ok(plan.cuotaTotal <= IPHONE_MAX_INSTALLMENT_VALUE);
 });
 
 test("el tope iPhone acepta 160000 y bloquea cualquier exceso exacto", () => {
