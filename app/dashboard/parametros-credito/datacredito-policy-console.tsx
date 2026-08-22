@@ -15,8 +15,13 @@ import {
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import {
   DATACREDITO_MAX_SCORE,
+  DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT,
+  DATACREDITO_MAX_INSTALLMENT_COUNT,
   DATACREDITO_MIN_SCORE,
   DATACREDITO_NO_INFORMATION_SCORE,
+  DATACREDITO_DEFAULT_ANDROID_INSTALLMENT_COUNT,
+  DATACREDITO_DEFAULT_IPHONE_INSTALLMENT_COUNT,
+  DATACREDITO_DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT,
   DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
   type DataCreditoAresPolicyFinancialSettings,
   type DataCreditoPolicyFinancialSettings,
@@ -46,6 +51,8 @@ export type DataCreditoPolicyBand = {
   initialPaymentPercentage: number;
   suretyPercentage: number;
   maxFinancedAmount: number;
+  installmentCount: number;
+  maxInstallmentAmount: number | null;
 };
 
 export type DataCreditoPolicyProfile = {
@@ -93,6 +100,8 @@ type EditableBand = {
   initialPaymentPercentage: string;
   suretyPercentage: string;
   maxFinancedAmount: string;
+  installmentCount: string;
+  maxInstallmentAmount: string;
 };
 
 type EditableFinancialSettings = {
@@ -135,7 +144,15 @@ class PolicyRequestError extends Error {
 const PLATFORMS: DataCreditoPolicyPlatform[] = ["ANDROID", "IPHONE"];
 const MIN_NUMERIC_SCORE = DATACREDITO_MIN_SCORE;
 const MAX_NUMERIC_SCORE = DATACREDITO_MAX_SCORE;
-const MAX_FINANCED_AMOUNT_COP = 100_000_000;
+const MAX_FINANCED_AMOUNT_COP = DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT;
+const MAX_INSTALLMENT_AMOUNT_COP = DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT;
+const MAX_INSTALLMENT_COUNT = DATACREDITO_MAX_INSTALLMENT_COUNT;
+const DEFAULT_ANDROID_INSTALLMENT_COUNT =
+  DATACREDITO_DEFAULT_ANDROID_INSTALLMENT_COUNT;
+const DEFAULT_IPHONE_INSTALLMENT_COUNT =
+  DATACREDITO_DEFAULT_IPHONE_INSTALLMENT_COUNT;
+const DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT =
+  DATACREDITO_DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT;
 const DEFAULT_FINANCIAL_SETTINGS: DataCreditoAresPolicyFinancialSettings = {
   ...DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
   redondeoComercial: {
@@ -211,6 +228,19 @@ function parseBand(value: unknown, index: number): DataCreditoPolicyBand {
   );
   const suretyPercentage = readFiniteNumber(value.suretyPercentage);
   const maxFinancedAmount = readFiniteNumber(value.maxFinancedAmount);
+  const installmentCount =
+    value.installmentCount === undefined || value.installmentCount === null
+      ? platform === "IPHONE"
+        ? DEFAULT_IPHONE_INSTALLMENT_COUNT
+        : DEFAULT_ANDROID_INSTALLMENT_COUNT
+      : readFiniteNumber(value.installmentCount);
+  const maxInstallmentAmount =
+    platform === "IPHONE"
+      ? value.maxInstallmentAmount === undefined ||
+        value.maxInstallmentAmount === null
+        ? DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT
+        : readFiniteNumber(value.maxInstallmentAmount)
+      : null;
 
   if (
     !id ||
@@ -220,7 +250,9 @@ function parseBand(value: unknown, index: number): DataCreditoPolicyBand {
     scoreMax === null ||
     initialPaymentPercentage === null ||
     suretyPercentage === null ||
-    maxFinancedAmount === null
+    maxFinancedAmount === null ||
+    installmentCount === null ||
+    (platform === "IPHONE" && maxInstallmentAmount === null)
   ) {
     throw new PolicyRequestError(`Banda ${index + 1} incompleta.`);
   }
@@ -235,6 +267,28 @@ function parseBand(value: unknown, index: number): DataCreditoPolicyBand {
     );
   }
 
+  if (
+    !Number.isInteger(installmentCount) ||
+    installmentCount < 1 ||
+    installmentCount > MAX_INSTALLMENT_COUNT
+  ) {
+    throw new PolicyRequestError(
+      `Banda ${index + 1} con plazo de financiación inválido.`
+    );
+  }
+
+  if (
+    platform === "IPHONE" &&
+    (maxInstallmentAmount === null ||
+      !Number.isInteger(maxInstallmentAmount) ||
+      maxInstallmentAmount <= 0 ||
+      maxInstallmentAmount > MAX_INSTALLMENT_AMOUNT_COP)
+  ) {
+    throw new PolicyRequestError(
+      `Banda ${index + 1} con tope de cuota iPhone inválido.`
+    );
+  }
+
   return {
     id,
     platform: platform as DataCreditoPolicyPlatform,
@@ -244,6 +298,8 @@ function parseBand(value: unknown, index: number): DataCreditoPolicyBand {
     initialPaymentPercentage,
     suretyPercentage,
     maxFinancedAmount,
+    installmentCount,
+    maxInstallmentAmount,
   };
 }
 
@@ -549,6 +605,11 @@ function toEditableBand(band: DataCreditoPolicyBand): EditableBand {
     initialPaymentPercentage: String(band.initialPaymentPercentage),
     suretyPercentage: String(band.suretyPercentage),
     maxFinancedAmount: String(band.maxFinancedAmount),
+    installmentCount: String(band.installmentCount),
+    maxInstallmentAmount:
+      band.maxInstallmentAmount === null
+        ? ""
+        : String(band.maxInstallmentAmount),
   };
 }
 
@@ -566,8 +627,17 @@ function createDraftBand(platform: DataCreditoPolicyPlatform): EditableBand {
     scoreMax: "",
     decision: "",
     initialPaymentPercentage: "",
-    suretyPercentage: "",
+    suretyPercentage: String(DEFAULT_FINANCIAL_SETTINGS.fianzaTotalPorcentaje),
     maxFinancedAmount: "",
+    installmentCount: String(
+      platform === "IPHONE"
+        ? DEFAULT_IPHONE_INSTALLMENT_COUNT
+        : DEFAULT_ANDROID_INSTALLMENT_COUNT
+    ),
+    maxInstallmentAmount:
+      platform === "IPHONE"
+        ? String(DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT)
+        : "",
   };
 }
 
@@ -615,6 +685,11 @@ function validateDraftBands(bands: EditableBand[]): ValidationResult {
     );
     const suretyPercentage = readFiniteNumber(band.suretyPercentage);
     const maxFinancedAmount = parseInteger(band.maxFinancedAmount);
+    const installmentCount = parseInteger(band.installmentCount);
+    const maxInstallmentAmount =
+      band.platform === "IPHONE"
+        ? parseInteger(band.maxInstallmentAmount)
+        : null;
 
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(band.id)) {
       addRowError(
@@ -712,6 +787,31 @@ function validateDraftBands(bands: EditableBand[]): ValidationResult {
       );
     }
 
+    if (
+      installmentCount === null ||
+      installmentCount < 1 ||
+      installmentCount > MAX_INSTALLMENT_COUNT
+    ) {
+      addRowError(
+        rowErrors,
+        band.id,
+        `El plazo debe ser un entero entre 1 y ${MAX_INSTALLMENT_COUNT} cuotas.`
+      );
+    }
+
+    if (
+      band.platform === "IPHONE" &&
+      (maxInstallmentAmount === null ||
+        maxInstallmentAmount <= 0 ||
+        maxInstallmentAmount > MAX_INSTALLMENT_AMOUNT_COP)
+    ) {
+      addRowError(
+        rowErrors,
+        band.id,
+        "El tope de cuota iPhone debe ser un entero entre $1 y $100.000.000 COP."
+      );
+    }
+
     if (!rowErrors[band.id]?.length) {
       canonicalBands.push({
         id: band.id,
@@ -722,6 +822,11 @@ function validateDraftBands(bands: EditableBand[]): ValidationResult {
         initialPaymentPercentage: initialPaymentPercentage as number,
         suretyPercentage: suretyPercentage as number,
         maxFinancedAmount: maxFinancedAmount as number,
+        installmentCount: installmentCount as number,
+        maxInstallmentAmount:
+          band.platform === "IPHONE"
+            ? (maxInstallmentAmount as number)
+            : null,
       });
     }
   }
@@ -849,6 +954,8 @@ function PolicyBandRow({
   const errorId = `${idPrefix}-errors`;
   const rangeDescriptionId = `${idPrefix}-range-description`;
   const maxFinancedDescriptionId = `${idPrefix}-max-financed-description`;
+  const maxInstallmentDescriptionId =
+    `${idPrefix}-max-installment-description`;
   const invalid = errors.length > 0;
   const noInformation = isNoInformationBand(band);
   const rowLabel = noInformation
@@ -862,6 +969,12 @@ function PolicyBandRow({
     .join(" ") || undefined;
   const maxFinancedDescriptionIds = [
     maxFinancedDescriptionId,
+    invalid ? errorId : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const maxInstallmentDescriptionIds = [
+    maxInstallmentDescriptionId,
     invalid ? errorId : null,
   ]
     .filter(Boolean)
@@ -915,7 +1028,7 @@ function PolicyBandRow({
         </p>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
         {noInformation ? (
           <>
             <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
@@ -1030,17 +1143,17 @@ function PolicyBandRow({
         </label>
 
         <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
-          Fianza de banda legada (%)
+          Plazo (cuotas)
           <Input
-            id={`${idPrefix}-surety`}
+            id={`${idPrefix}-installments`}
             type="number"
-            inputMode="decimal"
-            min={0}
-            max={100}
-            step="0.01"
-            value={band.suretyPercentage}
+            inputMode="numeric"
+            min={1}
+            max={MAX_INSTALLMENT_COUNT}
+            step={1}
+            value={band.installmentCount}
             onChange={(event) =>
-              onChange(band.id, "suretyPercentage", event.target.value)
+              onChange(band.id, "installmentCount", event.target.value)
             }
             disabled={disabled}
             aria-invalid={invalid}
@@ -1049,7 +1162,7 @@ function PolicyBandRow({
         </label>
 
         <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
-          Crédito máximo
+          Monto máximo a financiar
           <Input
             id={`${idPrefix}-max-financed`}
             type="number"
@@ -1072,6 +1185,37 @@ function PolicyBandRow({
             Valor entero en COP, hasta $100.000.000.
           </span>
         </label>
+
+        {band.platform === "IPHONE" ? (
+          <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
+            Tope de cuota iPhone
+            <Input
+              id={`${idPrefix}-max-installment`}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={MAX_INSTALLMENT_AMOUNT_COP}
+              step={1}
+              value={band.maxInstallmentAmount}
+              onChange={(event) =>
+                onChange(
+                  band.id,
+                  "maxInstallmentAmount",
+                  event.target.value
+                )
+              }
+              disabled={disabled}
+              aria-invalid={invalid}
+              aria-describedby={maxInstallmentDescriptionIds}
+            />
+            <span
+              id={maxInstallmentDescriptionId}
+              className="text-xs font-normal leading-5 text-[var(--fp-muted)]"
+            >
+              Valor máximo permitido por cuota, en pesos colombianos.
+            </span>
+          </label>
+        ) : null}
       </div>
 
       {invalid ? (
@@ -1956,12 +2100,12 @@ export default function DatacreditoPolicyConsole() {
             <Settings2 className="h-4 w-4" aria-hidden="true" />
             Riesgo crediticio
           </div>
-          <h2
+          <h1
             id="datacredito-policy-title"
             className="mt-2 text-3xl font-black tracking-tight sm:text-4xl"
           >
             Políticas DataCrédito
-          </h2>
+          </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
             Crea políticas independientes, publica nuevas revisiones y asigna
             exactamente una a cada aliado. Los cambios solo afectan consultas
@@ -2409,8 +2553,8 @@ export default function DatacreditoPolicyConsole() {
                     </h3>
                     <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
                       Estos valores quedan congelados en cada evaluación y
-                      alimentan la cuota fija por sistema francés. Una excepción
-                      explícita por cédula conserva prioridad.
+                      alimentan la cuota fija por sistema francés junto con las
+                      condiciones de la banda DataCrédito aplicable.
                     </p>
                   </div>
                 </div>

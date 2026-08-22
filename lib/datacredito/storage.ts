@@ -10,6 +10,7 @@ import {
   parseDataCreditoPolicyBands,
   parseDataCreditoPolicyFinancialSettings,
   resolveDataCreditoDecision,
+  resolveDataCreditoOfferFinancingTerms,
   type DataCreditoDecision,
   type DataCreditoOffer,
   type DataCreditoPlatform,
@@ -1730,6 +1731,9 @@ export function dataCreditoAssessmentMatchesScope(
 
 export function serializeDataCreditoAssessment(row: DataCreditoAssessmentRow) {
   const approved = row.status === "APROBADO";
+  const financingTerms = approved
+    ? resolveDataCreditoOfferFinancingTerms(row.platform, row.offer)
+    : null;
   const financialSettings = approved
     ? parseDataCreditoPolicyFinancialSettings(row.offer?.financialSettings, {
         optional: true,
@@ -1740,11 +1744,13 @@ export function serializeDataCreditoAssessment(row: DataCreditoAssessmentRow) {
     status: row.status === "RECHAZADO" ? "RECHAZADO" : approved ? "APROBADO" : "NO_EVALUADO",
     expiresAt:
       row.expiresAt instanceof Date ? row.expiresAt.toISOString() : String(row.expiresAt),
-    offer: approved
+    offer: approved && financingTerms
       ? {
           initialPaymentPercentage: Number(row.offer?.initialPaymentPercentage),
           suretyPercentage: Number(row.offer?.suretyPercentage),
           maxFinancedAmount: Number(row.offer?.maxFinancedAmount),
+          installmentCount: financingTerms.installmentCount,
+          maxInstallmentAmount: financingTerms.maxInstallmentAmount,
           policyVersion: row.policyVersion,
           financialSettings,
         }

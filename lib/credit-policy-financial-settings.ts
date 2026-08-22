@@ -15,19 +15,6 @@ type CreditFinancialBase = {
   redondeoComercialMultiplo?: number | null;
 };
 
-type CreditFinancialDocumentOverride = {
-  calculoVersion?: "FRANCES_V1" | "ARES_FRANCES_V1" | null;
-  tasaInteresEa?: number | null;
-  fianzaTotalPorcentaje?: number | null;
-  fianzaPorcentaje?: number | null;
-  fianzaCuotaPorcentaje?: number | null;
-  seguroCuotaPorcentaje?: number | null;
-  frecuenciaPago?: string | null;
-  tasaPeriodoDecimales?: number | null;
-  redondeoComercialModo?: "REDONDEO" | "PISO" | null;
-  redondeoComercialMultiplo?: number | null;
-} | null;
-
 export type ResolvedCreditPolicyFinancialSettings = CreditFinancialBase & {
   calculoVersion: "FRANCES_V1" | "ARES_FRANCES_V1";
   fianzaTotalPorcentaje: number | null;
@@ -38,8 +25,6 @@ export type ResolvedCreditPolicyFinancialSettings = CreditFinancialBase & {
     multiplo: number;
   };
   fianzaSource:
-    | "CLIENTE_POR_CUOTA"
-    | "CLIENTE_TOTAL"
     | "POLITICA"
     | "OFERTA_LEGACY_TOTAL"
     | "GLOBAL";
@@ -55,18 +40,16 @@ function presentNumber(value: unknown) {
 /**
  * Resolves the financial terms used by preview, signature and final creation.
  *
- * Explicit document exceptions have the highest administrative precedence.
- * New policy revisions then provide the French-calculation parameters. The
- * legacy band surety remains a fallback only for historical revisions that did
- * not snapshot a per-installment surety.
+ * Published policy revisions provide the terms for evaluated applications.
+ * Global settings remain only as a compatibility fallback when an assessment
+ * does not contain financial settings. The legacy band surety is used only by
+ * historical offers.
  */
 export function resolveCreditPolicyFinancialSettings(input: {
   globalSettings: CreditFinancialBase;
-  documentException?: CreditFinancialDocumentOverride;
   policyFinancialSettings?: DataCreditoPolicyFinancialSettings | unknown | null;
   legacyOfferSuretyPercentage?: number | null;
   numeroCuotas: number;
-  forcePaymentFrequency?: string | null;
 }): ResolvedCreditPolicyFinancialSettings {
   if (!Number.isSafeInteger(input.numeroCuotas) || input.numeroCuotas <= 0) {
     throw new Error("numeroCuotas debe ser un entero positivo");
@@ -76,16 +59,6 @@ export function resolveCreditPolicyFinancialSettings(input: {
     input.policyFinancialSettings,
     { optional: true }
   );
-  const exception = input.documentException || null;
-  const exceptionInterest = presentNumber(exception?.tasaInteresEa);
-  const exceptionSuretyTotalAres = presentNumber(
-    exception?.fianzaTotalPorcentaje
-  );
-  const exceptionSuretyPerInstallment = presentNumber(
-    exception?.fianzaCuotaPorcentaje
-  );
-  const exceptionSuretyTotal = presentNumber(exception?.fianzaPorcentaje);
-  const exceptionInsurance = presentNumber(exception?.seguroCuotaPorcentaje);
   const legacySuretyTotal = presentNumber(
     input.legacyOfferSuretyPercentage
   );
@@ -97,7 +70,6 @@ export function resolveCreditPolicyFinancialSettings(input: {
       ? "ARES_FRANCES_V1"
       : "FRANCES_V1";
   const calculationVersion =
-    exception?.calculoVersion ||
     policy?.calculoVersion ||
     globalCalculationVersion;
 
@@ -108,22 +80,7 @@ export function resolveCreditPolicyFinancialSettings(input: {
   let fianzaSource: ResolvedCreditPolicyFinancialSettings["fianzaSource"] =
     "GLOBAL";
 
-  if (exceptionSuretyTotalAres !== null) {
-    fianzaTotalPorcentaje = exceptionSuretyTotalAres;
-    fianzaCuotaPorcentaje =
-      exceptionSuretyTotalAres / input.numeroCuotas;
-    fianzaModalidad = "TOTAL_CREDITO";
-    fianzaSource = "CLIENTE_TOTAL";
-  } else if (exceptionSuretyPerInstallment !== null) {
-    fianzaCuotaPorcentaje = exceptionSuretyPerInstallment;
-    fianzaSource = "CLIENTE_POR_CUOTA";
-  } else if (exceptionSuretyTotal !== null) {
-    fianzaTotalPorcentaje = exceptionSuretyTotal;
-    fianzaCuotaPorcentaje =
-      exceptionSuretyTotal / input.numeroCuotas;
-    fianzaModalidad = "TOTAL_CREDITO";
-    fianzaSource = "CLIENTE_TOTAL";
-  } else if (policy?.calculoVersion === "ARES_FRANCES_V1") {
+  if (policy?.calculoVersion === "ARES_FRANCES_V1") {
     fianzaTotalPorcentaje = policy.fianzaTotalPorcentaje;
     fianzaCuotaPorcentaje =
       policy.fianzaTotalPorcentaje / input.numeroCuotas;
@@ -151,17 +108,14 @@ export function resolveCreditPolicyFinancialSettings(input: {
   return {
     calculoVersion: calculationVersion,
     tasaInteresEa:
-      exceptionInterest ?? policy?.tasaInteresEa ??
-      input.globalSettings.tasaInteresEa,
+      policy?.tasaInteresEa ?? input.globalSettings.tasaInteresEa,
     fianzaCuotaPorcentaje,
     fianzaTotalPorcentaje,
     fianzaModalidad,
     seguroCuotaPorcentaje:
-      exceptionInsurance ?? policy?.seguroCuotaPorcentaje ??
+      policy?.seguroCuotaPorcentaje ??
       input.globalSettings.seguroCuotaPorcentaje,
     frecuenciaPago:
-      input.forcePaymentFrequency ||
-      exception?.frecuenciaPago ||
       policy?.frecuenciaPago ||
       input.globalSettings.frecuenciaPago,
     tasaPeriodoDecimales: aresCalculation ? 6 : 12,

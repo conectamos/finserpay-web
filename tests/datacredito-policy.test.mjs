@@ -9,12 +9,16 @@ const jiti = createJiti(import.meta.url, {
   alias: { "@": projectRoot },
 });
 const {
+  DATACREDITO_DEFAULT_ANDROID_INSTALLMENT_COUNT,
+  DATACREDITO_DEFAULT_IPHONE_INSTALLMENT_COUNT,
+  DATACREDITO_DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT,
   DATACREDITO_NO_INFORMATION_SCORE,
   DataCreditoPolicyValidationError,
   isDataCreditoNoInformationScore,
   normalizeDataCreditoPlatform,
   parseDataCreditoPolicyBands,
   resolveDataCreditoDecision,
+  resolveDataCreditoOfferFinancingTerms,
 } = await jiti.import("../lib/datacredito/policy.ts");
 
 function completeBands() {
@@ -109,10 +113,120 @@ function finserCommercialBands() {
   );
 }
 
+function strictFinancingBands() {
+  return completeBands().map((band) => ({
+    ...band,
+    installmentCount:
+      band.platform === "IPHONE"
+        ? DATACREDITO_DEFAULT_IPHONE_INSTALLMENT_COUNT
+        : DATACREDITO_DEFAULT_ANDROID_INSTALLMENT_COUNT,
+    maxInstallmentAmount:
+      band.platform === "IPHONE"
+        ? DATACREDITO_DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT
+        : null,
+  }));
+}
+
 test("normaliza unicamente las plataformas soportadas", () => {
   assert.equal(normalizeDataCreditoPlatform(" android "), "ANDROID");
   assert.equal(normalizeDataCreditoPlatform("iPhone"), "IPHONE");
   assert.equal(normalizeDataCreditoPlatform("WEB"), null);
+});
+
+test("resuelve terminos historicos solo cuando los campos no existen", () => {
+  assert.deepEqual(resolveDataCreditoOfferFinancingTerms("ANDROID", {}), {
+    installmentCount: DATACREDITO_DEFAULT_ANDROID_INSTALLMENT_COUNT,
+    maxInstallmentAmount: null,
+    usedLegacyFallback: true,
+  });
+  assert.deepEqual(resolveDataCreditoOfferFinancingTerms("IPHONE", {}), {
+    installmentCount: DATACREDITO_DEFAULT_IPHONE_INSTALLMENT_COUNT,
+    maxInstallmentAmount: DATACREDITO_DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT,
+    usedLegacyFallback: true,
+  });
+  assert.deepEqual(
+    resolveDataCreditoOfferFinancingTerms("IPHONE", {
+      installmentCount: 36,
+      maxInstallmentAmount: 175_000,
+    }),
+    {
+      installmentCount: 36,
+      maxInstallmentAmount: 175_000,
+      usedLegacyFallback: false,
+    }
+  );
+
+  assert.equal(
+    resolveDataCreditoOfferFinancingTerms("ANDROID", {
+      installmentCount: null,
+    }),
+    null
+  );
+  assert.equal(
+    resolveDataCreditoOfferFinancingTerms("IPHONE", {
+      installmentCount: 24,
+      maxInstallmentAmount: null,
+    }),
+    null
+  );
+  assert.equal(
+    resolveDataCreditoOfferFinancingTerms("ANDROID", {
+      installmentCount: 16,
+      maxInstallmentAmount: 160_000,
+    }),
+    null
+  );
+});
+
+test("exige terminos financieros explicitos al publicar una politica", () => {
+  assert.throws(
+    () =>
+      parseDataCreditoPolicyBands(completeBands(), {
+        requireFinancingTerms: true,
+      }),
+    (error) =>
+      error instanceof DataCreditoPolicyValidationError &&
+      error.issues.some((issue) => issue.includes("plazo")) &&
+      error.issues.some((issue) => issue.includes("tope de cuota"))
+  );
+
+  const strict = parseDataCreditoPolicyBands(strictFinancingBands(), {
+    requireFinancingTerms: true,
+  });
+  assert.equal(
+    strict.find((band) => band.platform === "ANDROID").installmentCount,
+    16
+  );
+  assert.equal(
+    strict.find((band) => band.platform === "ANDROID").maxInstallmentAmount,
+    null
+  );
+  assert.equal(
+    strict.find((band) => band.platform === "IPHONE").installmentCount,
+    24
+  );
+  assert.equal(
+    strict.find((band) => band.platform === "IPHONE").maxInstallmentAmount,
+    160_000
+  );
+
+  for (const replacement of [
+    { id: "android-bajo", installmentCount: 61 },
+    { id: "android-bajo", maxInstallmentAmount: 160_000 },
+    { id: "iphone-bajo", maxInstallmentAmount: null },
+    { id: "iphone-bajo", maxInstallmentAmount: 100_000_001 },
+  ]) {
+    const bands = strictFinancingBands();
+    const index = bands.findIndex((band) => band.id === replacement.id);
+    bands[index] = { ...bands[index], ...replacement };
+    assert.throws(
+      () =>
+        parseDataCreditoPolicyBands(bands, {
+          requireFinancingTerms: true,
+        }),
+      DataCreditoPolicyValidationError
+    );
+  }
 });
 
 test("acepta una regla sin informacion y cobertura completa por plataforma", () => {
@@ -235,6 +349,8 @@ test("resuelve decision y oferta desde la version exacta de politica", () => {
         initialPaymentPercentage: 40,
         suretyPercentage: 85,
         maxFinancedAmount: 600_000,
+        installmentCount: 16,
+        maxInstallmentAmount: null,
         policyVersion: 7,
       },
     }
@@ -245,6 +361,8 @@ test("resuelve decision y oferta desde la version exacta de politica", () => {
       initialPaymentPercentage: 15.5,
       suretyPercentage: 7.25,
       maxFinancedAmount: 1_800_000,
+      installmentCount: 16,
+      maxInstallmentAmount: null,
       policyVersion: 7,
     },
   });
@@ -254,6 +372,8 @@ test("resuelve decision y oferta desde la version exacta de politica", () => {
       initialPaymentPercentage: 50,
       suretyPercentage: 25,
       maxFinancedAmount: 850_000,
+      installmentCount: 24,
+      maxInstallmentAmount: 160_000,
       policyVersion: 7,
     },
   });
@@ -325,6 +445,14 @@ test("aplica la política comercial en 885 y todos sus bordes", () => {
             initialPaymentPercentage: initial,
             suretyPercentage: surety,
             maxFinancedAmount: maximum,
+            installmentCount:
+              platform === "IPHONE"
+                ? DATACREDITO_DEFAULT_IPHONE_INSTALLMENT_COUNT
+                : DATACREDITO_DEFAULT_ANDROID_INSTALLMENT_COUNT,
+            maxInstallmentAmount:
+              platform === "IPHONE"
+                ? DATACREDITO_DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT
+                : null,
             policyVersion: 21,
           },
         });

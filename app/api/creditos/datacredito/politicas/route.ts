@@ -258,7 +258,9 @@ export async function POST(request: Request) {
     const createdPolicyId = await createDataCreditoPolicyProfile({
       name: parseDataCreditoPolicyProfileName(body.name),
       description: parseDataCreditoPolicyProfileDescription(body.description),
-      bands: parseDataCreditoPolicyBands(body.bands),
+      bands: parseDataCreditoPolicyBands(body.bands, {
+        requireFinancingTerms: true,
+      }),
       financialSettings: parseDataCreditoPolicyFinancialSettings(
         body.financialSettings
       )!,
@@ -316,7 +318,9 @@ export async function PATCH(request: Request) {
       const updatedPolicyId = String(body.policyId);
       await createDataCreditoPolicyRevision({
         profileId: updatedPolicyId,
-        bands: parseDataCreditoPolicyBands(body.bands),
+        bands: parseDataCreditoPolicyBands(body.bands, {
+          requireFinancingTerms: true,
+        }),
         financialSettings: parseDataCreditoPolicyFinancialSettings(
           body.financialSettings
         )!,

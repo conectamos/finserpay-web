@@ -360,6 +360,26 @@ export function calculateRequiredInitialPayment(
   return Math.round(initial * 100) / 100;
 }
 
+export function calculateRequiredInitialPaymentForFinancingLimit(
+  valorTotalEquipo: number | null | undefined,
+  maxFinancedAmount: number | null | undefined,
+  initialPaymentPercentage: number | null | undefined = DEFAULT_INITIAL_PAYMENT_PERCENTAGE
+) {
+  const total = Math.max(0, Number(valorTotalEquipo || 0));
+  const financingLimit = Math.max(0, Number(maxFinancedAmount || 0));
+  const percentage = Math.max(
+    0,
+    Math.min(100, Number(initialPaymentPercentage ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE))
+  );
+  const minimumByPercentage = (total * percentage) / 100;
+  const minimumByFinancingLimit =
+    financingLimit > 0 ? Math.max(0, total - financingLimit) : total;
+
+  return Math.round(
+    Math.max(minimumByPercentage, minimumByFinancingLimit) * 100
+  ) / 100;
+}
+
 export function isIphoneCreditPlatform(value: unknown) {
   const normalized = String(value ?? "").trim().toUpperCase();
 

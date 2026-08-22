@@ -10,11 +10,15 @@ import {
   getApprovedDataCreditoAssessmentForCredit,
   isDataCreditoAuditConfigured,
 } from "@/lib/datacredito/storage";
-import { DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT } from "@/lib/datacredito/policy";
 import {
+  DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT,
+  resolveDataCreditoOfferFinancingTerms,
+  type DataCreditoPolicyFinancialSettings,
+} from "@/lib/datacredito/policy";
+import {
+  calculateRequiredInitialPaymentForFinancingLimit,
   calculateRequiredInitialPaymentByPlatform,
   DEFAULT_CREDIT_INSTALLMENTS,
-  DEFAULT_PAYMENT_FREQUENCY,
   generateCreditFolio,
   generatePaymentReference,
   getDefaultFirstPaymentDateObject,
@@ -31,7 +35,6 @@ import {
 import { calculateFrenchAmortization } from "@/lib/credit-amortization";
 import { createFinancingTermsSeal } from "@/lib/credit-amortization-contract";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
-import type { DataCreditoPolicyFinancialSettings } from "@/lib/datacredito/policy";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import {
   findEquipmentCatalogItem,
@@ -78,6 +81,9 @@ type DraftDataCreditoOffer = {
   initialPaymentPercentage: number;
   suretyPercentage: number;
   maxFinancedAmount: number;
+  installmentCount: number;
+  maxInstallmentAmount: number | null;
+  usedLegacyFinancingTermsFallback: boolean;
   financialSettings: DataCreditoPolicyFinancialSettings | null;
 };
 
@@ -283,6 +289,10 @@ async function getDraftDataCreditoOffer(
   );
   const suretyPercentage = Number(assessment.offer?.suretyPercentage);
   const maxFinancedAmount = Number(assessment.offer?.maxFinancedAmount);
+  const financingTerms = resolveDataCreditoOfferFinancingTerms(
+    platform,
+    assessment.offer
+  );
   const validOffer =
     Number.isFinite(initialPaymentPercentage) &&
     initialPaymentPercentage >= 0 &&
@@ -292,9 +302,10 @@ async function getDraftDataCreditoOffer(
     suretyPercentage <= 100 &&
     Number.isSafeInteger(maxFinancedAmount) &&
     maxFinancedAmount > 0 &&
-    maxFinancedAmount <= DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT;
+    maxFinancedAmount <= DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT &&
+    Boolean(financingTerms);
 
-  if (!validOffer) {
+  if (!validOffer || !financingTerms) {
     throw new CreditValidationError(
       "La oferta de la precalificacion no es valida. Solicita revision de la politica de puntajes.",
       503
@@ -308,6 +319,9 @@ async function getDraftDataCreditoOffer(
     initialPaymentPercentage,
     suretyPercentage,
     maxFinancedAmount,
+    installmentCount: financingTerms.installmentCount,
+    maxInstallmentAmount: financingTerms.maxInstallmentAmount,
+    usedLegacyFinancingTermsFallback: financingTerms.usedLegacyFallback,
     financialSettings: assessment.offer?.financialSettings || null,
   };
 }
@@ -377,13 +391,12 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
   }
 
   const plataformaDispositivo = platformResolution.platform;
-  const isIphoneCredit = plataformaDispositivo === "IPHONE";
   const valorEquipoTotalInput = toNumber(payload.valorEquipoTotal);
   const precioBaseVentaCatalogo = catalogItem?.activo
     ? catalogItem.precioBaseVenta
     : null;
   const effectiveCreditSettings = await getEffectiveCreditSettings(
-    clienteDocumento,
+    undefined,
     plataformaDispositivo
   );
   const dataCreditoOffer = await getDraftDataCreditoOffer(
@@ -393,46 +406,43 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
   );
   const creditSettings = dataCreditoOffer
     ? {
-        ...effectiveCreditSettings.settings,
-        cuotaInicialPorcentaje:
-          effectiveCreditSettings.documentException
-            ?.cuotaInicialPorcentaje ??
-          dataCreditoOffer.initialPaymentPercentage,
+        ...effectiveCreditSettings.globalSettings,
+        cuotaInicialPorcentaje: dataCreditoOffer.initialPaymentPercentage,
         fianzaPorcentaje: dataCreditoOffer.suretyPercentage,
       }
-    : effectiveCreditSettings.settings;
-  const cuotaInicialMinima = calculateRequiredInitialPaymentByPlatform({
-    valorTotalEquipo: valorEquipoTotalInput,
-    precioBaseVenta: precioBaseVentaCatalogo,
-    initialPaymentPercentage: creditSettings.cuotaInicialPorcentaje,
-    platform: plataformaDispositivo,
-    iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
-    maxFinancedAmount: dataCreditoOffer?.maxFinancedAmount,
-  });
+    : effectiveCreditSettings.globalSettings;
+  const cuotaInicialMinima = dataCreditoOffer
+    ? calculateRequiredInitialPaymentForFinancingLimit(
+        valorEquipoTotalInput,
+        dataCreditoOffer.maxFinancedAmount,
+        dataCreditoOffer.initialPaymentPercentage
+      )
+    : calculateRequiredInitialPaymentByPlatform({
+        valorTotalEquipo: valorEquipoTotalInput,
+        precioBaseVenta: precioBaseVentaCatalogo,
+        initialPaymentPercentage: creditSettings.cuotaInicialPorcentaje,
+        platform: plataformaDispositivo,
+        iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
+      });
   const cuotaInicialInput = toNumber(payload.cuotaInicial);
   const cuotaInicial =
     cuotaInicialInput > 0
       ? Math.max(cuotaInicialMinima, cuotaInicialInput)
       : cuotaInicialMinima;
-  const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
-    creditSettings.plazoMaximoCuotas
-  );
-  const plazoMeses = normalizeCreditInstallments(
-    toNumber(payload.plazoMeses),
-    creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
-    plazoMaximoCuotas
-  );
+  const plazoMeses = dataCreditoOffer
+    ? dataCreditoOffer.installmentCount
+    : normalizeCreditInstallments(
+        toNumber(payload.plazoMeses),
+        creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
+        normalizeCreditInstallmentLimit(creditSettings.plazoMaximoCuotas)
+      );
   const resolvedPolicyFinancialSettings =
     resolveCreditPolicyFinancialSettings({
       globalSettings: effectiveCreditSettings.globalSettings,
-      documentException: effectiveCreditSettings.documentException,
       policyFinancialSettings: dataCreditoOffer?.financialSettings,
       legacyOfferSuretyPercentage:
         dataCreditoOffer?.suretyPercentage ?? null,
       numeroCuotas: plazoMeses,
-      forcePaymentFrequency: isIphoneCredit
-        ? DEFAULT_PAYMENT_FREQUENCY
-        : null,
     });
   const frecuenciaPago = normalizePaymentFrequency(
     resolvedPolicyFinancialSettings.frecuenciaPago
@@ -442,9 +452,14 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
     frecuenciaPago,
     fechaCredito
   );
-  const fechaPrimerPago = isIphoneCredit
-    ? defaultFirstPaymentDate
-    : toValidDate(payload.fechaPrimerPago, defaultFirstPaymentDate);
+  const requestedFirstPaymentDate = toValidDate(
+    payload.fechaPrimerPago,
+    defaultFirstPaymentDate
+  );
+  const fechaPrimerPago =
+    requestedFirstPaymentDate > fechaCredito
+      ? requestedFirstPaymentDate
+      : defaultFirstPaymentDate;
   const amortizationPlan = calculateFrenchAmortization({
     calculoVersion: resolvedPolicyFinancialSettings.calculoVersion,
     tasaPeriodoDecimales:
@@ -487,7 +502,9 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
   const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
     platform: plataformaDispositivo,
     valorCuota: amortizationPlan.cuotaTotal,
-    iphoneMaxInstallmentValue: creditSettings.iphoneTopeCuota,
+    iphoneMaxInstallmentValue: dataCreditoOffer
+      ? dataCreditoOffer.maxInstallmentAmount
+      : creditSettings.iphoneTopeCuota,
   });
 
   if (iphoneInstallmentLimit.exceeded) {
@@ -503,6 +520,18 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
     contratoSnapshot: {
       borradorId: row.id,
       origen: "BORRADOR_FIRMASEGURO",
+      dataCredito: dataCreditoOffer
+        ? {
+            assessmentId: dataCreditoOffer.assessmentId,
+            policyVersion: dataCreditoOffer.policyVersion,
+            policyRevisionId: dataCreditoOffer.policyRevisionId,
+            installmentCount: dataCreditoOffer.installmentCount,
+            maxInstallmentAmount: dataCreditoOffer.maxInstallmentAmount,
+            usedLegacyFinancingTermsFallback:
+              dataCreditoOffer.usedLegacyFinancingTermsFallback,
+            documentExceptionId: null,
+          }
+        : null,
     },
     clienteTipoDocumento: sanitizeText(payload.clienteTipoDocumento) || null,
     clienteNombre,

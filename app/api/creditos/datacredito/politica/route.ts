@@ -7,9 +7,15 @@ import {
   shouldLoadDataCreditoPolicy,
 } from "@/lib/datacredito/policy-access";
 import {
+  DATACREDITO_NO_INFORMATION_SCORE,
   DataCreditoPolicyValidationError,
+  normalizeDataCreditoPlatform,
   parseDataCreditoPolicyBands,
   parseDataCreditoPolicyFinancialSettings,
+  resolveDataCreditoDecision,
+  type DataCreditoDecision,
+  type DataCreditoOffer,
+  type DataCreditoPlatform,
 } from "@/lib/datacredito/policy";
 import { getCreditSettings } from "@/lib/credit-settings";
 import {
@@ -39,6 +45,16 @@ function serializePolicyResponse(input: {
   centralAdmin: boolean;
   policy: Awaited<ReturnType<typeof createDataCreditoPolicyVersion>>;
   provider: ReturnType<typeof getDataCreditoPublicConfig>;
+  simulationRequested?: boolean;
+  simulation?: {
+    kind: "POLICY_NO_INFORMATION";
+    simulationOnly: true;
+    platform: DataCreditoPlatform;
+    decision: DataCreditoDecision;
+    offer: DataCreditoOffer | null;
+    policyVersion: number;
+    policyRevisionId: string;
+  } | null;
 }) {
   const auditConfigured = isDataCreditoAuditConfigured();
   const provider = {
@@ -61,6 +77,9 @@ function serializePolicyResponse(input: {
             createdAt: input.policy.createdAt,
           }
       : null,
+    ...(input.simulationRequested
+      ? { simulation: input.simulation || null }
+      : {}),
     consent: {
       version: DATACREDITO_CONSENT_VERSION,
       text: DATACREDITO_CONSENT_TEXT,
@@ -76,12 +95,31 @@ export async function GET(request: Request) {
       return NextResponse.json({ ok: false, error: "No autenticado" }, { status: 401 });
     }
 
+    const requestUrl = new URL(request.url);
     const provider = getDataCreditoPublicConfig();
     const centralAdmin = isCentralAdmin(user);
     const includeDisabledPolicy =
-      new URL(request.url).searchParams.get(
+      requestUrl.searchParams.get(
         DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM
       ) === "true";
+    const purpose = requestUrl.searchParams.get("purpose");
+    const simulationRequested = purpose === "simulation";
+    const simulationPlatform = simulationRequested
+      ? normalizeDataCreditoPlatform(requestUrl.searchParams.get("platform"))
+      : null;
+
+    if (purpose && !simulationRequested) {
+      return NextResponse.json(
+        { ok: false, error: "El proposito solicitado no es valido" },
+        { status: 400 }
+      );
+    }
+    if (simulationRequested && !simulationPlatform) {
+      return NextResponse.json(
+        { ok: false, error: "La simulacion requiere plataforma ANDROID o IPHONE" },
+        { status: 400 }
+      );
+    }
 
     if (
       !shouldLoadDataCreditoPolicy({
@@ -91,14 +129,49 @@ export async function GET(request: Request) {
       })
     ) {
       return NextResponse.json(
-        serializePolicyResponse({ centralAdmin: false, policy: null, provider })
+        serializePolicyResponse({
+          centralAdmin: false,
+          policy: null,
+          provider,
+          simulationRequested,
+          simulation: null,
+        })
       );
     }
 
     const assigned = await getAssignedDataCreditoPolicy(user.aliadoId || null);
     const policy = assigned.kind === "READY" ? assigned.policy : null;
+    const simulationResolution =
+      simulationRequested && simulationPlatform && policy
+        ? resolveDataCreditoDecision(
+            policy,
+            simulationPlatform,
+            DATACREDITO_NO_INFORMATION_SCORE
+          )
+        : null;
+    const simulation =
+      simulationRequested && simulationPlatform && policy && simulationResolution
+        ? {
+            kind: "POLICY_NO_INFORMATION" as const,
+            simulationOnly: true as const,
+            platform: simulationPlatform,
+            decision: simulationResolution.decision,
+            offer:
+              simulationResolution.decision === "APROBADO"
+                ? simulationResolution.offer
+                : null,
+            policyVersion: policy.version,
+            policyRevisionId: policy.revisionId,
+          }
+        : null;
     return NextResponse.json(
-      serializePolicyResponse({ centralAdmin, policy, provider })
+      serializePolicyResponse({
+        centralAdmin,
+        policy,
+        provider,
+        simulationRequested,
+        simulation,
+      })
     );
   } catch (error) {
     if (error instanceof DataCreditoStorageConfigurationError) {
@@ -172,7 +245,9 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const bands = parseDataCreditoPolicyBands(body.bands);
+    const bands = parseDataCreditoPolicyBands(body.bands, {
+      requireFinancingTerms: true,
+    });
     const creditDefaults = await getCreditSettings();
     const financialSettings = parseDataCreditoPolicyFinancialSettings(
       body.financialSettings ??

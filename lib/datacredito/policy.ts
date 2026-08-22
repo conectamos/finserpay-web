@@ -18,6 +18,10 @@ export const DATACREDITO_MIN_SCORE = 0;
 export const DATACREDITO_MAX_SCORE = 950;
 // Defensive ceiling for an administratively configured credit offer (COP).
 export const DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT = 100_000_000;
+export const DATACREDITO_MAX_INSTALLMENT_COUNT = 60;
+export const DATACREDITO_DEFAULT_ANDROID_INSTALLMENT_COUNT = 16;
+export const DATACREDITO_DEFAULT_IPHONE_INSTALLMENT_COUNT = 24;
+export const DATACREDITO_DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT = 160_000;
 
 export type DataCreditoPlatform = (typeof DATACREDITO_PLATFORMS)[number];
 export type DataCreditoDecision = (typeof DATACREDITO_DECISIONS)[number];
@@ -77,6 +81,8 @@ export type DataCreditoPolicyBand = {
   initialPaymentPercentage: number;
   suretyPercentage: number;
   maxFinancedAmount: number;
+  installmentCount?: number;
+  maxInstallmentAmount?: number | null;
 };
 
 export type DataCreditoPolicy = {
@@ -93,8 +99,16 @@ export type DataCreditoOffer = {
   initialPaymentPercentage: number;
   suretyPercentage: number;
   maxFinancedAmount: number;
+  installmentCount: number;
+  maxInstallmentAmount: number | null;
   policyVersion: number;
   financialSettings?: DataCreditoPolicyFinancialSettings | null;
+};
+
+export type DataCreditoOfferFinancingTerms = {
+  installmentCount: number;
+  maxInstallmentAmount: number | null;
+  usedLegacyFallback: boolean;
 };
 
 export class DataCreditoPolicyValidationError extends Error {
@@ -176,6 +190,60 @@ export function normalizeDataCreditoDecision(
   return DATACREDITO_DECISIONS.includes(normalized as DataCreditoDecision)
     ? (normalized as DataCreditoDecision)
     : null;
+}
+
+export function resolveDataCreditoOfferFinancingTerms(
+  platformValue: unknown,
+  value?: {
+    installmentCount?: unknown;
+    maxInstallmentAmount?: unknown;
+  } | null
+): DataCreditoOfferFinancingTerms | null {
+  const platform = normalizeDataCreditoPlatform(platformValue);
+  if (!platform) return null;
+
+  const installmentMissing = value?.installmentCount === undefined;
+  const rawInstallmentCount = installmentMissing
+    ? platform === "IPHONE"
+      ? DATACREDITO_DEFAULT_IPHONE_INSTALLMENT_COUNT
+      : DATACREDITO_DEFAULT_ANDROID_INSTALLMENT_COUNT
+    : finiteNumber(value?.installmentCount);
+  if (
+    !Number.isSafeInteger(rawInstallmentCount) ||
+    rawInstallmentCount! < 1 ||
+    rawInstallmentCount! > DATACREDITO_MAX_INSTALLMENT_COUNT
+  ) {
+    return null;
+  }
+
+  const maxInstallmentMissing = value?.maxInstallmentAmount === undefined;
+  if (platform === "ANDROID") {
+    if (!maxInstallmentMissing && value?.maxInstallmentAmount !== null) {
+      return null;
+    }
+    return {
+      installmentCount: rawInstallmentCount!,
+      maxInstallmentAmount: null,
+      usedLegacyFallback: installmentMissing || maxInstallmentMissing,
+    };
+  }
+
+  const rawMaxInstallmentAmount = maxInstallmentMissing
+    ? DATACREDITO_DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT
+    : finiteNumber(value?.maxInstallmentAmount);
+  if (
+    !Number.isSafeInteger(rawMaxInstallmentAmount) ||
+    rawMaxInstallmentAmount! <= 0 ||
+    rawMaxInstallmentAmount! > DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT
+  ) {
+    return null;
+  }
+
+  return {
+    installmentCount: rawInstallmentCount!,
+    maxInstallmentAmount: rawMaxInstallmentAmount!,
+    usedLegacyFallback: installmentMissing || maxInstallmentMissing,
+  };
 }
 
 export function parseDataCreditoPolicyFinancialSettings(
@@ -297,7 +365,10 @@ export function parseDataCreditoPolicyFinancialSettings(
  * Validates a complete policy. Gaps are intentionally invalid: a score must
  * never fall through to an implicit decision or an implicit financial offer.
  */
-export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBand[] {
+export function parseDataCreditoPolicyBands(
+  value: unknown,
+  options: { requireFinancingTerms?: boolean } = {}
+): DataCreditoPolicyBand[] {
   const issues: string[] = [];
 
   if (!Array.isArray(value) || value.length === 0) {
@@ -325,6 +396,13 @@ export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBa
     const initialPaymentPercentage = finiteNumber(row.initialPaymentPercentage);
     const suretyPercentage = finiteNumber(row.suretyPercentage);
     const maxFinancedAmount = finiteNumber(row.maxFinancedAmount);
+    const hasInstallmentCount = row.installmentCount !== undefined;
+    const installmentCount = finiteNumber(row.installmentCount);
+    const hasMaxInstallmentAmount = row.maxInstallmentAmount !== undefined;
+    const maxInstallmentAmount =
+      row.maxInstallmentAmount === null
+        ? null
+        : finiteNumber(row.maxInstallmentAmount);
 
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id)) {
       issues.push(`La banda ${index + 1} debe tener un id estable y valido`);
@@ -385,6 +463,35 @@ export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBa
         `El credito maximo de ${id || `la banda ${index + 1}`} debe ser un entero en COP entre 1 y ${DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT}`
       );
     }
+    if (
+      (options.requireFinancingTerms || hasInstallmentCount) &&
+      (!Number.isSafeInteger(installmentCount) ||
+        installmentCount! < 1 ||
+        installmentCount! > DATACREDITO_MAX_INSTALLMENT_COUNT)
+    ) {
+      issues.push(
+        `El plazo de ${id || `la banda ${index + 1}`} debe ser un entero entre 1 y ${DATACREDITO_MAX_INSTALLMENT_COUNT} cuotas`
+      );
+    }
+    if (platform === "IPHONE") {
+      if (
+        (options.requireFinancingTerms || hasMaxInstallmentAmount) &&
+        (!Number.isSafeInteger(maxInstallmentAmount) ||
+          maxInstallmentAmount! <= 0 ||
+          maxInstallmentAmount! > DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT)
+      ) {
+        issues.push(
+          `El tope de cuota iPhone de ${id || `la banda ${index + 1}`} debe ser un entero en COP entre 1 y ${DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT}`
+        );
+      }
+    } else if (
+      (options.requireFinancingTerms && !hasMaxInstallmentAmount) ||
+      (hasMaxInstallmentAmount && row.maxInstallmentAmount !== null)
+    ) {
+      issues.push(
+        `El tope de cuota de ${id || `la banda ${index + 1}`} debe ser nulo para Android`
+      );
+    }
 
     if (
       !id ||
@@ -409,6 +516,8 @@ export function parseDataCreditoPolicyBands(value: unknown): DataCreditoPolicyBa
         initialPaymentPercentage,
         suretyPercentage,
         maxFinancedAmount,
+        ...(hasInstallmentCount ? { installmentCount: installmentCount! } : {}),
+        ...(hasMaxInstallmentAmount ? { maxInstallmentAmount } : {}),
       } satisfies DataCreditoPolicyBand,
     ];
   });
@@ -504,6 +613,11 @@ export function resolveDataCreditoDecision(
 ): { decision: DataCreditoDecision; offer: DataCreditoOffer } | null {
   const band = resolveDataCreditoPolicyBand(policy, platform, score);
   if (!band) return null;
+  const financingTerms = resolveDataCreditoOfferFinancingTerms(
+    band.platform,
+    band
+  );
+  if (!financingTerms) return null;
 
   return {
     decision: band.decision,
@@ -511,6 +625,8 @@ export function resolveDataCreditoDecision(
       initialPaymentPercentage: band.initialPaymentPercentage,
       suretyPercentage: band.suretyPercentage,
       maxFinancedAmount: band.maxFinancedAmount,
+      installmentCount: financingTerms.installmentCount,
+      maxInstallmentAmount: financingTerms.maxInstallmentAmount,
       policyVersion: policy.version,
       ...(policy.financialSettings
         ? { financialSettings: policy.financialSettings }

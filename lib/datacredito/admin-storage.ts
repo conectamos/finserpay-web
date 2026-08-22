@@ -14,6 +14,7 @@ import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors"
 import {
   parseDataCreditoPolicyBands,
   parseDataCreditoPolicyFinancialSettings,
+  resolveDataCreditoOfferFinancingTerms,
   type DataCreditoPolicyBand,
   type DataCreditoPolicyFinancialSettings,
 } from "@/lib/datacredito/policy";
@@ -147,16 +148,21 @@ function finiteInteger(value: unknown) {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-function serializeOffer(value: Record<string, unknown> | null) {
+function serializeOffer(
+  value: Record<string, unknown> | null,
+  platform: "ANDROID" | "IPHONE"
+) {
   if (!value) return null;
   const initialPaymentPercentage = Number(value.initialPaymentPercentage);
   const suretyPercentage = Number(value.suretyPercentage);
   const maxFinancedAmount = Number(value.maxFinancedAmount);
+  const financingTerms = resolveDataCreditoOfferFinancingTerms(platform, value);
   if (
     !Number.isFinite(initialPaymentPercentage) ||
     !Number.isFinite(suretyPercentage) ||
     !Number.isSafeInteger(maxFinancedAmount) ||
-    maxFinancedAmount <= 0
+    maxFinancedAmount <= 0 ||
+    !financingTerms
   ) {
     return null;
   }
@@ -164,6 +170,8 @@ function serializeOffer(value: Record<string, unknown> | null) {
     initialPaymentPercentage,
     suretyPercentage,
     maxFinancedAmount,
+    installmentCount: financingTerms.installmentCount,
+    maxInstallmentAmount: financingTerms.maxInstallmentAmount,
     financialSettings: parseDataCreditoPolicyFinancialSettings(
       value.financialSettings,
       { optional: true }
@@ -182,7 +190,7 @@ function serializeAdminAssessment(row: AdminAssessmentRow) {
     status: row.status,
     score: score !== null && score >= -1 && score <= 950 ? score : null,
     decision: row.decision,
-    offer: serializeOffer(row.offer),
+    offer: serializeOffer(row.offer, row.platform),
     policyVersion: row.policyVersion,
     reusedFromAssessmentId: row.reusedFromAssessmentId,
     consentAt: iso(row.consentAt),

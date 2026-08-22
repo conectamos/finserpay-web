@@ -29,6 +29,10 @@ import {
   LoadingState,
   StatusPill,
 } from "@/app/_components/finser-ui";
+import {
+  DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT,
+  DATACREDITO_MAX_INSTALLMENT_COUNT,
+} from "@/lib/datacredito/policy";
 
 export type DataCreditoPlatform = "ANDROID" | "IPHONE";
 
@@ -36,6 +40,8 @@ export type DataCreditoOffer = {
   initialPaymentPercentage: number;
   suretyPercentage: number;
   maxFinancedAmount: number;
+  installmentCount: number;
+  maxInstallmentAmount: number | null;
   policyVersion?: number;
   [key: string]: unknown;
 };
@@ -211,8 +217,19 @@ function normalizeApprovedAssessment(
   );
   const suretyPercentage = readNumber(offerSource.suretyPercentage);
   const maxFinancedAmount = readNumber(offerSource.maxFinancedAmount);
+  const installmentCount = readNumber(offerSource.installmentCount);
+  const maxInstallmentAmount = readNumber(offerSource.maxInstallmentAmount);
   const validMaxFinancedAmount =
     Number.isSafeInteger(maxFinancedAmount) && Number(maxFinancedAmount) > 0;
+  const validInstallmentCount =
+    Number.isSafeInteger(installmentCount) &&
+    Number(installmentCount) >= 1 &&
+    Number(installmentCount) <= DATACREDITO_MAX_INSTALLMENT_COUNT;
+  const validMaxInstallmentAmount =
+    maxInstallmentAmount === null ||
+    (Number.isSafeInteger(maxInstallmentAmount) &&
+      Number(maxInstallmentAmount) > 0 &&
+      Number(maxInstallmentAmount) <= DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT);
 
   if (
     !assessmentId ||
@@ -221,7 +238,9 @@ function normalizeApprovedAssessment(
     !expiresAt ||
     initialPaymentPercentage === null ||
     suretyPercentage === null ||
-    !validMaxFinancedAmount
+    !validMaxFinancedAmount ||
+    !validInstallmentCount ||
+    !validMaxInstallmentAmount
   ) {
     return null;
   }
@@ -239,6 +258,9 @@ function normalizeApprovedAssessment(
       suretyPercentage,
       ...(policyVersion === null ? {} : { policyVersion }),
       maxFinancedAmount: Number(maxFinancedAmount),
+      installmentCount: Number(installmentCount),
+      maxInstallmentAmount:
+        maxInstallmentAmount === null ? null : Number(maxInstallmentAmount),
     },
   };
 }
@@ -907,6 +929,24 @@ export default function DatacreditoPrequalificationGate({
                 {formatMoney(approvedResult.offer.maxFinancedAmount)}
               </p>
             </div>
+            <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
+              <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
+                Plazo autorizado
+              </p>
+              <p className="mt-2 text-2xl font-black text-[var(--fp-graphite)]">
+                {approvedResult.offer.installmentCount} cuotas
+              </p>
+            </div>
+            {approvedResult.offer.maxInstallmentAmount ? (
+              <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
+                <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
+                  Tope de cuota iPhone
+                </p>
+                <p className="mt-2 text-2xl font-black text-[var(--fp-graphite)]">
+                  {formatMoney(approvedResult.offer.maxInstallmentAmount)}
+                </p>
+              </div>
+            ) : null}
           </div>
 
           <p className="mt-5 text-xs leading-5 text-[var(--fp-muted)]">

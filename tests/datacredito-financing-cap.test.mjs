@@ -10,11 +10,27 @@ const projectRoot = path.resolve(
 );
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const {
+  calculateRequiredInitialPaymentForFinancingLimit,
   calculateRequiredInitialPaymentByPlatform,
   resolveEffectiveDataCreditoFinancingLimit,
 } = await jiti.import(
   "../lib/credit-factory.ts"
 );
+
+test("el monto maximo de la oferta limita el saldo realmente financiado", () => {
+  assert.equal(
+    calculateRequiredInitialPaymentForFinancingLimit(800_000, 600_000, 40),
+    320_000
+  );
+  assert.equal(
+    calculateRequiredInitialPaymentForFinancingLimit(1_000_000, 600_000, 20),
+    400_000
+  );
+  assert.equal(
+    calculateRequiredInitialPaymentForFinancingLimit(3_000_000, 2_500_000, 0),
+    500_000
+  );
+});
 
 const requiredInitial = ({
   total,

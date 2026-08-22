@@ -2,13 +2,61 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const consoleSource = await readFile(
-  new URL(
-    "../app/dashboard/parametros-credito/datacredito-policy-console.tsx",
-    import.meta.url
+const [consoleSource, pageSource] = await Promise.all([
+  readFile(
+    new URL(
+      "../app/dashboard/parametros-credito/datacredito-policy-console.tsx",
+      import.meta.url
+    ),
+    "utf8"
   ),
-  "utf8"
-);
+  readFile(
+    new URL(
+      "../app/dashboard/parametros-credito/page.tsx",
+      import.meta.url
+    ),
+    "utf8"
+  ),
+]);
+
+test("usa una sola vista de edición basada en políticas", () => {
+  assert.match(pageSource, /import DatacreditoPolicyConsole/);
+  assert.doesNotMatch(pageSource, /CreditParametersConsole/);
+  assert.match(pageSource, /href="\/dashboard"/);
+  assert.match(pageSource, /href="\/dashboard\/creditos"/);
+  assert.match(pageSource, /Políticas de crédito \| FINSER PAY/);
+  assert.equal((consoleSource.match(/<h1\b/g) || []).length, 1);
+  assert.doesNotMatch(consoleSource, /Fianza de banda legada/);
+  assert.doesNotMatch(
+    consoleSource,
+    /excepción\s+explícita\s+por\s+cédula/i
+  );
+});
+
+test("edita monto, plazo y tope de cuota desde cada banda DataCrédito", () => {
+  assert.match(consoleSource, /installmentCount: number/);
+  assert.match(consoleSource, /maxInstallmentAmount: number \| null/);
+  assert.match(consoleSource, /Plazo \(cuotas\)/);
+  assert.match(consoleSource, /Monto máximo a financiar/);
+  assert.match(consoleSource, /Tope de cuota iPhone/);
+  assert.match(
+    consoleSource,
+    /MAX_INSTALLMENT_COUNT = DATACREDITO_MAX_INSTALLMENT_COUNT/
+  );
+  assert.match(
+    consoleSource,
+    /DEFAULT_ANDROID_INSTALLMENT_COUNT =\s*DATACREDITO_DEFAULT_ANDROID_INSTALLMENT_COUNT/
+  );
+  assert.match(
+    consoleSource,
+    /DEFAULT_IPHONE_INSTALLMENT_COUNT =\s*DATACREDITO_DEFAULT_IPHONE_INSTALLMENT_COUNT/
+  );
+  assert.match(
+    consoleSource,
+    /DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT =\s*DATACREDITO_DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT/
+  );
+  assert.match(consoleSource, /suretyPercentage: String\(band\.suretyPercentage\)/);
+});
 
 test("gestiona un catálogo de políticas con revisiones inmutables", () => {
   assert.match(

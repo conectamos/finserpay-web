@@ -62,7 +62,7 @@ test("valida y congela los parametros financieros en la oferta", () => {
   );
 });
 
-test("la excepcion explicita por cedula gana sin perder valores cero", () => {
+test("la politica publicada es la unica fuente financiera de una evaluacion", () => {
   const resolved = resolveCreditPolicyFinancialSettings({
     globalSettings: {
       calculoVersion: "ARES_FRANCES_V1",
@@ -75,22 +75,15 @@ test("la excepcion explicita por cedula gana sin perder valores cero", () => {
       redondeoComercialModo: "PISO",
       redondeoComercialMultiplo: 50,
     },
-    documentException: {
-      tasaInteresEa: 0,
-      fianzaPorcentaje: null,
-      fianzaCuotaPorcentaje: 0,
-      seguroCuotaPorcentaje: 0,
-      frecuenciaPago: "SEMANAL",
-    },
     policyFinancialSettings: financialSettings,
     legacyOfferSuretyPercentage: 80,
     numeroCuotas: 16,
   });
-  assert.equal(resolved.tasaInteresEa, 0);
-  assert.equal(resolved.fianzaCuotaPorcentaje, 0);
-  assert.equal(resolved.seguroCuotaPorcentaje, 0);
-  assert.equal(resolved.frecuenciaPago, "SEMANAL");
-  assert.equal(resolved.fianzaSource, "CLIENTE_POR_CUOTA");
+  assert.equal(resolved.tasaInteresEa, 29.66);
+  assert.equal(resolved.fianzaCuotaPorcentaje, 75 / 16);
+  assert.equal(resolved.seguroCuotaPorcentaje, 0.03);
+  assert.equal(resolved.frecuenciaPago, "QUINCENAL");
+  assert.equal(resolved.fianzaSource, "POLITICA");
 });
 
 test("ARES divide la fianza total por plazo y FRANCES_V1 conserva fianza por cuota", () => {

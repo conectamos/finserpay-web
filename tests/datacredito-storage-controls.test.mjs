@@ -425,6 +425,89 @@ test("la ausencia explicita usa politica y puede consumirse sin exponer el senti
   assert.match(policyConsole, /Sin información/);
 });
 
+test("la simulacion resuelve la banda sin informacion de la politica asignada", () => {
+  const getter = policyRoute.slice(
+    policyRoute.indexOf("export async function GET"),
+    policyRoute.indexOf("export async function PATCH")
+  );
+
+  assert.match(getter, /searchParams\.get\(["']purpose["']\)/);
+  assert.match(getter, /purpose\s*===\s*["']simulation["']/);
+  assert.match(getter, /searchParams\.get\(["']platform["']\)/);
+  assert.match(getter, /normalizeDataCreditoPlatform/);
+  assert.match(getter, /DATACREDITO_NO_INFORMATION_SCORE/);
+  assert.match(
+    getter,
+    /resolveDataCredito(?:Decision|PolicyBand)\([\s\S]{0,220}DATACREDITO_NO_INFORMATION_SCORE/
+  );
+});
+
+test("el DTO de simulacion es minimo y un rechazo nunca expone oferta", () => {
+  const simulationMarker = policyRoute.indexOf("simulationOnly: true");
+  assert.notEqual(simulationMarker, -1);
+
+  const dtoSource = policyRoute.slice(
+    Math.max(0, simulationMarker - 900),
+    Math.min(policyRoute.length, simulationMarker + 1_500)
+  );
+  assert.doesNotMatch(
+    dtoSource,
+    /\b(?:bands|assessmentId|documentNumber|firstSurname|documentHash|surnameHash|cedula)\s*:/i
+  );
+  assert.match(dtoSource, /\bplatform\s*:/);
+  assert.match(dtoSource, /\bdecision\s*:/);
+  assert.match(dtoSource, /\boffer\s*:/);
+
+  assert.match(
+    policyRoute,
+    /(?:offer\s*:|const\s+\w*offer\w*\s*=)[\s\S]{0,220}\.decision\s*===\s*["']APROBADO["'][\s\S]{0,160}\.offer[\s\S]{0,80}:\s*null/
+  );
+});
+
+test("la consola usa la simulacion sin convertirla en assessment aprobado", () => {
+  const endpointIndex = factoryConsole.indexOf(
+    "/api/creditos/datacredito/politica"
+  );
+  assert.notEqual(endpointIndex, -1);
+
+  const loaderSource = factoryConsole.slice(
+    Math.max(0, endpointIndex - 2_500),
+    Math.min(factoryConsole.length, endpointIndex + 2_500)
+  );
+  assert.match(loaderSource, /simulatorMode/);
+  assert.match(
+    loaderSource,
+    /(?:purpose=simulation|["']purpose["']\s*,\s*["']simulation["']|purpose\s*:\s*["']simulation["'])/
+  );
+  assert.match(
+    loaderSource,
+    /(?:platform=\$\{|["']platform["']\s*,\s*dataCreditoPlatform|platform\s*:\s*dataCreditoPlatform)/
+  );
+  assert.match(loaderSource, /simulationOnly/);
+  assert.match(loaderSource, /set\w*Simulation\w*\(/i);
+  assert.doesNotMatch(loaderSource, /setDataCreditoApproval\s*\(/);
+  assert.doesNotMatch(loaderSource, /setDataCreditoAssessmentId\s*\(/);
+  assert.doesNotMatch(loaderSource, /\bassessmentId\s*:/);
+});
+
+test("la oferta activa conserva su plazo y nunca cae al tope global en pantalla", () => {
+  assert.match(factoryConsole, /policyControlled:\s*true/);
+  assert.match(
+    factoryConsole,
+    /preservedTerms\.policyControlled\s*\?\s*MAX_CREDIT_INSTALLMENTS/
+  );
+
+  const policyFirstMessages =
+    factoryConsole.match(
+      /activeDataCreditoOffer\s*\?\s*dataCreditoFinancingExcess\s*>\s*0/g
+    ) || [];
+  assert.equal(policyFirstMessages.length, 2);
+  assert.doesNotMatch(
+    factoryConsole,
+    /activeDataCreditoOffer\s*&&\s*dataCreditoFinancingExcess\s*>\s*0/
+  );
+});
+
 test("la vigencia contractual es exactamente 15 dias y no admite override historico", () => {
   assert.match(
     storage,
@@ -471,7 +554,7 @@ test("la clasificacion posfallo no filtra evaluaciones fuera de identidad y scop
   assert.match(classifier, /status: "INVALID"/);
 });
 
-test("la oferta persiste y serializa el tope maximo financiado", () => {
+test("la oferta persiste y serializa monto, plazo y tope de cuota", () => {
   assert.match(storage, /JSON\.stringify\(input\.offer\)/);
   const serializer = storage.match(
     /export function serializeDataCreditoAssessment\([\s\S]*?\n\}/
@@ -481,6 +564,30 @@ test("la oferta persiste y serializa el tope maximo financiado", () => {
     serializer,
     /maxFinancedAmount: Number\(row\.offer\?\.maxFinancedAmount\)/
   );
+  assert.match(
+    serializer,
+    /resolveDataCreditoOfferFinancingTerms\(row\.platform, row\.offer\)/
+  );
+  assert.match(
+    serializer,
+    /installmentCount: financingTerms\.installmentCount/
+  );
+  assert.match(
+    serializer,
+    /maxInstallmentAmount: financingTerms\.maxInstallmentAmount/
+  );
+  assert.match(
+    creditRoute,
+    /const plazoMeses = dataCreditoFinancingTerms[\s\S]*?dataCreditoFinancingTerms\.installmentCount/
+  );
+  assert.match(
+    creditRoute,
+    /iphoneMaxInstallmentValue: dataCreditoFinancingTerms[\s\S]*?dataCreditoFinancingTerms\.maxInstallmentAmount/
+  );
+  assert.doesNotMatch(creditRoute, /forcePaymentFrequency/);
+  assert.doesNotMatch(firmaSeguroDraftRoute, /forcePaymentFrequency/);
+  assert.doesNotMatch(factoryConsole, /forcePaymentFrequency/);
+  assert.match(policyRoute, /requireFinancingTerms: true/);
 });
 
 test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apagado", () => {
@@ -521,7 +628,7 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
   );
   assert.match(
     creditBuilder,
-    /const creditSettings = dataCreditoOffer[\s\S]*?: effectiveCreditSettings\.settings;/
+    /const creditSettings = dataCreditoOffer[\s\S]*?: effectiveCreditSettings\.globalSettings;/
   );
   assert.match(
     creditBuilder,
@@ -529,7 +636,19 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
   );
   assert.match(
     creditBuilder,
-    /maxFinancedAmount: dataCreditoOffer\?\.maxFinancedAmount/
+    /calculateRequiredInitialPaymentForFinancingLimit\([\s\S]*?dataCreditoOffer\.maxFinancedAmount/
+  );
+  assert.match(
+    creditBuilder,
+    /const plazoMeses = dataCreditoOffer[\s\S]*?dataCreditoOffer\.installmentCount/
+  );
+  assert.match(
+    creditBuilder,
+    /iphoneMaxInstallmentValue: dataCreditoOffer[\s\S]*?dataCreditoOffer\.maxInstallmentAmount/
+  );
+  assert.doesNotMatch(
+    creditBuilder,
+    /effectiveCreditSettings\.documentException/
   );
 });
 

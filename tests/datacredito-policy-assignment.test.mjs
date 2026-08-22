@@ -80,6 +80,32 @@ test("catalogo y asignaciones solo exponen mutaciones al administrador central",
   assert.match(catalogRoute, /POLICY_VERSION_CONFLICT/);
   assert.match(catalogRoute, /POLICY_ASSIGNMENT_CONFLICT/);
   assert.match(catalogRoute, /POLICY_NAME_CONFLICT/);
+  assert.equal(
+    catalogRoute.match(/requireFinancingTerms:\s*true/g)?.length,
+    2
+  );
+});
+
+test("el detalle admin normaliza terminos de ofertas historicas", () => {
+  const serializer = section(
+    adminStorage,
+    "function serializeOffer(",
+    "function serializeAdminAssessment"
+  );
+  assert.match(serializer, /platform: "ANDROID" \| "IPHONE"/);
+  assert.match(
+    serializer,
+    /resolveDataCreditoOfferFinancingTerms\(platform, value\)/
+  );
+  assert.match(
+    serializer,
+    /installmentCount: financingTerms\.installmentCount/
+  );
+  assert.match(
+    serializer,
+    /maxInstallmentAmount: financingTerms\.maxInstallmentAmount/
+  );
+  assert.match(adminStorage, /serializeOffer\(row\.offer, row\.platform\)/);
 });
 
 test("asignar serializa el perfil y el aliado y deja auditoria", () => {
