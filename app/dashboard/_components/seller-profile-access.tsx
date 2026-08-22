@@ -168,9 +168,9 @@ export default function SellerProfileAccess({
   };
 
   return (
-    <div className="min-h-dvh bg-[var(--fp-bg)] text-[var(--fp-graphite)]">
+    <div className="fp-profile-selector min-h-dvh bg-[var(--fp-bg)] text-[var(--fp-graphite)]">
       <header className="border-b border-white/10 bg-[var(--fp-navy)] text-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
+        <div className="mx-auto flex min-h-[72px] max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
           <div className="flex min-w-0 items-center gap-4">
             <FinserBrand dark mini accentPay showTagline={false} />
             <span className="hidden h-8 w-px bg-white/15 sm:block" aria-hidden="true" />
@@ -188,8 +188,8 @@ export default function SellerProfileAccess({
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-9 lg:px-8">
-        <section aria-labelledby="seller-access-title">
+      <main className="fp-profile-selector-main mx-auto max-w-[1440px] px-4 py-7 sm:px-6 sm:py-9 lg:px-8">
+        <section className="fp-profile-selector-intro" aria-labelledby="seller-access-title">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-xs font-bold uppercase text-[var(--fp-lime-strong)]">
@@ -203,13 +203,13 @@ export default function SellerProfileAccess({
               </h1>
             </div>
 
-            <div className="inline-flex min-h-11 w-fit items-center gap-2 rounded-[8px] border border-[var(--fp-border)] bg-white px-3 text-sm font-semibold text-[var(--fp-muted)]">
+            <div className="fp-profile-selector-count inline-flex min-h-11 w-fit items-center gap-2 rounded-[8px] border border-[var(--fp-border)] bg-white px-3 text-sm font-semibold text-[var(--fp-muted)]">
               <UsersRound className="h-4 w-4 text-[var(--fp-lime-strong)]" aria-hidden="true" />
               {filteredSellers.length} de {sellers.length} perfiles
             </div>
           </div>
 
-          <div className="mt-6 flex min-h-14 items-center gap-3 rounded-[12px] border border-[var(--fp-border)] bg-white px-4 shadow-[var(--fp-shadow-sm)] focus-within:border-[var(--fp-lime-strong)] focus-within:ring-2 focus-within:ring-[var(--fp-lime-soft)]">
+          <div className="fp-profile-selector-search mt-6 flex min-h-14 items-center gap-3 rounded-[12px] border border-[var(--fp-border)] bg-white px-4 shadow-[var(--fp-shadow-sm)] focus-within:border-[var(--fp-lime-strong)] focus-within:ring-2 focus-within:ring-[var(--fp-lime-soft)]">
             <Search className="h-5 w-5 shrink-0 text-[var(--fp-muted)]" aria-hidden="true" />
             <label htmlFor="seller-search" className="sr-only">
               Buscar asesor
@@ -247,7 +247,7 @@ export default function SellerProfileAccess({
         )}
 
         <section
-          className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3"
+          className="fp-profile-selector-grid mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3"
           aria-label="Perfiles disponibles"
         >
           {filteredSellers.map((seller) => {
@@ -264,7 +264,7 @@ export default function SellerProfileAccess({
                   setAvailableSedes([]);
                   setSelectedSeller(seller);
                 }}
-                className="group flex min-h-[84px] items-center gap-3 rounded-[12px] border border-[var(--fp-border)] bg-white px-3 py-3 text-left shadow-[var(--fp-shadow-sm)] transition hover:border-[var(--fp-lime-strong)] hover:bg-[var(--fp-lime-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime-strong)] focus-visible:ring-offset-2"
+                className="fp-profile-selector-card group flex min-h-[84px] items-center gap-3 rounded-[12px] border border-[var(--fp-border)] bg-white px-3 py-3 text-left shadow-[var(--fp-shadow-sm)] transition hover:border-[var(--fp-lime-strong)] hover:bg-[var(--fp-lime-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime-strong)] focus-visible:ring-offset-2"
                 aria-label={`Abrir perfil de ${seller.nombre}`}
               >
                 <ProfileAvatar seller={seller} size="compact" />

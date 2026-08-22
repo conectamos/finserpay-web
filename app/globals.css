@@ -3683,3 +3683,273 @@ body {
     padding-top: 0.875rem;
   }
 }
+
+/* Profile access and simulator refresh */
+.fp-profile-selector {
+  background: var(--fp-bg);
+}
+
+.fp-profile-selector-grid {
+  gap: 0 !important;
+  overflow: hidden;
+  border: 1px solid var(--fp-border);
+  border-radius: var(--fp-radius-lg);
+  background: var(--fp-surface);
+  box-shadow: var(--fp-shadow-sm);
+}
+
+.fp-profile-selector-card {
+  min-height: 96px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+
+.fp-profile-selector-card:hover {
+  transform: none;
+}
+
+.fp-simulator-app {
+  min-height: 100dvh;
+  padding: 0 0 48px !important;
+  background: var(--fp-bg) !important;
+}
+
+.fp-simulator-app > .mx-auto {
+  width: 100%;
+  max-width: 1320px !important;
+  padding-right: 24px;
+  padding-left: 24px;
+}
+
+.fp-simulator-hero {
+  margin-top: 24px;
+  border: 0 !important;
+  border-radius: var(--fp-radius-lg) !important;
+  background: var(--fp-navy) !important;
+  box-shadow: var(--fp-shadow-md) !important;
+  color: #ffffff;
+}
+
+.fp-simulator-hero h1 {
+  color: #ffffff !important;
+  font-size: clamp(1.5rem, 2vw, 2rem) !important;
+}
+
+.fp-simulator-hero [class*="bg-[#faf7ef]"] {
+  border-color: rgba(168, 243, 74, 0.4) !important;
+  background: rgba(168, 243, 74, 0.1) !important;
+  color: var(--fp-lime) !important;
+}
+
+.fp-simulator-hero [class*="bg-slate-50"] {
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: rgba(255, 255, 255, 0.82) !important;
+}
+
+.fp-simulator-hero a {
+  min-height: 44px;
+  align-items: center;
+  border-color: rgba(255, 255, 255, 0.26) !important;
+  border-radius: var(--fp-radius-md) !important;
+  background: transparent !important;
+  color: #ffffff !important;
+}
+
+.fp-simulator-hero a:hover {
+  border-color: var(--fp-lime) !important;
+  color: var(--fp-lime) !important;
+}
+
+.fp-simulator-workbench {
+  margin-top: 20px !important;
+}
+
+.fp-simulator-panel {
+  border: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+.fp-simulator-stage {
+  border-color: var(--fp-border) !important;
+  border-radius: var(--fp-radius-lg) !important;
+  background: var(--fp-surface) !important;
+  padding: 24px !important;
+  box-shadow: var(--fp-shadow-sm) !important;
+}
+
+.fp-simulator-stage > div > div:first-child [class*="rounded-full"] {
+  border-color: var(--fp-border) !important;
+  border-radius: var(--fp-radius-sm) !important;
+  background: var(--fp-lime-soft) !important;
+  color: var(--fp-lime-strong) !important;
+}
+
+.fp-simulator-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.76fr) !important;
+  align-items: start;
+  gap: 24px !important;
+}
+
+.fp-simulator-form {
+  align-content: start;
+  gap: 16px !important;
+}
+
+.fp-simulator-form input,
+.fp-simulator-form select,
+.fp-simulator-form [class*="bg-slate-50"] {
+  min-height: 48px;
+  border-radius: var(--fp-radius-md) !important;
+  box-shadow: none !important;
+}
+
+.fp-simulator-layout > div:last-child {
+  position: sticky;
+  top: 24px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--fp-radius-lg);
+  background: var(--fp-navy);
+  padding: 16px;
+  color: #ffffff;
+  box-shadow: var(--fp-shadow-md);
+}
+
+.fp-simulator-layout > div:last-child > .grid {
+  gap: 8px !important;
+}
+
+.fp-simulator-layout > div:last-child > .grid > div {
+  min-height: 96px;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  border-radius: var(--fp-radius-md) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  padding: 14px !important;
+}
+
+.fp-simulator-layout > div:last-child > .grid > div p {
+  color: rgba(255, 255, 255, 0.68) !important;
+}
+
+.fp-simulator-layout > div:last-child > .grid > div p[class*="font-black"] {
+  color: #ffffff !important;
+}
+
+.fp-simulator-layout > div:last-child > .grid > div:last-child {
+  grid-column: 1 / -1;
+  min-height: 118px;
+  border-color: var(--fp-lime) !important;
+  background: var(--fp-lime) !important;
+}
+
+.fp-simulator-layout > div:last-child > .grid > div:last-child p {
+  color: rgba(8, 24, 35, 0.72) !important;
+}
+
+.fp-simulator-layout > div:last-child > .grid > div:last-child p[class*="font-black"] {
+  color: var(--fp-navy) !important;
+  font-size: clamp(1.9rem, 3vw, 2.5rem) !important;
+}
+
+@media (min-width: 768px) and (max-width: 1279px) {
+  .fp-profile-selector-card:nth-child(odd) {
+    border-right: 1px solid var(--fp-border) !important;
+  }
+
+  .fp-profile-selector-card:nth-child(n + 3) {
+    border-top: 1px solid var(--fp-border) !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .fp-profile-selector-main {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    align-items: start;
+    gap: 32px;
+  }
+
+  .fp-profile-selector-intro {
+    position: sticky;
+    top: 96px;
+    padding-top: 12px;
+  }
+
+  .fp-profile-selector-intro > div:first-child {
+    display: block;
+  }
+
+  .fp-profile-selector-count {
+    margin-top: 24px;
+  }
+
+  .fp-profile-selector-search {
+    margin-top: 24px;
+  }
+
+  .fp-profile-selector-grid {
+    grid-column: 2;
+    margin-top: 0 !important;
+  }
+
+  .fp-profile-selector-main > [role="alert"] {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1280px) {
+  .fp-profile-selector-main {
+    grid-template-columns: 360px minmax(0, 1fr);
+    gap: 40px;
+  }
+
+  .fp-profile-selector-card:not(:nth-child(3n)) {
+    border-right: 1px solid var(--fp-border) !important;
+  }
+
+  .fp-profile-selector-card:nth-child(n + 4) {
+    border-top: 1px solid var(--fp-border) !important;
+  }
+}
+
+@media (max-width: 1023px) {
+  .fp-simulator-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  .fp-simulator-layout > div:last-child {
+    position: static;
+  }
+}
+
+@media (max-width: 767px) {
+  .fp-profile-selector-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .fp-profile-selector-card + .fp-profile-selector-card {
+    border-top: 1px solid var(--fp-border) !important;
+  }
+
+  .fp-simulator-app > .mx-auto {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .fp-simulator-hero {
+    margin-top: 12px;
+  }
+
+  .fp-simulator-stage {
+    padding: 18px !important;
+  }
+
+  .fp-simulator-layout > div:last-child > .grid > div {
+    min-height: 88px;
+  }
+}

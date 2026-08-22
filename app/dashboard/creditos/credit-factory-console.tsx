@@ -8703,6 +8703,7 @@ export default function CreditFactoryConsole({
           ? "fp-payments-workspace min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[228px_minmax(0,1fr)]"
           : [
               "fp-shell text-slate-950",
+              simulatorMode ? "fp-simulator-app" : "",
               embeddedClientLookup ? "fp-client-lookup-embedded" : "min-h-screen px-4 py-6",
               clientLookupMode ? "fp-client-lookup" : "fp-seller-app",
               createClientMode ? "fp-credit-factory" : "",
@@ -8752,7 +8753,7 @@ export default function CreditFactoryConsole({
                 ? "fp-client-lookup-hero"
                 : [
                     "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6",
-                    simulatorMode || deliveryMode ? "fp-tool-hero" : "",
+                    simulatorMode ? "fp-tool-hero fp-simulator-hero" : deliveryMode ? "fp-tool-hero" : "",
                     createClientMode ? "fp-new-sale-header" : "",
                   ].join(" ")
             }
@@ -8809,14 +8810,14 @@ export default function CreditFactoryConsole({
             ) : simulatorMode || deliveryMode ? (
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-                  <FinserBrand compact showTagline={false} />
+                  <FinserBrand compact dark={simulatorMode} showTagline={false} />
                   <div className="hidden h-10 w-px bg-[#e8decb] sm:block" />
                   <div>
                     <div className="inline-flex rounded-full border border-[#e6d6bd] bg-[#faf7ef] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#7a5c20]">
                       {deliveryMode ? "Entrega" : "Simulador"}
                     </div>
                     <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
-                      {deliveryMode ? "Validar entrega" : "Calcula cuotas"}
+                      {deliveryMode ? "Validar entrega" : "Simulador de cuotas"}
                     </h1>
                   </div>
                 </div>
@@ -9321,13 +9322,14 @@ export default function CreditFactoryConsole({
                 : lookupMode
                   ? "mt-6"
                   : simulatorMode
-                    ? "fp-seller-workbench mt-6"
+                    ? "fp-seller-workbench fp-simulator-workbench mt-6"
                   : "fp-seller-workbench mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]"
           }
         >
           <div
               className={[
                 "fp-surface fp-seller-panel rounded-[24px] p-4 sm:p-5",
+              simulatorMode ? "fp-simulator-panel" : "",
               lookupMode ? "hidden" : "",
             ].join(" ")}
           >
@@ -9335,6 +9337,7 @@ export default function CreditFactoryConsole({
               className={[
                 "fp-flow-header fp-seller-flow-intro relative overflow-hidden rounded-[24px] border border-[#cfe5e2] bg-white/72 p-4 sm:p-5",
                 createClientMode ? "fp-sale-summary" : "",
+                simulatorMode ? "hidden" : "",
               ].join(" ")}
             >
               {createClientMode ? (
@@ -9398,7 +9401,7 @@ export default function CreditFactoryConsole({
             <div
               className={
                 simulatorMode
-                  ? "mt-4"
+                  ? "mt-0"
                   : "fp-credit-factory-layout mt-4 grid gap-4 xl:grid-cols-[220px_1fr] xl:items-start"
               }
             >
@@ -9467,7 +9470,7 @@ export default function CreditFactoryConsole({
                 <div
                   className={[
                     "fp-active-step-summary mb-4 rounded-[22px] border border-[#d8e6e5] bg-white px-4 py-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]",
-                    createClientMode ? "hidden" : "",
+                    createClientMode || simulatorMode ? "hidden" : "",
                   ].join(" ")}
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -9534,6 +9537,7 @@ export default function CreditFactoryConsole({
             <div
               className={[
                 "fp-step-stage fp-form-redesign fp-seller-form-card rounded-[24px] border border-[#d6e4e1] bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]",
+                simulatorMode ? "fp-simulator-stage" : "",
                 createClientMode && wizardStep === 1 ? "fp-identity-workspace" : "",
               ].join(" ")}
             >
@@ -10527,11 +10531,11 @@ export default function CreditFactoryConsole({
                         {simulatorMode ? "Simulador" : "Paso 2"}
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        {simulatorMode ? "Equipo y cuotas" : "Equipo y plan financiero"}
+                        {simulatorMode ? "Configura la financiación" : "Equipo y plan financiero"}
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {simulatorMode
-                          ? "Selecciona equipo, inicial y plazo."
+                          ? "Elige el equipo y ajusta la inicial para conocer la cuota estimada."
                           : "Captura el equipo, define la inicial y confirma la cuota que vera el cliente."}
                       </p>
                       <div
@@ -10578,8 +10582,8 @@ export default function CreditFactoryConsole({
                     </div>
                   ) : null}
 
-                  <div className="mt-6 grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-                    <div className="grid gap-4 md:grid-cols-2">
+                  <div className="fp-simulator-layout mt-6 grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+                    <div className="fp-simulator-form grid gap-4 md:grid-cols-2">
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Marca
