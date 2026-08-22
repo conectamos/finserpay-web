@@ -37,12 +37,21 @@ type AliadoItem = {
   nombre: string;
   codigo: string | null;
   activo: boolean;
-  redescuentoPorcentaje: number;
+  redescuentoPorcentaje?: number;
+  redescuentoAndroidPorcentaje?: number;
+  redescuentoIphonePorcentaje?: number;
   sedes: SedeItem[];
   totalSedes: number;
   totalCreditos: number;
   totalRecaudos: number;
 };
+
+type RedescuentoPlataforma = "android" | "iphone";
+
+type RedescuentoInputState = Record<
+  number,
+  Record<RedescuentoPlataforma, string>
+>;
 
 type NuevaSedeState = {
   nombre: string;
@@ -69,6 +78,24 @@ function formatPercent(value: number) {
     maximumFractionDigits: 2,
     minimumFractionDigits: 0,
   }).format(Number.isFinite(value) ? value : 0);
+}
+
+function redescuentoPorPlataforma(
+  aliado: AliadoItem,
+  plataforma: RedescuentoPlataforma
+) {
+  const valorPlataforma =
+    plataforma === "android"
+      ? aliado.redescuentoAndroidPorcentaje
+      : aliado.redescuentoIphonePorcentaje;
+  const porcentaje = Number(valorPlataforma);
+
+  if (valorPlataforma !== undefined && Number.isFinite(porcentaje)) {
+    return porcentaje;
+  }
+
+  const porcentajeAnterior = Number(aliado.redescuentoPorcentaje);
+  return Number.isFinite(porcentajeAnterior) ? porcentajeAnterior : 0;
 }
 
 function slugUsuarioSede(valor: string) {
@@ -116,8 +143,12 @@ export default function AliadosClient() {
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
   const [nombre, setNombre] = useState("");
   const [codigo, setCodigo] = useState("");
-  const [redescuentoPorcentaje, setRedescuentoPorcentaje] = useState("10");
-  const [redescuentoInputs, setRedescuentoInputs] = useState<Record<number, string>>({});
+  const [redescuentoAndroidPorcentaje, setRedescuentoAndroidPorcentaje] =
+    useState("10");
+  const [redescuentoIphonePorcentaje, setRedescuentoIphonePorcentaje] =
+    useState("10");
+  const [redescuentoInputs, setRedescuentoInputs] =
+    useState<RedescuentoInputState>({});
   const [sedesForm, setSedesForm] = useState<Record<number, NuevaSedeState>>({});
   const [esCentral, setEsCentral] = useState(true);
 
@@ -139,8 +170,11 @@ export default function AliadosClient() {
       setAliados(items);
       setEsCentral(Boolean(data.scope?.central));
       setRedescuentoInputs(
-        items.reduce((acc: Record<number, string>, aliado) => {
-          acc[aliado.id] = String(Number(aliado.redescuentoPorcentaje || 0));
+        items.reduce((acc: RedescuentoInputState, aliado) => {
+          acc[aliado.id] = {
+            android: String(redescuentoPorPlataforma(aliado, "android")),
+            iphone: String(redescuentoPorPlataforma(aliado, "iphone")),
+          };
           return acc;
         }, {})
       );
@@ -174,7 +208,8 @@ export default function AliadosClient() {
         body: JSON.stringify({
           nombre,
           codigo,
-          redescuentoPorcentaje,
+          redescuentoAndroidPorcentaje,
+          redescuentoIphonePorcentaje,
         }),
       });
 
@@ -188,7 +223,8 @@ export default function AliadosClient() {
       setMensaje(data.mensaje || "Aliado creado correctamente");
       setNombre("");
       setCodigo("");
-      setRedescuentoPorcentaje("10");
+      setRedescuentoAndroidPorcentaje("10");
+      setRedescuentoIphonePorcentaje("10");
       await cargarAliados();
     } catch {
       setMensaje("Error creando aliado");
@@ -272,12 +308,22 @@ export default function AliadosClient() {
     }
   };
 
-  const actualizarRedescuentoInput = (aliadoId: number, valor: string) => {
+  const actualizarRedescuentoInput = (
+    aliado: AliadoItem,
+    plataforma: RedescuentoPlataforma,
+    valor: string
+  ) => {
     const sanitized = valor.replace(/[^0-9,.]/g, "").replace(",", ".");
 
     setRedescuentoInputs((actual) => ({
       ...actual,
-      [aliadoId]: sanitized,
+      [aliado.id]: {
+        ...(actual[aliado.id] || {
+          android: String(redescuentoPorPlataforma(aliado, "android")),
+          iphone: String(redescuentoPorPlataforma(aliado, "iphone")),
+        }),
+        [plataforma]: sanitized,
+      },
     }));
   };
 
@@ -290,6 +336,11 @@ export default function AliadosClient() {
       setProcesandoId(aliado.id);
       setMensaje("");
 
+      const porcentajes = redescuentoInputs[aliado.id] || {
+        android: String(redescuentoPorPlataforma(aliado, "android")),
+        iphone: String(redescuentoPorPlataforma(aliado, "iphone")),
+      };
+
       const res = await fetch("/api/aliados/admin", {
         method: "PATCH",
         headers: {
@@ -297,22 +348,22 @@ export default function AliadosClient() {
         },
         body: JSON.stringify({
           aliadoId: aliado.id,
-          redescuentoPorcentaje:
-            redescuentoInputs[aliado.id] ?? aliado.redescuentoPorcentaje,
+          redescuentoAndroidPorcentaje: porcentajes.android,
+          redescuentoIphonePorcentaje: porcentajes.iphone,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        setMensaje(data.error || "No se pudo actualizar el redescuento");
+        setMensaje(data.error || "No se pudieron actualizar los redescuentos");
         return;
       }
 
-      setMensaje(data.mensaje || "Redescuento actualizado correctamente");
+      setMensaje(data.mensaje || "Redescuentos actualizados correctamente");
       await cargarAliados();
     } catch {
-      setMensaje("Error actualizando el redescuento");
+      setMensaje("Error actualizando los redescuentos");
     } finally {
       setProcesandoId(null);
     }
@@ -538,7 +589,7 @@ export default function AliadosClient() {
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_0.55fr_0.42fr_170px] lg:items-end">
+              <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(140px,0.55fr)_minmax(155px,0.45fr)_minmax(155px,0.45fr)_170px] xl:items-end">
                 <label className="flex flex-col gap-2 text-sm font-semibold text-[#344054]">
                   Nombre comercial
                   <Input
@@ -556,11 +607,24 @@ export default function AliadosClient() {
                   />
                 </label>
                 <label className="flex flex-col gap-2 text-sm font-semibold text-[#344054]">
-                  Redescuento %
+                  Android (%)
                   <Input
-                    value={redescuentoPorcentaje}
+                    value={redescuentoAndroidPorcentaje}
                     onChange={(event) =>
-                      setRedescuentoPorcentaje(
+                      setRedescuentoAndroidPorcentaje(
+                        event.target.value.replace(/[^0-9,.]/g, "").replace(",", ".")
+                      )
+                    }
+                    inputMode="decimal"
+                    placeholder="10"
+                  />
+                </label>
+                <label className="flex flex-col gap-2 text-sm font-semibold text-[#344054]">
+                  iPhone (%)
+                  <Input
+                    value={redescuentoIphonePorcentaje}
+                    onChange={(event) =>
+                      setRedescuentoIphonePorcentaje(
                         event.target.value.replace(/[^0-9,.]/g, "").replace(",", ".")
                       )
                     }
@@ -571,7 +635,7 @@ export default function AliadosClient() {
                 <Button
                   onClick={crearAliado}
                   disabled={guardando || !nombre.trim()}
-                  className="w-full"
+                  className="w-full md:col-span-2 xl:col-span-1"
                 >
                   <Plus className="h-4 w-4" strokeWidth={1.9} aria-hidden="true" />
                   {guardando ? "Guardando..." : "Crear aliado"}
@@ -603,7 +667,7 @@ export default function AliadosClient() {
 
                   return (
                     <details key={aliado.id} className="group">
-                      <summary className="relative grid min-h-24 cursor-pointer list-none gap-4 px-5 py-5 transition hover:bg-[#fbfcfc] sm:px-6 lg:grid-cols-[minmax(240px,1fr)_minmax(520px,1.4fr)_32px] lg:items-center [&::-webkit-details-marker]:hidden">
+                      <summary className="relative grid min-h-24 cursor-pointer list-none gap-4 px-5 py-5 transition hover:bg-[#fbfcfc] sm:px-6 lg:grid-cols-[minmax(220px,1fr)_minmax(560px,1.5fr)_32px] lg:items-center [&::-webkit-details-marker]:hidden">
                         <div className="flex min-w-0 items-center gap-3 pr-10 lg:pr-0">
                           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[#d9e8ad] bg-[#fbfdf5] text-[#5c7a13]">
                             <Handshake className="h-5 w-5" strokeWidth={1.8} aria-hidden="true" />
@@ -623,7 +687,7 @@ export default function AliadosClient() {
                           </span>
                         </div>
 
-                        <span className="grid grid-cols-2 gap-x-5 gap-y-3 sm:grid-cols-4">
+                        <span className="grid grid-cols-2 gap-x-5 gap-y-3 sm:grid-cols-5">
                           <span>
                             <span className="block text-[11px] font-semibold text-[#667085]">Sedes</span>
                             <span className="mt-1 block text-base font-black text-[#151a21]">
@@ -643,9 +707,19 @@ export default function AliadosClient() {
                             </span>
                           </span>
                           <span>
-                            <span className="block text-[11px] font-semibold text-[#667085]">Redescuento</span>
+                            <span className="block text-[11px] font-semibold text-[#667085]">
+                              Redesc. Android
+                            </span>
                             <span className="mt-1 block text-base font-black text-[#151a21]">
-                              {formatPercent(aliado.redescuentoPorcentaje)}%
+                              {formatPercent(redescuentoPorPlataforma(aliado, "android"))}%
+                            </span>
+                          </span>
+                          <span>
+                            <span className="block text-[11px] font-semibold text-[#667085]">
+                              Redesc. iPhone
+                            </span>
+                            <span className="mt-1 block text-base font-black text-[#151a21]">
+                              {formatPercent(redescuentoPorPlataforma(aliado, "iphone"))}%
                             </span>
                           </span>
                         </span>
@@ -666,22 +740,44 @@ export default function AliadosClient() {
                               <div className="flex items-center gap-2">
                                 <Percent className="h-4 w-4 text-[#5c7a13]" strokeWidth={1.8} />
                                 <h3 className="text-sm font-black text-[#151a21]">
-                                  Redescuento de respaldo
+                                  Redescuento por plataforma
                                 </h3>
                               </div>
                               <p className="mt-2 text-xs leading-5 text-[#667085]">
-                                Porcentaje vigente para la operacion de este aliado.
+                                Porcentajes vigentes para Android y iPhone.
                               </p>
-                              <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] xl:grid-cols-1 2xl:grid-cols-[1fr_auto]">
+                              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
                                 <label className="flex flex-col gap-2 text-sm font-semibold text-[#344054]">
-                                  Porcentaje
+                                  Android (%)
                                   <Input
                                     value={
-                                      redescuentoInputs[aliado.id] ??
-                                      String(Number(aliado.redescuentoPorcentaje || 0))
+                                      redescuentoInputs[aliado.id]?.android ??
+                                      String(redescuentoPorPlataforma(aliado, "android"))
                                     }
                                     onChange={(event) =>
-                                      actualizarRedescuentoInput(aliado.id, event.target.value)
+                                      actualizarRedescuentoInput(
+                                        aliado,
+                                        "android",
+                                        event.target.value
+                                      )
+                                    }
+                                    inputMode="decimal"
+                                    placeholder="0"
+                                  />
+                                </label>
+                                <label className="flex flex-col gap-2 text-sm font-semibold text-[#344054]">
+                                  iPhone (%)
+                                  <Input
+                                    value={
+                                      redescuentoInputs[aliado.id]?.iphone ??
+                                      String(redescuentoPorPlataforma(aliado, "iphone"))
+                                    }
+                                    onChange={(event) =>
+                                      actualizarRedescuentoInput(
+                                        aliado,
+                                        "iphone",
+                                        event.target.value
+                                      )
                                     }
                                     inputMode="decimal"
                                     placeholder="0"
@@ -691,7 +787,7 @@ export default function AliadosClient() {
                                   variant="secondary"
                                   onClick={() => guardarRedescuento(aliado)}
                                   disabled={procesandoId === aliado.id}
-                                  className="self-end"
+                                  className="self-end sm:col-span-2 xl:col-span-1 2xl:col-span-2"
                                 >
                                   <Save className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
                                   {procesandoId === aliado.id ? "Guardando..." : "Guardar"}

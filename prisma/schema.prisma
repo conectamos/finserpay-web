@@ -22,6 +22,8 @@ model Aliado {
   codigo                          String?                            @unique
   activo                          Boolean                            @default(true)
   redescuentoPorcentaje           Float                              @default(10)
+  redescuentoAndroidPorcentaje    Float                              @default(10)
+  redescuentoIphonePorcentaje     Float                              @default(10)
   dataCreditoPolicyId             String                             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   dataCreditoPolicy               DataCreditoPolicyProfile           @relation(fields: [dataCreditoPolicyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   dataCreditoPolicyAssignmentLogs DataCreditoPolicyAssignmentAudit[]

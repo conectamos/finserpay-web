@@ -5,9 +5,42 @@ CREATE TABLE IF NOT EXISTS "Aliado" (
   "nombre" TEXT NOT NULL,
   "codigo" TEXT,
   "activo" BOOLEAN NOT NULL DEFAULT true,
+  "redescuentoPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT 10,
+  "redescuentoAndroidPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT 10,
+  "redescuentoIphonePorcentaje" DOUBLE PRECISION NOT NULL DEFAULT 10,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE "Aliado"
+  ADD COLUMN IF NOT EXISTS "redescuentoPorcentaje"
+    DOUBLE PRECISION NOT NULL DEFAULT 10,
+  ADD COLUMN IF NOT EXISTS "redescuentoAndroidPorcentaje"
+    DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS "redescuentoIphonePorcentaje"
+    DOUBLE PRECISION;
+
+UPDATE "Aliado"
+SET
+  "redescuentoAndroidPorcentaje" = COALESCE(
+    "redescuentoAndroidPorcentaje",
+    "redescuentoPorcentaje",
+    10
+  ),
+  "redescuentoIphonePorcentaje" = COALESCE(
+    "redescuentoIphonePorcentaje",
+    "redescuentoPorcentaje",
+    10
+  )
+WHERE
+  "redescuentoAndroidPorcentaje" IS NULL
+  OR "redescuentoIphonePorcentaje" IS NULL;
+
+ALTER TABLE "Aliado"
+  ALTER COLUMN "redescuentoAndroidPorcentaje" SET DEFAULT 10,
+  ALTER COLUMN "redescuentoAndroidPorcentaje" SET NOT NULL,
+  ALTER COLUMN "redescuentoIphonePorcentaje" SET DEFAULT 10,
+  ALTER COLUMN "redescuentoIphonePorcentaje" SET NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS "Aliado_nombre_key"
   ON "Aliado" ("nombre");

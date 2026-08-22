@@ -2286,7 +2286,7 @@ export default function CreditFactoryConsole({
     !paymentsView && !lookupMode && !simulatorMode;
   const clientLookupMode = lookupView && canViewSavedCredits;
   const embeddedClientLookup = clientLookupMode && embeddedLookup;
-  const canAdminMoveFreelyInFactory = canAdmin && !paymentsView && !lookupMode;
+  const canAdminMoveFreelyInFactory = canSeeInternalPricing && createClientMode;
   const adminFactoryAssistAvailable = canAdmin && createClientMode;
   const pathname = usePathname();
   const normalizedInitialSearch = initialSearch.trim();
@@ -2583,6 +2583,9 @@ export default function CreditFactoryConsole({
     Boolean(dataCreditoApproval);
   const dataCreditoGatePending =
     dataCreditoCreditCreationMode && !dataCreditoFlowReady;
+  const showDataCreditoGate =
+    dataCreditoGatePending &&
+    (!canAdminMoveFreelyInFactory || wizardStep === 1);
   const dataCreditoDraftLoading =
     dataCreditoGatePending && Boolean(initialDraftId) && draftStatus === "loading";
 
@@ -6402,6 +6405,11 @@ export default function CreditFactoryConsole({
     [...visibleFactorySteps].reverse().find((step) => step.id < currentStep)?.id || 1;
 
   const goToStep = (targetStep: number) => {
+    if (canAdminMoveFreelyInFactory) {
+      setWizardStep(clampWizardStep(targetStep));
+      return;
+    }
+
     if (targetStep > 1 && dataCreditoRequiresVeriff && !veriffApproved) {
       setNotice({
         text: veriffUnavailableForDataCredito
@@ -6424,7 +6432,7 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    if (FLEXIBLE_WIZARD_FOR_TESTING || canAdminMoveFreelyInFactory) {
+    if (FLEXIBLE_WIZARD_FOR_TESTING) {
       setWizardStep(clampWizardStep(targetStep));
       return;
     }
@@ -6503,6 +6511,11 @@ export default function CreditFactoryConsole({
   };
 
   const advanceToStep = async (targetStep: number) => {
+    if (canAdminMoveFreelyInFactory) {
+      setWizardStep(clampWizardStep(targetStep));
+      return;
+    }
+
     if (targetStep > 1 && dataCreditoRequiresVeriff && !veriffApproved) {
       setNotice({
         text: veriffUnavailableForDataCredito
@@ -6525,7 +6538,7 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    if (FLEXIBLE_WIZARD_FOR_TESTING || canAdminMoveFreelyInFactory) {
+    if (FLEXIBLE_WIZARD_FOR_TESTING) {
       setWizardStep(clampWizardStep(targetStep));
       return;
     }
@@ -6958,7 +6971,11 @@ export default function CreditFactoryConsole({
     setSelectedId(item.id);
   };
 
-  const saveCurrentDraft = async (currentStepOverride = wizardStep) => {
+  const saveCurrentDraft = async (
+    currentStepOverride = canAdminMoveFreelyInFactory
+      ? nextFactoryStep.id
+      : wizardStep
+  ) => {
     const result = await requestJson<CreditDraftSingleResponse>(
       "/api/creditos/borradores",
       {
@@ -8400,6 +8417,9 @@ export default function CreditFactoryConsole({
         try {
           setDraftStatus("saving");
           setDraftErrorMessage("");
+          const persistedWizardStep = canAdminMoveFreelyInFactory
+            ? nextFactoryStep.id
+            : wizardStep;
           const result = await requestJson<CreditDraftSingleResponse>(
             "/api/creditos/borradores",
             {
@@ -8410,8 +8430,11 @@ export default function CreditFactoryConsole({
               signal: requestController?.signal,
               body: JSON.stringify({
                 id: draftId,
-                currentStep: wizardStep,
-                payload: factoryDraftPayload,
+                currentStep: persistedWizardStep,
+                payload: {
+                  ...factoryDraftPayload,
+                  wizardStep: persistedWizardStep,
+                },
               }),
             }
           );
@@ -8480,11 +8503,13 @@ export default function CreditFactoryConsole({
     };
   }, [
     cancelPendingDraftAutosave,
+    canAdminMoveFreelyInFactory,
     createClientMode,
     deliveryMode,
     draftHasMeaningfulData,
     draftId,
     factoryDraftPayload,
+    nextFactoryStep.id,
     simulatorMode,
     wizardStep,
   ]);
@@ -8991,6 +9016,19 @@ export default function CreditFactoryConsole({
                   <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                     {initialSession.sedeNombre}
                   </span>
+                  {simulatorMode ? (
+                    <>
+                      <span className="rounded-full border border-[#c9df91] bg-[#f4f9e8] px-3 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#527405]">
+                        {iphoneFactory ? "iPhone" : "Android"}
+                      </span>
+                      <Link
+                        href="/dashboard/creditos?mode=simulator"
+                        className="inline-flex justify-center rounded-[16px] border border-[#c9df91] bg-white px-4 py-2.5 text-sm font-semibold text-[#527405] transition hover:bg-[#f4f9e8]"
+                      >
+                        Cambiar plataforma
+                      </Link>
+                    </>
+                  ) : null}
                   <Link
                     href="/dashboard"
                     className="inline-flex justify-center rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
@@ -9706,8 +9744,8 @@ export default function CreditFactoryConsole({
                 createClientMode && wizardStep === 1 ? "fp-identity-workspace" : "",
               ].join(" ")}
             >
-              {dataCreditoGatePending ? (
-                <div className="mx-auto w-full max-w-4xl py-2">
+              {showDataCreditoGate ? (
+                <div className="mx-auto w-full max-w-6xl py-2">
                   {dataCreditoDraftLoading ? (
                     <div
                       className="rounded-[var(--fp-radius-lg)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-6"
@@ -12985,7 +13023,7 @@ export default function CreditFactoryConsole({
               )}
             </div>
 
-            {!simulatorMode && !dataCreditoGatePending && (
+            {!simulatorMode && !showDataCreditoGate && (
               <div
                 className={[
                   "fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-[24px] border border-[#d8e6e5] bg-white/92 px-4 py-4 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur",

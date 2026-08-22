@@ -71,7 +71,7 @@ export default async function CreditosPage(props: {
       ? "create-client"
       : requestedEntryMode;
   const shouldChooseDevicePlatform =
-    entryMode === "create-client" &&
+    (entryMode === "create-client" || entryMode === "simulator") &&
     !devicePlatform &&
     !(Number.isInteger(initialDraftId) && initialDraftId > 0);
 
@@ -104,7 +104,7 @@ export default async function CreditosPage(props: {
   if (shouldChooseDevicePlatform) {
     const buildPlatformHref = (platform: DevicePlatform) => {
       const params = new URLSearchParams();
-      params.set("mode", "create-client");
+      params.set("mode", entryMode);
       params.set("platform", platform);
 
       if (initialSearch) {
@@ -124,6 +124,7 @@ export default async function CreditosPage(props: {
         adminCentral={admin && isFinserPayCentralAlly(session.aliadoAccesoCodigo)}
         androidHref={buildPlatformHref("android")}
         iphoneHref={buildPlatformHref("iphone")}
+        mode={entryMode === "simulator" ? "simulator" : "sale"}
         nombreUsuario={session.nombre}
         rolUsuario={session.rolNombre}
         sedeNombre={sellerSession?.sedeNombre || session.sedeNombre}
@@ -133,7 +134,7 @@ export default async function CreditosPage(props: {
 
   return (
     <CreditFactoryConsole
-      key={`${entryMode}:${Number.isInteger(initialDraftId) && initialDraftId > 0 ? initialDraftId : "nuevo"}`}
+      key={`${entryMode}:${devicePlatform || "sin-plataforma"}:${Number.isInteger(initialDraftId) && initialDraftId > 0 ? initialDraftId : "nuevo"}`}
       initialSession={session}
       initialSeller={sellerSession}
       initialSearch={initialSearch}

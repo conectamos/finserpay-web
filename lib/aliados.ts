@@ -27,6 +27,8 @@ async function runAliadoSchemaSetup(prisma: AliadoSchemaClient) {
       "codigo" TEXT,
       "activo" BOOLEAN NOT NULL DEFAULT true,
       "redescuentoPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_REDESCUENTO_PERCENTAGE},
+      "redescuentoAndroidPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_REDESCUENTO_PERCENTAGE},
+      "redescuentoIphonePorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_REDESCUENTO_PERCENTAGE},
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -35,6 +37,40 @@ async function runAliadoSchemaSetup(prisma: AliadoSchemaClient) {
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "Aliado"
       ADD COLUMN IF NOT EXISTS "redescuentoPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_REDESCUENTO_PERCENTAGE}
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "Aliado"
+      ADD COLUMN IF NOT EXISTS "redescuentoAndroidPorcentaje" DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS "redescuentoIphonePorcentaje" DOUBLE PRECISION
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    UPDATE "Aliado"
+    SET
+      "redescuentoAndroidPorcentaje" = COALESCE(
+        "redescuentoAndroidPorcentaje",
+        "redescuentoPorcentaje",
+        ${DEFAULT_REDESCUENTO_PERCENTAGE}
+      ),
+      "redescuentoIphonePorcentaje" = COALESCE(
+        "redescuentoIphonePorcentaje",
+        "redescuentoPorcentaje",
+        ${DEFAULT_REDESCUENTO_PERCENTAGE}
+      )
+    WHERE
+      "redescuentoAndroidPorcentaje" IS NULL
+      OR "redescuentoIphonePorcentaje" IS NULL
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "Aliado"
+      ALTER COLUMN "redescuentoAndroidPorcentaje"
+        SET DEFAULT ${DEFAULT_REDESCUENTO_PERCENTAGE},
+      ALTER COLUMN "redescuentoAndroidPorcentaje" SET NOT NULL,
+      ALTER COLUMN "redescuentoIphonePorcentaje"
+        SET DEFAULT ${DEFAULT_REDESCUENTO_PERCENTAGE},
+      ALTER COLUMN "redescuentoIphonePorcentaje" SET NOT NULL
   `);
 
   await prisma.$executeRawUnsafe(`
@@ -256,6 +292,27 @@ export function normalizeRedescuentoPercentage(value: unknown) {
   }
 
   return Math.max(0, Math.min(100, Math.round(parsed * 100) / 100));
+}
+
+export function resolveRedescuentoPercentageByPlatform(
+  settings: {
+    redescuentoAndroidPorcentaje?: unknown;
+    redescuentoIphonePorcentaje?: unknown;
+    redescuentoPorcentaje?: unknown;
+  },
+  platform: unknown
+) {
+  const normalizedPlatform = String(platform || "").trim().toUpperCase();
+  const platformValue =
+    normalizedPlatform === "IPHONE"
+      ? settings.redescuentoIphonePorcentaje
+      : normalizedPlatform === "ANDROID"
+        ? settings.redescuentoAndroidPorcentaje
+        : settings.redescuentoPorcentaje;
+
+  return normalizeRedescuentoPercentage(
+    platformValue ?? settings.redescuentoPorcentaje
+  );
 }
 
 export function normalizeAllyName(value: unknown) {

@@ -18,9 +18,10 @@ import prisma from "@/lib/prisma";
 import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import {
   ALIADO_FINSER_PAY,
-  DEFAULT_REDESCUENTO_PERCENTAGE,
   ensureAliadoSchema,
+  resolveRedescuentoPercentageByPlatform,
 } from "@/lib/aliados";
+import { isIphoneEquipmentCatalogBrand } from "@/lib/credit-factory";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import AdminSidebar from "../_components/admin-sidebar";
 import PushMassivePanel from "./push-massive-panel";
@@ -146,6 +147,39 @@ function firstFamilyReferencePhone(snapshot: unknown) {
   return typeof record.telefono === "string" ? record.telefono : "";
 }
 
+function creditPlatform(
+  snapshot: unknown,
+  equipmentBrand: string | null | undefined
+) {
+  const root =
+    typeof snapshot === "object" && snapshot !== null
+      ? (snapshot as Record<string, unknown>)
+      : null;
+  const equipment =
+    typeof root?.equipo === "object" && root.equipo !== null
+      ? (root.equipo as Record<string, unknown>)
+      : null;
+  const snapshotPlatform = String(equipment?.plataforma || "")
+    .trim()
+    .toUpperCase();
+
+  if (snapshotPlatform === "IPHONE") {
+    return "IPHONE" as const;
+  }
+
+  if (snapshotPlatform === "ANDROID") {
+    return "ANDROID" as const;
+  }
+
+  if (isIphoneEquipmentCatalogBrand(equipmentBrand)) {
+    return "IPHONE" as const;
+  }
+
+  return String(equipmentBrand || "").trim()
+    ? ("ANDROID" as const)
+    : null;
+}
+
 export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   const { session } = await requireCentralAdminDashboardAccess();
   await ensureAliadoSchema(prisma);
@@ -165,6 +199,8 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
       nombre: true,
       codigo: true,
       redescuentoPorcentaje: true,
+      redescuentoAndroidPorcentaje: true,
+      redescuentoIphonePorcentaje: true,
     },
     orderBy: {
       nombre: "asc",
@@ -220,6 +256,8 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                 nombre: true,
                 codigo: true,
                 redescuentoPorcentaje: true,
+                redescuentoAndroidPorcentaje: true,
+                redescuentoIphonePorcentaje: true,
               },
             },
           },
@@ -271,6 +309,10 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
       const creditoAutorizado =
         Number(credito.saldoBaseFinanciado || 0) ||
         Math.max(0, Number(credito.valorEquipoTotal || 0) - Number(credito.cuotaInicial || 0));
+      const plataforma = creditPlatform(
+        credito.contratoSnapshot,
+        credito.equipoMarca
+      );
 
       return {
         id: credito.id,
@@ -286,9 +328,10 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
           "Equipo",
         sede: credito.sede.nombre,
         aliado: credito.sede.aliado?.nombre || "Sin aliado",
-        redescuentoPorcentaje: Number(
-          credito.sede.aliado?.redescuentoPorcentaje ??
-            DEFAULT_REDESCUENTO_PERCENTAGE
+        plataforma,
+        redescuentoPorcentaje: resolveRedescuentoPercentageByPlatform(
+          credito.sede.aliado || {},
+          plataforma
         ),
         vendedor: credito.vendedor?.nombre || "Sin vendedor",
         cuotaInicial: Number(credito.cuotaInicial || 0),
@@ -324,8 +367,10 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
     0
   );
   const respaldoDetail = selectedAliado
-    ? `${percent(selectedAliado.redescuentoPorcentaje)} de inversion`
-    : "Segun porcentaje por aliado";
+    ? `Android ${percent(
+        selectedAliado.redescuentoAndroidPorcentaje
+      )} · iPhone ${percent(selectedAliado.redescuentoIphonePorcentaje)}`
+    : "Segun plataforma y porcentaje por aliado";
   const gananciaProyectadaActiva = activeCredits.reduce(
     (sum, item) => sum + item.gananciaProyectada,
     0

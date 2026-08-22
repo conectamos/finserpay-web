@@ -19,6 +19,7 @@ type CreditPlatformSelectorProps = {
   adminCentral: boolean;
   androidHref: string;
   iphoneHref: string;
+  mode?: "sale" | "simulator";
   nombreUsuario: string;
   rolUsuario: string;
   sedeNombre: string;
@@ -26,6 +27,7 @@ type CreditPlatformSelectorProps = {
 
 type PlatformCardProps = {
   accent: "android" | "iphone";
+  actionLabel: string;
   badge: string;
   description: string;
   href: string;
@@ -33,10 +35,12 @@ type PlatformCardProps = {
   imageSrc: string;
   platform: string;
   secondary: string;
+  summary: string;
 };
 
 function PlatformCard({
   accent,
+  actionLabel,
   badge,
   description,
   href,
@@ -44,6 +48,7 @@ function PlatformCard({
   imageSrc,
   platform,
   secondary,
+  summary,
 }: PlatformCardProps) {
   const android = accent === "android";
 
@@ -83,9 +88,7 @@ function PlatformCard({
 
         <h2 className="mt-7 text-4xl font-black text-[#15191d]">{platform}</h2>
         <p className="mt-3 max-w-[260px] text-base leading-6 text-[#68717a]">
-          {android
-            ? "Enrolamiento automatico con Trustonic y Zero Touch."
-            : "Validacion guiada y enrolamiento verificado."}
+          {summary}
         </p>
 
         <div className="mt-7 max-w-[250px] space-y-4 border-t border-[#dfe3e5] pt-6 text-sm leading-5 text-[#3f474e]">
@@ -121,7 +124,7 @@ function PlatformCard({
             : "border-[#2b3238] bg-white text-[#171d22] group-hover:border-[#87b90c]",
         ].join(" ")}
       >
-        Iniciar venta {platform}
+        {actionLabel}
         <ArrowRight className="h-5 w-5 transition group-hover:translate-x-1" strokeWidth={2} />
       </span>
     </Link>
@@ -138,9 +141,11 @@ export default function CreditPlatformSelector({
   adminCentral,
   androidHref,
   iphoneHref,
+  mode = "sale",
   nombreUsuario,
   rolUsuario,
 }: CreditPlatformSelectorProps) {
+  const simulatorMode = mode === "simulator";
   const content = (
     <main className="min-w-0 bg-[#f4f5f3] text-[#15191d]">
       <header className="border-b border-[#dfe2e4] bg-white">
@@ -148,9 +153,13 @@ export default function CreditPlatformSelector({
           <div className="flex min-w-0 items-center gap-5">
             {!admin ? <FinserBrand compact showTagline={false} /> : null}
             <div className="flex items-center gap-2 text-sm">
-              <span className="hidden text-[#4f5962] sm:inline">Ventas</span>
+              <span className="hidden text-[#4f5962] sm:inline">
+                {simulatorMode ? "Herramientas" : "Ventas"}
+              </span>
               <ChevronRight className="hidden h-4 w-4 text-[#a6adb2] sm:block" strokeWidth={1.8} />
-              <span className="font-semibold text-[#6f9806]">Nueva venta</span>
+              <span className="font-semibold text-[#6f9806]">
+                {simulatorMode ? "Simulador" : "Nueva venta"}
+              </span>
             </div>
           </div>
 
@@ -173,12 +182,18 @@ export default function CreditPlatformSelector({
       <div className="mx-auto max-w-[1540px] px-4 py-8 sm:px-6 lg:px-10 lg:py-10 xl:px-12 xl:py-11">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-xs font-extrabold uppercase text-[#719a08]">Nueva venta</p>
+            <p className="text-xs font-extrabold uppercase text-[#719a08]">
+              {simulatorMode ? "Simulador de cuotas" : "Nueva venta"}
+            </p>
             <h1 className="mt-3 text-3xl font-black text-[#15191d] sm:text-4xl xl:text-[40px]">
-              ¿Qué tipo de equipo vas a financiar?
+              {simulatorMode
+                ? "¿Qué plataforma quieres simular?"
+                : "¿Qué tipo de equipo vas a financiar?"}
             </h1>
             <p className="mt-3 text-base text-[#66707a]">
-              Selecciona una plataforma para iniciar el flujo correspondiente.
+              {simulatorMode
+                ? "Android e iPhone usan políticas, topes, iniciales y plazos independientes."
+                : "Selecciona una plataforma para iniciar el flujo correspondiente."}
             </p>
           </div>
 
@@ -194,55 +209,97 @@ export default function CreditPlatformSelector({
         <section className="mt-9 grid gap-6 lg:grid-cols-2">
           <PlatformCard
             accent="android"
-            badge="Fabrica actual"
-            description="Trustonic / Zero Touch"
+            actionLabel={simulatorMode ? "Simular Android" : "Iniciar venta Android"}
+            badge={simulatorMode ? "Simulador Android" : "Fabrica actual"}
+            description={
+              simulatorMode
+                ? "Política y catálogo exclusivos de Android"
+                : "Trustonic / Zero Touch"
+            }
             href={androidHref}
             imageAlt="Telefono Android con enrolamiento seguro"
             imageSrc="/assets/creditos/android-choice-light.png"
             platform="Android"
-            secondary="Enrolamiento automatico del dispositivo"
+            secondary={
+              simulatorMode
+                ? "Inicial, plazo, fianza y seguro Android"
+                : "Enrolamiento automatico del dispositivo"
+            }
+            summary={
+              simulatorMode
+                ? "Calcula la cuota con las reglas definidas para equipos Android."
+                : "Enrolamiento automatico con Trustonic y Zero Touch."
+            }
           />
           <PlatformCard
             accent="iphone"
-            badge="Nueva fabrica"
-            description="Verificacion manual de enrolamiento"
+            actionLabel={simulatorMode ? "Simular iPhone" : "Iniciar venta iPhone"}
+            badge={simulatorMode ? "Simulador iPhone" : "Nueva fabrica"}
+            description={
+              simulatorMode
+                ? "Política y catálogo exclusivos de iPhone"
+                : "Verificacion manual de enrolamiento"
+            }
             href={iphoneHref}
             imageAlt="iPhone con validacion segura"
             imageSrc="/assets/creditos/iphone-choice-light.png"
             platform="iPhone"
-            secondary="Validacion guiada antes de continuar"
+            secondary={
+              simulatorMode
+                ? "Inicial, plazo, topes y cuota iPhone"
+                : "Validacion guiada antes de continuar"
+            }
+            summary={
+              simulatorMode
+                ? "Calcula la cuota con los topes y condiciones propios de iPhone."
+                : "Validacion guiada y enrolamiento verificado."
+            }
           />
         </section>
 
         <section className="mt-7 grid rounded-lg border border-[#d8dcdf] bg-white px-2 py-3 shadow-[0_5px_16px_rgba(17,24,39,0.04)] sm:grid-cols-[1.15fr_1fr_1fr_1fr]">
           <div className="flex min-h-20 items-center px-5 py-3 text-base font-extrabold text-[#20252a] sm:border-r sm:border-[#e1e4e6] xl:px-7">
-            Todos los procesos incluyen
+            {simulatorMode ? "Cada simulacion usa" : "Todos los procesos incluyen"}
           </div>
           <div className="flex min-h-20 items-center gap-4 border-t border-[#e1e4e6] px-5 py-3 sm:border-r sm:border-t-0 xl:px-7">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#eef5dc] text-[#739b0a]"><UserCheck className="h-6 w-6" strokeWidth={1.7} /></span>
             <div>
-              <p className="text-sm font-bold text-[#20252a]">Validacion de identidad</p>
-              <p className="mt-1 text-xs text-[#747d85]">Proceso seguro y verificable</p>
+              <p className="text-sm font-bold text-[#20252a]">
+                {simulatorMode ? "Politica DataCredito" : "Validacion de identidad"}
+              </p>
+              <p className="mt-1 text-xs text-[#747d85]">
+                {simulatorMode ? "Reglas de la plataforma elegida" : "Proceso seguro y verificable"}
+              </p>
             </div>
           </div>
           <div className="flex min-h-20 items-center gap-4 border-t border-[#e1e4e6] px-5 py-3 sm:border-r sm:border-t-0 xl:px-7">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#eef5dc] text-[#739b0a]"><FileSignature className="h-6 w-6" strokeWidth={1.7} /></span>
             <div>
-              <p className="text-sm font-bold text-[#20252a]">Firma digital</p>
-              <p className="mt-1 text-xs text-[#747d85]">Documentos con validez legal</p>
+              <p className="text-sm font-bold text-[#20252a]">
+                {simulatorMode ? "Parametros financieros" : "Firma digital"}
+              </p>
+              <p className="mt-1 text-xs text-[#747d85]">
+                {simulatorMode ? "Interes, fianza, seguro e inicial" : "Documentos con validez legal"}
+              </p>
             </div>
           </div>
           <div className="flex min-h-20 items-center gap-4 border-t border-[#e1e4e6] px-5 py-3 sm:border-t-0 xl:px-7">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#eef5dc] text-[#739b0a]"><ShieldCheck className="h-6 w-6" strokeWidth={1.7} /></span>
             <div>
-              <p className="text-sm font-bold text-[#20252a]">Entrega controlada</p>
-              <p className="mt-1 text-xs text-[#747d85]">Validacion antes del desembolso</p>
+              <p className="text-sm font-bold text-[#20252a]">
+                {simulatorMode ? "Cuota y amortizacion" : "Entrega controlada"}
+              </p>
+              <p className="mt-1 text-xs text-[#747d85]">
+                {simulatorMode ? "Desglose exacto sin crear un credito" : "Validacion antes del desembolso"}
+              </p>
             </div>
           </div>
         </section>
 
         <p className="mt-7 text-center text-xs text-[#98a0a6]">
-          El flujo puede variar segun la plataforma seleccionada.
+          {simulatorMode
+            ? "La consulta no crea un cliente ni guarda un credito."
+            : "El flujo puede variar segun la plataforma seleccionada."}
         </p>
       </div>
     </main>
@@ -255,7 +312,11 @@ export default function CreditPlatformSelector({
   return (
     <div className="min-h-screen bg-[#f4f5f3] lg:grid lg:grid-cols-[270px_minmax(0,1fr)]">
       <AdminSidebar
-        activeHref="/dashboard/creditos"
+        activeHref={
+          simulatorMode
+            ? "/dashboard/creditos?mode=simulator"
+            : "/dashboard/creditos"
+        }
         adminCentral={adminCentral}
         nombreUsuario={nombreUsuario}
         rolUsuario={rolUsuario}

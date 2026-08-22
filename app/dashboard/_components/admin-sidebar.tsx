@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import Link from "next/link";
 import {
   BarChart3,
+  Calculator,
   ChevronDown,
   CircleDollarSign,
   Equal,
@@ -117,6 +118,15 @@ export default function AdminSidebar({
       label: "Operacion",
       items: [
         { href: "/dashboard/creditos", icon: FileText, label: "Creditos" },
+        ...(adminCentral
+          ? [
+              {
+                href: "/dashboard/creditos?mode=simulator",
+                icon: Calculator,
+                label: "Simulador",
+              },
+            ]
+          : []),
         ...(adminCentral
           ? [
               {

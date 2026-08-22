@@ -72,6 +72,8 @@ async function loadAliadosPayload(aliadoScopeId: number | null) {
       codigo: true,
       activo: true,
       redescuentoPorcentaje: true,
+      redescuentoAndroidPorcentaje: true,
+      redescuentoIphonePorcentaje: true,
       createdAt: true,
       updatedAt: true,
       sedes: {
@@ -132,6 +134,10 @@ async function loadAliadosPayload(aliadoScopeId: number | null) {
         codigo: aliado.codigo,
         activo: aliado.activo,
         redescuentoPorcentaje: aliado.redescuentoPorcentaje,
+        redescuentoAndroidPorcentaje:
+          aliado.redescuentoAndroidPorcentaje,
+        redescuentoIphonePorcentaje:
+          aliado.redescuentoIphonePorcentaje,
         sedes: aliado.sedes,
         totalSedes: aliado.sedes.length,
         totalCreditos: creditos,
@@ -200,8 +206,14 @@ export async function POST(req: Request) {
     const body = (await req.json()) as Record<string, unknown>;
     const nombre = normalizeAllyName(body.nombre);
     const codigo = normalizeAllyCode(body.codigo || nombre);
-    const redescuentoPorcentaje = normalizeRedescuentoPercentage(
+    const redescuentoPorcentajeAnterior = normalizeRedescuentoPercentage(
       body.redescuentoPorcentaje
+    );
+    const redescuentoAndroidPorcentaje = normalizeRedescuentoPercentage(
+      body.redescuentoAndroidPorcentaje ?? redescuentoPorcentajeAnterior
+    );
+    const redescuentoIphonePorcentaje = normalizeRedescuentoPercentage(
+      body.redescuentoIphonePorcentaje ?? redescuentoPorcentajeAnterior
     );
 
     if (!nombre) {
@@ -215,7 +227,9 @@ export async function POST(req: Request) {
       data: {
         nombre,
         codigo,
-        redescuentoPorcentaje,
+        redescuentoPorcentaje: redescuentoAndroidPorcentaje,
+        redescuentoAndroidPorcentaje,
+        redescuentoIphonePorcentaje,
         activo: true,
       },
     });
@@ -262,6 +276,8 @@ export async function PATCH(req: Request) {
       codigo?: string | null;
       activo?: boolean;
       redescuentoPorcentaje?: number;
+      redescuentoAndroidPorcentaje?: number;
+      redescuentoIphonePorcentaje?: number;
     } = {};
 
     if ("nombre" in body) {
@@ -285,7 +301,12 @@ export async function PATCH(req: Request) {
       data.activo = Boolean(body.activo);
     }
 
-    if ("redescuentoPorcentaje" in body) {
+    const actualizaRedescuento =
+      "redescuentoPorcentaje" in body ||
+      "redescuentoAndroidPorcentaje" in body ||
+      "redescuentoIphonePorcentaje" in body;
+
+    if (actualizaRedescuento) {
       if (aliadoScopeId) {
         return NextResponse.json(
           { error: "Solo FINSER PAY central puede editar el redescuento" },
@@ -293,9 +314,34 @@ export async function PATCH(req: Request) {
         );
       }
 
-      data.redescuentoPorcentaje = normalizeRedescuentoPercentage(
-        body.redescuentoPorcentaje
-      );
+      const redescuentoAnterior =
+        "redescuentoPorcentaje" in body
+          ? normalizeRedescuentoPercentage(body.redescuentoPorcentaje)
+          : undefined;
+
+      if (
+        "redescuentoAndroidPorcentaje" in body ||
+        redescuentoAnterior !== undefined
+      ) {
+        data.redescuentoAndroidPorcentaje =
+          normalizeRedescuentoPercentage(
+            body.redescuentoAndroidPorcentaje ?? redescuentoAnterior
+          );
+      }
+
+      if (
+        "redescuentoIphonePorcentaje" in body ||
+        redescuentoAnterior !== undefined
+      ) {
+        data.redescuentoIphonePorcentaje =
+          normalizeRedescuentoPercentage(
+            body.redescuentoIphonePorcentaje ?? redescuentoAnterior
+          );
+      }
+
+      if (redescuentoAnterior !== undefined) {
+        data.redescuentoPorcentaje = redescuentoAnterior;
+      }
     }
 
     if (Object.keys(data).length > 0) {

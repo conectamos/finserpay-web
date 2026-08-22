@@ -17,9 +17,12 @@ import {
   ArrowLeft,
   CheckCircle2,
   CircleAlert,
+  FileCheck2,
+  IdCard,
   RotateCw,
   ShieldCheck,
   Smartphone,
+  UserRound,
 } from "lucide-react";
 import {
   Badge,
@@ -1096,75 +1099,104 @@ export default function DatacreditoPrequalificationGate({
   }
 
   const isSubmitting = view === "submitting";
+  const platformArtwork =
+    platform === "ANDROID"
+      ? "/assets/creditos/platform-android.png"
+      : "/assets/creditos/platform-iphone.png";
 
   return (
-    <Card className="overflow-hidden" aria-busy={isSubmitting}>
-      <div className="border-b border-[var(--fp-border)] bg-[var(--fp-bg)] px-5 py-5 sm:px-8 sm:py-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex items-start gap-4">
+    <Card
+      className="overflow-hidden shadow-[var(--fp-shadow-md)]"
+      aria-busy={isSubmitting}
+    >
+      <div className="relative isolate overflow-hidden border-b border-[var(--fp-border)] bg-[var(--fp-surface)] px-5 py-7 sm:px-8 sm:py-8 md:min-h-[224px] md:pr-[38%]">
+        <div
+          className="pointer-events-none absolute inset-y-0 right-0 z-0 hidden w-[47%] bg-[radial-gradient(circle_at_70%_52%,var(--fp-lime-soft)_0%,rgba(242,249,223,0.78)_34%,rgba(255,255,255,0)_72%)] md:block"
+          aria-hidden="true"
+        />
+        <div
+          className="pointer-events-none absolute -right-8 top-1/2 z-0 hidden h-56 w-56 -translate-y-1/2 rounded-full border border-[var(--fp-lime)]/30 md:block"
+          aria-hidden="true"
+        />
+        <Image
+          src={platformArtwork}
+          alt=""
+          aria-hidden="true"
+          width={platform === "ANDROID" ? 1609 : 1653}
+          height={platform === "ANDROID" ? 977 : 951}
+          preload
+          sizes="(max-width: 767px) 0px, (max-width: 1024px) 340px, 390px"
+          className="pointer-events-none absolute bottom-0 right-0 z-0 hidden h-full w-[41%] object-contain object-right-bottom md:block"
+        />
+
+        <div className="relative z-10 max-w-2xl">
+          <div className="flex items-center gap-3">
             <span
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-navy)] text-white"
+              className="grid h-12 w-12 shrink-0 place-items-center rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] text-[var(--fp-graphite)] shadow-[var(--fp-shadow-sm)]"
               aria-hidden="true"
             >
-              <Smartphone className="h-5 w-5" />
+              <Smartphone className="h-6 w-6" />
             </span>
-            <div>
-              <Badge tone="positive">Precalificación</Badge>
-              <h2 className="mt-3 text-2xl font-black tracking-tight text-[var(--fp-graphite)]">
-                Consulta previa para {platformLabel(platform)}
-              </h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--fp-muted)]">
-                Ingresa únicamente la identificación solicitada. El resultado se
-                usa para decidir si el flujo puede continuar.
-              </p>
-            </div>
+            <Badge tone="positive" className="px-4 py-2 text-xs sm:text-sm">
+              Precalificación
+            </Badge>
           </div>
-          <ShieldCheck
-            className="hidden h-7 w-7 text-[var(--fp-graphite)] sm:block"
-            aria-hidden="true"
-          />
+          <h2 className="mt-5 text-3xl font-black leading-tight tracking-tight text-[var(--fp-graphite)] sm:text-4xl">
+            Consulta previa para {platformLabel(platform)}
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
+            Ingresa únicamente la identificación solicitada. El resultado se usa
+            para decidir si el flujo puede continuar.
+          </p>
         </div>
       </div>
 
       <form className="p-5 sm:p-8" noValidate onSubmit={submitAssessment}>
-        <div className="grid gap-5 md:grid-cols-2">
+        <div className="grid gap-6 md:grid-cols-2">
           <div>
             <label
               htmlFor="datacredito-document-number"
-              className="mb-2 block text-sm font-bold text-[var(--fp-graphite)]"
+              className="mb-2 block text-base font-extrabold text-[var(--fp-graphite)]"
             >
               Número de cédula
             </label>
-            <Input
-              id="datacredito-document-number"
-              name="documentNumber"
-              value={documentNumber}
-              onChange={(event) => {
-                setDocumentNumber(
-                  event.target.value.replace(/\D/g, "").slice(0, 13)
-                );
-                setFormErrors((current) => ({
-                  ...current,
-                  documentNumber: undefined,
-                }));
-              }}
-              inputMode="numeric"
-              autoComplete="off"
-              minLength={3}
-              maxLength={13}
-              pattern="[0-9]{3,13}"
-              required
-              disabled={isSubmitting}
-              aria-invalid={Boolean(formErrors.documentNumber)}
-              aria-describedby={
-                formErrors.documentNumber
-                  ? "datacredito-document-number-error"
-                  : "datacredito-document-number-help"
-              }
-            />
+            <div className="relative">
+              <IdCard
+                className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--fp-lime-strong)]"
+                aria-hidden="true"
+              />
+              <Input
+                id="datacredito-document-number"
+                name="documentNumber"
+                value={documentNumber}
+                onChange={(event) => {
+                  setDocumentNumber(
+                    event.target.value.replace(/\D/g, "").slice(0, 13)
+                  );
+                  setFormErrors((current) => ({
+                    ...current,
+                    documentNumber: undefined,
+                  }));
+                }}
+                inputMode="numeric"
+                autoComplete="off"
+                minLength={3}
+                maxLength={13}
+                pattern="[0-9]{3,13}"
+                required
+                disabled={isSubmitting}
+                className="min-h-14 border-[var(--fp-lime-strong)] pl-12 text-base shadow-[var(--fp-shadow-sm)] disabled:bg-[var(--fp-bg)]"
+                aria-invalid={Boolean(formErrors.documentNumber)}
+                aria-describedby={
+                  formErrors.documentNumber
+                    ? "datacredito-document-number-error"
+                    : "datacredito-document-number-help"
+                }
+              />
+            </div>
             <p
               id="datacredito-document-number-help"
-              className="mt-2 text-xs text-[var(--fp-muted)]"
+              className="mt-2 text-sm text-[var(--fp-muted)]"
             >
               Entre 3 y 13 dígitos, sin puntos ni espacios.
             </p>
@@ -1182,32 +1214,39 @@ export default function DatacreditoPrequalificationGate({
           <div>
             <label
               htmlFor="datacredito-first-surname"
-              className="mb-2 block text-sm font-bold text-[var(--fp-graphite)]"
+              className="mb-2 block text-base font-extrabold text-[var(--fp-graphite)]"
             >
               Primer apellido
             </label>
-            <Input
-              id="datacredito-first-surname"
-              name="firstSurname"
-              value={firstSurname}
-              onChange={(event) => {
-                setFirstSurname(event.target.value.slice(0, 80));
-                setFormErrors((current) => ({
-                  ...current,
-                  firstSurname: undefined,
-                }));
-              }}
-              autoComplete="family-name"
-              maxLength={80}
-              required
-              disabled={isSubmitting}
-              aria-invalid={Boolean(formErrors.firstSurname)}
-              aria-describedby={
-                formErrors.firstSurname
-                  ? "datacredito-first-surname-error"
-                  : undefined
-              }
-            />
+            <div className="relative">
+              <UserRound
+                className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--fp-lime-strong)]"
+                aria-hidden="true"
+              />
+              <Input
+                id="datacredito-first-surname"
+                name="firstSurname"
+                value={firstSurname}
+                onChange={(event) => {
+                  setFirstSurname(event.target.value.slice(0, 80));
+                  setFormErrors((current) => ({
+                    ...current,
+                    firstSurname: undefined,
+                  }));
+                }}
+                autoComplete="family-name"
+                maxLength={80}
+                required
+                disabled={isSubmitting}
+                className="min-h-14 border-[var(--fp-lime-strong)] pl-12 text-base shadow-[var(--fp-shadow-sm)] disabled:bg-[var(--fp-bg)]"
+                aria-invalid={Boolean(formErrors.firstSurname)}
+                aria-describedby={
+                  formErrors.firstSurname
+                    ? "datacredito-first-surname-error"
+                    : undefined
+                }
+              />
+            </div>
             {formErrors.firstSurname ? (
               <p
                 id="datacredito-first-surname-error"
@@ -1220,10 +1259,8 @@ export default function DatacreditoPrequalificationGate({
           </div>
         </div>
 
-        <div
-          className="mt-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4"
-        >
-          <label className="flex min-h-11 cursor-pointer items-start gap-3 text-sm leading-6 text-[var(--fp-graphite)]">
+        <div className="mt-7 rounded-[var(--fp-radius-lg)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4 shadow-[var(--fp-shadow-sm)] sm:p-5">
+          <label className="grid min-h-11 cursor-pointer grid-cols-[auto_1fr] items-start gap-3 text-sm leading-6 text-[var(--fp-graphite)] sm:grid-cols-[auto_auto_1fr] sm:gap-5 sm:text-base">
             <input
               type="checkbox"
               checked={consentAccepted}
@@ -1235,19 +1272,25 @@ export default function DatacreditoPrequalificationGate({
                 }));
               }}
               disabled={isSubmitting}
-              className="mt-1 h-5 w-5 shrink-0 accent-[var(--fp-graphite)] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
+              className="mt-1 h-6 w-6 shrink-0 accent-[var(--fp-lime-strong)] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
               aria-invalid={Boolean(formErrors.consent)}
               aria-describedby={
                 formErrors.consent ? "datacredito-consent-error" : undefined
               }
             />
-            <span>
+            <span
+              className="hidden h-12 w-12 place-items-center rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] text-[var(--fp-lime-strong)] sm:grid"
+              aria-hidden="true"
+            >
+              <FileCheck2 className="h-6 w-6" />
+            </span>
+            <span className="font-medium">
               {consentText}{" "}
               <Link
                 href="/politica-privacidad"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-bold underline decoration-[var(--fp-lime-strong)] decoration-2 underline-offset-2 focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
+                className="font-bold text-[var(--fp-lime-strong)] underline decoration-2 underline-offset-4 focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
               >
                 Consultar política de privacidad
                 <span className="sr-only"> (abre en una pestaña nueva)</span>
@@ -1258,7 +1301,7 @@ export default function DatacreditoPrequalificationGate({
           {formErrors.consent ? (
             <p
               id="datacredito-consent-error"
-              className="mt-2 pl-8 text-sm font-semibold text-[var(--fp-danger)]"
+              className="mt-3 text-sm font-semibold text-[var(--fp-danger)] sm:pl-[5.25rem]"
               role="alert"
             >
               {formErrors.consent}
@@ -1266,25 +1309,44 @@ export default function DatacreditoPrequalificationGate({
           ) : null}
         </div>
 
-        <p className="mt-4 text-xs leading-5 text-[var(--fp-muted)]">
-          FINSER PAY no muestra el puntaje al asesor. Los errores técnicos se
-          informan por separado y nunca se presentan como un rechazo.
-        </p>
+        <div
+          className="mt-5 flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] px-4 py-3 text-sm leading-5 text-[var(--fp-muted)]"
+          role="note"
+        >
+          <ShieldCheck
+            className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-lime-strong)]"
+            aria-hidden="true"
+          />
+          <p>
+            FINSER PAY no muestra el puntaje al asesor. Los errores técnicos se
+            informan por separado y nunca se presentan como un rechazo.
+          </p>
+        </div>
 
         <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
           <Link
             href="/dashboard/creditos?mode=create-client"
-            className="fp-ui-button is-ghost focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
+            className="fp-ui-button is-ghost justify-start px-2 text-base !text-[var(--fp-graphite)] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
           >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            <ArrowLeft
+              className="h-5 w-5 text-[var(--fp-lime-strong)]"
+              aria-hidden="true"
+            />
             Volver
           </Link>
-          <Button type="submit" disabled={isSubmitting}>
+          <Button
+            type="submit"
+            disabled={isSubmitting}
+            className="min-h-12 px-6 text-base shadow-[var(--fp-shadow-md)] !border-[var(--fp-lime-strong)] !bg-[var(--fp-lime)] !text-[var(--fp-graphite)] hover:!bg-[var(--fp-graphite)] hover:!text-white sm:min-w-56"
+          >
             {isSubmitting ? (
-              "Evaluando..."
+              <>
+                <RotateCw className="h-5 w-5 animate-spin" aria-hidden="true" />
+                Evaluando...
+              </>
             ) : (
               <>
-                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                <ShieldCheck className="h-5 w-5" aria-hidden="true" />
                 Evaluar solicitud
               </>
             )}
