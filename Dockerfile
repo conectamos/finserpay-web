@@ -38,6 +38,7 @@ COPY --from=builder /app/scripts/setup-datacredito.sql ./scripts/setup-datacredi
 COPY --from=builder /app/scripts/ensure-iphone-identity-evidence-column.mjs ./scripts/ensure-iphone-identity-evidence-column.mjs
 COPY --from=builder /app/scripts/ensure-datacredito-schema.mjs ./scripts/ensure-datacredito-schema.mjs
 COPY --from=builder /app/scripts/ensure-credit-amortization-schema.mjs ./scripts/ensure-credit-amortization-schema.mjs
+COPY --from=builder /app/scripts/ensure-aliado-redescuento-schema.mjs ./scripts/ensure-aliado-redescuento-schema.mjs
 COPY --from=builder /app/scripts/railway-predeploy.mjs ./scripts/railway-predeploy.mjs
  
 EXPOSE 3000

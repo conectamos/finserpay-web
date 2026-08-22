@@ -25,6 +25,18 @@ const cartera = readFileSync(
   new URL("../app/dashboard/cartera/page.tsx", import.meta.url),
   "utf8"
 );
+const predeploy = readFileSync(
+  new URL("../scripts/railway-predeploy.mjs", import.meta.url),
+  "utf8"
+);
+const rediscountMigration = readFileSync(
+  new URL("../scripts/ensure-aliado-redescuento-schema.mjs", import.meta.url),
+  "utf8"
+);
+const dockerfile = readFileSync(
+  new URL("../Dockerfile", import.meta.url),
+  "utf8"
+);
 
 test("resuelve porcentajes distintos para Android y iPhone", () => {
   const settings = {
@@ -61,6 +73,27 @@ test("la migracion conserva el porcentaje anterior en ambas plataformas", () => 
   assert.match(
     aliadosLib,
     /"redescuentoIphonePorcentaje"\s*=\s*COALESCE\([\s\S]{0,180}"redescuentoPorcentaje"/
+  );
+  assert.match(
+    rediscountMigration,
+    /"redescuentoAndroidPorcentaje"\s*=\s*COALESCE\([\s\S]{0,180}"redescuentoPorcentaje"/
+  );
+  assert.match(
+    rediscountMigration,
+    /"redescuentoIphonePorcentaje"\s*=\s*COALESCE\([\s\S]{0,180}"redescuentoPorcentaje"/
+  );
+});
+
+test("Railway migra el redescuento antes de iniciar la aplicacion", () => {
+  assert.match(predeploy, /ensure-aliado-redescuento-schema\.mjs/);
+  assert.match(dockerfile, /ensure-aliado-redescuento-schema\.mjs/);
+  assert.match(
+    rediscountMigration,
+    /ALTER COLUMN "redescuentoAndroidPorcentaje" SET NOT NULL/
+  );
+  assert.match(
+    rediscountMigration,
+    /ALTER COLUMN "redescuentoIphonePorcentaje" SET NOT NULL/
   );
 });
 
