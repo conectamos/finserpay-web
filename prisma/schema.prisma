@@ -529,10 +529,15 @@ model CatalogoEquipoModelo {
 model CreditoConfiguracion {
   id                           Int      @id @default(autoincrement())
   nombre                       String   @unique
-  tasaInteresEa                Float    @default(17.84)
-  fianzaPorcentaje             Float    @default(60)
+  calculoVersion               String?  @default("ARES_FRANCES_V1")
+  tasaInteresEa                Float    @default(29.66)
+  fianzaPorcentaje             Float    @default(75)
+  fianzaTotalPorcentaje        Float?   @default(75)
   fianzaCuotaPorcentaje        Float    @default(2.083333)
   seguroCuotaPorcentaje        Float    @default(0.03)
+  tasaPeriodoDecimales         Int?     @default(6)
+  redondeoComercialModo        String?  @default("PISO")
+  redondeoComercialMultiplo    Int?     @default(50)
   cuotaInicialPorcentaje       Float    @default(20)
   plazoCuotas                  Int      @default(12)
   plazoMaximoCuotas            Int      @default(16)
@@ -550,10 +555,15 @@ model CreditoConfiguracionDocumento {
   id                            Int      @id @default(autoincrement())
   documento                     String
   documentoNormalizado          String   @unique
+  calculoVersion                String?
   tasaInteresEa                 Float?
   fianzaPorcentaje              Float?
+  fianzaTotalPorcentaje         Float?
   fianzaCuotaPorcentaje         Float?
   seguroCuotaPorcentaje         Float?
+  tasaPeriodoDecimales          Int?
+  redondeoComercialModo         String?
+  redondeoComercialMultiplo     Int?
   cuotaInicialPorcentaje        Float?
   plazoCuotas                   Int?
   plazoMaximoCuotas             Int?

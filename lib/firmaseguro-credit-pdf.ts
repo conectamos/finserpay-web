@@ -27,7 +27,11 @@ export type CreditForFirmaSeguroPdf = {
   tasaInteresEa?: number | null;
   tasaPeriodo?: number | null;
   fianzaCuotaPorcentaje?: number | null;
+  fianzaTotalPorcentaje?: number | null;
+  fianzaModalidad?: "TOTAL_CREDITO" | "POR_CUOTA" | null;
   seguroCuotaPorcentaje?: number | null;
+  redondeoComercialModo?: "REDONDEO" | "PISO" | null;
+  redondeoComercialMultiplo?: number | null;
   valorSeguro?: number | null;
   plazoMeses?: number | null;
   frecuenciaPago?: string | null;
@@ -978,7 +982,13 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
       { label: "Numero de cuotas", value: `${credito.plazoMeses || "-"} cuotas` },
       { label: "Cuota exacta", value: formatExactCurrency(credito.valorCuota) },
       {
-        label: "Cuota comercial (referencia)",
+        label:
+          credito.redondeoComercialModo === "PISO" &&
+          Number(credito.redondeoComercialMultiplo || 0) > 0
+            ? `Cuota comercial (piso $${Number(
+                credito.redondeoComercialMultiplo
+              ).toLocaleString("es-CO")})`
+            : "Cuota comercial (referencia)",
         value: formatCurrency(credito.valorCuotaComercial || credito.valorCuota),
       },
       { label: "Frecuencia", value: getPaymentFrequencyLabel(credito.frecuenciaPago) },
@@ -989,8 +999,17 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
         value: formatPercentage(Number(credito.tasaPeriodo || 0) * 100, 6),
       },
       {
-        label: "Fianza por cuota",
-        value: formatPercentage(credito.fianzaCuotaPorcentaje, 6),
+        label:
+          credito.fianzaModalidad === "TOTAL_CREDITO"
+            ? "Fianza total / equivalente por cuota"
+            : "Fianza por cuota",
+        value:
+          credito.fianzaModalidad === "TOTAL_CREDITO"
+            ? `${formatPercentage(
+                credito.fianzaTotalPorcentaje,
+                6
+              )} / ${formatPercentage(credito.fianzaCuotaPorcentaje, 6)}`
+            : formatPercentage(credito.fianzaCuotaPorcentaje, 6),
       },
       {
         label: "Seguro por cuota",

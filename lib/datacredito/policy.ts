@@ -1,6 +1,13 @@
 export const DATACREDITO_PLATFORMS = ["ANDROID", "IPHONE"] as const;
 export const DATACREDITO_DECISIONS = ["APROBADO", "RECHAZADO"] as const;
-export const DATACREDITO_FINANCIAL_CALCULATION_VERSIONS = ["FRANCES_V1"] as const;
+export const DATACREDITO_FINANCIAL_CALCULATION_VERSIONS = [
+  "FRANCES_V1",
+  "ARES_FRANCES_V1",
+] as const;
+export const DATACREDITO_COMMERCIAL_ROUNDING_MODES = [
+  "REDONDEO",
+  "PISO",
+] as const;
 export const DATACREDITO_FINANCIAL_PAYMENT_FREQUENCIES = [
   "SEMANAL",
   "QUINCENAL",
@@ -18,14 +25,48 @@ export type DataCreditoFinancialCalculationVersion =
   (typeof DATACREDITO_FINANCIAL_CALCULATION_VERSIONS)[number];
 export type DataCreditoFinancialPaymentFrequency =
   (typeof DATACREDITO_FINANCIAL_PAYMENT_FREQUENCIES)[number];
+export type DataCreditoCommercialRoundingMode =
+  (typeof DATACREDITO_COMMERCIAL_ROUNDING_MODES)[number];
 
-export type DataCreditoPolicyFinancialSettings = {
-  calculoVersion: DataCreditoFinancialCalculationVersion;
+type DataCreditoPolicyFinancialSettingsBase = {
   tasaInteresEa: number;
-  fianzaCuotaPorcentaje: number;
   seguroCuotaPorcentaje: number;
   frecuenciaPago: DataCreditoFinancialPaymentFrequency;
 };
+
+export type DataCreditoLegacyPolicyFinancialSettings =
+  DataCreditoPolicyFinancialSettingsBase & {
+    calculoVersion: "FRANCES_V1";
+    fianzaCuotaPorcentaje: number;
+  };
+
+export type DataCreditoAresPolicyFinancialSettings =
+  DataCreditoPolicyFinancialSettingsBase & {
+    calculoVersion: "ARES_FRANCES_V1";
+    fianzaTotalPorcentaje: number;
+    tasaPeriodoDecimales: 6;
+    redondeoComercial: {
+      modo: "PISO";
+      multiplo: 50;
+    };
+  };
+
+export type DataCreditoPolicyFinancialSettings =
+  | DataCreditoLegacyPolicyFinancialSettings
+  | DataCreditoAresPolicyFinancialSettings;
+
+export const DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS = {
+  calculoVersion: "ARES_FRANCES_V1",
+  tasaInteresEa: 29.66,
+  fianzaTotalPorcentaje: 75,
+  seguroCuotaPorcentaje: 0.03,
+  frecuenciaPago: "QUINCENAL",
+  tasaPeriodoDecimales: 6,
+  redondeoComercial: {
+    modo: "PISO",
+    multiplo: 50,
+  },
+} as const satisfies DataCreditoAresPolicyFinancialSettings;
 
 export type DataCreditoPolicyBand = {
   id: string;
@@ -156,29 +197,19 @@ export function parseDataCreditoPolicyFinancialSettings(
     .trim()
     .toUpperCase();
   const tasaInteresEa = finiteNumber(row.tasaInteresEa);
-  const fianzaCuotaPorcentaje = finiteNumber(row.fianzaCuotaPorcentaje);
   const seguroCuotaPorcentaje = finiteNumber(row.seguroCuotaPorcentaje);
   const frecuenciaPago = String(row.frecuenciaPago || "")
     .trim()
     .toUpperCase();
   const issues: string[] = [];
 
-  if (
-    !DATACREDITO_FINANCIAL_CALCULATION_VERSIONS.includes(
-      calculoVersion as DataCreditoFinancialCalculationVersion
-    )
-  ) {
-    issues.push("El sistema de calculo debe ser amortizacion francesa FRANCES_V1");
+  if (!DATACREDITO_FINANCIAL_CALCULATION_VERSIONS.includes(
+    calculoVersion as DataCreditoFinancialCalculationVersion
+  )) {
+    issues.push("El sistema de calculo debe ser una version francesa soportada");
   }
   if (tasaInteresEa === null || tasaInteresEa < 0 || tasaInteresEa > 100) {
     issues.push("El interes E.A. debe estar entre 0 y 100");
-  }
-  if (
-    fianzaCuotaPorcentaje === null ||
-    fianzaCuotaPorcentaje < 0 ||
-    fianzaCuotaPorcentaje > 100
-  ) {
-    issues.push("La fianza por cuota debe estar entre 0 y 100");
   }
   if (
     seguroCuotaPorcentaje === null ||
@@ -202,14 +233,63 @@ export function parseDataCreditoPolicyFinancialSettings(
   const precise = (numberValue: number) =>
     Math.round(numberValue * 1_000_000) / 1_000_000;
 
-  return {
-    calculoVersion:
-      calculoVersion as DataCreditoFinancialCalculationVersion,
+  const base = {
     tasaInteresEa: precise(tasaInteresEa!),
-    fianzaCuotaPorcentaje: precise(fianzaCuotaPorcentaje!),
     seguroCuotaPorcentaje: precise(seguroCuotaPorcentaje!),
     frecuenciaPago:
       frecuenciaPago as DataCreditoFinancialPaymentFrequency,
+  };
+
+  if (calculoVersion === "FRANCES_V1") {
+    const fianzaCuotaPorcentaje = finiteNumber(row.fianzaCuotaPorcentaje);
+    if (
+      fianzaCuotaPorcentaje === null ||
+      fianzaCuotaPorcentaje < 0 ||
+      fianzaCuotaPorcentaje > 100
+    ) {
+      throw new DataCreditoPolicyValidationError([
+        "La fianza por cuota legada debe estar entre 0 y 100",
+      ]);
+    }
+    return {
+      calculoVersion: "FRANCES_V1",
+      ...base,
+      fianzaCuotaPorcentaje: precise(fianzaCuotaPorcentaje),
+    };
+  }
+
+  const fianzaTotalPorcentaje = finiteNumber(row.fianzaTotalPorcentaje);
+  const tasaPeriodoDecimales = finiteNumber(row.tasaPeriodoDecimales);
+  const redondeo = recordValue(row.redondeoComercial);
+  const redondeoModo = String(redondeo?.modo || "").trim().toUpperCase();
+  const redondeoMultiplo = finiteNumber(redondeo?.multiplo);
+  const aresIssues: string[] = [];
+  if (
+    fianzaTotalPorcentaje === null ||
+    fianzaTotalPorcentaje < 0 ||
+    fianzaTotalPorcentaje > 100
+  ) {
+    aresIssues.push("La fianza total ARES debe estar entre 0 y 100");
+  }
+  if (tasaPeriodoDecimales !== 6) {
+    aresIssues.push("ARES_FRANCES_V1 usa exactamente 6 decimales en la tasa periodica");
+  }
+  if (redondeoModo !== "PISO" || redondeoMultiplo !== 50) {
+    aresIssues.push("ARES_FRANCES_V1 usa redondeo comercial al piso en multiplos de 50");
+  }
+  if (aresIssues.length) {
+    throw new DataCreditoPolicyValidationError(aresIssues);
+  }
+
+  return {
+    calculoVersion: "ARES_FRANCES_V1",
+    ...base,
+    fianzaTotalPorcentaje: precise(fianzaTotalPorcentaje!),
+    tasaPeriodoDecimales: 6,
+    redondeoComercial: {
+      modo: "PISO",
+      multiplo: 50,
+    },
   };
 }
 

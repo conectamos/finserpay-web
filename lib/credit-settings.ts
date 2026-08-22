@@ -1,9 +1,7 @@
 import prisma from "@/lib/prisma";
 import {
   DEFAULT_CREDIT_INSTALLMENTS,
-  DEFAULT_FIANCO_SURETY_PERCENTAGE,
   DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
-  DEFAULT_LEGAL_CONSUMER_RATE_EA,
   DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
   IPHONE_DEFAULT_CREDIT_INSTALLMENTS,
@@ -20,6 +18,10 @@ import {
   DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE,
   DEFAULT_INSTALLMENT_SURETY_PERCENTAGE,
 } from "@/lib/credit-amortization";
+import {
+  DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
+  type DataCreditoFinancialCalculationVersion,
+} from "@/lib/datacredito/policy";
 
 const CREDIT_SETTINGS_KEY = "GLOBAL";
 const SEEDED_MULTI_CREDIT_DOCUMENT = "1023028341";
@@ -27,10 +29,15 @@ const SEEDED_MULTI_CREDIT_DOCUMENT = "1023028341";
 let creditSettingsTableReady = false;
 
 export type CreditSettings = {
+  calculoVersion: DataCreditoFinancialCalculationVersion;
   tasaInteresEa: number;
   fianzaPorcentaje: number;
+  fianzaTotalPorcentaje: number;
   fianzaCuotaPorcentaje: number;
   seguroCuotaPorcentaje: number;
+  tasaPeriodoDecimales: number;
+  redondeoComercialModo: "REDONDEO" | "PISO";
+  redondeoComercialMultiplo: number;
   cuotaInicialPorcentaje: number;
   plazoCuotas: number;
   plazoMaximoCuotas: number;
@@ -49,10 +56,15 @@ export type CreditDocumentException = {
   id: number;
   documento: string;
   documentoNormalizado: string;
+  calculoVersion: DataCreditoFinancialCalculationVersion | null;
   tasaInteresEa: number | null;
   fianzaPorcentaje: number | null;
+  fianzaTotalPorcentaje: number | null;
   fianzaCuotaPorcentaje: number | null;
   seguroCuotaPorcentaje: number | null;
+  tasaPeriodoDecimales: number | null;
+  redondeoComercialModo: "REDONDEO" | "PISO" | null;
+  redondeoComercialMultiplo: number | null;
   cuotaInicialPorcentaje: number | null;
   plazoCuotas: number | null;
   plazoMaximoCuotas: number | null;
@@ -150,6 +162,69 @@ function normalizeOptionalPaymentFrequency(value: unknown) {
   return normalizePaymentFrequency(value);
 }
 
+function normalizeCalculationVersion(
+  value: unknown,
+  fallback: DataCreditoFinancialCalculationVersion =
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.calculoVersion
+) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return normalized === "FRANCES_V1" || normalized === "ARES_FRANCES_V1"
+    ? normalized
+    : fallback;
+}
+
+function normalizeOptionalCalculationVersion(value: unknown) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
+  return normalizeCalculationVersion(value);
+}
+
+function normalizeAresRateDecimals(value: unknown, fallback = 6) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 12
+    ? parsed
+    : fallback;
+}
+
+function normalizeOptionalAresRateDecimals(value: unknown) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
+  return normalizeAresRateDecimals(value);
+}
+
+function normalizeCommercialRoundingMode(
+  value: unknown,
+  fallback: "REDONDEO" | "PISO" = "PISO"
+) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return normalized === "REDONDEO" || normalized === "PISO"
+    ? normalized
+    : fallback;
+}
+
+function normalizeOptionalCommercialRoundingMode(value: unknown) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
+  return normalizeCommercialRoundingMode(value);
+}
+
+function normalizeCommercialRoundingMultiple(value: unknown, fallback = 50) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 10_000
+    ? parsed
+    : fallback;
+}
+
+function normalizeOptionalCommercialRoundingMultiple(value: unknown) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
+  return normalizeCommercialRoundingMultiple(value);
+}
+
 export function normalizeCreditDocument(value: unknown) {
   return String(value ?? "").replace(/\D/g, "").slice(0, 40);
 }
@@ -180,6 +255,8 @@ export function getPlatformCreditSettings(
 }
 
 function toCreditSettings(row?: Record<string, unknown> | null): CreditSettings {
+  const calculoVersion = normalizeCalculationVersion(row?.calculoVersion);
+  const aresCalculation = calculoVersion === "ARES_FRANCES_V1";
   const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
     row?.plazoMaximoCuotas,
     DEFAULT_MAX_CREDIT_INSTALLMENTS
@@ -194,10 +271,18 @@ function toCreditSettings(row?: Record<string, unknown> | null): CreditSettings 
   );
 
   return {
-    tasaInteresEa: toNumber(row?.tasaInteresEa, DEFAULT_LEGAL_CONSUMER_RATE_EA),
+    calculoVersion,
+    tasaInteresEa: toNumber(
+      row?.tasaInteresEa,
+      DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.tasaInteresEa
+    ),
     fianzaPorcentaje: toNumber(
       row?.fianzaPorcentaje,
-      DEFAULT_FIANCO_SURETY_PERCENTAGE
+      DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.fianzaTotalPorcentaje
+    ),
+    fianzaTotalPorcentaje: toNumber(
+      row?.fianzaTotalPorcentaje,
+      DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.fianzaTotalPorcentaje
     ),
     fianzaCuotaPorcentaje: toNumber(
       row?.fianzaCuotaPorcentaje,
@@ -206,6 +291,18 @@ function toCreditSettings(row?: Record<string, unknown> | null): CreditSettings 
     seguroCuotaPorcentaje: toNumber(
       row?.seguroCuotaPorcentaje,
       DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE
+    ),
+    tasaPeriodoDecimales: normalizeAresRateDecimals(
+      row?.tasaPeriodoDecimales,
+      aresCalculation ? 6 : 12
+    ),
+    redondeoComercialModo: normalizeCommercialRoundingMode(
+      row?.redondeoComercialModo,
+      aresCalculation ? "PISO" : "REDONDEO"
+    ),
+    redondeoComercialMultiplo: normalizeCommercialRoundingMultiple(
+      row?.redondeoComercialMultiplo,
+      aresCalculation ? 50 : 100
     ),
     cuotaInicialPorcentaje,
     plazoCuotas: normalizeCreditInstallments(
@@ -257,16 +354,34 @@ function mergeDocumentSettings(
 
   return {
     ...globalSettings,
+    calculoVersion: normalizeCalculationVersion(
+      row?.calculoVersion,
+      globalSettings.calculoVersion
+    ),
     tasaInteresEa:
       toNullableNumber(row?.tasaInteresEa) ?? globalSettings.tasaInteresEa,
     fianzaPorcentaje:
       toNullableNumber(row?.fianzaPorcentaje) ?? globalSettings.fianzaPorcentaje,
+    fianzaTotalPorcentaje:
+      toNullableNumber(row?.fianzaTotalPorcentaje) ??
+      globalSettings.fianzaTotalPorcentaje,
     fianzaCuotaPorcentaje:
       toNullableNumber(row?.fianzaCuotaPorcentaje) ??
       globalSettings.fianzaCuotaPorcentaje,
     seguroCuotaPorcentaje:
       toNullableNumber(row?.seguroCuotaPorcentaje) ??
       globalSettings.seguroCuotaPorcentaje,
+    tasaPeriodoDecimales:
+      toNullableNumber(row?.tasaPeriodoDecimales) ??
+      globalSettings.tasaPeriodoDecimales,
+    redondeoComercialModo: normalizeCommercialRoundingMode(
+      row?.redondeoComercialModo,
+      globalSettings.redondeoComercialModo
+    ),
+    redondeoComercialMultiplo: normalizeCommercialRoundingMultiple(
+      row?.redondeoComercialMultiplo,
+      globalSettings.redondeoComercialMultiplo
+    ),
     cuotaInicialPorcentaje:
       documentInitialPercentage ?? globalSettings.cuotaInicialPorcentaje,
     plazoMaximoCuotas: normalizedMax,
@@ -300,10 +415,19 @@ function toDocumentException(
     id: Number(row.id || 0),
     documento: String(row.documento || ""),
     documentoNormalizado: String(row.documentoNormalizado || ""),
+    calculoVersion: normalizeOptionalCalculationVersion(row.calculoVersion),
     tasaInteresEa: toNullableNumber(row.tasaInteresEa),
     fianzaPorcentaje: toNullableNumber(row.fianzaPorcentaje),
+    fianzaTotalPorcentaje: toNullableNumber(row.fianzaTotalPorcentaje),
     fianzaCuotaPorcentaje: toNullableNumber(row.fianzaCuotaPorcentaje),
     seguroCuotaPorcentaje: toNullableNumber(row.seguroCuotaPorcentaje),
+    tasaPeriodoDecimales: toNullableNumber(row.tasaPeriodoDecimales),
+    redondeoComercialModo: normalizeOptionalCommercialRoundingMode(
+      row.redondeoComercialModo
+    ),
+    redondeoComercialMultiplo: toNullableNumber(
+      row.redondeoComercialMultiplo
+    ),
     cuotaInicialPorcentaje: toNullableNumber(row.cuotaInicialPorcentaje),
     plazoCuotas: toNullableNumber(row.plazoCuotas),
     plazoMaximoCuotas: toNullableNumber(row.plazoMaximoCuotas),
@@ -327,10 +451,15 @@ export async function ensureCreditSettingsTable() {
     CREATE TABLE IF NOT EXISTS "CreditoConfiguracion" (
       id SERIAL PRIMARY KEY,
       nombre TEXT NOT NULL UNIQUE,
-      "tasaInteresEa" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_LEGAL_CONSUMER_RATE_EA},
-      "fianzaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_FIANCO_SURETY_PERCENTAGE},
+      "calculoVersion" TEXT DEFAULT 'ARES_FRANCES_V1',
+      "tasaInteresEa" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.tasaInteresEa},
+      "fianzaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.fianzaTotalPorcentaje},
+      "fianzaTotalPorcentaje" DOUBLE PRECISION DEFAULT ${DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.fianzaTotalPorcentaje},
       "fianzaCuotaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INSTALLMENT_SURETY_PERCENTAGE},
       "seguroCuotaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE},
+      "tasaPeriodoDecimales" INTEGER DEFAULT 6,
+      "redondeoComercialModo" TEXT DEFAULT 'PISO',
+      "redondeoComercialMultiplo" INTEGER DEFAULT 50,
       "cuotaInicialPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INITIAL_PAYMENT_PERCENTAGE},
       "plazoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_CREDIT_INSTALLMENTS},
       "plazoMaximoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_CREDIT_INSTALLMENTS},
@@ -343,6 +472,14 @@ export async function ensureCreditSettingsTable() {
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracion"
+    ADD COLUMN IF NOT EXISTS "calculoVersion" TEXT,
+    ADD COLUMN IF NOT EXISTS "fianzaTotalPorcentaje" DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS "tasaPeriodoDecimales" INTEGER,
+    ADD COLUMN IF NOT EXISTS "redondeoComercialModo" TEXT,
+    ADD COLUMN IF NOT EXISTS "redondeoComercialMultiplo" INTEGER
   `);
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "CreditoConfiguracion"
@@ -393,10 +530,15 @@ export async function ensureCreditSettingsTable() {
       id SERIAL PRIMARY KEY,
       documento TEXT NOT NULL,
       "documentoNormalizado" TEXT NOT NULL UNIQUE,
+      "calculoVersion" TEXT,
       "tasaInteresEa" DOUBLE PRECISION,
       "fianzaPorcentaje" DOUBLE PRECISION,
+      "fianzaTotalPorcentaje" DOUBLE PRECISION,
       "fianzaCuotaPorcentaje" DOUBLE PRECISION,
       "seguroCuotaPorcentaje" DOUBLE PRECISION,
+      "tasaPeriodoDecimales" INTEGER,
+      "redondeoComercialModo" TEXT,
+      "redondeoComercialMultiplo" INTEGER,
       "cuotaInicialPorcentaje" DOUBLE PRECISION,
       "plazoCuotas" INTEGER,
       "plazoMaximoCuotas" INTEGER,
@@ -408,6 +550,14 @@ export async function ensureCreditSettingsTable() {
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracionDocumento"
+    ADD COLUMN IF NOT EXISTS "calculoVersion" TEXT,
+    ADD COLUMN IF NOT EXISTS "fianzaTotalPorcentaje" DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS "tasaPeriodoDecimales" INTEGER,
+    ADD COLUMN IF NOT EXISTS "redondeoComercialModo" TEXT,
+    ADD COLUMN IF NOT EXISTS "redondeoComercialMultiplo" INTEGER
   `);
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "CreditoConfiguracionDocumento"
@@ -439,14 +589,22 @@ export async function ensureCreditSettingsTable() {
   `);
   await prisma.$executeRawUnsafe(
     `INSERT INTO "CreditoConfiguracion"
-      (nombre, "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas",
+      (nombre, "calculoVersion", "tasaInteresEa", "fianzaPorcentaje", "fianzaTotalPorcentaje",
+       "seguroCuotaPorcentaje", "tasaPeriodoDecimales", "redondeoComercialModo", "redondeoComercialMultiplo",
+       "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas",
        "iphoneCuotaInicialPorcentaje", "iphonePlazoCuotas", "iphonePlazoMaximoCuotas", "iphoneTopeFinanciado", "iphoneTopeCuota",
        "frecuenciaPago", "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())
      ON CONFLICT (nombre) DO NOTHING`,
     CREDIT_SETTINGS_KEY,
-    DEFAULT_LEGAL_CONSUMER_RATE_EA,
-    DEFAULT_FIANCO_SURETY_PERCENTAGE,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.calculoVersion,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.tasaInteresEa,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.fianzaTotalPorcentaje,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.fianzaTotalPorcentaje,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.seguroCuotaPorcentaje,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.tasaPeriodoDecimales,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.redondeoComercial.modo,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.redondeoComercial.multiplo,
     DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
     DEFAULT_CREDIT_INSTALLMENTS,
     DEFAULT_MAX_CREDIT_INSTALLMENTS,
@@ -456,6 +614,31 @@ export async function ensureCreditSettingsTable() {
     IPHONE_MAX_FINANCED_AMOUNT,
     IPHONE_MAX_INSTALLMENT_VALUE,
     DEFAULT_PAYMENT_FREQUENCY
+  );
+  // One-shot marker: only the pre-existing GLOBAL row with no calculation
+  // version receives ARES defaults. Once marked, later administrator changes
+  // are never overwritten by schema preparation.
+  await prisma.$executeRawUnsafe(
+    `UPDATE "CreditoConfiguracion"
+     SET "calculoVersion" = $2,
+         "tasaInteresEa" = $3,
+         "fianzaPorcentaje" = $4,
+         "fianzaTotalPorcentaje" = $4,
+         "seguroCuotaPorcentaje" = $5,
+         "tasaPeriodoDecimales" = $6,
+         "redondeoComercialModo" = $7,
+         "redondeoComercialMultiplo" = $8,
+         "updatedAt" = NOW()
+     WHERE nombre = $1
+       AND "calculoVersion" IS NULL`,
+    CREDIT_SETTINGS_KEY,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.calculoVersion,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.tasaInteresEa,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.fianzaTotalPorcentaje,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.seguroCuotaPorcentaje,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.tasaPeriodoDecimales,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.redondeoComercial.modo,
+    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.redondeoComercial.multiplo
   );
   await prisma.$executeRawUnsafe(
     `INSERT INTO "CreditoConfiguracionDocumento"
@@ -473,7 +656,9 @@ export async function getCreditSettings() {
   await ensureCreditSettingsTable();
 
   const rows = (await prisma.$queryRawUnsafe(
-    `SELECT "tasaInteresEa", "fianzaPorcentaje", "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje",
+    `SELECT "calculoVersion", "tasaInteresEa", "fianzaPorcentaje", "fianzaTotalPorcentaje",
+            "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje", "tasaPeriodoDecimales",
+            "redondeoComercialModo", "redondeoComercialMultiplo",
             "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas",
             "iphoneCuotaInicialPorcentaje", "iphonePlazoCuotas", "iphonePlazoMaximoCuotas",
             "iphoneTopeFinanciado", "iphoneTopeCuota", "frecuenciaPago", "updatedAt"
@@ -496,8 +681,11 @@ export async function getCreditDocumentException(documento: unknown) {
 
   const globalSettings = await getCreditSettings();
   const rows = (await prisma.$queryRawUnsafe(
-    `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
-            "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje", "cuotaInicialPorcentaje",
+    `SELECT id, documento, "documentoNormalizado", "calculoVersion",
+            "tasaInteresEa", "fianzaPorcentaje", "fianzaTotalPorcentaje",
+            "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje",
+            "tasaPeriodoDecimales", "redondeoComercialModo", "redondeoComercialMultiplo",
+            "cuotaInicialPorcentaje",
             "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
             "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
             activo, observacion, "createdAt", "updatedAt"
@@ -538,8 +726,11 @@ export async function listCreditDocumentExceptions() {
   await ensureCreditSettingsTable();
   const globalSettings = await getCreditSettings();
   const rows = (await prisma.$queryRawUnsafe(
-    `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
-            "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje", "cuotaInicialPorcentaje",
+    `SELECT id, documento, "documentoNormalizado", "calculoVersion",
+            "tasaInteresEa", "fianzaPorcentaje", "fianzaTotalPorcentaje",
+            "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje",
+            "tasaPeriodoDecimales", "redondeoComercialModo", "redondeoComercialMultiplo",
+            "cuotaInicialPorcentaje",
             "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
             "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
             activo, observacion, "createdAt", "updatedAt"
@@ -551,10 +742,15 @@ export async function listCreditDocumentExceptions() {
 }
 
 export async function updateCreditSettings(params: {
+  calculoVersion?: unknown;
   tasaInteresEa: unknown;
   fianzaPorcentaje: unknown;
+  fianzaTotalPorcentaje?: unknown;
   fianzaCuotaPorcentaje?: unknown;
   seguroCuotaPorcentaje?: unknown;
+  tasaPeriodoDecimales?: unknown;
+  redondeoComercialModo?: unknown;
+  redondeoComercialMultiplo?: unknown;
   cuotaInicialPorcentaje?: unknown;
   plazoCuotas?: unknown;
   plazoMaximoCuotas?: unknown;
@@ -567,14 +763,22 @@ export async function updateCreditSettings(params: {
 }) {
   await ensureCreditSettingsTable();
   const current = await getCreditSettings();
+  const calculoVersion = normalizeCalculationVersion(
+    params.calculoVersion,
+    current.calculoVersion
+  );
 
   const tasaInteresEa = normalizePercentage(
     params.tasaInteresEa,
     current.tasaInteresEa
   );
+  const fianzaTotalPorcentaje = normalizePercentage(
+    params.fianzaTotalPorcentaje,
+    current.fianzaTotalPorcentaje
+  );
   const fianzaPorcentaje = normalizePercentage(
-    params.fianzaPorcentaje,
-    current.fianzaPorcentaje
+    params.fianzaTotalPorcentaje ?? params.fianzaPorcentaje,
+    fianzaTotalPorcentaje
   );
   const fianzaCuotaPorcentaje = normalizePrecisePercentage(
     params.fianzaCuotaPorcentaje,
@@ -584,6 +788,27 @@ export async function updateCreditSettings(params: {
     params.seguroCuotaPorcentaje,
     current.seguroCuotaPorcentaje
   );
+  const tasaPeriodoDecimales =
+    calculoVersion === "ARES_FRANCES_V1"
+      ? 6
+      : normalizeAresRateDecimals(
+          params.tasaPeriodoDecimales,
+          current.tasaPeriodoDecimales
+        );
+  const redondeoComercialModo =
+    calculoVersion === "ARES_FRANCES_V1"
+      ? "PISO"
+      : normalizeCommercialRoundingMode(
+          params.redondeoComercialModo,
+          current.redondeoComercialModo
+        );
+  const redondeoComercialMultiplo =
+    calculoVersion === "ARES_FRANCES_V1"
+      ? 50
+      : normalizeCommercialRoundingMultiple(
+          params.redondeoComercialMultiplo,
+          current.redondeoComercialMultiplo
+        );
   const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
     params.plazoMaximoCuotas,
     current.plazoMaximoCuotas
@@ -643,9 +868,16 @@ export async function updateCreditSettings(params: {
          "iphoneTopeCuota" = $12,
          "fianzaCuotaPorcentaje" = $13,
          "seguroCuotaPorcentaje" = $14,
+         "calculoVersion" = $15,
+         "fianzaTotalPorcentaje" = $16,
+         "tasaPeriodoDecimales" = $17,
+         "redondeoComercialModo" = $18,
+         "redondeoComercialMultiplo" = $19,
          "updatedAt" = NOW()
      WHERE nombre = $1
-     RETURNING "tasaInteresEa", "fianzaPorcentaje", "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje",
+     RETURNING "calculoVersion", "tasaInteresEa", "fianzaPorcentaje", "fianzaTotalPorcentaje",
+       "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje", "tasaPeriodoDecimales",
+       "redondeoComercialModo", "redondeoComercialMultiplo",
        "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas",
        "iphoneCuotaInicialPorcentaje", "iphonePlazoCuotas", "iphonePlazoMaximoCuotas",
        "iphoneTopeFinanciado", "iphoneTopeCuota", "frecuenciaPago", "updatedAt"`,
@@ -662,7 +894,12 @@ export async function updateCreditSettings(params: {
     iphoneTopeFinanciado,
     iphoneTopeCuota,
     fianzaCuotaPorcentaje,
-    seguroCuotaPorcentaje
+    seguroCuotaPorcentaje,
+    calculoVersion,
+    fianzaTotalPorcentaje,
+    tasaPeriodoDecimales,
+    redondeoComercialModo,
+    redondeoComercialMultiplo
   )) as Array<Record<string, unknown>>;
 
   return toCreditSettings(rows[0]);
@@ -670,10 +907,15 @@ export async function updateCreditSettings(params: {
 
 export async function upsertCreditDocumentException(params: {
   documento: unknown;
+  calculoVersion?: unknown;
   tasaInteresEa?: unknown;
   fianzaPorcentaje?: unknown;
+  fianzaTotalPorcentaje?: unknown;
   fianzaCuotaPorcentaje?: unknown;
   seguroCuotaPorcentaje?: unknown;
+  tasaPeriodoDecimales?: unknown;
+  redondeoComercialModo?: unknown;
+  redondeoComercialMultiplo?: unknown;
   cuotaInicialPorcentaje?: unknown;
   plazoCuotas?: unknown;
   plazoMaximoCuotas?: unknown;
@@ -702,21 +944,55 @@ export async function upsertCreditDocumentException(params: {
   const observacion = String(params.observacion ?? "").trim().slice(0, 240) || null;
   const activo =
     params.activo === null || params.activo === undefined ? true : Boolean(params.activo);
+  const calculoVersion = normalizeOptionalCalculationVersion(
+    params.calculoVersion
+  );
+  const aresCalculation =
+    (calculoVersion || globalSettings.calculoVersion) === "ARES_FRANCES_V1";
+  const tasaPeriodoDecimales = calculoVersion
+    ? aresCalculation
+      ? 6
+      : normalizeOptionalAresRateDecimals(params.tasaPeriodoDecimales)
+    : normalizeOptionalAresRateDecimals(params.tasaPeriodoDecimales);
+  const redondeoComercialModo = calculoVersion
+    ? aresCalculation
+      ? "PISO"
+      : normalizeOptionalCommercialRoundingMode(
+          params.redondeoComercialModo
+        )
+    : normalizeOptionalCommercialRoundingMode(params.redondeoComercialModo);
+  const redondeoComercialMultiplo = calculoVersion
+    ? aresCalculation
+      ? 50
+      : normalizeOptionalCommercialRoundingMultiple(
+          params.redondeoComercialMultiplo
+        )
+    : normalizeOptionalCommercialRoundingMultiple(
+        params.redondeoComercialMultiplo
+      );
 
   const rows = (await prisma.$queryRawUnsafe(
     `INSERT INTO "CreditoConfiguracionDocumento"
-      (documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje",
+      (documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje", "fianzaTotalPorcentaje",
+       "cuotaInicialPorcentaje",
        "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
        "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
-       activo, observacion, "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje", "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+       activo, observacion, "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje",
+       "calculoVersion", "tasaPeriodoDecimales", "redondeoComercialModo",
+       "redondeoComercialMultiplo", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
      ON CONFLICT ("documentoNormalizado")
      DO UPDATE SET
        documento = EXCLUDED.documento,
        "tasaInteresEa" = EXCLUDED."tasaInteresEa",
        "fianzaPorcentaje" = EXCLUDED."fianzaPorcentaje",
+       "fianzaTotalPorcentaje" = EXCLUDED."fianzaTotalPorcentaje",
        "fianzaCuotaPorcentaje" = EXCLUDED."fianzaCuotaPorcentaje",
        "seguroCuotaPorcentaje" = EXCLUDED."seguroCuotaPorcentaje",
+       "calculoVersion" = EXCLUDED."calculoVersion",
+       "tasaPeriodoDecimales" = EXCLUDED."tasaPeriodoDecimales",
+       "redondeoComercialModo" = EXCLUDED."redondeoComercialModo",
+       "redondeoComercialMultiplo" = EXCLUDED."redondeoComercialMultiplo",
        "cuotaInicialPorcentaje" = EXCLUDED."cuotaInicialPorcentaje",
        "plazoCuotas" = EXCLUDED."plazoCuotas",
        "plazoMaximoCuotas" = EXCLUDED."plazoMaximoCuotas",
@@ -726,8 +1002,10 @@ export async function upsertCreditDocumentException(params: {
        activo = EXCLUDED.activo,
        observacion = EXCLUDED.observacion,
        "updatedAt" = NOW()
-     RETURNING id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
-       "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje", "cuotaInicialPorcentaje",
+     RETURNING id, documento, "documentoNormalizado", "calculoVersion",
+       "tasaInteresEa", "fianzaPorcentaje", "fianzaTotalPorcentaje",
+       "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje", "tasaPeriodoDecimales",
+       "redondeoComercialModo", "redondeoComercialMultiplo", "cuotaInicialPorcentaje",
        "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
        "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
        activo, observacion, "createdAt", "updatedAt"`,
@@ -735,6 +1013,7 @@ export async function upsertCreditDocumentException(params: {
     documentoNormalizado,
     normalizeOptionalPercentage(params.tasaInteresEa),
     normalizeOptionalPercentage(params.fianzaPorcentaje),
+    normalizeOptionalPercentage(params.fianzaTotalPorcentaje),
     normalizeOptionalPercentage(params.cuotaInicialPorcentaje),
     plazoCuotas,
     normalizeOptionalInstallmentLimit(params.plazoMaximoCuotas),
@@ -744,7 +1023,11 @@ export async function upsertCreditDocumentException(params: {
     activo,
     observacion,
     normalizeOptionalPrecisePercentage(params.fianzaCuotaPorcentaje),
-    normalizeOptionalPrecisePercentage(params.seguroCuotaPorcentaje)
+    normalizeOptionalPrecisePercentage(params.seguroCuotaPorcentaje),
+    calculoVersion,
+    tasaPeriodoDecimales,
+    redondeoComercialModo,
+    redondeoComercialMultiplo
   )) as Array<Record<string, unknown>>;
 
   return toDocumentException(rows[0], globalSettings);

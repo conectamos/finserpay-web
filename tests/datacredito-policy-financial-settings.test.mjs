@@ -23,11 +23,16 @@ const { resolveCreditPolicyFinancialSettings } = await jiti.import(
 );
 
 const financialSettings = {
-  calculoVersion: "FRANCES_V1",
+  calculoVersion: "ARES_FRANCES_V1",
   tasaInteresEa: 29.66,
-  fianzaCuotaPorcentaje: 2.083333,
+  fianzaTotalPorcentaje: 75,
   seguroCuotaPorcentaje: 0.03,
   frecuenciaPago: "QUINCENAL",
+  tasaPeriodoDecimales: 6,
+  redondeoComercial: {
+    modo: "PISO",
+    multiplo: 50,
+  },
 };
 
 test("valida y congela los parametros financieros en la oferta", () => {
@@ -60,10 +65,15 @@ test("valida y congela los parametros financieros en la oferta", () => {
 test("la excepcion explicita por cedula gana sin perder valores cero", () => {
   const resolved = resolveCreditPolicyFinancialSettings({
     globalSettings: {
+      calculoVersion: "ARES_FRANCES_V1",
       tasaInteresEa: 25,
+      fianzaTotalPorcentaje: 75,
       fianzaCuotaPorcentaje: 3,
       seguroCuotaPorcentaje: 0.05,
       frecuenciaPago: "MENSUAL",
+      tasaPeriodoDecimales: 6,
+      redondeoComercialModo: "PISO",
+      redondeoComercialMultiplo: 50,
     },
     documentException: {
       tasaInteresEa: 0,
@@ -83,12 +93,17 @@ test("la excepcion explicita por cedula gana sin perder valores cero", () => {
   assert.equal(resolved.fianzaSource, "CLIENTE_POR_CUOTA");
 });
 
-test("una politica nueva usa fianza por cuota y una historica conserva total dividido", () => {
+test("ARES divide la fianza total por plazo y FRANCES_V1 conserva fianza por cuota", () => {
   const base = {
+    calculoVersion: "ARES_FRANCES_V1",
     tasaInteresEa: 25,
+    fianzaTotalPorcentaje: 70,
     fianzaCuotaPorcentaje: 3,
     seguroCuotaPorcentaje: 0.05,
     frecuenciaPago: "MENSUAL",
+    tasaPeriodoDecimales: 6,
+    redondeoComercialModo: "PISO",
+    redondeoComercialMultiplo: 50,
   };
   const current = resolveCreditPolicyFinancialSettings({
     globalSettings: base,
@@ -96,17 +111,72 @@ test("una politica nueva usa fianza por cuota y una historica conserva total div
     legacyOfferSuretyPercentage: 75,
     numeroCuotas: 36,
   });
-  assert.equal(current.fianzaCuotaPorcentaje, 2.083333);
+  assert.equal(current.fianzaCuotaPorcentaje, 75 / 36);
+  assert.equal(current.fianzaTotalPorcentaje, 75);
+  assert.equal(current.fianzaModalidad, "TOTAL_CREDITO");
+  assert.equal(current.calculoVersion, "ARES_FRANCES_V1");
+  assert.deepEqual(current.redondeoComercial, { modo: "PISO", multiplo: 50 });
   assert.equal(current.fianzaSource, "POLITICA");
 
-  const historical = resolveCreditPolicyFinancialSettings({
+  const legacyPolicy = resolveCreditPolicyFinancialSettings({
     globalSettings: base,
+    policyFinancialSettings: {
+      calculoVersion: "FRANCES_V1",
+      tasaInteresEa: 25,
+      fianzaCuotaPorcentaje: 2.083333,
+      seguroCuotaPorcentaje: 0.03,
+      frecuenciaPago: "QUINCENAL",
+    },
+    legacyOfferSuretyPercentage: 75,
+    numeroCuotas: 36,
+  });
+  assert.equal(legacyPolicy.fianzaCuotaPorcentaje, 2.083333);
+  assert.equal(legacyPolicy.fianzaModalidad, "POR_CUOTA");
+  assert.equal(legacyPolicy.calculoVersion, "FRANCES_V1");
+  assert.equal(legacyPolicy.tasaPeriodoDecimales, 12);
+  assert.deepEqual(legacyPolicy.redondeoComercial, {
+    modo: "REDONDEO",
+    multiplo: 100,
+  });
+
+  const historical = resolveCreditPolicyFinancialSettings({
+    globalSettings: {
+      ...base,
+      calculoVersion: "FRANCES_V1",
+    },
     policyFinancialSettings: null,
     legacyOfferSuretyPercentage: 75,
     numeroCuotas: 36,
   });
   assert.equal(historical.fianzaCuotaPorcentaje, 75 / 36);
+  assert.equal(historical.fianzaModalidad, "TOTAL_CREDITO");
   assert.equal(historical.fianzaSource, "OFERTA_LEGACY_TOTAL");
+});
+
+test("el global ARES aplica 29.66, aval total 75 y piso 50 sin assessment", () => {
+  const resolved = resolveCreditPolicyFinancialSettings({
+    globalSettings: {
+      calculoVersion: "ARES_FRANCES_V1",
+      tasaInteresEa: 29.66,
+      fianzaTotalPorcentaje: 75,
+      fianzaCuotaPorcentaje: 2.083333,
+      seguroCuotaPorcentaje: 0.03,
+      frecuenciaPago: "QUINCENAL",
+      tasaPeriodoDecimales: 6,
+      redondeoComercialModo: "PISO",
+      redondeoComercialMultiplo: 50,
+    },
+    numeroCuotas: 16,
+  });
+
+  assert.equal(resolved.fianzaCuotaPorcentaje, 75 / 16);
+  assert.equal(resolved.seguroCuotaPorcentaje, 0.03);
+  assert.equal(resolved.tasaInteresEa, 29.66);
+  assert.equal(resolved.tasaPeriodoDecimales, 6);
+  assert.deepEqual(resolved.redondeoComercial, {
+    modo: "PISO",
+    multiplo: 50,
+  });
 });
 
 test("retirar una politica es logico, bloqueado y conserva historia", async () => {
@@ -138,9 +208,9 @@ test("retirar una politica es logico, bloqueado y conserva historia", async () =
   assert.match(ui, /Retirar política/);
   assert.match(ui, /Reasigna primero/);
   assert.match(ui, /Parámetros financieros de la política/);
-  assert.match(ui, /Fianza por cuota/);
+  assert.match(ui, /Aval\/fianza total del crédito/);
   assert.match(ui, /Seguro por cuota/);
-  assert.match(ui, /FRANCES_V1/);
+  assert.match(ui, /ARES_FRANCES_V1/);
   assert.match(ui, /Condiciones financieras de la nueva política/);
   assert.match(ui, /newPolicyFinancialSettings/);
   assert.match(

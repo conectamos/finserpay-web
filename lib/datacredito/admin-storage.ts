@@ -644,11 +644,16 @@ export async function listDataCreditoPolicyCatalog() {
   return {
     defaultPolicyId: DEFAULT_DATACREDITO_POLICY_PROFILE_ID,
     financialDefaults: {
-      calculoVersion: "FRANCES_V1" as const,
+      calculoVersion: "ARES_FRANCES_V1" as const,
       tasaInteresEa: creditDefaults.tasaInteresEa,
-      fianzaCuotaPorcentaje: creditDefaults.fianzaCuotaPorcentaje,
+      fianzaTotalPorcentaje: creditDefaults.fianzaTotalPorcentaje,
       seguroCuotaPorcentaje: creditDefaults.seguroCuotaPorcentaje,
       frecuenciaPago: creditDefaults.frecuenciaPago,
+      tasaPeriodoDecimales: 6 as const,
+      redondeoComercial: {
+        modo: "PISO" as const,
+        multiplo: 50 as const,
+      },
     },
     profiles: profileRows.map((row) => {
       const payload = row.policy

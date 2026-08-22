@@ -1112,6 +1112,36 @@ export async function POST(req: Request) {
     const frecuenciaPago = normalizePaymentFrequency(
       resolvedPolicyFinancialSettings.frecuenciaPago
     );
+    const policyFinancialSettings =
+      dataCreditoAssessment?.offer?.financialSettings || null;
+    const documentFinancialException =
+      effectiveCreditSettings.documentException || null;
+    const financialParameterOrigins = {
+      calculo: resolvedPolicyFinancialSettings.calculoVersion,
+      tasaInteresEa:
+        documentFinancialException?.tasaInteresEa !== null &&
+        documentFinancialException?.tasaInteresEa !== undefined
+          ? "EXCEPCION_CLIENTE"
+          : policyFinancialSettings
+            ? "POLITICA_DATACREDITO"
+            : "CONFIGURACION_GLOBAL",
+      fianzaModalidad: resolvedPolicyFinancialSettings.fianzaModalidad,
+      fianzaFuente: resolvedPolicyFinancialSettings.fianzaSource,
+      seguro:
+        documentFinancialException?.seguroCuotaPorcentaje !== null &&
+        documentFinancialException?.seguroCuotaPorcentaje !== undefined
+          ? "EXCEPCION_CLIENTE"
+          : policyFinancialSettings
+            ? "POLITICA_DATACREDITO"
+            : "CONFIGURACION_GLOBAL",
+      frecuenciaPago: isIphoneCredit
+        ? "REGLA_PLATAFORMA_IPHONE"
+        : documentFinancialException?.frecuenciaPago
+          ? "EXCEPCION_CLIENTE"
+          : policyFinancialSettings
+            ? "POLITICA_DATACREDITO"
+            : "CONFIGURACION_GLOBAL",
+    } as const;
     const fechaCredito = new Date();
     const fechaPrimerPagoPredeterminada = getDefaultFirstPaymentDateObject(
       frecuenciaPago,
@@ -1250,6 +1280,11 @@ export async function POST(req: Request) {
     const fianzaCuotaPorcentaje =
       resolvedPolicyFinancialSettings.fianzaCuotaPorcentaje;
     const amortizationPlan = calculateFrenchAmortization({
+      calculoVersion: resolvedPolicyFinancialSettings.calculoVersion,
+      tasaPeriodoDecimales:
+        resolvedPolicyFinancialSettings.tasaPeriodoDecimales,
+      redondeoComercial:
+        resolvedPolicyFinancialSettings.redondeoComercial,
       valorVenta: valorVentaCalculo,
       cuotaInicial,
       numeroCuotas: plazoMeses,
@@ -1298,6 +1333,20 @@ export async function POST(req: Request) {
         imei,
       },
       amortizacion: amortizationPlan,
+      parametros: {
+        fianzaTotalPorcentaje:
+          resolvedPolicyFinancialSettings.fianzaTotalPorcentaje,
+        fianzaModalidad:
+          resolvedPolicyFinancialSettings.fianzaModalidad,
+        fianzaFuente: resolvedPolicyFinancialSettings.fianzaSource,
+        tasaPeriodoDecimales:
+          resolvedPolicyFinancialSettings.tasaPeriodoDecimales,
+        redondeoComercial:
+          resolvedPolicyFinancialSettings.redondeoComercial,
+        policyVersion: dataCreditoAssessment?.policyVersion || null,
+        policyRevisionId:
+          dataCreditoAssessment?.policyRevisionId || null,
+      },
     });
 
     if (firmaSeguroProcess) {
@@ -2104,7 +2153,14 @@ export async function POST(req: Request) {
         tasaPeriodo: amortizationPlan.tasaPeriodo,
         periodosPorAno: amortizationPlan.periodosPorAno,
         fianzaCuotaPorcentaje: amortizationPlan.fianzaCuotaPorcentaje,
+        fianzaTotalPorcentaje:
+          resolvedPolicyFinancialSettings.fianzaTotalPorcentaje,
+        fianzaModalidad: resolvedPolicyFinancialSettings.fianzaModalidad,
         seguroCuotaPorcentaje: amortizationPlan.seguroCuotaPorcentaje,
+        tasaPeriodoDecimales:
+          resolvedPolicyFinancialSettings.tasaPeriodoDecimales,
+        redondeoComercial:
+          resolvedPolicyFinancialSettings.redondeoComercial,
         cuotaCreditoExacta: amortizationPlan.cuotaCredito,
         cuotaFianzaExacta: amortizationPlan.cuotaFianza,
         cuotaSeguroExacta: amortizationPlan.cuotaSeguro,
@@ -2112,8 +2168,13 @@ export async function POST(req: Request) {
         cuotaComercial: amortizationPlan.cuotaComercial,
         valorSeguro: amortizationPlan.valorSeguroTotal,
         valorCuota,
+        origenParametros: financialParameterOrigins,
+        selloFinanciero: financingTermsSeal,
         dataCredito: dataCreditoAssessment
           ? {
+              assessmentId: dataCreditoAssessment.id,
+              policyVersion: dataCreditoAssessment.policyVersion,
+              policyRevisionId: dataCreditoAssessment.policyRevisionId,
               maxFinancedAmount: dataCreditoMaxFinancedAmount,
               effectiveMaxFinancedAmount:
                 dataCreditoEffectiveMaxFinancedAmount,
@@ -2348,10 +2409,19 @@ export async function POST(req: Request) {
     const amortizationParametersSnapshot = {
       metodo: amortizationPlan.metodo,
       calculoVersion: amortizationPlan.version,
-      origenFianza: dataCreditoAssessment
-        ? "OFERTA_DATACREDITO_TOTAL_DIVIDIDA_POR_CUOTAS"
-        : "CONFIGURACION_POR_CUOTA",
+      origenFianza: resolvedPolicyFinancialSettings.fianzaModalidad,
+      fuenteFianza: resolvedPolicyFinancialSettings.fianzaSource,
+      fianzaTotalPorcentaje:
+        resolvedPolicyFinancialSettings.fianzaTotalPorcentaje,
+      tasaPeriodoDecimales:
+        resolvedPolicyFinancialSettings.tasaPeriodoDecimales,
+      redondeoComercial:
+        resolvedPolicyFinancialSettings.redondeoComercial,
+      origenParametros: financialParameterOrigins,
       dataCreditoAssessmentId: dataCreditoAssessment?.id || null,
+      dataCreditoPolicyVersion: dataCreditoAssessment?.policyVersion || null,
+      dataCreditoPolicyRevisionId:
+        dataCreditoAssessment?.policyRevisionId || null,
       documentExceptionId:
         effectiveCreditSettings.documentException?.id || null,
       fechaPrimerPago: fechaPrimerPago.toISOString(),

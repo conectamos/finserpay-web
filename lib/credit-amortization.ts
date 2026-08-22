@@ -6,10 +6,25 @@ import {
 } from "@/lib/credit-factory";
 
 export const FRENCH_AMORTIZATION_VERSION = "FRANCES_V1";
+export const ARES_FRENCH_AMORTIZATION_VERSION = "ARES_FRANCES_V1";
 export const DEFAULT_INSTALLMENT_SURETY_PERCENTAGE = 2.083333;
 export const DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE = 0.03;
+export const ARES_PERIODIC_RATE_DECIMALS = 6;
+export const ARES_COMMERCIAL_INSTALLMENT_INCREMENT = 50;
+
+export type FrenchAmortizationVersion =
+  | typeof FRENCH_AMORTIZATION_VERSION
+  | typeof ARES_FRENCH_AMORTIZATION_VERSION;
+
+export type CommercialInstallmentRounding = {
+  modo: "REDONDEO" | "PISO";
+  multiplo: number;
+};
 
 export type FrenchAmortizationInput = {
+  calculoVersion?: FrenchAmortizationVersion;
+  tasaPeriodoDecimales?: number;
+  redondeoComercial?: CommercialInstallmentRounding;
   valorVenta: number;
   cuotaInicial: number;
   numeroCuotas: number;
@@ -36,7 +51,7 @@ export type FrenchAmortizationInstallment = {
 
 export type FrenchAmortizationResult = {
   metodo: "FRANCES_CUOTA_FIJA";
-  version: typeof FRENCH_AMORTIZATION_VERSION;
+  version: FrenchAmortizationVersion;
   valorVenta: number;
   cuotaInicial: number;
   valorFinanciado: number;
@@ -120,6 +135,24 @@ export function annualEffectiveToPeriodicRate(
   return Math.pow(1 + annualRate / 100, 1 / periods) - 1;
 }
 
+export function roundPeriodicRateForAres(
+  value: number,
+  decimalPlaces = ARES_PERIODIC_RATE_DECIMALS
+) {
+  const rate = nonNegativeNumber(value, "tasaPeriodo");
+  const decimals = finiteNumber(decimalPlaces, "tasaPeriodoDecimales");
+
+  if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > 12) {
+    throw new Error(
+      "tasaPeriodoDecimales debe ser un entero entre cero y doce."
+    );
+  }
+
+  const factor = 10 ** decimals;
+
+  return Math.round((rate + Number.EPSILON) * factor) / factor;
+}
+
 export function roundCommercialInstallment(value: number, increment = 100) {
   const amount = nonNegativeNumber(value, "cuotaTotal");
   const commercialIncrement = positiveInteger(increment, "incrementoComercial");
@@ -127,9 +160,25 @@ export function roundCommercialInstallment(value: number, increment = 100) {
   return Math.round(amount / commercialIncrement) * commercialIncrement;
 }
 
+export function floorCommercialInstallment(
+  value: number,
+  increment = ARES_COMMERCIAL_INSTALLMENT_INCREMENT
+) {
+  const amount = nonNegativeNumber(value, "cuotaTotal");
+  const commercialIncrement = positiveInteger(increment, "incrementoComercial");
+  const floatingPointTolerance = Number.EPSILON * Math.max(1, amount);
+
+  return (
+    Math.floor((amount + floatingPointTolerance) / commercialIncrement) *
+    commercialIncrement
+  );
+}
+
 export function calculateFrenchAmortization(
   input: FrenchAmortizationInput
 ): FrenchAmortizationResult {
+  const version = input.calculoVersion || ARES_FRENCH_AMORTIZATION_VERSION;
+  const aresCompatible = version === ARES_FRENCH_AMORTIZATION_VERSION;
   const valorVenta = nonNegativeNumber(input.valorVenta, "valorVenta");
   const cuotaInicial = nonNegativeNumber(input.cuotaInicial, "cuotaInicial");
   const numeroCuotas = positiveInteger(input.numeroCuotas, "numeroCuotas");
@@ -154,10 +203,16 @@ export function calculateFrenchAmortization(
   const valorFinanciado = valorVenta - cuotaInicial;
   const frecuenciaPago = normalizePaymentFrequency(input.frecuenciaPago);
   const periodosPorAno = getPaymentFrequencyPeriodsPerYear(frecuenciaPago);
-  const tasaPeriodo = annualEffectiveToPeriodicRate(
+  const tasaPeriodoSinRedondear = annualEffectiveToPeriodicRate(
     tasaInteresEa,
     periodosPorAno
   );
+  const tasaPeriodo = aresCompatible
+    ? roundPeriodicRateForAres(
+        tasaPeriodoSinRedondear,
+        input.tasaPeriodoDecimales ?? ARES_PERIODIC_RATE_DECIMALS
+      )
+    : tasaPeriodoSinRedondear;
   const fechaPrimerPago = normalizeFirstPaymentDate(input.fechaPrimerPago);
   const cuotaCredito =
     tasaPeriodo === 0
@@ -167,6 +222,18 @@ export function calculateFrenchAmortization(
   const cuotaFianza = valorFinanciado * (fianzaCuotaPorcentaje / 100);
   const cuotaSeguro = valorFinanciado * (seguroCuotaPorcentaje / 100);
   const cuotaTotal = cuotaCredito + cuotaFianza + cuotaSeguro;
+  const redondeoComercial =
+    input.redondeoComercial ||
+    (aresCompatible
+      ? {
+          modo: "PISO" as const,
+          multiplo: ARES_COMMERCIAL_INSTALLMENT_INCREMENT,
+        }
+      : { modo: "REDONDEO" as const, multiplo: 100 });
+  const cuotaComercial =
+    redondeoComercial.modo === "PISO"
+      ? floorCommercialInstallment(cuotaTotal, redondeoComercial.multiplo)
+      : roundCommercialInstallment(cuotaTotal, redondeoComercial.multiplo);
 
   let saldo = valorFinanciado;
   let valorInteresTotal = 0;
@@ -219,7 +286,7 @@ export function calculateFrenchAmortization(
 
   return {
     metodo: "FRANCES_CUOTA_FIJA",
-    version: FRENCH_AMORTIZATION_VERSION,
+    version,
     valorVenta,
     cuotaInicial,
     valorFinanciado,
@@ -234,7 +301,7 @@ export function calculateFrenchAmortization(
     cuotaFianza,
     cuotaSeguro,
     cuotaTotal,
-    cuotaComercial: roundCommercialInstallment(cuotaTotal),
+    cuotaComercial,
     valorInteresTotal,
     valorFianzaTotal,
     valorSeguroTotal,

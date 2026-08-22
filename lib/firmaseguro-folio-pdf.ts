@@ -103,6 +103,81 @@ function formatCurrency(value: number | null | undefined) {
   }).format(Number(value || 0));
 }
 
+function formatExactCurrency(value: number | null | undefined) {
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0));
+}
+
+function formatPercentage(value: number | null | undefined, digits = 6) {
+  return `${new Intl.NumberFormat("es-CO", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  }).format(Number(value || 0))}%`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function finiteNumber(value: unknown) {
+  const parsed = Number(value);
+  return value !== null && value !== undefined && Number.isFinite(parsed)
+    ? parsed
+    : null;
+}
+
+export function resolveFirmaSeguroFinancialDisclosure(
+  credito: CreditForFirmaSeguroPdf
+) {
+  const snapshot = asRecord(credito.contratoSnapshot);
+  const financiero = asRecord(snapshot?.financiero);
+  const snapshotRounding = asRecord(financiero?.redondeoComercial);
+  const cuotaExacta =
+    finiteNumber(credito.valorCuota) ??
+    finiteNumber(financiero?.cuotaTotalExacta) ??
+    0;
+  const cuotaComercial =
+    finiteNumber(credito.valorCuotaComercial) ??
+    finiteNumber(financiero?.cuotaComercial) ??
+    cuotaExacta;
+
+  return {
+    cuotaExacta,
+    cuotaComercial,
+    tasaInteresEa:
+      finiteNumber(credito.tasaInteresEa) ??
+      finiteNumber(financiero?.tasaInteresEa),
+    fianzaCuotaPorcentaje:
+      finiteNumber(credito.fianzaCuotaPorcentaje) ??
+      finiteNumber(financiero?.fianzaCuotaPorcentaje),
+    fianzaTotalPorcentaje:
+      finiteNumber(credito.fianzaTotalPorcentaje) ??
+      finiteNumber(financiero?.fianzaTotalPorcentaje),
+    fianzaModalidad:
+      credito.fianzaModalidad === "TOTAL_CREDITO" ||
+      financiero?.fianzaModalidad === "TOTAL_CREDITO"
+        ? ("TOTAL_CREDITO" as const)
+        : ("POR_CUOTA" as const),
+    seguroCuotaPorcentaje:
+      finiteNumber(credito.seguroCuotaPorcentaje) ??
+      finiteNumber(financiero?.seguroCuotaPorcentaje),
+    redondeoComercialModo:
+      credito.redondeoComercialModo === "PISO" ||
+      snapshotRounding?.modo === "PISO"
+        ? ("PISO" as const)
+        : ("REDONDEO" as const),
+    redondeoComercialMultiplo:
+      finiteNumber(credito.redondeoComercialMultiplo) ??
+      finiteNumber(snapshotRounding?.multiplo),
+  };
+}
+
 function valueOrDash(value: string | number | null | undefined) {
   const text = String(value ?? "").trim();
   return text || "-";
@@ -476,6 +551,7 @@ export async function buildFirmaSeguroCreditPdf(
     "-";
   const imei = valueOrDash(credito.imei || credito.deviceUid);
   const financedAmount = Number(credito.montoCredito || 0);
+  const financialDisclosure = resolveFirmaSeguroFinancialDisclosure(credito);
   const paymentFrequency = getPaymentFrequencyLabel(credito.frecuenciaPago);
   const compact = { size: 6.35, gap: 3 };
 
@@ -547,7 +623,19 @@ export async function buildFirmaSeguroCreditPdf(
   writeSection(doc, "Segunda - Intereses, seguros y fianza", fonts);
   writeParagraph(
     doc,
-    "Sobre el saldo de capital reconocere intereses remuneratorios equivalentes al ________. En caso de mora reconocere intereses moratorios a la tasa del ________, sin exceder la maxima legal permitida, asi como los saldos de la poliza por seguro de fallecimiento, cuando aplique, y el valor pendiente del Fondo de Garantias AFIANZAMOS correspondiente a las obligaciones a favor de FINSER PAY S.A.S., desde el vencimiento y mientras permanezca la mora.",
+    `Sobre el saldo de capital reconocere intereses remuneratorios a una tasa efectiva anual de ${formatPercentage(
+      financialDisclosure.tasaInteresEa,
+      4
+    )}. La fianza corresponde a ${formatPercentage(
+      financialDisclosure.fianzaTotalPorcentaje,
+      6
+    )} total del credito, equivalente a ${formatPercentage(
+      financialDisclosure.fianzaCuotaPorcentaje,
+      6
+    )} por cuota, y el seguro a ${formatPercentage(
+      financialDisclosure.seguroCuotaPorcentaje,
+      6
+    )} por cuota. En caso de mora reconocere intereses moratorios sin exceder la maxima tasa legal permitida y los saldos pendientes de seguro y fianza legalmente procedentes.`,
     fonts,
     { size: 7.05, gap: 5 }
   );
@@ -717,15 +805,24 @@ export async function buildFirmaSeguroCreditPdf(
     doc,
     `3. OBLIGACIONES. El arrendador entregara el equipo operativo y garantizara su funcionamiento, salvo danos por mal uso. El arrendatario pagara ${valueOrDash(
       credito.plazoMeses
-    )} cuotas de ${formatCurrency(
-      credito.valorCuota
-    )} con frecuencia ${paymentFrequency.toLowerCase()}, conservara el equipo en buen estado y no lo subarrendara, no alterara su IMEI ni retirara los controles instalados.`,
+    )} cuotas con valor exacto de referencia de ${formatExactCurrency(
+      financialDisclosure.cuotaExacta
+    )} y cuota comercial informativa de ${formatCurrency(
+      financialDisclosure.cuotaComercial
+    )}${
+      financialDisclosure.redondeoComercialModo === "PISO" &&
+      Number(financialDisclosure.redondeoComercialMultiplo || 0) > 0
+        ? `, calculada al piso en multiplos de ${formatCurrency(
+            financialDisclosure.redondeoComercialMultiplo
+          )}`
+        : ""
+    }, con frecuencia ${paymentFrequency.toLowerCase()}. El plan exacto determina el recaudo y la ultima cuota puede ajustarse por centavos. El arrendatario conservara el equipo en buen estado y no lo subarrendara, no alterara su IMEI ni retirara los controles instalados.`,
     fonts,
     { size: 6.15, gap: 2.5 }
   );
   writeParagraph(
     doc,
-    `4. PAGOS Y PENALIZACIONES. La obligacion total corresponde a ${formatCurrency(
+    `4. PAGOS Y PENALIZACIONES. La obligacion total corresponde a ${formatExactCurrency(
       financedAmount
     )}. La mora causara intereses hasta la maxima tasa legal vigente. La perdida o hurto no extingue el deber de pagar las cuotas pendientes. Cualquier descuento por pago anticipado debera constar por escrito. 5. OPCION DE COMPRA. El precio final y las condiciones de ejercicio seran los que consten en el plan y en los acuerdos escritos entre las partes.`,
     fonts,
