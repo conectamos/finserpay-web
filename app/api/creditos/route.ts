@@ -5,10 +5,8 @@ import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import {
-  calculateCreditCharges,
   calculateFinancedBalance,
   calculateRequiredInitialPaymentByPlatform,
-  calculateInstallmentValue,
   DEFAULT_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
   extendDays,
@@ -35,6 +33,17 @@ import {
   toNumber,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
+import { calculateFrenchAmortization } from "@/lib/credit-amortization";
+import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
+import {
+  createFinancingTermsSeal,
+  readFinancingTermsSeal,
+} from "@/lib/credit-amortization-contract";
+import {
+  ensureCreditAmortizationSchema,
+  persistCreditAmortization,
+  type CreditAmortizationDbClient,
+} from "@/lib/credit-amortization-storage";
 import {
   getEqualityDeviceMeta,
   getPayloadSummary,
@@ -107,6 +116,10 @@ function hashImageDataUrl(value: string) {
   return createHash("sha256")
     .update(Buffer.from(payload, "base64"))
     .digest("hex");
+}
+
+function roundCurrency(value: number) {
+  return Math.round(Number(value || 0) * 100) / 100;
 }
 
 const CONTRACT_TEMPLATE_TITLE =
@@ -1037,10 +1050,16 @@ export async function POST(req: Request) {
       );
     }
 
+    const documentInitialPaymentPercentage =
+      effectiveCreditSettings.documentException?.cuotaInicialPorcentaje;
     const creditSettings = dataCreditoAssessment
       ? {
           ...effectiveCreditSettings.settings,
-          cuotaInicialPorcentaje: dataCreditoInitialPaymentPercentage,
+          cuotaInicialPorcentaje:
+            documentInitialPaymentPercentage !== null &&
+            documentInitialPaymentPercentage !== undefined
+              ? documentInitialPaymentPercentage
+              : dataCreditoInitialPaymentPercentage,
           fianzaPorcentaje: dataCreditoSuretyPercentage,
         }
       : effectiveCreditSettings.settings;
@@ -1076,14 +1095,38 @@ export async function POST(req: Request) {
       creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
       plazoMaximoCuotas
     );
-    const frecuenciaPago = isIphoneCredit
-      ? DEFAULT_PAYMENT_FREQUENCY
-      : normalizePaymentFrequency(body.frecuenciaPago || creditSettings.frecuenciaPago);
+    const resolvedPolicyFinancialSettings =
+      resolveCreditPolicyFinancialSettings({
+        globalSettings: effectiveCreditSettings.globalSettings,
+        documentException: effectiveCreditSettings.documentException,
+        policyFinancialSettings:
+          dataCreditoAssessment?.offer?.financialSettings,
+        legacyOfferSuretyPercentage: dataCreditoAssessment
+          ? dataCreditoSuretyPercentage
+          : null,
+        numeroCuotas: plazoMeses,
+        forcePaymentFrequency: isIphoneCredit
+          ? DEFAULT_PAYMENT_FREQUENCY
+          : null,
+      });
+    const frecuenciaPago = normalizePaymentFrequency(
+      resolvedPolicyFinancialSettings.frecuenciaPago
+    );
     const fechaCredito = new Date();
-    const fechaPrimerPago = getDefaultFirstPaymentDateObject(
+    const fechaPrimerPagoPredeterminada = getDefaultFirstPaymentDateObject(
       frecuenciaPago,
       fechaCredito
     );
+    const fechaPrimerPagoTexto = sanitizeText(body.fechaPrimerPago);
+    const fechaPrimerPagoSolicitada = /^\d{4}-\d{2}-\d{2}$/.test(
+      fechaPrimerPagoTexto
+    )
+      ? new Date(`${fechaPrimerPagoTexto}T12:00:00.000Z`)
+      : toNullableDate(fechaPrimerPagoTexto);
+    const fechaPrimerPago =
+      fechaPrimerPagoSolicitada && fechaPrimerPagoSolicitada > fechaCredito
+        ? fechaPrimerPagoSolicitada
+        : fechaPrimerPagoPredeterminada;
     const firmaSeguroPasoContratos = Boolean(body.firmaSeguroPasoContratos);
     const firmaSeguroProcessUuid = sanitizeText(body.firmaSeguroProcessUuid);
     let firmaSeguroProcess:
@@ -1199,35 +1242,98 @@ export async function POST(req: Request) {
       Boolean(body.autorizacionDatosAceptada) || firmaSeguroPasoContratos;
     const montoCreditoInput = toNumber(body.montoCredito);
     const saldoBaseFinanciado = calculateFinancedBalance(valorEquipoTotalInput, cuotaInicial);
-    const financialPlan = calculateCreditCharges({
-      saldoBaseFinanciado:
-        saldoBaseFinanciado > 0 ? saldoBaseFinanciado : montoCreditoInput,
-      cuotas: plazoMeses,
-      tasaInteresEa: creditSettings.tasaInteresEa,
-      fianzaPorcentaje: creditSettings.fianzaPorcentaje,
-      frecuenciaPago,
-    });
-    const montoCredito =
-      financialPlan.montoCreditoTotal > 0
-        ? financialPlan.montoCreditoTotal
-        : calculateFinancedBalance(valorEquipoTotalInput, cuotaInicial);
-    const valorEquipoTotal =
+    const valorVentaCalculo =
       valorEquipoTotalInput > 0
         ? valorEquipoTotalInput
-        : financialPlan.saldoBaseFinanciado + cuotaInicial;
-    const valorCuota =
-      financialPlan.valorCuota > 0
-        ? financialPlan.valorCuota
-        : calculateInstallmentValue(montoCredito, plazoMeses);
+        : (saldoBaseFinanciado > 0 ? saldoBaseFinanciado : montoCreditoInput) +
+          cuotaInicial;
+    const fianzaCuotaPorcentaje =
+      resolvedPolicyFinancialSettings.fianzaCuotaPorcentaje;
+    const amortizationPlan = calculateFrenchAmortization({
+      valorVenta: valorVentaCalculo,
+      cuotaInicial,
+      numeroCuotas: plazoMeses,
+      tasaInteresEa: resolvedPolicyFinancialSettings.tasaInteresEa,
+      fianzaCuotaPorcentaje,
+      seguroCuotaPorcentaje:
+        resolvedPolicyFinancialSettings.seguroCuotaPorcentaje,
+      frecuenciaPago,
+      fechaPrimerPago,
+    });
+    const financialPlan = {
+      saldoBaseFinanciado: amortizationPlan.valorFinanciado,
+      montoCreditoTotal: roundCurrency(amortizationPlan.montoTotal),
+      valorCuota: amortizationPlan.cuotaTotal,
+      cuotaComercial: amortizationPlan.cuotaComercial,
+      tasaInteresEa: amortizationPlan.tasaInteresEa,
+      valorInteres: roundCurrency(amortizationPlan.valorInteresTotal),
+      fianzaPorcentaje:
+        amortizationPlan.fianzaCuotaPorcentaje * amortizationPlan.numeroCuotas,
+      valorFianza: roundCurrency(amortizationPlan.valorFianzaTotal),
+    };
+    const montoCredito = financialPlan.montoCreditoTotal;
+    const valorEquipoTotal = amortizationPlan.valorVenta;
+    const valorCuota = financialPlan.valorCuota;
     const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
       platform: plataformaDispositivo,
-      valorCuota,
+      valorCuota: amortizationPlan.cuotaTotal,
       iphoneMaxInstallmentValue: creditSettings.iphoneTopeCuota,
     });
     const firmaSeguroDraftFolio = firmaSeguroProcess?.draftFolio
       ? sanitizeText(firmaSeguroProcess.draftFolio)
       : "";
     const folio = firmaSeguroDraftFolio || generateCreditFolio();
+    const financingTermsSeal = createFinancingTermsSeal({
+      folio,
+      documento: clienteDocumento,
+      contrato: {
+        tipoDocumento: clienteTipoDocumento,
+        clienteNombre: clienteNombreFinal,
+        clienteTelefono,
+        clienteCorreo,
+        clienteDireccion,
+        equipoMarca,
+        equipoModelo,
+        referenciaEquipo,
+        imei,
+      },
+      amortizacion: amortizationPlan,
+    });
+
+    if (firmaSeguroProcess) {
+      const draftPayload =
+        firmaSeguroProcess.draftPayload &&
+        typeof firmaSeguroProcess.draftPayload === "object" &&
+        !Array.isArray(firmaSeguroProcess.draftPayload)
+          ? (firmaSeguroProcess.draftPayload as Record<string, unknown>)
+          : null;
+
+      const signedTerms = readFinancingTermsSeal(
+        draftPayload?.financialTermsSeal
+      );
+
+      if (!signedTerms) {
+        return NextResponse.json(
+          {
+            code: "FIRMASEGURO_RESIGN_REQUIRED",
+            error:
+              "Este proceso fue generado sin el sello financiero actual. Debes generar y firmar nuevamente los documentos antes de finalizar el credito.",
+          },
+          { status: 409 }
+        );
+      }
+
+      if (signedTerms.checksum !== financingTermsSeal.checksum) {
+        return NextResponse.json(
+          {
+            code: "FIRMASEGURO_TERMS_MISMATCH",
+            error:
+              "Las condiciones financieras cambiaron despues de enviar el documento a firma. Recalcula y genera un nuevo proceso de FirmaSeguro.",
+          },
+          { status: 409 }
+        );
+      }
+    }
     const existingCreditWithFolio = await prisma.credito.findUnique({
       where: { folio },
       select: { id: true },
@@ -1993,6 +2099,18 @@ export async function POST(req: Request) {
         valorInteres: financialPlan.valorInteres,
         fianzaPorcentaje: financialPlan.fianzaPorcentaje,
         valorFianza: financialPlan.valorFianza,
+        metodoCalculo: amortizationPlan.metodo,
+        calculoVersion: amortizationPlan.version,
+        tasaPeriodo: amortizationPlan.tasaPeriodo,
+        periodosPorAno: amortizationPlan.periodosPorAno,
+        fianzaCuotaPorcentaje: amortizationPlan.fianzaCuotaPorcentaje,
+        seguroCuotaPorcentaje: amortizationPlan.seguroCuotaPorcentaje,
+        cuotaCreditoExacta: amortizationPlan.cuotaCredito,
+        cuotaFianzaExacta: amortizationPlan.cuotaFianza,
+        cuotaSeguroExacta: amortizationPlan.cuotaSeguro,
+        cuotaTotalExacta: amortizationPlan.cuotaTotal,
+        cuotaComercial: amortizationPlan.cuotaComercial,
+        valorSeguro: amortizationPlan.valorSeguroTotal,
         valorCuota,
         dataCredito: dataCreditoAssessment
           ? {
@@ -2203,6 +2321,45 @@ export async function POST(req: Request) {
       clausulas: CONTRACT_CLAUSE_LABELS,
     };
 
+    const amortizationPersistencePlan = {
+      calculoVersion: amortizationPlan.version,
+      frecuenciaPago: amortizationPlan.frecuenciaPago,
+      periodosPorAnio: amortizationPlan.periodosPorAno,
+      numeroCuotas: amortizationPlan.numeroCuotas,
+      valorVenta: amortizationPlan.valorVenta,
+      cuotaInicial: amortizationPlan.cuotaInicial,
+      valorFinanciado: amortizationPlan.valorFinanciado,
+      tasaInteresEaPorcentaje: amortizationPlan.tasaInteresEa,
+      tasaPeriodo: amortizationPlan.tasaPeriodo,
+      fianzaCuotaPorcentaje: amortizationPlan.fianzaCuotaPorcentaje,
+      seguroCuotaPorcentaje: amortizationPlan.seguroCuotaPorcentaje,
+      cuotaCreditoExacta: amortizationPlan.cuotaCredito,
+      cuotaFianzaExacta: amortizationPlan.cuotaFianza,
+      cuotaSeguroExacta: amortizationPlan.cuotaSeguro,
+      cuotaTotalExacta: amortizationPlan.cuotaTotal,
+      cuotaComercial: amortizationPlan.cuotaComercial,
+      totalInteres: amortizationPlan.valorInteresTotal,
+      totalFianza: amortizationPlan.valorFianzaTotal,
+      totalSeguro: amortizationPlan.valorSeguroTotal,
+      totalPagar: amortizationPlan.montoTotal,
+      aprobadoAt: contratoAceptadoAt,
+      cuotas: amortizationPlan.cuotas,
+    };
+    const amortizationParametersSnapshot = {
+      metodo: amortizationPlan.metodo,
+      calculoVersion: amortizationPlan.version,
+      origenFianza: dataCreditoAssessment
+        ? "OFERTA_DATACREDITO_TOTAL_DIVIDIDA_POR_CUOTAS"
+        : "CONFIGURACION_POR_CUOTA",
+      dataCreditoAssessmentId: dataCreditoAssessment?.id || null,
+      documentExceptionId:
+        effectiveCreditSettings.documentException?.id || null,
+      fechaPrimerPago: fechaPrimerPago.toISOString(),
+      financialTermsChecksum: financingTermsSeal.checksum,
+    };
+
+    await ensureCreditAmortizationSchema();
+
     if (dataCreditoAssessment && dataCreditoAssessmentMatch) {
       const claimed = await claimDataCreditoAssessment(
         dataCreditoAssessmentMatch
@@ -2300,12 +2457,25 @@ export async function POST(req: Request) {
       omit: creditListOmit,
     } satisfies Prisma.CreditoCreateArgs;
 
+    const createCreditWithAmortization = async (
+      transaction: Prisma.TransactionClient
+    ) => {
+      const credit = await transaction.credito.create(creditCreateArgs);
+      await persistCreditAmortization(
+        transaction as unknown as CreditAmortizationDbClient,
+        credit.id,
+        amortizationPersistencePlan,
+        amortizationParametersSnapshot
+      );
+      return credit;
+    };
+
     let created;
     if (dataCreditoClaim) {
       const claimedAssessment = dataCreditoClaim;
 
       created = await prisma.$transaction(async (transaction) => {
-        const credit = await transaction.credito.create(creditCreateArgs);
+        const credit = await createCreditWithAmortization(transaction);
         const consumed = await consumeDataCreditoAssessment(
           {
             assessmentId: claimedAssessment.assessmentId,
@@ -2323,7 +2493,9 @@ export async function POST(req: Request) {
       });
       dataCreditoClaim = null;
     } else {
-      created = await prisma.credito.create(creditCreateArgs);
+      created = await prisma.$transaction((transaction) =>
+        createCreditWithAmortization(transaction)
+      );
     }
     createdCreditId = created.id;
 

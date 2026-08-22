@@ -35,6 +35,7 @@ import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
+import { hasCreditAmortization } from "@/lib/credit-amortization-storage";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isMassImportedCredit } from "@/lib/credit-import-flags";
@@ -487,6 +488,16 @@ export async function POST(
           return NextResponse.json(
             { error: "Solo el administrador puede ajustar el plan del credito" },
             { status: 403 }
+          );
+        }
+
+        if (await hasCreditAmortization(current.id)) {
+          return NextResponse.json(
+            {
+              error:
+                "El plan aprobado usa amortizacion francesa inmutable. Para reestructurarlo se requiere un nuevo proceso contractual.",
+            },
+            { status: 409 }
           );
         }
 

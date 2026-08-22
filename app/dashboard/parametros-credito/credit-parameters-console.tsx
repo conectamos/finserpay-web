@@ -20,6 +20,10 @@ import {
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
 } from "@/lib/credit-factory";
+import {
+  DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE,
+  DEFAULT_INSTALLMENT_SURETY_PERCENTAGE,
+} from "@/lib/credit-amortization";
 import DatacreditoPolicyConsole from "./datacredito-policy-console";
 
 type SessionUser = {
@@ -29,6 +33,8 @@ type SessionUser = {
 type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
+  fianzaCuotaPorcentaje: number;
+  seguroCuotaPorcentaje: number;
   cuotaInicialPorcentaje: number;
   iphoneCuotaInicialPorcentaje: number;
   plazoCuotas: number;
@@ -47,6 +53,8 @@ type CreditDocumentException = {
   documentoNormalizado: string;
   tasaInteresEa: number | null;
   fianzaPorcentaje: number | null;
+  fianzaCuotaPorcentaje: number | null;
+  seguroCuotaPorcentaje: number | null;
   cuotaInicialPorcentaje: number | null;
   plazoCuotas: number | null;
   plazoMaximoCuotas: number | null;
@@ -69,7 +77,7 @@ type CreditSettingsResponse = {
 };
 
 const inputClass =
-  "w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base font-semibold text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100";
+  "w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base font-semibold text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200";
 
 function percentValue(value: number | string) {
   const normalized = String(value ?? "").replace(",", ".");
@@ -143,6 +151,12 @@ export default function CreditParametersConsole() {
   const [settings, setSettings] = useState<CreditSettings | null>(null);
   const [tasaInteresEa, setTasaInteresEa] = useState("");
   const [fianzaPorcentaje, setFianzaPorcentaje] = useState("");
+  const [fianzaCuotaPorcentaje, setFianzaCuotaPorcentaje] = useState(
+    String(DEFAULT_INSTALLMENT_SURETY_PERCENTAGE)
+  );
+  const [seguroCuotaPorcentaje, setSeguroCuotaPorcentaje] = useState(
+    String(DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE)
+  );
   const [cuotaInicialPorcentaje, setCuotaInicialPorcentaje] = useState(
     String(DEFAULT_INITIAL_PAYMENT_PERCENTAGE)
   );
@@ -170,6 +184,10 @@ export default function CreditParametersConsole() {
   const [exceptionDocumento, setExceptionDocumento] = useState("");
   const [exceptionTasaInteresEa, setExceptionTasaInteresEa] = useState("");
   const [exceptionFianzaPorcentaje, setExceptionFianzaPorcentaje] = useState("");
+  const [exceptionFianzaCuotaPorcentaje, setExceptionFianzaCuotaPorcentaje] =
+    useState("");
+  const [exceptionSeguroCuotaPorcentaje, setExceptionSeguroCuotaPorcentaje] =
+    useState("");
   const [exceptionCuotaInicialPorcentaje, setExceptionCuotaInicialPorcentaje] =
     useState("");
   const [exceptionPlazoCuotas, setExceptionPlazoCuotas] = useState("");
@@ -225,6 +243,8 @@ export default function CreditParametersConsole() {
     setSettings(nextSettings);
     setTasaInteresEa(percentValue(nextSettings.tasaInteresEa));
     setFianzaPorcentaje(percentValue(nextSettings.fianzaPorcentaje));
+    setFianzaCuotaPorcentaje(percentValue(nextSettings.fianzaCuotaPorcentaje));
+    setSeguroCuotaPorcentaje(percentValue(nextSettings.seguroCuotaPorcentaje));
     setCuotaInicialPorcentaje(percentValue(nextSettings.cuotaInicialPorcentaje));
     setIphoneCuotaInicialPorcentaje(
       percentValue(
@@ -290,6 +310,8 @@ export default function CreditParametersConsole() {
     setExceptionDocumento("");
     setExceptionTasaInteresEa("");
     setExceptionFianzaPorcentaje("");
+    setExceptionFianzaCuotaPorcentaje("");
+    setExceptionSeguroCuotaPorcentaje("");
     setExceptionCuotaInicialPorcentaje("");
     setExceptionPlazoCuotas("");
     setExceptionPlazoMaximoCuotas("");
@@ -305,6 +327,16 @@ export default function CreditParametersConsole() {
     setExceptionTasaInteresEa(item.tasaInteresEa === null ? "" : String(item.tasaInteresEa));
     setExceptionFianzaPorcentaje(
       item.fianzaPorcentaje === null ? "" : String(item.fianzaPorcentaje)
+    );
+    setExceptionFianzaCuotaPorcentaje(
+      item.fianzaCuotaPorcentaje === null
+        ? ""
+        : String(item.fianzaCuotaPorcentaje)
+    );
+    setExceptionSeguroCuotaPorcentaje(
+      item.seguroCuotaPorcentaje === null
+        ? ""
+        : String(item.seguroCuotaPorcentaje)
     );
     setExceptionCuotaInicialPorcentaje(
       item.cuotaInicialPorcentaje === null ? "" : String(item.cuotaInicialPorcentaje)
@@ -364,6 +396,8 @@ export default function CreditParametersConsole() {
           body: JSON.stringify({
             tasaInteresEa,
             fianzaPorcentaje,
+            fianzaCuotaPorcentaje,
+            seguroCuotaPorcentaje,
             cuotaInicialPorcentaje,
             iphoneCuotaInicialPorcentaje,
             plazoCuotas,
@@ -411,6 +445,8 @@ export default function CreditParametersConsole() {
             documento: exceptionDocumento,
             tasaInteresEa: exceptionTasaInteresEa || null,
             fianzaPorcentaje: exceptionFianzaPorcentaje || null,
+            fianzaCuotaPorcentaje: exceptionFianzaCuotaPorcentaje || null,
+            seguroCuotaPorcentaje: exceptionSeguroCuotaPorcentaje || null,
             cuotaInicialPorcentaje: exceptionCuotaInicialPorcentaje || null,
             plazoCuotas: exceptionPlazoCuotas || null,
             plazoMaximoCuotas: exceptionPlazoMaximoCuotas || null,
@@ -584,7 +620,7 @@ export default function CreditParametersConsole() {
 
               <label className="block">
                 <span className="mb-2 block text-sm font-semibold text-slate-700">
-                  Fianza (%)
+                  Fianza total legado (%)
                 </span>
                 <input
                   value={fianzaPorcentaje}
@@ -592,6 +628,40 @@ export default function CreditParametersConsole() {
                   inputMode="decimal"
                   className={inputClass}
                   placeholder="60"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-semibold text-slate-700">
+                  Fianza por cuota (%)
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.000001"
+                  value={fianzaCuotaPorcentaje}
+                  onChange={(event) => setFianzaCuotaPorcentaje(event.target.value)}
+                  inputMode="decimal"
+                  className={inputClass}
+                  placeholder="2.083333"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-semibold text-slate-700">
+                  Seguro por cuota (%)
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.000001"
+                  value={seguroCuotaPorcentaje}
+                  onChange={(event) => setSeguroCuotaPorcentaje(event.target.value)}
+                  inputMode="decimal"
+                  className={inputClass}
+                  placeholder="0.03"
                 />
               </label>
 
@@ -757,7 +827,7 @@ export default function CreditParametersConsole() {
                 type="button"
                 onClick={() => void saveSettings()}
                 disabled={saving}
-                className="rounded-2xl bg-[#0f5d59] px-5 py-3 text-sm font-bold text-white shadow-[0_14px_30px_rgba(15,93,89,0.22)] transition hover:bg-[#0b4744] disabled:opacity-70"
+                className="rounded-2xl bg-[var(--fp-graphite)] px-5 py-3 text-sm font-bold text-white shadow-[var(--fp-shadow-md)] transition hover:bg-slate-800 disabled:opacity-70"
               >
                 {saving ? "Guardando..." : "Guardar parametros"}
               </button>
@@ -784,10 +854,30 @@ export default function CreditParametersConsole() {
 
               <div className="rounded-[22px] border border-slate-200 bg-[#fbfefd] px-4 py-4">
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Fianza
+                  Fianza total legado
                 </p>
                 <p className="mt-2 text-3xl font-black text-slate-950">
                   {settings?.fianzaPorcentaje ?? 0}%
+                </p>
+              </div>
+
+              <div className="rounded-[22px] border border-slate-200 bg-[#fbfefd] px-4 py-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Fianza por cuota
+                </p>
+                <p className="mt-2 text-3xl font-black text-slate-950">
+                  {settings?.fianzaCuotaPorcentaje ??
+                    DEFAULT_INSTALLMENT_SURETY_PERCENTAGE}%
+                </p>
+              </div>
+
+              <div className="rounded-[22px] border border-slate-200 bg-[#fbfefd] px-4 py-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Seguro por cuota
+                </p>
+                <p className="mt-2 text-3xl font-black text-slate-950">
+                  {settings?.seguroCuotaPorcentaje ??
+                    DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE}%
                 </p>
               </div>
 
@@ -946,7 +1036,7 @@ export default function CreditParametersConsole() {
 
                   <label className="block">
                     <span className="mb-2 block text-sm font-semibold text-slate-700">
-                      Fianza (%)
+                      Fianza total legado (%)
                     </span>
                     <input
                       value={exceptionFianzaPorcentaje}
@@ -956,6 +1046,44 @@ export default function CreditParametersConsole() {
                       inputMode="decimal"
                       className={inputClass}
                       placeholder={`${settings?.fianzaPorcentaje ?? 0}`}
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-semibold text-slate-700">
+                      Fianza por cuota (%)
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.000001"
+                      value={exceptionFianzaCuotaPorcentaje}
+                      onChange={(event) =>
+                        setExceptionFianzaCuotaPorcentaje(event.target.value)
+                      }
+                      inputMode="decimal"
+                      className={inputClass}
+                      placeholder={`${settings?.fianzaCuotaPorcentaje ?? DEFAULT_INSTALLMENT_SURETY_PERCENTAGE}`}
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-semibold text-slate-700">
+                      Seguro por cuota (%)
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.000001"
+                      value={exceptionSeguroCuotaPorcentaje}
+                      onChange={(event) =>
+                        setExceptionSeguroCuotaPorcentaje(event.target.value)
+                      }
+                      inputMode="decimal"
+                      className={inputClass}
+                      placeholder={`${settings?.seguroCuotaPorcentaje ?? DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE}`}
                     />
                   </label>
 
@@ -1143,7 +1271,12 @@ export default function CreditParametersConsole() {
 
                       <div className="mt-4 grid gap-2 text-xs font-semibold text-slate-600 sm:grid-cols-2">
                         <span>Interes: {item.effectiveSettings.tasaInteresEa}%</span>
-                        <span>Fianza: {item.effectiveSettings.fianzaPorcentaje}%</span>
+                        <span>
+                          Fianza por cuota: {item.effectiveSettings.fianzaCuotaPorcentaje}%
+                        </span>
+                        <span>
+                          Seguro por cuota: {item.effectiveSettings.seguroCuotaPorcentaje}%
+                        </span>
                         <span>
                           Inicial: {item.effectiveSettings.cuotaInicialPorcentaje}%
                         </span>

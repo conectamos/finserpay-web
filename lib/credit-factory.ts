@@ -315,7 +315,13 @@ export function addPaymentFrequency(
   }
 
   if (frequency === "MENSUAL") {
+    const targetDay = next.getUTCDate();
+    next.setUTCDate(1);
     next.setUTCMonth(next.getUTCMonth() + periods);
+    const lastDayOfTargetMonth = new Date(
+      Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0, 12)
+    ).getUTCDate();
+    next.setUTCDate(Math.min(targetDay, lastDayOfTargetMonth));
     return next;
   }
 

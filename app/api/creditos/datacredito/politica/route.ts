@@ -9,7 +9,9 @@ import {
 import {
   DataCreditoPolicyValidationError,
   parseDataCreditoPolicyBands,
+  parseDataCreditoPolicyFinancialSettings,
 } from "@/lib/datacredito/policy";
+import { getCreditSettings } from "@/lib/credit-settings";
 import {
   createDataCreditoPolicyVersion,
   DATACREDITO_CONSENT_HASH,
@@ -171,9 +173,21 @@ export async function PATCH(request: Request) {
     }
 
     const bands = parseDataCreditoPolicyBands(body.bands);
+    const creditDefaults = await getCreditSettings();
+    const financialSettings = parseDataCreditoPolicyFinancialSettings(
+      body.financialSettings ??
+        assigned.policy.financialSettings ?? {
+          calculoVersion: "FRANCES_V1",
+          tasaInteresEa: creditDefaults.tasaInteresEa,
+          fianzaCuotaPorcentaje: creditDefaults.fianzaCuotaPorcentaje,
+          seguroCuotaPorcentaje: creditDefaults.seguroCuotaPorcentaje,
+          frecuenciaPago: creditDefaults.frecuenciaPago,
+        }
+    )!;
     const policy = await createDataCreditoPolicyVersion({
       profileId: assigned.policy.profileId,
       bands,
+      financialSettings,
       createdByUserId: user.id,
       expectedVersion,
     });

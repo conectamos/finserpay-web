@@ -8,12 +8,14 @@ import prisma from "@/lib/prisma";
 import {
   DataCreditoPolicyValidationError,
   parseDataCreditoPolicyBands,
+  parseDataCreditoPolicyFinancialSettings,
   resolveDataCreditoDecision,
   type DataCreditoDecision,
   type DataCreditoOffer,
   type DataCreditoPlatform,
   type DataCreditoPolicy,
   type DataCreditoPolicyBand,
+  type DataCreditoPolicyFinancialSettings,
 } from "@/lib/datacredito/policy";
 import {
   matchesDataCreditoSchemaIndex,
@@ -305,10 +307,15 @@ function policyFromRow(row: DataCreditoPolicyRow | null): DataCreditoPolicy | nu
       ? (row.policy as Record<string, unknown>)
       : {};
   const bands = parseDataCreditoPolicyBands(payload.bands);
+  const financialSettings = parseDataCreditoPolicyFinancialSettings(
+    payload.financialSettings,
+    { optional: true }
+  );
 
   return {
     version: row.version,
     bands,
+    financialSettings,
     createdAt:
       row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
@@ -1146,12 +1153,16 @@ export async function getAssignedDataCreditoPolicy(
 export async function createDataCreditoPolicyRevision(input: {
   profileId: string;
   bands: DataCreditoPolicyBand[];
+  financialSettings: DataCreditoPolicyFinancialSettings;
   createdByUserId: number;
   expectedVersion?: number | null;
 }) {
   await ensureDataCreditoSchema();
   if (!isUuid(input.profileId)) throw new DataCreditoPolicyNotFoundError();
   const bands = parseDataCreditoPolicyBands(input.bands);
+  const financialSettings = parseDataCreditoPolicyFinancialSettings(
+    input.financialSettings
+  )!;
 
   return prisma.$transaction(async (tx) => {
     if (input.profileId === DEFAULT_DATACREDITO_POLICY_PROFILE_ID) {
@@ -1192,7 +1203,7 @@ export async function createDataCreditoPolicyRevision(input: {
       revisionId,
       input.profileId,
       nextVersion,
-      JSON.stringify({ bands }),
+      JSON.stringify({ bands, financialSettings }),
       input.createdByUserId
     );
     if (input.profileId === DEFAULT_DATACREDITO_POLICY_PROFILE_ID) {
@@ -1204,7 +1215,7 @@ export async function createDataCreditoPolicyRevision(input: {
           ON CONFLICT ("version") DO NOTHING
         `,
         nextVersion,
-        JSON.stringify({ bands }),
+        JSON.stringify({ bands, financialSettings }),
         input.createdByUserId
       );
     }
@@ -1215,6 +1226,7 @@ export async function createDataCreditoPolicyRevision(input: {
 export async function createDataCreditoPolicyVersion(input: {
   profileId?: string;
   bands: DataCreditoPolicyBand[];
+  financialSettings: DataCreditoPolicyFinancialSettings;
   createdByUserId: number;
   expectedVersion?: number | null;
 }) {
@@ -1718,6 +1730,11 @@ export function dataCreditoAssessmentMatchesScope(
 
 export function serializeDataCreditoAssessment(row: DataCreditoAssessmentRow) {
   const approved = row.status === "APROBADO";
+  const financialSettings = approved
+    ? parseDataCreditoPolicyFinancialSettings(row.offer?.financialSettings, {
+        optional: true,
+      })
+    : null;
   return {
     assessmentId: row.id,
     status: row.status === "RECHAZADO" ? "RECHAZADO" : approved ? "APROBADO" : "NO_EVALUADO",
@@ -1729,6 +1746,7 @@ export function serializeDataCreditoAssessment(row: DataCreditoAssessmentRow) {
           suretyPercentage: Number(row.offer?.suretyPercentage),
           maxFinancedAmount: Number(row.offer?.maxFinancedAmount),
           policyVersion: row.policyVersion,
+          financialSettings,
         }
       : null,
   } as const;

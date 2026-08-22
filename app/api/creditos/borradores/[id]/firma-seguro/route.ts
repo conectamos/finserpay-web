@@ -12,8 +12,6 @@ import {
 } from "@/lib/datacredito/storage";
 import { DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT } from "@/lib/datacredito/policy";
 import {
-  calculateCreditCharges,
-  calculateFinancedBalance,
   calculateRequiredInitialPaymentByPlatform,
   DEFAULT_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
@@ -30,6 +28,10 @@ import {
   toNumber,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
+import { calculateFrenchAmortization } from "@/lib/credit-amortization";
+import { createFinancingTermsSeal } from "@/lib/credit-amortization-contract";
+import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
+import type { DataCreditoPolicyFinancialSettings } from "@/lib/datacredito/policy";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import {
   findEquipmentCatalogItem,
@@ -73,6 +75,12 @@ type DraftDataCreditoOffer = {
   initialPaymentPercentage: number;
   suretyPercentage: number;
   maxFinancedAmount: number;
+  financialSettings: DataCreditoPolicyFinancialSettings | null;
+};
+
+type BuiltDraftCredit = {
+  credit: CreditForFirmaSeguroPdf;
+  amortizationPlan: ReturnType<typeof calculateFrenchAmortization>;
 };
 
 class CreditValidationError extends Error {
@@ -291,10 +299,11 @@ async function getDraftDataCreditoOffer(
     initialPaymentPercentage,
     suretyPercentage,
     maxFinancedAmount,
+    financialSettings: assessment.offer?.financialSettings || null,
   };
 }
 
-async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf> {
+async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
   const payload = payloadObject(row.payload);
   const clientePrimerNombre = sanitizeText(payload.clientePrimerNombre);
   const clientePrimerApellido = sanitizeText(payload.clientePrimerApellido);
@@ -376,7 +385,10 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
   const creditSettings = dataCreditoOffer
     ? {
         ...effectiveCreditSettings.settings,
-        cuotaInicialPorcentaje: dataCreditoOffer.initialPaymentPercentage,
+        cuotaInicialPorcentaje:
+          effectiveCreditSettings.documentException
+            ?.cuotaInicialPorcentaje ??
+          dataCreditoOffer.initialPaymentPercentage,
         fianzaPorcentaje: dataCreditoOffer.suretyPercentage,
       }
     : effectiveCreditSettings.settings;
@@ -401,9 +413,21 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
     creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
     plazoMaximoCuotas
   );
-  const frecuenciaPago = isIphoneCredit
-    ? DEFAULT_PAYMENT_FREQUENCY
-    : normalizePaymentFrequency(payload.frecuenciaPago || creditSettings.frecuenciaPago);
+  const resolvedPolicyFinancialSettings =
+    resolveCreditPolicyFinancialSettings({
+      globalSettings: effectiveCreditSettings.globalSettings,
+      documentException: effectiveCreditSettings.documentException,
+      policyFinancialSettings: dataCreditoOffer?.financialSettings,
+      legacyOfferSuretyPercentage:
+        dataCreditoOffer?.suretyPercentage ?? null,
+      numeroCuotas: plazoMeses,
+      forcePaymentFrequency: isIphoneCredit
+        ? DEFAULT_PAYMENT_FREQUENCY
+        : null,
+    });
+  const frecuenciaPago = normalizePaymentFrequency(
+    resolvedPolicyFinancialSettings.frecuenciaPago
+  );
   const fechaCredito = new Date();
   const defaultFirstPaymentDate = getDefaultFirstPaymentDateObject(
     frecuenciaPago,
@@ -412,20 +436,29 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
   const fechaPrimerPago = isIphoneCredit
     ? defaultFirstPaymentDate
     : toValidDate(payload.fechaPrimerPago, defaultFirstPaymentDate);
-  const saldoBaseFinanciado = calculateFinancedBalance(
-    valorEquipoTotalInput,
-    cuotaInicial
-  );
-  const financialPlan = calculateCreditCharges({
-    saldoBaseFinanciado,
-    cuotas: plazoMeses,
-    tasaInteresEa: creditSettings.tasaInteresEa,
-    fianzaPorcentaje: creditSettings.fianzaPorcentaje,
+  const amortizationPlan = calculateFrenchAmortization({
+    valorVenta: valorEquipoTotalInput,
+    cuotaInicial,
+    numeroCuotas: plazoMeses,
+    tasaInteresEa: resolvedPolicyFinancialSettings.tasaInteresEa,
+    fianzaCuotaPorcentaje:
+      resolvedPolicyFinancialSettings.fianzaCuotaPorcentaje,
+    seguroCuotaPorcentaje:
+      resolvedPolicyFinancialSettings.seguroCuotaPorcentaje,
     frecuenciaPago,
+    fechaPrimerPago,
   });
+  const financialPlan = {
+    montoCreditoTotal:
+      Math.round(amortizationPlan.montoTotal * 100) / 100,
+    valorCuota: amortizationPlan.cuotaTotal,
+    cuotaComercial: amortizationPlan.cuotaComercial,
+    valorFianza:
+      Math.round(amortizationPlan.valorFianzaTotal * 100) / 100,
+  };
   const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
     platform: plataformaDispositivo,
-    valorCuota: financialPlan.valorCuota,
+    valorCuota: amortizationPlan.cuotaTotal,
     iphoneMaxInstallmentValue: creditSettings.iphoneTopeCuota,
   });
 
@@ -437,7 +470,8 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
   const referenciaPago = generatePaymentReference(folio, clienteDocumento);
 
   return {
-    folio,
+    credit: {
+      folio,
     contratoSnapshot: {
       borradorId: row.id,
       origen: "BORRADOR_FIRMASEGURO",
@@ -459,6 +493,12 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
     montoCredito: financialPlan.montoCreditoTotal,
     cuotaInicial,
     valorCuota: financialPlan.valorCuota,
+    valorCuotaComercial: financialPlan.cuotaComercial,
+    tasaInteresEa: amortizationPlan.tasaInteresEa,
+    tasaPeriodo: amortizationPlan.tasaPeriodo,
+    fianzaCuotaPorcentaje: amortizationPlan.fianzaCuotaPorcentaje,
+    seguroCuotaPorcentaje: amortizationPlan.seguroCuotaPorcentaje,
+    valorSeguro: amortizationPlan.valorSeguroTotal,
     plazoMeses,
     frecuenciaPago,
     fechaPrimerPago,
@@ -482,11 +522,13 @@ async function buildDraftCredit(row: DraftRow): Promise<CreditForFirmaSeguroPdf>
           email: row.vendedorEmail,
         }
       : null,
-    sede: {
-      nombre: row.sedeNombre || "Sede",
-      codigo: row.sedeCodigo,
-      aliadoId: row.sedeAliadoId,
+      sede: {
+        nombre: row.sedeNombre || "Sede",
+        codigo: row.sedeCodigo,
+        aliadoId: row.sedeAliadoId,
+      },
     },
+    amortizationPlan,
   };
 }
 
@@ -582,7 +624,7 @@ export async function POST(
     }
 
     const current = await getLatestFirmaSeguroProcessForDraft(draftId);
-    const credit = await buildDraftCredit(authorized.row);
+    const { credit, amortizationPlan } = await buildDraftCredit(authorized.row);
     const draftFolio = current?.draftFolio || credit.folio;
     const payload = {
       ...payloadObject(authorized.row.payload),
@@ -600,6 +642,22 @@ export async function POST(
       draftFolio,
       credit.clienteDocumento || ""
     );
+    firmaSeguroDraftPayload.financialTermsSeal = createFinancingTermsSeal({
+      folio: draftFolio,
+      documento: credit.clienteDocumento || "",
+      contrato: {
+        tipoDocumento: credit.clienteTipoDocumento || "",
+        clienteNombre: credit.clienteNombre,
+        clienteTelefono: credit.clienteTelefono || "",
+        clienteCorreo: credit.clienteCorreo || "",
+        clienteDireccion: credit.clienteDireccion || "",
+        equipoMarca: credit.equipoMarca || "",
+        equipoModelo: credit.equipoModelo || "",
+        referenciaEquipo: credit.referenciaEquipo || "",
+        imei: credit.imei || credit.deviceUid || "",
+      },
+      amortizacion: amortizationPlan,
+    });
 
     await prisma.$executeRawUnsafe(
       `

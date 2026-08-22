@@ -16,6 +16,10 @@ import {
   normalizeMoneyLimit,
   normalizePaymentFrequency,
 } from "@/lib/credit-factory";
+import {
+  DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE,
+  DEFAULT_INSTALLMENT_SURETY_PERCENTAGE,
+} from "@/lib/credit-amortization";
 
 const CREDIT_SETTINGS_KEY = "GLOBAL";
 const SEEDED_MULTI_CREDIT_DOCUMENT = "1023028341";
@@ -25,6 +29,8 @@ let creditSettingsTableReady = false;
 export type CreditSettings = {
   tasaInteresEa: number;
   fianzaPorcentaje: number;
+  fianzaCuotaPorcentaje: number;
+  seguroCuotaPorcentaje: number;
   cuotaInicialPorcentaje: number;
   plazoCuotas: number;
   plazoMaximoCuotas: number;
@@ -45,6 +51,8 @@ export type CreditDocumentException = {
   documentoNormalizado: string;
   tasaInteresEa: number | null;
   fianzaPorcentaje: number | null;
+  fianzaCuotaPorcentaje: number | null;
+  seguroCuotaPorcentaje: number | null;
   cuotaInicialPorcentaje: number | null;
   plazoCuotas: number | null;
   plazoMaximoCuotas: number | null;
@@ -98,6 +106,24 @@ function normalizeOptionalPercentage(value: unknown) {
   }
 
   return normalizePercentage(value, 0);
+}
+
+function normalizePrecisePercentage(value: unknown, fallback: number) {
+  const parsed = Number(String(value ?? "").replace(",", "."));
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(parsed * 1_000_000) / 1_000_000));
+}
+
+function normalizeOptionalPrecisePercentage(value: unknown) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
+
+  return normalizePrecisePercentage(value, 0);
 }
 
 function normalizeOptionalInstallmentLimit(value: unknown) {
@@ -173,6 +199,14 @@ function toCreditSettings(row?: Record<string, unknown> | null): CreditSettings 
       row?.fianzaPorcentaje,
       DEFAULT_FIANCO_SURETY_PERCENTAGE
     ),
+    fianzaCuotaPorcentaje: toNumber(
+      row?.fianzaCuotaPorcentaje,
+      DEFAULT_INSTALLMENT_SURETY_PERCENTAGE
+    ),
+    seguroCuotaPorcentaje: toNumber(
+      row?.seguroCuotaPorcentaje,
+      DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE
+    ),
     cuotaInicialPorcentaje,
     plazoCuotas: normalizeCreditInstallments(
       row?.plazoCuotas,
@@ -227,6 +261,12 @@ function mergeDocumentSettings(
       toNullableNumber(row?.tasaInteresEa) ?? globalSettings.tasaInteresEa,
     fianzaPorcentaje:
       toNullableNumber(row?.fianzaPorcentaje) ?? globalSettings.fianzaPorcentaje,
+    fianzaCuotaPorcentaje:
+      toNullableNumber(row?.fianzaCuotaPorcentaje) ??
+      globalSettings.fianzaCuotaPorcentaje,
+    seguroCuotaPorcentaje:
+      toNullableNumber(row?.seguroCuotaPorcentaje) ??
+      globalSettings.seguroCuotaPorcentaje,
     cuotaInicialPorcentaje:
       documentInitialPercentage ?? globalSettings.cuotaInicialPorcentaje,
     plazoMaximoCuotas: normalizedMax,
@@ -262,6 +302,8 @@ function toDocumentException(
     documentoNormalizado: String(row.documentoNormalizado || ""),
     tasaInteresEa: toNullableNumber(row.tasaInteresEa),
     fianzaPorcentaje: toNullableNumber(row.fianzaPorcentaje),
+    fianzaCuotaPorcentaje: toNullableNumber(row.fianzaCuotaPorcentaje),
+    seguroCuotaPorcentaje: toNullableNumber(row.seguroCuotaPorcentaje),
     cuotaInicialPorcentaje: toNullableNumber(row.cuotaInicialPorcentaje),
     plazoCuotas: toNullableNumber(row.plazoCuotas),
     plazoMaximoCuotas: toNullableNumber(row.plazoMaximoCuotas),
@@ -287,6 +329,8 @@ export async function ensureCreditSettingsTable() {
       nombre TEXT NOT NULL UNIQUE,
       "tasaInteresEa" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_LEGAL_CONSUMER_RATE_EA},
       "fianzaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_FIANCO_SURETY_PERCENTAGE},
+      "fianzaCuotaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INSTALLMENT_SURETY_PERCENTAGE},
+      "seguroCuotaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE},
       "cuotaInicialPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INITIAL_PAYMENT_PERCENTAGE},
       "plazoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_CREDIT_INSTALLMENTS},
       "plazoMaximoCuotas" INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_CREDIT_INSTALLMENTS},
@@ -299,6 +343,14 @@ export async function ensureCreditSettingsTable() {
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracion"
+    ADD COLUMN IF NOT EXISTS "fianzaCuotaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INSTALLMENT_SURETY_PERCENTAGE}
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracion"
+    ADD COLUMN IF NOT EXISTS "seguroCuotaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE}
   `);
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "CreditoConfiguracion"
@@ -343,6 +395,8 @@ export async function ensureCreditSettingsTable() {
       "documentoNormalizado" TEXT NOT NULL UNIQUE,
       "tasaInteresEa" DOUBLE PRECISION,
       "fianzaPorcentaje" DOUBLE PRECISION,
+      "fianzaCuotaPorcentaje" DOUBLE PRECISION,
+      "seguroCuotaPorcentaje" DOUBLE PRECISION,
       "cuotaInicialPorcentaje" DOUBLE PRECISION,
       "plazoCuotas" INTEGER,
       "plazoMaximoCuotas" INTEGER,
@@ -354,6 +408,14 @@ export async function ensureCreditSettingsTable() {
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracionDocumento"
+    ADD COLUMN IF NOT EXISTS "fianzaCuotaPorcentaje" DOUBLE PRECISION
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "CreditoConfiguracionDocumento"
+    ADD COLUMN IF NOT EXISTS "seguroCuotaPorcentaje" DOUBLE PRECISION
   `);
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "CreditoConfiguracionDocumento"
@@ -411,7 +473,8 @@ export async function getCreditSettings() {
   await ensureCreditSettingsTable();
 
   const rows = (await prisma.$queryRawUnsafe(
-    `SELECT "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas",
+    `SELECT "tasaInteresEa", "fianzaPorcentaje", "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje",
+            "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas",
             "iphoneCuotaInicialPorcentaje", "iphonePlazoCuotas", "iphonePlazoMaximoCuotas",
             "iphoneTopeFinanciado", "iphoneTopeCuota", "frecuenciaPago", "updatedAt"
      FROM "CreditoConfiguracion"
@@ -433,7 +496,8 @@ export async function getCreditDocumentException(documento: unknown) {
 
   const globalSettings = await getCreditSettings();
   const rows = (await prisma.$queryRawUnsafe(
-    `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje",
+    `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
+            "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje", "cuotaInicialPorcentaje",
             "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
             "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
             activo, observacion, "createdAt", "updatedAt"
@@ -474,7 +538,8 @@ export async function listCreditDocumentExceptions() {
   await ensureCreditSettingsTable();
   const globalSettings = await getCreditSettings();
   const rows = (await prisma.$queryRawUnsafe(
-    `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje",
+    `SELECT id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
+            "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje", "cuotaInicialPorcentaje",
             "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
             "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
             activo, observacion, "createdAt", "updatedAt"
@@ -488,6 +553,8 @@ export async function listCreditDocumentExceptions() {
 export async function updateCreditSettings(params: {
   tasaInteresEa: unknown;
   fianzaPorcentaje: unknown;
+  fianzaCuotaPorcentaje?: unknown;
+  seguroCuotaPorcentaje?: unknown;
   cuotaInicialPorcentaje?: unknown;
   plazoCuotas?: unknown;
   plazoMaximoCuotas?: unknown;
@@ -508,6 +575,14 @@ export async function updateCreditSettings(params: {
   const fianzaPorcentaje = normalizePercentage(
     params.fianzaPorcentaje,
     current.fianzaPorcentaje
+  );
+  const fianzaCuotaPorcentaje = normalizePrecisePercentage(
+    params.fianzaCuotaPorcentaje,
+    current.fianzaCuotaPorcentaje
+  );
+  const seguroCuotaPorcentaje = normalizePrecisePercentage(
+    params.seguroCuotaPorcentaje,
+    current.seguroCuotaPorcentaje
   );
   const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
     params.plazoMaximoCuotas,
@@ -566,9 +641,12 @@ export async function updateCreditSettings(params: {
          "iphonePlazoMaximoCuotas" = $10,
          "iphoneTopeFinanciado" = $11,
          "iphoneTopeCuota" = $12,
+         "fianzaCuotaPorcentaje" = $13,
+         "seguroCuotaPorcentaje" = $14,
          "updatedAt" = NOW()
      WHERE nombre = $1
-     RETURNING "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas",
+     RETURNING "tasaInteresEa", "fianzaPorcentaje", "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje",
+       "cuotaInicialPorcentaje", "plazoCuotas", "plazoMaximoCuotas",
        "iphoneCuotaInicialPorcentaje", "iphonePlazoCuotas", "iphonePlazoMaximoCuotas",
        "iphoneTopeFinanciado", "iphoneTopeCuota", "frecuenciaPago", "updatedAt"`,
     CREDIT_SETTINGS_KEY,
@@ -582,7 +660,9 @@ export async function updateCreditSettings(params: {
     iphonePlazoCuotas,
     iphonePlazoMaximoCuotas,
     iphoneTopeFinanciado,
-    iphoneTopeCuota
+    iphoneTopeCuota,
+    fianzaCuotaPorcentaje,
+    seguroCuotaPorcentaje
   )) as Array<Record<string, unknown>>;
 
   return toCreditSettings(rows[0]);
@@ -592,6 +672,8 @@ export async function upsertCreditDocumentException(params: {
   documento: unknown;
   tasaInteresEa?: unknown;
   fianzaPorcentaje?: unknown;
+  fianzaCuotaPorcentaje?: unknown;
+  seguroCuotaPorcentaje?: unknown;
   cuotaInicialPorcentaje?: unknown;
   plazoCuotas?: unknown;
   plazoMaximoCuotas?: unknown;
@@ -626,13 +708,15 @@ export async function upsertCreditDocumentException(params: {
       (documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje",
        "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
        "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
-       activo, observacion, "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+       activo, observacion, "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
      ON CONFLICT ("documentoNormalizado")
      DO UPDATE SET
        documento = EXCLUDED.documento,
        "tasaInteresEa" = EXCLUDED."tasaInteresEa",
        "fianzaPorcentaje" = EXCLUDED."fianzaPorcentaje",
+       "fianzaCuotaPorcentaje" = EXCLUDED."fianzaCuotaPorcentaje",
+       "seguroCuotaPorcentaje" = EXCLUDED."seguroCuotaPorcentaje",
        "cuotaInicialPorcentaje" = EXCLUDED."cuotaInicialPorcentaje",
        "plazoCuotas" = EXCLUDED."plazoCuotas",
        "plazoMaximoCuotas" = EXCLUDED."plazoMaximoCuotas",
@@ -642,7 +726,8 @@ export async function upsertCreditDocumentException(params: {
        activo = EXCLUDED.activo,
        observacion = EXCLUDED.observacion,
        "updatedAt" = NOW()
-     RETURNING id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje", "cuotaInicialPorcentaje",
+     RETURNING id, documento, "documentoNormalizado", "tasaInteresEa", "fianzaPorcentaje",
+       "fianzaCuotaPorcentaje", "seguroCuotaPorcentaje", "cuotaInicialPorcentaje",
        "plazoCuotas", "plazoMaximoCuotas", "frecuenciaPago",
        "permiteMultiplesCreditos", "permiteEntregaSinVerificacion",
        activo, observacion, "createdAt", "updatedAt"`,
@@ -657,7 +742,9 @@ export async function upsertCreditDocumentException(params: {
     Boolean(params.permiteMultiplesCreditos),
     Boolean(params.permiteEntregaSinVerificacion),
     activo,
-    observacion
+    observacion,
+    normalizeOptionalPrecisePercentage(params.fianzaCuotaPorcentaje),
+    normalizeOptionalPrecisePercentage(params.seguroCuotaPorcentaje)
   )) as Array<Record<string, unknown>>;
 
   return toDocumentException(rows[0], globalSettings);
