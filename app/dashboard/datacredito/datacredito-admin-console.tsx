@@ -1,6 +1,13 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   AlertTriangle,
   ChevronDown,
@@ -43,6 +50,7 @@ type AssessmentItem = {
   decision: string | null;
   offer: Offer;
   policyVersion: number;
+  reusedFromAssessmentId: string | null;
   consentAt: string | null;
   actor: {
     userId: number;
@@ -144,6 +152,86 @@ function statusTone(status: string) {
   if (status === "RECHAZADO") return "danger" as const;
   if (status === "PENDING") return "warning" as const;
   return "neutral" as const;
+}
+
+function numberLabel(value: number | null | undefined) {
+  return value === null || value === undefined || !Number.isFinite(value)
+    ? "No disponible"
+    : new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(value);
+}
+
+function percentage(value: number | null | undefined) {
+  return value === null || value === undefined || !Number.isFinite(value)
+    ? "No disponible"
+    : numberLabel(value) + " %";
+}
+
+function providerFlag(value: boolean | null | undefined) {
+  if (value === true) return "Sí";
+  if (value === false) return "No";
+  return "No informado";
+}
+
+function displayText(value: string | null | undefined) {
+  return value || "No disponible";
+}
+
+function ReportSection({
+  id,
+  title,
+  description,
+  children,
+}: {
+  id: string;
+  title: string;
+  description?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section aria-labelledby={id} className="space-y-3">
+      <div>
+        <h3 id={id} className="text-lg font-black">
+          {title}
+        </h3>
+        {description ? (
+          <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
+            {description}
+          </p>
+        ) : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function DetailValue({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: ReactNode;
+  detail?: ReactNode;
+}) {
+  return (
+    <div className="min-w-0 border-t border-[var(--fp-border)] px-4 py-3 first:border-t-0 sm:border-l sm:first:border-l-0 sm:[&:nth-child(-n+3)]:border-t-0 sm:[&:nth-child(3n+1)]:border-l-0">
+      <dt className="text-xs font-bold text-[var(--fp-muted)]">{label}</dt>
+      <dd className="mt-1 break-words font-black text-[var(--fp-graphite)]">
+        {value}
+      </dd>
+      {detail ? (
+        <dd className="mt-1 text-xs leading-5 text-[var(--fp-muted)]">{detail}</dd>
+      ) : null}
+    </div>
+  );
+}
+
+function EmptyReportValue({ children }: { children: ReactNode }) {
+  return (
+    <p className="rounded-[var(--fp-radius-md)] border border-dashed border-[var(--fp-border)] bg-[var(--fp-bg)] px-4 py-4 text-sm text-[var(--fp-muted)]">
+      {children}
+    </p>
+  );
 }
 
 function isProductionProviderEnvironment(value: string | null | undefined) {
@@ -278,7 +366,13 @@ export default function DataCreditoAdminConsole() {
   const nonProductionVisibleCount = items.filter(
     (item) => !isProductionProviderEnvironment(item.providerEnvironment)
   ).length;
-  const telco = sectors.find((sector) => sector.isTelcos) ?? null;
+  const telco = summary?.telcos ?? null;
+  const telcoTone =
+    telco?.delinquentBalance === null || telco?.delinquentBalance === undefined
+      ? ("warning" as const)
+      : telco.delinquentBalance > 0
+        ? ("danger" as const)
+        : ("positive" as const);
   const reportIdentity = summary?.identity ?? null;
   const detailDocument =
     detail?.identity?.documentNumber ||
@@ -637,6 +731,12 @@ export default function DataCreditoAdminConsole() {
                     <strong className="text-[var(--fp-graphite)]">Fecha:</strong>{" "}
                     {dateTime(detail.assessment?.createdAt)}
                   </p>
+                  <p>
+                    <strong className="text-[var(--fp-graphite)]">Origen:</strong>{" "}
+                    {detail.assessment?.reusedFromAssessmentId
+                      ? "Resultado reutilizado (sin nueva consulta al proveedor)"
+                      : "Consulta original al proveedor"}
+                  </p>
                 </div>
 
                 {detail.historicWithoutDossier ? (
@@ -645,6 +745,15 @@ export default function DataCreditoAdminConsole() {
                     No se realizará una nueva consulta automática.
                   </div>
                 ) : null}
+
+                <div
+                  role="note"
+                  className="rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm leading-6 text-[var(--fp-graphite)]"
+                >
+                  Los montos, unidades y códigos son valores informados por
+                  MiDecisor. No deben usarse para automatizar un rechazo hasta validar
+                  el contrato y el catálogo oficial con Experian.
+                </div>
 
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   <MetricCard
@@ -672,7 +781,7 @@ export default function DataCreditoAdminConsole() {
                     detail={
                       totals?.debtPercentage !== null &&
                       totals?.debtPercentage !== undefined
-                        ? String(totals.debtPercentage) + " % de deuda"
+                        ? percentage(totals.debtPercentage) + " de deuda"
                         : undefined
                     }
                   />
@@ -682,21 +791,12 @@ export default function DataCreditoAdminConsole() {
                   />
                   <MetricCard
                     label="Créditos vigentes"
-                    value={String(totals?.activeCredits ?? "No disponible")}
+                    value={numberLabel(totals?.activeCredits)}
                     detail={
                       totals?.closedCredits !== null &&
                       totals?.closedCredits !== undefined
-                        ? String(totals.closedCredits) + " cerrados"
+                        ? numberLabel(totals.closedCredits) + " cerrados"
                         : undefined
-                    }
-                  />
-                  <MetricCard
-                    label="Sector telefonía"
-                    value={telco ? currency(telco.currentBalance) : "Sin agregado"}
-                    detail={
-                      telco
-                        ? "Mora " + currency(telco.delinquentBalance)
-                        : "MiDecisor no informó Sector Telcos"
                     }
                   />
                 </div>
@@ -714,6 +814,94 @@ export default function DataCreditoAdminConsole() {
                     </p>
                   </div>
                 ) : null}
+
+                <section
+                  aria-labelledby="telcos-summary-title"
+                  className="overflow-hidden rounded-[var(--fp-radius-lg)] border border-[var(--fp-lime)] bg-[var(--fp-lime-soft)]"
+                >
+                  <div className="flex flex-col gap-3 border-b border-[var(--fp-lime)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.14em] text-[#6d8c19]">
+                        Información sectorial
+                      </p>
+                      <h3 id="telcos-summary-title" className="mt-1 text-xl font-black">
+                        Resumen Telcos
+                      </h3>
+                    </div>
+                    <div className="text-left sm:text-right">
+                      <StatusPill tone={telcoTone}>
+                        {telco?.delinquencyStatus || "Mora no informada"}
+                      </StatusPill>
+                      <p className="mt-2 text-xs text-[var(--fp-muted)]">
+                        {telco?.available
+                          ? "Agregado Sector Telcos informado"
+                          : "Sector Telcos no informado por MiDecisor"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <dl className="grid bg-[var(--fp-surface)] sm:grid-cols-3">
+                    <DetailValue
+                      label="Obligaciones vigentes"
+                      value={numberLabel(telco?.activeCredits)}
+                    />
+                    <DetailValue
+                      label="Obligaciones cerradas"
+                      value={numberLabel(telco?.closedCredits)}
+                    />
+                    <DetailValue
+                      label="Saldo actual"
+                      value={currency(telco?.currentBalance)}
+                    />
+                    <DetailValue
+                      label="Cuota"
+                      value={currency(telco?.installmentAmount)}
+                    />
+                    <DetailValue
+                      label="Mora vigente"
+                      value={currency(telco?.delinquentBalance)}
+                    />
+                    <DetailValue
+                      label="Valor inicial"
+                      value={currency(telco?.initialAmount)}
+                    />
+                    <DetailValue
+                      label="Como titular/principal"
+                      value={numberLabel(telco?.principalCredits)}
+                    />
+                    <DetailValue
+                      label="Como codeudor/u otros"
+                      value={numberLabel(telco?.coDebtorOrOtherCredits)}
+                    />
+                    <DetailValue
+                      label="Porcentaje de deuda"
+                      value={percentage(telco?.debtPercentage)}
+                    />
+                    <DetailValue
+                      label="Operador"
+                      value="No informado por MiDecisor PN"
+                    />
+                    <DetailValue
+                      label="Cuenta individual"
+                      value="No informada por MiDecisor PN"
+                    />
+                    <DetailValue
+                      label="Historial de incumplimiento Telco"
+                      value="No disponible"
+                    />
+                  </dl>
+
+                  <div
+                    role="note"
+                    className="border-t border-[var(--fp-lime)] px-4 py-4 text-sm leading-6 text-[var(--fp-graphite)]"
+                  >
+                    <strong>Alcance del dato:</strong> MiDecisor PN actual no identifica
+                    operador ni cuenta individual. Una mora de $0 solo indica ausencia
+                    de mora vigente agregada reportada; no prueba pagos históricos ni
+                    ausencia de mora histórica. El historial global mostrado más abajo
+                    no es específico de Telcos.
+                  </div>
+                </section>
 
                 {detail.assessment?.offer ? (
                   <div className="grid gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-lime)] bg-[var(--fp-lime-soft)] p-4 sm:grid-cols-3">
@@ -744,66 +932,487 @@ export default function DataCreditoAdminConsole() {
                   </div>
                 ) : null}
 
-                {sectors.length ? (
-                  <section>
-                    <h3 className="text-lg font-black">Obligaciones por sector</h3>
-                    <p className="mt-1 text-sm text-[var(--fp-muted)]">
-                      MiDecisor entrega agregados por sector; no identifica operador
-                      o cuenta individual.
-                    </p>
-                    <DataTable className="mt-3">
-                      <div className="min-w-[620px]">
-                        <div className="grid grid-cols-[1.1fr_repeat(4,0.7fr)] gap-3 bg-[#f8fafb] px-4 py-3 text-[10px] font-black uppercase text-[var(--fp-muted)]">
-                          <span>Sector</span>
-                          <span>Vigentes</span>
-                          <span>Saldo</span>
-                          <span>Cuota</span>
-                          <span>Mora</span>
-                        </div>
-                        {sectors.map((sector, index) => (
-                          <div
-                            key={String(sector.sector || index)}
-                            className={[
-                              "grid grid-cols-[1.1fr_repeat(4,0.7fr)] gap-3 border-t border-[var(--fp-border)] px-4 py-3 text-sm",
-                              sector.isTelcos ? "bg-[var(--fp-lime-soft)]" : "",
-                            ].join(" ")}
-                          >
-                            <strong>{String(sector.sector || "Sin sector")}</strong>
-                            <span>{String(sector.activeCredits ?? "—")}</span>
-                            <span>{currency(sector.currentBalance)}</span>
-                            <span>{currency(sector.installmentAmount)}</span>
-                            <span>{currency(sector.delinquentBalance)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </DataTable>
-                  </section>
-                ) : null}
+                <ReportSection
+                  id="identity-validation-title"
+                  title="Identidad y validación"
+                  description="Contrasta los datos digitados en la consulta con la identidad devuelta por MiDecisor."
+                >
+                  <dl className="grid overflow-hidden rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] sm:grid-cols-3">
+                    <DetailValue
+                      label="Validación con información"
+                      value={providerFlag(summary?.validation?.hasInformation)}
+                    />
+                    <DetailValue
+                      label="Datos básicos con información"
+                      value={providerFlag(
+                        summary?.validation?.basicDataHasInformation
+                      )}
+                    />
+                    <DetailValue
+                      label="Nombre completo"
+                      value={displayText(reportIdentity?.fullName || reportName)}
+                    />
+                    <DetailValue
+                      label="Tipo de documento devuelto"
+                      value={displayText(reportIdentity?.documentType)}
+                    />
+                    <DetailValue
+                      label="Documento devuelto"
+                      value={displayText(reportIdentity?.documentNumber)}
+                    />
+                    <DetailValue
+                      label="Estado del documento"
+                      value={displayText(reportIdentity?.documentStatus)}
+                    />
+                    <DetailValue
+                      label="Rango de edad"
+                      value={displayText(reportIdentity?.ageRange)}
+                    />
+                    <DetailValue
+                      label="Documento digitado"
+                      value={displayText(reportIdentity?.queriedDocumentNumber)}
+                      detail={displayText(reportIdentity?.queriedDocumentType)}
+                    />
+                    <DetailValue
+                      label="Apellido digitado"
+                      value={displayText(reportIdentity?.queriedSurname)}
+                    />
+                    <DetailValue
+                      label="Primer nombre"
+                      value={displayText(reportIdentity?.firstName)}
+                    />
+                    <DetailValue
+                      label="Segundo nombre"
+                      value={displayText(reportIdentity?.secondName)}
+                    />
+                    <DetailValue
+                      label="Apellidos devueltos"
+                      value={
+                        [
+                          reportIdentity?.firstSurname,
+                          reportIdentity?.secondSurname,
+                        ]
+                          .filter(Boolean)
+                          .join(" ") || "No disponible"
+                      }
+                    />
+                  </dl>
+                </ReportSection>
 
-                <div className="grid gap-3 text-sm sm:grid-cols-2">
-                  <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] p-4">
-                    <span className="text-xs font-bold text-[var(--fp-muted)]">
-                      Viabilidad
-                    </span>
-                    <strong className="mt-1 block">
-                      {risk?.viability || "No disponible"}
-                    </strong>
+                <ReportSection
+                  id="risk-analysis-title"
+                  title="Riesgo, recaudos y alertas"
+                  description="Campos informativos del proveedor; la oferta continúa siendo determinada por la política interna versionada."
+                >
+                  <dl className="grid overflow-hidden rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] sm:grid-cols-3">
+                    <DetailValue
+                      label="Información de riesgo disponible"
+                      value={providerFlag(risk?.hasInformation)}
+                    />
+                    <DetailValue
+                      label="Score"
+                      value={scoreLabel(risk?.score)}
+                    />
+                    <DetailValue
+                      label="Viabilidad"
+                      value={displayText(risk?.viability)}
+                    />
+                    <DetailValue
+                      label="Probabilidad"
+                      value={displayText(risk?.probabilityText)}
+                    />
+                    <DetailValue
+                      label="Rating de recaudos"
+                      value={displayText(risk?.collectionsRating)}
+                    />
+                    <DetailValue
+                      label="Evaluación de recaudos"
+                      value={displayText(risk?.collectionsText)}
+                    />
+                    <DetailValue
+                      label="Monto sugerido por MiDecisor"
+                      value={currency(risk?.suggestedAmount)}
+                      detail="No sustituye la política interna de FINSER PAY."
+                    />
+                  </dl>
+
+                  <div>
+                    <h4 className="text-sm font-black">Alertas del proveedor</h4>
+                    {risk?.alerts.length ? (
+                      <ul className="mt-2 divide-y divide-[var(--fp-border)] overflow-hidden rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)]">
+                        {risk.alerts.map((alert, index) => (
+                          <li key={String(index)} className="px-4 py-3 text-sm">
+                            <strong className="block">
+                              {displayText(alert.description)}
+                            </strong>
+                            <span className="mt-1 block text-xs text-[var(--fp-muted)]">
+                              Colocación: {displayText(alert.placedAt)} · Modificación:{" "}
+                              {displayText(alert.updatedAt)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <EmptyReportValue>
+                        MiDecisor no informó alertas para esta consulta.
+                      </EmptyReportValue>
+                    )}
                   </div>
-                  <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] p-4">
-                    <span className="text-xs font-bold text-[var(--fp-muted)]">
-                      Monto sugerido
-                    </span>
-                    <strong className="mt-1 block">
-                      {currency(risk?.suggestedAmount)}
-                    </strong>
+                </ReportSection>
+
+                <ReportSection
+                  id="portfolio-totals-title"
+                  title="Totales de obligaciones"
+                  description="Agregados generales del comportamiento crediticio informado por MiDecisor."
+                >
+                  <dl className="grid overflow-hidden rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] sm:grid-cols-3">
+                    <DetailValue
+                      label="Indicadores con información"
+                      value={providerFlag(summary?.indicatorValuesHaveInformation)}
+                    />
+                    <DetailValue
+                      label="Créditos vigentes"
+                      value={numberLabel(totals?.activeCredits)}
+                    />
+                    <DetailValue
+                      label="Créditos cerrados"
+                      value={numberLabel(totals?.closedCredits)}
+                    />
+                    <DetailValue
+                      label="Como titular/principal"
+                      value={numberLabel(totals?.principalCredits)}
+                    />
+                    <DetailValue
+                      label="Como codeudor/u otros"
+                      value={numberLabel(totals?.coDebtorOrOtherCredits)}
+                    />
+                    <DetailValue
+                      label="Valor inicial"
+                      value={currency(totals?.initialAmount)}
+                    />
+                    <DetailValue
+                      label="Saldo actual"
+                      value={currency(totals?.currentBalance)}
+                    />
+                    <DetailValue
+                      label="Cuota"
+                      value={currency(totals?.installmentAmount)}
+                    />
+                    <DetailValue
+                      label="Mora vigente"
+                      value={currency(totals?.delinquentBalance)}
+                    />
+                    <DetailValue
+                      label="Porcentaje de deuda"
+                      value={percentage(totals?.debtPercentage)}
+                    />
+                  </dl>
+                </ReportSection>
+
+                <ReportSection
+                  id="sector-obligations-title"
+                  title="Obligaciones por sector"
+                  description="Agregados sectoriales. MiDecisor PN no identifica entidad, operador ni cuenta individual."
+                >
+                  {sectors.length ? (
+                    <DataTable>
+                      <table className="min-w-[1180px] w-full border-collapse text-sm">
+                        <caption className="sr-only">
+                          Indicadores completos de obligaciones agrupados por sector
+                        </caption>
+                        <thead className="bg-[#f8fafb] text-left text-[10px] font-black uppercase text-[var(--fp-muted)]">
+                          <tr>
+                            <th scope="col" className="px-4 py-3">Sector</th>
+                            <th scope="col" className="px-3 py-3">Vigentes</th>
+                            <th scope="col" className="px-3 py-3">Cerrados</th>
+                            <th scope="col" className="px-3 py-3">Principal</th>
+                            <th scope="col" className="px-3 py-3">Codeudor/otros</th>
+                            <th scope="col" className="px-3 py-3">Valor inicial</th>
+                            <th scope="col" className="px-3 py-3">Saldo</th>
+                            <th scope="col" className="px-3 py-3">Cuota</th>
+                            <th scope="col" className="px-3 py-3">Mora</th>
+                            <th scope="col" className="px-3 py-3">% deuda</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sectors.map((sector, index) => (
+                            <tr
+                              key={String(sector.sector || index)}
+                              className={
+                                sector.isTelcos
+                                  ? "border-t border-[var(--fp-border)] bg-[var(--fp-lime-soft)]"
+                                  : "border-t border-[var(--fp-border)]"
+                              }
+                            >
+                              <th scope="row" className="px-4 py-3 text-left font-black">
+                                {String(sector.sector || "Sin sector")}
+                              </th>
+                              <td className="px-3 py-3">{numberLabel(sector.activeCredits)}</td>
+                              <td className="px-3 py-3">{numberLabel(sector.closedCredits)}</td>
+                              <td className="px-3 py-3">{numberLabel(sector.principalCredits)}</td>
+                              <td className="px-3 py-3">{numberLabel(sector.coDebtorOrOtherCredits)}</td>
+                              <td className="px-3 py-3">{currency(sector.initialAmount)}</td>
+                              <td className="px-3 py-3">{currency(sector.currentBalance)}</td>
+                              <td className="px-3 py-3">{currency(sector.installmentAmount)}</td>
+                              <td className="px-3 py-3">{currency(sector.delinquentBalance)}</td>
+                              <td className="px-3 py-3">{percentage(sector.debtPercentage)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </DataTable>
+                  ) : (
+                    <EmptyReportValue>
+                      MiDecisor no informó agregados por sector.
+                    </EmptyReportValue>
+                  )}
+                </ReportSection>
+
+                <ReportSection
+                  id="balance-evolution-title"
+                  title="Evolución de saldos y cuotas"
+                  description="Serie trimestral agregada informada por MiDecisor."
+                >
+                  {summary?.balanceEvolution.length ? (
+                    <DataTable>
+                      <table className="min-w-[560px] w-full border-collapse text-sm">
+                        <caption className="sr-only">
+                          Evolución trimestral de saldo total y cuota total
+                        </caption>
+                        <thead className="bg-[#f8fafb] text-left text-[10px] font-black uppercase text-[var(--fp-muted)]">
+                          <tr>
+                            <th scope="col" className="px-4 py-3">Periodo</th>
+                            <th scope="col" className="px-4 py-3">Saldo total</th>
+                            <th scope="col" className="px-4 py-3">Cuota total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {summary.balanceEvolution.map((item, index) => (
+                            <tr key={String(item.period || index)} className="border-t border-[var(--fp-border)]">
+                              <th scope="row" className="px-4 py-3 text-left font-black">
+                                {displayText(item.period)}
+                              </th>
+                              <td className="px-4 py-3">{currency(item.totalBalance)}</td>
+                              <td className="px-4 py-3">{currency(item.totalInstallment)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </DataTable>
+                  ) : (
+                    <EmptyReportValue>
+                      MiDecisor no informó evolución de saldos y cuotas.
+                    </EmptyReportValue>
+                  )}
+                </ReportSection>
+
+                <ReportSection
+                  id="revolving-evolution-title"
+                  title="Evolución de productos rotativos"
+                  description="Saldo, cupo y utilización agregados por trimestre."
+                >
+                  {summary?.revolvingEvolution.length ? (
+                    <DataTable>
+                      <table className="min-w-[700px] w-full border-collapse text-sm">
+                        <caption className="sr-only">
+                          Evolución trimestral de productos rotativos
+                        </caption>
+                        <thead className="bg-[#f8fafb] text-left text-[10px] font-black uppercase text-[var(--fp-muted)]">
+                          <tr>
+                            <th scope="col" className="px-4 py-3">Periodo</th>
+                            <th scope="col" className="px-4 py-3">Saldo total</th>
+                            <th scope="col" className="px-4 py-3">Cupo total</th>
+                            <th scope="col" className="px-4 py-3">% deuda</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {summary.revolvingEvolution.map((item, index) => (
+                            <tr key={String(item.period || index)} className="border-t border-[var(--fp-border)]">
+                              <th scope="row" className="px-4 py-3 text-left font-black">
+                                {displayText(item.period)}
+                              </th>
+                              <td className="px-4 py-3">{currency(item.totalBalance)}</td>
+                              <td className="px-4 py-3">{currency(item.totalLimit)}</td>
+                              <td className="px-4 py-3">{percentage(item.debtPercentage)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </DataTable>
+                  ) : (
+                    <EmptyReportValue>
+                      MiDecisor no informó evolución de productos rotativos.
+                    </EmptyReportValue>
+                  )}
+                </ReportSection>
+
+                <ReportSection
+                  id="global-payment-history-title"
+                  title="Historial global de comportamiento de pago"
+                  description="Este vector es global: no corresponde específicamente a Telcos ni identifica una obligación individual."
+                >
+                  <div
+                    id="payment-code-legend"
+                    role="note"
+                    className="rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm leading-6"
+                  >
+                    <strong>Leyenda:</strong> se muestra el código literal informado por
+                    MiDecisor. El sistema no tiene un catálogo contractual validado para
+                    traducir N, 1–6, C, D o “-”; su significado se presenta como no
+                    disponible y no se infieren días de mora.
                   </div>
-                </div>
+                  {summary?.paymentHistory.length ? (
+                    <DataTable>
+                      <table
+                        aria-describedby="payment-code-legend"
+                        className="min-w-[620px] w-full border-collapse text-sm"
+                      >
+                        <caption className="sr-only">
+                          Vector global de comportamiento de pago
+                        </caption>
+                        <thead className="bg-[#f8fafb] text-left text-[10px] font-black uppercase text-[var(--fp-muted)]">
+                          <tr>
+                            <th scope="col" className="px-4 py-3">Periodo</th>
+                            <th scope="col" className="px-4 py-3">Código MiDecisor</th>
+                            <th scope="col" className="px-4 py-3">Significado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {summary.paymentHistory.map((item, index) => (
+                            <tr key={String(item.period || index)} className="border-t border-[var(--fp-border)]">
+                              <th scope="row" className="px-4 py-3 text-left font-black">
+                                {displayText(item.period)}
+                              </th>
+                              <td className="px-4 py-3 font-black">
+                                {displayText(item.code)}
+                              </td>
+                              <td className="px-4 py-3 text-[var(--fp-muted)]">
+                                Significado no disponible
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </DataTable>
+                  ) : (
+                    <EmptyReportValue>
+                      MiDecisor no informó historial global de comportamiento de pago.
+                    </EmptyReportValue>
+                  )}
+                </ReportSection>
+
+                <ReportSection
+                  id="indebtedness-title"
+                  title="Endeudamiento"
+                  description="Valores agregados informados por el proveedor."
+                >
+                  <dl className="grid overflow-hidden rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] sm:grid-cols-2">
+                    <DetailValue
+                      label="Ingreso informado"
+                      value={currency(summary?.indebtedness?.income)}
+                    />
+                    <DetailValue
+                      label="Cuota frente al ingreso"
+                      value={percentage(
+                        summary?.indebtedness?.installmentToIncomePercentage
+                      )}
+                    />
+                  </dl>
+                </ReportSection>
+
+                <ReportSection
+                  id="provider-suggestions-title"
+                  title="Sugerencias de MiDecisor"
+                  description="Recomendaciones informativas incluidas por el proveedor."
+                >
+                  {summary?.suggestions.length ? (
+                    <div className="divide-y divide-[var(--fp-border)] overflow-hidden rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)]">
+                      {summary.suggestions.map((suggestion, index) => (
+                        <article key={String(index)} className="px-4 py-4">
+                          <h4 className="font-black">
+                            {displayText(suggestion.title)}
+                          </h4>
+                          {suggestion.descriptions.length ? (
+                            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-[var(--fp-muted)]">
+                              {suggestion.descriptions.map((description, itemIndex) => (
+                                <li key={String(itemIndex)}>{description}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="mt-2 text-sm text-[var(--fp-muted)]">
+                              Sin detalle informado.
+                            </p>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyReportValue>
+                      MiDecisor no informó sugerencias para esta consulta.
+                    </EmptyReportValue>
+                  )}
+                </ReportSection>
+
+                <ReportSection
+                  id="provider-transaction-title"
+                  title="Información de la transacción"
+                  description="Metadatos y códigos de respuesta sanitizados; no incluyen tokens, credenciales ni cabeceras."
+                >
+                  <dl className="grid overflow-hidden rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] sm:grid-cols-3">
+                    <DetailValue
+                      label="Estado del proveedor"
+                      value={displayText(summary?.transaction?.providerStatus)}
+                    />
+                    <DetailValue
+                      label="Fecha de consulta"
+                      value={displayText(summary?.transaction?.queryDate)}
+                    />
+                    <DetailValue
+                      label="Hora de consulta"
+                      value={displayText(summary?.transaction?.queryTime)}
+                    />
+                  </dl>
+
+                  {summary?.transaction?.responseCodes.length ? (
+                    <DataTable>
+                      <table className="min-w-[480px] w-full border-collapse text-sm">
+                        <caption className="sr-only">
+                          Códigos sanitizados de respuesta de MiDecisor
+                        </caption>
+                        <thead className="bg-[#f8fafb] text-left text-[10px] font-black uppercase text-[var(--fp-muted)]">
+                          <tr>
+                            <th scope="col" className="px-4 py-3">Clave</th>
+                            <th scope="col" className="px-4 py-3">Valor</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {summary.transaction.responseCodes.map((code, index) => (
+                            <tr key={String(index)} className="border-t border-[var(--fp-border)]">
+                              <th scope="row" className="px-4 py-3 text-left font-black">
+                                {displayText(code.key)}
+                              </th>
+                              <td className="px-4 py-3">{displayText(code.value)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </DataTable>
+                  ) : (
+                    <EmptyReportValue>
+                      MiDecisor no informó códigos de respuesta adicionales.
+                    </EmptyReportValue>
+                  )}
+                </ReportSection>
 
                 {detail.providerData ? (
                   <details className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)]">
                     <summary className="min-h-11 cursor-pointer px-4 py-3 text-sm font-black">
-                      Ver información completa entregada por MiDecisor
+                      Ver detalle técnico sanitizado de MiDecisor
                     </summary>
+                    <p className="border-t border-[var(--fp-border)] bg-[#f8fafb] px-4 pt-4 text-xs leading-5 text-[var(--fp-muted)]">
+                      Vista reconstruida mediante allowlist; puede omitir campos no
+                      contratados, desconocidos o truncados por seguridad.
+                    </p>
                     <pre className="max-h-[520px] overflow-auto border-t border-[var(--fp-border)] bg-[#f8fafb] p-4 text-xs leading-5 whitespace-pre-wrap break-words">
                       {JSON.stringify(detail.providerData, null, 2)}
                     </pre>

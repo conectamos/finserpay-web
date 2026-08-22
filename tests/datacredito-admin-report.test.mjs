@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createJiti } from "jiti";
 
@@ -9,6 +10,13 @@ const {
 } = await jiti.import("../lib/datacredito/admin-report.ts");
 const { parseDataCreditoQueryResponse } = await jiti.import(
   "../lib/datacredito/response.ts"
+);
+const adminConsoleSource = await readFile(
+  new URL(
+    "../app/dashboard/datacredito/datacredito-admin-console.tsx",
+    import.meta.url
+  ),
+  "utf8"
 );
 
 function providerPayload() {
@@ -166,19 +174,37 @@ test("conserva el score 885 y construye el resumen PN de mora y Telcos", () => {
   assert.equal(parsed.score, 885);
   assert.ok(summary);
   assert.deepEqual(Object.keys(summary), [
+    "transaction",
+    "validation",
     "identity",
     "risk",
+    "indicatorValuesHaveInformation",
     "totals",
     "sectors",
+    "telcos",
     "balanceEvolution",
     "revolvingEvolution",
     "paymentHistory",
     "indebtedness",
     "suggestions",
   ]);
+  assert.deepEqual(summary.transaction, {
+    providerStatus: "ACCEPTED",
+    queryDate: "2026-08-19",
+    queryTime: "12:00:00",
+    responseCodes: [
+      { key: "CC", value: "00" },
+      { key: "TX", value: "05" },
+    ],
+  });
+  assert.deepEqual(summary.validation, {
+    hasInformation: true,
+    basicDataHasInformation: true,
+  });
   assert.equal(summary.identity.queriedDocumentNumber, "900123456");
   assert.equal(summary.identity.documentNumber, "900123456");
   assert.equal(summary.risk.score, 885);
+  assert.equal(summary.indicatorValuesHaveInformation, true);
   assert.equal(summary.totals.delinquentBalance, 43000);
   assert.equal(summary.totals.activeCredits, 7);
 
@@ -187,6 +213,20 @@ test("conserva el score 885 y construye el resumen PN de mora y Telcos", () => {
   assert.equal(telcos.sector, "Sector Telcos");
   assert.equal(telcos.activeCredits, 2);
   assert.equal(telcos.delinquentBalance, 35000);
+  assert.deepEqual(summary.telcos, {
+    available: true,
+    sector: "Sector Telcos",
+    activeCredits: 2,
+    closedCredits: 3,
+    principalCredits: 4,
+    coDebtorOrOtherCredits: 1,
+    initialAmount: 500000,
+    currentBalance: 100000,
+    installmentAmount: 15000,
+    delinquentBalance: 35000,
+    debtPercentage: 20,
+    delinquencyStatus: "Con mora vigente agregada en Telcos",
+  });
   assert.deepEqual(summary.paymentHistory, [
     { period: "2026-06", code: "N" },
     { period: "2026-07", code: "1" },
@@ -271,4 +311,199 @@ test("limita arreglos y textos y cierra valores numericos o codigos invalidos", 
   assert.equal(summary.suggestions.length, 16);
   assert.equal(sanitizeDataCreditoProviderPayload(null), null);
   assert.equal(buildDataCreditoAdminRiskSummary({ status: "ACCEPTED" }), null);
+});
+
+
+test("clasifica la mora Telcos sin inferir pagos históricos", () => {
+  const withoutDelinquency = providerPayload();
+  const telcoWithoutDelinquency =
+    withoutDelinquency.content.respuesta.comportamientoCrediticio.indicadoresValores
+      .sectores[1];
+  telcoWithoutDelinquency.saldoMora = "0";
+  const zeroSummary = buildDataCreditoAdminRiskSummary(withoutDelinquency);
+  assert.ok(zeroSummary);
+  assert.equal(
+    zeroSummary.telcos.delinquencyStatus,
+    "Sin mora vigente agregada reportada"
+  );
+  assert.equal(zeroSummary.telcos.delinquentBalance, 0);
+
+  const unknownDelinquency = providerPayload();
+  const telcoUnknownDelinquency =
+    unknownDelinquency.content.respuesta.comportamientoCrediticio.indicadoresValores
+      .sectores[1];
+  telcoUnknownDelinquency.saldoMora = null;
+  const unknownSummary = buildDataCreditoAdminRiskSummary(unknownDelinquency);
+  assert.ok(unknownSummary);
+  assert.equal(unknownSummary.telcos.delinquencyStatus, "Mora no informada");
+  assert.equal(unknownSummary.telcos.delinquentBalance, null);
+
+  const invalidNegativeDelinquency = providerPayload();
+  const telcoNegativeDelinquency =
+    invalidNegativeDelinquency.content.respuesta.comportamientoCrediticio
+      .indicadoresValores.sectores[1];
+  telcoNegativeDelinquency.saldoMora = "-1";
+  telcoNegativeDelinquency.creditosVigentes = "-2";
+  telcoNegativeDelinquency.creditosCerrados = "2.5";
+  const negativeSummary = buildDataCreditoAdminRiskSummary(
+    invalidNegativeDelinquency
+  );
+  assert.ok(negativeSummary);
+  assert.equal(negativeSummary.telcos.delinquencyStatus, "Mora no informada");
+  assert.equal(negativeSummary.telcos.delinquentBalance, null);
+  assert.equal(negativeSummary.telcos.activeCredits, null);
+  assert.equal(negativeSummary.telcos.closedCredits, null);
+
+  const withoutTelcos = providerPayload();
+  withoutTelcos.content.respuesta.comportamientoCrediticio.indicadoresValores.sectores =
+    withoutTelcos.content.respuesta.comportamientoCrediticio.indicadoresValores.sectores.filter(
+      (sector) => sector.sector !== "Sector Telcos"
+    );
+  const absentSummary = buildDataCreditoAdminRiskSummary(withoutTelcos);
+  assert.ok(absentSummary);
+  assert.equal(absentSummary.telcos.available, false);
+  assert.equal(absentSummary.telcos.delinquencyStatus, "Mora no informada");
+  assert.equal(absentSummary.telcos.activeCredits, null);
+
+  const explicitlyUnavailable = providerPayload();
+  explicitlyUnavailable.content.respuesta.comportamientoCrediticio.indicadoresValores.conInformacion =
+    false;
+  const unavailableSummary = buildDataCreditoAdminRiskSummary(
+    explicitlyUnavailable
+  );
+  assert.ok(unavailableSummary);
+  assert.equal(unavailableSummary.indicatorValuesHaveInformation, false);
+  assert.equal(unavailableSummary.totals, null);
+  assert.deepEqual(unavailableSummary.sectors, []);
+  assert.equal(unavailableSummary.telcos.available, false);
+  assert.equal(unavailableSummary.telcos.delinquencyStatus, "Mora no informada");
+});
+
+test("conserva Telcos aunque el proveedor lo envíe después del límite sectorial", () => {
+  const payload = providerPayload();
+  const indicators =
+    payload.content.respuesta.comportamientoCrediticio.indicadoresValores;
+  const originalTelcos = indicators.sectores[1];
+  indicators.sectores = [
+    ...Array.from({ length: 18 }, (_, index) => ({
+      sector: "Sector " + (index + 1),
+      creditosVigentes: "1",
+      saldoMora: "0",
+    })),
+    originalTelcos,
+  ];
+
+  const sanitized = sanitizeDataCreditoProviderPayload(payload);
+  const summary = buildDataCreditoAdminRiskSummary(payload);
+  assert.ok(sanitized);
+  assert.ok(summary);
+  assert.equal(
+    sanitized.content.respuesta.comportamientoCrediticio.indicadoresValores
+      .sectores.length,
+    16
+  );
+  assert.equal(summary.sectors.length, 16);
+  assert.equal(summary.telcos.available, true);
+  assert.equal(summary.telcos.sector, "Sector Telcos");
+});
+
+test("ignora datos contradictorios cuando MiDecisor declara sin información", () => {
+  const payload = providerPayload();
+  const answer = payload.content.respuesta;
+  answer.validacion.conInformacion = false;
+  answer.comportamientoCrediticio.conInformacion = false;
+  answer.informacionRiesgo.conInformacion = false;
+  answer.endeudamiento.conInformacion = false;
+  answer.sugerencias.conInformacion = false;
+
+  const summary = buildDataCreditoAdminRiskSummary(payload);
+  assert.ok(summary);
+  assert.equal(summary.identity.queriedDocumentNumber, "900123456");
+  assert.equal(summary.identity.queriedSurname, "APELLIDO");
+  assert.equal(summary.identity.documentNumber, null);
+  assert.equal(summary.identity.fullName, null);
+  assert.equal(summary.indicatorValuesHaveInformation, false);
+  assert.equal(summary.totals, null);
+  assert.deepEqual(summary.sectors, []);
+  assert.equal(summary.telcos.available, false);
+  assert.deepEqual(summary.balanceEvolution, []);
+  assert.deepEqual(summary.revolvingEvolution, []);
+  assert.deepEqual(summary.paymentHistory, []);
+  assert.equal(summary.risk.hasInformation, false);
+  assert.equal(summary.risk.score, null);
+  assert.equal(summary.risk.probabilityText, null);
+  assert.equal(summary.risk.viability, null);
+  assert.equal(summary.risk.collectionsRating, null);
+  assert.equal(summary.risk.collectionsText, null);
+  assert.equal(summary.risk.suggestedAmount, null);
+  assert.deepEqual(summary.risk.alerts, []);
+  assert.equal(summary.indebtedness, null);
+  assert.deepEqual(summary.suggestions, []);
+});
+
+test("respeta flags false de subsecciones aunque incluyan filas", () => {
+  const payload = providerPayload();
+  const answer = payload.content.respuesta;
+  answer.validacion.datosBasicos.conInformacion = false;
+  answer.comportamientoCrediticio.evolucionSaldoCuotaPN.conInformacion = false;
+  answer.comportamientoCrediticio.evolucionRoPN.conInformacion = false;
+  answer.comportamientoCrediticio.comportamientoPago.conInformacion = false;
+
+  const summary = buildDataCreditoAdminRiskSummary(payload);
+  assert.ok(summary);
+  assert.equal(summary.identity.queriedDocumentNumber, "900123456");
+  assert.equal(summary.identity.documentNumber, null);
+  assert.equal(summary.identity.firstName, null);
+  assert.deepEqual(summary.balanceEvolution, []);
+  assert.deepEqual(summary.revolvingEvolution, []);
+  assert.deepEqual(summary.paymentHistory, []);
+  assert.equal(summary.totals.currentBalance, 1200000);
+});
+
+test("la consola central presenta el expediente completo en secciones accesibles", () => {
+  for (const heading of [
+    "Resumen Telcos",
+    "Identidad y validación",
+    "Riesgo, recaudos y alertas",
+    "Totales de obligaciones",
+    "Obligaciones por sector",
+    "Evolución de saldos y cuotas",
+    "Evolución de productos rotativos",
+    "Historial global de comportamiento de pago",
+    "Endeudamiento",
+    "Sugerencias de MiDecisor",
+    "Información de la transacción",
+  ]) {
+    assert.ok(adminConsoleSource.includes(heading), heading);
+  }
+
+  assert.match(adminConsoleSource, /Operador[\s\S]*No informado por MiDecisor PN/);
+  assert.match(adminConsoleSource, /Historial de incumplimiento Telco/);
+  assert.match(
+    adminConsoleSource,
+    /Una mora de \$0 solo indica ausencia[\s\S]*no prueba pagos históricos ni[\s\S]*ausencia de mora histórica/
+  );
+  assert.match(
+    adminConsoleSource,
+    /Este vector es global: no corresponde específicamente a Telcos/
+  );
+  assert.match(adminConsoleSource, /Significado no disponible/);
+  assert.match(
+    adminConsoleSource,
+    /Los montos, unidades y códigos son valores informados por[\s\S]*No deben usarse para automatizar un rechazo/
+  );
+  assert.match(
+    adminConsoleSource,
+    /Resultado reutilizado \(sin nueva consulta al proveedor\)/
+  );
+  assert.match(adminConsoleSource, /Consulta original al proveedor/);
+  assert.match(adminConsoleSource, /<caption className="sr-only">/);
+  assert.match(adminConsoleSource, /aria-describedby="payment-code-legend"/);
+  assert.match(
+    adminConsoleSource,
+    /Ver detalle técnico sanitizado de MiDecisor/
+  );
+  assert.ok(
+    adminConsoleSource.includes("JSON.stringify(detail.providerData, null, 2)")
+  );
 });
