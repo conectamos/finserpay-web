@@ -102,6 +102,7 @@ import {
 } from "@/lib/credit-amortization";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
 import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
+import CreditEvidenceGallery from "@/app/dashboard/creditos/credit-evidence-gallery";
 import {
   findCreditCreatedAfterConnectionLoss,
   isCreditCreationNetworkError,
@@ -14330,7 +14331,8 @@ export default function CreditFactoryConsole({
                     ) : null}
 
                     {clientDossierTab === "documents" ? (
-                      <section className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <section className="mt-4 space-y-5">
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                         {[
                           ["Expediente PDF", () => downloadExpedientePdf()],
                           ["Plan de pagos", () => downloadPlanPagos()],
@@ -14348,6 +14350,11 @@ export default function CreditFactoryConsole({
                             {String(label)}
                           </button>
                         ))}
+                        </div>
+                        <CreditEvidenceGallery
+                          creditId={selectedCredit.id}
+                          clientName={selectedCredit.clienteNombre}
+                        />
                       </section>
                     ) : null}
 
