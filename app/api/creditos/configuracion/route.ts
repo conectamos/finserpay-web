@@ -90,10 +90,15 @@ export async function PATCH(req: Request) {
 
     const body = (await req.json()) as Record<string, unknown>;
     const settings = await updateCreditSettings({
+      calculoVersion: body.calculoVersion,
       tasaInteresEa: body.tasaInteresEa,
       fianzaPorcentaje: body.fianzaPorcentaje,
+      fianzaTotalPorcentaje: body.fianzaTotalPorcentaje,
       fianzaCuotaPorcentaje: body.fianzaCuotaPorcentaje,
       seguroCuotaPorcentaje: body.seguroCuotaPorcentaje,
+      tasaPeriodoDecimales: body.tasaPeriodoDecimales,
+      redondeoComercialModo: body.redondeoComercialModo,
+      redondeoComercialMultiplo: body.redondeoComercialMultiplo,
       cuotaInicialPorcentaje: body.cuotaInicialPorcentaje,
       plazoCuotas: body.plazoCuotas,
       plazoMaximoCuotas: body.plazoMaximoCuotas,
@@ -127,10 +132,15 @@ export async function POST(req: Request) {
     const body = (await req.json()) as Record<string, unknown>;
     const exception = await upsertCreditDocumentException({
       documento: body.documento,
+      calculoVersion: body.calculoVersion,
       tasaInteresEa: body.tasaInteresEa,
       fianzaPorcentaje: body.fianzaPorcentaje,
+      fianzaTotalPorcentaje: body.fianzaTotalPorcentaje,
       fianzaCuotaPorcentaje: body.fianzaCuotaPorcentaje,
       seguroCuotaPorcentaje: body.seguroCuotaPorcentaje,
+      tasaPeriodoDecimales: body.tasaPeriodoDecimales,
+      redondeoComercialModo: body.redondeoComercialModo,
+      redondeoComercialMultiplo: body.redondeoComercialMultiplo,
       cuotaInicialPorcentaje: body.cuotaInicialPorcentaje,
       plazoCuotas: body.plazoCuotas,
       plazoMaximoCuotas: body.plazoMaximoCuotas,

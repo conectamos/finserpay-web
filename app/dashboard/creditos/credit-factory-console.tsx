@@ -2902,6 +2902,11 @@ export default function CreditFactoryConsole({
     cuotaInicialNumero >= 0 &&
     cuotaInicialNumero < valorTotalEquipoNumero
       ? calculateFrenchAmortization({
+          calculoVersion: resolvedPolicyFinancialSettings.calculoVersion,
+          tasaPeriodoDecimales:
+            resolvedPolicyFinancialSettings.tasaPeriodoDecimales,
+          redondeoComercial:
+            resolvedPolicyFinancialSettings.redondeoComercial,
           valorVenta: valorTotalEquipoNumero,
           cuotaInicial: cuotaInicialNumero,
           numeroCuotas: plazoMesesNumero,
@@ -2929,6 +2934,7 @@ export default function CreditFactoryConsole({
   };
   const saldoFinanciado = financialPlan.montoCreditoTotal;
   const valorCuota = financialPlan.valorCuota;
+  const valorCuotaExacta = amortizationPlan?.cuotaTotal ?? valorCuota;
   const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
     platform: currentDevicePlatform,
     valorCuota: amortizationPlan?.cuotaTotal ?? valorCuota,
@@ -3170,7 +3176,7 @@ export default function CreditFactoryConsole({
 
         <div className="mt-5">
           <p className="font-black text-slate-950">
-            {currency(saldoFinanciado)} (PESOS COLOMBIANOS)
+            {exactCurrency(saldoFinanciado)} (PESOS COLOMBIANOS)
           </p>
         </div>
 
@@ -3179,7 +3185,7 @@ export default function CreditFactoryConsole({
           <ul className="mt-2 list-disc space-y-1 pl-5">
             <li>Numero de cuotas: {plazoMesesNumero || "{{NUM_CUOTAS}}"}</li>
             <li>Frecuencia de pago: {frecuenciaPagoLabel}</li>
-            <li>Valor de cada cuota: {currency(valorCuota)}</li>
+            <li>Valor exacto por cuota: {exactCurrency(valorCuotaExacta)}</li>
             <li>Fecha de inicio: {fechaPrimerPagoLabel}</li>
           </ul>
         </div>
@@ -4435,15 +4441,16 @@ export default function CreditFactoryConsole({
           </div>
           <div className="mt-5">
             <p className="font-black text-slate-950">
-              $ {currency(saldoFinanciado).replace("$ ", "")} (PESOS COLOMBIANOS)
+              {exactCurrency(saldoFinanciado)} (PESOS COLOMBIANOS)
             </p>
           </div>
           <div className="mt-5">
             <p className="font-black text-slate-950">PRIMERA – FORMA DE PAGO</p>
             <p className="mt-2">
               La obligacion sera pagada en {plazoMesesNumero || "{{cuotas}}"} cuotas
-              de {currency(valorCuota)} cada una, con frecuencia {frecuenciaPagoLabel.toLowerCase()},
-              conforme al plan pactado.
+              con valor exacto de referencia de {exactCurrency(valorCuotaExacta)}, con
+              frecuencia {frecuenciaPagoLabel.toLowerCase()}, conforme al plan pactado.
+              La ultima cuota podra ajustarse por centavos.
             </p>
           </div>
           <div className="mt-5">
@@ -8455,10 +8462,10 @@ export default function CreditFactoryConsole({
         <div className="mt-5">
           <p className="font-black text-slate-950">2. CONDICIONES DEL CREDITO</p>
           <p className="mt-2">El DEUDOR se obliga a pagar:</p>
-          <p className="mt-2">Total a pagar: {currency(saldoFinanciado)}</p>
+          <p className="mt-2">Total a pagar: {exactCurrency(saldoFinanciado)}</p>
           <p>Numero de cuotas: {plazoMesesNumero || "{{NUM_CUOTAS}}"}</p>
           <p>Frecuencia de pago: {frecuenciaPagoLabel}</p>
-          <p>Valor por cuota: {currency(valorCuota)}</p>
+          <p>Valor exacto por cuota: {exactCurrency(valorCuotaExacta)}</p>
           <p>Fecha primer pago: {fechaPrimerPagoLabel}</p>
           <p className="mt-2">El incumplimiento de una o mas cuotas dara lugar a:</p>
           <ul className="mt-2 list-disc space-y-1 pl-5">
@@ -10357,9 +10364,11 @@ export default function CreditFactoryConsole({
                               {currency(financialPlan.saldoBaseFinanciado)}
                             </p>
                             <p>Interes estimado: {currency(financialPlan.valorInteres)}</p>
-                            <p>Valor total a pagar: {currency(saldoFinanciado)}</p>
+                            <p>Valor total a pagar: {exactCurrency(saldoFinanciado)}</p>
                             <p>Numero de cuotas: {plazoMesesNumero || "{{cuotas}}"}</p>
-                            <p>Valor de cada cuota: {currency(valorCuota)}</p>
+                            <p>
+                              Valor exacto por cuota: {exactCurrency(valorCuotaExacta)}
+                            </p>
                             <p className="mt-2">
                               El CLIENTE se obliga a pagar en las fechas acordadas.
                             </p>
@@ -11548,7 +11557,8 @@ export default function CreditFactoryConsole({
                           ["Documento", clienteDocumento || "-"],
                           ["Equipo", referenciaEquipo || "-"],
                           ["IMEI", imei || "-"],
-                          ["Valor cuota", currency(valorCuota)],
+                          ["Cuota comercial", currency(valorCuota)],
+                          ["Cuota exacta", exactCurrency(valorCuotaExacta)],
                         ].map(([label, value]) => (
                           <div
                             key={label}
@@ -11894,7 +11904,8 @@ export default function CreditFactoryConsole({
                       {canSeeInternalPricing ? (
                         <div><span>Total financiado</span><strong>{currency(saldoFinanciado)}</strong></div>
                       ) : null}
-                      <div><span>Valor cuota</span><strong>{currency(valorCuota)}</strong></div>
+                      <div><span>Cuota comercial</span><strong>{currency(valorCuota)}</strong></div>
+                      <div><span>Cuota exacta para recaudo</span><strong>{exactCurrency(valorCuotaExacta)}</strong></div>
                     </div>
                   </section>
 
@@ -12313,7 +12324,8 @@ export default function CreditFactoryConsole({
                         {canSeeInternalPricing ? (
                           <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
                         ) : null}
-                        <p><span className="font-semibold text-slate-950">Valor cuota:</span> {currency(valorCuota)}</p>
+                        <p><span className="font-semibold text-slate-950">Cuota comercial:</span> {currency(valorCuota)}</p>
+                        <p><span className="font-semibold text-slate-950">Cuota exacta para recaudo:</span> {exactCurrency(valorCuotaExacta)}</p>
                       </div>
                     </div>
 
@@ -12449,7 +12461,8 @@ export default function CreditFactoryConsole({
                         {canSeeInternalPricing ? (
                           <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
                         ) : null}
-                        <p><span className="font-semibold text-slate-950">Valor cuota:</span> {currency(valorCuota)}</p>
+                        <p><span className="font-semibold text-slate-950">Cuota comercial:</span> {currency(valorCuota)}</p>
+                        <p><span className="font-semibold text-slate-950">Cuota exacta para recaudo:</span> {exactCurrency(valorCuotaExacta)}</p>
                       </div>
                     </div>
 
@@ -12478,7 +12491,7 @@ export default function CreditFactoryConsole({
 
                         <div className="mt-5">
                           <p className="font-black text-slate-950">
-                            $ {currency(saldoFinanciado).replace("$ ", "")} (PESOS COLOMBIANOS)
+                            {exactCurrency(saldoFinanciado)} (PESOS COLOMBIANOS)
                           </p>
                         </div>
 
@@ -12486,8 +12499,9 @@ export default function CreditFactoryConsole({
                           <p className="font-black text-slate-950">PRIMERA – FORMA DE PAGO</p>
                           <p className="mt-2">
                             La obligacion sera pagada en {plazoMesesNumero || "{{cuotas}}"} cuotas
-                            de {currency(valorCuota)} cada una, con frecuencia {frecuenciaPagoLabel.toLowerCase()},
-                            conforme al plan pactado.
+                            con valor exacto de referencia de {exactCurrency(valorCuotaExacta)}, con
+                            frecuencia {frecuenciaPagoLabel.toLowerCase()}, conforme al plan pactado.
+                            La ultima cuota podra ajustarse por centavos.
                           </p>
                         </div>
 
@@ -13124,10 +13138,13 @@ export default function CreditFactoryConsole({
 
               <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Valor por cuota
+                  Cuota comercial
                 </p>
                 <p className="mt-2 text-2xl font-black text-slate-950">
                   {currency(valorCuota)}
+                </p>
+                <p className="mt-1 text-xs font-semibold text-slate-500">
+                  Exacta para recaudo: {exactCurrency(valorCuotaExacta)}
                 </p>
                 {iphoneFactory ? (
                   <p
@@ -13283,9 +13300,9 @@ export default function CreditFactoryConsole({
                         Credito autorizado: {currency(financialPlan.saldoBaseFinanciado)}
                       </p>
                       <p>Interes estimado: {currency(financialPlan.valorInteres)}</p>
-                      <p>Valor total a pagar: {currency(saldoFinanciado)}</p>
+                      <p>Valor total a pagar: {exactCurrency(saldoFinanciado)}</p>
                       <p>Numero de cuotas: {plazoMesesNumero || "{{cuotas}}"}</p>
-                      <p>Valor de cada cuota: {currency(valorCuota)}</p>
+                      <p>Valor exacto por cuota: {exactCurrency(valorCuotaExacta)}</p>
                       <p className="mt-2">
                         El CLIENTE se obliga a pagar en las fechas acordadas.
                       </p>

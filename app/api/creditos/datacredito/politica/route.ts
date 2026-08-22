@@ -177,11 +177,16 @@ export async function PATCH(request: Request) {
     const financialSettings = parseDataCreditoPolicyFinancialSettings(
       body.financialSettings ??
         assigned.policy.financialSettings ?? {
-          calculoVersion: "FRANCES_V1",
+          calculoVersion: "ARES_FRANCES_V1",
           tasaInteresEa: creditDefaults.tasaInteresEa,
-          fianzaCuotaPorcentaje: creditDefaults.fianzaCuotaPorcentaje,
+          fianzaTotalPorcentaje: creditDefaults.fianzaTotalPorcentaje,
           seguroCuotaPorcentaje: creditDefaults.seguroCuotaPorcentaje,
           frecuenciaPago: creditDefaults.frecuenciaPago,
+          tasaPeriodoDecimales: 6,
+          redondeoComercial: {
+            modo: "PISO",
+            multiplo: 50,
+          },
         }
     )!;
     const policy = await createDataCreditoPolicyVersion({

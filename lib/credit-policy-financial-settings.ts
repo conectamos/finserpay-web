@@ -4,22 +4,39 @@ import {
 } from "@/lib/datacredito/policy";
 
 type CreditFinancialBase = {
+  calculoVersion?: "FRANCES_V1" | "ARES_FRANCES_V1" | null;
   tasaInteresEa: number;
+  fianzaTotalPorcentaje?: number | null;
   fianzaCuotaPorcentaje: number;
   seguroCuotaPorcentaje: number;
   frecuenciaPago: string;
+  tasaPeriodoDecimales?: number | null;
+  redondeoComercialModo?: "REDONDEO" | "PISO" | null;
+  redondeoComercialMultiplo?: number | null;
 };
 
 type CreditFinancialDocumentOverride = {
+  calculoVersion?: "FRANCES_V1" | "ARES_FRANCES_V1" | null;
   tasaInteresEa?: number | null;
+  fianzaTotalPorcentaje?: number | null;
   fianzaPorcentaje?: number | null;
   fianzaCuotaPorcentaje?: number | null;
   seguroCuotaPorcentaje?: number | null;
   frecuenciaPago?: string | null;
+  tasaPeriodoDecimales?: number | null;
+  redondeoComercialModo?: "REDONDEO" | "PISO" | null;
+  redondeoComercialMultiplo?: number | null;
 } | null;
 
 export type ResolvedCreditPolicyFinancialSettings = CreditFinancialBase & {
-  calculoVersion: "FRANCES_V1";
+  calculoVersion: "FRANCES_V1" | "ARES_FRANCES_V1";
+  fianzaTotalPorcentaje: number | null;
+  fianzaModalidad: "TOTAL_CREDITO" | "POR_CUOTA";
+  tasaPeriodoDecimales: number;
+  redondeoComercial: {
+    modo: "REDONDEO" | "PISO";
+    multiplo: number;
+  };
   fianzaSource:
     | "CLIENTE_POR_CUOTA"
     | "CLIENTE_TOTAL"
@@ -61,6 +78,9 @@ export function resolveCreditPolicyFinancialSettings(input: {
   );
   const exception = input.documentException || null;
   const exceptionInterest = presentNumber(exception?.tasaInteresEa);
+  const exceptionSuretyTotalAres = presentNumber(
+    exception?.fianzaTotalPorcentaje
+  );
   const exceptionSuretyPerInstallment = presentNumber(
     exception?.fianzaCuotaPorcentaje
   );
@@ -69,32 +89,73 @@ export function resolveCreditPolicyFinancialSettings(input: {
   const legacySuretyTotal = presentNumber(
     input.legacyOfferSuretyPercentage
   );
+  const globalSuretyTotal = presentNumber(
+    input.globalSettings.fianzaTotalPorcentaje
+  );
+  const globalCalculationVersion =
+    input.globalSettings.calculoVersion === "ARES_FRANCES_V1"
+      ? "ARES_FRANCES_V1"
+      : "FRANCES_V1";
+  const calculationVersion =
+    exception?.calculoVersion ||
+    policy?.calculoVersion ||
+    globalCalculationVersion;
 
   let fianzaCuotaPorcentaje = input.globalSettings.fianzaCuotaPorcentaje;
+  let fianzaTotalPorcentaje: number | null = null;
+  let fianzaModalidad: ResolvedCreditPolicyFinancialSettings["fianzaModalidad"] =
+    "POR_CUOTA";
   let fianzaSource: ResolvedCreditPolicyFinancialSettings["fianzaSource"] =
     "GLOBAL";
 
-  if (exceptionSuretyPerInstallment !== null) {
+  if (exceptionSuretyTotalAres !== null) {
+    fianzaTotalPorcentaje = exceptionSuretyTotalAres;
+    fianzaCuotaPorcentaje =
+      exceptionSuretyTotalAres / input.numeroCuotas;
+    fianzaModalidad = "TOTAL_CREDITO";
+    fianzaSource = "CLIENTE_TOTAL";
+  } else if (exceptionSuretyPerInstallment !== null) {
     fianzaCuotaPorcentaje = exceptionSuretyPerInstallment;
     fianzaSource = "CLIENTE_POR_CUOTA";
   } else if (exceptionSuretyTotal !== null) {
+    fianzaTotalPorcentaje = exceptionSuretyTotal;
     fianzaCuotaPorcentaje =
       exceptionSuretyTotal / input.numeroCuotas;
+    fianzaModalidad = "TOTAL_CREDITO";
     fianzaSource = "CLIENTE_TOTAL";
-  } else if (policy) {
+  } else if (policy?.calculoVersion === "ARES_FRANCES_V1") {
+    fianzaTotalPorcentaje = policy.fianzaTotalPorcentaje;
+    fianzaCuotaPorcentaje =
+      policy.fianzaTotalPorcentaje / input.numeroCuotas;
+    fianzaModalidad = "TOTAL_CREDITO";
+    fianzaSource = "POLITICA";
+  } else if (policy?.calculoVersion === "FRANCES_V1") {
     fianzaCuotaPorcentaje = policy.fianzaCuotaPorcentaje;
     fianzaSource = "POLITICA";
   } else if (legacySuretyTotal !== null) {
+    fianzaTotalPorcentaje = legacySuretyTotal;
     fianzaCuotaPorcentaje = legacySuretyTotal / input.numeroCuotas;
+    fianzaModalidad = "TOTAL_CREDITO";
     fianzaSource = "OFERTA_LEGACY_TOTAL";
+  } else if (
+    globalCalculationVersion === "ARES_FRANCES_V1" &&
+    globalSuretyTotal !== null
+  ) {
+    fianzaTotalPorcentaje = globalSuretyTotal;
+    fianzaCuotaPorcentaje = globalSuretyTotal / input.numeroCuotas;
+    fianzaModalidad = "TOTAL_CREDITO";
   }
 
+  const aresCalculation = calculationVersion === "ARES_FRANCES_V1";
+
   return {
-    calculoVersion: "FRANCES_V1",
+    calculoVersion: calculationVersion,
     tasaInteresEa:
       exceptionInterest ?? policy?.tasaInteresEa ??
       input.globalSettings.tasaInteresEa,
     fianzaCuotaPorcentaje,
+    fianzaTotalPorcentaje,
+    fianzaModalidad,
     seguroCuotaPorcentaje:
       exceptionInsurance ?? policy?.seguroCuotaPorcentaje ??
       input.globalSettings.seguroCuotaPorcentaje,
@@ -103,6 +164,11 @@ export function resolveCreditPolicyFinancialSettings(input: {
       exception?.frecuenciaPago ||
       policy?.frecuenciaPago ||
       input.globalSettings.frecuenciaPago,
+    tasaPeriodoDecimales: aresCalculation ? 6 : 12,
+    redondeoComercial: {
+      modo: aresCalculation ? "PISO" : "REDONDEO",
+      multiplo: aresCalculation ? 50 : 100,
+    },
     fianzaSource,
   };
 }

@@ -17,7 +17,10 @@ const client = new Client({
 
 const statements = [
   'ALTER TABLE public."CreditoConfiguracion" ADD COLUMN IF NOT EXISTS "fianzaCuotaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT 2.083333, ADD COLUMN IF NOT EXISTS "seguroCuotaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT 0.03',
+  'ALTER TABLE public."CreditoConfiguracion" ADD COLUMN IF NOT EXISTS "calculoVersion" TEXT, ADD COLUMN IF NOT EXISTS "fianzaTotalPorcentaje" DOUBLE PRECISION, ADD COLUMN IF NOT EXISTS "tasaPeriodoDecimales" INTEGER, ADD COLUMN IF NOT EXISTS "redondeoComercialModo" TEXT, ADD COLUMN IF NOT EXISTS "redondeoComercialMultiplo" INTEGER',
+  'UPDATE public."CreditoConfiguracion" SET "calculoVersion" = \'ARES_FRANCES_V1\', "tasaInteresEa" = 29.66, "fianzaPorcentaje" = 75, "fianzaTotalPorcentaje" = 75, "seguroCuotaPorcentaje" = 0.03, "tasaPeriodoDecimales" = 6, "redondeoComercialModo" = \'PISO\', "redondeoComercialMultiplo" = 50, "updatedAt" = CURRENT_TIMESTAMP WHERE nombre = \'GLOBAL\' AND "calculoVersion" IS NULL',
   'ALTER TABLE public."CreditoConfiguracionDocumento" ADD COLUMN IF NOT EXISTS "fianzaCuotaPorcentaje" DOUBLE PRECISION, ADD COLUMN IF NOT EXISTS "seguroCuotaPorcentaje" DOUBLE PRECISION',
+  'ALTER TABLE public."CreditoConfiguracionDocumento" ADD COLUMN IF NOT EXISTS "calculoVersion" TEXT, ADD COLUMN IF NOT EXISTS "fianzaTotalPorcentaje" DOUBLE PRECISION, ADD COLUMN IF NOT EXISTS "tasaPeriodoDecimales" INTEGER, ADD COLUMN IF NOT EXISTS "redondeoComercialModo" TEXT, ADD COLUMN IF NOT EXISTS "redondeoComercialMultiplo" INTEGER',
   'CREATE TABLE IF NOT EXISTS public."CreditoAmortizacion" ("id" SERIAL PRIMARY KEY, "creditoId" INTEGER NOT NULL, "calculoVersion" TEXT NOT NULL DEFAULT \'FRANCES_V1\', "frecuenciaPago" TEXT NOT NULL, "periodosPorAnio" INTEGER NOT NULL CHECK ("periodosPorAnio" > 0), "numeroCuotas" INTEGER NOT NULL CHECK ("numeroCuotas" > 0), "valorVenta" NUMERIC(20,6) NOT NULL, "cuotaInicial" NUMERIC(20,6) NOT NULL, "valorFinanciado" NUMERIC(20,6) NOT NULL, "tasaInteresEaPorcentaje" NUMERIC(18,12) NOT NULL, "tasaPeriodo" NUMERIC(18,12) NOT NULL, "fianzaCuotaPorcentaje" NUMERIC(18,12) NOT NULL, "seguroCuotaPorcentaje" NUMERIC(18,12) NOT NULL, "cuotaCreditoExacta" NUMERIC(20,6) NOT NULL, "cuotaFianzaExacta" NUMERIC(20,6) NOT NULL, "cuotaSeguroExacta" NUMERIC(20,6) NOT NULL, "cuotaTotalExacta" NUMERIC(20,6) NOT NULL, "cuotaComercial" NUMERIC(20,2) NOT NULL, "totalInteres" NUMERIC(20,6) NOT NULL, "totalFianza" NUMERIC(20,6) NOT NULL, "totalSeguro" NUMERIC(20,6) NOT NULL, "totalPagar" NUMERIC(20,6) NOT NULL, "parametrosSnapshot" JSONB NOT NULL, "checksum" TEXT NOT NULL, "aprobadoAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "CreditoAmortizacion_creditoId_fkey" FOREIGN KEY ("creditoId") REFERENCES public."Credito"("id") ON DELETE CASCADE ON UPDATE CASCADE)',
   'CREATE UNIQUE INDEX IF NOT EXISTS "CreditoAmortizacion_creditoId_key" ON public."CreditoAmortizacion" ("creditoId")',
   'CREATE INDEX IF NOT EXISTS "CreditoAmortizacion_checksum_idx" ON public."CreditoAmortizacion" ("checksum")',
@@ -32,8 +35,18 @@ const statements = [
 ];
 
 const expectedColumns = [
+  ["CreditoConfiguracion", "calculoVersion", "text", "YES"],
+  ["CreditoConfiguracion", "fianzaTotalPorcentaje", "double precision", "YES"],
+  ["CreditoConfiguracion", "tasaPeriodoDecimales", "integer", "YES"],
+  ["CreditoConfiguracion", "redondeoComercialModo", "text", "YES"],
+  ["CreditoConfiguracion", "redondeoComercialMultiplo", "integer", "YES"],
   ["CreditoConfiguracion", "fianzaCuotaPorcentaje", "double precision", "NO"],
   ["CreditoConfiguracion", "seguroCuotaPorcentaje", "double precision", "NO"],
+  ["CreditoConfiguracionDocumento", "calculoVersion", "text", "YES"],
+  ["CreditoConfiguracionDocumento", "fianzaTotalPorcentaje", "double precision", "YES"],
+  ["CreditoConfiguracionDocumento", "tasaPeriodoDecimales", "integer", "YES"],
+  ["CreditoConfiguracionDocumento", "redondeoComercialModo", "text", "YES"],
+  ["CreditoConfiguracionDocumento", "redondeoComercialMultiplo", "integer", "YES"],
   ["CreditoConfiguracionDocumento", "fianzaCuotaPorcentaje", "double precision", "YES"],
   ["CreditoConfiguracionDocumento", "seguroCuotaPorcentaje", "double precision", "YES"],
   ["CreditoAmortizacion", "creditoId", "integer", "NO"],

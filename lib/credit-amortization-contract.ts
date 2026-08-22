@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { FrenchAmortizationResult } from "@/lib/credit-amortization";
 
-export const FINANCING_TERMS_SEAL_VERSION = "FINANCIACION_FIRMADA_V1";
+export const FINANCING_TERMS_SEAL_VERSION = "FINANCIACION_FIRMADA_V2";
 
 export type FinancingTermsSnapshot = {
   folio: string;
@@ -25,7 +25,15 @@ export type FinancingTermsSnapshot = {
   tasaInteresEa: string;
   tasaPeriodo: string;
   fianzaCuotaPorcentaje: string;
+  fianzaTotalPorcentaje: string;
+  fianzaModalidad: "TOTAL_CREDITO" | "POR_CUOTA";
+  fianzaFuente: string;
   seguroCuotaPorcentaje: string;
+  tasaPeriodoDecimales: number;
+  redondeoComercialModo: "REDONDEO" | "PISO";
+  redondeoComercialMultiplo: number;
+  policyVersion: number | null;
+  policyRevisionId: string;
   cuotaCreditoExacta: string;
   cuotaFianzaExacta: string;
   cuotaSeguroExacta: string;
@@ -95,6 +103,18 @@ export function createFinancingTermsSeal(input: {
     imei: string;
   };
   amortizacion: FrenchAmortizationResult;
+  parametros: {
+    fianzaTotalPorcentaje: number | null;
+    fianzaModalidad: "TOTAL_CREDITO" | "POR_CUOTA";
+    fianzaFuente: string;
+    tasaPeriodoDecimales: number;
+    redondeoComercial: {
+      modo: "REDONDEO" | "PISO";
+      multiplo: number;
+    };
+    policyVersion?: number | null;
+    policyRevisionId?: string | null;
+  };
 }): FinancingTermsSeal {
   const plan = input.amortizacion;
   const snapshot: FinancingTermsSnapshot = {
@@ -119,7 +139,21 @@ export function createFinancingTermsSeal(input: {
     tasaInteresEa: rate(plan.tasaInteresEa),
     tasaPeriodo: rate(plan.tasaPeriodo),
     fianzaCuotaPorcentaje: rate(plan.fianzaCuotaPorcentaje),
+    fianzaTotalPorcentaje: rate(
+      input.parametros.fianzaTotalPorcentaje ??
+        plan.fianzaCuotaPorcentaje * plan.numeroCuotas
+    ),
+    fianzaModalidad: input.parametros.fianzaModalidad,
+    fianzaFuente: normalizedText(input.parametros.fianzaFuente),
     seguroCuotaPorcentaje: rate(plan.seguroCuotaPorcentaje),
+    tasaPeriodoDecimales: input.parametros.tasaPeriodoDecimales,
+    redondeoComercialModo: input.parametros.redondeoComercial.modo,
+    redondeoComercialMultiplo:
+      input.parametros.redondeoComercial.multiplo,
+    policyVersion: input.parametros.policyVersion ?? null,
+    policyRevisionId: String(
+      input.parametros.policyRevisionId || ""
+    ).trim(),
     cuotaCreditoExacta: money(plan.cuotaCredito),
     cuotaFianzaExacta: money(plan.cuotaFianza),
     cuotaSeguroExacta: money(plan.cuotaSeguro),

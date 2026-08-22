@@ -17,6 +17,8 @@ import {
   DATACREDITO_MAX_SCORE,
   DATACREDITO_MIN_SCORE,
   DATACREDITO_NO_INFORMATION_SCORE,
+  DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
+  type DataCreditoAresPolicyFinancialSettings,
   type DataCreditoPolicyFinancialSettings,
 } from "@/lib/datacredito/policy";
 import {
@@ -71,7 +73,7 @@ export type DataCreditoPolicyAlly = {
 
 type PolicyCatalogSnapshot = {
   defaultPolicyId: string | null;
-  financialDefaults: DataCreditoPolicyFinancialSettings;
+  financialDefaults: DataCreditoAresPolicyFinancialSettings;
   profiles: DataCreditoPolicyProfile[];
   allies: DataCreditoPolicyAlly[];
   provider: {
@@ -95,7 +97,7 @@ type EditableBand = {
 
 type EditableFinancialSettings = {
   tasaInteresEa: string;
-  fianzaCuotaPorcentaje: string;
+  fianzaTotalPorcentaje: string;
   seguroCuotaPorcentaje: string;
   frecuenciaPago: DataCreditoPolicyFinancialSettings["frecuenciaPago"];
 };
@@ -103,7 +105,7 @@ type EditableFinancialSettings = {
 type FinancialValidationResult = {
   valid: boolean;
   issues: string[];
-  canonical: DataCreditoPolicyFinancialSettings | null;
+  canonical: DataCreditoAresPolicyFinancialSettings | null;
 };
 
 type ValidationResult = {
@@ -134,12 +136,11 @@ const PLATFORMS: DataCreditoPolicyPlatform[] = ["ANDROID", "IPHONE"];
 const MIN_NUMERIC_SCORE = DATACREDITO_MIN_SCORE;
 const MAX_NUMERIC_SCORE = DATACREDITO_MAX_SCORE;
 const MAX_FINANCED_AMOUNT_COP = 100_000_000;
-const DEFAULT_FINANCIAL_SETTINGS: DataCreditoPolicyFinancialSettings = {
-  calculoVersion: "FRANCES_V1",
-  tasaInteresEa: 25,
-  fianzaCuotaPorcentaje: 2.083333,
-  seguroCuotaPorcentaje: 0.03,
-  frecuenciaPago: "QUINCENAL",
+const DEFAULT_FINANCIAL_SETTINGS: DataCreditoAresPolicyFinancialSettings = {
+  ...DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
+  redondeoComercial: {
+    ...DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.redondeoComercial,
+  },
 };
 let draftSequence = 0;
 
@@ -255,21 +256,15 @@ function parseFinancialSettings(
   }
   const calculoVersion = String(value.calculoVersion || "").toUpperCase();
   const tasaInteresEa = readFiniteNumber(value.tasaInteresEa);
-  const fianzaCuotaPorcentaje = readFiniteNumber(
-    value.fianzaCuotaPorcentaje
-  );
   const seguroCuotaPorcentaje = readFiniteNumber(
     value.seguroCuotaPorcentaje
   );
   const frecuenciaPago = String(value.frecuenciaPago || "").toUpperCase();
   if (
-    calculoVersion !== "FRANCES_V1" ||
+    !["FRANCES_V1", "ARES_FRANCES_V1"].includes(calculoVersion) ||
     tasaInteresEa === null ||
     tasaInteresEa < 0 ||
     tasaInteresEa > 100 ||
-    fianzaCuotaPorcentaje === null ||
-    fianzaCuotaPorcentaje < 0 ||
-    fianzaCuotaPorcentaje > 100 ||
     seguroCuotaPorcentaje === null ||
     seguroCuotaPorcentaje < 0 ||
     seguroCuotaPorcentaje > 100 ||
@@ -277,22 +272,71 @@ function parseFinancialSettings(
   ) {
     throw new PolicyRequestError(`${label} tiene parametros financieros invalidos.`);
   }
+  if (calculoVersion === "FRANCES_V1") {
+    const fianzaCuotaPorcentaje = readFiniteNumber(
+      value.fianzaCuotaPorcentaje
+    );
+    if (
+      fianzaCuotaPorcentaje === null ||
+      fianzaCuotaPorcentaje < 0 ||
+      fianzaCuotaPorcentaje > 100
+    ) {
+      throw new PolicyRequestError(`${label} tiene fianza legada invalida.`);
+    }
+    return {
+      calculoVersion: "FRANCES_V1",
+      tasaInteresEa,
+      fianzaCuotaPorcentaje,
+      seguroCuotaPorcentaje,
+      frecuenciaPago:
+        frecuenciaPago as DataCreditoPolicyFinancialSettings["frecuenciaPago"],
+    };
+  }
+
+  const fianzaTotalPorcentaje = readFiniteNumber(
+    value.fianzaTotalPorcentaje
+  );
+  const tasaPeriodoDecimales = readFiniteNumber(value.tasaPeriodoDecimales);
+  const redondeo = isRecord(value.redondeoComercial)
+    ? value.redondeoComercial
+    : null;
+  if (
+    fianzaTotalPorcentaje === null ||
+    fianzaTotalPorcentaje < 0 ||
+    fianzaTotalPorcentaje > 100 ||
+    tasaPeriodoDecimales !== 6 ||
+    String(redondeo?.modo || "").toUpperCase() !== "PISO" ||
+    readFiniteNumber(redondeo?.multiplo) !== 50
+  ) {
+    throw new PolicyRequestError(`${label} no cumple la regla ARES.`);
+  }
   return {
-    calculoVersion: "FRANCES_V1",
+    calculoVersion: "ARES_FRANCES_V1",
     tasaInteresEa,
-    fianzaCuotaPorcentaje,
+    fianzaTotalPorcentaje,
     seguroCuotaPorcentaje,
     frecuenciaPago:
       frecuenciaPago as DataCreditoPolicyFinancialSettings["frecuenciaPago"],
+    tasaPeriodoDecimales: 6,
+    redondeoComercial: {
+      modo: "PISO",
+      multiplo: 50,
+    },
   };
 }
 
 function toEditableFinancialSettings(
-  settings: DataCreditoPolicyFinancialSettings
+  settings: DataCreditoPolicyFinancialSettings,
+  aresDefaults: DataCreditoAresPolicyFinancialSettings =
+    DEFAULT_FINANCIAL_SETTINGS
 ): EditableFinancialSettings {
   return {
     tasaInteresEa: String(settings.tasaInteresEa),
-    fianzaCuotaPorcentaje: String(settings.fianzaCuotaPorcentaje),
+    fianzaTotalPorcentaje: String(
+      settings.calculoVersion === "ARES_FRANCES_V1"
+        ? settings.fianzaTotalPorcentaje
+        : aresDefaults.fianzaTotalPorcentaje
+    ),
     seguroCuotaPorcentaje: String(settings.seguroCuotaPorcentaje),
     frecuenciaPago: settings.frecuenciaPago,
   };
@@ -302,8 +346,8 @@ function validateFinancialSettings(
   settings: EditableFinancialSettings
 ): FinancialValidationResult {
   const tasaInteresEa = readFiniteNumber(settings.tasaInteresEa);
-  const fianzaCuotaPorcentaje = readFiniteNumber(
-    settings.fianzaCuotaPorcentaje
+  const fianzaTotalPorcentaje = readFiniteNumber(
+    settings.fianzaTotalPorcentaje
   );
   const seguroCuotaPorcentaje = readFiniteNumber(
     settings.seguroCuotaPorcentaje
@@ -313,11 +357,11 @@ function validateFinancialSettings(
     issues.push("El interes E.A. debe estar entre 0 % y 100 %.");
   }
   if (
-    fianzaCuotaPorcentaje === null ||
-    fianzaCuotaPorcentaje < 0 ||
-    fianzaCuotaPorcentaje > 100
+    fianzaTotalPorcentaje === null ||
+    fianzaTotalPorcentaje < 0 ||
+    fianzaTotalPorcentaje > 100
   ) {
-    issues.push("La fianza por cuota debe estar entre 0 % y 100 %.");
+    issues.push("La fianza total ARES debe estar entre 0 % y 100 %.");
   }
   if (
     seguroCuotaPorcentaje === null ||
@@ -332,11 +376,16 @@ function validateFinancialSettings(
     canonical:
       issues.length === 0
         ? {
-            calculoVersion: "FRANCES_V1",
+            calculoVersion: "ARES_FRANCES_V1",
             tasaInteresEa: tasaInteresEa!,
-            fianzaCuotaPorcentaje: fianzaCuotaPorcentaje!,
+            fianzaTotalPorcentaje: fianzaTotalPorcentaje!,
             seguroCuotaPorcentaje: seguroCuotaPorcentaje!,
             frecuenciaPago: settings.frecuenciaPago,
+            tasaPeriodoDecimales: 6,
+            redondeoComercial: {
+              modo: "PISO",
+              multiplo: 50,
+            },
           }
         : null,
   };
@@ -448,12 +497,19 @@ function parseCatalog(
     );
   }
 
+  const financialDefaults = parseFinancialSettings(
+    payload.financialDefaults,
+    "La configuracion base"
+  );
+  if (financialDefaults.calculoVersion !== "ARES_FRANCES_V1") {
+    throw new PolicyRequestError(
+      "La configuracion base no usa ARES_FRANCES_V1."
+    );
+  }
+
   return {
     defaultPolicyId: readString(payload.defaultPolicyId),
-    financialDefaults: parseFinancialSettings(
-      payload.financialDefaults,
-      "La configuracion base"
-    ),
+    financialDefaults,
     profiles: payload.profiles.map(parsePolicyProfile),
     allies: payload.allies.map(parsePolicyAlly),
     provider: {
@@ -974,7 +1030,7 @@ function PolicyBandRow({
         </label>
 
         <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
-          Fianza total de oferta (%)
+          Fianza de banda legada (%)
           <Input
             id={`${idPrefix}-surety`}
             type="number"
@@ -1180,7 +1236,7 @@ export default function DatacreditoPolicyConsole() {
   const [allies, setAllies] = useState<DataCreditoPolicyAlly[]>([]);
   const [defaultPolicyId, setDefaultPolicyId] = useState<string | null>(null);
   const [financialDefaults, setFinancialDefaults] =
-    useState<DataCreditoPolicyFinancialSettings>(
+    useState<DataCreditoAresPolicyFinancialSettings>(
       DEFAULT_FINANCIAL_SETTINGS
     );
   const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null);
@@ -1253,7 +1309,7 @@ export default function DatacreditoPolicyConsole() {
   const applyProfile = useCallback(
     (
       profile: DataCreditoPolicyProfile | null,
-      defaults: DataCreditoPolicyFinancialSettings
+      defaults: DataCreditoAresPolicyFinancialSettings
     ) => {
       setSelectedPolicyId(profile?.id || null);
       setVersion(profile?.version ?? null);
@@ -1261,7 +1317,8 @@ export default function DatacreditoPolicyConsole() {
       setBands((profile?.bands || []).map(toEditableBand));
       setFinancialSettings(
         toEditableFinancialSettings(
-          profile?.financialSettings || defaults
+          profile?.financialSettings || defaults,
+          defaults
         )
       );
       setHasUnsavedChanges(false);
@@ -1580,7 +1637,8 @@ export default function DatacreditoPolicyConsole() {
     setNewPolicyDescription("");
     setNewPolicyFinancialSettings(
       toEditableFinancialSettings(
-        selectedProfile.financialSettings || financialDefaults
+        selectedProfile.financialSettings || financialDefaults,
+        financialDefaults
       )
     );
     setCreateOpen(true);
@@ -2224,11 +2282,11 @@ export default function DatacreditoPolicyConsole() {
                       Condiciones financieras de la nueva política
                     </h4>
                     <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-                      Se precargan desde la política origen, pero puedes definirlas
-                      antes de crear la versión 1.
+                      Se precargan desde la política origen. La fianza es total
+                      y ARES la divide entre el plazo antes de calcular la cuota.
                     </p>
                   </div>
-                  <Badge>Cuota fija · FRANCES_V1</Badge>
+                  <Badge>ARES · ARES_FRANCES_V1</Badge>
                 </div>
                 <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <label className="grid gap-2 text-sm font-bold">
@@ -2250,17 +2308,17 @@ export default function DatacreditoPolicyConsole() {
                     />
                   </label>
                   <label className="grid gap-2 text-sm font-bold">
-                    Fianza por cuota (%)
+                    Aval/fianza total del crédito (%)
                     <Input
                       type="number"
                       inputMode="decimal"
                       min={0}
                       max={100}
                       step="0.000001"
-                      value={newPolicyFinancialSettings.fianzaCuotaPorcentaje}
+                      value={newPolicyFinancialSettings.fianzaTotalPorcentaje}
                       onChange={(event) =>
                         updateNewPolicyFinancialSetting(
-                          "fianzaCuotaPorcentaje",
+                          "fianzaTotalPorcentaje",
                           event.target.value
                         )
                       }
@@ -2357,13 +2415,22 @@ export default function DatacreditoPolicyConsole() {
                   </div>
                 </div>
 
+                {selectedProfile.financialSettings?.calculoVersion ===
+                "FRANCES_V1" ? (
+                  <div className="mt-4 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm font-semibold text-[var(--fp-graphite)]">
+                    La revisión publicada usa el cálculo legado. Al publicar,
+                    se creará una nueva revisión ARES sin modificar evaluaciones
+                    ni créditos anteriores.
+                  </div>
+                ) : null}
+
                 <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
                   <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-lime-soft)] p-4">
                     <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
                       Motor de cálculo
                     </p>
                     <p className="mt-2 font-black">Cuota fija · francés</p>
-                    <Badge className="mt-2">FRANCES_V1</Badge>
+                    <Badge className="mt-2">ARES_FRANCES_V1</Badge>
                   </div>
                   <label className="grid gap-2 text-sm font-bold">
                     Interés E.A. (%)
@@ -2384,17 +2451,17 @@ export default function DatacreditoPolicyConsole() {
                     />
                   </label>
                   <label className="grid gap-2 text-sm font-bold">
-                    Fianza por cuota (%)
+                    Aval/fianza total del crédito (%)
                     <Input
                       type="number"
                       inputMode="decimal"
                       min={0}
                       max={100}
                       step="0.000001"
-                      value={financialSettings.fianzaCuotaPorcentaje}
+                      value={financialSettings.fianzaTotalPorcentaje}
                       onChange={(event) =>
                         updateFinancialSetting(
-                          "fianzaCuotaPorcentaje",
+                          "fianzaTotalPorcentaje",
                           event.target.value
                         )
                       }
@@ -2446,9 +2513,9 @@ export default function DatacreditoPolicyConsole() {
                   </ul>
                 ) : (
                   <p className="mt-4 text-sm leading-6 text-[var(--fp-muted)]">
-                    La fianza total de cada banda se conserva para reproducir
-                    políticas históricas; las nuevas revisiones usan la fianza
-                    por cuota definida aquí.
+                    ARES divide este porcentaje total entre el número de cuotas.
+                    La tasa periódica usa 6 decimales y la cuota comercial baja
+                    al múltiplo de $50 inmediatamente anterior.
                   </p>
                 )}
               </Card>
