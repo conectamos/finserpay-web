@@ -135,6 +135,28 @@ test("replica el caso ARES de 16 cuotas con inicial manual", () => {
   assert.equal(result.cuotaComercial, 146_850);
 });
 
+test("replica el caso ARES de 3.5 millones a 40 cuotas", () => {
+  const result = calculateFrenchAmortization({
+    calculoVersion: ARES_FRENCH_AMORTIZATION_VERSION,
+    valorVenta: 3_500_000,
+    cuotaInicial: 1_050_000,
+    numeroCuotas: 40,
+    tasaInteresEa: 29.66,
+    fianzaCuotaPorcentaje: 75 / 40,
+    seguroCuotaPorcentaje: 0.03,
+    frecuenciaPago: "QUINCENAL",
+    fechaPrimerPago: "2026-09-17",
+  });
+
+  assert.equal(result.valorFinanciado, 2_450_000);
+  closeTo(result.tasaPeriodo, 0.010882, 1e-15);
+  closeTo(result.cuotaCredito, 75_871.97450071451);
+  closeTo(result.cuotaFianza, 45_937.5);
+  closeTo(result.cuotaSeguro, 735);
+  closeTo(result.cuotaTotal, 122_544.47450071451);
+  assert.equal(result.cuotaComercial, 122_500);
+});
+
 test("replica el segundo caso ARES de 20 cuotas", () => {
   const result = calculateFrenchAmortization({
     calculoVersion: ARES_FRENCH_AMORTIZATION_VERSION,

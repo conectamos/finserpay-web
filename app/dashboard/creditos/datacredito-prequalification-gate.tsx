@@ -934,7 +934,7 @@ export default function DatacreditoPrequalificationGate({
             </div>
             <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
               <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
-                Plazo autorizado
+                Plazo máximo autorizado
               </p>
               <p className="mt-2 text-2xl font-black text-[var(--fp-graphite)]">
                 {approvedResult.offer.installmentCount} cuotas

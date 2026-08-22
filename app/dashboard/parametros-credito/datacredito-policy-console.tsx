@@ -1143,7 +1143,7 @@ function PolicyBandRow({
         </label>
 
         <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
-          Plazo (cuotas)
+          Plazo máximo (cuotas)
           <Input
             id={`${idPrefix}-installments`}
             type="number"

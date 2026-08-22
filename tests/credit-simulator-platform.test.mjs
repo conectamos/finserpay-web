@@ -68,13 +68,21 @@ test("el simulador iPhone usa inicial del 30 por ciento y plazo flexible", () =>
     consoleSource,
     /const plazoMaximoCuotas = normalizeCreditInstallmentLimit\(\s*simulatorIphoneRulesActive\s*\? creditSettings\.iphonePlazoMaximoCuotas/
   );
-  assert.match(
+  assert.doesNotMatch(
     consoleSource,
-    /const dataCreditoLocksInstallmentCount\s*=\s*Boolean\(dataCreditoInstallmentCount\) && !simulatorMode/
+    /dataCreditoLocksInstallmentCount/
   );
   assert.match(
     consoleSource,
-    /dataCreditoLocksInstallmentCount\s*\? \[String\(dataCreditoInstallmentCount\)\]\s*:\s*getCreditInstallmentOptions\(plazoMaximoCuotas\)/
+    /const policyInstallmentOptions = useMemo\([\s\S]{0,180}getCreditInstallmentOptions\(plazoMaximoCuotas\)/
+  );
+  assert.match(
+    consoleSource,
+    /const plazoMesesNumero = normalizeCreditInstallments\(\s*plazoMeses,[\s\S]{0,240}plazoMaximoCuotas/
+  );
+  assert.doesNotMatch(
+    consoleSource,
+    /const creditInstallmentOptions = useMemo\(\(\) => \{\s*if \(\s*!simulatorMode \|\|/
   );
   assert.match(
     consoleSource,
@@ -82,7 +90,7 @@ test("el simulador iPhone usa inicial del 30 por ciento y plazo flexible", () =>
   );
   assert.match(
     consoleSource,
-    /Puedes elegir hasta \$\{plazoMaximoCuotas\} cuotas\. Solo se muestran plazos cuya cuota no supera/
+    /Puedes elegir hasta \{plazoMaximoCuotas\} cuotas\. No[\s\S]{0,120}máximo autorizado/
   );
 });
 
@@ -101,7 +109,7 @@ test("el simulador iPhone conserva el tope global configurado", () => {
   );
   assert.match(
     consoleSource,
-    /simulatorMode\s*\? plazoMaximoCuotas\s*:\s*dataCreditoInstallmentCount/
+    /Plazo máximo \{plazoMaximoCuotas\} cuotas/
   );
   assert.match(consoleSource, /IPHONE_MAX_INSTALLMENT_VALUE/);
 });
