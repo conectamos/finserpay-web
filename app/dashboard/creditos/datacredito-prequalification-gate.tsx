@@ -1185,7 +1185,7 @@ export default function DatacreditoPrequalificationGate({
                 pattern="[0-9]{3,13}"
                 required
                 disabled={isSubmitting}
-                className="min-h-14 border-[var(--fp-lime-strong)] pl-12 text-base shadow-[var(--fp-shadow-sm)] disabled:bg-[var(--fp-bg)]"
+                className="min-h-14 border-[var(--fp-lime-strong)] !pl-12 text-base shadow-[var(--fp-shadow-sm)] disabled:bg-[var(--fp-bg)]"
                 aria-invalid={Boolean(formErrors.documentNumber)}
                 aria-describedby={
                   formErrors.documentNumber
@@ -1238,7 +1238,7 @@ export default function DatacreditoPrequalificationGate({
                 maxLength={80}
                 required
                 disabled={isSubmitting}
-                className="min-h-14 border-[var(--fp-lime-strong)] pl-12 text-base shadow-[var(--fp-shadow-sm)] disabled:bg-[var(--fp-bg)]"
+                className="min-h-14 border-[var(--fp-lime-strong)] !pl-12 text-base shadow-[var(--fp-shadow-sm)] disabled:bg-[var(--fp-bg)]"
                 aria-invalid={Boolean(formErrors.firstSurname)}
                 aria-describedby={
                   formErrors.firstSurname

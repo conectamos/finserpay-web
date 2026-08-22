@@ -677,6 +677,15 @@ test("muestra los resultados DataCredito aprobados y rechazados como ventanas em
   );
 });
 
+test("reserva espacio para los iconos de identificacion en la precalificacion", () => {
+  const inputsWithLeadingIcon =
+    prequalificationGate.match(
+      /className="min-h-14 border-\[var\(--fp-lime-strong\)\] !pl-12 text-base/g
+    ) || [];
+
+  assert.equal(inputsWithLeadingIcon.length, 2);
+});
+
 test("oculta visualmente la fianza DataCredito para todos los perfiles", () => {
   assert.doesNotMatch(prequalificationGate, /showSurety/);
   assert.doesNotMatch(factoryConsole, /showSurety=/);
