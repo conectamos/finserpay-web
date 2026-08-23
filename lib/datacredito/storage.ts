@@ -124,6 +124,8 @@ type DataCreditoQueryExecutor = Prisma.TransactionClient | typeof prisma;
 export type DataCreditoAssessmentReuseInput = DataCreditoAssessmentScope & {
   platform: DataCreditoPlatform;
   providerEnvironment: string;
+  policyVersion: number;
+  policyRevisionId: string;
   documentHash: string;
   documentLast4: string;
   surnameHash: string;
@@ -133,10 +135,7 @@ export type DataCreditoAssessmentReuseInput = DataCreditoAssessmentScope & {
   userAgentHash: string | null;
 };
 
-type CreatePendingAssessmentInput = DataCreditoAssessmentReuseInput & {
-  policyVersion: number;
-  policyRevisionId: string;
-};
+type CreatePendingAssessmentInput = DataCreditoAssessmentReuseInput;
 
 type CompleteAssessmentInput = {
   id: string;
@@ -152,6 +151,7 @@ export type DataCreditoAssessmentReservation =
   | { kind: "CREATED"; assessment: DataCreditoAssessmentRow }
   | { kind: "IN_PROGRESS" }
   | { kind: "RATE_LIMITED" }
+  | { kind: "ALREADY_CONSUMED"; assessment: DataCreditoAssessmentRow }
   | { kind: "REUSED"; assessment: DataCreditoAssessmentRow };
 
 export class DataCreditoStorageConfigurationError extends Error {
@@ -1257,6 +1257,7 @@ async function findReusableDataCreditoAssessment(
     hashes: ReturnType<typeof buildDataCreditoIdentityHashes>;
     platform: DataCreditoPlatform;
     providerEnvironment: string;
+    policyRevisionId: string;
     scope: DataCreditoAssessmentScope;
   },
   database: DataCreditoQueryExecutor
@@ -1283,6 +1284,7 @@ async function findReusableDataCreditoAssessment(
         AND assessment."userId" = $6
         AND assessment."sellerId" IS NOT DISTINCT FROM $7
         AND assessment."sedeId" = $8
+        AND assessment."policyRevisionId" = $9
       ) DESC,
         assessment."expiresAt" DESC, assessment."createdAt" DESC
       LIMIT 1
@@ -1294,7 +1296,45 @@ async function findReusableDataCreditoAssessment(
     input.platform,
     input.scope.userId,
     input.scope.sellerId,
-    input.scope.sedeId
+    input.scope.sedeId,
+    input.policyRevisionId
+  );
+  return rows[0] || null;
+}
+
+async function findRecentConsumedDataCreditoAssessment(
+  input: {
+    documentHash: string;
+    providerEnvironment: string;
+    aliadoId: number | null;
+  },
+  database: DataCreditoQueryExecutor
+) {
+  const rows = await database.$queryRawUnsafe<DataCreditoAssessmentRow[]>(
+    `
+      SELECT assessment.*
+      FROM "DataCreditoAssessment" assessment
+      WHERE assessment."documentHash" = $1
+        AND assessment."providerEnvironment" = $2
+        AND assessment."aliadoId" IS NOT DISTINCT FROM $3
+        AND assessment."status" IN ('APROBADO', 'RECHAZADO')
+        AND assessment."expiresAt" > CURRENT_TIMESTAMP
+        AND (
+          assessment."consumedAt" IS NOT NULL
+          OR EXISTS (
+            SELECT 1 FROM "DataCreditoAssessment" consumed
+            WHERE COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
+              COALESCE(assessment."reusedFromAssessmentId", assessment."id")
+              AND consumed."consumedAt" IS NOT NULL
+          )
+        )
+      ORDER BY (assessment."consumedAt" IS NOT NULL) DESC,
+        assessment."expiresAt" DESC, assessment."createdAt" DESC
+      LIMIT 1
+    `,
+    input.documentHash,
+    input.providerEnvironment,
+    input.aliadoId
   );
   return rows[0] || null;
 }
@@ -1309,7 +1349,8 @@ function dataCreditoAssessmentHasCurrentIdentityAndScope(
     row.userId === input.userId &&
     row.sellerId === input.sellerId &&
     row.sedeId === input.sedeId &&
-    row.aliadoId === input.aliadoId
+    row.aliadoId === input.aliadoId &&
+    row.policyRevisionId === input.policyRevisionId
   );
 }
 
@@ -1349,14 +1390,16 @@ async function cloneReusableDataCreditoAssessment(
       INNER JOIN "DataCreditoPolicyProfile" profile
         ON profile."id" = revision."profileId"
       WHERE revision."id" = $1
+        AND revision."version" = $2
       LIMIT 1
     `,
-    sourceRow.policyRevisionId
+    input.policyRevisionId,
+    input.policyVersion
   );
-  const historicalPolicy = policyFromRevisionRow(revisionRows[0] || null);
+  const currentPolicy = policyFromRevisionRow(revisionRows[0] || null);
   const resolution =
-    historicalPolicy && sourceRow.score !== null
-      ? resolveDataCreditoDecision(historicalPolicy, input.platform, sourceRow.score)
+    currentPolicy && sourceRow.score !== null
+      ? resolveDataCreditoDecision(currentPolicy, input.platform, sourceRow.score)
       : null;
   if (!resolution) throw schemaNotReady();
 
@@ -1374,12 +1417,12 @@ async function cloneReusableDataCreditoAssessment(
       SELECT $1, source."documentHash", source."documentLast4",
         $3, $4, source."providerEnvironment",
         $5, source."score", $5, $6::jsonb,
-        source."policyVersion", source."policyRevisionId", $2,
-        $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+        $7, $8, $2,
+        $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
         source."transactionCode", source."providerStatus", NULL,
         source."durationMs", source."expiresAt", source."retainedUntil"
       FROM "DataCreditoAssessment" source
-      WHERE source."id" = $17
+      WHERE source."id" = $19
         AND source."status" IN ('APROBADO', 'RECHAZADO')
         AND source."expiresAt" > CURRENT_TIMESTAMP
         AND source."consumedAt" IS NULL
@@ -1402,6 +1445,8 @@ async function cloneReusableDataCreditoAssessment(
     input.platform,
     resolution.decision,
     JSON.stringify(resolution.offer),
+    input.policyVersion,
+    input.policyRevisionId,
     DATACREDITO_CONSENT_VERSION,
     DATACREDITO_CONSENT_HASH,
     input.consentAt,
@@ -1430,6 +1475,7 @@ async function tryReuseDataCreditoAssessment(
       },
       platform: input.platform,
       providerEnvironment: input.providerEnvironment,
+      policyRevisionId: input.policyRevisionId,
       scope: input,
     },
     database
@@ -1464,7 +1510,9 @@ function dataCreditoDocumentLockKey(input: {
 
 export async function reuseDataCreditoAssessment(
   input: DataCreditoAssessmentReuseInput
-): Promise<Extract<DataCreditoAssessmentReservation, { kind: "REUSED" | "IN_PROGRESS" }> | null> {
+): Promise<
+  Extract<DataCreditoAssessmentReservation, { kind: "REUSED" | "IN_PROGRESS" | "ALREADY_CONSUMED" }> | null
+> {
   await ensureDataCreditoSchema();
   const staleMinutes = getDataCreditoPendingStaleMinutes();
   return prisma.$transaction(async (transaction) => {
@@ -1474,6 +1522,10 @@ export async function reuseDataCreditoAssessment(
     );
     const reusable = await tryReuseDataCreditoAssessment(input, transaction);
     if (reusable) return reusable;
+    const consumed = await findRecentConsumedDataCreditoAssessment(input, transaction);
+    if (consumed) {
+      return { kind: "ALREADY_CONSUMED", assessment: consumed };
+    }
     const pendingRows = await transaction.$queryRawUnsafe<Array<{ id: string }>>(
       `
         SELECT "id" FROM "DataCreditoAssessment"
@@ -1612,6 +1664,10 @@ export async function reserveDataCreditoAssessment(
 
       const reusable = await tryReuseDataCreditoAssessment(input, transaction);
       if (reusable) return reusable;
+      const consumed = await findRecentConsumedDataCreditoAssessment(input, transaction);
+      if (consumed) {
+        return { kind: "ALREADY_CONSUMED", assessment: consumed };
+      }
 
       const activeRows = await transaction.$queryRawUnsafe<Array<{ id: string }>>(
         `
@@ -1741,6 +1797,7 @@ export function serializeDataCreditoAssessment(row: DataCreditoAssessmentRow) {
     : null;
   return {
     assessmentId: row.id,
+    platform: row.platform,
     status: row.status === "RECHAZADO" ? "RECHAZADO" : approved ? "APROBADO" : "NO_EVALUADO",
     expiresAt:
       row.expiresAt instanceof Date ? row.expiresAt.toISOString() : String(row.expiresAt),

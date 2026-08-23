@@ -494,9 +494,19 @@ test("la consola central presenta el expediente completo en secciones accesibles
   );
   assert.match(
     adminConsoleSource,
-    /Resultado reutilizado \(sin nueva consulta al proveedor\)/
+    /Reutilizada · sin nueva consulta\/cobro/
   );
-  assert.match(adminConsoleSource, /Consulta original al proveedor/);
+  assert.match(adminConsoleSource, /Original · consulta al proveedor/);
+  assert.match(
+    adminConsoleSource,
+    /Las reutilizadas conservan una consulta vigente y no generan[\s\S]*una nueva consulta ni cobro/
+  );
+  assert.match(adminConsoleSource, /<span>Origen<\/span>/);
+  assert.equal(
+    (adminConsoleSource.match(/<AssessmentOriginStatus/g) || []).length,
+    2,
+    "El origen debe verse tanto en la lista como en el expediente"
+  );
   assert.match(adminConsoleSource, /<caption className="sr-only">/);
   assert.match(adminConsoleSource, /aria-describedby="payment-code-legend"/);
   assert.match(

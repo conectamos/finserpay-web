@@ -173,17 +173,19 @@ test("la llave anticonsulta es cedula, ambiente y aliado, no apellido ni platafo
   assert.doesNotMatch(pendingIndex, /surnameHash|platform/);
 });
 
-test("repetir registra un assessment actual y conserva vencimiento y revision del origen", () => {
+test("repetir conserva la consulta raiz y aplica la revision vigente de destino", () => {
   const clone = section(
     storage,
     "async function cloneReusableDataCreditoAssessment",
     "async function tryReuseDataCreditoAssessment"
   );
-  assert.match(clone, /historicalPolicy/);
-  assert.match(clone, /resolveDataCreditoDecision\(historicalPolicy, input\.platform/);
+  assert.match(clone, /currentPolicy/);
+  assert.match(clone, /resolveDataCreditoDecision\([\s\S]*?currentPolicy,[\s\S]*?input\.platform/);
   assert.match(clone, /input\.surnameHash/);
   assert.match(clone, /input\.platform/);
-  assert.match(clone, /source\."policyRevisionId"/);
+  assert.match(clone, /input\.policyVersion/);
+  assert.match(clone, /input\.policyRevisionId/);
+  assert.doesNotMatch(clone, /historicalPolicy|source\."policyRevisionId"/);
   assert.match(clone, /source\."expiresAt", source\."retainedUntil"/);
   assert.match(clone, /"reusedFromAssessmentId"/);
   assert.doesNotMatch(clone, /SecurePayload|ciphertext/);
@@ -191,6 +193,7 @@ test("repetir registra un assessment actual y conserva vencimiento y revision de
 
 test("reintentos del mismo scope devuelven el assessment existente sin crecer filas", () => {
   assert.match(storage, /dataCreditoAssessmentHasCurrentIdentityAndScope/);
+  assert.match(storage, /row\.policyRevisionId === input\.policyRevisionId/);
   assert.match(
     storage,
     /if \(dataCreditoAssessmentHasCurrentIdentityAndScope\(reusable, input\)\) \{[\s\S]*?assessment: reusable/
@@ -229,6 +232,12 @@ test("cambiar Android a iPhone recalcula la oferta historica sin consultar", () 
   const reuseStart = evaluationRoute.indexOf("reuseDataCreditoAssessment({");
   const providerCall = evaluationRoute.indexOf("queryDataCreditoNaturalPerson({");
   assert.ok(reuseStart >= 0 && reuseStart < providerCall);
+  const reuseInput = evaluationRoute.slice(
+    reuseStart,
+    evaluationRoute.indexOf("if (cached?.kind", reuseStart)
+  );
+  assert.match(reuseInput, /policyVersion:\s*policy\.version/);
+  assert.match(reuseInput, /policyRevisionId:\s*policy\.revisionId/);
 });
 
 test("vigencia exacta de 15 dias no es deslizable ni heredable del env historico", () => {
@@ -251,6 +260,46 @@ test("vigencia exacta de 15 dias no es deslizable ni heredable del env historico
   const expiry = created + 21_600 * 60_000;
   assert.ok(created + 14 * 86_400_000 < expiry);
   assert.equal(created + 15 * 86_400_000, expiry);
+});
+
+test("una oferta consumida vigente bloquea antes del proveedor sin renovar los 15 dias", () => {
+  const consumedLookup = section(
+    storage,
+    "async function findRecentConsumedDataCreditoAssessment",
+    "function dataCreditoAssessmentHasCurrentIdentityAndScope"
+  );
+  assert.match(consumedLookup, /assessment\."documentHash" = \$1/);
+  assert.match(consumedLookup, /assessment\."providerEnvironment" = \$2/);
+  assert.match(consumedLookup, /assessment\."aliadoId" IS NOT DISTINCT FROM \$3/);
+  assert.match(consumedLookup, /assessment\."expiresAt" > CURRENT_TIMESTAMP/);
+  assert.match(consumedLookup, /consumed\."consumedAt" IS NOT NULL/);
+  assert.doesNotMatch(consumedLookup, /CURRENT_TIMESTAMP \+|INTERVAL '15 days'/);
+
+  const earlyReuse = section(
+    storage,
+    "export async function reuseDataCreditoAssessment",
+    "async function countRecentDataCreditoAssessments"
+  );
+  const consumedGuard = earlyReuse.indexOf("findRecentConsumedDataCreditoAssessment");
+  const pendingLookup = earlyReuse.indexOf('SELECT "id" FROM "DataCreditoAssessment"');
+  assert.ok(consumedGuard >= 0 && consumedGuard < pendingLookup);
+  assert.match(earlyReuse, /kind: "ALREADY_CONSUMED"/);
+
+  const reserve = section(
+    storage,
+    "export async function reserveDataCreditoAssessment",
+    "export async function completeDataCreditoAssessment"
+  );
+  assert.ok(
+    reserve.indexOf("findRecentConsumedDataCreditoAssessment") <
+      reserve.indexOf("insertPendingDataCreditoAssessment")
+  );
+
+  const reuseCall = evaluationRoute.indexOf("reuseDataCreditoAssessment({");
+  const consumedResponse = evaluationRoute.indexOf('cached?.kind === "ALREADY_CONSUMED"');
+  const providerCall = evaluationRoute.indexOf("queryDataCreditoNaturalPerson({");
+  assert.ok(reuseCall >= 0 && reuseCall < consumedResponse && consumedResponse < providerCall);
+  assert.equal(evaluationRoute.match(/code: "ASSESSMENT_ALREADY_CONSUMED"/g)?.length, 2);
 });
 
 test("claim y consumo bloquean todo el grupo para impedir doble credito", () => {

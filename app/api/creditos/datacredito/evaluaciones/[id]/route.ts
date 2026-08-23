@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
+import { normalizeDataCreditoPlatform } from "@/lib/datacredito/policy";
 import {
   dataCreditoAssessmentMatchesScope,
   getDataCreditoAssessmentById,
@@ -17,7 +18,7 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ ok: false, error: "No autenticado" }, { status: 401 });
@@ -37,6 +38,23 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ ok: false, error: "Evaluacion no encontrada" }, { status: 404 });
   }
 
+  const requestedPlatform = new URL(request.url).searchParams.get("platform");
+  const expectedPlatform =
+    requestedPlatform === null
+      ? null
+      : normalizeDataCreditoPlatform(requestedPlatform);
+  if (requestedPlatform !== null && !expectedPlatform) {
+    return NextResponse.json(
+      {
+        ok: false,
+        status: "NO_EVALUADO",
+        code: "INVALID_PLATFORM",
+        error: "La plataforma debe ser ANDROID o IPHONE.",
+      },
+      { status: 400 }
+    );
+  }
+
   try {
     const row = await getDataCreditoAssessmentById(id);
     const scope: DataCreditoAssessmentScope = {
@@ -50,6 +68,19 @@ export async function GET(_request: Request, context: RouteContext) {
       return NextResponse.json(
         { ok: false, error: "Evaluacion no encontrada" },
         { status: 404 }
+      );
+    }
+
+    if (expectedPlatform && row.platform !== expectedPlatform) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "NO_EVALUADO",
+          code: "ASSESSMENT_PLATFORM_MISMATCH",
+          error: "La evaluacion corresponde a otra plataforma.",
+          correlationId: row.correlationId,
+        },
+        { status: 409 }
       );
     }
 

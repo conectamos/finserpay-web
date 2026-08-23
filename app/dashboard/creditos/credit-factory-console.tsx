@@ -2376,7 +2376,7 @@ export default function CreditFactoryConsole({
     string | null
   >(null);
   const [dataCreditoApproval, setDataCreditoApproval] = useState<
-    (DataCreditoApprovedResult & { platform: "ANDROID" | "IPHONE" }) | null
+    DataCreditoApprovedResult | null
   >(null);
   const [dataCreditoSimulation, setDataCreditoSimulation] =
     useState<DataCreditoPolicySimulation | null>(null);
@@ -8701,7 +8701,7 @@ export default function CreditFactoryConsole({
       policyControlled: true,
     };
     setDataCreditoAssessmentId(result.assessmentId);
-    setDataCreditoApproval({ ...result, platform: dataCreditoPlatform });
+    setDataCreditoApproval(result);
     setDataCreditoBypassed(false);
     setClienteTipoDocumento("CEDULA_DE_CIUDADANIA");
     setClienteDocumento(result.documentNumber);

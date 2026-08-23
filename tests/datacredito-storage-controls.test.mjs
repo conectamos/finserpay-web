@@ -560,6 +560,7 @@ test("la oferta persiste y serializa monto, plazo y tope de cuota", () => {
     /export function serializeDataCreditoAssessment\([\s\S]*?\n\}/
   )?.[0];
   assert.ok(serializer);
+  assert.match(serializer, /platform: row\.platform/);
   assert.match(
     serializer,
     /maxFinancedAmount: Number\(row\.offer\?\.maxFinancedAmount\)/

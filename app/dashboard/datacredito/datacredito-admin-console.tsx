@@ -238,6 +238,25 @@ function isProductionProviderEnvironment(value: string | null | undefined) {
   return ["prod", "production"].includes(String(value || "").toLowerCase());
 }
 
+function AssessmentOriginStatus({
+  reusedFromAssessmentId,
+}: {
+  reusedFromAssessmentId: string | null | undefined;
+}) {
+  const reused = Boolean(reusedFromAssessmentId);
+
+  return (
+    <StatusPill
+      tone={reused ? "positive" : "neutral"}
+      className="whitespace-nowrap"
+    >
+      {reused
+        ? "Reutilizada · sin nueva consulta/cobro"
+        : "Original · consulta al proveedor"}
+    </StatusPill>
+  );
+}
+
 export default function DataCreditoAdminConsole() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] =
@@ -549,6 +568,10 @@ export default function DataCreditoAdminConsole() {
                 <p className="mt-1 text-sm text-[var(--fp-muted)]">
                   {items.length} resultado(s) en esta vista
                 </p>
+                <p className="mt-1 text-xs text-[var(--fp-muted)]">
+                  Las reutilizadas conservan una consulta vigente y no generan
+                  una nueva consulta ni cobro.
+                </p>
               </div>
               <Button
                 variant="ghost"
@@ -568,13 +591,14 @@ export default function DataCreditoAdminConsole() {
               />
             ) : (
               <DataTable>
-                <div className="min-w-[1040px]">
-                  <div className="grid grid-cols-[1.05fr_0.75fr_0.65fr_0.7fr_0.95fr_1fr_0.5fr] gap-4 bg-[var(--fp-bg)] px-5 py-3 text-[11px] font-black uppercase text-[var(--fp-muted)]">
+                <div className="min-w-[1360px]">
+                  <div className="grid grid-cols-[1.05fr_0.75fr_0.65fr_0.7fr_0.95fr_1.35fr_1fr_0.5fr] gap-4 bg-[var(--fp-bg)] px-5 py-3 text-[11px] font-black uppercase text-[var(--fp-muted)]">
                     <span>Fecha / cédula</span>
                     <span>Resultado</span>
                     <span>Puntaje</span>
                     <span>Plataforma</span>
                     <span>Oferta</span>
+                    <span>Origen</span>
                     <span>Consultó</span>
                     <span className="sr-only">Acciones</span>
                   </div>
@@ -583,7 +607,7 @@ export default function DataCreditoAdminConsole() {
                       <article
                         key={item.id}
                         className={[
-                          "grid grid-cols-[1.05fr_0.75fr_0.65fr_0.7fr_0.95fr_1fr_0.5fr] items-center gap-4 px-5 py-4 text-sm transition",
+                          "grid grid-cols-[1.05fr_0.75fr_0.65fr_0.7fr_0.95fr_1.35fr_1fr_0.5fr] items-center gap-4 px-5 py-4 text-sm transition",
                           selectedId === item.id
                             ? "bg-[var(--fp-lime-soft)]"
                             : "hover:bg-[#fbfcf8]",
@@ -635,6 +659,9 @@ export default function DataCreditoAdminConsole() {
                             "Sin oferta"
                           )}
                         </div>
+                        <AssessmentOriginStatus
+                          reusedFromAssessmentId={item.reusedFromAssessmentId}
+                        />
                         <div className="min-w-0">
                           <p className="truncate font-bold">
                             {item.actor.sellerName || item.actor.userName}
@@ -731,12 +758,12 @@ export default function DataCreditoAdminConsole() {
                     <strong className="text-[var(--fp-graphite)]">Fecha:</strong>{" "}
                     {dateTime(detail.assessment?.createdAt)}
                   </p>
-                  <p>
+                  <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
                     <strong className="text-[var(--fp-graphite)]">Origen:</strong>{" "}
-                    {detail.assessment?.reusedFromAssessmentId
-                      ? "Resultado reutilizado (sin nueva consulta al proveedor)"
-                      : "Consulta original al proveedor"}
-                  </p>
+                    <AssessmentOriginStatus
+                      reusedFromAssessmentId={detail.assessment?.reusedFromAssessmentId}
+                    />
+                  </div>
                 </div>
 
                 {detail.historicWithoutDossier ? (
