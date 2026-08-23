@@ -50,6 +50,7 @@ export type DataCreditoOffer = {
 };
 
 export type DataCreditoApprovedResult = {
+  platform: DataCreditoPlatform;
   assessmentId: string;
   documentNumber: string;
   firstSurname: string;
@@ -103,6 +104,7 @@ type PolicyResponse = {
 };
 
 type AssessmentFallback = {
+  platform?: DataCreditoPlatform;
   assessmentId?: string;
   documentNumber?: string;
   firstSurname?: string;
@@ -166,6 +168,13 @@ function readNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function readPlatform(value: unknown): DataCreditoPlatform | null {
+  const normalized = String(value || "").trim().toUpperCase();
+  return normalized === "ANDROID" || normalized === "IPHONE"
+    ? normalized
+    : null;
+}
+
 function getCorrelationId(payload: unknown, response?: Response) {
   const body = isRecord(payload) ? payload : null;
   const nestedError = body && isRecord(body.error) ? body.error : null;
@@ -213,6 +222,11 @@ function normalizeApprovedAssessment(
     readString(payload.firstSurname) ||
     fallback.firstSurname ||
     null;
+  const platform =
+    readPlatform(source.platform) ||
+    readPlatform(payload.platform) ||
+    fallback.platform ||
+    null;
   const expiresAt =
     readString(source.expiresAt) || readString(payload.expiresAt) || null;
   const initialPaymentPercentage = readNumber(
@@ -238,6 +252,7 @@ function normalizeApprovedAssessment(
     !assessmentId ||
     !documentNumber ||
     !firstSurname ||
+    !platform ||
     !expiresAt ||
     initialPaymentPercentage === null ||
     suretyPercentage === null ||
@@ -251,6 +266,7 @@ function normalizeApprovedAssessment(
   const policyVersion = readNumber(offerSource.policyVersion);
 
   return {
+    platform,
     assessmentId,
     documentNumber,
     firstSurname,
@@ -294,6 +310,7 @@ function isRecoverableInitialAssessmentFailure(
     response.status === 422 ||
     code === "ASSESSMENT_EXPIRED" ||
     code === "ASSESSMENT_ENVIRONMENT_MISMATCH" ||
+    code === "ASSESSMENT_PLATFORM_MISMATCH" ||
     (status === "NO_EVALUADO" &&
       [409, 410, 422].includes(response.status) &&
       code !== "EVALUATION_IN_PROGRESS")
@@ -432,6 +449,7 @@ export default function DatacreditoPrequalificationGate({
   );
   const [firstSurname, setFirstSurname] = useState(normalizedInitialSurname);
   const [lastInitialIdentity, setLastInitialIdentity] = useState(() => ({
+    platform,
     assessmentId: initialAssessmentId,
     documentNumber: normalizedInitialDocument,
     firstSurname: normalizedInitialSurname,
@@ -459,11 +477,13 @@ export default function DatacreditoPrequalificationGate({
   );
 
   if (
+    lastInitialIdentity.platform !== platform ||
     lastInitialIdentity.assessmentId !== initialAssessmentId ||
     lastInitialIdentity.documentNumber !== normalizedInitialDocument ||
     lastInitialIdentity.firstSurname !== normalizedInitialSurname
   ) {
     setLastInitialIdentity({
+      platform,
       assessmentId: initialAssessmentId,
       documentNumber: normalizedInitialDocument,
       firstSurname: normalizedInitialSurname,
@@ -639,7 +659,7 @@ export default function DatacreditoPrequalificationGate({
         const assessmentResponse = await fetch(
           `/api/creditos/datacredito/evaluaciones/${encodeURIComponent(
             initialAssessmentId
-          )}`,
+          )}?platform=${encodeURIComponent(platform)}`,
           {
             cache: "no-store",
             headers: { Accept: "application/json" },
@@ -704,6 +724,15 @@ export default function DatacreditoPrequalificationGate({
                 .replace(/\s+/g, " ") || undefined,
           });
 
+          if (approved && approved.platform !== platform) {
+            onAssessmentInvalidatedRef.current?.();
+            setConsentAccepted(false);
+            setFormErrors({});
+            setCorrelationId(null);
+            setView("ready");
+            return;
+          }
+
           if (approved) {
             setDocumentNumber(approved.documentNumber);
             setFirstSurname(approved.firstSurname);
@@ -727,6 +756,7 @@ export default function DatacreditoPrequalificationGate({
       initialAssessmentId,
       initialDocumentNumber,
       initialFirstSurname,
+      platform,
       showApproved,
     ]
   );
@@ -814,11 +844,12 @@ export default function DatacreditoPrequalificationGate({
 
       if (decision === "APROBADO") {
         const result = normalizeApprovedAssessment(payload, {
+          platform,
           documentNumber: validation.documentNumber,
           firstSurname: validation.firstSurname,
         });
 
-        if (result) {
+        if (result?.platform === platform) {
           showApproved(result);
           return;
         }

@@ -103,6 +103,7 @@ import {
 } from "@/lib/credit-amortization";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
 import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
+import CreditEvidenceGallery from "@/app/dashboard/creditos/credit-evidence-gallery";
 import {
   findCreditCreatedAfterConnectionLoss,
   isCreditCreationNetworkError,
@@ -2376,7 +2377,7 @@ export default function CreditFactoryConsole({
     string | null
   >(null);
   const [dataCreditoApproval, setDataCreditoApproval] = useState<
-    (DataCreditoApprovedResult & { platform: "ANDROID" | "IPHONE" }) | null
+    DataCreditoApprovedResult | null
   >(null);
   const [dataCreditoSimulation, setDataCreditoSimulation] =
     useState<DataCreditoPolicySimulation | null>(null);
@@ -8681,7 +8682,7 @@ export default function CreditFactoryConsole({
       policyControlled: true,
     };
     setDataCreditoAssessmentId(result.assessmentId);
-    setDataCreditoApproval({ ...result, platform: dataCreditoPlatform });
+    setDataCreditoApproval(result);
     setDataCreditoBypassed(false);
     setClienteTipoDocumento("CEDULA_DE_CIUDADANIA");
     setClienteDocumento(result.documentNumber);
@@ -14307,7 +14308,8 @@ export default function CreditFactoryConsole({
                     ) : null}
 
                     {clientDossierTab === "documents" ? (
-                      <section className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <section className="mt-4 space-y-5">
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                         {[
                           ["Expediente PDF", () => downloadExpedientePdf()],
                           ["Plan de pagos", () => downloadPlanPagos()],
@@ -14325,6 +14327,11 @@ export default function CreditFactoryConsole({
                             {String(label)}
                           </button>
                         ))}
+                        </div>
+                        <CreditEvidenceGallery
+                          creditId={selectedCredit.id}
+                          clientName={selectedCredit.clienteNombre}
+                        />
                       </section>
                     ) : null}
 

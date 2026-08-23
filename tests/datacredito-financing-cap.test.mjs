@@ -266,3 +266,34 @@ test("el tope iPhone acepta 160000 y bloquea cualquier exceso exacto", () => {
     false
   );
 });
+
+test("el plazo de la politica es maximo y admite cada plazo menor dentro del tope", () => {
+  const maxInstallments = 40;
+  const allowedInstallments = getCreditInstallmentOptions(maxInstallments).filter(
+    (value) => {
+      const installmentCount = Number(value);
+      const plan = calculateFrenchAmortization({
+        calculoVersion: ARES_FRENCH_AMORTIZATION_VERSION,
+        valorVenta: 3_500_000,
+        cuotaInicial: 1_050_000,
+        numeroCuotas: installmentCount,
+        tasaInteresEa: 29.66,
+        fianzaCuotaPorcentaje: 75 / installmentCount,
+        seguroCuotaPorcentaje: 0.03,
+        frecuenciaPago: "QUINCENAL",
+        fechaPrimerPago: "2026-09-17",
+      });
+
+      return !validateIphoneInstallmentLimit({
+        platform: "IPHONE",
+        valorCuota: plan.cuotaTotal,
+        iphoneMaxInstallmentValue: 160_000,
+      }).exceeded;
+    }
+  );
+
+  assert.deepEqual(
+    allowedInstallments,
+    Array.from({ length: 11 }, (_, index) => String(index + 30))
+  );
+});

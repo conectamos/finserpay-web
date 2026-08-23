@@ -25,6 +25,11 @@ test("el service worker no conserva HTML ni navegaciones del portal", () => {
   assert.doesNotMatch(serviceWorker, /cache\.put\(["']\/clientes["']/);
   assert.doesNotMatch(serviceWorker, /request\.mode\s*===\s*["']navigate["']/);
   assert.match(serviceWorker, /finserpay-client-/);
+  assert.match(
+    serviceWorker,
+    /CACHE_NAME\s*=\s*`\$\{CACHE_PREFIX\}v4`/,
+    "La version v4 fuerza a las sesiones abiertas a activar el worker nuevo"
+  );
 });
 
 test("el registro busca actualizaciones y recarga al cambiar de version", () => {

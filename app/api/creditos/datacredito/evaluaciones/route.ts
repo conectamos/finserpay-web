@@ -261,6 +261,8 @@ export async function POST(request: Request) {
       correlationId,
       consentAt,
       ...metadata,
+      policyVersion: policy.version,
+      policyRevisionId: policy.revisionId,
       providerEnvironment: provider.environment,
     });
     if (cached?.kind === "REUSED") {
@@ -268,6 +270,15 @@ export async function POST(request: Request) {
         ok: true,
         reused: true,
         ...serializeDataCreditoAssessment(cached.assessment),
+      });
+    }
+    if (cached?.kind === "ALREADY_CONSUMED") {
+      return technicalResponse({
+        correlationId,
+        code: "ASSESSMENT_ALREADY_CONSUMED",
+        error:
+          "Existe una consulta vigente, pero su oferta ya fue utilizada. No se realizo una nueva consulta a DataCredito.",
+        status: 409,
       });
     }
     if (cached?.kind === "IN_PROGRESS") {
@@ -319,6 +330,15 @@ export async function POST(request: Request) {
         ok: true,
         reused: true,
         ...serializeDataCreditoAssessment(reservation.assessment),
+      });
+    }
+    if (reservation.kind === "ALREADY_CONSUMED") {
+      return technicalResponse({
+        correlationId,
+        code: "ASSESSMENT_ALREADY_CONSUMED",
+        error:
+          "Existe una consulta vigente, pero su oferta ya fue utilizada. No se realizo una nueva consulta a DataCredito.",
+        status: 409,
       });
     }
     if (reservation.kind === "IN_PROGRESS") {

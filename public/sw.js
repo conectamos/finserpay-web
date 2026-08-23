@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "finserpay-client-";
-const CACHE_NAME = `${CACHE_PREFIX}v3`;
+const CACHE_NAME = `${CACHE_PREFIX}v4`;
 const STATIC_ASSETS = [
   "/icons/finserpay-client-192.png",
   "/icons/finserpay-client-512.png",
