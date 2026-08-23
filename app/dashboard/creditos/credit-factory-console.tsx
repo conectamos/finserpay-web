@@ -107,6 +107,7 @@ import {
   findCreditCreatedAfterConnectionLoss,
   isCreditCreationNetworkError,
 } from "@/lib/credit-create-recovery";
+import { buildCreditPaymentHref } from "@/lib/credit-payment-navigation";
 import {
   runCedulaValidation,
   type CedulaValidationCheck,
@@ -5037,7 +5038,9 @@ export default function CreditFactoryConsole({
 
       if (trimmedSearch) {
         params.set("search", trimmedSearch);
-      } else if (paymentsView && selectedId) {
+      }
+
+      if (paymentsView && preserveSelected && selectedId) {
         params.set("id", String(selectedId));
       }
 
@@ -8117,28 +8120,6 @@ export default function CreditFactoryConsole({
     } finally {
       setFirmaSeguroRefreshing(false);
     }
-  };
-
-  const openPaymentsForCredit = (creditId?: number | null) => {
-    const credit =
-      typeof creditId === "number"
-        ? credits.find((item) => item.id === creditId) || null
-        : selectedCredit;
-
-    if (!credit) {
-      return;
-    }
-
-    const params = new URLSearchParams();
-    const searchValue =
-      credit.clienteDocumento || credit.clienteTelefono || credit.folio;
-
-    if (searchValue) {
-      params.set("search", searchValue);
-    }
-
-    params.set("selected", String(credit.id));
-    window.location.assign(`/dashboard/abonos?${params.toString()}`);
   };
 
   const focusHistory = () => {
@@ -13981,14 +13962,13 @@ export default function CreditFactoryConsole({
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => openPaymentsForCredit()}
+                          <Link
+                            href={buildCreditPaymentHref(selectedCredit)}
                             className="fp-client-action-primary rounded-lg px-6 py-3 text-sm font-black"
                           >
                             <CircleDollarSign className="h-4 w-4" strokeWidth={2} />
                             Registrar abono
-                          </button>
+                          </Link>
                           <details className="fp-client-options relative">
                             <summary
                               className="grid h-11 w-11 cursor-pointer list-none place-items-center rounded-lg border border-[#d8dee5] bg-white text-[#344054] [&::-webkit-details-marker]:hidden"
@@ -15124,13 +15104,12 @@ export default function CreditFactoryConsole({
                       </div>
 
                       <div className="fp-client-history-actions flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openPaymentsForCredit()}
-                          className="rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a]"
+                        <Link
+                          href={buildCreditPaymentHref(selectedCredit)}
+                          className="inline-flex items-center justify-center rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f4a4a]"
                         >
                           Abrir abonos
-                        </button>
+                        </Link>
                         <button
                           type="button"
                           onClick={() => downloadExpedientePdf()}
@@ -15237,18 +15216,17 @@ export default function CreditFactoryConsole({
                           </div>
 
                           <div className="mt-4 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openPaymentsForCredit(credit.id)}
+                            <Link
+                              href={buildCreditPaymentHref(credit)}
                               className={[
-                                "rounded-2xl px-4 py-2.5 text-sm font-semibold transition",
+                                "inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold transition",
                                 credit.id === selectedCredit.id
                                   ? "border border-white/15 bg-white/10 text-white hover:bg-white/16"
                                   : "border border-[#145a5a] bg-[#145a5a] text-white hover:bg-[#0f4a4a]",
                               ].join(" ")}
                             >
                               Abono
-                            </button>
+                            </Link>
                             <button
                               type="button"
                               onClick={() => openLookupDetail(credit.id)}
