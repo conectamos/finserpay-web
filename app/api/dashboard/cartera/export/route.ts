@@ -153,6 +153,10 @@ function buildWorkbookHtml(rows: string) {
         <th>Nombre del cliente</th>
         <th>Cedula</th>
         <th>Telefono del cliente</th>
+        <th>DIRECCION</th>
+        <th>FECHA DE NACIMIENTO</th>
+        <th>CORREO</th>
+        <th>SEXO</th>
         <th>IMEI</th>
         <th>Referencia</th>
         <th>Plazo credito</th>
@@ -312,6 +316,10 @@ export async function GET(req: Request) {
           ${textCell(credito.clienteNombre)}
           ${textCell(credito.clienteDocumento || "")}
           ${textCell(credito.clienteTelefono || "")}
+          ${textCell(credito.clienteDireccion || "")}
+          ${textCell(formatDate(credito.clienteFechaNacimiento))}
+          ${textCell(credito.clienteCorreo || "")}
+          ${textCell(credito.clienteGenero || "")}
           ${textCell(credito.imei || "")}
           ${textCell(referenciaEquipo)}
           ${numberCell(Number(credito.plazoMeses || 0))}
