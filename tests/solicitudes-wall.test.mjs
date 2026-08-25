@@ -211,7 +211,7 @@ test("expira exactamente al cumplir 15 dias calendario", () => {
   assert.equal(isSolicitudExpired("fecha-invalida", new Date()), false);
 });
 
-test("solo el asesor titular puede retomar y desistir una solicitud abierta", () => {
+test("la fabrica del borrador respeta central, aliado, sede y asesor titular", () => {
   const openDraft = {
     ownership: ownSolicitud,
     source: "DRAFT",
@@ -220,7 +220,7 @@ test("solo el asesor titular puede retomar y desistir una solicitud abierta", ()
   };
   assert.deepEqual(getSolicitudActions({ viewer: seller, ...openDraft }), [
     "VER_DETALLE",
-    "RETOMAR",
+    "ABRIR_FABRICA",
     "DESISTIR",
   ]);
   assert.deepEqual(getSolicitudActions({ viewer: supervisor, ...openDraft }), [
@@ -228,6 +228,10 @@ test("solo el asesor titular puede retomar y desistir una solicitud abierta", ()
   ]);
   assert.deepEqual(getSolicitudActions({ viewer: allyAdmin, ...openDraft }), [
     "VER_DETALLE",
+  ]);
+  assert.deepEqual(getSolicitudActions({ viewer: centralAdmin, ...openDraft }), [
+    "VER_DETALLE",
+    "ABRIR_FABRICA",
   ]);
   assert.deepEqual(
     getSolicitudActions({ viewer: { ...seller, vendedorId: 402 }, ...openDraft }),
@@ -244,15 +248,35 @@ test("solo el asesor titular puede retomar y desistir una solicitud abierta", ()
   );
 });
 
-test("un credito visible ofrece detalle y acceso al credito", () => {
+test("solo central abre en fabrica un credito aprobado", () => {
   assert.deepEqual(
     getSolicitudActions({
-      viewer: seller,
+      viewer: centralAdmin,
       ownership: ownSolicitud,
       source: "CREDIT",
       state: "APROBADA",
     }),
-    ["VER_DETALLE", "VER_CREDITO"]
+    ["VER_DETALLE", "ABRIR_FABRICA"]
+  );
+  for (const viewer of [allyAdmin, supervisor, seller]) {
+    assert.deepEqual(
+      getSolicitudActions({
+        viewer,
+        ownership: ownSolicitud,
+        source: "CREDIT",
+        state: "APROBADA",
+      }),
+      ["VER_DETALLE"]
+    );
+  }
+  assert.deepEqual(
+    getSolicitudActions({
+      viewer: centralAdmin,
+      ownership: ownSolicitud,
+      source: "CREDIT",
+      state: "CANCELADA",
+    }),
+    ["VER_DETALLE"]
   );
 });
 
@@ -302,7 +326,30 @@ test("la interfaz conserva filtros en URL y confirma el desistimiento", async ()
     assert.match(ui, new RegExp(filter));
   }
   assert.match(ui, /DESISTIR/);
+  assert.match(ui, /ABRIR_FABRICA/);
+  assert.match(ui, /factoryHref/);
+  assert.match(ui, /mode=correction/);
   assert.match(ui, /ConfirmDialog/);
+});
+
+test("el muro enlaza la correccion aprobada sin convertir el detalle en fabrica", async () => {
+  const [storage, ui] = await Promise.all([
+    readProjectFile("lib/solicitudes-storage.ts"),
+    readProjectFile("app/dashboard/solicitudes/solicitudes-wall-client.tsx"),
+  ]);
+
+  assert.match(
+    storage,
+    /creditHref:[\s\S]{0,180}mode=correction&selected=\$\{row\.entityId\}/
+  );
+  assert.match(
+    ui,
+    /actions\.includes\("ABRIR_FABRICA"\)[\s\S]{0,220}<Link[\s\S]{0,220}factoryHref/
+  );
+  assert.match(
+    ui,
+    /:\s*item\.actions\.includes\("VER_DETALLE"\)[\s\S]{0,180}openDetail\(item\)/
+  );
 });
 
 test("la respuesta y la interfaz no exponen puntajes", async () => {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
+import { getSellerSessionUser } from "@/lib/seller-auth";
 import { canAccessVeriffValidation } from "@/lib/veriff-access";
 import { getVeriffValidationById } from "@/lib/veriff-storage";
 import { veriffGetSessionMedia } from "@/lib/veriff";
@@ -83,7 +84,9 @@ export async function GET(
       );
     }
 
-    if (!canAccessVeriffValidation(user, validation)) {
+    const sellerSession = await getSellerSessionUser(user);
+
+    if (!canAccessVeriffValidation(user, validation, sellerSession)) {
       return NextResponse.json(
         { ok: false, error: "No tienes acceso a esta validacion" },
         { status: 403 }

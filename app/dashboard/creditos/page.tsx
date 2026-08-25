@@ -1,10 +1,14 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft, ShieldCheck } from "lucide-react";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
+import { PageHeader } from "@/app/_components/finser-ui";
 import CreditFactoryConsole from "./credit-factory-console";
 import CreditPlatformSelector from "./credit-platform-selector";
+import { ApprovedCreditEvidenceCorrection } from "./credit-evidence-gallery";
 
 export const metadata = {
   title: "Fabrica de creditos | FINSER PAY",
@@ -17,9 +21,18 @@ type SearchParams = Promise<{
   selected?: string;
   draft?: string;
   platform?: string;
+  returnTo?: string;
 }>;
 type EntryMode = "default" | "create-client" | "delivery" | "simulator";
 type DevicePlatform = "android" | "iphone";
+
+function solicitudesReturnHref(value: string | undefined) {
+  const candidate = String(value || "").trim();
+  return candidate === "/dashboard/solicitudes" ||
+    candidate.startsWith("/dashboard/solicitudes?")
+    ? candidate
+    : "/dashboard/solicitudes";
+}
 
 export default async function CreditosPage(props: {
   searchParams: SearchParams;
@@ -31,6 +44,7 @@ export default async function CreditosPage(props: {
   }
 
   const admin = isAdminRole(session.rolNombre);
+  const adminCentral = admin && isFinserPayCentralAlly(session.aliadoAccesoCodigo);
   const sellerSession = admin ? null : await getSellerSessionUser(session);
 
   if (!admin && !sellerSession) {
@@ -47,6 +61,59 @@ export default async function CreditosPage(props: {
       ? rawDevicePlatform
       : null;
   const rawEntryMode = String(searchParams?.mode || "").trim().toLowerCase();
+  const returnTo = solicitudesReturnHref(searchParams?.returnTo);
+
+  if (rawEntryMode === "correction") {
+    if (
+      !adminCentral ||
+      !Number.isInteger(initialSelectedId) ||
+      initialSelectedId <= 0
+    ) {
+      redirect("/dashboard/solicitudes");
+    }
+
+    return (
+      <div className="mx-auto w-full max-w-[1600px]">
+        <PageHeader
+          eyebrow="Fábrica de créditos"
+          title="Corrección de venta aprobada"
+          description="Reemplaza únicamente evidencias de la venta. Los datos comerciales, el estado y las validaciones externas permanecen intactos."
+          actions={
+            <Link
+              href={returnTo}
+              className="fp-ui-button is-secondary min-h-11"
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              Volver al muro
+            </Link>
+          }
+        />
+        <div className="mb-4 flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-white p-4 text-sm text-[var(--fp-muted)]">
+          <ShieldCheck
+            className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-lime-strong)]"
+            aria-hidden="true"
+          />
+          <p>
+            Este acceso es exclusivo del administrador central FINSER PAY. Cada
+            reemplazo registra actor, fecha y huellas de la evidencia anterior y
+            nueva.
+          </p>
+        </div>
+        <ApprovedCreditEvidenceCorrection
+          creditId={initialSelectedId}
+          clientName={`Crédito ${initialSelectedId}`}
+        />
+      </div>
+    );
+  }
+
+  const hasSelectedCredit =
+    Number.isInteger(initialSelectedId) && initialSelectedId > 0;
+
+  if (!adminCentral && (rawEntryMode === "delivery" || hasSelectedCredit)) {
+    redirect("/dashboard/solicitudes");
+  }
+
   let requestedEntryMode: EntryMode = "default";
 
   if (
@@ -121,7 +188,7 @@ export default async function CreditosPage(props: {
     return (
       <CreditPlatformSelector
         admin={admin}
-        adminCentral={admin && isFinserPayCentralAlly(session.aliadoAccesoCodigo)}
+        adminCentral={adminCentral}
         androidHref={buildPlatformHref("android")}
         iphoneHref={buildPlatformHref("iphone")}
         mode={entryMode === "simulator" ? "simulator" : "sale"}

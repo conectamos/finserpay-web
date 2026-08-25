@@ -17,7 +17,7 @@ const [evidenceRoute, evidenceGallery, factoryConsole] = await Promise.all([
   readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
 ]);
 
-test("expone de forma autenticada las cinco evidencias del cierre iPhone", () => {
+test("expone las cinco evidencias del cierre iPhone solo a administradores autorizados", () => {
   for (const field of [
     "contratoCedulaFrenteDataUrl",
     "contratoCedulaRespaldoDataUrl",
@@ -29,7 +29,9 @@ test("expone de forma autenticada las cinco evidencias del cierre iPhone", () =>
   }
 
   assert.match(evidenceRoute, /isAdminRole/);
-  assert.match(evidenceRoute, /tipoPerfil === "SUPERVISOR"/);
+  assert.match(evidenceRoute, /if \(!admin\)/);
+  assert.match(evidenceRoute, /Solo administradores pueden consultar evidencias/);
+  assert.doesNotMatch(evidenceRoute, /tipoPerfil === "SUPERVISOR"/);
   assert.match(evidenceRoute, /buildCreditAccessWhere/);
   assert.match(evidenceRoute, /Content-Type/);
   assert.match(evidenceRoute, /private, no-store/);

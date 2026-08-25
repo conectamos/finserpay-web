@@ -274,10 +274,11 @@ test("el expediente PDF anexa las cinco evidencias requeridas", () => {
 });
 
 test("Railway prepara la columna iPhone antes de publicar la aplicacion", async () => {
-  const [schemaGuard, dockerfile, railwayConfig] = await Promise.all([
+  const [schemaGuard, dockerfile, railwayConfig, predeploy] = await Promise.all([
     readProjectFile("scripts/ensure-iphone-identity-evidence-column.mjs"),
     readProjectFile("Dockerfile"),
     readProjectFile("railway.toml"),
+    readProjectFile("scripts/railway-predeploy.mjs"),
   ]);
 
   assert.match(schemaGuard, /ADD COLUMN IF NOT EXISTS "iphoneSelfieCedulaDataUrl" TEXT/);
@@ -292,6 +293,10 @@ test("Railway prepara la columna iPhone antes de publicar la aplicacion", async 
   );
   assert.match(
     railwayConfig,
-    /preDeployCommand = \["node scripts\/ensure-iphone-identity-evidence-column\.mjs"\]/
+    /preDeployCommand = \[[\s\S]*"node scripts\/railway-predeploy\.mjs"[\s\S]*\]/
+  );
+  assert.match(
+    predeploy,
+    /import\("\.\/ensure-iphone-identity-evidence-column\.mjs"\)/
   );
 });

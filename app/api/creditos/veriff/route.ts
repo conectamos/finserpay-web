@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { sanitizeText, toNumber } from "@/lib/credit-factory";
+import prisma from "@/lib/prisma";
 import {
   createVeriffValidation,
   getReusableVeriffValidationForDraft,
@@ -9,6 +10,8 @@ import {
   updateVeriffValidation,
 } from "@/lib/veriff-storage";
 import { getSellerSessionUser } from "@/lib/seller-auth";
+import { canOperateVeriffDraft } from "@/lib/veriff-access";
+import { ensureSolicitudSchema } from "@/lib/solicitudes-storage";
 import {
   extractVeriffSessionId,
   extractVeriffSessionUrl,
@@ -32,9 +35,35 @@ type VeriffCreateBody = {
   draftId?: number | string | null;
 };
 
+type VeriffDraftAccessRow = {
+  id: number;
+  estado: string;
+  usuarioId: number;
+  vendedorId: number | null;
+  sedeId: number;
+  aliadoId: number | null;
+  clienteDocumento: string | null;
+};
+
 function parsePositiveId(value: unknown) {
   const parsed = Math.trunc(toNumber(value));
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function readVeriffDraftAccess(draftId: number) {
+  await ensureSolicitudSchema();
+  const rows = await prisma.$queryRawUnsafe<VeriffDraftAccessRow[]>(
+    `
+      SELECT d."id", d."estado", d."usuarioId", d."vendedorId", d."sedeId",
+        d."clienteDocumento", s."aliadoId"
+      FROM "CreditoBorrador" d
+      LEFT JOIN "Sede" s ON s."id" = d."sedeId"
+      WHERE d."id" = $1
+      LIMIT 1
+    `,
+    draftId
+  );
+  return rows[0] || null;
 }
 
 function buildVendorData(params: {
@@ -114,7 +143,26 @@ export async function POST(request: Request) {
       );
     }
 
-    const clienteDocumento = sanitizeText(body.clienteDocumento);
+    const draft = await readVeriffDraftAccess(draftId);
+    if (!draft || !canOperateVeriffDraft(user, draft, sellerSession)) {
+      return NextResponse.json(
+        { ok: false, error: "Borrador no encontrado" },
+        { status: 404 }
+      );
+    }
+
+    const requestedDocument = sanitizeText(body.clienteDocumento).replace(/\D/g, "");
+    const clienteDocumento = String(draft.clienteDocumento || "").replace(/\D/g, "");
+    if (!clienteDocumento || requestedDocument !== clienteDocumento) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "La cedula no corresponde al borrador autorizado",
+        },
+        { status: 409 }
+      );
+    }
+
     const clientePrimerNombre = sanitizeText(body.clientePrimerNombre);
     const clientePrimerApellido = sanitizeText(body.clientePrimerApellido);
     const clienteNombre = [clientePrimerNombre, clientePrimerApellido]
@@ -122,10 +170,10 @@ export async function POST(request: Request) {
       .join(" ");
 
     const reusableValidation = await getReusableVeriffValidationForDraft({
-      aliadoId: user.aliadoId || null,
+      aliadoId: draft.aliadoId,
       clienteDocumento,
       draftId,
-      sedeId: user.sedeId,
+      sedeId: draft.sedeId,
     });
 
     if (reusableValidation) {
@@ -139,11 +187,11 @@ export async function POST(request: Request) {
 
     const vendorData = buildVendorData({
       draftId,
-      sedeId: user.sedeId,
+      sedeId: draft.sedeId,
     });
     const endUserId = randomUUID();
     const validation = await createVeriffValidation({
-      aliadoId: user.aliadoId || null,
+      aliadoId: draft.aliadoId,
       captureToken: sanitizeText(body.captureToken) || null,
       clienteDocumento,
       clienteNombre,
@@ -155,9 +203,9 @@ export async function POST(request: Request) {
         draftId,
         flow: "veriff-qr",
       },
-      sedeId: user.sedeId,
+      sedeId: draft.sedeId,
       usuarioId: user.id,
-      vendedorId: sellerSession?.id || null,
+      vendedorId: draft.vendedorId,
       vendorData,
     });
 

@@ -47,6 +47,7 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import {
   ActiveSolicitudConflictError,
   attachDataCreditoToSolicitud,
+  markSolicitudDataCreditoTechnicalError,
   reserveSolicitudForIdentity,
 } from "@/lib/solicitudes-storage";
 
@@ -76,6 +77,23 @@ function technicalResponse(input: {
     },
     { status: input.status }
   );
+}
+
+async function solicitudTechnicalResponse(input: {
+  correlationId: string;
+  code: string;
+  error: string;
+  status: number;
+  solicitudId: number;
+  plataforma?: string | null;
+}) {
+  const { solicitudId, plataforma, ...response } = input;
+  await markSolicitudDataCreditoTechnicalError({
+    solicitudId,
+    errorCode: response.code,
+    plataforma,
+  }).catch(() => undefined);
+  return technicalResponse(response);
 }
 
 function safeProviderValue(value: unknown, maximumLength: number) {
@@ -297,8 +315,10 @@ export async function POST(request: Request) {
       });
     }
     if (cached?.kind === "ALREADY_CONSUMED") {
-      return technicalResponse({
+      return solicitudTechnicalResponse({
         correlationId,
+        solicitudId,
+        plataforma: platform,
         code: "ASSESSMENT_ALREADY_CONSUMED",
         error:
           "Existe una consulta vigente, pero su oferta ya fue utilizada. No se realizo una nueva consulta a DataCredito.",
@@ -306,8 +326,10 @@ export async function POST(request: Request) {
       });
     }
     if (cached?.kind === "IDENTITY_MISMATCH") {
-      return technicalResponse({
+      return solicitudTechnicalResponse({
         correlationId,
+        solicitudId,
+        plataforma: platform,
         code: "ASSESSMENT_IDENTITY_MISMATCH",
         error:
           "La cedula tiene una consulta vigente, pero el primer apellido no coincide con la identidad consultada.",
@@ -315,8 +337,10 @@ export async function POST(request: Request) {
       });
     }
     if (cached?.kind === "REQUIRES_REVIEW") {
-      return technicalResponse({
+      return solicitudTechnicalResponse({
         correlationId,
+        solicitudId,
+        plataforma: platform,
         code: "ASSESSMENT_REQUIRES_REVIEW",
         error:
           "La cedula tiene una consulta vigente con resultado tecnico pendiente de revision. No se realizo una nueva consulta a DataCredito.",
@@ -324,8 +348,10 @@ export async function POST(request: Request) {
       });
     }
     if (cached?.kind === "IN_PROGRESS") {
-      return technicalResponse({
+      return solicitudTechnicalResponse({
         correlationId,
+        solicitudId,
+        plataforma: platform,
         code: "EVALUATION_IN_PROGRESS",
         error: "Ya existe una evaluacion en proceso para esta cedula",
         status: 409,
@@ -333,8 +359,10 @@ export async function POST(request: Request) {
     }
 
     if (!provider.configured) {
-      return technicalResponse({
+      return solicitudTechnicalResponse({
         correlationId,
+        solicitudId,
+        plataforma: platform,
         code: "DATACREDITO_NOT_CONFIGURED",
         error: "La evaluacion crediticia aun no esta configurada",
         status: 503,
@@ -357,8 +385,10 @@ export async function POST(request: Request) {
       });
     } catch (error) {
       if (isDataCreditoUniqueViolation(error)) {
-        return technicalResponse({
+        return solicitudTechnicalResponse({
           correlationId,
+          solicitudId,
+          plataforma: platform,
           code: "EVALUATION_IN_PROGRESS",
           error: "Ya existe una evaluacion en proceso para esta solicitud",
           status: 409,
@@ -382,8 +412,10 @@ export async function POST(request: Request) {
       });
     }
     if (reservation.kind === "ALREADY_CONSUMED") {
-      return technicalResponse({
+      return solicitudTechnicalResponse({
         correlationId,
+        solicitudId,
+        plataforma: platform,
         code: "ASSESSMENT_ALREADY_CONSUMED",
         error:
           "Existe una consulta vigente, pero su oferta ya fue utilizada. No se realizo una nueva consulta a DataCredito.",
@@ -391,8 +423,10 @@ export async function POST(request: Request) {
       });
     }
     if (reservation.kind === "IDENTITY_MISMATCH") {
-      return technicalResponse({
+      return solicitudTechnicalResponse({
         correlationId,
+        solicitudId,
+        plataforma: platform,
         code: "ASSESSMENT_IDENTITY_MISMATCH",
         error:
           "La cedula tiene una consulta vigente, pero el primer apellido no coincide con la identidad consultada.",
@@ -400,8 +434,10 @@ export async function POST(request: Request) {
       });
     }
     if (reservation.kind === "REQUIRES_REVIEW") {
-      return technicalResponse({
+      return solicitudTechnicalResponse({
         correlationId,
+        solicitudId,
+        plataforma: platform,
         code: "ASSESSMENT_REQUIRES_REVIEW",
         error:
           "La cedula tiene una consulta vigente con resultado tecnico pendiente de revision. No se realizo una nueva consulta a DataCredito.",
@@ -409,16 +445,20 @@ export async function POST(request: Request) {
       });
     }
     if (reservation.kind === "IN_PROGRESS") {
-      return technicalResponse({
+      return solicitudTechnicalResponse({
         correlationId,
+        solicitudId,
+        plataforma: platform,
         code: "EVALUATION_IN_PROGRESS",
         error: "Ya existe una evaluacion en proceso para esta solicitud",
         status: 409,
       });
     }
     if (reservation.kind === "RATE_LIMITED") {
-      return technicalResponse({
+      return solicitudTechnicalResponse({
         correlationId,
+        solicitudId,
+        plataforma: platform,
         code: "RATE_LIMITED",
         error: "Se alcanzo el limite temporal de consultas. Intenta mas tarde.",
         status: 429,
@@ -644,13 +684,24 @@ export async function POST(request: Request) {
         durationMs: providerStartedAt ? Date.now() - providerStartedAt : null,
       }).catch(() => undefined);
       if (solicitudId) {
+        const trackedSolicitudId = solicitudId;
         await attachDataCreditoToSolicitud({
-          solicitudId,
+          solicitudId: trackedSolicitudId,
           assessmentId: pendingAssessmentId,
           status: "NO_EVALUADO",
           errorCode: code,
-        }).catch(() => undefined);
+        }).catch(() =>
+          markSolicitudDataCreditoTechnicalError({
+            solicitudId: trackedSolicitudId,
+            errorCode: code,
+          }).catch(() => undefined)
+        );
       }
+    } else if (solicitudId) {
+      await markSolicitudDataCreditoTechnicalError({
+        solicitudId,
+        errorCode: code,
+      }).catch(() => undefined);
     }
 
     console.error("ERROR EVALUACION DATACREDITO:", {

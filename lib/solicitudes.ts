@@ -54,7 +54,7 @@ export type SolicitudSignals = {
   creditState?: string | null;
 };
 
-export type SolicitudAction = "VER_DETALLE" | "RETOMAR" | "DESISTIR" | "VER_CREDITO";
+export type SolicitudAction = "VER_DETALLE" | "ABRIR_FABRICA" | "DESISTIR";
 
 export type SolicitudFilters = {
   q: string;
@@ -242,7 +242,9 @@ export function getSolicitudActions(input: {
 
   const actions: SolicitudAction[] = ["VER_DETALLE"];
   if (input.source === "CREDIT") {
-    actions.push("VER_CREDITO");
+    if (input.viewer.kind === "CENTRAL_ADMIN" && input.state === "APROBADA") {
+      actions.push("ABRIR_FABRICA");
+    }
     return actions;
   }
 
@@ -252,8 +254,14 @@ export function getSolicitudActions(input: {
       input.viewer.vendedorId &&
       input.viewer.vendedorId === input.ownership.vendedorId
   );
-  if (isOpen && isOwner && !["RECHAZADA", "CANCELADA"].includes(input.state)) {
-    actions.push("RETOMAR", "DESISTIR");
+  const canOpenFactory = input.viewer.kind === "CENTRAL_ADMIN" || isOwner;
+  const isActive = isOpen && !["RECHAZADA", "CANCELADA"].includes(input.state);
+
+  if (isActive && canOpenFactory) {
+    actions.push("ABRIR_FABRICA");
+  }
+  if (isActive && isOwner) {
+    actions.push("DESISTIR");
   }
   return actions;
 }

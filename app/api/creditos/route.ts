@@ -567,6 +567,34 @@ function serializeCredit(
   };
 }
 
+function redactCreditForNonAdmin(item: ReturnType<typeof serializeCredit>) {
+  return {
+    ...item,
+    clienteDireccion: null,
+    clienteFechaNacimiento: null,
+    clienteFechaExpedicion: null,
+    clienteCorreo: null,
+    clienteGenero: null,
+    equalityPayload: null,
+    observacionAdmin: null,
+    contratoIp: null,
+    contratoFotoDataUrl: null,
+    contratoSelfieDataUrl: null,
+    contratoOtpDestino: null,
+    referenciasFamiliares: [],
+    usuario: {
+      ...item.usuario,
+      usuario: "",
+    },
+    vendedor: item.vendedor
+      ? {
+          ...item.vendedor,
+          documento: "",
+        }
+      : null,
+  };
+}
+
 function parseTake(value: string | null) {
   const numeric = Number(value || 15);
 
@@ -726,7 +754,10 @@ export async function GET(req: Request) {
             sellerSedeId: sellerSession?.sedeId,
             supervisor: paymentsMode || supervisorLookupMode,
           })
-        : { sedeId: user.sedeId };
+        : {
+            sedeId: sellerSession!.sedeId,
+            vendedorId: sellerSession!.id,
+          };
     const searchOr: Prisma.CreditoWhereInput[] = search
       ? [
           { clienteNombre: { contains: search, mode: "insensitive" } },
@@ -788,9 +819,12 @@ export async function GET(req: Request) {
         ? "global"
         : admin || paymentsMode || supervisorLookupMode
           ? "aliado"
-            : "sede",
+          : "vendedor",
       search,
-      items: items.map((item) => serializeCredit(item, paymentMap)),
+      items: items.map((item) => {
+        const serialized = serializeCredit(item, paymentMap);
+        return admin ? serialized : redactCreditForNonAdmin(serialized);
+      }),
     });
   } catch (error) {
     console.error("ERROR LISTANDO CREDITOS:", error);

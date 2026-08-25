@@ -2292,7 +2292,8 @@ export default function CreditFactoryConsole({
   const clientLookupMode = lookupView && canViewSavedCredits;
   const embeddedClientLookup = clientLookupMode && embeddedLookup;
   const canAdminMoveFreelyInFactory = canSeeInternalPricing && createClientMode;
-  const adminFactoryAssistAvailable = canAdmin && createClientMode;
+  const adminFactoryAssistAvailable =
+    canSeeInternalPricing && createClientMode;
   const pathname = usePathname();
   const normalizedInitialSearch = initialSearch.trim();
   const [showAdminAssist, setShowAdminAssist] = useState(
@@ -8540,7 +8541,13 @@ export default function CreditFactoryConsole({
   }, [createClientMode, initialDraftId]);
 
   useEffect(() => {
-    if (!createClientMode || simulatorMode || deliveryMode || !draftHasMeaningfulData) {
+    if (
+      !createClientMode ||
+      simulatorMode ||
+      deliveryMode ||
+      !draftId ||
+      !draftHasMeaningfulData
+    ) {
       cancelPendingDraftAutosave();
       return;
     }
@@ -8678,6 +8685,14 @@ export default function CreditFactoryConsole({
   };
 
   const handleDataCreditoApproved = (result: DataCreditoApprovedResult) => {
+    if (result.solicitudId) {
+      cancelPendingDraftAutosave();
+      setDraftId(result.solicitudId);
+      setDraftStatus("saved");
+      setDraftErrorMessage("");
+      replaceDraftInUrl(result.solicitudId);
+    }
+
     const maxInstallmentCount = normalizeCreditInstallments(
       result.offer.installmentCount,
       DEFAULT_CREDIT_INSTALLMENTS,

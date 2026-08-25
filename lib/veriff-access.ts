@@ -9,15 +9,23 @@ type VeriffAccessUser = {
   sedeId: number;
 } | null;
 
+type VeriffAccessSeller = {
+  id: number;
+  sedeId: number;
+} | null;
+
 type VeriffAccessRow = {
   aliadoId?: number | null;
+  estado?: string | null;
   sedeId?: number | null;
   usuarioId?: number | null;
+  vendedorId?: number | null;
 } | null;
 
 export function canAccessVeriffValidation(
   user: VeriffAccessUser,
-  row: VeriffAccessRow
+  row: VeriffAccessRow,
+  seller: VeriffAccessSeller
 ) {
   if (!user || !row) {
     return false;
@@ -34,5 +42,20 @@ export function canAccessVeriffValidation(
     return true;
   }
 
-  return row.sedeId === user.sedeId || row.usuarioId === user.id;
+  return Boolean(
+    seller &&
+      row.vendedorId === seller.id &&
+      row.sedeId === seller.sedeId
+  );
+}
+
+export function canOperateVeriffDraft(
+  user: VeriffAccessUser,
+  row: VeriffAccessRow,
+  seller: VeriffAccessSeller
+) {
+  return (
+    String(row?.estado || "").trim().toUpperCase() === "ABIERTO" &&
+    canAccessVeriffValidation(user, row, seller)
+  );
 }

@@ -9,7 +9,6 @@ import {
   ChevronRight,
   ClipboardList,
   Eye,
-  FileCheck2,
   Filter,
   PlayCircle,
   RefreshCw,
@@ -204,9 +203,24 @@ function resumeHref(item: SolicitudItem) {
 function creditHref(item: SolicitudItem, viewerRole: ViewerRole) {
   if (item.creditHref) return item.creditHref;
   const id = rawId(item.id);
-  return viewerRole === "SELLER"
-    ? `/dashboard/creditos?mode=delivery&selected=${encodeURIComponent(id)}`
+  return viewerRole === "ADMIN"
+    ? `/dashboard/creditos?mode=correction&selected=${encodeURIComponent(id)}`
     : `/dashboard/clientes?selected=${encodeURIComponent(id)}`;
+}
+
+function factoryHref(
+  item: SolicitudItem,
+  viewerRole: ViewerRole,
+  returnTo: string
+) {
+  const href = item.source === "DRAFT"
+    ? resumeHref(item)
+    : creditHref(item, viewerRole);
+  const [pathname, query = ""] = href.split("?");
+  if (pathname !== "/dashboard/creditos") return href;
+  const params = new URLSearchParams(query);
+  params.set("returnTo", returnTo);
+  return `${pathname}?${params.toString()}`;
 }
 
 function DetailLine({
@@ -236,6 +250,9 @@ export default function SolicitudesWallClient({
   const router = useRouter();
   const searchParams = useSearchParams();
   const paramsKey = searchParams.toString();
+  const wallReturnHref = `/dashboard/solicitudes${
+    paramsKey ? `?${paramsKey}` : ""
+  }`;
   const selectedId = searchParams.get("id") || "";
   const [formFilters, setFormFilters] = useState<FormFilters>(() =>
     readFilters(new URLSearchParams(paramsKey))
@@ -726,13 +743,21 @@ export default function SolicitudesWallClient({
                         </td>
                         <td className="px-4 py-4">
                           <div className="flex justify-end gap-2">
-                            {item.actions.includes("RETOMAR") ? (
-                              <Link href={resumeHref(item)} className="fp-ui-button is-primary whitespace-nowrap">
-                                <PlayCircle className="h-4 w-4" aria-hidden="true" />
-                                Retomar
-                              </Link>
+                            {item.actions.includes("DESISTIR") ? (
+                              <Button variant="danger" onClick={() => setDesistTarget(item)}>
+                                <Ban className="h-4 w-4" aria-hidden="true" />
+                                Desistir
+                              </Button>
                             ) : null}
-                            {item.actions.includes("VER_DETALLE") ? (
+                            {item.actions.includes("ABRIR_FABRICA") ? (
+                              <Link
+                                href={factoryHref(item, viewerRole, wallReturnHref)}
+                                className="fp-ui-button is-secondary whitespace-nowrap"
+                              >
+                                <Eye className="h-4 w-4" aria-hidden="true" />
+                                Ver
+                              </Link>
+                            ) : item.actions.includes("VER_DETALLE") ? (
                               <Button variant="secondary" onClick={() => openDetail(item)}>
                                 <Eye className="h-4 w-4" aria-hidden="true" />
                                 Ver
@@ -777,13 +802,21 @@ export default function SolicitudesWallClient({
                     </div>
                   </dl>
                   <div className="mt-3 flex flex-wrap justify-end gap-2">
-                    {item.actions.includes("RETOMAR") ? (
-                      <Link href={resumeHref(item)} className="fp-ui-button is-primary">
-                        <PlayCircle className="h-4 w-4" aria-hidden="true" />
-                        Retomar
-                      </Link>
+                    {item.actions.includes("DESISTIR") ? (
+                      <Button variant="danger" onClick={() => setDesistTarget(item)}>
+                        <Ban className="h-4 w-4" aria-hidden="true" />
+                        Desistir
+                      </Button>
                     ) : null}
-                    {item.actions.includes("VER_DETALLE") ? (
+                    {item.actions.includes("ABRIR_FABRICA") ? (
+                      <Link
+                        href={factoryHref(item, viewerRole, wallReturnHref)}
+                        className="fp-ui-button is-secondary"
+                      >
+                        <Eye className="h-4 w-4" aria-hidden="true" />
+                        Ver
+                      </Link>
+                    ) : item.actions.includes("VER_DETALLE") ? (
                       <Button variant="secondary" onClick={() => openDetail(item)}>
                         <Eye className="h-4 w-4" aria-hidden="true" />
                         Ver detalle
@@ -930,16 +963,13 @@ export default function SolicitudesWallClient({
             {detail ? (
               <footer className="border-t border-[var(--fp-border)] bg-[var(--fp-bg)] px-4 py-4 sm:px-6">
                 <div className="flex flex-wrap justify-end gap-2">
-                  {detail.actions.includes("VER_CREDITO") ? (
-                    <Link href={creditHref(detail, viewerRole)} className="fp-ui-button is-secondary">
-                      <FileCheck2 className="h-4 w-4" aria-hidden="true" />
-                      Abrir crédito
-                    </Link>
-                  ) : null}
-                  {detail.actions.includes("RETOMAR") ? (
-                    <Link href={resumeHref(detail)} className="fp-ui-button is-primary">
+                  {detail.actions.includes("ABRIR_FABRICA") ? (
+                    <Link
+                      href={factoryHref(detail, viewerRole, wallReturnHref)}
+                      className="fp-ui-button is-primary"
+                    >
                       <PlayCircle className="h-4 w-4" aria-hidden="true" />
-                      Retomar venta
+                      Abrir fábrica
                     </Link>
                   ) : null}
                 </div>

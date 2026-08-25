@@ -135,7 +135,6 @@ export function CommercialSidebar({
     : [
         { href: "/dashboard/creditos", icon: Plus, label: "Nueva venta" },
         { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
-        { href: "/dashboard/creditos?mode=delivery", icon: PackageCheck, label: "Validar entrega" },
         { href: "/dashboard/creditos?mode=simulator", icon: Calculator, label: "Simulador" },
         { href: "/dashboard/pin", icon: ShieldCheck, label: "Cambiar PIN" },
       ];
@@ -307,10 +306,10 @@ export default function SellerCommercialDashboard({
           primary: true,
         },
         {
-          href: "/dashboard/creditos?mode=delivery",
-          icon: PackageCheck,
-          label: "Validar entrega",
-          description: "Confirmar si el equipo se puede entregar.",
+          href: "/dashboard/solicitudes",
+          icon: ClipboardList,
+          label: "Retomar solicitud",
+          description: "Continuar una venta en proceso desde el muro.",
         },
         {
           href: "/dashboard/creditos?mode=simulator",

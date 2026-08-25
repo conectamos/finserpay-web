@@ -51,6 +51,7 @@ export type DataCreditoOffer = {
 
 export type DataCreditoApprovedResult = {
   platform: DataCreditoPlatform;
+  solicitudId: number | null;
   assessmentId: string;
   documentNumber: string;
   firstSurname: string;
@@ -105,6 +106,7 @@ type PolicyResponse = {
 
 type AssessmentFallback = {
   platform?: DataCreditoPlatform;
+  solicitudId?: number | null;
   assessmentId?: string;
   documentNumber?: string;
   firstSurname?: string;
@@ -212,6 +214,17 @@ function normalizeApprovedAssessment(
     readString(payload.assessmentId) ||
     fallback.assessmentId ||
     null;
+  const solicitudIdValue =
+    readNumber(source.solicitudId) ??
+    readNumber(payload.solicitudId) ??
+    fallback.solicitudId ??
+    null;
+  const solicitudId =
+    solicitudIdValue !== null &&
+    Number.isInteger(solicitudIdValue) &&
+    solicitudIdValue > 0
+      ? solicitudIdValue
+      : null;
   const documentNumber =
     readString(source.documentNumber) ||
     readString(payload.documentNumber) ||
@@ -267,6 +280,7 @@ function normalizeApprovedAssessment(
 
   return {
     platform,
+    solicitudId,
     assessmentId,
     documentNumber,
     firstSurname,

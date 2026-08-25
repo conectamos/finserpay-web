@@ -244,11 +244,17 @@ export async function expireStaleSolicitudes() {
 }
 
 function sameOwner(
-  row: { usuarioId: number; vendedorId: number | null },
-  input: { usuarioId: number; vendedorId: number | null }
+  row: { usuarioId: number; vendedorId: number | null; sedeId: number },
+  input: { usuarioId: number; vendedorId: number | null; sedeId: number }
 ) {
-  if (input.vendedorId) return row.vendedorId === input.vendedorId;
-  return row.vendedorId === null && row.usuarioId === input.usuarioId;
+  if (input.vendedorId) {
+    return row.vendedorId === input.vendedorId && row.sedeId === input.sedeId;
+  }
+  return (
+    row.vendedorId === null &&
+    row.usuarioId === input.usuarioId &&
+    row.sedeId === input.sedeId
+  );
 }
 
 async function lockIdentity(database: Database, kind: "document" | "imei", value: string) {
@@ -278,6 +284,12 @@ async function findActiveByIdentity(
       FROM "CreditoBorrador"
       WHERE "estado" = 'ABIERTO'
         AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
+        AND (
+          "dataCreditoAssessmentId" IS NOT NULL
+          OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+          OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+          OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+        )
         AND ($3::integer IS NULL OR "id" <> $3)
         AND (
           ($1 <> '' AND regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $1)
@@ -311,6 +323,22 @@ export async function reserveSolicitudForIdentity(input: {
     const active = await findActiveByIdentity(transaction, document, "");
     if (active) {
       if (!sameOwner(active, input)) throw new ActiveSolicitudConflictError();
+      await transaction.$executeRawUnsafe(
+        `
+          UPDATE "CreditoBorrador"
+          SET "plataforma" = COALESCE($2, "plataforma"),
+              "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
+                'solicitudOrigen', 'DATACREDITO',
+                'dataCreditoStatus', 'PENDING',
+                'dataCreditoErrorCode', NULL,
+                'dataCreditoUpdatedAt', CURRENT_TIMESTAMP
+              ),
+              "updatedAt" = CURRENT_TIMESTAMP
+          WHERE "id" = $1 AND "estado" = 'ABIERTO'
+        `,
+        active.id,
+        normalizePlatform(input.plataforma)
+      );
       return { id: active.id, reused: true };
     }
 
@@ -331,6 +359,10 @@ export async function reserveSolicitudForIdentity(input: {
       JSON.stringify({
         clienteDocumento: input.clienteDocumento.trim(),
         plataformaDispositivo: normalizePlatform(input.plataforma),
+        solicitudOrigen: "DATACREDITO",
+        dataCreditoStatus: "PENDING",
+        dataCreditoErrorCode: null,
+        dataCreditoUpdatedAt: new Date().toISOString(),
       })
     );
     if (!rows[0]) throw new Error("SOLICITUD_RESERVATION_FAILED");
@@ -412,31 +444,10 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       return { id: updated[0].id, created: false };
     }
 
-    const created = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
-      `
-        INSERT INTO "CreditoBorrador" (
-          "usuarioId", "vendedorId", "sedeId", "currentStep", "clienteNombre",
-          "clienteDocumento", "clienteTelefono", "imei", "plataforma",
-          "dataCreditoAssessmentId", "payload", "expiresAt", "updatedAt"
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11::jsonb,
-          CURRENT_TIMESTAMP + INTERVAL '15 days', CURRENT_TIMESTAMP)
-        RETURNING "id"
-      `,
-      input.usuarioId,
-      input.vendedorId,
-      input.sedeId,
-      input.currentStep,
-      input.clienteNombre,
-      input.clienteDocumento,
-      input.clienteTelefono,
-      input.imei,
-      normalizePlatform(input.plataforma),
-      assessmentId,
-      payloadJson
-    );
-    if (!created[0]) throw new Error("SOLICITUD_CREATE_FAILED");
-    return { id: created[0].id, created: true };
+    // A draft is materialized only when DataCredito reserves the identity.
+    // Autosave may update that canonical row (by id or by the same document),
+    // but it must never create anonymous/pre-consultation wall entries.
+    throw new Error("SOLICITUD_REQUIERE_CONSULTA_DATACREDITO");
   });
 }
 
@@ -449,13 +460,26 @@ export async function attachDataCreditoToSolicitud(input: {
 }) {
   if (!isUuid(input.assessmentId)) return;
   await ensureSolicitudSchema();
-  const rejected = String(input.status || "").toUpperCase() === "RECHAZADO";
+  const status = String(input.status || "PENDING")
+    .trim()
+    .toUpperCase()
+    .slice(0, 40);
+  const errorCode = input.errorCode
+    ? String(input.errorCode).trim().toUpperCase().slice(0, 80)
+    : null;
+  const rejected = status === "RECHAZADO";
   await prisma.$executeRawUnsafe(
     `
       UPDATE "CreditoBorrador"
       SET "dataCreditoAssessmentId" = $2::uuid,
           "plataforma" = COALESCE($3, "plataforma"),
-          "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object('dataCreditoAssessmentId', $2::text),
+          "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
+            'solicitudOrigen', 'DATACREDITO',
+            'dataCreditoAssessmentId', $2::text,
+            'dataCreditoStatus', $5::text,
+            'dataCreditoErrorCode', $6::text,
+            'dataCreditoUpdatedAt', CURRENT_TIMESTAMP
+          ),
           "estado" = CASE WHEN $4::boolean THEN 'CERRADO' ELSE "estado" END,
           "closedReason" = CASE WHEN $4::boolean THEN 'RECHAZADA' ELSE "closedReason" END,
           "closedAt" = CASE WHEN $4::boolean THEN CURRENT_TIMESTAMP ELSE "closedAt" END,
@@ -465,7 +489,38 @@ export async function attachDataCreditoToSolicitud(input: {
     input.solicitudId,
     input.assessmentId,
     normalizePlatform(input.plataforma),
-    rejected
+    rejected,
+    status,
+    errorCode
+  );
+}
+
+export async function markSolicitudDataCreditoTechnicalError(input: {
+  solicitudId: number;
+  errorCode: string;
+  plataforma?: string | null;
+}) {
+  await ensureSolicitudSchema();
+  const errorCode = String(input.errorCode || "EVALUATION_ERROR")
+    .trim()
+    .toUpperCase()
+    .slice(0, 80);
+  await prisma.$executeRawUnsafe(
+    `
+      UPDATE "CreditoBorrador"
+      SET "plataforma" = COALESCE($2, "plataforma"),
+          "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
+            'solicitudOrigen', 'DATACREDITO',
+            'dataCreditoStatus', 'NO_EVALUADO',
+            'dataCreditoErrorCode', $3::text,
+            'dataCreditoUpdatedAt', CURRENT_TIMESTAMP
+          ),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1 AND "estado" = 'ABIERTO'
+    `,
+    input.solicitudId,
+    normalizePlatform(input.plataforma),
+    errorCode
   );
 }
 
@@ -628,6 +683,7 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
   });
   where.conditions.unshift(`
     d."creditoId" IS NULL
+    AND COALESCE(dc."status", NULLIF(d."payload"->>'dataCreditoStatus', '')) IS NOT NULL
     AND (
       d."estado" = 'ABIERTO'
       OR d."closedReason" IN ('DESISTIDA', 'EXPIRADA_15_DIAS', 'RECHAZADA')
@@ -644,8 +700,9 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
         d."createdAt", d."updatedAt", d."closedAt", d."expiresAt",
         u."nombre" AS "usuarioNombre", v."nombre" AS "vendedorNombre",
         s."nombre" AS "sedeNombre", a."nombre" AS "aliadoNombre",
-        dc."status" AS "dataCreditoStatus", dc."errorCode" AS "dataCreditoErrorCode",
-        dc."updatedAt" AS "dataCreditoUpdatedAt",
+        COALESCE(dc."status", NULLIF(d."payload"->>'dataCreditoStatus', '')) AS "dataCreditoStatus",
+        COALESCE(dc."errorCode", NULLIF(d."payload"->>'dataCreditoErrorCode', '')) AS "dataCreditoErrorCode",
+        COALESCE(dc."updatedAt", d."updatedAt") AS "dataCreditoUpdatedAt",
         veriff."status" AS "veriffStatus", veriff."updatedAt" AS "veriffUpdatedAt",
         firma."status" AS "firmaStatus", firma."lastError" AS "firmaLastError",
         firma."updatedAt" AS "firmaUpdatedAt",
@@ -853,7 +910,9 @@ function serializeSolicitudRow(row: SolicitudRow, viewer: SolicitudViewer) {
         ? `/dashboard/creditos?draft=${row.entityId}&mode=create-client`
         : null,
     creditHref:
-      row.source === "CREDIT" ? `/dashboard/creditos?selected=${row.entityId}` : null,
+      row.source === "CREDIT"
+        ? `/dashboard/creditos?mode=correction&selected=${row.entityId}`
+        : null,
     timeline,
   };
 }
