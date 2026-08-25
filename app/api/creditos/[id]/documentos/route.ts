@@ -8,6 +8,7 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
+import { getColombiaDepartmentLabel } from "@/lib/colombia-locations";
 import {
   buildCreditAccessWhere,
   buildCreditLookupWhere,
@@ -552,8 +553,12 @@ export async function GET(
         {
           label: "Ubicacion",
           value:
-            [credito.clienteCiudad, credito.clienteDepartamento].filter(Boolean).join(", ") ||
-            "-",
+            [
+              credito.clienteCiudad,
+              getColombiaDepartmentLabel(credito.clienteDepartamento),
+            ]
+              .filter(Boolean)
+              .join(", ") || "-",
         },
         { label: "Genero", value: credito.clienteGenero || "-" },
         { label: "Fecha de nacimiento", value: formatDate(credito.clienteFechaNacimiento) },

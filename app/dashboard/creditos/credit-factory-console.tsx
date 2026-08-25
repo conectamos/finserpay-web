@@ -104,6 +104,11 @@ import {
   DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE,
   DEFAULT_INSTALLMENT_SURETY_PERCENTAGE,
 } from "@/lib/credit-amortization";
+import {
+  COLOMBIA_DEPARTMENT_OPTIONS,
+  getColombiaCityOptions,
+  getColombiaDepartmentLabel,
+} from "@/lib/colombia-locations";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
 import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
 import CreditEvidenceGallery from "@/app/dashboard/creditos/credit-evidence-gallery";
@@ -819,25 +824,6 @@ const GENDER_OPTIONS = [
   { value: "OTRO", label: "Otro" },
   { value: "PREFIERO_NO_DECIR", label: "Prefiero no decirlo" },
 ];
-
-const DEPARTMENT_CITY_OPTIONS: Record<string, string[]> = {
-  ANTIOQUIA: ["Medellin", "Bello", "Itagui", "Envigado", "Rionegro"],
-  ATLANTICO: ["Barranquilla", "Soledad", "Malambo", "Puerto Colombia"],
-  BOLIVAR: ["Cartagena", "Magangue", "Turbaco", "Arjona"],
-  CALDAS: ["Manizales", "Villamaria", "Chinchina", "La Dorada"],
-  CUNDINAMARCA: ["Bogota", "Soacha", "Facatativa", "Zipaquira", "Chia"],
-  HUILA: ["Neiva", "Pitalito", "Garzon", "La Plata"],
-  META: ["Villavicencio", "Granada", "Acacias", "Puerto Lopez"],
-  RISARALDA: ["Pereira", "Dosquebradas", "Santa Rosa de Cabal"],
-  SANTANDER: ["Bucaramanga", "Floridablanca", "Girón", "Piedecuesta"],
-  TOLIMA: ["Ibague", "Espinal", "Melgar", "Honda", "Lerida"],
-  VALLE_DEL_CAUCA: ["Cali", "Palmira", "Tulua", "Buenaventura", "Buga"],
-};
-
-const DEPARTMENT_OPTIONS = Object.keys(DEPARTMENT_CITY_OPTIONS).map((value) => ({
-  value,
-  label: value.replace(/_/g, " "),
-}));
 
 const FLEXIBLE_WIZARD_FOR_TESTING = false;
 
@@ -2698,7 +2684,7 @@ export default function CreditFactoryConsole({
     ? [
         selectedCredit.clienteDireccion,
         selectedCredit.clienteCiudad,
-        selectedCredit.clienteDepartamento,
+        getColombiaDepartmentLabel(selectedCredit.clienteDepartamento),
       ]
         .filter(Boolean)
         .join(" | ") || "-"
@@ -3281,8 +3267,8 @@ export default function CreditFactoryConsole({
     valorEquipoTotal,
   ]);
   const cityOptions = useMemo(
-    () => DEPARTMENT_CITY_OPTIONS[clienteDepartamento] || [],
-    [clienteDepartamento]
+    () => getColombiaCityOptions(clienteDepartamento, clienteCiudad),
+    [clienteDepartamento, clienteCiudad]
   );
   const replaceDraftInUrl = (nextDraftId: number | null) => {
     if (!createClientMode || typeof window === "undefined") {
@@ -5415,12 +5401,6 @@ export default function CreditFactoryConsole({
 
     setClienteNombre(nextFullName);
   }, [clientePrimerNombre, clientePrimerApellido]);
-
-  useEffect(() => {
-    if (clienteCiudad && !cityOptions.includes(clienteCiudad)) {
-      setClienteCiudad("");
-    }
-  }, [cityOptions, clienteCiudad]);
 
   useEffect(() => {
     const normalizedValue = String(valorEquipoTotal || "").replace(/\D/g, "");
@@ -10334,15 +10314,18 @@ export default function CreditFactoryConsole({
 
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          En que departamento vive el cliente
+                          En qué departamento vive el cliente
                         </label>
                         <select
                           value={clienteDepartamento}
-                          onChange={(event) => setClienteDepartamento(event.target.value)}
+                          onChange={(event) => {
+                            setClienteDepartamento(event.target.value);
+                            setClienteCiudad("");
+                          }}
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                         >
                           <option value="">Selecciona</option>
-                          {DEPARTMENT_OPTIONS.map((option) => (
+                          {COLOMBIA_DEPARTMENT_OPTIONS.map((option) => (
                             <option key={option.value} value={option.value}>
                               {option.label}
                             </option>
@@ -10352,21 +10335,33 @@ export default function CreditFactoryConsole({
 
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          En que ciudad vive el cliente
+                          En qué ciudad vive el cliente
                         </label>
-                        <select
+                        <input
+                          type="text"
+                          list="cliente-ciudad-options"
                           value={clienteCiudad}
                           onChange={(event) => setClienteCiudad(event.target.value)}
                           disabled={!clienteDepartamento}
+                          autoComplete="address-level2"
+                          placeholder={
+                            clienteDepartamento
+                              ? "Escribe o selecciona la ciudad"
+                              : "Selecciona primero el departamento"
+                          }
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2] disabled:bg-slate-50 disabled:text-slate-400"
-                        >
-                          <option value="">Selecciona</option>
+                        />
+                        <datalist id="cliente-ciudad-options">
                           {cityOptions.map((city) => (
                             <option key={city} value={city}>
-                              {city}
                             </option>
                           ))}
-                        </select>
+                        </datalist>
+                        {clienteDepartamento ? (
+                          <p className="mt-2 text-xs text-slate-500">
+                            Puedes seleccionar una sugerencia o escribir cualquier municipio.
+                          </p>
+                        ) : null}
                       </div>
 
                       <div>
@@ -14552,7 +14547,12 @@ export default function CreditFactoryConsole({
                           <DetailRow
                             label="Ubicacion"
                             value={
-                              [selectedCredit.clienteCiudad, selectedCredit.clienteDepartamento]
+                              [
+                                selectedCredit.clienteCiudad,
+                                getColombiaDepartmentLabel(
+                                  selectedCredit.clienteDepartamento
+                                ),
+                              ]
                                 .filter(Boolean)
                                 .join(", ") || "-"
                             }
@@ -14913,7 +14913,10 @@ export default function CreditFactoryConsole({
                     <InfoTile
                       label="Ubicacion"
                       value={
-                        [selectedCredit.clienteCiudad, selectedCredit.clienteDepartamento]
+                        [
+                          selectedCredit.clienteCiudad,
+                          getColombiaDepartmentLabel(selectedCredit.clienteDepartamento),
+                        ]
                           .filter(Boolean)
                           .join(", ") || "-"
                       }

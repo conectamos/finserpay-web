@@ -68,6 +68,7 @@ import {
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
+import { getColombiaDepartmentLabel } from "@/lib/colombia-locations";
 import { getFirmaSeguroProcessByUuid } from "@/lib/firmaseguro-storage";
 import {
   linkFirmaSeguroProcessForCredit,
@@ -2163,7 +2164,7 @@ export async function POST(req: Request) {
         telefono: clienteTelefono,
         correo: clienteCorreo,
         direccion: clienteDireccion,
-        departamento: clienteDepartamento,
+        departamento: getColombiaDepartmentLabel(clienteDepartamento),
         ciudad: clienteCiudad,
         genero: clienteGenero,
         fechaNacimiento: clienteFechaNacimiento.toISOString(),
