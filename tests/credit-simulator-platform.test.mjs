@@ -1,6 +1,24 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { createJiti } from "jiti";
+
+const projectRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  ".."
+);
+const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
+const {
+  ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
+  ANDROID_SIMULATOR_TOTAL_SURETY_PERCENTAGE,
+  calculateAndroidSimulatorInitialPayment,
+  calculateAndroidSimulatorInstallmentSuretyPercentage,
+} = await jiti.import("../lib/credit-factory.ts");
+const { calculateFrenchAmortization } = await jiti.import(
+  "../lib/credit-amortization.ts"
+);
 
 const page = readFileSync(
   new URL("../app/dashboard/creditos/page.tsx", import.meta.url),
@@ -20,6 +38,10 @@ const dashboard = readFileSync(
 );
 const consoleSource = readFileSync(
   new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url),
+  "utf8"
+);
+const creditFactorySource = readFileSync(
+  new URL("../lib/credit-factory.ts", import.meta.url),
   "utf8"
 );
 
@@ -54,7 +76,7 @@ test("el simulador iPhone usa inicial del 30 por ciento y plazo flexible", () =>
   );
   assert.match(
     consoleSource,
-    /simulatorMode && iphoneFactory\s*\? configuredInitialPaymentPercentage/
+    /simulatorIphoneRulesActive\s*\? configuredInitialPaymentPercentage/
   );
   assert.match(
     consoleSource,
@@ -62,7 +84,7 @@ test("el simulador iPhone usa inicial del 30 por ciento y plazo flexible", () =>
   );
   assert.match(
     consoleSource,
-    /const cuotaInicialMinimaNumero = dataCreditoEffectiveMaxFinancedAmount > 0[\s\S]{0,220}dataCreditoEffectiveMaxFinancedAmount/
+    /const cuotaInicialMinimaNumero = simulatorAndroidRulesActive[\s\S]{0,220}: dataCreditoEffectiveMaxFinancedAmount > 0[\s\S]{0,220}dataCreditoEffectiveMaxFinancedAmount/
   );
   assert.match(
     consoleSource,
@@ -91,6 +113,86 @@ test("el simulador iPhone usa inicial del 30 por ciento y plazo flexible", () =>
   assert.match(
     consoleSource,
     /Puedes elegir hasta \{plazoMaximoCuotas\} cuotas\. No[\s\S]{0,120}máximo autorizado/
+  );
+});
+
+test("el simulador Android usa inicial del 30 por ciento y fianza total del 75 por ciento", () => {
+  assert.match(
+    creditFactorySource,
+    /const ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE = 30/
+  );
+  assert.match(
+    creditFactorySource,
+    /const ANDROID_SIMULATOR_TOTAL_SURETY_PERCENTAGE = 75/
+  );
+  assert.match(
+    consoleSource,
+    /const simulatorAndroidRulesActive\s*=\s*simulatorMode && !iphoneFactory/
+  );
+  assert.match(
+    consoleSource,
+    /simulatorAndroidRulesActive\s*\? ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE/
+  );
+  assert.match(
+    consoleSource,
+    /const cuotaInicialMinimaNumero = simulatorAndroidRulesActive\s*\? calculateAndroidSimulatorInitialPayment\(valorTotalEquipoNumero\)/
+  );
+  assert.match(
+    consoleSource,
+    /simulatorAndroidRulesActive\s*\? calculateAndroidSimulatorInstallmentSuretyPercentage\(plazoMesesNumero\)/
+  );
+
+  const valorEquipo = 1_000_000;
+  const numeroCuotas = 16;
+  const cuotaInicial = calculateAndroidSimulatorInitialPayment(valorEquipo);
+  const fianzaCuotaPorcentaje =
+    calculateAndroidSimulatorInstallmentSuretyPercentage(numeroCuotas);
+  const amortization = calculateFrenchAmortization({
+    valorVenta: valorEquipo,
+    cuotaInicial,
+    numeroCuotas,
+    tasaInteresEa: 29.66,
+    fianzaCuotaPorcentaje,
+    seguroCuotaPorcentaje: 0.03,
+    frecuenciaPago: "QUINCENAL",
+    fechaPrimerPago: "2026-09-17",
+  });
+
+  assert.equal(ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE, 30);
+  assert.equal(ANDROID_SIMULATOR_TOTAL_SURETY_PERCENTAGE, 75);
+  assert.equal(cuotaInicial, 300_000);
+  assert.equal(amortization.valorFinanciado, 700_000);
+  assert.equal(amortization.valorFianzaTotal, 525_000);
+});
+
+test("el simulador oculta la política DataCrédito y sus términos internos", () => {
+  assert.doesNotMatch(
+    consoleSource,
+    /Política DataCrédito · Sin información/
+  );
+  assert.doesNotMatch(
+    consoleSource,
+    /Política DataCrédito · Regla Sin información/
+  );
+  assert.match(
+    consoleSource,
+    /\{!simulatorMode \? \([\s\S]{0,700}\{creditSettingsScopeLabel\}/
+  );
+  assert.match(
+    consoleSource,
+    /\{activeDataCreditoOffer && !simulatorMode \? \([\s\S]{0,350}Oferta DataCrédito/
+  );
+  assert.match(
+    consoleSource,
+    /\{simulatorMode\s*\? `Inicial base: \$\{initialPaymentPercentage\}%\.`\s*: activeDataCreditoOffer/
+  );
+  assert.match(
+    consoleSource,
+    /\{!simulatorMode && dataCreditoInstallmentCount \? \(/
+  );
+  assert.match(
+    consoleSource,
+    /simulatorMode\s*\? "Valor equipo - inicial\."\s*: activeDataCreditoOffer/
   );
 });
 

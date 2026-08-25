@@ -20,6 +20,8 @@ export const CREDIT_ABONO_CAJA_MARKER = "ABONO_CREDITO_ID:";
 export const DEFAULT_LEGAL_CONSUMER_RATE_EA = 17.84;
 export const DEFAULT_FIANCO_SURETY_PERCENTAGE = 60;
 export const DEFAULT_INITIAL_PAYMENT_PERCENTAGE = 20;
+export const ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE = 30;
+export const ANDROID_SIMULATOR_TOTAL_SURETY_PERCENTAGE = 75;
 export const DEFAULT_CREDIT_INSTALLMENTS = 12;
 export const DEFAULT_MAX_CREDIT_INSTALLMENTS = 16;
 export const MAX_CREDIT_INSTALLMENTS = 60;
@@ -59,6 +61,27 @@ export function sanitizeSearch(value: unknown) {
 export function toNumber(value: unknown) {
   const normalized = Number(value);
   return Number.isFinite(normalized) ? normalized : 0;
+}
+
+export function calculateAndroidSimulatorInitialPayment(
+  valorTotalEquipo: number | null | undefined
+) {
+  const total = Number(valorTotalEquipo || 0);
+  if (!Number.isFinite(total) || total <= 0) return 0;
+
+  return Math.round(
+    (total * ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE) / 100
+  );
+}
+
+export function calculateAndroidSimulatorInstallmentSuretyPercentage(
+  numeroCuotas: number
+) {
+  if (!Number.isSafeInteger(numeroCuotas) || numeroCuotas <= 0) {
+    throw new Error("numeroCuotas debe ser un entero positivo");
+  }
+
+  return ANDROID_SIMULATOR_TOTAL_SURETY_PERCENTAGE / numeroCuotas;
 }
 
 export function normalizeCreditInstallmentLimit(

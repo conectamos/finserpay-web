@@ -64,6 +64,9 @@ import DatacreditoPrequalificationGate, {
   type DataCreditoApprovedResult,
 } from "@/app/dashboard/creditos/datacredito-prequalification-gate";
 import {
+  ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
+  calculateAndroidSimulatorInitialPayment,
+  calculateAndroidSimulatorInstallmentSuretyPercentage,
   calculateFinancedBalance,
   calculateRequiredInitialPaymentForFinancingLimit,
   calculateRequiredInitialPaymentByPlatform,
@@ -2864,6 +2867,7 @@ export default function CreditFactoryConsole({
     IPHONE_MAX_FINANCED_AMOUNT
   );
   const simulatorIphoneRulesActive = simulatorMode && iphoneFactory;
+  const simulatorAndroidRulesActive = simulatorMode && !iphoneFactory;
   const dataCreditoEffectiveMaxFinancedAmount =
     simulatorIphoneRulesActive
       ? iphoneMaxFinancedAmount
@@ -2908,12 +2912,16 @@ export default function CreditFactoryConsole({
     : creditSettings.cuotaInicialPorcentaje ??
       DEFAULT_INITIAL_PAYMENT_PERCENTAGE;
   const initialPaymentPercentage =
-    simulatorMode && iphoneFactory
+    simulatorAndroidRulesActive
+      ? ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE
+      : simulatorIphoneRulesActive
       ? configuredInitialPaymentPercentage
       : activeDataCreditoOffer
       ? activeDataCreditoOffer.initialPaymentPercentage
       : configuredInitialPaymentPercentage;
-  const cuotaInicialMinimaNumero = dataCreditoEffectiveMaxFinancedAmount > 0
+  const cuotaInicialMinimaNumero = simulatorAndroidRulesActive
+    ? calculateAndroidSimulatorInitialPayment(valorTotalEquipoNumero)
+    : dataCreditoEffectiveMaxFinancedAmount > 0
     ? calculateRequiredInitialPaymentForFinancingLimit(
         valorTotalEquipoNumero,
         dataCreditoEffectiveMaxFinancedAmount,
@@ -3043,7 +3051,9 @@ export default function CreditFactoryConsole({
     resolvedPolicyFinancialSettings.tasaInteresEa
   );
   const effectiveFianzaCuotaPorcentaje =
-    resolvedPolicyFinancialSettings.fianzaCuotaPorcentaje;
+    simulatorAndroidRulesActive
+      ? calculateAndroidSimulatorInstallmentSuretyPercentage(plazoMesesNumero)
+      : resolvedPolicyFinancialSettings.fianzaCuotaPorcentaje;
   const frecuenciaPagoCredito =
     resolvedPolicyFinancialSettings.frecuenciaPago;
   const saldoBaseFinanciado = calculateFinancedBalance(
@@ -3101,9 +3111,7 @@ export default function CreditFactoryConsole({
     : "La cuota supera el limite permitido para iPhone. Aumenta la inicial o ajusta el plazo para continuar.";
   const frecuenciaPagoLabel = getPaymentFrequencyLabel(frecuenciaPagoCredito);
   const creditSettingsScopeLabel = activeDataCreditoOffer
-    ? simulatorMode
-      ? "Política DataCrédito · Sin información"
-      : "Política DataCrédito"
+    ? "Política DataCrédito"
     : "Política no disponible";
   const referenciaEquipo = [equipoMarca.trim(), equipoModelo.trim()]
     .filter(Boolean)
@@ -5218,7 +5226,7 @@ export default function CreditFactoryConsole({
         ) {
           setDataCreditoSimulationStatus("unavailable");
           setDataCreditoSimulationMessage(
-            "No hay una política activa con regla Sin información para esta plataforma."
+            "La simulación no está configurada para esta plataforma."
           );
           return;
         }
@@ -5227,7 +5235,7 @@ export default function CreditFactoryConsole({
         if (simulation.decision !== "APROBADO" || !simulation.offer) {
           setDataCreditoSimulationStatus("rejected");
           setDataCreditoSimulationMessage(
-            "La regla Sin información de la política no autoriza financiación."
+            "La configuración actual no autoriza esta simulación."
           );
           return;
         }
@@ -5240,9 +5248,7 @@ export default function CreditFactoryConsole({
         setDataCreditoSimulation(null);
         setDataCreditoSimulationStatus("error");
         setDataCreditoSimulationMessage(
-          error instanceof Error
-            ? error.message
-            : "No se pudo cargar la política para la simulación."
+          "No se pudo cargar la configuración del simulador."
         );
       }
     };
@@ -10905,16 +10911,18 @@ export default function CreditFactoryConsole({
                           ? "Elige el equipo y ajusta la inicial para conocer la cuota estimada."
                           : "Captura el equipo, define la inicial y confirma la cuota que vera el cliente."}
                       </p>
-                      <div
-                        className={[
-                          "mt-3 inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]",
-                          activeDataCreditoOffer
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                            : "border-slate-200 bg-slate-50 text-slate-500",
-                        ].join(" ")}
-                      >
-                        {creditSettingsScopeLabel}
-                      </div>
+                      {!simulatorMode ? (
+                        <div
+                          className={[
+                            "mt-3 inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]",
+                            activeDataCreditoOffer
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-slate-50 text-slate-500",
+                          ].join(" ")}
+                        >
+                          {creditSettingsScopeLabel}
+                        </div>
+                      ) : null}
                     </div>
                     <div
                         className={[
@@ -10941,7 +10949,7 @@ export default function CreditFactoryConsole({
                       role="status"
                       aria-live="polite"
                     >
-                      <LoadingState label="Cargando política DataCrédito..." />
+                      <LoadingState label="Cargando configuración del simulador..." />
                     </div>
                   ) : null}
 
@@ -10956,17 +10964,15 @@ export default function CreditFactoryConsole({
                       <p className="font-black">Simulación no disponible</p>
                       <p className="mt-1">
                         {dataCreditoSimulationMessage ||
-                          "La política asignada no autoriza una simulación para esta plataforma."}
+                          "La configuración actual no autoriza una simulación para esta plataforma."}
                       </p>
                     </div>
                   ) : null}
 
-                  {activeDataCreditoOffer ? (
+                  {activeDataCreditoOffer && !simulatorMode ? (
                     <div className="mt-5 flex flex-wrap items-center gap-2 rounded-[20px] border border-[#c9df91] bg-[#f4f9e8] px-4 py-3 text-sm text-slate-700">
                       <span className="font-black text-slate-950">
-                        {simulatorMode
-                          ? "Política DataCrédito · Regla Sin información"
-                          : "Oferta DataCrédito"}
+                        Oferta DataCrédito
                       </span>
                       <span aria-hidden="true">·</span>
                       <span>
@@ -11122,7 +11128,9 @@ export default function CreditFactoryConsole({
                         />
                         {canSeeInternalPricing ? (
                           <p className="mt-2 text-xs font-medium text-slate-500">
-                            {activeDataCreditoOffer
+                            {simulatorMode
+                              ? `Inicial base: ${initialPaymentPercentage}%.`
+                              : activeDataCreditoOffer
                               ? simulatorIphoneRulesActive
                                 ? `Crédito máximo iPhone: ${currency(dataCreditoEffectiveMaxFinancedAmount)}. Excedente a inicial: ${currency(dataCreditoFinancingExcess)}.`
                                 : `Crédito máximo DataCrédito: ${currency(dataCreditoMaxFinancedAmount)}.${dataCreditoEffectiveLimitSummary} Excedente a inicial: ${currency(dataCreditoFinancingExcess)}.`
@@ -11131,7 +11139,9 @@ export default function CreditFactoryConsole({
                                 : precioBaseVentaCatalogo > 0
                                   ? `Base del modelo: ${currency(precioBaseVentaCatalogo)}. Excedente a inicial: ${currency(excedentePrecioBase)}.`
                                   : `Base maxima sin catalogo: ${currency(MAX_DEVICE_FINANCING_BASE)}.`}
-                            {` Inicial base: ${initialPaymentPercentage}%.`}
+                            {!simulatorMode
+                              ? ` Inicial base: ${initialPaymentPercentage}%.`
+                              : null}
                           </p>
                         ) : (
                           <p className="mt-2 text-xs font-medium text-slate-500">
@@ -11170,7 +11180,7 @@ export default function CreditFactoryConsole({
                           ].join(" ")}
                         >
                           Minimo: {currency(cuotaInicialMinimaNumero)}. Puedes subirla si el cliente da mas.
-                          {activeDataCreditoOffer
+                          {!simulatorMode && activeDataCreditoOffer
                             ? dataCreditoFinancingExcess > 0
                               ? ` Excedente sobre el crédito máximo pasado a inicial: ${currency(dataCreditoFinancingExcess)}.`
                               : ""
@@ -11207,7 +11217,7 @@ export default function CreditFactoryConsole({
                             </option>
                           )}
                         </select>
-                        {dataCreditoInstallmentCount ? (
+                        {!simulatorMode && dataCreditoInstallmentCount ? (
                           <p className="mt-2 text-xs font-medium text-slate-500">
                             Puedes elegir hasta {plazoMaximoCuotas} cuotas. No
                             puedes superar el máximo autorizado por la política
@@ -11240,8 +11250,10 @@ export default function CreditFactoryConsole({
                         />
                         <p className="mt-2 text-xs font-medium text-slate-500">
                           Se calcula automáticamente según la fecha del crédito y
-                          la frecuencia {frecuenciaPagoLabel.toLowerCase()} definida
-                          por la política.
+                          la frecuencia {frecuenciaPagoLabel.toLowerCase()}{" "}
+                          {simulatorMode
+                            ? "configurada para el simulador."
+                            : "definida por la política."}
                         </p>
                       </div>
                     </div>
@@ -11272,7 +11284,9 @@ export default function CreditFactoryConsole({
                             {currency(cuotaInicialNumero)}
                           </p>
                           <p className="mt-1 text-xs font-medium text-slate-500">
-                            {activeDataCreditoOffer
+                            {simulatorMode
+                              ? `Minimo ${currency(cuotaInicialMinimaNumero)}.`
+                              : activeDataCreditoOffer
                               ? dataCreditoFinancingExcess > 0
                                 ? `Incluye excedente sobre el tope efectivo ${currency(dataCreditoFinancingExcess)}.`
                                 : `Minimo ${currency(cuotaInicialMinimaNumero)}.`
@@ -11289,7 +11303,9 @@ export default function CreditFactoryConsole({
                             {currency(saldoBaseFinanciado)}
                           </p>
                           <p className="mt-1 text-xs font-medium text-slate-500">
-                            {activeDataCreditoOffer
+                            {simulatorMode
+                              ? "Valor equipo - inicial."
+                              : activeDataCreditoOffer
                               ? `Tope efectivo ${currency(dataCreditoEffectiveMaxFinancedAmount)}.`
                               : iphoneFactory
                                 ? `Maximo base financiada ${currency(iphoneMaxFinancedAmount)}.`
