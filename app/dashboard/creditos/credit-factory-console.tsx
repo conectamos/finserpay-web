@@ -109,6 +109,7 @@ import {
   isCreditCreationNetworkError,
 } from "@/lib/credit-create-recovery";
 import { buildCreditPaymentHref } from "@/lib/credit-payment-navigation";
+import { veriffIdentityMatchesExpectedDocument } from "@/lib/veriff-identity";
 import {
   runCedulaValidation,
   type CedulaValidationCheck,
@@ -269,7 +270,8 @@ function veriffIdentityHasAutofillData(
 
 function veriffApprovalCanUnlockClient(
   validation: VeriffValidationState | null | undefined,
-  expectedDraftId?: number | null
+  expectedDraftId?: number | null,
+  expectedDocumentNumber?: string | null
 ) {
   if (!validation?.approved || !validation.decidedAt) {
     return false;
@@ -279,6 +281,15 @@ function veriffApprovalCanUnlockClient(
     if (!expectedDraftId || validation.draftId !== expectedDraftId) {
       return false;
     }
+  }
+
+  if (
+    !veriffIdentityMatchesExpectedDocument(
+      validation.identityData?.documentNumber,
+      expectedDocumentNumber
+    )
+  ) {
+    return false;
   }
 
   return veriffIdentityHasAutofillData(validation);
@@ -3848,7 +3859,11 @@ export default function CreditFactoryConsole({
   useEffect(() => {
     if (
       !veriffValidation?.sessionUrl ||
-      veriffApprovalCanUnlockClient(veriffValidation, veriffExpectedDraftId)
+      veriffApprovalCanUnlockClient(
+        veriffValidation,
+        veriffExpectedDraftId,
+        dataCreditoApproval?.documentNumber
+      )
     ) {
       setVeriffQrDataUrl("");
       return;
@@ -3879,7 +3894,11 @@ export default function CreditFactoryConsole({
     return () => {
       active = false;
     };
-  }, [veriffExpectedDraftId, veriffValidation]);
+  }, [
+    dataCreditoApproval?.documentNumber,
+    veriffExpectedDraftId,
+    veriffValidation,
+  ]);
   useEffect(() => {
     if (
       wizardStep !== 3 ||
@@ -3943,7 +3962,8 @@ export default function CreditFactoryConsole({
     (veriffConfig.configured && veriffConfig.mode === "required");
   const veriffApproved = veriffApprovalCanUnlockClient(
     veriffValidation,
-    veriffExpectedDraftId
+    veriffExpectedDraftId,
+    dataCreditoApproval?.documentNumber
   );
   const veriffRejected = Boolean(
     veriffValidation?.status === "DECLINED" ||
@@ -5999,7 +6019,13 @@ export default function CreditFactoryConsole({
       return veriffConfig.configured ? "Pendiente" : "Sin configurar";
     }
 
-    if (veriffApprovalCanUnlockClient(validation, veriffExpectedDraftId)) {
+    if (
+      veriffApprovalCanUnlockClient(
+        validation,
+        veriffExpectedDraftId,
+        dataCreditoApproval?.documentNumber
+      )
+    ) {
       return "Aprobada";
     }
 
@@ -6065,9 +6091,17 @@ export default function CreditFactoryConsole({
     expectedDraftId: number | null | undefined = veriffExpectedDraftId
   ) => {
     const identity = validation?.identityData;
-    if (!veriffApprovalCanUnlockClient(validation, expectedDraftId) || !identity) {
+    if (
+      !veriffApprovalCanUnlockClient(
+        validation,
+        expectedDraftId,
+        dataCreditoApproval?.documentNumber
+      ) ||
+      !identity
+    ) {
       return false;
     }
+    const dataCreditoIdentityLocked = Boolean(dataCreditoApproval);
 
     const fullNameParts = String(identity.fullName || "")
       .replace(/\s+/g, " ")
@@ -6094,15 +6128,15 @@ export default function CreditFactoryConsole({
       copiedFields += 1;
       setClientePrimerNombre(firstName);
     }
-    if (lastName) {
+    if (lastName && !dataCreditoIdentityLocked) {
       copiedFields += 1;
       setClientePrimerApellido(lastName);
     }
-    if (documentNumber) {
+    if (documentNumber && !dataCreditoIdentityLocked) {
       copiedFields += 1;
       setClienteDocumento(documentNumber);
     }
-    if (identity.documentType) {
+    if (identity.documentType && !dataCreditoIdentityLocked) {
       copiedFields += 1;
       setClienteTipoDocumento(normalizeVeriffDocumentType(identity.documentType));
     }
@@ -6124,8 +6158,6 @@ export default function CreditFactoryConsole({
     }
 
     applyingVeriffIdentityRef.current = true;
-    setWizardStep(1);
-
     return true;
   };
 
@@ -6264,7 +6296,8 @@ export default function CreditFactoryConsole({
           : veriffExpectedDraftId;
       const usableApproval = veriffApprovalCanUnlockClient(
         validation,
-        expectedDraftId
+        expectedDraftId,
+        dataCreditoApproval?.documentNumber
       );
       const filledClientData = applyVeriffIdentityData(validation, expectedDraftId);
       setVeriffInlineMessage(
@@ -6428,7 +6461,8 @@ export default function CreditFactoryConsole({
       const expectedDraftId = createClientMode ? currentDraftId : undefined;
       const usableApproval = veriffApprovalCanUnlockClient(
         validation,
-        expectedDraftId
+        expectedDraftId,
+        dataCreditoApproval?.documentNumber
       );
       const filledClientData = applyVeriffIdentityData(
         validation,

@@ -89,10 +89,15 @@ Para Veriff, usa:
 
 ```bash
 VERIFF_BASE_URL=https://stationapi.veriff.com
-VERIFF_CALLBACK_URL=https://finserpay.com/dashboard/creditos
+VERIFF_CALLBACK_URL=https://finserpay.com/validacion-identidad/completada
 VERIFF_ENVIRONMENT=test
 VERIFF_IDENTITY_MODE=soft
 ```
+
+El callback anterior es una pantalla publica y neutral para el celular del
+cliente. La decision continua llegando al panel autenticado mediante el webhook
+y la consulta periodica; nunca apuntes este callback a `/dashboard` ni hagas
+publicas las rutas administrativas.
 
 En produccion, configura el webhook de decision de Veriff hacia:
 

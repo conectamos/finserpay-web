@@ -18,6 +18,7 @@ import {
   veriffCreateSession,
   VeriffApiError,
 } from "@/lib/veriff";
+import { buildVeriffCompletionUrl } from "@/lib/veriff-callback";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -165,6 +166,7 @@ export async function POST(request: Request) {
     }
 
     const createPayload = await veriffCreateSession({
+      callbackUrl: buildVeriffCompletionUrl(request),
       documentNumber: clienteDocumento,
       documentType: sanitizeText(body.clienteTipoDocumento),
       endUserId,
