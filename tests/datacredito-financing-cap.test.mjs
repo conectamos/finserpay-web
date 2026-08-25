@@ -175,6 +175,37 @@ test("resuelve directamente el menor tope por plataforma", () => {
   );
 });
 
+test("cobra sobre el tope del equipo aunque el cupo DataCredito sea mayor", () => {
+  const effectiveLimit = resolveEffectiveDataCreditoFinancingLimit({
+    platform: "ANDROID",
+    maxFinancedAmount: 1_200_000,
+    precioBaseVenta: 800_000,
+  });
+
+  assert.equal(effectiveLimit, 800_000);
+
+  for (const [equipmentPrice, expectedInitial] of [
+    [700_000, 140_000],
+    [900_000, 260_000],
+    [1_200_000, 560_000],
+    [1_300_000, 660_000],
+  ]) {
+    assert.equal(
+      calculateRequiredInitialPaymentForFinancingLimit(
+        equipmentPrice,
+        effectiveLimit,
+        20
+      ),
+      expectedInitial,
+      `Inicial incorrecta para un equipo de ${equipmentPrice}`
+    );
+    assert.ok(
+      equipmentPrice - expectedInitial <= 640_000,
+      "El saldo financiado no debe superar el 80% del tope del equipo"
+    );
+  }
+});
+
 test("el simulador iPhone ofrece plazos hasta 48 cuotas", () => {
   const options = getCreditInstallmentOptions(IPHONE_MAX_CREDIT_INSTALLMENTS);
 

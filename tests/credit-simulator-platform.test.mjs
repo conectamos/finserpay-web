@@ -80,7 +80,7 @@ test("el simulador iPhone usa inicial del 30 por ciento y plazo flexible", () =>
   );
   assert.match(
     consoleSource,
-    /const dataCreditoEffectiveMaxFinancedAmount\s*=\s*simulatorIphoneRulesActive\s*\? iphoneMaxFinancedAmount\s*:\s*dataCreditoMaxFinancedAmount/
+    /const dataCreditoEffectiveMaxFinancedAmount\s*=\s*simulatorIphoneRulesActive\s*\? iphoneMaxFinancedAmount[\s\S]{0,120}: dataCreditoMaxFinancedAmount > 0[\s\S]{0,120}resolveEffectiveDataCreditoFinancingLimit/
   );
   assert.match(
     consoleSource,

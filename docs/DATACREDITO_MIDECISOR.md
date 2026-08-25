@@ -260,6 +260,12 @@ Por ejemplo, para un equipo de `$1.300.000`, tope de `$1.200.000` e inicial
 del `20%`, la inicial minima es `$240.000 + $100.000 = $340.000`; el excedente
 nunca queda financiado ni se limita a una nota informativa.
 
+Si el cupo aprobado es `$1.200.000` pero el tope financiable del equipo es
+`$800.000`, prevalece el tope del equipo. Con inicial del `20%`, los valores de
+equipo de `$700.000`, `$900.000`, `$1.200.000` y `$1.300.000` exigen iniciales
+de `$140.000`, `$260.000`, `$560.000` y `$660.000`, respectivamente. El saldo
+financiado nunca supera `$640.000`, equivalente al `80%` de `$800.000`.
+
 ## Reutilización de consultas durante 15 días
 
 Una respuesta terminal `APROBADO` o `RECHAZADO` se reutiliza durante 15 días

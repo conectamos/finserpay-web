@@ -730,7 +730,11 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
   );
   assert.match(
     creditBuilder,
-    /calculateRequiredInitialPaymentForFinancingLimit\([\s\S]*?dataCreditoOffer\.maxFinancedAmount/
+    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoOffer\.maxFinancedAmount/
+  );
+  assert.match(
+    creditBuilder,
+    /calculateRequiredInitialPaymentForFinancingLimit\([\s\S]*?dataCreditoEffectiveMaxFinancedAmount/
   );
   assert.match(
     creditBuilder,
@@ -763,6 +767,33 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
   assert.doesNotMatch(
     creditBuilder,
     /effectiveCreditSettings\.documentException/
+  );
+});
+
+test("pantalla, cierre y FirmaSeguro respetan el menor tope financiable", () => {
+  assert.match(
+    factoryConsole,
+    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoMaxFinancedAmount[\s\S]*?precioBaseVenta:/
+  );
+  assert.match(
+    factoryConsole,
+    /calculateRequiredInitialPaymentForFinancingLimit\([\s\S]*?dataCreditoEffectiveMaxFinancedAmount/
+  );
+  assert.match(
+    creditRoute,
+    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoMaxFinancedAmount[\s\S]*?precioBaseVenta: precioBaseVentaCatalogo/
+  );
+  assert.match(
+    creditRoute,
+    /calculateRequiredInitialPaymentForFinancingLimit\([\s\S]*?dataCreditoEffectiveMaxFinancedAmount/
+  );
+  assert.match(
+    firmaSeguroDraftRoute,
+    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoOffer\.maxFinancedAmount[\s\S]*?precioBaseVenta: precioBaseVentaCatalogo/
+  );
+  assert.match(
+    firmaSeguroDraftRoute,
+    /calculateRequiredInitialPaymentForFinancingLimit\([\s\S]*?dataCreditoEffectiveMaxFinancedAmount/
   );
 });
 

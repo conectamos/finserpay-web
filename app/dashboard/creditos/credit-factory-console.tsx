@@ -97,6 +97,7 @@ import {
   normalizePaymentFrequency,
   parseCreditInstallmentSelection,
   PAYMENT_FREQUENCY_OPTIONS,
+  resolveEffectiveDataCreditoFinancingLimit,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import {
@@ -2858,7 +2859,13 @@ export default function CreditFactoryConsole({
     simulatorIphoneRulesActive
       ? iphoneMaxFinancedAmount
       : dataCreditoMaxFinancedAmount > 0
-      ? dataCreditoMaxFinancedAmount
+      ? resolveEffectiveDataCreditoFinancingLimit({
+          platform: activeDataCreditoPlatform || currentDevicePlatform,
+          maxFinancedAmount: dataCreditoMaxFinancedAmount,
+          precioBaseVenta:
+            precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined,
+          iphoneMaxFinancedAmount,
+        })
       : 0;
   const dataCreditoFinancingExcess =
     dataCreditoEffectiveMaxFinancedAmount > 0

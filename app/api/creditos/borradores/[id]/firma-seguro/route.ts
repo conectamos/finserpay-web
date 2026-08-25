@@ -28,6 +28,7 @@ import {
   normalizeCreditInstallments,
   normalizePaymentFrequency,
   parseCreditInstallmentSelection,
+  resolveEffectiveDataCreditoFinancingLimit,
   sanitizeDeviceValue,
   sanitizeImageDataUrl,
   sanitizeText,
@@ -389,10 +390,18 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
         fianzaPorcentaje: dataCreditoOffer.suretyPercentage,
       }
     : effectiveCreditSettings.globalSettings;
+  const dataCreditoEffectiveMaxFinancedAmount = dataCreditoOffer
+    ? resolveEffectiveDataCreditoFinancingLimit({
+        platform: plataformaDispositivo,
+        maxFinancedAmount: dataCreditoOffer.maxFinancedAmount,
+        precioBaseVenta: precioBaseVentaCatalogo,
+        iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
+      })
+    : 0;
   const cuotaInicialMinima = dataCreditoOffer
     ? calculateRequiredInitialPaymentForFinancingLimit(
         valorEquipoTotalInput,
-        dataCreditoOffer.maxFinancedAmount,
+        dataCreditoEffectiveMaxFinancedAmount,
         dataCreditoOffer.initialPaymentPercentage
       )
     : calculateRequiredInitialPaymentByPlatform({
