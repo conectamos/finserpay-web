@@ -259,21 +259,44 @@ en pantalla como en el servidor es:
 ## Reutilización de consultas durante 15 días
 
 Una respuesta terminal `APROBADO` o `RECHAZADO` se reutiliza durante 15 días
-para la misma cédula, ambiente de proveedor y aliado, aunque cambien apellido,
-asesor, sede o plataforma. El apellido y el consentimiento se vuelven a exigir.
+para la misma cédula y ambiente de proveedor en todo FINSER PAY, aunque cambien
+aliado, asesor, sede o plataforma. El primer apellido debe coincidir con el del
+inquiry raíz; una diferencia se bloquea sin crear otra consulta ni asociar el
+puntaje a una identidad distinta. El consentimiento siempre se vuelve a exigir.
 Si identidad y scope coinciden exactamente se devuelve el mismo assessment; si
-cambia alguno, se crea una fila operativa actual enlazada al inquiry raíz, sin
-duplicar el expediente cifrado ni llamar otra vez a Experian.
+cambia el contexto autorizado, se crea una fila operativa actual enlazada al
+inquiry raíz, sin duplicar el expediente cifrado ni llamar otra vez a Experian.
 
-Si cambia Android/iPhone, el servidor toma del inquiry raíz el puntaje y el
-resumen TELCOS ya cifrado, y recalcula la decisión/oferta con la plataforma
-solicitada usando la misma revisión histórica. No genera una consulta nueva y
-conserva el vencimiento original, de modo que reutilizar no extiende la ventana.
-Una revisión histórica sin la regla TELCOS continúa por banda. Un cambio de
-aliado o ambiente no comparte el resultado.
-Un resultado consumido no puede reutilizarse ni reclamarse de nuevo. Claim y
-consumo bloquean y marcan atómicamente todo el grupo raíz/clones para impedir un
-segundo crédito sobre la misma consulta.
+Si cambia Android/iPhone o el aliado, el servidor toma del inquiry raíz el
+puntaje y el resumen TELCOS ya cifrado, y recalcula la decisión/oferta con la
+plataforma solicitada y la revisión vigente asignada al aliado actual. No genera
+una consulta nueva y conserva el vencimiento original, de modo que reutilizar no
+extiende la ventana. Una revisión histórica sin la regla TELCOS continúa por
+banda. Solo un cambio de ambiente de proveedor separa la reutilización.
+
+La reserva y el lock documental usan únicamente el HMAC de la cédula y el
+ambiente del proveedor. Así, dos aliados que consulten simultáneamente la misma
+cédula no pueden iniciar dos consumos facturables. Un resultado consumido no
+puede reutilizarse ni reclamarse de nuevo: claim y consumo se coordinan para todo
+FINSER PAY. Solo el assessment reclamado recibe `creditId`; las demás raíces o
+clones quedan bloqueados globalmente sin exponer el crédito de otro aliado.
+
+Si el proveedor pudo haber recibido la solicitud pero el resultado no pudo
+persistirse de forma concluyente, el registro queda pendiente de revisión hasta
+el vencimiento original. Tampoco se consulta de nuevo cuando MiDecisor ya
+respondió sin información evaluable o faltó un dato necesario para aplicar la
+política. Esta decisión prioriza evitar un segundo cobro; soporte debe conciliar
+el caso usando la correlación y el expediente disponible.
+
+El preflight instala esta barrera de forma compatible con despliegues
+blue-green: conserva sin redefinir los índices legacy y agrega índices globales
+con nombres nuevos. Dentro de la misma transacción bloquea la tabla, convierte
+reservas `PENDING` de más de seis minutos en resultados ambiguos protegidos e
+instala triggers permanentes antes de crear la llave única global. Los triggers
+también serializan claim/consumo entre runtimes nuevos y antiguos, y convierten
+el consumo masivo legado en una actualización exclusiva del assessment
+reclamado. Si ya existen dos claims vigentes para la misma cédula y ambiente, la
+migración falla cerrada y debe reintentarse cuando hayan vencido.
 
 ## Protección, expediente y auditoría
 

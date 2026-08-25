@@ -159,6 +159,8 @@ export type DataCreditoAssessmentReservation =
   | { kind: "IN_PROGRESS" }
   | { kind: "RATE_LIMITED" }
   | { kind: "ALREADY_CONSUMED"; assessment: DataCreditoAssessmentRow }
+  | { kind: "IDENTITY_MISMATCH" }
+  | { kind: "REQUIRES_REVIEW" }
   | { kind: "REUSED"; assessment: DataCreditoAssessmentRow };
 
 export class DataCreditoStorageConfigurationError extends Error {
@@ -486,6 +488,9 @@ const REQUIRED_ASSESSMENT_INDEXES = [
   "DataCreditoAssessment_pending_document_key",
   "DataCreditoAssessment_reuse_idx",
   "DataCreditoAssessment_reuse_environment_idx",
+  "DataCreditoAssessment_pending_global_key",
+  "DataCreditoAssessment_reuse_global_idx",
+  "DataCreditoAssessment_reuse_environment_global_idx",
   "DataCreditoAssessment_rate_idx",
   "DataCreditoAssessment_retention_idx",
   "DataCreditoAssessment_admin_created_idx",
@@ -536,6 +541,8 @@ async function verifyDataCreditoPolicyProfileSchema() {
       policyProfileTable: string | null;
       policyRevisionHasPrimaryKey: boolean;
       policyRevisionTable: string | null;
+      globalPendingGuardPresent: boolean;
+      globalUsageGuardPresent: boolean;
       requiredIndexesPresent: boolean;
       requiredTriggersPresent: boolean;
     }>
@@ -578,13 +585,42 @@ async function verifyDataCreditoPolicyProfileSchema() {
           ('DataCreditoPolicy_sync_profile_revision'),
           ('DataCreditoPolicyRevision_immutable'),
           ('DataCreditoAssessment_resolve_legacy_revision'),
-          ('DataCreditoAssessment_terminal_expiry')
+          ('DataCreditoAssessment_terminal_expiry'),
+          ('DataCreditoAssessment_guard_pending_global'),
+          ('DataCreditoAssessment_guard_global_usage')
         ) AS required(name)
         WHERE NOT EXISTS (
           SELECT 1 FROM pg_trigger
-          WHERE tgname = required.name AND NOT tgisinternal AND tgenabled <> 'D'
+          WHERE tgname = required.name AND NOT tgisinternal AND tgenabled IN ('O', 'A')
         )
-      ) AS "requiredTriggersPresent"
+      ) AS "requiredTriggersPresent",
+      EXISTS (
+        SELECT 1
+        FROM pg_trigger pending_guard
+        INNER JOIN pg_proc pending_guard_function
+          ON pending_guard_function.oid = pending_guard.tgfoid
+        WHERE pending_guard.tgname = 'DataCreditoAssessment_guard_pending_global'
+          AND pending_guard_function.proname = 'finser_guard_datacredito_pending_global'
+          AND pending_guard.tgrelid = to_regclass('"DataCreditoAssessment"')
+          AND NOT pending_guard.tgisinternal
+          AND pending_guard.tgenabled IN ('O', 'A')
+          AND pending_guard.tgtype = 7
+          AND pending_guard.tgqual IS NOT NULL
+          AND pg_get_expr(pending_guard.tgqual, pending_guard.tgrelid) ILIKE '%status%'
+          AND pg_get_expr(pending_guard.tgqual, pending_guard.tgrelid) ILIKE '%PENDING%'
+      ) AS "globalPendingGuardPresent",
+      EXISTS (
+        SELECT 1
+        FROM pg_trigger usage_guard
+        INNER JOIN pg_proc usage_guard_function
+          ON usage_guard_function.oid = usage_guard.tgfoid
+        WHERE usage_guard.tgname = 'DataCreditoAssessment_guard_global_usage'
+          AND usage_guard_function.proname = 'finser_guard_datacredito_global_usage_v1'
+          AND usage_guard.tgrelid = to_regclass('"DataCreditoAssessment"')
+          AND NOT usage_guard.tgisinternal
+          AND usage_guard.tgenabled IN ('O', 'A')
+          AND usage_guard.tgtype = 19
+      ) AS "globalUsageGuardPresent"
   `);
   const state = rows[0];
   if (
@@ -597,7 +633,9 @@ async function verifyDataCreditoPolicyProfileSchema() {
     !state.policyRevisionHasPrimaryKey ||
     !state.assignmentAuditHasPrimaryKey ||
     !state.requiredIndexesPresent ||
-    !state.requiredTriggersPresent
+    !state.requiredTriggersPresent ||
+    !state.globalPendingGuardPresent ||
+    !state.globalUsageGuardPresent
   ) {
     throw schemaNotReady();
   }
@@ -979,8 +1017,20 @@ async function verifyDataCreditoSchema() {
   const pendingIndex = assessmentIndex(
     "DataCreditoAssessment_pending_document_key"
   );
+  const reuseIndex = assessmentIndex(
+    "DataCreditoAssessment_reuse_idx"
+  );
   const reuseEnvironmentIndex = assessmentIndex(
     "DataCreditoAssessment_reuse_environment_idx"
+  );
+  const pendingGlobalIndex = assessmentIndex(
+    "DataCreditoAssessment_pending_global_key"
+  );
+  const reuseGlobalIndex = assessmentIndex(
+    "DataCreditoAssessment_reuse_global_idx"
+  );
+  const reuseEnvironmentGlobalIndex = assessmentIndex(
+    "DataCreditoAssessment_reuse_environment_global_idx"
   );
   const secureKeyNonceIndex = securePayloadIndex(
     "DataCreditoSecurePayload_key_nonce_key"
@@ -1027,11 +1077,48 @@ async function verifyDataCreditoSchema() {
       predicate: "PENDING_STATUS",
       unique: true,
     }) ||
+    !matchesDataCreditoSchemaIndex(reuseIndex, {
+      keys: [
+        { column: "documentHash" },
+        { expression: 'COALESCE("aliadoId", 0)' },
+        { column: "expiresAt" },
+        { column: "createdAt" },
+      ],
+      predicate: null,
+      unique: false,
+    }) ||
     !matchesDataCreditoSchemaIndex(reuseEnvironmentIndex, {
       keys: [
         { column: "documentHash" },
         { column: "providerEnvironment" },
         { expression: 'COALESCE("aliadoId", 0)' },
+        { column: "expiresAt" },
+        { column: "createdAt" },
+      ],
+      predicate: null,
+      unique: false,
+    }) ||
+    !matchesDataCreditoSchemaIndex(pendingGlobalIndex, {
+      keys: [
+        { column: "documentHash" },
+        { column: "providerEnvironment" },
+      ],
+      predicate: "PENDING_STATUS",
+      unique: true,
+    }) ||
+    !matchesDataCreditoSchemaIndex(reuseGlobalIndex, {
+      keys: [
+        { column: "documentHash" },
+        { column: "expiresAt" },
+        { column: "createdAt" },
+      ],
+      predicate: null,
+      unique: false,
+    }) ||
+    !matchesDataCreditoSchemaIndex(reuseEnvironmentGlobalIndex, {
+      keys: [
+        { column: "documentHash" },
+        { column: "providerEnvironment" },
         { column: "expiresAt" },
         { column: "createdAt" },
       ],
@@ -1275,6 +1362,10 @@ export async function purgeExpiredDataCreditoAssessments() {
   });
 }
 
+type ReusableDataCreditoAssessmentRow = DataCreditoAssessmentRow & {
+  canonicalRootSurnameHash: string;
+};
+
 async function findReusableDataCreditoAssessment(
   input: {
     hashes: ReturnType<typeof buildDataCreditoIdentityHashes>;
@@ -1285,41 +1376,69 @@ async function findReusableDataCreditoAssessment(
   },
   database: DataCreditoQueryExecutor
 ) {
-  const rows = await database.$queryRawUnsafe<DataCreditoAssessmentRow[]>(
+  const rows = await database.$queryRawUnsafe<ReusableDataCreditoAssessmentRow[]>(
     `
-      SELECT assessment.*
-      FROM "DataCreditoAssessment" assessment
+      WITH canonical_root AS (
+        SELECT root."id", root."surnameHash"
+        FROM "DataCreditoAssessment" root
+        WHERE root."reusedFromAssessmentId" IS NULL
+          AND root."documentHash" = $1
+          AND root."providerEnvironment" = $2
+          AND root."status" IN ('APROBADO', 'RECHAZADO')
+          AND root."expiresAt" > CURRENT_TIMESTAMP
+          AND root."consumedAt" IS NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "DataCreditoAssessment" consumed
+            WHERE consumed."documentHash" = $1
+              AND consumed."providerEnvironment" = $2
+              AND consumed."status" IN ('APROBADO', 'RECHAZADO')
+              AND consumed."expiresAt" > CURRENT_TIMESTAMP
+              AND consumed."consumedAt" IS NOT NULL
+          )
+        ORDER BY root."expiresAt" DESC, root."createdAt" DESC, root."id" DESC
+        LIMIT 1
+      )
+      SELECT assessment.*,
+        canonical_root."surnameHash" AS "canonicalRootSurnameHash"
+      FROM canonical_root
+      INNER JOIN "DataCreditoAssessment" assessment
+        ON COALESCE(assessment."reusedFromAssessmentId", assessment."id") =
+          canonical_root."id"
       WHERE assessment."documentHash" = $1
         AND assessment."providerEnvironment" = $2
-        AND assessment."aliadoId" IS NOT DISTINCT FROM $3
         AND assessment."status" IN ('APROBADO', 'RECHAZADO')
         AND assessment."expiresAt" > CURRENT_TIMESTAMP
         AND assessment."consumedAt" IS NULL
         AND NOT EXISTS (
-          SELECT 1 FROM "DataCreditoAssessment" consumed
-          WHERE COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
-            COALESCE(assessment."reusedFromAssessmentId", assessment."id")
+          SELECT 1
+          FROM "DataCreditoAssessment" consumed
+          WHERE consumed."documentHash" = $1
+            AND consumed."providerEnvironment" = $2
+            AND consumed."status" IN ('APROBADO', 'RECHAZADO')
+            AND consumed."expiresAt" > CURRENT_TIMESTAMP
             AND consumed."consumedAt" IS NOT NULL
         )
       ORDER BY (
-        assessment."surnameHash" = $4
-        AND assessment."platform" = $5
-        AND assessment."userId" = $6
-        AND assessment."sellerId" IS NOT DISTINCT FROM $7
-        AND assessment."sedeId" = $8
+        assessment."surnameHash" = $3
+        AND assessment."platform" = $4
+        AND assessment."userId" = $5
+        AND assessment."sellerId" IS NOT DISTINCT FROM $6
+        AND assessment."sedeId" = $7
+        AND assessment."aliadoId" IS NOT DISTINCT FROM $8
         AND assessment."policyRevisionId" = $9
       ) DESC,
-        assessment."expiresAt" DESC, assessment."createdAt" DESC
+        assessment."createdAt" DESC, assessment."id" DESC
       LIMIT 1
     `,
     input.hashes.documentHash,
     input.providerEnvironment,
-    input.scope.aliadoId,
     input.hashes.surnameHash,
     input.platform,
     input.scope.userId,
     input.scope.sellerId,
     input.scope.sedeId,
+    input.scope.aliadoId,
     input.policyRevisionId
   );
   return rows[0] || null;
@@ -1329,7 +1448,6 @@ async function findRecentConsumedDataCreditoAssessment(
   input: {
     documentHash: string;
     providerEnvironment: string;
-    aliadoId: number | null;
   },
   database: DataCreditoQueryExecutor
 ) {
@@ -1339,27 +1457,49 @@ async function findRecentConsumedDataCreditoAssessment(
       FROM "DataCreditoAssessment" assessment
       WHERE assessment."documentHash" = $1
         AND assessment."providerEnvironment" = $2
-        AND assessment."aliadoId" IS NOT DISTINCT FROM $3
         AND assessment."status" IN ('APROBADO', 'RECHAZADO')
         AND assessment."expiresAt" > CURRENT_TIMESTAMP
-        AND (
-          assessment."consumedAt" IS NOT NULL
-          OR EXISTS (
-            SELECT 1 FROM "DataCreditoAssessment" consumed
-            WHERE COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
-              COALESCE(assessment."reusedFromAssessmentId", assessment."id")
-              AND consumed."consumedAt" IS NOT NULL
-          )
-        )
-      ORDER BY (assessment."consumedAt" IS NOT NULL) DESC,
-        assessment."expiresAt" DESC, assessment."createdAt" DESC
+        AND assessment."consumedAt" IS NOT NULL
+      ORDER BY assessment."consumedAt" DESC,
+        assessment."expiresAt" DESC, assessment."createdAt" DESC,
+        assessment."id" DESC
       LIMIT 1
     `,
     input.documentHash,
-    input.providerEnvironment,
-    input.aliadoId
+    input.providerEnvironment
   );
   return rows[0] || null;
+}
+
+async function hasRecentDataCreditoReviewBlock(
+  input: {
+    documentHash: string;
+    providerEnvironment: string;
+  },
+  database: DataCreditoQueryExecutor
+) {
+  const rows = await database.$queryRawUnsafe<Array<{ active: boolean }>>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM "DataCreditoAssessment" assessment
+        WHERE assessment."documentHash" = $1
+          AND assessment."providerEnvironment" = $2
+          AND assessment."status" = 'NO_EVALUADO'
+          AND assessment."expiresAt" > CURRENT_TIMESTAMP
+          AND (
+            assessment."durationMs" IS NOT NULL
+            OR assessment."errorCode" IN (
+              'PROVIDER_OUTCOME_AMBIGUOUS', 'NO_EVALUABLE_INFORMATION',
+              'TELCO_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
+            )
+          )
+      ) AS "active"
+    `,
+    input.documentHash,
+    input.providerEnvironment
+  );
+  return Boolean(rows[0]?.active);
 }
 
 function dataCreditoAssessmentHasCurrentIdentityAndScope(
@@ -1377,21 +1517,25 @@ function dataCreditoAssessmentHasCurrentIdentityAndScope(
   );
 }
 
-async function hasActiveClaimForDataCreditoAssessmentGroup(
+async function hasActiveClaimForDataCreditoDocument(
   sourceRow: DataCreditoAssessmentRow,
   database: DataCreditoQueryExecutor
 ) {
-  const rootId = sourceRow.reusedFromAssessmentId || sourceRow.id;
   const rows = await database.$queryRawUnsafe<Array<{ active: boolean }>>(
     `
       SELECT EXISTS (
-        SELECT 1 FROM "DataCreditoAssessment" claimed
-        WHERE COALESCE(claimed."reusedFromAssessmentId", claimed."id") = $1
+        SELECT 1
+        FROM "DataCreditoAssessment" claimed
+        WHERE claimed."documentHash" = $1
+          AND claimed."providerEnvironment" = $2
+          AND claimed."status" = 'APROBADO'
+          AND claimed."expiresAt" > CURRENT_TIMESTAMP
           AND claimed."claimTokenHash" IS NOT NULL
           AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
       ) AS "active"
     `,
-    rootId
+    sourceRow.documentHash,
+    sourceRow.providerEnvironment
   );
   return Boolean(rows[0]?.active);
 }
@@ -1565,12 +1709,18 @@ async function cloneReusableDataCreditoAssessment(
         AND source."consumedAt" IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM "DataCreditoAssessment" consumed
-          WHERE COALESCE(consumed."reusedFromAssessmentId", consumed."id") = $2
+          WHERE consumed."documentHash" = source."documentHash"
+            AND consumed."providerEnvironment" = source."providerEnvironment"
+            AND consumed."status" IN ('APROBADO', 'RECHAZADO')
+            AND consumed."expiresAt" > CURRENT_TIMESTAMP
             AND consumed."consumedAt" IS NOT NULL
         )
         AND NOT EXISTS (
           SELECT 1 FROM "DataCreditoAssessment" claimed
-          WHERE COALESCE(claimed."reusedFromAssessmentId", claimed."id") = $2
+          WHERE claimed."documentHash" = source."documentHash"
+            AND claimed."providerEnvironment" = source."providerEnvironment"
+            AND claimed."status" = 'APROBADO'
+            AND claimed."expiresAt" > CURRENT_TIMESTAMP
             AND claimed."claimTokenHash" IS NOT NULL
             AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
         )
@@ -1602,7 +1752,12 @@ async function cloneReusableDataCreditoAssessment(
 async function tryReuseDataCreditoAssessment(
   input: DataCreditoAssessmentReuseInput,
   database: DataCreditoQueryExecutor
-): Promise<Extract<DataCreditoAssessmentReservation, { kind: "REUSED" | "IN_PROGRESS" }> | null> {
+): Promise<
+  Extract<
+    DataCreditoAssessmentReservation,
+    { kind: "REUSED" | "IN_PROGRESS" | "IDENTITY_MISMATCH" }
+  > | null
+> {
   const reusable = await findReusableDataCreditoAssessment(
     {
       hashes: {
@@ -1618,7 +1773,10 @@ async function tryReuseDataCreditoAssessment(
     database
   );
   if (!reusable) return null;
-  if (await hasActiveClaimForDataCreditoAssessmentGroup(reusable, database)) {
+  if (reusable.canonicalRootSurnameHash !== input.surnameHash) {
+    return { kind: "IDENTITY_MISMATCH" };
+  }
+  if (await hasActiveClaimForDataCreditoDocument(reusable, database)) {
     return { kind: "IN_PROGRESS" };
   }
   if (dataCreditoAssessmentHasCurrentIdentityAndScope(reusable, input)) {
@@ -1626,20 +1784,18 @@ async function tryReuseDataCreditoAssessment(
   }
   const clone = await cloneReusableDataCreditoAssessment(reusable, input, database);
   if (clone) return { kind: "REUSED", assessment: clone };
-  if (await hasActiveClaimForDataCreditoAssessmentGroup(reusable, database)) {
+  if (await hasActiveClaimForDataCreditoDocument(reusable, database)) {
     return { kind: "IN_PROGRESS" };
   }
   return null;
 }
 
 function dataCreditoDocumentLockKey(input: {
-  aliadoId: number | null;
   documentHash: string;
   providerEnvironment: string;
 }) {
   return [
     "datacredito-document",
-    input.aliadoId || 0,
     input.providerEnvironment,
     input.documentHash,
   ].join(":");
@@ -1648,7 +1804,13 @@ function dataCreditoDocumentLockKey(input: {
 export async function reuseDataCreditoAssessment(
   input: DataCreditoAssessmentReuseInput
 ): Promise<
-  Extract<DataCreditoAssessmentReservation, { kind: "REUSED" | "IN_PROGRESS" | "ALREADY_CONSUMED" }> | null
+  Extract<
+    DataCreditoAssessmentReservation,
+    {
+      kind: "REUSED" | "IN_PROGRESS" | "ALREADY_CONSUMED" |
+        "IDENTITY_MISMATCH" | "REQUIRES_REVIEW";
+    }
+  > | null
 > {
   await ensureDataCreditoSchema();
   const staleMinutes = getDataCreditoPendingStaleMinutes();
@@ -1657,24 +1819,25 @@ export async function reuseDataCreditoAssessment(
       `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`,
       dataCreditoDocumentLockKey(input)
     );
-    const reusable = await tryReuseDataCreditoAssessment(input, transaction);
-    if (reusable) return reusable;
     const consumed = await findRecentConsumedDataCreditoAssessment(input, transaction);
     if (consumed) {
       return { kind: "ALREADY_CONSUMED", assessment: consumed };
     }
+    if (await hasRecentDataCreditoReviewBlock(input, transaction)) {
+      return { kind: "REQUIRES_REVIEW" };
+    }
+    const reusable = await tryReuseDataCreditoAssessment(input, transaction);
+    if (reusable) return reusable;
     const pendingRows = await transaction.$queryRawUnsafe<Array<{ id: string }>>(
       `
         SELECT "id" FROM "DataCreditoAssessment"
         WHERE "status" = 'PENDING' AND "documentHash" = $1
           AND "providerEnvironment" = $2
-          AND "aliadoId" IS NOT DISTINCT FROM $3
-          AND "createdAt" >= CURRENT_TIMESTAMP - ($4::integer * INTERVAL '1 minute')
+          AND "createdAt" >= CURRENT_TIMESTAMP - ($3::integer * INTERVAL '1 minute')
         LIMIT 1
       `,
       input.documentHash,
       input.providerEnvironment,
-      input.aliadoId,
       staleMinutes
     );
     return pendingRows.length ? { kind: "IN_PROGRESS" as const } : null;
@@ -1768,43 +1931,45 @@ export async function reserveDataCreditoAssessment(
     input.userId,
   ].join(":");
   const documentLockKey = dataCreditoDocumentLockKey(input);
-  const lockKeys = [actorLockKey, documentLockKey].sort();
 
   return prisma.$transaction(
     async (transaction) => {
-      for (const lockKey of lockKeys) {
-        await transaction.$executeRawUnsafe(
-          `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`,
-          lockKey
-        );
-      }
+      await transaction.$executeRawUnsafe(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`,
+        actorLockKey
+      );
+      await transaction.$executeRawUnsafe(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`,
+        documentLockKey
+      );
 
-      // Only the same tenant/site/document can release a stale reservation.
-      // The threshold covers the provider's longest documented retry sequence.
+      // The document lock is global for the provider environment. Only stale
+      // work for that exact paid-query key may be released.
       await transaction.$executeRawUnsafe(
         `
           UPDATE "DataCreditoAssessment"
           SET "status" = 'NO_EVALUADO',
-              "errorCode" = 'STALE_PENDING',
+              "errorCode" = 'PROVIDER_OUTCOME_AMBIGUOUS',
               "updatedAt" = CURRENT_TIMESTAMP
           WHERE "status" = 'PENDING'
             AND "documentHash" = $1
             AND "providerEnvironment" = $2
-            AND "aliadoId" IS NOT DISTINCT FROM $3
-            AND "createdAt" < CURRENT_TIMESTAMP - ($4::integer * INTERVAL '1 minute')
+            AND "createdAt" < CURRENT_TIMESTAMP - ($3::integer * INTERVAL '1 minute')
         `,
         input.documentHash,
         input.providerEnvironment,
-        input.aliadoId,
         staleMinutes
       );
 
-      const reusable = await tryReuseDataCreditoAssessment(input, transaction);
-      if (reusable) return reusable;
       const consumed = await findRecentConsumedDataCreditoAssessment(input, transaction);
       if (consumed) {
         return { kind: "ALREADY_CONSUMED", assessment: consumed };
       }
+      if (await hasRecentDataCreditoReviewBlock(input, transaction)) {
+        return { kind: "REQUIRES_REVIEW" };
+      }
+      const reusable = await tryReuseDataCreditoAssessment(input, transaction);
+      if (reusable) return reusable;
 
       const activeRows = await transaction.$queryRawUnsafe<Array<{ id: string }>>(
         `
@@ -1813,12 +1978,10 @@ export async function reserveDataCreditoAssessment(
           WHERE "status" = 'PENDING'
             AND "documentHash" = $1
             AND "providerEnvironment" = $2
-            AND "aliadoId" IS NOT DISTINCT FROM $3
           LIMIT 1
         `,
         input.documentHash,
-        input.providerEnvironment,
-        input.aliadoId
+        input.providerEnvironment
       );
       if (activeRows.length) {
         return { kind: "IN_PROGRESS" };
@@ -1910,6 +2073,49 @@ export async function getDataCreditoAssessmentById(id: string) {
   return rows[0] || null;
 }
 
+export async function getDataCreditoAssessmentDocumentState(
+  row: Pick<
+    DataCreditoAssessmentRow,
+    "id" | "documentHash" | "providerEnvironment"
+  >
+) {
+  await ensureDataCreditoSchema();
+  const rows = await prisma.$queryRawUnsafe<
+    Array<{ consumedElsewhere: boolean; inProgress: boolean }>
+  >(
+    `
+      SELECT
+        EXISTS (
+          SELECT 1
+          FROM "DataCreditoAssessment" consumed
+          WHERE consumed."id" <> $1
+            AND consumed."documentHash" = $2
+            AND consumed."providerEnvironment" = $3
+            AND consumed."status" IN ('APROBADO', 'RECHAZADO')
+            AND consumed."expiresAt" > CURRENT_TIMESTAMP
+            AND consumed."consumedAt" IS NOT NULL
+        ) AS "consumedElsewhere",
+        EXISTS (
+          SELECT 1
+          FROM "DataCreditoAssessment" claimed
+          WHERE claimed."documentHash" = $2
+            AND claimed."providerEnvironment" = $3
+            AND claimed."status" = 'APROBADO'
+            AND claimed."expiresAt" > CURRENT_TIMESTAMP
+            AND claimed."claimTokenHash" IS NOT NULL
+            AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
+        ) AS "inProgress"
+    `,
+    row.id,
+    row.documentHash,
+    row.providerEnvironment
+  );
+  return {
+    consumedElsewhere: Boolean(rows[0]?.consumedElsewhere),
+    inProgress: Boolean(rows[0]?.inProgress),
+  };
+}
+
 export function dataCreditoAssessmentMatchesScope(
   row: DataCreditoAssessmentRow,
   scope: DataCreditoAssessmentScope
@@ -1960,6 +2166,7 @@ export type DataCreditoAssessmentMatchInput = DataCreditoIdentityInput &
 
 export type DataCreditoAssessmentCreditClassification =
   | { status: "CONSUMED"; creditId: number }
+  | { status: "CONSUMED_ELSEWHERE" }
   | { status: "EXPIRED" }
   | { status: "IN_PROGRESS" }
   | { status: "INVALID" };
@@ -1985,28 +2192,50 @@ export async function classifyDataCreditoAssessmentForCredit(
       consumedAt: Date | null;
       creditId: number | null;
       expiresAt: Date | null;
+      globalClaimActive: boolean;
+      globalConsumedElsewhere: boolean;
       providerEnvironment: string;
       status: string;
     }>
   >(
     `
       SELECT
-        "status",
-        "expiresAt",
-        "claimTokenHash",
-        "claimExpiresAt",
-        "consumedAt",
-        "creditId",
-        "providerEnvironment"
-      FROM "DataCreditoAssessment"
-      WHERE "id" = $1
-        AND "documentHash" = $2
-        AND "surnameHash" = $3
-        AND "platform" = $4
-        AND "userId" = $5
-        AND "sellerId" IS NOT DISTINCT FROM $6
-        AND "sedeId" = $7
-        AND "aliadoId" IS NOT DISTINCT FROM $8
+        assessment."status",
+        assessment."expiresAt",
+        assessment."claimTokenHash",
+        assessment."claimExpiresAt",
+        assessment."consumedAt",
+        assessment."creditId",
+        assessment."providerEnvironment",
+        EXISTS (
+          SELECT 1
+          FROM "DataCreditoAssessment" consumed
+          WHERE consumed."id" <> assessment."id"
+            AND consumed."documentHash" = assessment."documentHash"
+            AND consumed."providerEnvironment" = assessment."providerEnvironment"
+            AND consumed."status" IN ('APROBADO', 'RECHAZADO')
+            AND consumed."expiresAt" > CURRENT_TIMESTAMP
+            AND consumed."consumedAt" IS NOT NULL
+        ) AS "globalConsumedElsewhere",
+        EXISTS (
+          SELECT 1
+          FROM "DataCreditoAssessment" claimed
+          WHERE claimed."documentHash" = assessment."documentHash"
+            AND claimed."providerEnvironment" = assessment."providerEnvironment"
+            AND claimed."status" = 'APROBADO'
+            AND claimed."expiresAt" > CURRENT_TIMESTAMP
+            AND claimed."claimTokenHash" IS NOT NULL
+            AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
+        ) AS "globalClaimActive"
+      FROM "DataCreditoAssessment" assessment
+      WHERE assessment."id" = $1
+        AND assessment."documentHash" = $2
+        AND assessment."surnameHash" = $3
+        AND assessment."platform" = $4
+        AND assessment."userId" = $5
+        AND assessment."sellerId" IS NOT DISTINCT FROM $6
+        AND assessment."sedeId" = $7
+        AND assessment."aliadoId" IS NOT DISTINCT FROM $8
       LIMIT 1
     `,
     match.assessmentId,
@@ -2031,16 +2260,17 @@ export async function classifyDataCreditoAssessmentForCredit(
     return { status: "INVALID" };
   }
 
+  if (row.globalConsumedElsewhere) {
+    return { status: "CONSUMED_ELSEWHERE" };
+  }
+
   if (row.status !== "APROBADO") return { status: "INVALID" };
 
-  const now = Date.now();
-  const claimExpiresAt = row.claimExpiresAt
-    ? new Date(row.claimExpiresAt).getTime()
-    : Number.NaN;
-  if (row.claimTokenHash && Number.isFinite(claimExpiresAt) && claimExpiresAt > now) {
+  if (row.globalClaimActive) {
     return { status: "IN_PROGRESS" };
   }
 
+  const now = Date.now();
   const expiresAt = row.expiresAt ? new Date(row.expiresAt).getTime() : Number.NaN;
   if (Number.isFinite(expiresAt) && expiresAt <= now) {
     return { status: "EXPIRED" };
@@ -2057,22 +2287,39 @@ export async function getApprovedDataCreditoAssessmentForCredit(
   const match = assessmentMatchParams(input);
   const rows = await prisma.$queryRawUnsafe<DataCreditoAssessmentRow[]>(
     `
-      SELECT *
-      FROM "DataCreditoAssessment"
-      WHERE "id" = $1
-        AND "documentHash" = $2
-        AND "surnameHash" = $3
-        AND "platform" = $4
-        AND "providerEnvironment" = $5
-        AND "userId" = $6
-        AND "sellerId" IS NOT DISTINCT FROM $7
-        AND "sedeId" = $8
-        AND "aliadoId" IS NOT DISTINCT FROM $9
-        AND "status" = 'APROBADO'
-        AND "score" BETWEEN -1 AND 950
-        AND "offer" IS NOT NULL
-        AND "expiresAt" > CURRENT_TIMESTAMP
-        AND "consumedAt" IS NULL
+      SELECT assessment.*
+      FROM "DataCreditoAssessment" assessment
+      WHERE assessment."id" = $1
+        AND assessment."documentHash" = $2
+        AND assessment."surnameHash" = $3
+        AND assessment."platform" = $4
+        AND assessment."providerEnvironment" = $5
+        AND assessment."userId" = $6
+        AND assessment."sellerId" IS NOT DISTINCT FROM $7
+        AND assessment."sedeId" = $8
+        AND assessment."aliadoId" IS NOT DISTINCT FROM $9
+        AND assessment."status" = 'APROBADO'
+        AND assessment."score" BETWEEN -1 AND 950
+        AND assessment."offer" IS NOT NULL
+        AND assessment."expiresAt" > CURRENT_TIMESTAMP
+        AND assessment."consumedAt" IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM "DataCreditoAssessment" consumed
+          WHERE consumed."documentHash" = assessment."documentHash"
+            AND consumed."providerEnvironment" = assessment."providerEnvironment"
+            AND consumed."status" IN ('APROBADO', 'RECHAZADO')
+            AND consumed."expiresAt" > CURRENT_TIMESTAMP
+            AND consumed."consumedAt" IS NOT NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "DataCreditoAssessment" claimed
+          WHERE claimed."documentHash" = assessment."documentHash"
+            AND claimed."providerEnvironment" = assessment."providerEnvironment"
+            AND claimed."status" = 'APROBADO'
+            AND claimed."expiresAt" > CURRENT_TIMESTAMP
+            AND claimed."claimTokenHash" IS NOT NULL
+            AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
+        )
       LIMIT 1
     `,
     match.assessmentId,
@@ -2096,9 +2343,11 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
   const claimTokenHash = hmacDataCreditoValue("claim", claimToken);
 
   return prisma.$transaction(async (transaction) => {
-    const roots = await transaction.$queryRawUnsafe<Array<{ rootId: string }>>(
+    const targets = await transaction.$queryRawUnsafe<
+      Array<{ documentHash: string; providerEnvironment: string }>
+    >(
       `
-        SELECT COALESCE("reusedFromAssessmentId", "id") AS "rootId"
+        SELECT "documentHash", "providerEnvironment"
         FROM "DataCreditoAssessment"
         WHERE "id" = $1
           AND "documentHash" = $2 AND "surnameHash" = $3
@@ -2117,12 +2366,14 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
       match.sedeId,
       match.aliadoId
     );
-    const rootId = roots[0]?.rootId;
-    if (!rootId) return null;
+    const target = targets[0];
+    if (!target) return null;
+
     await transaction.$executeRawUnsafe(
       `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`,
-      `datacredito-assessment-group:${rootId}`
+      dataCreditoDocumentLockKey(target)
     );
+
     const rows = await transaction.$queryRawUnsafe<DataCreditoAssessmentRow[]>(
       `
         UPDATE "DataCreditoAssessment" target
@@ -2143,12 +2394,18 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
           AND (target."claimTokenHash" IS NULL OR target."claimExpiresAt" <= CURRENT_TIMESTAMP)
           AND NOT EXISTS (
             SELECT 1 FROM "DataCreditoAssessment" consumed
-            WHERE COALESCE(consumed."reusedFromAssessmentId", consumed."id") = $11
+            WHERE consumed."documentHash" = target."documentHash"
+              AND consumed."providerEnvironment" = target."providerEnvironment"
+              AND consumed."status" IN ('APROBADO', 'RECHAZADO')
+              AND consumed."expiresAt" > CURRENT_TIMESTAMP
               AND consumed."consumedAt" IS NOT NULL
           )
           AND NOT EXISTS (
             SELECT 1 FROM "DataCreditoAssessment" claimed
-            WHERE COALESCE(claimed."reusedFromAssessmentId", claimed."id") = $11
+            WHERE claimed."documentHash" = target."documentHash"
+              AND claimed."providerEnvironment" = target."providerEnvironment"
+              AND claimed."status" = 'APROBADO'
+              AND claimed."expiresAt" > CURRENT_TIMESTAMP
               AND claimed."claimTokenHash" IS NOT NULL
               AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
           )
@@ -2163,8 +2420,7 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
       match.sellerId,
       match.sedeId,
       match.aliadoId,
-      claimTokenHash,
-      rootId
+      claimTokenHash
     );
     return rows[0] ? { assessment: rows[0], claimToken } : null;
   });
@@ -2175,9 +2431,11 @@ async function consumeDataCreditoAssessmentInTransaction(
   database: Prisma.TransactionClient
 ) {
   const claimTokenHash = hmacDataCreditoValue("claim", input.claimToken);
-  const roots = await database.$queryRawUnsafe<Array<{ rootId: string }>>(
+  const targets = await database.$queryRawUnsafe<
+    Array<{ documentHash: string; providerEnvironment: string }>
+  >(
     `
-      SELECT COALESCE("reusedFromAssessmentId", "id") AS "rootId"
+      SELECT "documentHash", "providerEnvironment"
       FROM "DataCreditoAssessment"
       WHERE "id" = $1 AND "claimTokenHash" = $2
         AND "claimExpiresAt" > CURRENT_TIMESTAMP
@@ -2186,45 +2444,64 @@ async function consumeDataCreditoAssessmentInTransaction(
     input.assessmentId,
     claimTokenHash
   );
-  const rootId = roots[0]?.rootId;
-  if (!rootId) return null;
+  const target = targets[0];
+  if (!target) return null;
+
   await database.$executeRawUnsafe(
     `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`,
-    `datacredito-assessment-group:${rootId}`
+    dataCreditoDocumentLockKey(target)
   );
+
   const claimedRows = await database.$queryRawUnsafe<Array<{ id: string }>>(
     `
-      SELECT "id" FROM "DataCreditoAssessment"
-      WHERE "id" = $1 AND "claimTokenHash" = $2
-        AND "claimExpiresAt" > CURRENT_TIMESTAMP
-        AND "status" = 'APROBADO' AND "expiresAt" > CURRENT_TIMESTAMP
-        AND "consumedAt" IS NULL
+      SELECT target."id"
+      FROM "DataCreditoAssessment" target
+      WHERE target."id" = $1 AND target."claimTokenHash" = $2
+        AND target."claimExpiresAt" > CURRENT_TIMESTAMP
+        AND target."status" = 'APROBADO'
+        AND target."expiresAt" > CURRENT_TIMESTAMP
+        AND target."consumedAt" IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM "DataCreditoAssessment" consumed
-          WHERE COALESCE(consumed."reusedFromAssessmentId", consumed."id") = $3
+          WHERE consumed."documentHash" = target."documentHash"
+            AND consumed."providerEnvironment" = target."providerEnvironment"
+            AND consumed."status" IN ('APROBADO', 'RECHAZADO')
+            AND consumed."expiresAt" > CURRENT_TIMESTAMP
             AND consumed."consumedAt" IS NOT NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "DataCreditoAssessment" claimed
+          WHERE claimed."id" <> target."id"
+            AND claimed."documentHash" = target."documentHash"
+            AND claimed."providerEnvironment" = target."providerEnvironment"
+            AND claimed."status" = 'APROBADO'
+            AND claimed."expiresAt" > CURRENT_TIMESTAMP
+            AND claimed."claimTokenHash" IS NOT NULL
+            AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
         )
       FOR UPDATE
     `,
     input.assessmentId,
-    claimTokenHash,
-    rootId
+    claimTokenHash
   );
   if (!claimedRows[0]) return null;
+
   const consumedRows = await database.$queryRawUnsafe<DataCreditoAssessmentRow[]>(
     `
       UPDATE "DataCreditoAssessment"
-      SET "consumedAt" = CURRENT_TIMESTAMP, "creditId" = $2,
+      SET "consumedAt" = CURRENT_TIMESTAMP, "creditId" = $3,
           "claimTokenHash" = NULL, "claimExpiresAt" = NULL,
           "updatedAt" = CURRENT_TIMESTAMP
-      WHERE ("id" = $1 OR "reusedFromAssessmentId" = $1)
+      WHERE "id" = $1
+        AND "claimTokenHash" = $2
         AND "consumedAt" IS NULL
       RETURNING *
     `,
-    rootId,
+    input.assessmentId,
+    claimTokenHash,
     input.creditId
   );
-  return consumedRows.find((row) => row.id === input.assessmentId) || null;
+  return consumedRows[0] || null;
 }
 
 export async function consumeDataCreditoAssessment(

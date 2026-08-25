@@ -5,6 +5,7 @@ import { normalizeDataCreditoPlatform } from "@/lib/datacredito/policy";
 import {
   dataCreditoAssessmentMatchesScope,
   getDataCreditoAssessmentById,
+  getDataCreditoAssessmentDocumentState,
   serializeDataCreditoAssessment,
   type DataCreditoAssessmentScope,
 } from "@/lib/datacredito/storage";
@@ -92,6 +93,32 @@ export async function GET(request: Request, context: RouteContext) {
           code: "ASSESSMENT_CONSUMED",
           error: "Esta evaluacion ya fue utilizada en una solicitud",
           creditId: row.creditId,
+          correlationId: row.correlationId,
+        },
+        { status: 409 }
+      );
+    }
+
+    const documentState = await getDataCreditoAssessmentDocumentState(row);
+    if (documentState.consumedElsewhere) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "NO_EVALUADO",
+          code: "ASSESSMENT_CONSUMED_ELSEWHERE",
+          error: "La consulta vigente ya fue utilizada en otra solicitud.",
+          correlationId: row.correlationId,
+        },
+        { status: 409 }
+      );
+    }
+    if (documentState.inProgress) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "NO_EVALUADO",
+          code: "EVALUATION_IN_PROGRESS",
+          error: "La evaluacion ya se esta utilizando en otra solicitud.",
           correlationId: row.correlationId,
         },
         { status: 409 }

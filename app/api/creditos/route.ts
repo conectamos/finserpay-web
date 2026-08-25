@@ -823,8 +823,13 @@ async function recoverDataCreditoCredit(
     await classifyDataCreditoAssessmentForCredit(input);
 
   if (classification.status === 'CONSUMED') {
-    const created = await prisma.credito.findUnique({
-      where: { id: classification.creditId },
+    const created = await prisma.credito.findFirst({
+      where: {
+        id: classification.creditId,
+        usuarioId: input.userId,
+        vendedorId: input.sellerId,
+        sedeId: input.sedeId,
+      },
       include: creditListInclude,
       omit: creditListOmit,
     });
@@ -846,6 +851,18 @@ async function recoverDataCreditoCredit(
       );
       return dataCreditoRecoveredCreditResponse(created);
     }
+  }
+
+  if (classification.status === 'CONSUMED_ELSEWHERE') {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: 'DATACREDITO_ASSESSMENT_CONSUMED_ELSEWHERE',
+        error:
+          'La consulta vigente ya fue utilizada en otra solicitud. No se realizo una nueva consulta y no se exponen datos del otro credito.',
+      },
+      { status: 409 }
+    );
   }
 
   if (classification.status === 'IN_PROGRESS') {

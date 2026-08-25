@@ -267,8 +267,9 @@ export async function POST(request: Request) {
     });
     solicitudId = solicitudReservation.id;
 
-    // A terminal inquiry for the same CC/tenant/environment is valid for
-    // exactly 15 days. Reuse is attempted before credential readiness and rate
+    // A terminal inquiry for the same CC/provider environment is valid across
+    // FINSER PAY. The destination policy is applied again for the current ally.
+    // It remains reusable for exactly 15 days, before credential readiness and rate
     // limiting so an outage never causes a duplicate paid query.
     const cached = await reuseDataCreditoAssessment({
       platform,
@@ -301,6 +302,24 @@ export async function POST(request: Request) {
         code: "ASSESSMENT_ALREADY_CONSUMED",
         error:
           "Existe una consulta vigente, pero su oferta ya fue utilizada. No se realizo una nueva consulta a DataCredito.",
+        status: 409,
+      });
+    }
+    if (cached?.kind === "IDENTITY_MISMATCH") {
+      return technicalResponse({
+        correlationId,
+        code: "ASSESSMENT_IDENTITY_MISMATCH",
+        error:
+          "La cedula tiene una consulta vigente, pero el primer apellido no coincide con la identidad consultada.",
+        status: 409,
+      });
+    }
+    if (cached?.kind === "REQUIRES_REVIEW") {
+      return technicalResponse({
+        correlationId,
+        code: "ASSESSMENT_REQUIRES_REVIEW",
+        error:
+          "La cedula tiene una consulta vigente con resultado tecnico pendiente de revision. No se realizo una nueva consulta a DataCredito.",
         status: 409,
       });
     }
@@ -368,6 +387,24 @@ export async function POST(request: Request) {
         code: "ASSESSMENT_ALREADY_CONSUMED",
         error:
           "Existe una consulta vigente, pero su oferta ya fue utilizada. No se realizo una nueva consulta a DataCredito.",
+        status: 409,
+      });
+    }
+    if (reservation.kind === "IDENTITY_MISMATCH") {
+      return technicalResponse({
+        correlationId,
+        code: "ASSESSMENT_IDENTITY_MISMATCH",
+        error:
+          "La cedula tiene una consulta vigente, pero el primer apellido no coincide con la identidad consultada.",
+        status: 409,
+      });
+    }
+    if (reservation.kind === "REQUIRES_REVIEW") {
+      return technicalResponse({
+        correlationId,
+        code: "ASSESSMENT_REQUIRES_REVIEW",
+        error:
+          "La cedula tiene una consulta vigente con resultado tecnico pendiente de revision. No se realizo una nueva consulta a DataCredito.",
         status: 409,
       });
     }
@@ -594,9 +631,12 @@ export async function POST(request: Request) {
           : "EVALUATION_ERROR";
 
     if (pendingAssessmentId) {
+      const errorCode = providerStartedAt
+        ? "PROVIDER_OUTCOME_AMBIGUOUS"
+        : code;
       await failDataCreditoAssessment({
         id: pendingAssessmentId,
-        errorCode: code,
+        errorCode,
         providerStatus:
           error instanceof DataCreditoError && error.providerHttpStatus
             ? `HTTP ${error.providerHttpStatus}`

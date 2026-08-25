@@ -275,12 +275,42 @@ WHERE
   OR "createdAt" IS NULL
   OR "updatedAt" IS NULL;
 
--- Existing terminal outcomes receive the new 15-day default from their
--- original creation time. Re-running this never slides the expiry window.
+-- Older runtimes released a timed-out provider attempt as STALE_PENDING.
+-- Because the provider may already have charged that request, migrate every
+-- historical row to the protected ambiguous outcome before deriving the
+-- root 15-day window and propagating it to reused rows.
 UPDATE "DataCreditoAssessment"
-SET "expiresAt" = LEAST("retainedUntil", "createdAt" + INTERVAL '15 days')
-WHERE "status" IN ('APROBADO', 'RECHAZADO')
-  AND "consumedAt" IS NULL;
+SET "errorCode" = 'PROVIDER_OUTCOME_AMBIGUOUS',
+    "updatedAt" = CURRENT_TIMESTAMP
+WHERE "status" = 'NO_EVALUADO'
+  AND "errorCode" = 'STALE_PENDING';
+
+-- The root owns the contractual 15-day clock. A reused row must never extend
+-- it from the clone creation time, even when this setup is executed again.
+UPDATE "DataCreditoAssessment" root
+SET "expiresAt" = LEAST(
+  root."retainedUntil",
+  root."createdAt" + INTERVAL '15 days'
+)
+WHERE root."reusedFromAssessmentId" IS NULL
+  AND (
+    root."status" IN ('APROBADO', 'RECHAZADO')
+    OR (
+      root."status" = 'NO_EVALUADO'
+      AND (
+        root."durationMs" IS NOT NULL
+        OR root."errorCode" IN (
+          'PROVIDER_OUTCOME_AMBIGUOUS', 'NO_EVALUABLE_INFORMATION',
+          'TELCO_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
+        )
+      )
+    )
+  );
+
+UPDATE "DataCreditoAssessment" clone
+SET "expiresAt" = LEAST(clone."retainedUntil", root."expiresAt")
+FROM "DataCreditoAssessment" root
+WHERE clone."reusedFromAssessmentId" = root."id";
 
 UPDATE "DataCreditoAssessment" assessment
 SET "policyRevisionId" = revision."id"
@@ -369,9 +399,30 @@ FOR EACH ROW EXECUTE FUNCTION "finser_resolve_legacy_assessment_revision"();
 CREATE OR REPLACE FUNCTION "finser_set_datacredito_terminal_expiry"()
 RETURNS TRIGGER AS $$
 BEGIN
+  -- An old runtime may release a stale PENDING and immediately query again.
+  -- The outcome is ambiguous once the process may have reached the provider.
   IF OLD."status" = 'PENDING'
-    AND NEW."status" IN ('APROBADO', 'RECHAZADO')
+    AND NEW."status" = 'NO_EVALUADO'
+    AND NEW."errorCode" = 'STALE_PENDING'
+  THEN
+    NEW."errorCode" := 'PROVIDER_OUTCOME_AMBIGUOUS';
+  END IF;
+
+  IF OLD."status" = 'PENDING'
     AND NEW."reusedFromAssessmentId" IS NULL
+    AND (
+      NEW."status" IN ('APROBADO', 'RECHAZADO')
+      OR (
+        NEW."status" = 'NO_EVALUADO'
+        AND (
+          NEW."durationMs" IS NOT NULL
+          OR NEW."errorCode" IN (
+            'PROVIDER_OUTCOME_AMBIGUOUS', 'NO_EVALUABLE_INFORMATION',
+            'TELCO_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
+          )
+        )
+      )
+    )
   THEN
     NEW."expiresAt" := LEAST(
       NEW."retainedUntil",
@@ -387,6 +438,204 @@ DROP TRIGGER IF EXISTS "DataCreditoAssessment_terminal_expiry"
 CREATE TRIGGER "DataCreditoAssessment_terminal_expiry"
 BEFORE UPDATE OF "status" ON "DataCreditoAssessment"
 FOR EACH ROW EXECUTE FUNCTION "finser_set_datacredito_terminal_expiry"();
+
+LOCK TABLE "DataCreditoAssessment" IN SHARE ROW EXCLUSIVE MODE;
+
+CREATE OR REPLACE FUNCTION "finser_guard_datacredito_pending_global"()
+RETURNS TRIGGER AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended(
+      'datacredito-document:' || NEW."providerEnvironment" || ':' ||
+        NEW."documentHash",
+      0::bigint
+    )
+  );
+
+  IF EXISTS (
+    SELECT 1
+    FROM "DataCreditoAssessment" assessment
+    WHERE assessment."documentHash" = NEW."documentHash"
+      AND assessment."providerEnvironment" = NEW."providerEnvironment"
+      AND (
+        assessment."status" = 'PENDING'
+        OR (
+          assessment."status" IN ('APROBADO', 'RECHAZADO')
+          AND assessment."expiresAt" > CURRENT_TIMESTAMP
+        )
+        OR (
+          assessment."status" = 'NO_EVALUADO'
+          AND assessment."expiresAt" > CURRENT_TIMESTAMP
+          AND (
+            assessment."durationMs" IS NOT NULL
+            OR assessment."errorCode" IN (
+              'PROVIDER_OUTCOME_AMBIGUOUS', 'NO_EVALUABLE_INFORMATION',
+              'TELCO_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
+            )
+          )
+        )
+      )
+  ) THEN
+    RAISE EXCEPTION
+      'Ya existe una consulta DataCredito activa para documento y ambiente'
+      USING ERRCODE = '23505',
+        CONSTRAINT = 'DataCreditoAssessment_document_guard_key';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "DataCreditoAssessment_global_pending_guard"
+  ON "DataCreditoAssessment";
+DROP TRIGGER IF EXISTS "DataCreditoAssessment_guard_pending_global"
+  ON "DataCreditoAssessment";
+CREATE TRIGGER "DataCreditoAssessment_guard_pending_global"
+BEFORE INSERT ON "DataCreditoAssessment"
+FOR EACH ROW
+WHEN (NEW."status" = 'PENDING')
+EXECUTE FUNCTION "finser_guard_datacredito_pending_global"();
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM "DataCreditoAssessment" assessment
+    WHERE assessment."status" = 'APROBADO'
+      AND assessment."expiresAt" > CURRENT_TIMESTAMP
+      AND assessment."claimTokenHash" IS NOT NULL
+      AND assessment."claimExpiresAt" > CURRENT_TIMESTAMP
+    GROUP BY assessment."documentHash", assessment."providerEnvironment"
+    HAVING COUNT(*) > 1
+  ) THEN
+    RAISE EXCEPTION
+      'Existen reclamaciones DataCredito globales duplicadas; espere su vencimiento y reintente el setup';
+  END IF;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION "finser_guard_datacredito_global_usage_v1"()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW."documentHash" IS DISTINCT FROM OLD."documentHash"
+    OR NEW."providerEnvironment" IS DISTINCT FROM OLD."providerEnvironment"
+  THEN
+    RAISE EXCEPTION
+      'La llave global de una consulta DataCredito es inmutable'
+      USING ERRCODE = '23514';
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended(
+      'datacredito-document:' || NEW."providerEnvironment" || ':' ||
+        NEW."documentHash",
+      0::bigint
+    )
+  );
+
+  -- A confirmed consumption can never be moved to another credit.
+  IF OLD."consumedAt" IS NOT NULL
+    AND (
+      NEW."consumedAt" IS DISTINCT FROM OLD."consumedAt"
+      OR NEW."creditId" IS DISTINCT FROM OLD."creditId"
+    )
+  THEN
+    RETURN NULL;
+  END IF;
+
+  -- Old runtimes update the root and every clone. Skipping rows without the
+  -- active claim turns that legacy statement into an exact one-row consume.
+  IF OLD."consumedAt" IS NULL AND NEW."consumedAt" IS NOT NULL THEN
+    IF OLD."status" <> 'APROBADO'
+      OR OLD."expiresAt" <= CURRENT_TIMESTAMP
+      OR OLD."claimTokenHash" IS NULL
+      OR OLD."claimExpiresAt" IS NULL
+      OR OLD."claimExpiresAt" <= CURRENT_TIMESTAMP
+      OR NEW."creditId" IS NULL
+      OR NEW."creditId" <= 0
+    THEN
+      RETURN NULL;
+    END IF;
+
+    IF EXISTS (
+      SELECT 1
+      FROM "DataCreditoAssessment" other
+      WHERE other."id" <> OLD."id"
+        AND other."documentHash" = OLD."documentHash"
+        AND other."providerEnvironment" = OLD."providerEnvironment"
+        AND other."status" IN ('APROBADO', 'RECHAZADO')
+        AND other."expiresAt" > CURRENT_TIMESTAMP
+        AND other."consumedAt" IS NOT NULL
+    ) OR EXISTS (
+      SELECT 1
+      FROM "DataCreditoAssessment" other
+      WHERE other."id" <> OLD."id"
+        AND other."documentHash" = OLD."documentHash"
+        AND other."providerEnvironment" = OLD."providerEnvironment"
+        AND other."status" = 'APROBADO'
+        AND other."expiresAt" > CURRENT_TIMESTAMP
+        AND other."claimTokenHash" IS NOT NULL
+        AND other."claimExpiresAt" > CURRENT_TIMESTAMP
+    ) THEN
+      RETURN NULL;
+    END IF;
+
+    RETURN NEW;
+  END IF;
+
+  -- Claim creation or renewal is globally exclusive for the document.
+  IF (
+    NEW."claimTokenHash" IS NOT NULL
+    OR NEW."claimExpiresAt" IS NOT NULL
+  ) AND (
+    NEW."claimTokenHash" IS DISTINCT FROM OLD."claimTokenHash"
+    OR NEW."claimExpiresAt" IS DISTINCT FROM OLD."claimExpiresAt"
+  ) THEN
+    IF NEW."claimTokenHash" IS NULL
+      OR NEW."claimExpiresAt" IS NULL
+      OR NEW."claimExpiresAt" <= CURRENT_TIMESTAMP
+      OR (
+        OLD."claimTokenHash" IS NOT NULL
+        AND OLD."claimExpiresAt" > CURRENT_TIMESTAMP
+      )
+      OR NEW."status" <> 'APROBADO'
+      OR NEW."expiresAt" <= CURRENT_TIMESTAMP
+      OR NEW."consumedAt" IS NOT NULL
+      OR EXISTS (
+        SELECT 1
+        FROM "DataCreditoAssessment" other
+        WHERE other."documentHash" = NEW."documentHash"
+          AND other."providerEnvironment" = NEW."providerEnvironment"
+          AND other."status" IN ('APROBADO', 'RECHAZADO')
+          AND other."expiresAt" > CURRENT_TIMESTAMP
+          AND other."consumedAt" IS NOT NULL
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM "DataCreditoAssessment" other
+        WHERE other."id" <> OLD."id"
+          AND other."documentHash" = NEW."documentHash"
+          AND other."providerEnvironment" = NEW."providerEnvironment"
+          AND other."status" = 'APROBADO'
+          AND other."expiresAt" > CURRENT_TIMESTAMP
+          AND other."claimTokenHash" IS NOT NULL
+          AND other."claimExpiresAt" > CURRENT_TIMESTAMP
+      )
+    THEN
+      RETURN NULL;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "DataCreditoAssessment_guard_global_usage"
+  ON "DataCreditoAssessment";
+CREATE TRIGGER "DataCreditoAssessment_guard_global_usage"
+BEFORE UPDATE OF "claimTokenHash", "claimExpiresAt", "consumedAt", "creditId"
+ON "DataCreditoAssessment"
+FOR EACH ROW
+EXECUTE FUNCTION "finser_guard_datacredito_global_usage_v1"();
 
 CREATE TABLE IF NOT EXISTS "DataCreditoAssessmentSecurePayload" (
   "assessmentId" UUID PRIMARY KEY,
@@ -476,24 +725,48 @@ CREATE UNIQUE INDEX "DataCreditoAssessment_pending_key"
   )
   WHERE "status" = 'PENDING';
 
-DROP INDEX IF EXISTS "DataCreditoAssessment_pending_document_key";
-CREATE UNIQUE INDEX "DataCreditoAssessment_pending_document_key"
+-- A pending older than six minutes cannot still own the provider sequence.
+-- Normalize it before installing the global anti-query uniqueness barrier.
+UPDATE "DataCreditoAssessment"
+SET "status" = 'NO_EVALUADO',
+    "errorCode" = 'PROVIDER_OUTCOME_AMBIGUOUS',
+    "updatedAt" = CURRENT_TIMESTAMP
+WHERE "status" = 'PENDING'
+  AND "createdAt" < CURRENT_TIMESTAMP - INTERVAL '6 minutes';
+
+CREATE UNIQUE INDEX IF NOT EXISTS "DataCreditoAssessment_pending_document_key"
   ON "DataCreditoAssessment" (
     "documentHash", "providerEnvironment", COALESCE("aliadoId", 0)
   )
   WHERE "status" = 'PENDING';
 
-DROP INDEX IF EXISTS "DataCreditoAssessment_reuse_idx";
-CREATE INDEX "DataCreditoAssessment_reuse_idx"
+CREATE INDEX IF NOT EXISTS "DataCreditoAssessment_reuse_idx"
   ON "DataCreditoAssessment" (
     "documentHash", COALESCE("aliadoId", 0),
     "expiresAt" DESC, "createdAt" DESC
   );
 
-DROP INDEX IF EXISTS "DataCreditoAssessment_reuse_environment_idx";
-CREATE INDEX "DataCreditoAssessment_reuse_environment_idx"
+CREATE INDEX IF NOT EXISTS "DataCreditoAssessment_reuse_environment_idx"
   ON "DataCreditoAssessment" (
     "documentHash", "providerEnvironment", COALESCE("aliadoId", 0),
+    "expiresAt" DESC, "createdAt" DESC
+  );
+
+DROP INDEX IF EXISTS "DataCreditoAssessment_pending_global_key";
+CREATE UNIQUE INDEX "DataCreditoAssessment_pending_global_key"
+  ON "DataCreditoAssessment" ("documentHash", "providerEnvironment")
+  WHERE "status" = 'PENDING';
+
+DROP INDEX IF EXISTS "DataCreditoAssessment_reuse_global_idx";
+CREATE INDEX "DataCreditoAssessment_reuse_global_idx"
+  ON "DataCreditoAssessment" (
+    "documentHash", "expiresAt" DESC, "createdAt" DESC
+  );
+
+DROP INDEX IF EXISTS "DataCreditoAssessment_reuse_environment_global_idx";
+CREATE INDEX "DataCreditoAssessment_reuse_environment_global_idx"
+  ON "DataCreditoAssessment" (
+    "documentHash", "providerEnvironment",
     "expiresAt" DESC, "createdAt" DESC
   );
 

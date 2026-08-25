@@ -80,28 +80,31 @@ test("reserva reutilizacion, rate limit e insercion bajo locks de base de datos"
   assert.doesNotMatch(evaluationRoute, /countRecentDataCreditoAssessments/);
 });
 
-test("el lock documental serializa apellidos y plataformas de la misma cedula", () => {
+test("el lock documental serializa globalmente la misma cedula y ambiente", () => {
   const lockDefinition = storage.match(
     /function dataCreditoDocumentLockKey[\s\S]*?(?=export async function reuseDataCreditoAssessment)/
   )?.[0];
   assert.ok(lockDefinition);
-  assert.match(lockDefinition, /input\.documentHash/);
-  assert.match(lockDefinition, /input\.providerEnvironment/);
-  assert.match(lockDefinition, /input\.aliadoId/);
-  assert.doesNotMatch(lockDefinition, /input\.(platform|surnameHash)/);
+  assert.match(
+    lockDefinition,
+    /"datacredito-document"[\s\S]*input\.providerEnvironment[\s\S]*input\.documentHash/
+  );
+  assert.doesNotMatch(
+    lockDefinition,
+    /input\.(aliadoId|sedeId|platform|surnameHash)/
+  );
 });
 
-test("solo libera pendientes antiguos de la misma cedula ambiente y aliado", () => {
+test("solo libera pendientes antiguos de la misma cedula y ambiente global", () => {
   assert.match(storage, /maximumProviderSequenceMs = timeoutMs \* 4/);
   assert.match(storage, /Math\.max\(5,/);
   const staleCleanup = storage.match(
-    /UPDATE "DataCreditoAssessment"[\s\S]*?"errorCode" = 'STALE_PENDING'[\s\S]*?createdAt" <[\s\S]*?\n        `/
+    /UPDATE "DataCreditoAssessment"[\s\S]*?"errorCode" = 'PROVIDER_OUTCOME_AMBIGUOUS'[\s\S]*?createdAt" <[\s\S]*?\n        `/
   )?.[0];
   assert.ok(staleCleanup);
   assert.match(staleCleanup, /"documentHash" = \$1/);
   assert.match(staleCleanup, /"providerEnvironment" = \$2/);
-  assert.match(staleCleanup, /"aliadoId" IS NOT DISTINCT FROM \$3/);
-  assert.doesNotMatch(staleCleanup, /sedeId|surnameHash|platform/);
+  assert.doesNotMatch(staleCleanup, /aliadoId|sedeId|surnameHash|platform/);
   assert.doesNotMatch(storage, /INTERVAL '2 minutes'/);
 });
 
@@ -143,6 +146,23 @@ test("incluye preflight idempotente antes de habilitar la integracion", () => {
     /COPY --from=builder \/app\/scripts\/setup-datacredito\.sql \.\/scripts\/setup-datacredito\.sql/
   );
   assert.match(setupSql, /ALTER COLUMN "retainedUntil" SET NOT NULL/);
+});
+
+test("migra STALE_PENDING historicos al bloqueo ambiguo antes del TTL global", () => {
+  const legacyBackfill = setupSql.search(
+    /UPDATE "DataCreditoAssessment"\r?\nSET "errorCode" = 'PROVIDER_OUTCOME_AMBIGUOUS',[\s\S]*?WHERE "status" = 'NO_EVALUADO'\r?\n  AND "errorCode" = 'STALE_PENDING';/
+  );
+  const rootTtlBackfill = setupSql.indexOf(
+    'UPDATE "DataCreditoAssessment" root'
+  );
+  const cloneTtlBackfill = setupSql.indexOf(
+    'UPDATE "DataCreditoAssessment" clone'
+  );
+
+  assert.ok(legacyBackfill >= 0);
+  assert.match(setupSql.slice(0, rootTtlBackfill), /PROVIDER_OUTCOME_AMBIGUOUS/);
+  assert.ok(legacyBackfill < rootTtlBackfill);
+  assert.ok(rootTtlBackfill < cloneTtlBackfill);
 });
 
 test("produccion verifica el preflight sin ejecutar DDL en runtime", () => {
@@ -358,6 +378,15 @@ test("el credito exige, consume y recupera una precalificacion sin bypass", () =
   assert.match(creditRoute, /recoverDataCreditoCredit/);
   assert.match(creditRoute, /dataCreditoRecoveredCreditResponse/);
   assert.match(creditRoute, /DATACREDITO_ASSESSMENT_IN_PROGRESS/);
+  assert.match(creditRoute, /DATACREDITO_ASSESSMENT_CONSUMED_ELSEWHERE/);
+  assert.match(
+    creditRoute,
+    /prisma\.credito\.findFirst\([\s\S]*usuarioId: input\.userId[\s\S]*vendedorId: input\.sellerId[\s\S]*sedeId: input\.sedeId/
+  );
+  assert.doesNotMatch(
+    creditRoute,
+    /prisma\.credito\.findUnique\([\s\S]{0,200}classification\.creditId/
+  );
   assert.match(creditRoute, /claimDataCreditoAssessment/);
   assert.match(creditRoute, /consumeDataCreditoAssessment\([\s\S]*?transaction/);
   assert.match(creditRoute, /dataCreditoRequired \|\| isVeriffRequired\(\)/);
@@ -378,10 +407,20 @@ test("el credito exige, consume y recupera una precalificacion sin bypass", () =
 
 test("la interfaz recupera borradores, vencimientos y conflictos sin repetir consultas", () => {
   const consumedCheck = assessmentRoute.indexOf("if (row.consumedAt)");
+  const globalStateCheck = assessmentRoute.indexOf(
+    "getDataCreditoAssessmentDocumentState(row)"
+  );
   const environmentCheck = assessmentRoute.indexOf(
     "row.providerEnvironment !== provider.environment"
   );
-  assert.ok(consumedCheck >= 0 && consumedCheck < environmentCheck);
+  assert.ok(consumedCheck >= 0 && consumedCheck < globalStateCheck);
+  assert.ok(globalStateCheck < environmentCheck);
+  assert.match(assessmentRoute, /ASSESSMENT_CONSUMED_ELSEWHERE/);
+  assert.match(assessmentRoute, /documentState\.inProgress/);
+  assert.doesNotMatch(
+    assessmentRoute,
+    /ASSESSMENT_CONSUMED_ELSEWHERE[\s\S]{0,240}creditId/
+  );
   assert.match(assessmentRoute, /ASSESSMENT_ENVIRONMENT_MISMATCH/);
   assert.match(assessmentRoute, /getDataCreditoPublicConfig/);
   assert.ok(environmentCheck < assessmentRoute.indexOf("const expiresAt"));
@@ -545,6 +584,9 @@ test("la clasificacion posfallo no filtra evaluaciones fuera de identidad y scop
   }
   assert.match(classifier, /row\.consumedAt/);
   assert.match(classifier, /status: "CONSUMED", creditId/);
+  assert.match(classifier, /status: "CONSUMED_ELSEWHERE"/);
+  assert.match(classifier, /row\.globalConsumedElsewhere/);
+  assert.match(classifier, /row\.globalClaimActive/);
   assert.ok(
     classifier.indexOf('status: "CONSUMED", creditId') <
       classifier.indexOf("row.providerEnvironment !== match.providerEnvironment")
