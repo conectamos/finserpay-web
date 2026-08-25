@@ -7,6 +7,7 @@ import {
   getDataCreditoPublicConfig,
   queryDataCreditoNaturalPerson,
 } from "@/lib/datacredito";
+import { buildDataCreditoAdminRiskSummary } from "@/lib/datacredito/admin-report";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import {
   DATACREDITO_MAX_SCORE,
@@ -430,10 +431,48 @@ export async function POST(request: Request) {
       });
     }
 
+    const riskSummary = buildDataCreditoAdminRiskSummary(
+      result.providerPayload
+    );
+    const telcoDelinquencyInformationAvailable =
+      riskSummary?.telcos.available ?? null;
+    const telcoDelinquentBalanceCop =
+      riskSummary?.telcos.delinquentBalance ?? null;
+    const priorityRuleEnabled =
+      policy.priorityRules?.telcoDelinquency.enabled === true;
+    const telcoRiskMetricValid =
+      typeof telcoDelinquentBalanceCop === "number" &&
+      Number.isSafeInteger(telcoDelinquentBalanceCop) &&
+      telcoDelinquentBalanceCop >= 0;
+    const telcoRiskMetricUnavailable =
+      telcoDelinquencyInformationAvailable === null ||
+      (telcoDelinquencyInformationAvailable &&
+        !telcoRiskMetricValid);
+    if (priorityRuleEnabled && telcoRiskMetricUnavailable) {
+      await failDataCreditoAssessmentWithSecureRecord({
+        id: pending.id,
+        errorCode: "TELCO_RISK_METRIC_UNAVAILABLE",
+        transactionCode,
+        providerStatus,
+        durationMs,
+        secure: completedSecure,
+      });
+      return technicalResponse({
+        correlationId,
+        code: "TELCO_RISK_METRIC_UNAVAILABLE",
+        error:
+          "DataCredito no retorno una mora vigente Telcos valida para aplicar la politica.",
+        status: 422,
+      });
+    }
     const resolution = resolveDataCreditoDecision(
       policy,
       platform,
-      assessmentScore
+      assessmentScore,
+      {
+        telcoDelinquentBalanceCop,
+        telcoDelinquencyInformationAvailable,
+      }
     );
     if (!resolution) {
       await failDataCreditoAssessmentWithSecureRecord({

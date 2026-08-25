@@ -13,10 +13,12 @@ const {
   DATACREDITO_DEFAULT_IPHONE_INSTALLMENT_COUNT,
   DATACREDITO_DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT,
   DATACREDITO_NO_INFORMATION_SCORE,
+  DATACREDITO_RISK_METRIC_VERSION,
   DataCreditoPolicyValidationError,
   isDataCreditoNoInformationScore,
   normalizeDataCreditoPlatform,
   parseDataCreditoPolicyBands,
+  parseDataCreditoPolicyPriorityRules,
   resolveDataCreditoDecision,
   resolveDataCreditoOfferFinancingTerms,
 } = await jiti.import("../lib/datacredito/policy.ts");
@@ -332,6 +334,211 @@ test("rechaza una politica que omite una plataforma", () => {
       error instanceof DataCreditoPolicyValidationError &&
       error.issues.includes("Faltan las bandas de IPHONE")
   );
+});
+
+test("valida la regla prioritaria y permite leer revisiones historicas sin ella", () => {
+  assert.equal(
+    parseDataCreditoPolicyPriorityRules(undefined, { optional: true }),
+    null
+  );
+  assert.deepEqual(
+    parseDataCreditoPolicyPriorityRules({
+      telcoDelinquency: {
+        enabled: true,
+        rejectAboveCop: "2000000",
+      },
+    }),
+    {
+      telcoDelinquency: {
+        enabled: true,
+        rejectAboveCop: 2_000_000,
+      },
+    }
+  );
+  assert.throws(
+    () => parseDataCreditoPolicyPriorityRules(undefined),
+    (error) =>
+      error instanceof DataCreditoPolicyValidationError &&
+      error.issues.some((issue) => issue.includes("regla prioritaria"))
+  );
+  assert.throws(
+    () =>
+      parseDataCreditoPolicyPriorityRules({
+        telcoDelinquency: {
+          enabled: "si",
+          rejectAboveCop: 2_000_000.5,
+        },
+      }),
+    (error) =>
+      error instanceof DataCreditoPolicyValidationError &&
+      error.issues.some((issue) => issue.includes("habilitada")) &&
+      error.issues.some((issue) => issue.includes("entre 1 y 100000000"))
+  );
+  assert.throws(
+    () =>
+      parseDataCreditoPolicyPriorityRules({
+        telcoDelinquency: { enabled: false, rejectAboveCop: 2_000_000 },
+      }),
+    (error) =>
+      error instanceof DataCreditoPolicyValidationError &&
+      error.issues.some((issue) => issue.includes("debe estar habilitada"))
+  );
+  assert.throws(
+    () =>
+      parseDataCreditoPolicyPriorityRules({
+        telcoDelinquency: { enabled: true, rejectAboveCop: 100_000_001 },
+      }),
+    (error) =>
+      error instanceof DataCreditoPolicyValidationError &&
+      error.issues.some((issue) => issue.includes("entre 1 y 100000000"))
+  );
+});
+
+test("la mora vigente Telcos tiene prioridad estricta y no usa la mora total", () => {
+  const priorityRules = parseDataCreditoPolicyPriorityRules({
+    telcoDelinquency: {
+      enabled: true,
+      rejectAboveCop: 2_000_000,
+    },
+  });
+  const policy = {
+    version: 22,
+    bands: parseDataCreditoPolicyBands(completeBands()),
+    priorityRules,
+  };
+
+  for (const platform of ["ANDROID", "IPHONE"]) {
+    const highTotalButLowTelcos = resolveDataCreditoDecision(
+      policy,
+      platform,
+      900,
+      {
+        telcoDelinquentBalanceCop: 100_000,
+        telcoDelinquencyInformationAvailable: true,
+      }
+    );
+    assert.ok(highTotalButLowTelcos);
+    assert.equal(highTotalButLowTelcos.decision, "APROBADO");
+    const zeroTelcoDelinquency = resolveDataCreditoDecision(
+      policy,
+      platform,
+      900,
+      {
+        telcoDelinquentBalanceCop: 0,
+        telcoDelinquencyInformationAvailable: true,
+      }
+    );
+    assert.equal(zeroTelcoDelinquency?.decisionRule, "SCORE_BAND");
+
+    const atBoundary = resolveDataCreditoDecision(policy, platform, 900, {
+      telcoDelinquentBalanceCop: 2_000_000,
+      telcoDelinquencyInformationAvailable: true,
+    });
+    assert.ok(atBoundary);
+    assert.equal(atBoundary.decision, "APROBADO");
+    assert.equal(atBoundary.decisionRule, "SCORE_BAND");
+    assert.equal(atBoundary.offer.decisionRule, "SCORE_BAND");
+    assert.equal(atBoundary.telcoRejectionThresholdCop, 2_000_000);
+    assert.equal(
+      atBoundary.riskMetricVersion,
+      DATACREDITO_RISK_METRIC_VERSION
+    );
+
+    const aboveBoundary = resolveDataCreditoDecision(policy, platform, 900, {
+      telcoDelinquentBalanceCop: 2_000_001,
+      telcoDelinquencyInformationAvailable: true,
+    });
+    assert.ok(aboveBoundary);
+    assert.equal(aboveBoundary.decision, "RECHAZADO");
+    assert.equal(
+      aboveBoundary.decisionRule,
+      "TELCO_DELINQUENCY_THRESHOLD"
+    );
+    assert.equal(
+      aboveBoundary.offer.decisionRule,
+      "TELCO_DELINQUENCY_THRESHOLD"
+    );
+    assert.equal(
+      aboveBoundary.offer.telcoRejectionThresholdCop,
+      2_000_000
+    );
+    assert.equal(
+      aboveBoundary.offer.riskMetricVersion,
+      "MIDECISOR_PN_MILES_COP_V1"
+    );
+    assert.equal("telcoDelinquentBalanceCop" in aboveBoundary, false);
+    assert.equal("telcoDelinquentBalanceCop" in aboveBoundary.offer, false);
+
+    const telcosNotReported = resolveDataCreditoDecision(
+      policy,
+      platform,
+      900,
+      {
+        telcoDelinquentBalanceCop: null,
+        telcoDelinquencyInformationAvailable: false,
+      }
+    );
+    assert.ok(telcosNotReported);
+    assert.equal(telcosNotReported.decision, "APROBADO");
+    assert.equal(telcosNotReported.decisionRule, "SCORE_BAND");
+  }
+});
+
+test("Telcos informado con mora invalida falla cerrado y una revision historica usa puntaje", () => {
+  const enabledPolicy = {
+    version: 23,
+    bands: parseDataCreditoPolicyBands(completeBands()),
+    priorityRules: parseDataCreditoPolicyPriorityRules({
+      telcoDelinquency: { enabled: true, rejectAboveCop: 2_000_000 },
+    }),
+  };
+  for (const riskContext of [
+    undefined,
+    {},
+    {
+      telcoDelinquentBalanceCop: null,
+      telcoDelinquencyInformationAvailable: null,
+    },
+    {
+      telcoDelinquentBalanceCop: null,
+      telcoDelinquencyInformationAvailable: true,
+    },
+    {
+      telcoDelinquentBalanceCop: -1,
+      telcoDelinquencyInformationAvailable: true,
+    },
+    {
+      telcoDelinquentBalanceCop: 2_000_000.5,
+      telcoDelinquencyInformationAvailable: true,
+    },
+    {
+      telcoDelinquentBalanceCop: Number.MAX_SAFE_INTEGER + 1,
+      telcoDelinquencyInformationAvailable: true,
+    },
+  ]) {
+    assert.equal(
+      resolveDataCreditoDecision(
+        enabledPolicy,
+        "ANDROID",
+        900,
+        riskContext
+      ),
+      null
+    );
+  }
+
+  const historicalPolicy = {
+    version: 23,
+    bands: enabledPolicy.bands,
+  };
+  const historical = resolveDataCreditoDecision(historicalPolicy, "ANDROID", 900, {
+    telcoDelinquentBalanceCop: 9_000_000,
+    telcoDelinquencyInformationAvailable: true,
+  });
+  assert.ok(historical);
+  assert.equal(historical.decision, "APROBADO");
+  assert.equal(historical.decisionRule, "SCORE_BAND");
+  assert.equal(historical.telcoRejectionThresholdCop, null);
 });
 
 test("resuelve decision y oferta desde la version exacta de politica", () => {

@@ -12,6 +12,7 @@ import {
   normalizeDataCreditoPlatform,
   parseDataCreditoPolicyBands,
   parseDataCreditoPolicyFinancialSettings,
+  parseDataCreditoPolicyPriorityRules,
   resolveDataCreditoDecision,
   type DataCreditoDecision,
   type DataCreditoOffer,
@@ -144,7 +145,7 @@ export async function GET(request: Request) {
     const simulationResolution =
       simulationRequested && simulationPlatform && policy
         ? resolveDataCreditoDecision(
-            policy,
+            { ...policy, priorityRules: null },
             simulationPlatform,
             DATACREDITO_NO_INFORMATION_SCORE
           )
@@ -264,10 +265,25 @@ export async function PATCH(request: Request) {
           },
         }
     )!;
+    const priorityRulesInput =
+      body.priorityRules ?? assigned.policy.priorityRules;
+    if (priorityRulesInput === null || priorityRulesInput === undefined) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "La revision historica no incluye una regla prioritaria. Envia priorityRules explicitamente antes de publicar.",
+        },
+        { status: 400 }
+      );
+    }
+    const priorityRules =
+      parseDataCreditoPolicyPriorityRules(priorityRulesInput)!;
     const policy = await createDataCreditoPolicyVersion({
       profileId: assigned.policy.profileId,
       bands,
       financialSettings,
+      priorityRules,
       createdByUserId: user.id,
       expectedVersion,
     });

@@ -11,7 +11,7 @@ const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const { parseDataCreditoPolicyBands, resolveDataCreditoDecision } =
   await jiti.import("../lib/datacredito/policy.ts");
 
-const [schema, setupSql, storage, adminStorage, evaluationRoute, catalogRoute] =
+const [schema, setupSql, storage, adminStorage, evaluationRoute, catalogRoute, legacyPolicyRoute] =
   await Promise.all([
     readProjectFile("prisma/schema.prisma"),
     readProjectFile("scripts/setup-datacredito.sql"),
@@ -19,6 +19,7 @@ const [schema, setupSql, storage, adminStorage, evaluationRoute, catalogRoute] =
     readProjectFile("lib/datacredito/admin-storage.ts"),
     readProjectFile("app/api/creditos/datacredito/evaluaciones/route.ts"),
     readProjectFile("app/api/creditos/datacredito/politicas/route.ts"),
+    readProjectFile("app/api/creditos/datacredito/politica/route.ts"),
   ]);
 
 function section(contents, startMarker, endMarker) {
@@ -84,6 +85,27 @@ test("catalogo y asignaciones solo exponen mutaciones al administrador central",
     catalogRoute.match(/requireFinancingTerms:\s*true/g)?.length,
     2
   );
+  assert.equal(
+    catalogRoute.match(/parseDataCreditoPolicyPriorityRules\(/g)?.length,
+    2,
+    "POST y PATCH deben exigir la regla prioritaria versionada"
+  );
+});
+
+test("el endpoint legado exige la regla al publicar una revision historica que no la tiene", () => {
+  const patchHandler = legacyPolicyRoute.slice(
+    legacyPolicyRoute.indexOf("export async function PATCH")
+  );
+  assert.match(
+    patchHandler,
+    /body\.priorityRules \?\? assigned\.policy\.priorityRules/
+  );
+  assert.match(
+    patchHandler,
+    /priorityRulesInput === null[\s\S]*?priorityRulesInput === undefined[\s\S]*?status: 400/
+  );
+  assert.match(patchHandler, /parseDataCreditoPolicyPriorityRules\(priorityRulesInput\)/);
+  assert.doesNotMatch(patchHandler, /rejectAboveCop:\s*2_000_000/);
 });
 
 test("el detalle admin normaliza terminos de ofertas historicas", () => {
@@ -134,6 +156,13 @@ test("evaluacion resuelve la politica por aliado y falla antes del proveedor", (
   assert.match(evaluationRoute, /POLICY_INACTIVE/);
   assert.match(evaluationRoute, /POLICY_NO_REVISION/);
   assert.match(evaluationRoute, /policyRevisionId:\s*policy\.revisionId/);
+  assert.match(
+    evaluationRoute,
+    /buildDataCreditoAdminRiskSummary\([\s\S]*?result\.providerPayload[\s\S]*?\)/
+  );
+  assert.match(evaluationRoute, /riskSummary\?\.telcos\.delinquentBalance/);
+  assert.match(evaluationRoute, /telcoDelinquencyInformationAvailable/);
+  assert.doesNotMatch(evaluationRoute, /riskSummary\?\.totals\.delinquentBalance/);
 });
 
 test("la llave anticonsulta es cedula, ambiente y aliado, no apellido ni plataforma", () => {
@@ -188,7 +217,20 @@ test("repetir conserva la consulta raiz y aplica la revision vigente de destino"
   assert.doesNotMatch(clone, /historicalPolicy|source\."policyRevisionId"/);
   assert.match(clone, /source\."expiresAt", source\."retainedUntil"/);
   assert.match(clone, /"reusedFromAssessmentId"/);
-  assert.doesNotMatch(clone, /SecurePayload|ciphertext/);
+  assert.match(clone, /readReusableDataCreditoRiskContext/);
+  assert.match(clone, /telcoDelinquentBalanceCop/);
+  assert.match(clone, /telcoDelinquencyInformationAvailable/);
+  assert.match(clone, /priorityRuleEnabled/);
+  assert.match(clone, /reusableTelcoRiskMetricUnavailable/);
+  assert.doesNotMatch(clone, /queryDataCreditoNaturalPerson/);
+  assert.match(storage, /DataCreditoAssessmentSecurePayload/);
+  assert.match(storage, /decryptDataCreditoSecureRecord/);
+  assert.match(storage, /riskSummary\?\.telcos\.delinquentBalance/);
+  assert.match(storage, /No se realizo una nueva consulta/);
+  assert.match(storage, /TELCO_RISK_METRIC_UNAVAILABLE/);
+  assert.match(storage, /JSON\.stringify\(\{ bands, financialSettings, priorityRules \}\)/);
+  assert.match(adminStorage, /priorityRules:\s*payload\.priorityRules/);
+  assert.match(adminStorage, /parseDataCreditoPolicyPriorityRules/);
 });
 
 test("reintentos del mismo scope devuelven el assessment existente sin crecer filas", () => {

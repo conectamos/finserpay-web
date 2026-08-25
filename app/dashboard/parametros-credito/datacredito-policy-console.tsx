@@ -25,6 +25,7 @@ import {
   DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
   type DataCreditoAresPolicyFinancialSettings,
   type DataCreditoPolicyFinancialSettings,
+  type DataCreditoPolicyPriorityRules,
 } from "@/lib/datacredito/policy";
 import {
   Badge,
@@ -63,6 +64,7 @@ export type DataCreditoPolicyProfile = {
   version: number;
   bands: DataCreditoPolicyBand[];
   financialSettings: DataCreditoPolicyFinancialSettings | null;
+  priorityRules: DataCreditoPolicyPriorityRules | null;
   createdAt: string | null;
   updatedAt: string | null;
   revisionCreatedAt: string | null;
@@ -111,10 +113,21 @@ type EditableFinancialSettings = {
   frecuenciaPago: DataCreditoPolicyFinancialSettings["frecuenciaPago"];
 };
 
+type EditablePriorityRules = {
+  enabled: boolean;
+  rejectAboveCop: string;
+};
+
 type FinancialValidationResult = {
   valid: boolean;
   issues: string[];
   canonical: DataCreditoAresPolicyFinancialSettings | null;
+};
+
+type PriorityRulesValidationResult = {
+  valid: boolean;
+  issues: string[];
+  canonical: DataCreditoPolicyPriorityRules | null;
 };
 
 type ValidationResult = {
@@ -146,7 +159,10 @@ const MIN_NUMERIC_SCORE = DATACREDITO_MIN_SCORE;
 const MAX_NUMERIC_SCORE = DATACREDITO_MAX_SCORE;
 const MAX_FINANCED_AMOUNT_COP = DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT;
 const MAX_INSTALLMENT_AMOUNT_COP = DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT;
+const MAX_PRIORITY_REJECTION_AMOUNT_COP =
+  DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT;
 const MAX_INSTALLMENT_COUNT = DATACREDITO_MAX_INSTALLMENT_COUNT;
+const DEFAULT_PRIORITY_REJECTION_AMOUNT_COP = 2_000_000;
 const DEFAULT_ANDROID_INSTALLMENT_COUNT =
   DATACREDITO_DEFAULT_ANDROID_INSTALLMENT_COUNT;
 const DEFAULT_IPHONE_INSTALLMENT_COUNT =
@@ -157,6 +173,12 @@ const DEFAULT_FINANCIAL_SETTINGS: DataCreditoAresPolicyFinancialSettings = {
   ...DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
   redondeoComercial: {
     ...DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.redondeoComercial,
+  },
+};
+const DEFAULT_PRIORITY_RULES: DataCreditoPolicyPriorityRules = {
+  telcoDelinquency: {
+    enabled: true,
+    rejectAboveCop: DEFAULT_PRIORITY_REJECTION_AMOUNT_COP,
   },
 };
 let draftSequence = 0;
@@ -447,6 +469,92 @@ function validateFinancialSettings(
   };
 }
 
+function parsePriorityRules(
+  value: unknown,
+  label: string
+): DataCreditoPolicyPriorityRules | null {
+  if (value === null || value === undefined) return null;
+  const priorityRules = isRecord(value) ? value : null;
+  const telcoDelinquency =
+    priorityRules && isRecord(priorityRules.telcoDelinquency)
+      ? priorityRules.telcoDelinquency
+      : null;
+  const rejectAboveCop = readFiniteNumber(telcoDelinquency?.rejectAboveCop);
+
+  if (
+    !telcoDelinquency ||
+    telcoDelinquency.enabled !== true ||
+    !Number.isSafeInteger(rejectAboveCop) ||
+    rejectAboveCop! <= 0 ||
+    rejectAboveCop! > MAX_PRIORITY_REJECTION_AMOUNT_COP
+  ) {
+    throw new PolicyRequestError(
+      `${label} tiene una regla prioritaria de mora vigente TELCOS inválida.`
+    );
+  }
+
+  return {
+    telcoDelinquency: {
+      enabled: telcoDelinquency.enabled,
+      rejectAboveCop: rejectAboveCop!,
+    },
+  };
+}
+
+function toEditablePriorityRules(
+  rules: DataCreditoPolicyPriorityRules
+): EditablePriorityRules {
+  return {
+    enabled: true,
+    rejectAboveCop: String(rules.telcoDelinquency.rejectAboveCop),
+  };
+}
+
+function validatePriorityRules(
+  rules: EditablePriorityRules | null
+): PriorityRulesValidationResult {
+  if (!rules) {
+    return {
+      valid: false,
+      issues: [
+        "La revisión vigente no incluye la regla prioritaria de mora vigente TELCOS. Prepárala y publica una nueva revisión.",
+      ],
+      canonical: null,
+    };
+  }
+
+  const rejectAboveCop = parseInteger(rules.rejectAboveCop);
+  const issues: string[] = [];
+  if (!rules.enabled) {
+    issues.push("La regla prioritaria de mora vigente TELCOS debe permanecer activa.");
+  }
+  if (
+    rejectAboveCop === null ||
+    rejectAboveCop <= 0 ||
+    rejectAboveCop > MAX_PRIORITY_REJECTION_AMOUNT_COP
+  ) {
+    issues.push(
+      `El umbral de mora vigente TELCOS debe ser un entero en COP entre $1 y $${new Intl.NumberFormat(
+        "es-CO"
+      ).format(MAX_PRIORITY_REJECTION_AMOUNT_COP)}.`
+    );
+  }
+
+  return {
+    valid: issues.length === 0,
+    issues,
+    canonical:
+      issues.length === 0
+        ? {
+            telcoDelinquency: {
+              enabled: true,
+              rejectAboveCop: rejectAboveCop!,
+            },
+          }
+        : null,
+  };
+}
+
 function parsePolicyProfile(
   value: unknown,
   index: number
@@ -487,6 +595,7 @@ function parsePolicyProfile(
       value.financialSettings === undefined
         ? null
         : parseFinancialSettings(value.financialSettings, `Politica ${index + 1}`),
+    priorityRules: parsePriorityRules(value.priorityRules, `Política ${index + 1}`),
     createdAt: readString(value.createdAt),
     updatedAt: readString(value.updatedAt),
     revisionCreatedAt: readString(value.revisionCreatedAt),
@@ -921,6 +1030,16 @@ function formatDate(value: string | null) {
         dateStyle: "medium",
         timeStyle: "short",
       }).format(date);
+}
+
+function formatCop(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "Valor no válido";
+
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 function platformLabel(platform: DataCreditoPolicyPlatform) {
@@ -1367,6 +1486,105 @@ function PlatformEditor({
 
 type PolicyConsoleTab = "POLICIES" | "ASSIGNMENTS";
 
+function PriorityRuleEditor({
+  rules,
+  validation,
+  disabled,
+  idPrefix,
+  onThresholdChange,
+}: {
+  rules: EditablePriorityRules;
+  validation: PriorityRulesValidationResult;
+  disabled: boolean;
+  idPrefix: string;
+  onThresholdChange: (rejectAboveCop: string) => void;
+}) {
+  const previewId = `${idPrefix}-preview`;
+  const errorId = `${idPrefix}-error`;
+  const describedBy = validation.issues.length
+    ? `${previewId} ${errorId}`
+    : previewId;
+
+  return (
+    <div className="mt-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-[var(--fp-muted)]">
+            Orden de evaluación
+          </p>
+          <div className="mt-2">
+            <StatusPill tone="danger">Prioridad 1 · activa</StatusPill>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
+            La mora vigente TELCOS se evalúa antes de cualquier banda de puntaje.
+          </p>
+        </div>
+
+        <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
+          Mora vigente TELCOS superior a (COP)
+          <Input
+            id={`${idPrefix}-threshold`}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MAX_PRIORITY_REJECTION_AMOUNT_COP}
+            step={1}
+            value={rules.rejectAboveCop}
+            onChange={(event) => onThresholdChange(event.target.value)}
+            disabled={disabled}
+            aria-invalid={!validation.valid}
+            aria-describedby={describedBy}
+          />
+          <span
+            id={previewId}
+            className="text-xs font-normal leading-5 text-[var(--fp-muted)]"
+          >
+            Umbral configurado: {formatCop(parseInteger(rules.rejectAboveCop))}.
+            Solo rechaza cuando la mora vigente TELCOS es mayor; el valor exacto
+            no activa la regla.
+          </span>
+        </label>
+
+        <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] px-4 py-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-[var(--fp-muted)]">
+            Aplicación
+          </p>
+          <p className="mt-2 font-black text-[var(--fp-graphite)]">
+            Android e iPhone
+          </p>
+          <p className="mt-1 text-xs leading-5 text-[var(--fp-muted)]">
+            Es independiente del puntaje y se aplica a ambas plataformas.
+          </p>
+        </div>
+
+        <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-[var(--fp-muted)]">
+            Decisión
+          </p>
+          <div className="mt-2">
+            <StatusPill tone="danger">RECHAZADO</StatusPill>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
+            No genera una oferta financiera cuando se activa.
+          </p>
+        </div>
+      </div>
+
+      {validation.issues.length ? (
+        <ul
+          id={errorId}
+          className="mt-4 list-disc space-y-1 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-5 py-4 text-sm font-semibold text-[var(--fp-danger)]"
+          role="alert"
+        >
+          {validation.issues.map((issue) => (
+            <li key={issue}>{issue}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function allyDraftKey(allyId: number) {
   return String(allyId);
 }
@@ -1391,6 +1609,8 @@ export default function DatacreditoPolicyConsole() {
     useState<EditableFinancialSettings>(
       toEditableFinancialSettings(DEFAULT_FINANCIAL_SETTINGS)
     );
+  const [priorityRules, setPriorityRules] =
+    useState<EditablePriorityRules | null>(null);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<PolicyConsoleTab>("POLICIES");
   const [assignmentQuery, setAssignmentQuery] = useState("");
@@ -1412,6 +1632,10 @@ export default function DatacreditoPolicyConsole() {
     useState<EditableFinancialSettings>(
       toEditableFinancialSettings(DEFAULT_FINANCIAL_SETTINGS)
     );
+  const [newPolicyPriorityRules, setNewPolicyPriorityRules] =
+    useState<EditablePriorityRules>(
+      toEditablePriorityRules(DEFAULT_PRIORITY_RULES)
+    );
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [correlationId, setCorrelationId] = useState<string | null>(null);
@@ -1422,9 +1646,17 @@ export default function DatacreditoPolicyConsole() {
     () => validateFinancialSettings(financialSettings),
     [financialSettings]
   );
+  const priorityRulesValidation = useMemo(
+    () => validatePriorityRules(priorityRules),
+    [priorityRules]
+  );
   const newPolicyFinancialValidation = useMemo(
     () => validateFinancialSettings(newPolicyFinancialSettings),
     [newPolicyFinancialSettings]
+  );
+  const newPolicyPriorityRulesValidation = useMemo(
+    () => validatePriorityRules(newPolicyPriorityRules),
+    [newPolicyPriorityRules]
   );
   const selectedProfile = useMemo(
     () => profiles.find((profile) => profile.id === selectedPolicyId) || null,
@@ -1464,6 +1696,11 @@ export default function DatacreditoPolicyConsole() {
           profile?.financialSettings || defaults,
           defaults
         )
+      );
+      setPriorityRules(
+        profile?.priorityRules?.telcoDelinquency.enabled
+          ? toEditablePriorityRules(profile.priorityRules)
+          : null
       );
       setHasUnsavedChanges(false);
     },
@@ -1669,6 +1906,27 @@ export default function DatacreditoPolicyConsole() {
     }));
   };
 
+  const preparePriorityRules = () => {
+    setNotice(null);
+    setPriorityRules(toEditablePriorityRules(DEFAULT_PRIORITY_RULES));
+    setHasUnsavedChanges(true);
+  };
+
+  const updatePriorityRuleThreshold = (rejectAboveCop: string) => {
+    setNotice(null);
+    setHasUnsavedChanges(true);
+    setPriorityRules((current) => ({
+      ...(current || toEditablePriorityRules(DEFAULT_PRIORITY_RULES)),
+      rejectAboveCop,
+    }));
+  };
+
+  const updateNewPolicyPriorityRuleThreshold = (rejectAboveCop: string) => {
+    setNewPolicyPriorityRules((current) => ({
+      ...current,
+      rejectAboveCop,
+    }));
+  };
   const removeBand = (bandId: string) => {
     setNotice(null);
     setHasUnsavedChanges(true);
@@ -1679,7 +1937,12 @@ export default function DatacreditoPolicyConsole() {
     setNotice(null);
     setError(null);
 
-    if (!validation.valid || !financialValidation.valid || !selectedProfile) {
+    if (
+      !validation.valid ||
+      !financialValidation.valid ||
+      !priorityRulesValidation.valid ||
+      !selectedProfile
+    ) {
       return;
     }
     if (!hasUnsavedChanges) {
@@ -1694,6 +1957,8 @@ export default function DatacreditoPolicyConsole() {
       !validation.valid ||
       !financialValidation.valid ||
       !financialValidation.canonical ||
+      !priorityRulesValidation.valid ||
+      !priorityRulesValidation.canonical ||
       !selectedProfile ||
       version === null ||
       saving
@@ -1719,6 +1984,7 @@ export default function DatacreditoPolicyConsole() {
           expectedVersion: version,
           bands: validation.canonicalBands,
           financialSettings: financialValidation.canonical,
+          priorityRules: priorityRulesValidation.canonical,
         }),
       });
       const payload = await readJson(response);
@@ -1785,6 +2051,11 @@ export default function DatacreditoPolicyConsole() {
         financialDefaults
       )
     );
+    setNewPolicyPriorityRules(
+      toEditablePriorityRules(
+        selectedProfile.priorityRules || DEFAULT_PRIORITY_RULES
+      )
+    );
     setCreateOpen(true);
     setError(null);
     setNotice(null);
@@ -1807,11 +2078,14 @@ export default function DatacreditoPolicyConsole() {
     }
     if (
       !newPolicyFinancialValidation.valid ||
-      !newPolicyFinancialValidation.canonical
+      !newPolicyFinancialValidation.canonical ||
+      !newPolicyPriorityRulesValidation.valid ||
+      !newPolicyPriorityRulesValidation.canonical
     ) {
       setError(
         newPolicyFinancialValidation.issues[0] ||
-          "Revisa los parámetros financieros de la nueva política."
+          newPolicyPriorityRulesValidation.issues[0] ||
+          "Revisa los parámetros de la nueva política."
       );
       return;
     }
@@ -1833,6 +2107,7 @@ export default function DatacreditoPolicyConsole() {
           description: description || undefined,
           bands: selectedProfile.bands,
           financialSettings: newPolicyFinancialValidation.canonical,
+          priorityRules: newPolicyPriorityRulesValidation.canonical,
         }),
       });
       const payload = await readJson(response);
@@ -1860,6 +2135,9 @@ export default function DatacreditoPolicyConsole() {
       setNewPolicyDescription("");
       setNewPolicyFinancialSettings(
         toEditableFinancialSettings(financialDefaults)
+      );
+      setNewPolicyPriorityRules(
+        toEditablePriorityRules(DEFAULT_PRIORITY_RULES)
       );
       setNotice(
         `Política “${name}” creada como versión 1 a partir de “${selectedProfile.name}”. Aún no cambia ningún aliado.`
@@ -2419,6 +2697,28 @@ export default function DatacreditoPolicyConsole() {
                   />
                 </label>
               </div>
+              <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] p-4 sm:p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h4 className="font-black">
+                      Regla prioritaria de la nueva política
+                    </h4>
+                    <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
+                      La regla de mora vigente TELCOS se hereda de la política
+                      origen. Si aún no existía, se propone el umbral inicial de
+                      {" "}{formatCop(DEFAULT_PRIORITY_REJECTION_AMOUNT_COP)}.
+                    </p>
+                  </div>
+                  <StatusPill tone="danger">Prioridad 1 · activa</StatusPill>
+                </div>
+                <PriorityRuleEditor
+                  rules={newPolicyPriorityRules}
+                  validation={newPolicyPriorityRulesValidation}
+                  disabled={creating}
+                  idPrefix="new-policy-priority"
+                  onThresholdChange={updateNewPolicyPriorityRuleThreshold}
+                />
+              </div>
               <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] p-4 sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -2527,7 +2827,8 @@ export default function DatacreditoPolicyConsole() {
                     creating ||
                     hasUnsavedChanges ||
                     newPolicyName.trim().length < 3 ||
-                    !newPolicyFinancialValidation.valid
+                    !newPolicyFinancialValidation.valid ||
+                    !newPolicyPriorityRulesValidation.valid
                   }
                 >
                   <Copy className="h-4 w-4" aria-hidden="true" />
@@ -2539,6 +2840,67 @@ export default function DatacreditoPolicyConsole() {
 
           {selectedProfile ? (
             <>
+              <Card
+                className="border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] p-5 sm:p-6"
+                aria-labelledby="policy-priority-title"
+              >
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex items-start gap-3">
+                    <span
+                      className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-danger)] text-white"
+                      aria-hidden="true"
+                    >
+                      <CircleAlert className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <h3 id="policy-priority-title" className="text-xl font-black">
+                        Regla prioritaria de rechazo por mora TELCOS
+                      </h3>
+                      <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
+                        Usa únicamente la mora vigente agregada del sector TELCOS.
+                        Se evalúa antes del puntaje para Android e iPhone.
+                      </p>
+                    </div>
+                  </div>
+                  <StatusPill tone={priorityRules ? "danger" : "warning"}>
+                    {priorityRules
+                      ? "Prioridad 1 · activa"
+                      : "Sin regla publicada"}
+                  </StatusPill>
+                </div>
+
+                {priorityRules ? (
+                  <PriorityRuleEditor
+                    rules={priorityRules}
+                    validation={priorityRulesValidation}
+                    disabled={saving}
+                    idPrefix="policy-priority"
+                    onThresholdChange={updatePriorityRuleThreshold}
+                  />
+                ) : (
+                  <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] p-4 sm:p-5">
+                    <p className="font-black text-[var(--fp-graphite)]">
+                      Esta revisión no contiene la regla prioritaria TELCOS.
+                    </p>
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
+                      No se activará de forma silenciosa. Prepara el umbral y
+                      publica una nueva revisión para que el rechazo por mora
+                      vigente TELCOS se aplique únicamente a consultas futuras.
+                    </p>
+                    <Button
+                      className="mt-4"
+                      variant="secondary"
+                      onClick={preparePriorityRules}
+                      disabled={saving}
+                    >
+                      <Plus className="h-4 w-4" aria-hidden="true" />
+                      Preparar regla por
+                      {" "}{formatCop(DEFAULT_PRIORITY_REJECTION_AMOUNT_COP)}
+                    </Button>
+                  </div>
+                )}
+              </Card>
+
               <Card className="p-5 sm:p-6" aria-labelledby="policy-financial-title">
                 <div className="flex items-start gap-3">
                   <span
@@ -2694,25 +3056,35 @@ export default function DatacreditoPolicyConsole() {
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge
                         tone={
-                          validation.valid && financialValidation.valid
+                          validation.valid &&
+                          financialValidation.valid &&
+                          priorityRulesValidation.valid
                             ? "positive"
                             : "warning"
                         }
                       >
-                        {validation.valid && financialValidation.valid
+                        {validation.valid &&
+                        financialValidation.valid &&
+                        priorityRulesValidation.valid
                           ? "Cobertura completa"
                           : "Política incompleta"}
                       </Badge>
                       <span className="text-sm font-semibold text-[var(--fp-muted)]">
-                        {bands.length} {bands.length === 1 ? "regla" : "reglas"}
+                        {bands.length} {bands.length === 1 ? "banda" : "bandas"}
+                        {" · "}
+                        {priorityRulesValidation.valid
+                          ? "1 regla prioritaria TELCOS"
+                          : "regla prioritaria TELCOS pendiente"}
                       </span>
                     </div>
                     <p
                       id="datacredito-policy-save-help"
                       className="mt-3 max-w-2xl text-sm leading-6 text-[var(--fp-muted)]"
                     >
-                      {!validation.valid || !financialValidation.valid
-                        ? "Completa los parámetros financieros y corrige ambas plataformas. Publicar permanecerá deshabilitado mientras existan valores inválidos, huecos, solapamientos o reglas Sin información ausentes o duplicadas."
+                      {!validation.valid ||
+                      !financialValidation.valid ||
+                      !priorityRulesValidation.valid
+                        ? "Completa la regla prioritaria TELCOS, los parámetros financieros y ambas plataformas. Publicar permanecerá deshabilitado mientras existan valores inválidos, huecos, solapamientos o reglas Sin información ausentes o duplicadas."
                         : hasUnsavedChanges
                           ? `La próxima publicación creará la versión ${(version || 0) + 1}; no reemplazará ni modificará revisiones históricas.`
                           : "No hay cambios pendientes por publicar."}
@@ -2724,8 +3096,9 @@ export default function DatacreditoPolicyConsole() {
                       saving ||
                       !selectedProfile.active ||
                       !validation.valid ||
+                      !hasUnsavedChanges ||
                       !financialValidation.valid ||
-                      !hasUnsavedChanges
+                      !priorityRulesValidation.valid
                     }
                     aria-describedby="datacredito-policy-save-help"
                   >
@@ -2902,7 +3275,9 @@ export default function DatacreditoPolicyConsole() {
         title="Publicar nueva revisión"
         description={`Se publicará la versión ${(version || 0) + 1} de “${
           selectedProfile?.name || "la política"
-        }” con ${validation.canonicalBands.length} reglas. La usarán ${
+        }” con ${validation.canonicalBands.length} bandas y la regla prioritaria de rechazo por mora vigente TELCOS superior a ${formatCop(
+          priorityRulesValidation.canonical?.telcoDelinquency.rejectAboveCop ?? null
+        )}. La usarán ${
           selectedProfile?.assignedAlliesCount || 0
         } aliado(s) únicamente en consultas futuras.`}
         confirmLabel="Publicar versión"
@@ -2937,7 +3312,7 @@ export default function DatacreditoPolicyConsole() {
       <ConfirmDialog
         open={switchConfirmOpen}
         title="Descartar borrador y cambiar de política"
-        description="La política seleccionada reemplazará las bandas editadas en este borrador. Las revisiones ya publicadas no se modifican."
+        description="La política seleccionada reemplazará la regla prioritaria, los parámetros financieros y las bandas editadas en este borrador. Las revisiones ya publicadas no se modifican."
         confirmLabel="Descartar y cambiar"
         onCancel={() => {
           setSwitchConfirmOpen(false);
@@ -2953,7 +3328,7 @@ export default function DatacreditoPolicyConsole() {
       <ConfirmDialog
         open={reloadConfirmOpen}
         title="Descartar cambios y recargar"
-        description="El catálogo vigente reemplazará el borrador de bandas y las reasignaciones pendientes. Esta acción no afecta cambios que ya se hayan publicado."
+        description="El catálogo vigente reemplazará la regla prioritaria, los parámetros financieros, las bandas y las reasignaciones pendientes. Esta acción no afecta cambios que ya se hayan publicado."
         confirmLabel="Descartar y recargar"
         onCancel={() => setReloadConfirmOpen(false)}
         onConfirm={() => {

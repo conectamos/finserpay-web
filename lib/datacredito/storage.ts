@@ -5,10 +5,12 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
+import { buildDataCreditoAdminRiskSummary } from "@/lib/datacredito/admin-report";
 import {
   DataCreditoPolicyValidationError,
   parseDataCreditoPolicyBands,
   parseDataCreditoPolicyFinancialSettings,
+  parseDataCreditoPolicyPriorityRules,
   resolveDataCreditoDecision,
   resolveDataCreditoOfferFinancingTerms,
   type DataCreditoDecision,
@@ -17,7 +19,12 @@ import {
   type DataCreditoPolicy,
   type DataCreditoPolicyBand,
   type DataCreditoPolicyFinancialSettings,
+  type DataCreditoPolicyPriorityRules,
 } from "@/lib/datacredito/policy";
+import {
+  decryptDataCreditoSecureRecord,
+  type DecryptDataCreditoSecureRecordInput,
+} from "@/lib/datacredito/secure-record";
 import {
   matchesDataCreditoSchemaIndex,
   type DataCreditoSchemaIndexMetadata,
@@ -155,11 +162,17 @@ export type DataCreditoAssessmentReservation =
   | { kind: "REUSED"; assessment: DataCreditoAssessmentRow };
 
 export class DataCreditoStorageConfigurationError extends Error {
-  readonly code: "AUDIT_NOT_CONFIGURED" | "SCHEMA_NOT_READY";
+  readonly code:
+    | "AUDIT_NOT_CONFIGURED"
+    | "SCHEMA_NOT_READY"
+    | "TELCO_RISK_METRIC_UNAVAILABLE";
 
   constructor(
     message: string,
-    code: "AUDIT_NOT_CONFIGURED" | "SCHEMA_NOT_READY" = "AUDIT_NOT_CONFIGURED"
+    code:
+      | "AUDIT_NOT_CONFIGURED"
+      | "SCHEMA_NOT_READY"
+      | "TELCO_RISK_METRIC_UNAVAILABLE" = "AUDIT_NOT_CONFIGURED"
   ) {
     super(message);
     this.name = "DataCreditoStorageConfigurationError";
@@ -312,11 +325,16 @@ function policyFromRow(row: DataCreditoPolicyRow | null): DataCreditoPolicy | nu
     payload.financialSettings,
     { optional: true }
   );
+  const priorityRules = parseDataCreditoPolicyPriorityRules(
+    payload.priorityRules,
+    { optional: true }
+  );
 
   return {
     version: row.version,
     bands,
     financialSettings,
+    priorityRules,
     createdAt:
       row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
@@ -1155,6 +1173,7 @@ export async function createDataCreditoPolicyRevision(input: {
   profileId: string;
   bands: DataCreditoPolicyBand[];
   financialSettings: DataCreditoPolicyFinancialSettings;
+  priorityRules: DataCreditoPolicyPriorityRules;
   createdByUserId: number;
   expectedVersion?: number | null;
 }) {
@@ -1163,6 +1182,9 @@ export async function createDataCreditoPolicyRevision(input: {
   const bands = parseDataCreditoPolicyBands(input.bands);
   const financialSettings = parseDataCreditoPolicyFinancialSettings(
     input.financialSettings
+  )!;
+  const priorityRules = parseDataCreditoPolicyPriorityRules(
+    input.priorityRules
   )!;
 
   return prisma.$transaction(async (tx) => {
@@ -1204,7 +1226,7 @@ export async function createDataCreditoPolicyRevision(input: {
       revisionId,
       input.profileId,
       nextVersion,
-      JSON.stringify({ bands, financialSettings }),
+      JSON.stringify({ bands, financialSettings, priorityRules }),
       input.createdByUserId
     );
     if (input.profileId === DEFAULT_DATACREDITO_POLICY_PROFILE_ID) {
@@ -1216,7 +1238,7 @@ export async function createDataCreditoPolicyRevision(input: {
           ON CONFLICT ("version") DO NOTHING
         `,
         nextVersion,
-        JSON.stringify({ bands, financialSettings }),
+        JSON.stringify({ bands, financialSettings, priorityRules }),
         input.createdByUserId
       );
     }
@@ -1228,6 +1250,7 @@ export async function createDataCreditoPolicyVersion(input: {
   profileId?: string;
   bands: DataCreditoPolicyBand[];
   financialSettings: DataCreditoPolicyFinancialSettings;
+  priorityRules: DataCreditoPolicyPriorityRules;
   createdByUserId: number;
   expectedVersion?: number | null;
 }) {
@@ -1373,6 +1396,81 @@ async function hasActiveClaimForDataCreditoAssessmentGroup(
   return Boolean(rows[0]?.active);
 }
 
+type ReusableDataCreditoSecurePayloadRow = {
+  assessmentId: string;
+  correlationId: string;
+  algorithm: string;
+  keyId: string;
+  aadVersion: number;
+  plaintextVersion: number;
+  nonce: Buffer;
+  authTag: Buffer;
+  ciphertext: Buffer;
+  plaintextBytes: number;
+};
+
+async function readReusableDataCreditoRiskContext(
+  sourceRow: DataCreditoAssessmentRow,
+  database: DataCreditoQueryExecutor
+) {
+  const rootId = sourceRow.reusedFromAssessmentId || sourceRow.id;
+  const rows = await database.$queryRawUnsafe<ReusableDataCreditoSecurePayloadRow[]>(
+    `
+      SELECT root."id" AS "assessmentId", root."correlationId",
+        secure."algorithm", secure."keyId", secure."aadVersion",
+        secure."plaintextVersion", secure."nonce", secure."authTag",
+        secure."ciphertext", secure."plaintextBytes"
+      FROM "DataCreditoAssessment" root
+      INNER JOIN "DataCreditoAssessmentSecurePayload" secure
+        ON secure."assessmentId" = root."id"
+      WHERE root."id" = $1
+        AND root."retainedUntil" > CURRENT_TIMESTAMP
+      LIMIT 1
+    `,
+    rootId
+  );
+  const row = rows[0];
+  if (!row) {
+    return {
+      securePayloadAvailable: false as const,
+      telcoDelinquentBalanceCop: null,
+      telcoDelinquencyInformationAvailable: null,
+    };
+  }
+
+  const envelope: Omit<
+    DecryptDataCreditoSecureRecordInput,
+    "assessmentId" | "correlationId"
+  > = {
+    algorithm: row.algorithm,
+    keyId: row.keyId,
+    aadVersion: row.aadVersion,
+    plaintextVersion: row.plaintextVersion,
+    nonce: row.nonce,
+    authTag: row.authTag,
+    ciphertext: row.ciphertext,
+    plaintextBytes: row.plaintextBytes,
+  };
+  const secureRecord = decryptDataCreditoSecureRecord({
+    assessmentId: row.assessmentId,
+    correlationId: row.correlationId,
+    ...envelope,
+  });
+  const riskSummary = buildDataCreditoAdminRiskSummary(
+    secureRecord.providerPayload
+  );
+  const telcoDelinquentBalanceCop =
+    riskSummary?.telcos.delinquentBalance ?? null;
+  const telcoDelinquencyInformationAvailable =
+    riskSummary?.telcos.available ?? null;
+
+  return {
+    securePayloadAvailable: true as const,
+    telcoDelinquentBalanceCop,
+    telcoDelinquencyInformationAvailable,
+  };
+}
+
 async function cloneReusableDataCreditoAssessment(
   sourceRow: DataCreditoAssessmentRow,
   input: DataCreditoAssessmentReuseInput,
@@ -1397,9 +1495,48 @@ async function cloneReusableDataCreditoAssessment(
     input.policyVersion
   );
   const currentPolicy = policyFromRevisionRow(revisionRows[0] || null);
+  const priorityRuleEnabled =
+    currentPolicy?.priorityRules?.telcoDelinquency.enabled === true;
+  const riskContext = priorityRuleEnabled
+    ? await readReusableDataCreditoRiskContext(sourceRow, database)
+    : null;
+  if (priorityRuleEnabled && !riskContext?.securePayloadAvailable) {
+    throw new DataCreditoStorageConfigurationError(
+      "La consulta vigente no tiene un expediente cifrado disponible para aplicar la regla prioritaria de mora. No se realizo una nueva consulta.",
+      "SCHEMA_NOT_READY"
+    );
+  }
+  const reusableTelcoDelinquencyCop =
+    riskContext?.telcoDelinquentBalanceCop;
+  const reusableTelcoRiskMetricValid =
+    typeof reusableTelcoDelinquencyCop === "number" &&
+    Number.isSafeInteger(reusableTelcoDelinquencyCop) &&
+    reusableTelcoDelinquencyCop >= 0;
+  const reusableTelcoRiskMetricUnavailable =
+    riskContext?.telcoDelinquencyInformationAvailable === null ||
+    (riskContext?.telcoDelinquencyInformationAvailable === true &&
+      !reusableTelcoRiskMetricValid);
+  if (priorityRuleEnabled && reusableTelcoRiskMetricUnavailable) {
+    throw new DataCreditoStorageConfigurationError(
+      "La consulta vigente no contiene una mora vigente Telcos valida para aplicar la regla prioritaria. No se realizo una nueva consulta.",
+      "TELCO_RISK_METRIC_UNAVAILABLE"
+    );
+  }
   const resolution =
     currentPolicy && sourceRow.score !== null
-      ? resolveDataCreditoDecision(currentPolicy, input.platform, sourceRow.score)
+      ? resolveDataCreditoDecision(
+          currentPolicy,
+          input.platform,
+          sourceRow.score,
+          priorityRuleEnabled
+            ? {
+                telcoDelinquentBalanceCop:
+                  riskContext?.telcoDelinquentBalanceCop ?? null,
+                telcoDelinquencyInformationAvailable:
+                  riskContext?.telcoDelinquencyInformationAvailable ?? null,
+              }
+            : undefined
+        )
       : null;
   if (!resolution) throw schemaNotReady();
 

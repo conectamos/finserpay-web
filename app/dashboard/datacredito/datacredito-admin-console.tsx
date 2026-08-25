@@ -38,6 +38,9 @@ type Offer = {
   initialPaymentPercentage: number;
   suretyPercentage: number;
   maxFinancedAmount: number;
+  decisionRule?: "SCORE_BAND" | "TELCO_DELINQUENCY_THRESHOLD";
+  telcoRejectionThresholdCop?: number | null;
+  riskMetricVersion?: "MIDECISOR_PN_MILES_COP_V1" | null;
 } | null;
 
 type AssessmentItem = {
@@ -376,16 +379,21 @@ export default function DataCreditoAdminConsole() {
   const risk = summary?.risk ?? null;
   const totals = summary?.totals ?? null;
   const sectors = summary?.sectors ?? [];
+  const telco = summary?.telcos ?? null;
   const providerScore = risk?.score ?? null;
   const appliedScore = detail?.assessment?.score ?? null;
   const scoreMismatch =
     Number.isInteger(providerScore) &&
     Number.isInteger(appliedScore) &&
     providerScore !== appliedScore;
+  const telcoPriorityRejectionOffer =
+    detail?.assessment?.status === "RECHAZADO" &&
+    detail.assessment.offer?.decisionRule === "TELCO_DELINQUENCY_THRESHOLD"
+      ? detail.assessment.offer
+      : null;
   const nonProductionVisibleCount = items.filter(
     (item) => !isProductionProviderEnvironment(item.providerEnvironment)
   ).length;
-  const telco = summary?.telcos ?? null;
   const telcoTone =
     telco?.delinquentBalance === null || telco?.delinquentBalance === undefined
       ? ("warning" as const)
@@ -647,7 +655,16 @@ export default function DataCreditoAdminConsole() {
                           </span>
                         </div>
                         <div className="text-xs leading-5">
-                          {item.offer ? (
+                          {item.offer?.decisionRule ===
+                          "TELCO_DELINQUENCY_THRESHOLD" ? (
+                            <>
+                              <strong>Rechazo prioritario TELCOS</strong>
+                              <br />
+                              Umbral {currency(
+                                item.offer.telcoRejectionThresholdCop
+                              )}
+                            </>
+                          ) : item.offer ? (
                             <>
                               <strong>
                                 Inicial {item.offer.initialPaymentPercentage} %
@@ -777,9 +794,10 @@ export default function DataCreditoAdminConsole() {
                   role="note"
                   className="rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm leading-6 text-[var(--fp-graphite)]"
                 >
-                  Los montos, unidades y códigos son valores informados por
-                  MiDecisor. No deben usarse para automatizar un rechazo hasta validar
-                  el contrato y el catálogo oficial con Experian.
+                  MiDecisor informa saldos, cuotas, moras, cupos y valores
+                  iniciales en miles de COP. Por ejemplo, 359 equivale a
+                  $359.000. La regla prioritaria usa únicamente la mora vigente
+                  agregada del sector TELCOS, convertida a COP.
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -827,6 +845,24 @@ export default function DataCreditoAdminConsole() {
                     }
                   />
                 </div>
+
+                {telcoPriorityRejectionOffer ? (
+                  <div
+                    role="alert"
+                    className="flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-4 text-sm leading-6 text-[var(--fp-graphite)]"
+                  >
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-danger)]" />
+                    <p>
+                      <strong>Rechazo prioritario por mora TELCOS:</strong> la
+                      mora vigente agregada del sector TELCOS de
+                      {" "}{currency(telco?.delinquentBalance)} superó el umbral
+                      de {currency(
+                        telcoPriorityRejectionOffer.telcoRejectionThresholdCop
+                      )}. Esta regla es independiente del puntaje y se evaluó
+                      primero para Android e iPhone.
+                    </p>
+                  </div>
+                ) : null}
 
                 {scoreMismatch ? (
                   <div
@@ -930,7 +966,9 @@ export default function DataCreditoAdminConsole() {
                   </div>
                 </section>
 
-                {detail.assessment?.offer ? (
+                {detail.assessment?.offer &&
+                detail.assessment.offer.decisionRule !==
+                  "TELCO_DELINQUENCY_THRESHOLD" ? (
                   <div className="grid gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-lime)] bg-[var(--fp-lime-soft)] p-4 sm:grid-cols-3">
                     <div>
                       <span className="text-xs font-bold text-[var(--fp-muted)]">

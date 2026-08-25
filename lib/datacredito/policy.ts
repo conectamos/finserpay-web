@@ -22,6 +22,12 @@ export const DATACREDITO_MAX_INSTALLMENT_COUNT = 60;
 export const DATACREDITO_DEFAULT_ANDROID_INSTALLMENT_COUNT = 16;
 export const DATACREDITO_DEFAULT_IPHONE_INSTALLMENT_COUNT = 24;
 export const DATACREDITO_DEFAULT_IPHONE_MAX_INSTALLMENT_AMOUNT = 160_000;
+export const DATACREDITO_RISK_METRIC_VERSION =
+  "MIDECISOR_PN_MILES_COP_V1" as const;
+export const DATACREDITO_DECISION_RULES = [
+  "SCORE_BAND",
+  "TELCO_DELINQUENCY_THRESHOLD",
+] as const;
 
 export type DataCreditoPlatform = (typeof DATACREDITO_PLATFORMS)[number];
 export type DataCreditoDecision = (typeof DATACREDITO_DECISIONS)[number];
@@ -31,6 +37,27 @@ export type DataCreditoFinancialPaymentFrequency =
   (typeof DATACREDITO_FINANCIAL_PAYMENT_FREQUENCIES)[number];
 export type DataCreditoCommercialRoundingMode =
   (typeof DATACREDITO_COMMERCIAL_ROUNDING_MODES)[number];
+
+export type DataCreditoDecisionRule =
+  (typeof DATACREDITO_DECISION_RULES)[number];
+
+export type DataCreditoPolicyPriorityRules = {
+  telcoDelinquency: {
+    enabled: boolean;
+    rejectAboveCop: number;
+  };
+};
+
+export type DataCreditoDecisionRiskContext = {
+  telcoDelinquentBalanceCop?: number | null;
+  telcoDelinquencyInformationAvailable?: boolean | null;
+};
+
+export type DataCreditoDecisionAudit = {
+  decisionRule: DataCreditoDecisionRule;
+  telcoRejectionThresholdCop: number | null;
+  riskMetricVersion: typeof DATACREDITO_RISK_METRIC_VERSION;
+};
 
 type DataCreditoPolicyFinancialSettingsBase = {
   tasaInteresEa: number;
@@ -92,6 +119,7 @@ export type DataCreditoPolicy = {
   version: number;
   bands: DataCreditoPolicyBand[];
   financialSettings?: DataCreditoPolicyFinancialSettings | null;
+  priorityRules?: DataCreditoPolicyPriorityRules | null;
   createdAt?: string;
 };
 
@@ -103,7 +131,12 @@ export type DataCreditoOffer = {
   maxInstallmentAmount: number | null;
   policyVersion: number;
   financialSettings?: DataCreditoPolicyFinancialSettings | null;
-};
+} & Partial<DataCreditoDecisionAudit>;
+
+export type DataCreditoDecisionResolution = {
+  decision: DataCreditoDecision;
+  offer: DataCreditoOffer;
+} & Partial<DataCreditoDecisionAudit>;
 
 export type DataCreditoOfferFinancingTerms = {
   installmentCount: number;
@@ -168,6 +201,51 @@ function finiteNumber(value: unknown) {
   }
 
   return null;
+}
+
+export function parseDataCreditoPolicyPriorityRules(
+  value: unknown,
+  options: { optional?: boolean } = {}
+): DataCreditoPolicyPriorityRules | null {
+  if ((value === null || value === undefined) && options.optional) {
+    return null;
+  }
+
+  const rules = recordValue(value);
+  const telcoDelinquency = recordValue(rules?.telcoDelinquency);
+  if (!rules || !telcoDelinquency) {
+    throw new DataCreditoPolicyValidationError([
+      "Debes configurar la regla prioritaria de mora vigente Telcos",
+    ]);
+  }
+
+  const enabled = telcoDelinquency.enabled;
+  const rejectAboveCop = finiteNumber(telcoDelinquency.rejectAboveCop);
+  const issues: string[] = [];
+  if (enabled !== true) {
+    issues.push(
+      "La regla prioritaria de mora vigente Telcos debe estar habilitada"
+    );
+  }
+  if (
+    !Number.isSafeInteger(rejectAboveCop) ||
+    rejectAboveCop! <= 0 ||
+    rejectAboveCop! > DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT
+  ) {
+    issues.push(
+      `El umbral de mora vigente Telcos debe ser un entero en pesos colombianos entre 1 y ${DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT}`
+    );
+  }
+  if (issues.length) {
+    throw new DataCreditoPolicyValidationError(issues);
+  }
+
+  return {
+    telcoDelinquency: {
+      enabled: enabled as boolean,
+      rejectAboveCop: rejectAboveCop!,
+    },
+  };
 }
 
 export function isDataCreditoNoInformationScore(value: unknown) {
@@ -607,10 +685,50 @@ export function resolveDataCreditoPolicyBand(
 
 export function resolveDataCreditoDecision(
   policy: Pick<DataCreditoPolicy, "version" | "bands"> &
-    Partial<Pick<DataCreditoPolicy, "financialSettings">>,
+    Partial<Pick<DataCreditoPolicy, "financialSettings" | "priorityRules">>,
   platform: unknown,
-  score: unknown
-): { decision: DataCreditoDecision; offer: DataCreditoOffer } | null {
+  score: unknown,
+  riskContext?: DataCreditoDecisionRiskContext
+): DataCreditoDecisionResolution | null {
+  const telcoDelinquencyRule = policy.priorityRules?.telcoDelinquency;
+  const priorityRuleEnabled = telcoDelinquencyRule?.enabled === true;
+  const telcoRejectionThresholdCop =
+    priorityRuleEnabled &&
+    Number.isSafeInteger(telcoDelinquencyRule.rejectAboveCop) &&
+    telcoDelinquencyRule.rejectAboveCop > 0
+      ? telcoDelinquencyRule.rejectAboveCop
+      : null;
+  const telcoInformationAvailable =
+    riskContext?.telcoDelinquencyInformationAvailable;
+  const observedTelcoDelinquency =
+    riskContext?.telcoDelinquentBalanceCop;
+  const validObservedTelcoDelinquency =
+    typeof observedTelcoDelinquency === "number" &&
+    Number.isSafeInteger(observedTelcoDelinquency) &&
+    observedTelcoDelinquency >= 0;
+  if (
+    priorityRuleEnabled &&
+    (telcoRejectionThresholdCop === null ||
+      telcoInformationAvailable === null ||
+      telcoInformationAvailable === undefined ||
+      (telcoInformationAvailable &&
+        !validObservedTelcoDelinquency))
+  ) {
+    return null;
+  }
+  const priorityRejection =
+    telcoRejectionThresholdCop !== null &&
+    telcoInformationAvailable === true &&
+    validObservedTelcoDelinquency &&
+    observedTelcoDelinquency! > telcoRejectionThresholdCop;
+  const includeDecisionAudit = riskContext !== undefined;
+  const decisionAudit: DataCreditoDecisionAudit = {
+    decisionRule: priorityRejection
+      ? "TELCO_DELINQUENCY_THRESHOLD"
+      : "SCORE_BAND",
+    telcoRejectionThresholdCop,
+    riskMetricVersion: DATACREDITO_RISK_METRIC_VERSION,
+  };
   const band = resolveDataCreditoPolicyBand(policy, platform, score);
   if (!band) return null;
   const financingTerms = resolveDataCreditoOfferFinancingTerms(
@@ -619,18 +737,22 @@ export function resolveDataCreditoDecision(
   );
   if (!financingTerms) return null;
 
+  const offer: DataCreditoOffer = {
+    initialPaymentPercentage: band.initialPaymentPercentage,
+    suretyPercentage: band.suretyPercentage,
+    maxFinancedAmount: band.maxFinancedAmount,
+    installmentCount: financingTerms.installmentCount,
+    maxInstallmentAmount: financingTerms.maxInstallmentAmount,
+    policyVersion: policy.version,
+    ...(policy.financialSettings
+      ? { financialSettings: policy.financialSettings }
+      : {}),
+    ...(includeDecisionAudit ? decisionAudit : {}),
+  };
+
   return {
-    decision: band.decision,
-    offer: {
-      initialPaymentPercentage: band.initialPaymentPercentage,
-      suretyPercentage: band.suretyPercentage,
-      maxFinancedAmount: band.maxFinancedAmount,
-      installmentCount: financingTerms.installmentCount,
-      maxInstallmentAmount: financingTerms.maxInstallmentAmount,
-      policyVersion: policy.version,
-      ...(policy.financialSettings
-        ? { financialSettings: policy.financialSettings }
-        : {}),
-    },
+    decision: priorityRejection ? "RECHAZADO" : band.decision,
+    offer,
+    ...(includeDecisionAudit ? decisionAudit : {}),
   };
 }

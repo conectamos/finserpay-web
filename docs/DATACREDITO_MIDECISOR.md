@@ -19,20 +19,28 @@ No forman parte de este alcance:
 1. El asesor elige Android o iPhone.
 2. Registra cedula y primer apellido.
 3. Confirma que el titular autorizo la consulta antes de ejecutarla.
-4. El servidor consulta MiDecisor y valida un puntaje entre 0 y 950 o la
-   respuesta explicita de que no existe informacion.
-5. El servidor resuelve la banda vigente para la plataforma.
-6. Si la banda rechaza, el flujo termina con `NO APROBADO`.
-7. Si la banda aprueba, se fijan la cuota inicial, la fianza y el credito
+4. El servidor consulta MiDecisor, valida el puntaje y construye el resumen
+   normalizado del sector TELCOS.
+5. Si TELCOS está informado y su mora vigente agregada en COP supera el umbral
+   de la revisión, se aplica `TELCO_DELINQUENCY_THRESHOLD` y el flujo termina
+   con `NO APROBADO` antes de evaluar el puntaje. La prioridad es igual para
+   Android e iPhone.
+6. Si TELCOS no está informado, o su mora válida no supera el umbral, el
+   servidor resuelve la banda de puntaje vigente para la plataforma.
+7. Si la banda rechaza, el flujo termina con `NO APROBADO`.
+8. Si la banda aprueba, se fijan la cuota inicial, la fianza y el credito
    maximo de esa banda; luego se abre la validacion de identidad existente.
-8. Al crear el credito, el servidor vuelve a validar y consume la evaluacion;
+9. Al crear el credito, el servidor vuelve a validar y consume la evaluacion;
    el navegador nunca decide ni puede modificar la banda aplicada.
 
 Una falla tecnica, una respuesta parcial o un puntaje ausente, malformado o
 fuera de rango se presenta como `No se pudo evaluar`; nunca se convierte en
 aprobacion ni rechazo. Solo una respuesta `ACCEPTED` con codigo `TX=17`, o con
 `TX=01..08` y `conInformacion=false` explicito, activa la regla comercial
-`Sin informacion`.
+`Sin informacion`. Si el sector TELCOS está marcado como disponible pero su
+`saldoMora` es nulo, negativo, fraccionario, excede el rango seguro o no puede
+normalizarse a COP, también se devuelve un error técnico; no se interpreta como
+mora cero ni como rechazo.
 
 ## Contrato MiDecisor usado
 
@@ -55,6 +63,36 @@ La autenticacion obtiene un JWT con `POST /spla/oauth2/v1/token`, enviando
 `client_id` y `client_secret` en headers, y `username` y `password` en JSON.
 El token solo se conserva en memoria, respetando `expires_in`; no se persiste ni
 se registra.
+
+## Unidad monetaria de indicadores MiDecisor PN
+
+FINSER PAY versiona la interpretación confirmada como
+`MIDECISOR_PN_MILES_COP_V1`. DataCrédito Experian indica oficialmente que los
+cupos, saldos y moras por sector de MiDecisor se expresan en miles:
+
+https://www.datacredito.com.co/empresas/midecisor-empresas
+
+Por tanto, los campos monetarios de `indicadoresValores`, sus `sectores`,
+`evolucionSaldoCuotaPN` y `evolucionRoPN` se convierten a pesos colombianos
+multiplicando el valor informado por 1.000. Por ejemplo, `saldoMora: 359`
+equivale a `$359.000 COP`.
+
+La conversión solo se aplica a valores monetarios: valor inicial, saldo, cuota,
+mora y cupo. Los conteos y porcentajes conservan la unidad informada. El payload
+original permanece intacto dentro del expediente cifrado; la normalización se
+realiza al construir el resumen derivado, por lo que también corrige la lectura
+de expedientes históricos sin reescribirlos ni generar una nueva consulta.
+
+La regla prioritaria usa exclusivamente
+`summary.telcos.delinquentBalance`: la mora vigente agregada de la fila sectorial
+identificada como TELCOS. No usa `summary.totals.delinquentBalance`, no suma mora
+de otros sectores y no infiere una mora TELCOS cuando ese sector no está
+reportado. El contrato de unidades sigue siendo
+`MIDECISOR_PN_MILES_COP_V1` porque versiona la conversión monetaria, no el
+agregado de riesgo elegido por la política.
+
+Por cautela, `montoSugerido` e `ingreso` no se convierten con esta regla hasta
+confirmar de forma específica su unidad contractual con Experian.
 
 ## Separación de ambientes
 
@@ -153,13 +191,35 @@ Cada revisión contiene bandas separadas para `ANDROID` e `IPHONE`:
 }
 ```
 
+Además, cada revisión nueva contiene una regla prioritaria única, anterior a
+las bandas y común a ambas plataformas:
+
+```json
+{
+  "priorityRules": {
+    "telcoDelinquency": {
+      "enabled": true,
+      "rejectAboveCop": 2000000
+    }
+  }
+}
+```
+
+El umbral es un entero en COP. La comparación es estricta: una mora TELCOS
+exactamente igual al umbral continúa a la banda; solo un valor superior produce
+`TELCO_DELINQUENCY_THRESHOLD`. Esta decisión es independiente del puntaje. Una
+revisión histórica sin `priorityRules.telcoDelinquency` continúa con sus bandas;
+la administración no activa la regla silenciosamente y exige publicar una nueva
+revisión para incorporarla.
+
 La administracion exige cobertura completa de 0 a 950 para cada plataforma,
 sin huecos ni solapes, y exactamente una regla `Sin informacion` adicional por
 plataforma. Esa regla se serializa internamente como el rango `-1..-1`; `-1` no
 es un puntaje de Experian, nunca se acepta desde el campo `score` del proveedor
-y no se muestra al asesor. Guardar genera una revisión nueva. Los umbrales, la decisión, la inicial,
-la fianza y el crédito máximo siguen siendo una definición comercial explícita
-de FINSER PAY; el perfil general solo conserva y asigna esa configuración.
+y no se muestra al asesor. Guardar genera una revisión nueva. Los umbrales, la
+decisión, la inicial, la fianza y el crédito máximo siguen siendo una definición
+comercial explícita de FINSER PAY; el perfil general solo conserva y asigna esa
+configuración.
 
 ### API administrativa
 
@@ -168,7 +228,8 @@ perfiles, su última revisión, `revisionCreatedAt`, aliados y estado público d
 proveedor. `POST` crea un perfil con su revisión 1 y devuelve
 `createdPolicyId`. `PATCH` admite:
 
-- `SAVE_REVISION` con `policyId`, `expectedVersion` y `bands`;
+- `SAVE_REVISION` con `policyId`, `expectedVersion`, `bands`,
+  `financialSettings` y `priorityRules`;
 - `ASSIGN_ALLY` con `allyId`, `policyId` y `expectedPolicyId`.
 
 Ambas mutaciones usan concurrencia optimista. Los conflictos devuelven `409`
@@ -194,10 +255,12 @@ Si identidad y scope coinciden exactamente se devuelve el mismo assessment; si
 cambia alguno, se crea una fila operativa actual enlazada al inquiry raíz, sin
 duplicar el expediente cifrado ni llamar otra vez a Experian.
 
-Si cambia Android/iPhone, el servidor toma el puntaje del inquiry raíz y
-recalcula la decisión/oferta con la plataforma solicitada usando la misma
-revisión histórica; conserva el vencimiento original, de modo que reutilizar no
-extiende la ventana. Un cambio de aliado o ambiente no comparte el resultado.
+Si cambia Android/iPhone, el servidor toma del inquiry raíz el puntaje y el
+resumen TELCOS ya cifrado, y recalcula la decisión/oferta con la plataforma
+solicitada usando la misma revisión histórica. No genera una consulta nueva y
+conserva el vencimiento original, de modo que reutilizar no extiende la ventana.
+Una revisión histórica sin la regla TELCOS continúa por banda. Un cambio de
+aliado o ambiente no comparte el resultado.
 Un resultado consumido no puede reutilizarse ni reclamarse de nuevo. Claim y
 consumo bloquean y marcan atómicamente todo el grupo raíz/clones para impedir un
 segundo crédito sobre la misma consulta.
@@ -214,10 +277,13 @@ segundo crédito sobre la misma consulta.
 - El expediente solo se descifra bajo demanda para el administrador central de
   FINSER PAY. El módulo `/dashboard/datacredito` lista consultas con documento
   enmascarado y permite abrir el detalle completo según la retención vigente.
+  Cuando aplica el rechazo TELCOS, el listado y el detalle muestran la causa,
+  la mora sectorial normalizada y el umbral de la revisión.
 - Cada apertura del expediente central genera una auditoría con actor,
   correlación, resultado del acceso e IP/agente de usuario seudonimizados.
 - IP y agente de usuario se conservan como HMAC, no en claro.
-- El asesor no recibe el puntaje, la respuesta completa ni los umbrales.
+- El asesor no recibe el puntaje, la respuesta completa, la mora TELCOS ni los
+  umbrales.
 - Los errores públicos incluyen un identificador de correlación, no detalles de
   credenciales, claves de cifrado ni del proveedor.
 - Cada evaluación operativa se vincula a usuario, asesor, aliado, sede,
@@ -263,8 +329,9 @@ pagada sin verificar si el credito ya fue creado.
    cifrados y auditorías cuya retención ya venció.
 5. Configurar y revisar las bandas desde Parámetros de crédito. Si existe una
    versión anterior sin regla `-1..-1` por plataforma o sin
-   `maxFinancedAmount`, publicar primero una versión compatible mediante una
-   operación controlada.
+   `maxFinancedAmount`, o una revisión sin
+   `priorityRules.telcoDelinquency`, publicar primero una versión compatible
+   mediante una operación controlada.
 6. Cargar las credenciales y hosts de certificación, nunca en el repositorio, y
    fijar `DATACREDITO_ENVIRONMENT=uat` (o la etiqueta no productiva acordada).
    Confirmar que el guard impide ventas reales. Usar
@@ -296,7 +363,7 @@ pagada sin verificar si el credito ya fue creado.
 - limite de peticiones, SLA, timeouts y efecto/costo de repetir una consulta;
 - requisitos de IP allowlist, VPN, certificados o mTLS;
 - evidencia de autorizacion exigida y periodo de conservacion;
-- moneda y unidad de montos informados por MiDecisor;
+- unidad contractual especifica de `montoSugerido` e `ingreso`;
 - confirmacion de que el reporte de obligaciones requiere otro producto/API.
 
 La clave recibida por correo abre el archivo de manuales. No es una credencial

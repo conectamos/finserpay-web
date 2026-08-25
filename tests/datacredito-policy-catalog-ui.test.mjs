@@ -122,3 +122,72 @@ test("bloquea duplicar un borrador y usa la fecha de la revisión publicada", ()
   );
   assert.match(consoleSource, /Publica los cambios o recarga para descartarlos/);
 });
+
+test("configura una regla prioritaria versionada antes de las bandas", () => {
+  assert.match(
+    consoleSource,
+    /priorityRules: DataCreditoPolicyPriorityRules \| null/
+  );
+  assert.match(
+    consoleSource,
+    /DEFAULT_PRIORITY_REJECTION_AMOUNT_COP = 2_000_000/
+  );
+  assert.match(
+    consoleSource,
+    /parsePriorityRules\(value\.priorityRules, `Política \$\{index \+ 1\}`\)/
+  );
+  assert.match(consoleSource, /telcoDelinquency\.enabled !== true/);
+  assert.doesNotMatch(consoleSource, /totalDelinquency/);
+  assert.match(
+    consoleSource,
+    /MAX_PRIORITY_REJECTION_AMOUNT_COP =\s*DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT/
+  );
+  assert.match(consoleSource, /max=\{MAX_PRIORITY_REJECTION_AMOUNT_COP\}/);
+  assert.match(consoleSource, /Mora vigente TELCOS superior a \(COP\)/);
+  assert.match(consoleSource, /Prioridad 1 · activa/);
+  assert.match(consoleSource, /Android e iPhone/);
+  assert.match(consoleSource, /<StatusPill tone="danger">RECHAZADO<\/StatusPill>/);
+  assert.match(
+    consoleSource,
+    /Es independiente del puntaje y se aplica a ambas plataformas/
+  );
+  assert.match(
+    consoleSource,
+    /Solo rechaza cuando la mora vigente TELCOS es mayor; el valor exacto[\s\S]*no activa la regla\./
+  );
+  assert.match(consoleSource, /telcoDelinquency: \{/);
+  assert.doesNotMatch(consoleSource, /onEnabledChange|PriorityRuleEnabled/);
+
+  const priorityCard = consoleSource.indexOf(
+    "Regla prioritaria de rechazo por mora TELCOS"
+  );
+  const financialCard = consoleSource.indexOf(
+    "Parámetros financieros de la política"
+  );
+  const androidBands = consoleSource.indexOf('platform="ANDROID"', financialCard);
+  assert.ok(priorityCard >= 0);
+  assert.ok(priorityCard < financialCard);
+  assert.ok(financialCard < androidBands);
+});
+
+test("hace explícita la migración histórica y versiona la regla en ambos payloads", () => {
+  assert.match(consoleSource, /Sin regla publicada/);
+  assert.match(
+    consoleSource,
+    /No se activará de forma silenciosa[\s\S]*publica una nueva revisión/
+  );
+  assert.match(consoleSource, /Preparar regla por/);
+  assert.match(consoleSource, /!priorityRulesValidation\.valid/);
+  assert.match(
+    consoleSource,
+    /priorityRules: priorityRulesValidation\.canonical/
+  );
+  assert.match(
+    consoleSource,
+    /priorityRules: newPolicyPriorityRulesValidation\.canonical/
+  );
+  assert.match(
+    consoleSource,
+    /selectedProfile\.priorityRules \|\| DEFAULT_PRIORITY_RULES/
+  );
+});

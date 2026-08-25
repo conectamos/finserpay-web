@@ -206,6 +206,13 @@ test("retirar una politica es logico, bloqueado y conserva historia", async () =
   assert.match(ui, /ARES_FRANCES_V1/);
   assert.match(ui, /Condiciones financieras de la nueva política/);
   assert.match(ui, /newPolicyFinancialSettings/);
+  assert.match(ui, /Regla prioritaria de la nueva política/);
+  assert.match(ui, /Regla prioritaria de rechazo/);
+  assert.match(ui, /newPolicyPriorityRules/);
+  assert.match(
+    ui,
+    /priorityRules: newPolicyPriorityRulesValidation\.canonical/
+  );
   assert.match(
     ui,
     /financialSettings: newPolicyFinancialValidation\.canonical/

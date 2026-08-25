@@ -8,6 +8,10 @@ const MAX_ALERTS = 32;
 const MAX_SUGGESTIONS = 16;
 const MAX_SUGGESTION_ITEMS = 16;
 
+export const MIDECISOR_PN_MONETARY_UNIT_CONTRACT =
+  "MIDECISOR_PN_MILES_COP_V1" as const;
+const MIDECISOR_PN_THOUSANDS_TO_COP = 1_000;
+
 const FORBIDDEN_PROVIDER_KEY = /^(?:access[_-]?token|refresh[_-]?token|authorization|client[_-]?secret|password|passwd|cookie|set-cookie|api[_-]?key|secret|token)$/i;
 const PAYMENT_BEHAVIOR_CODES = new Set([
   "N",
@@ -331,6 +335,19 @@ function providerNonNegativeNumber(value: unknown) {
   return parsed !== null && parsed >= 0 ? parsed : null;
 }
 
+/**
+ * MiDecisor PN reports balances, installments, arrears and limits in thousands
+ * of Colombian pesos. The encrypted provider payload remains untouched; this
+ * conversion is only applied while building the derived administrative view.
+ */
+export function midecisorThousandsToCop(value: unknown): number | null {
+  const parsed = providerNonNegativeNumber(value);
+  if (parsed === null) return null;
+
+  const amountInCop = parsed * MIDECISOR_PN_THOUSANDS_TO_COP;
+  return Number.isSafeInteger(amountInCop) ? amountInCop : null;
+}
+
 function providerNonNegativeInteger(value: unknown) {
   const parsed = providerNonNegativeNumber(value);
   return parsed !== null && Number.isInteger(parsed) ? parsed : null;
@@ -358,10 +375,10 @@ function numericIndicators(
     closedCredits: providerNonNegativeInteger(indicators.creditosCerrados),
     principalCredits: providerNonNegativeInteger(indicators.totalPrincipal),
     coDebtorOrOtherCredits: providerNonNegativeInteger(indicators.totalCodeudorOtros),
-    initialAmount: providerNonNegativeNumber(indicators.valorInicial),
-    currentBalance: providerNonNegativeNumber(indicators.saldoActual),
-    installmentAmount: providerNonNegativeNumber(indicators.valorCuota),
-    delinquentBalance: providerNonNegativeNumber(indicators.saldoMora),
+    initialAmount: midecisorThousandsToCop(indicators.valorInicial),
+    currentBalance: midecisorThousandsToCop(indicators.saldoActual),
+    installmentAmount: midecisorThousandsToCop(indicators.valorCuota),
+    delinquentBalance: midecisorThousandsToCop(indicators.saldoMora),
     debtPercentage: providerNonNegativeNumber(indicators.porcentajeDeuda),
   };
 }
@@ -818,8 +835,8 @@ export function buildDataCreditoAdminRiskSummary(
         : []
     ).map((item) => ({
       period: item.trimestre,
-      totalBalance: providerNonNegativeNumber(item.saldoTotal),
-      totalInstallment: providerNonNegativeNumber(item.cuotaTotal),
+      totalBalance: midecisorThousandsToCop(item.saldoTotal),
+      totalInstallment: midecisorThousandsToCop(item.cuotaTotal),
     })),
     revolvingEvolution: (
       creditBehaviorHasInformation && revolvingSection?.conInformacion !== false
@@ -827,8 +844,8 @@ export function buildDataCreditoAdminRiskSummary(
         : []
     ).map((item) => ({
       period: item.trimestre,
-      totalBalance: providerNonNegativeNumber(item.saldoTotal),
-      totalLimit: providerNonNegativeNumber(item.cupoTotal),
+      totalBalance: midecisorThousandsToCop(item.saldoTotal),
+      totalLimit: midecisorThousandsToCop(item.cupoTotal),
       debtPercentage: providerNonNegativeNumber(item.porcentajeDeuda),
     })),
     paymentHistory: (

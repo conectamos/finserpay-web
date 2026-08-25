@@ -14,6 +14,7 @@ import {
   DataCreditoPolicyValidationError,
   parseDataCreditoPolicyBands,
   parseDataCreditoPolicyFinancialSettings,
+  parseDataCreditoPolicyPriorityRules,
   parseDataCreditoPolicyProfileDescription,
   parseDataCreditoPolicyProfileName,
 } from "@/lib/datacredito/policy";
@@ -264,6 +265,9 @@ export async function POST(request: Request) {
       financialSettings: parseDataCreditoPolicyFinancialSettings(
         body.financialSettings
       )!,
+      priorityRules: parseDataCreditoPolicyPriorityRules(
+        body.priorityRules
+      )!,
       actorUserId: access.user.id,
     });
     return NextResponse.json(await catalogPayload({ createdPolicyId }), {
@@ -323,6 +327,9 @@ export async function PATCH(request: Request) {
         }),
         financialSettings: parseDataCreditoPolicyFinancialSettings(
           body.financialSettings
+        )!,
+        priorityRules: parseDataCreditoPolicyPriorityRules(
+          body.priorityRules
         )!,
         createdByUserId: access.user.id,
         expectedVersion,

@@ -14,9 +14,11 @@ import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors"
 import {
   parseDataCreditoPolicyBands,
   parseDataCreditoPolicyFinancialSettings,
+  parseDataCreditoPolicyPriorityRules,
   resolveDataCreditoOfferFinancingTerms,
   type DataCreditoPolicyBand,
   type DataCreditoPolicyFinancialSettings,
+  type DataCreditoPolicyPriorityRules,
 } from "@/lib/datacredito/policy";
 import {
   decryptDataCreditoSecureRecord,
@@ -176,6 +178,20 @@ function serializeOffer(
       value.financialSettings,
       { optional: true }
     ),
+    ...(value.decisionRule === "SCORE_BAND" ||
+    value.decisionRule === "TELCO_DELINQUENCY_THRESHOLD"
+      ? {
+          decisionRule: value.decisionRule,
+          telcoRejectionThresholdCop:
+            value.telcoRejectionThresholdCop === null
+              ? null
+              : finiteInteger(value.telcoRejectionThresholdCop),
+          riskMetricVersion:
+            value.riskMetricVersion === "MIDECISOR_PN_MILES_COP_V1"
+              ? value.riskMetricVersion
+              : null,
+        }
+      : {}),
   };
 }
 
@@ -600,13 +616,17 @@ export class DataCreditoPolicyProfileNotFoundError extends Error {
 
 function policyPayload(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { bands: [], financialSettings: null };
+    return { bands: [], financialSettings: null, priorityRules: null };
   }
   const payload = value as Record<string, unknown>;
   return {
     bands: parseDataCreditoPolicyBands(payload.bands),
     financialSettings: parseDataCreditoPolicyFinancialSettings(
       payload.financialSettings,
+      { optional: true }
+    ),
+    priorityRules: parseDataCreditoPolicyPriorityRules(
+      payload.priorityRules,
       { optional: true }
     ),
   };
@@ -666,7 +686,7 @@ export async function listDataCreditoPolicyCatalog() {
     profiles: profileRows.map((row) => {
       const payload = row.policy
         ? policyPayload(row.policy)
-        : { bands: [], financialSettings: null };
+        : { bands: [], financialSettings: null, priorityRules: null };
       return {
         id: row.id,
         name: row.name,
@@ -675,6 +695,7 @@ export async function listDataCreditoPolicyCatalog() {
         version: row.version,
         bands: payload.bands,
         financialSettings: payload.financialSettings,
+        priorityRules: payload.priorityRules,
         createdAt: iso(row.createdAt),
         updatedAt: iso(row.updatedAt),
         revisionCreatedAt: iso(row.revisionCreatedAt),
@@ -697,12 +718,16 @@ export async function createDataCreditoPolicyProfile(input: {
   description: string | null;
   bands: DataCreditoPolicyBand[];
   financialSettings: DataCreditoPolicyFinancialSettings;
+  priorityRules: DataCreditoPolicyPriorityRules;
   actorUserId: number;
 }) {
   await ensureDataCreditoSchema();
   const bands = parseDataCreditoPolicyBands(input.bands);
   const financialSettings = parseDataCreditoPolicyFinancialSettings(
     input.financialSettings
+  )!;
+  const priorityRules = parseDataCreditoPolicyPriorityRules(
+    input.priorityRules
   )!;
   const profileId = randomUUID();
   try {
@@ -726,7 +751,7 @@ export async function createDataCreditoPolicyProfile(input: {
         `,
         randomUUID(),
         profileId,
-        JSON.stringify({ bands, financialSettings }),
+        JSON.stringify({ bands, financialSettings, priorityRules }),
         input.actorUserId
       );
     });

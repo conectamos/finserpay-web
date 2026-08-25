@@ -97,12 +97,29 @@ test("el payload crudo del proveedor nunca se serializa al asesor", () => {
   );
   assert.equal(
     (post.match(/result\.providerPayload/g) || []).length,
-    1,
-    "La respuesta cruda solo debe entrar al sobre cifrado"
+    2,
+    "La respuesta cruda solo debe entrar al sobre cifrado y al normalizador de riesgo"
   );
   assert.match(
     post,
     /encryptDataCreditoSecureRecord\([\s\S]*?providerPayload:\s*result\.providerPayload[\s\S]*?\}\)/
+  );
+  assert.match(
+    post,
+    /const riskSummary = buildDataCreditoAdminRiskSummary\([\s\S]*?result\.providerPayload[\s\S]*?\)/
+  );
+  assert.match(post, /riskSummary\?\.telcos\.delinquentBalance/);
+  assert.doesNotMatch(post, /riskSummary\?\.totals\.delinquentBalance/);
+  assert.match(post, /priorityRuleEnabled/);
+  assert.match(post, /telcoRiskMetricValid/);
+  assert.match(post, /telcoRiskMetricUnavailable/);
+  assert.match(
+    post,
+    /failDataCreditoAssessmentWithSecureRecord[\s\S]*?TELCO_RISK_METRIC_UNAVAILABLE/
+  );
+  assert.match(
+    post,
+    /resolveDataCreditoDecision\([\s\S]*?telcoDelinquentBalanceCop,[\s\S]*?telcoDelinquencyInformationAvailable/
   );
   assert.match(post, /\.\.\.serializeDataCreditoAssessment\(completed\)/);
   assert.doesNotMatch(

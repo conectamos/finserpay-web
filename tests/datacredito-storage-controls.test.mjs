@@ -440,6 +440,10 @@ test("la simulacion resuelve la banda sin informacion de la politica asignada", 
     getter,
     /resolveDataCredito(?:Decision|PolicyBand)\([\s\S]{0,220}DATACREDITO_NO_INFORMATION_SCORE/
   );
+  assert.match(
+    getter,
+    /\{\s*\.\.\.policy,\s*priorityRules:\s*null\s*\}/
+  );
 });
 
 test("el DTO de simulacion es minimo y un rechazo nunca expone oferta", () => {

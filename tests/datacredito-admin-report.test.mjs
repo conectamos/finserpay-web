@@ -6,6 +6,8 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url);
 const {
   buildDataCreditoAdminRiskSummary,
+  MIDECISOR_PN_MONETARY_UNIT_CONTRACT,
+  midecisorThousandsToCop,
   sanitizeDataCreditoProviderPayload,
 } = await jiti.import("../lib/datacredito/admin-report.ts");
 const { parseDataCreditoQueryResponse } = await jiti.import(
@@ -60,8 +62,8 @@ function providerPayload() {
             trimestres: [
               {
                 trimestre: "2026-06",
-                saldoTotal: "1200000.0",
-                cuotaTotal: "85000.0",
+                saldoTotal: "1200.0",
+                cuotaTotal: "85.0",
               },
             ],
           },
@@ -70,8 +72,8 @@ function providerPayload() {
             trimestres: [
               {
                 trimestre: "2026-06",
-                saldoTotal: "600000.0",
-                cupoTotal: "1000000.0",
+                saldoTotal: "600.0",
+                cupoTotal: "1000.0",
                 porcentajeDeuda: "60.0",
               },
             ],
@@ -89,10 +91,10 @@ function providerPayload() {
             creditosCerrados: "11",
             totalPrincipal: "17",
             totalCodeudorOtros: "1",
-            valorInicial: "2500000",
-            saldoActual: "1200000",
-            valorCuota: "85000",
-            saldoMora: "43000",
+            valorInicial: "2500",
+            saldoActual: "1200",
+            valorCuota: "85",
+            saldoMora: "359",
             porcentajeDeuda: "48.0",
             sectores: [
               {
@@ -101,10 +103,10 @@ function providerPayload() {
                 creditosCerrados: "8",
                 totalPrincipal: "13",
                 totalCodeudorOtros: "0",
-                valorInicial: "2000000",
-                saldoActual: "1100000",
-                valorCuota: "70000",
-                saldoMora: "8000",
+                valorInicial: "2000",
+                saldoActual: "1100",
+                valorCuota: "70",
+                saldoMora: "40",
                 porcentajeDeuda: "55.0",
               },
               {
@@ -113,10 +115,10 @@ function providerPayload() {
                 creditosCerrados: "3",
                 totalPrincipal: "4",
                 totalCodeudorOtros: "1",
-                valorInicial: "500000",
-                saldoActual: "100000",
-                valorCuota: "15000",
-                saldoMora: "35000",
+                valorInicial: "500",
+                saldoActual: "100",
+                valorCuota: "15",
+                saldoMora: "319",
                 porcentajeDeuda: "20.0",
                 api_key: "nested-api-key",
               },
@@ -165,6 +167,28 @@ function providerPayload() {
   };
 }
 
+test("convierte los montos MiDecisor PN de miles a COP con bordes seguros", () => {
+  assert.equal(
+    MIDECISOR_PN_MONETARY_UNIT_CONTRACT,
+    "MIDECISOR_PN_MILES_COP_V1"
+  );
+  assert.equal(midecisorThousandsToCop(359), 359000);
+  assert.equal(midecisorThousandsToCop("8.004"), 8004);
+  assert.equal(midecisorThousandsToCop("2,5"), 2500);
+  assert.equal(midecisorThousandsToCop(0), 0);
+
+  const maximumSafeThousands = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
+  assert.equal(
+    midecisorThousandsToCop(maximumSafeThousands),
+    maximumSafeThousands * 1000
+  );
+  assert.equal(midecisorThousandsToCop(maximumSafeThousands + 1), null);
+
+  for (const invalid of [null, undefined, "", "-1", -1, Infinity, "sin dato"]) {
+    assert.equal(midecisorThousandsToCop(invalid), null);
+  }
+});
+
 test("conserva el score 885 y construye el resumen PN de mora y Telcos", () => {
   const payload = providerPayload();
   const parsed = parseDataCreditoQueryResponse(payload, 12.4);
@@ -204,15 +228,20 @@ test("conserva el score 885 y construye el resumen PN de mora y Telcos", () => {
   assert.equal(summary.identity.queriedDocumentNumber, "900123456");
   assert.equal(summary.identity.documentNumber, "900123456");
   assert.equal(summary.risk.score, 885);
+  assert.equal(summary.risk.suggestedAmount, 2500000);
   assert.equal(summary.indicatorValuesHaveInformation, true);
-  assert.equal(summary.totals.delinquentBalance, 43000);
+  assert.equal(summary.totals.delinquentBalance, 359000);
   assert.equal(summary.totals.activeCredits, 7);
+  assert.equal(
+    payload.content.respuesta.comportamientoCrediticio.indicadoresValores.saldoMora,
+    "359"
+  );
 
   const telcos = summary.sectors.find((sector) => sector.isTelcos);
   assert.ok(telcos);
   assert.equal(telcos.sector, "Sector Telcos");
   assert.equal(telcos.activeCredits, 2);
-  assert.equal(telcos.delinquentBalance, 35000);
+  assert.equal(telcos.delinquentBalance, 319000);
   assert.deepEqual(summary.telcos, {
     available: true,
     sector: "Sector Telcos",
@@ -223,7 +252,7 @@ test("conserva el score 885 y construye el resumen PN de mora y Telcos", () => {
     initialAmount: 500000,
     currentBalance: 100000,
     installmentAmount: 15000,
-    delinquentBalance: 35000,
+    delinquentBalance: 319000,
     debtPercentage: 20,
     delinquencyStatus: "Con mora vigente agregada en Telcos",
   });
@@ -237,6 +266,7 @@ test("conserva el score 885 y construye el resumen PN de mora y Telcos", () => {
     totalInstallment: 85000,
   });
   assert.equal(summary.revolvingEvolution[0].totalLimit, 1000000);
+  assert.equal(summary.indebtedness.income, 5000000);
   assert.equal(summary.indebtedness.installmentToIncomePercentage, 31.5);
   assert.deepEqual(summary.suggestions, [
     {
@@ -490,7 +520,27 @@ test("la consola central presenta el expediente completo en secciones accesibles
   assert.match(adminConsoleSource, /Significado no disponible/);
   assert.match(
     adminConsoleSource,
-    /Los montos, unidades y códigos son valores informados por[\s\S]*No deben usarse para automatizar un rechazo/
+    /MiDecisor informa saldos, cuotas, moras, cupos y valores[\s\S]*iniciales en miles de COP/
+  );
+  assert.match(
+    adminConsoleSource,
+    /359 equivale a[\s\S]*\$359\.000[\s\S]*La regla prioritaria usa únicamente la mora vigente[\s\S]*agregada del sector TELCOS, convertida a COP/
+  );
+  assert.match(
+    adminConsoleSource,
+    /Rechazo prioritario por mora TELCOS:[\s\S]*telco\?\.delinquentBalance[\s\S]*superó el umbral[\s\S]*independiente del puntaje[\s\S]*Android e iPhone/
+  );
+  assert.match(
+    adminConsoleSource,
+    /<strong>Rechazo prioritario TELCOS<\/strong>/
+  );
+  assert.match(adminConsoleSource, /"TELCO_DELINQUENCY_THRESHOLD"/);
+  assert.match(adminConsoleSource, /telcoRejectionThresholdCop/);
+  assert.doesNotMatch(adminConsoleSource, /TOTAL_DELINQUENCY_THRESHOLD/);
+  assert.doesNotMatch(adminConsoleSource, /\brejectionThresholdCop\b/);
+  assert.match(
+    adminConsoleSource,
+    /offer\.decisionRule !==[\s\S]*"TELCO_DELINQUENCY_THRESHOLD"/
   );
   assert.match(
     adminConsoleSource,
