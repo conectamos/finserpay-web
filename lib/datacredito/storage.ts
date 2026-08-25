@@ -606,8 +606,8 @@ async function verifyDataCreditoPolicyProfileSchema() {
           AND pending_guard.tgenabled IN ('O', 'A')
           AND pending_guard.tgtype = 7
           AND pending_guard.tgqual IS NOT NULL
-          AND pg_get_expr(pending_guard.tgqual, pending_guard.tgrelid) ILIKE '%status%'
-          AND pg_get_expr(pending_guard.tgqual, pending_guard.tgrelid) ILIKE '%PENDING%'
+          AND pg_get_triggerdef(pending_guard.oid, false) ILIKE '%status%'
+          AND pg_get_triggerdef(pending_guard.oid, false) ILIKE '%PENDING%'
       ) AS "globalPendingGuardPresent",
       EXISTS (
         SELECT 1

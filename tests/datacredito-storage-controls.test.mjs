@@ -182,6 +182,14 @@ test("produccion verifica el preflight sin ejecutar DDL en runtime", () => {
   assert.match(storage, /matchesDataCreditoSchemaIndex/);
   assert.match(storage, /DataCreditoAssessment_pending_key/);
   assert.match(storage, /SCHEMA_NOT_READY/);
+  assert.match(
+    storage,
+    /pg_get_triggerdef\(pending_guard\.oid, false\)/
+  );
+  assert.doesNotMatch(
+    storage,
+    /pg_get_expr\(pending_guard\.tgqual, pending_guard\.tgrelid\)/
+  );
 
   const initializer = storage.match(
     /async function initializeDataCreditoSchema\(\) \{([\s\S]*?)\n\}/
