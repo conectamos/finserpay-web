@@ -256,6 +256,10 @@ en pantalla como en el servidor es:
 
 `inicial minima = porcentaje * min(valor equipo, tope efectivo) + max(0, valor equipo - tope efectivo)`.
 
+Por ejemplo, para un equipo de `$1.300.000`, tope de `$1.200.000` e inicial
+del `20%`, la inicial minima es `$240.000 + $100.000 = $340.000`; el excedente
+nunca queda financiado ni se limita a una nota informativa.
+
 ## Reutilización de consultas durante 15 días
 
 Una respuesta terminal `APROBADO` o `RECHAZADO` se reutiliza durante 15 días

@@ -329,11 +329,15 @@ test("reserva globalmente la cedula antes de consultar al proveedor", async () =
   const reservation = evaluationRoute.indexOf(
     "const solicitudReservation = await reserveSolicitudForIdentity"
   );
+  const reuse = evaluationRoute.indexOf(
+    "const cached = await reuseDataCreditoAssessment"
+  );
   const providerCall = evaluationRoute.indexOf(
     "await queryDataCreditoNaturalPerson({"
   );
   assert.ok(reservation >= 0, "debe reservar la solicitud");
-  assert.ok(providerCall > reservation, "debe reservar antes de consultar DataCredito");
+  assert.ok(reuse > reservation, "debe reservar antes de reutilizar DataCredito");
+  assert.ok(providerCall > reuse, "debe reutilizar antes de consultar al proveedor");
 });
 
 test("cierra y vincula el borrador dentro de la transaccion del credito", async () => {

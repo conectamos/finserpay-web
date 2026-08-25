@@ -31,16 +31,28 @@ const {
 
 test("el monto maximo de la oferta limita el saldo realmente financiado", () => {
   assert.equal(
+    calculateRequiredInitialPaymentForFinancingLimit(500_000, 600_000, 40),
+    200_000
+  );
+  assert.equal(
     calculateRequiredInitialPaymentForFinancingLimit(800_000, 600_000, 40),
-    320_000
+    440_000
   );
   assert.equal(
     calculateRequiredInitialPaymentForFinancingLimit(1_000_000, 600_000, 20),
-    400_000
+    520_000
   );
   assert.equal(
     calculateRequiredInitialPaymentForFinancingLimit(3_000_000, 2_500_000, 0),
     500_000
+  );
+  assert.equal(
+    calculateRequiredInitialPaymentForFinancingLimit(1_300_000, 1_200_000, 20),
+    340_000
+  );
+  assert.equal(
+    calculateRequiredInitialPaymentForFinancingLimit(1_300_000, 0, 20),
+    1_300_000
   );
 });
 
@@ -213,8 +225,8 @@ test("la regla comercial iPhone conserva 30%, 3.5M, 48 y 160k", () => {
     IPHONE_INITIAL_PAYMENT_PERCENTAGE
   );
 
-  assert.equal(initialPayment, 1_500_000);
-  assert.equal(5_000_000 - initialPayment, 3_500_000);
+  assert.equal(initialPayment, 2_550_000);
+  assert.equal(5_000_000 - initialPayment, 2_450_000);
 
   const plan = calculateFrenchAmortization({
     calculoVersion: ARES_FRENCH_AMORTIZATION_VERSION,
@@ -228,7 +240,7 @@ test("la regla comercial iPhone conserva 30%, 3.5M, 48 y 160k", () => {
     fechaPrimerPago: "2026-09-17",
   });
 
-  assert.equal(plan.valorFinanciado, IPHONE_MAX_FINANCED_AMOUNT);
+  assert.equal(plan.valorFinanciado, 2_450_000);
   assert.equal(
     validateIphoneInstallmentLimit({
       platform: "IPHONE",
