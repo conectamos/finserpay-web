@@ -44,7 +44,7 @@ export type DataCreditoDecisionRule =
 export type DataCreditoPolicyPriorityRules = {
   telcoDelinquency: {
     enabled: boolean;
-    rejectAboveCop: number;
+    rejectAboveCopByPlatform: Record<DataCreditoPlatform, number>;
   };
 };
 
@@ -220,21 +220,56 @@ export function parseDataCreditoPolicyPriorityRules(
   }
 
   const enabled = telcoDelinquency.enabled;
-  const rejectAboveCop = finiteNumber(telcoDelinquency.rejectAboveCop);
+  const hasPlatformThresholds = Object.prototype.hasOwnProperty.call(
+    telcoDelinquency,
+    "rejectAboveCopByPlatform"
+  );
+  const hasLegacyThreshold = Object.prototype.hasOwnProperty.call(
+    telcoDelinquency,
+    "rejectAboveCop"
+  );
+  const rejectAboveCopByPlatform = hasPlatformThresholds
+    ? recordValue(telcoDelinquency.rejectAboveCopByPlatform)
+    : null;
+  const legacyRejectAboveCop =
+    !hasPlatformThresholds && hasLegacyThreshold
+      ? finiteNumber(telcoDelinquency.rejectAboveCop)
+      : null;
+  const androidRejectAboveCop = finiteNumber(
+    rejectAboveCopByPlatform?.ANDROID ?? legacyRejectAboveCop
+  );
+  const iphoneRejectAboveCop = finiteNumber(
+    rejectAboveCopByPlatform?.IPHONE ?? legacyRejectAboveCop
+  );
   const issues: string[] = [];
   if (enabled !== true) {
     issues.push(
       "La regla prioritaria de mora vigente Telcos debe estar habilitada"
     );
   }
-  if (
-    !Number.isSafeInteger(rejectAboveCop) ||
-    rejectAboveCop! <= 0 ||
-    rejectAboveCop! > DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT
-  ) {
+  if (hasPlatformThresholds === hasLegacyThreshold) {
     issues.push(
-      `El umbral de mora vigente Telcos debe ser un entero en pesos colombianos entre 1 y ${DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT}`
+      "La regla prioritaria de mora vigente Telcos debe usar exactamente una configuración de umbrales"
     );
+  }
+  if (hasPlatformThresholds && !rejectAboveCopByPlatform) {
+    issues.push(
+      "Los umbrales de mora vigente Telcos por plataforma no son válidos"
+    );
+  }
+  for (const [platform, rejectAboveCop] of [
+    ["Android", androidRejectAboveCop],
+    ["iPhone", iphoneRejectAboveCop],
+  ] as const) {
+    if (
+      !Number.isSafeInteger(rejectAboveCop) ||
+      rejectAboveCop! <= 0 ||
+      rejectAboveCop! > DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT
+    ) {
+      issues.push(
+        `El umbral de mora vigente Telcos para ${platform} debe ser un entero en pesos colombianos entre 1 y ${DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT}`
+      );
+    }
   }
   if (issues.length) {
     throw new DataCreditoPolicyValidationError(issues);
@@ -243,7 +278,10 @@ export function parseDataCreditoPolicyPriorityRules(
   return {
     telcoDelinquency: {
       enabled: enabled as boolean,
-      rejectAboveCop: rejectAboveCop!,
+      rejectAboveCopByPlatform: {
+        ANDROID: androidRejectAboveCop!,
+        IPHONE: iphoneRejectAboveCop!,
+      },
     },
   };
 }
@@ -690,13 +728,18 @@ export function resolveDataCreditoDecision(
   score: unknown,
   riskContext?: DataCreditoDecisionRiskContext
 ): DataCreditoDecisionResolution | null {
+  const normalizedPlatform = normalizeDataCreditoPlatform(platform);
+  if (!normalizedPlatform) return null;
+
   const telcoDelinquencyRule = policy.priorityRules?.telcoDelinquency;
   const priorityRuleEnabled = telcoDelinquencyRule?.enabled === true;
+  const configuredPlatformThreshold =
+    telcoDelinquencyRule?.rejectAboveCopByPlatform?.[normalizedPlatform];
   const telcoRejectionThresholdCop =
     priorityRuleEnabled &&
-    Number.isSafeInteger(telcoDelinquencyRule.rejectAboveCop) &&
-    telcoDelinquencyRule.rejectAboveCop > 0
-      ? telcoDelinquencyRule.rejectAboveCop
+    Number.isSafeInteger(configuredPlatformThreshold) &&
+    configuredPlatformThreshold! > 0
+      ? configuredPlatformThreshold!
       : null;
   const telcoInformationAvailable =
     riskContext?.telcoDelinquencyInformationAvailable;
@@ -729,7 +772,7 @@ export function resolveDataCreditoDecision(
     telcoRejectionThresholdCop,
     riskMetricVersion: DATACREDITO_RISK_METRIC_VERSION,
   };
-  const band = resolveDataCreditoPolicyBand(policy, platform, score);
+  const band = resolveDataCreditoPolicyBand(policy, normalizedPlatform, score);
   if (!band) return null;
   const financingTerms = resolveDataCreditoOfferFinancingTerms(
     band.platform,

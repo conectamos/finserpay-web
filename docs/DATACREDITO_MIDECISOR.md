@@ -22,11 +22,12 @@ No forman parte de este alcance:
 4. El servidor consulta MiDecisor, valida el puntaje y construye el resumen
    normalizado del sector TELCOS.
 5. Si TELCOS está informado y su mora vigente agregada en COP supera el umbral
-   de la revisión, se aplica `TELCO_DELINQUENCY_THRESHOLD` y el flujo termina
-   con `NO APROBADO` antes de evaluar el puntaje. La prioridad es igual para
-   Android e iPhone.
-6. Si TELCOS no está informado, o su mora válida no supera el umbral, el
-   servidor resuelve la banda de puntaje vigente para la plataforma.
+   configurado para la plataforma consultada, se aplica
+   `TELCO_DELINQUENCY_THRESHOLD` y el flujo termina con `NO APROBADO` antes
+   de evaluar el puntaje. La prioridad es igual para Android e iPhone, pero cada
+   plataforma conserva su propio umbral.
+6. Si TELCOS no está informado, o su mora válida no supera el umbral de la
+   plataforma, el servidor resuelve la banda de puntaje vigente.
 7. Si la banda rechaza, el flujo termina con `NO APROBADO`.
 8. Si la banda aprueba, se fijan la cuota inicial, la fianza y el credito
    maximo de esa banda; luego se abre la validacion de identidad existente.
@@ -192,25 +193,34 @@ Cada revisión contiene bandas separadas para `ANDROID` e `IPHONE`:
 ```
 
 Además, cada revisión nueva contiene una regla prioritaria única, anterior a
-las bandas y común a ambas plataformas:
+las bandas, con un umbral independiente para cada plataforma:
 
 ```json
 {
   "priorityRules": {
     "telcoDelinquency": {
       "enabled": true,
-      "rejectAboveCop": 2000000
+      "rejectAboveCopByPlatform": {
+        "ANDROID": 2000000,
+        "IPHONE": 1000000
+      }
     }
   }
 }
 ```
 
-El umbral es un entero en COP. La comparación es estricta: una mora TELCOS
-exactamente igual al umbral continúa a la banda; solo un valor superior produce
-`TELCO_DELINQUENCY_THRESHOLD`. Esta decisión es independiente del puntaje. Una
-revisión histórica sin `priorityRules.telcoDelinquency` continúa con sus bandas;
-la administración no activa la regla silenciosamente y exige publicar una nueva
-revisión para incorporarla.
+Cada umbral es un entero en COP. La comparación es estricta: una mora TELCOS
+exactamente igual al umbral de la plataforma continúa a la banda; solo un valor
+superior produce `TELCO_DELINQUENCY_THRESHOLD`. La oferta auditada conserva el
+umbral que se aplicó a esa evaluación. Esta decisión es independiente del
+puntaje.
+
+Una revisión histórica con el campo escalar `rejectAboveCop` se normaliza
+únicamente en memoria usando ese mismo valor para Android e iPhone; el JSON
+histórico no se reescribe. Una revisión sin
+`priorityRules.telcoDelinquency` continúa con sus bandas. La administración no
+activa la regla silenciosamente y exige publicar una nueva revisión para
+incorporarla.
 
 La administracion exige cobertura completa de 0 a 950 para cada plataforma,
 sin huecos ni solapes, y exactamente una regla `Sin informacion` adicional por
@@ -331,7 +341,9 @@ pagada sin verificar si el credito ya fue creado.
    versión anterior sin regla `-1..-1` por plataforma o sin
    `maxFinancedAmount`, o una revisión sin
    `priorityRules.telcoDelinquency`, publicar primero una versión compatible
-   mediante una operación controlada.
+   mediante una operación controlada. Toda revisión nueva debe guardar
+   `rejectAboveCopByPlatform.ANDROID` y
+   `rejectAboveCopByPlatform.IPHONE`.
 6. Cargar las credenciales y hosts de certificación, nunca en el repositorio, y
    fijar `DATACREDITO_ENVIRONMENT=uat` (o la etiqueta no productiva acordada).
    Confirmar que el guard impide ventas reales. Usar

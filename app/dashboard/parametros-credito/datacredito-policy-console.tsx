@@ -115,7 +115,7 @@ type EditableFinancialSettings = {
 
 type EditablePriorityRules = {
   enabled: boolean;
-  rejectAboveCop: string;
+  rejectAboveCopByPlatform: Record<DataCreditoPolicyPlatform, string>;
 };
 
 type FinancialValidationResult = {
@@ -178,7 +178,10 @@ const DEFAULT_FINANCIAL_SETTINGS: DataCreditoAresPolicyFinancialSettings = {
 const DEFAULT_PRIORITY_RULES: DataCreditoPolicyPriorityRules = {
   telcoDelinquency: {
     enabled: true,
-    rejectAboveCop: DEFAULT_PRIORITY_REJECTION_AMOUNT_COP,
+    rejectAboveCopByPlatform: {
+      ANDROID: DEFAULT_PRIORITY_REJECTION_AMOUNT_COP,
+      IPHONE: DEFAULT_PRIORITY_REJECTION_AMOUNT_COP,
+    },
   },
 };
 let draftSequence = 0;
@@ -479,14 +482,41 @@ function parsePriorityRules(
     priorityRules && isRecord(priorityRules.telcoDelinquency)
       ? priorityRules.telcoDelinquency
       : null;
-  const rejectAboveCop = readFiniteNumber(telcoDelinquency?.rejectAboveCop);
+  const hasPlatformThresholds =
+    telcoDelinquency !== null &&
+    Object.prototype.hasOwnProperty.call(
+      telcoDelinquency,
+      "rejectAboveCopByPlatform"
+    );
+  const hasLegacyThreshold =
+    telcoDelinquency !== null &&
+    Object.prototype.hasOwnProperty.call(telcoDelinquency, "rejectAboveCop");
+  const configuredThresholds =
+    telcoDelinquency && isRecord(telcoDelinquency.rejectAboveCopByPlatform)
+      ? telcoDelinquency.rejectAboveCopByPlatform
+      : null;
+  const legacyRejectAboveCop =
+    !hasPlatformThresholds && hasLegacyThreshold
+      ? readFiniteNumber(telcoDelinquency?.rejectAboveCop)
+      : null;
+  const androidRejectAboveCop = readFiniteNumber(
+    configuredThresholds?.ANDROID ?? legacyRejectAboveCop
+  );
+  const iphoneRejectAboveCop = readFiniteNumber(
+    configuredThresholds?.IPHONE ?? legacyRejectAboveCop
+  );
 
   if (
     !telcoDelinquency ||
     telcoDelinquency.enabled !== true ||
-    !Number.isSafeInteger(rejectAboveCop) ||
-    rejectAboveCop! <= 0 ||
-    rejectAboveCop! > MAX_PRIORITY_REJECTION_AMOUNT_COP
+    hasPlatformThresholds === hasLegacyThreshold ||
+    (hasPlatformThresholds && !configuredThresholds) ||
+    !Number.isSafeInteger(androidRejectAboveCop) ||
+    androidRejectAboveCop! <= 0 ||
+    androidRejectAboveCop! > MAX_PRIORITY_REJECTION_AMOUNT_COP ||
+    !Number.isSafeInteger(iphoneRejectAboveCop) ||
+    iphoneRejectAboveCop! <= 0 ||
+    iphoneRejectAboveCop! > MAX_PRIORITY_REJECTION_AMOUNT_COP
   ) {
     throw new PolicyRequestError(
       `${label} tiene una regla prioritaria de mora vigente TELCOS inválida.`
@@ -496,7 +526,10 @@ function parsePriorityRules(
   return {
     telcoDelinquency: {
       enabled: telcoDelinquency.enabled,
-      rejectAboveCop: rejectAboveCop!,
+      rejectAboveCopByPlatform: {
+        ANDROID: androidRejectAboveCop!,
+        IPHONE: iphoneRejectAboveCop!,
+      },
     },
   };
 }
@@ -506,7 +539,14 @@ function toEditablePriorityRules(
 ): EditablePriorityRules {
   return {
     enabled: true,
-    rejectAboveCop: String(rules.telcoDelinquency.rejectAboveCop),
+    rejectAboveCopByPlatform: {
+      ANDROID: String(
+        rules.telcoDelinquency.rejectAboveCopByPlatform.ANDROID
+      ),
+      IPHONE: String(
+        rules.telcoDelinquency.rejectAboveCopByPlatform.IPHONE
+      ),
+    },
   };
 }
 
@@ -523,21 +563,28 @@ function validatePriorityRules(
     };
   }
 
-  const rejectAboveCop = parseInteger(rules.rejectAboveCop);
+  const rejectAboveCopByPlatform = {
+    ANDROID: parseInteger(rules.rejectAboveCopByPlatform.ANDROID),
+    IPHONE: parseInteger(rules.rejectAboveCopByPlatform.IPHONE),
+  };
   const issues: string[] = [];
   if (!rules.enabled) {
     issues.push("La regla prioritaria de mora vigente TELCOS debe permanecer activa.");
   }
-  if (
-    rejectAboveCop === null ||
-    rejectAboveCop <= 0 ||
-    rejectAboveCop > MAX_PRIORITY_REJECTION_AMOUNT_COP
-  ) {
-    issues.push(
-      `El umbral de mora vigente TELCOS debe ser un entero en COP entre $1 y $${new Intl.NumberFormat(
-        "es-CO"
-      ).format(MAX_PRIORITY_REJECTION_AMOUNT_COP)}.`
-    );
+  for (const platform of PLATFORMS) {
+    const rejectAboveCop = rejectAboveCopByPlatform[platform];
+    const platformLabel = platform === "ANDROID" ? "Android" : "iPhone";
+    if (
+      rejectAboveCop === null ||
+      rejectAboveCop <= 0 ||
+      rejectAboveCop > MAX_PRIORITY_REJECTION_AMOUNT_COP
+    ) {
+      issues.push(
+        `El umbral de mora vigente TELCOS para ${platformLabel} debe ser un entero en COP entre $1 y $${new Intl.NumberFormat(
+          "es-CO"
+        ).format(MAX_PRIORITY_REJECTION_AMOUNT_COP)}.`
+      );
+    }
   }
 
   return {
@@ -548,7 +595,10 @@ function validatePriorityRules(
         ? {
             telcoDelinquency: {
               enabled: true,
-              rejectAboveCop: rejectAboveCop!,
+              rejectAboveCopByPlatform: {
+                ANDROID: rejectAboveCopByPlatform.ANDROID!,
+                IPHONE: rejectAboveCopByPlatform.IPHONE!,
+              },
             },
           }
         : null,
@@ -1497,13 +1547,12 @@ function PriorityRuleEditor({
   validation: PriorityRulesValidationResult;
   disabled: boolean;
   idPrefix: string;
-  onThresholdChange: (rejectAboveCop: string) => void;
+  onThresholdChange: (
+    platform: DataCreditoPolicyPlatform,
+    rejectAboveCop: string
+  ) => void;
 }) {
-  const previewId = `${idPrefix}-preview`;
   const errorId = `${idPrefix}-error`;
-  const describedBy = validation.issues.length
-    ? `${previewId} ${errorId}`
-    : previewId;
 
   return (
     <div className="mt-5">
@@ -1520,42 +1569,53 @@ function PriorityRuleEditor({
           </p>
         </div>
 
-        <label className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]">
-          Mora vigente TELCOS superior a (COP)
-          <Input
-            id={`${idPrefix}-threshold`}
-            type="number"
-            inputMode="numeric"
-            min={1}
-            max={MAX_PRIORITY_REJECTION_AMOUNT_COP}
-            step={1}
-            value={rules.rejectAboveCop}
-            onChange={(event) => onThresholdChange(event.target.value)}
-            disabled={disabled}
-            aria-invalid={!validation.valid}
-            aria-describedby={describedBy}
-          />
-          <span
-            id={previewId}
-            className="text-xs font-normal leading-5 text-[var(--fp-muted)]"
-          >
-            Umbral configurado: {formatCop(parseInteger(rules.rejectAboveCop))}.
-            Solo rechaza cuando la mora vigente TELCOS es mayor; el valor exacto
-            no activa la regla.
-          </span>
-        </label>
+        {PLATFORMS.map((platform) => {
+          const platformLabel = platform === "ANDROID" ? "Android" : "iPhone";
+          const platformKey = platform.toLocaleLowerCase("es-CO");
+          const previewId = `${idPrefix}-${platformKey}-preview`;
+          const rejectAboveCop =
+            rules.rejectAboveCopByPlatform[platform];
+          const parsedThreshold = parseInteger(rejectAboveCop);
+          const thresholdValid =
+            parsedThreshold !== null &&
+            parsedThreshold > 0 &&
+            parsedThreshold <= MAX_PRIORITY_REJECTION_AMOUNT_COP;
+          const describedBy = validation.issues.length
+            ? `${previewId} ${errorId}`
+            : previewId;
 
-        <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] px-4 py-3">
-          <p className="text-xs font-bold uppercase tracking-wide text-[var(--fp-muted)]">
-            Aplicación
-          </p>
-          <p className="mt-2 font-black text-[var(--fp-graphite)]">
-            Android e iPhone
-          </p>
-          <p className="mt-1 text-xs leading-5 text-[var(--fp-muted)]">
-            Es independiente del puntaje y se aplica a ambas plataformas.
-          </p>
-        </div>
+          return (
+            <label
+              key={platform}
+              className="grid gap-2 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] px-4 py-3 text-sm font-bold text-[var(--fp-graphite)]"
+            >
+              Mora TELCOS {platformLabel} superior a (COP)
+              <Input
+                id={`${idPrefix}-${platformKey}-threshold`}
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={MAX_PRIORITY_REJECTION_AMOUNT_COP}
+                step={1}
+                value={rejectAboveCop}
+                onChange={(event) =>
+                  onThresholdChange(platform, event.target.value)
+                }
+                disabled={disabled}
+                aria-invalid={!thresholdValid}
+                aria-describedby={describedBy}
+              />
+              <span
+                id={previewId}
+                className="text-xs font-normal leading-5 text-[var(--fp-muted)]"
+              >
+                Umbral {platformLabel}: {formatCop(parsedThreshold)}. Solo
+                rechaza esta plataforma cuando la mora es mayor; el valor
+                exacto no activa la regla.
+              </span>
+            </label>
+          );
+        })}
 
         <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3">
           <p className="text-xs font-bold uppercase tracking-wide text-[var(--fp-muted)]">
@@ -1565,7 +1625,8 @@ function PriorityRuleEditor({
             <StatusPill tone="danger">RECHAZADO</StatusPill>
           </div>
           <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
-            No genera una oferta financiera cuando se activa.
+            Rechaza únicamente la solicitud de la plataforma cuyo umbral fue
+            superado.
           </p>
         </div>
       </div>
@@ -1912,19 +1973,35 @@ export default function DatacreditoPolicyConsole() {
     setHasUnsavedChanges(true);
   };
 
-  const updatePriorityRuleThreshold = (rejectAboveCop: string) => {
+  const updatePriorityRuleThreshold = (
+    platform: DataCreditoPolicyPlatform,
+    rejectAboveCop: string
+  ) => {
     setNotice(null);
     setHasUnsavedChanges(true);
-    setPriorityRules((current) => ({
-      ...(current || toEditablePriorityRules(DEFAULT_PRIORITY_RULES)),
-      rejectAboveCop,
-    }));
+    setPriorityRules((current) => {
+      const editable =
+        current || toEditablePriorityRules(DEFAULT_PRIORITY_RULES);
+      return {
+        ...editable,
+        rejectAboveCopByPlatform: {
+          ...editable.rejectAboveCopByPlatform,
+          [platform]: rejectAboveCop,
+        },
+      };
+    });
   };
 
-  const updateNewPolicyPriorityRuleThreshold = (rejectAboveCop: string) => {
+  const updateNewPolicyPriorityRuleThreshold = (
+    platform: DataCreditoPolicyPlatform,
+    rejectAboveCop: string
+  ) => {
     setNewPolicyPriorityRules((current) => ({
       ...current,
-      rejectAboveCop,
+      rejectAboveCopByPlatform: {
+        ...current.rejectAboveCopByPlatform,
+        [platform]: rejectAboveCop,
+      },
     }));
   };
   const removeBand = (bandId: string) => {
@@ -2704,9 +2781,11 @@ export default function DatacreditoPolicyConsole() {
                       Regla prioritaria de la nueva política
                     </h4>
                     <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-                      La regla de mora vigente TELCOS se hereda de la política
-                      origen. Si aún no existía, se propone el umbral inicial de
-                      {" "}{formatCop(DEFAULT_PRIORITY_REJECTION_AMOUNT_COP)}.
+                      Los umbrales de mora vigente TELCOS se heredan de la
+                      política origen. Si aún no existían, Android e iPhone
+                      comienzan en{" "}
+                      {formatCop(DEFAULT_PRIORITY_REJECTION_AMOUNT_COP)} y
+                      pueden ajustarse por separado.
                     </p>
                   </div>
                   <StatusPill tone="danger">Prioridad 1 · activa</StatusPill>
@@ -2858,7 +2937,8 @@ export default function DatacreditoPolicyConsole() {
                       </h3>
                       <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
                         Usa únicamente la mora vigente agregada del sector TELCOS.
-                        Se evalúa antes del puntaje para Android e iPhone.
+                        Se evalúa antes del puntaje con el umbral correspondiente
+                        a la plataforma consultada.
                       </p>
                     </div>
                   </div>
@@ -3275,8 +3355,12 @@ export default function DatacreditoPolicyConsole() {
         title="Publicar nueva revisión"
         description={`Se publicará la versión ${(version || 0) + 1} de “${
           selectedProfile?.name || "la política"
-        }” con ${validation.canonicalBands.length} bandas y la regla prioritaria de rechazo por mora vigente TELCOS superior a ${formatCop(
-          priorityRulesValidation.canonical?.telcoDelinquency.rejectAboveCop ?? null
+        }” con ${validation.canonicalBands.length} bandas y dos umbrales de mora TELCOS: Android superior a ${formatCop(
+          priorityRulesValidation.canonical?.telcoDelinquency
+            .rejectAboveCopByPlatform.ANDROID ?? null
+        )} e iPhone superior a ${formatCop(
+          priorityRulesValidation.canonical?.telcoDelinquency
+            .rejectAboveCopByPlatform.IPHONE ?? null
         )}. La usarán ${
           selectedProfile?.assignedAlliesCount || 0
         } aliado(s) únicamente en consultas futuras.`}

@@ -859,7 +859,8 @@ export default function DataCreditoAdminConsole() {
                       de {currency(
                         telcoPriorityRejectionOffer.telcoRejectionThresholdCop
                       )}. Esta regla es independiente del puntaje y se evaluó
-                      primero para Android e iPhone.
+                      primero con el umbral configurado para{" "}
+                      {detail?.assessment?.platform}.
                     </p>
                   </div>
                 ) : null}

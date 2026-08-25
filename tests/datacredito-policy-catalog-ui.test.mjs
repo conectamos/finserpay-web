@@ -123,7 +123,7 @@ test("bloquea duplicar un borrador y usa la fecha de la revisión publicada", ()
   assert.match(consoleSource, /Publica los cambios o recarga para descartarlos/);
 });
 
-test("configura una regla prioritaria versionada antes de las bandas", () => {
+test("configura dos umbrales TELCOS versionados antes de las bandas", () => {
   assert.match(
     consoleSource,
     /priorityRules: DataCreditoPolicyPriorityRules \| null/
@@ -142,20 +142,38 @@ test("configura una regla prioritaria versionada antes de las bandas", () => {
     consoleSource,
     /MAX_PRIORITY_REJECTION_AMOUNT_COP =\s*DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT/
   );
+  assert.match(consoleSource, /rejectAboveCopByPlatform:\s*\{/);
+  assert.match(
+    consoleSource,
+    /ANDROID: DEFAULT_PRIORITY_REJECTION_AMOUNT_COP[\s\S]*IPHONE: DEFAULT_PRIORITY_REJECTION_AMOUNT_COP/
+  );
+  assert.match(consoleSource, /PLATFORMS\.map\(\(platform\)/);
+  assert.match(
+    consoleSource,
+    /platform === "ANDROID" \? "Android" : "iPhone"/
+  );
+  assert.match(consoleSource, /Mora TELCOS \{platformLabel\} superior a \(COP\)/);
+  assert.match(consoleSource, /\$\{idPrefix\}-\$\{platformKey\}-threshold/);
+  assert.match(consoleSource, /onThresholdChange\(platform, event\.target\.value\)/);
   assert.match(consoleSource, /max=\{MAX_PRIORITY_REJECTION_AMOUNT_COP\}/);
-  assert.match(consoleSource, /Mora vigente TELCOS superior a \(COP\)/);
   assert.match(consoleSource, /Prioridad 1 · activa/);
-  assert.match(consoleSource, /Android e iPhone/);
   assert.match(consoleSource, /<StatusPill tone="danger">RECHAZADO<\/StatusPill>/);
   assert.match(
     consoleSource,
-    /Es independiente del puntaje y se aplica a ambas plataformas/
+    /Rechaza únicamente la solicitud de la plataforma cuyo umbral fue[\s\S]*superado/
   );
   assert.match(
     consoleSource,
-    /Solo rechaza cuando la mora vigente TELCOS es mayor; el valor exacto[\s\S]*no activa la regla\./
+    /Solo[\s\S]*rechaza esta plataforma cuando la mora es mayor; el valor[\s\S]*exacto no activa la regla/
   );
-  assert.match(consoleSource, /telcoDelinquency: \{/);
+  assert.match(
+    consoleSource,
+    /Android superior a \$\{formatCop\([\s\S]*rejectAboveCopByPlatform\.ANDROID[\s\S]*iPhone superior a \$\{formatCop\([\s\S]*rejectAboveCopByPlatform\.IPHONE/
+  );
+  assert.doesNotMatch(
+    consoleSource,
+    /Es independiente del puntaje y se aplica a ambas plataformas/
+  );
   assert.doesNotMatch(consoleSource, /onEnabledChange|PriorityRuleEnabled/);
 
   const priorityCard = consoleSource.indexOf(

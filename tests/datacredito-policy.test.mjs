@@ -336,25 +336,47 @@ test("rechaza una politica que omite una plataforma", () => {
   );
 });
 
-test("valida la regla prioritaria y permite leer revisiones historicas sin ella", () => {
+test("valida umbrales Telcos por plataforma y normaliza revisiones historicas", () => {
   assert.equal(
     parseDataCreditoPolicyPriorityRules(undefined, { optional: true }),
     null
   );
-  assert.deepEqual(
-    parseDataCreditoPolicyPriorityRules({
-      telcoDelinquency: {
-        enabled: true,
-        rejectAboveCop: "2000000",
+
+  const legacy = parseDataCreditoPolicyPriorityRules({
+    telcoDelinquency: {
+      enabled: true,
+      rejectAboveCop: "2000000",
+    },
+  });
+  assert.deepEqual(legacy, {
+    telcoDelinquency: {
+      enabled: true,
+      rejectAboveCopByPlatform: {
+        ANDROID: 2_000_000,
+        IPHONE: 2_000_000,
       },
-    }),
-    {
-      telcoDelinquency: {
-        enabled: true,
-        rejectAboveCop: 2_000_000,
+    },
+  });
+
+  const platformSpecific = parseDataCreditoPolicyPriorityRules({
+    telcoDelinquency: {
+      enabled: true,
+      rejectAboveCopByPlatform: {
+        ANDROID: 2_000_000,
+        IPHONE: "750000",
       },
-    }
-  );
+    },
+  });
+  assert.deepEqual(platformSpecific, {
+    telcoDelinquency: {
+      enabled: true,
+      rejectAboveCopByPlatform: {
+        ANDROID: 2_000_000,
+        IPHONE: 750_000,
+      },
+    },
+  });
+
   assert.throws(
     () => parseDataCreditoPolicyPriorityRules(undefined),
     (error) =>
@@ -365,40 +387,79 @@ test("valida la regla prioritaria y permite leer revisiones historicas sin ella"
     () =>
       parseDataCreditoPolicyPriorityRules({
         telcoDelinquency: {
+          enabled: true,
+          rejectAboveCop: 2_000_000,
+          rejectAboveCopByPlatform: {
+            ANDROID: 2_000_000,
+            IPHONE: 750_000,
+          },
+        },
+      }),
+    (error) =>
+      error instanceof DataCreditoPolicyValidationError &&
+      error.issues.some((issue) => issue.includes("exactamente una"))
+  );
+  assert.throws(
+    () =>
+      parseDataCreditoPolicyPriorityRules({
+        telcoDelinquency: {
+          enabled: true,
+          rejectAboveCopByPlatform: {
+            ANDROID: 2_000_000,
+          },
+        },
+      }),
+    (error) =>
+      error instanceof DataCreditoPolicyValidationError &&
+      error.issues.some(
+        (issue) => issue.includes("para iPhone") &&
+          issue.includes("entre 1 y 100000000")
+      )
+  );
+  assert.throws(
+    () =>
+      parseDataCreditoPolicyPriorityRules({
+        telcoDelinquency: {
           enabled: "si",
-          rejectAboveCop: 2_000_000.5,
+          rejectAboveCopByPlatform: {
+            ANDROID: 2_000_000.5,
+            IPHONE: 750_000,
+          },
         },
       }),
     (error) =>
       error instanceof DataCreditoPolicyValidationError &&
       error.issues.some((issue) => issue.includes("habilitada")) &&
-      error.issues.some((issue) => issue.includes("entre 1 y 100000000"))
+      error.issues.some((issue) => issue.includes("para Android"))
   );
   assert.throws(
     () =>
       parseDataCreditoPolicyPriorityRules({
-        telcoDelinquency: { enabled: false, rejectAboveCop: 2_000_000 },
+        telcoDelinquency: {
+          enabled: true,
+          rejectAboveCopByPlatform: {
+            ANDROID: 2_000_000,
+            IPHONE: 100_000_001,
+          },
+        },
       }),
     (error) =>
       error instanceof DataCreditoPolicyValidationError &&
-      error.issues.some((issue) => issue.includes("debe estar habilitada"))
-  );
-  assert.throws(
-    () =>
-      parseDataCreditoPolicyPriorityRules({
-        telcoDelinquency: { enabled: true, rejectAboveCop: 100_000_001 },
-      }),
-    (error) =>
-      error instanceof DataCreditoPolicyValidationError &&
-      error.issues.some((issue) => issue.includes("entre 1 y 100000000"))
+      error.issues.some(
+        (issue) => issue.includes("para iPhone") &&
+          issue.includes("entre 1 y 100000000")
+      )
   );
 });
 
-test("la mora vigente Telcos tiene prioridad estricta y no usa la mora total", () => {
+test("la mora vigente Telcos usa el umbral estricto de cada plataforma", () => {
   const priorityRules = parseDataCreditoPolicyPriorityRules({
     telcoDelinquency: {
       enabled: true,
-      rejectAboveCop: 2_000_000,
+      rejectAboveCopByPlatform: {
+        ANDROID: 2_000_000,
+        IPHONE: 750_000,
+      },
     },
   });
   const policy = {
@@ -406,19 +467,18 @@ test("la mora vigente Telcos tiene prioridad estricta y no usa la mora total", (
     bands: parseDataCreditoPolicyBands(completeBands()),
     priorityRules,
   };
+  const thresholdsByPlatform =
+    priorityRules.telcoDelinquency.rejectAboveCopByPlatform;
 
   for (const platform of ["ANDROID", "IPHONE"]) {
-    const highTotalButLowTelcos = resolveDataCreditoDecision(
-      policy,
-      platform,
-      900,
-      {
-        telcoDelinquentBalanceCop: 100_000,
-        telcoDelinquencyInformationAvailable: true,
-      }
-    );
-    assert.ok(highTotalButLowTelcos);
-    assert.equal(highTotalButLowTelcos.decision, "APROBADO");
+    const threshold = thresholdsByPlatform[platform];
+    const lowTelcos = resolveDataCreditoDecision(policy, platform, 900, {
+      telcoDelinquentBalanceCop: 100_000,
+      telcoDelinquencyInformationAvailable: true,
+    });
+    assert.ok(lowTelcos);
+    assert.equal(lowTelcos.decision, "APROBADO");
+
     const zeroTelcoDelinquency = resolveDataCreditoDecision(
       policy,
       platform,
@@ -431,21 +491,21 @@ test("la mora vigente Telcos tiene prioridad estricta y no usa la mora total", (
     assert.equal(zeroTelcoDelinquency?.decisionRule, "SCORE_BAND");
 
     const atBoundary = resolveDataCreditoDecision(policy, platform, 900, {
-      telcoDelinquentBalanceCop: 2_000_000,
+      telcoDelinquentBalanceCop: threshold,
       telcoDelinquencyInformationAvailable: true,
     });
     assert.ok(atBoundary);
     assert.equal(atBoundary.decision, "APROBADO");
     assert.equal(atBoundary.decisionRule, "SCORE_BAND");
     assert.equal(atBoundary.offer.decisionRule, "SCORE_BAND");
-    assert.equal(atBoundary.telcoRejectionThresholdCop, 2_000_000);
+    assert.equal(atBoundary.telcoRejectionThresholdCop, threshold);
     assert.equal(
       atBoundary.riskMetricVersion,
       DATACREDITO_RISK_METRIC_VERSION
     );
 
     const aboveBoundary = resolveDataCreditoDecision(policy, platform, 900, {
-      telcoDelinquentBalanceCop: 2_000_001,
+      telcoDelinquentBalanceCop: threshold + 1,
       telcoDelinquencyInformationAvailable: true,
     });
     assert.ok(aboveBoundary);
@@ -460,7 +520,7 @@ test("la mora vigente Telcos tiene prioridad estricta y no usa la mora total", (
     );
     assert.equal(
       aboveBoundary.offer.telcoRejectionThresholdCop,
-      2_000_000
+      threshold
     );
     assert.equal(
       aboveBoundary.offer.riskMetricVersion,
@@ -482,6 +542,27 @@ test("la mora vigente Telcos tiene prioridad estricta y no usa la mora total", (
     assert.equal(telcosNotReported.decision, "APROBADO");
     assert.equal(telcosNotReported.decisionRule, "SCORE_BAND");
   }
+
+  const sameObservedDelinquency = {
+    telcoDelinquentBalanceCop: 1_000_000,
+    telcoDelinquencyInformationAvailable: true,
+  };
+  const android = resolveDataCreditoDecision(
+    policy,
+    "ANDROID",
+    900,
+    sameObservedDelinquency
+  );
+  const iphone = resolveDataCreditoDecision(
+    policy,
+    "IPHONE",
+    900,
+    sameObservedDelinquency
+  );
+  assert.equal(android?.decision, "APROBADO");
+  assert.equal(android?.telcoRejectionThresholdCop, 2_000_000);
+  assert.equal(iphone?.decision, "RECHAZADO");
+  assert.equal(iphone?.telcoRejectionThresholdCop, 750_000);
 });
 
 test("Telcos informado con mora invalida falla cerrado y una revision historica usa puntaje", () => {

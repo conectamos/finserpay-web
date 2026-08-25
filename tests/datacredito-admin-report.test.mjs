@@ -528,7 +528,7 @@ test("la consola central presenta el expediente completo en secciones accesibles
   );
   assert.match(
     adminConsoleSource,
-    /Rechazo prioritario por mora TELCOS:[\s\S]*telco\?\.delinquentBalance[\s\S]*superó el umbral[\s\S]*independiente del puntaje[\s\S]*Android e iPhone/
+    /Rechazo prioritario por mora TELCOS:[\s\S]*telco\?\.delinquentBalance[\s\S]*superó el umbral[\s\S]*independiente del puntaje[\s\S]*umbral configurado para[\s\S]*detail\?\.assessment\?\.platform/
   );
   assert.match(
     adminConsoleSource,
