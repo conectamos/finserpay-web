@@ -19,6 +19,7 @@
     "test:datacredito": "node --test tests/datacredito-client.test.mjs tests/datacredito-admin-report.test.mjs tests/datacredito-policy.test.mjs tests/datacredito-storage-controls.test.mjs tests/datacredito-financing-cap.test.mjs tests/datacredito-secure-record.test.mjs tests/datacredito-evaluation-security.test.mjs tests/datacredito-policy-assignment.test.mjs tests/datacredito-policy-catalog-ui.test.mjs tests/datacredito-policy-financial-settings.test.mjs",
     "test:aliados": "node --experimental-strip-types --test tests/ally-platform-rediscount.test.mjs",
     "test:iphone-delivery": "node --test tests/iphone-delivery-evidence.test.mjs tests/credit-equipment-platform.test.mjs",
+    "test:solicitudes": "node --experimental-strip-types --test tests/solicitudes-wall.test.mjs",
     "cron:efecty": "node scripts/railway-cron.mjs efecty",
     "cron:datacredito-retention": "node scripts/railway-cron.mjs datacredito-retention",
     "cron:mora": "node scripts/railway-cron.mjs mora",

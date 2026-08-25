@@ -6,6 +6,7 @@ import {
   Calculator,
   ChevronDown,
   CircleDollarSign,
+  ClipboardList,
   Clock3,
   FileText,
   LayoutDashboard,
@@ -79,36 +80,43 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-function Navigation({ items }: { items: NavItem[] }) {
+function Navigation({ activeHref, items }: { activeHref: string; items: NavItem[] }) {
+  const links: NavItem[] = [
+    { href: "/dashboard", icon: LayoutDashboard, label: "Inicio" },
+    ...items,
+  ];
   return (
     <nav className="space-y-1">
-      <Link
-        href="/dashboard"
-        aria-current="page"
-        className="flex min-h-11 items-center gap-3 rounded-lg bg-[#0b6f6a] px-3 py-2.5 text-sm font-bold text-white"
-      >
-        <LayoutDashboard className="h-5 w-5 shrink-0" strokeWidth={1.8} />
-        Inicio
-      </Link>
-      {items.map(({ href, icon: Icon, label }) => (
-        <Link
-          key={`${href}-${label}`}
-          href={href}
-          className="flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/8 hover:text-white"
-        >
-          <Icon className="h-5 w-5 shrink-0" strokeWidth={1.8} />
-          {label}
-        </Link>
-      ))}
+      {links.map(({ href, icon: Icon, label }) => {
+        const active = href === activeHref;
+        return (
+          <Link
+            key={`${href}-${label}`}
+            href={href}
+            aria-current={active ? "page" : undefined}
+            className={[
+              "flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition",
+              active
+                ? "relative bg-white/10 text-[#dafa70] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-[#b7e63d]"
+                : "text-slate-300 hover:bg-white/8 hover:text-white",
+            ].join(" ")}
+          >
+            <Icon className="h-5 w-5 shrink-0" strokeWidth={1.8} />
+            {label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }
 
-function CommercialSidebar({
+export function CommercialSidebar({
+  activeHref = "/dashboard",
   avatarSrc,
   isSupervisor,
   nombre,
 }: {
+  activeHref?: string;
   avatarSrc: string | null;
   isSupervisor: boolean;
   nombre: string;
@@ -116,6 +124,7 @@ function CommercialSidebar({
   const navItems: NavItem[] = isSupervisor
     ? [
         { href: "/dashboard/creditos", icon: Plus, label: "Nueva venta" },
+        { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
         { href: "/dashboard/clientes", icon: Users, label: "Clientes" },
         { href: "/dashboard/abonos", icon: CircleDollarSign, label: "Recaudos" },
         { href: "/dashboard/creditos?mode=simulator", icon: Calculator, label: "Simulador" },
@@ -125,6 +134,7 @@ function CommercialSidebar({
       ]
     : [
         { href: "/dashboard/creditos", icon: Plus, label: "Nueva venta" },
+        { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
         { href: "/dashboard/creditos?mode=delivery", icon: PackageCheck, label: "Validar entrega" },
         { href: "/dashboard/creditos?mode=simulator", icon: Calculator, label: "Simulador" },
         { href: "/dashboard/pin", icon: ShieldCheck, label: "Cambiar PIN" },
@@ -144,7 +154,7 @@ function CommercialSidebar({
           <ChevronDown className="ml-auto h-4 w-4 transition group-open:rotate-180" />
         </summary>
         <div className="max-h-[70vh] overflow-y-auto px-3 pb-4 pt-2">
-          <Navigation items={navItems} />
+          <Navigation activeHref={activeHref} items={navItems} />
         </div>
       </details>
 
@@ -152,7 +162,7 @@ function CommercialSidebar({
         <p className="mb-2 px-3 text-[10px] font-bold uppercase text-slate-500">
           Panel comercial
         </p>
-        <Navigation items={navItems} />
+        <Navigation activeHref={activeHref} items={navItems} />
       </div>
 
       <div className="mt-auto hidden border-t border-white/15 px-5 py-5 lg:block">

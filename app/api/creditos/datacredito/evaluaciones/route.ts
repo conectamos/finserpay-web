@@ -44,6 +44,11 @@ import {
 } from "@/lib/datacredito/storage";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
+import {
+  ActiveSolicitudConflictError,
+  attachDataCreditoToSolicitud,
+  reserveSolicitudForIdentity,
+} from "@/lib/solicitudes-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -104,6 +109,7 @@ export async function POST(request: Request) {
   const correlationId = randomUUID();
   let pendingAssessmentId: string | null = null;
   let providerStartedAt: number | null = null;
+  let solicitudId: number | null = null;
 
   try {
     const user = await getSessionUser();
@@ -252,6 +258,15 @@ export async function POST(request: Request) {
       });
     }
 
+    const solicitudReservation = await reserveSolicitudForIdentity({
+      usuarioId: user.id,
+      vendedorId: seller?.id || null,
+      sedeId: user.sedeId,
+      clienteDocumento: documentNumber,
+      plataforma: platform,
+    });
+    solicitudId = solicitudReservation.id;
+
     // A terminal inquiry for the same CC/tenant/environment is valid for
     // exactly 15 days. Reuse is attempted before credential readiness and rate
     // limiting so an outage never causes a duplicate paid query.
@@ -267,9 +282,16 @@ export async function POST(request: Request) {
       providerEnvironment: provider.environment,
     });
     if (cached?.kind === "REUSED") {
+      await attachDataCreditoToSolicitud({
+        solicitudId,
+        assessmentId: cached.assessment.id,
+        status: cached.assessment.status,
+        plataforma: platform,
+      });
       return NextResponse.json({
         ok: true,
         reused: true,
+        solicitudId,
         ...serializeDataCreditoAssessment(cached.assessment),
       });
     }
@@ -327,9 +349,16 @@ export async function POST(request: Request) {
     }
 
     if (reservation.kind === "REUSED") {
+      await attachDataCreditoToSolicitud({
+        solicitudId,
+        assessmentId: reservation.assessment.id,
+        status: reservation.assessment.status,
+        plataforma: platform,
+      });
       return NextResponse.json({
         ok: true,
         reused: true,
+        solicitudId,
         ...serializeDataCreditoAssessment(reservation.assessment),
       });
     }
@@ -364,6 +393,12 @@ export async function POST(request: Request) {
       throw new Error("No se pudo crear la auditoria de evaluacion");
     }
     pendingAssessmentId = pending.id;
+    await attachDataCreditoToSolicitud({
+      solicitudId,
+      assessmentId: pending.id,
+      status: "PENDING",
+      plataforma: platform,
+    });
 
     const pendingSecure = {
       assessmentId: pending.id,
@@ -423,6 +458,13 @@ export async function POST(request: Request) {
         durationMs,
         secure: completedSecure,
       });
+      await attachDataCreditoToSolicitud({
+        solicitudId,
+        assessmentId: pending.id,
+        status: "NO_EVALUADO",
+        errorCode: "NO_EVALUABLE_INFORMATION",
+        plataforma: platform,
+      });
       return technicalResponse({
         correlationId,
         code: "NO_EVALUABLE_INFORMATION",
@@ -457,6 +499,13 @@ export async function POST(request: Request) {
         durationMs,
         secure: completedSecure,
       });
+      await attachDataCreditoToSolicitud({
+        solicitudId,
+        assessmentId: pending.id,
+        status: "NO_EVALUADO",
+        errorCode: "TELCO_RISK_METRIC_UNAVAILABLE",
+        plataforma: platform,
+      });
       return technicalResponse({
         correlationId,
         code: "TELCO_RISK_METRIC_UNAVAILABLE",
@@ -483,6 +532,13 @@ export async function POST(request: Request) {
         durationMs,
         secure: completedSecure,
       });
+      await attachDataCreditoToSolicitud({
+        solicitudId,
+        assessmentId: pending.id,
+        status: "NO_EVALUADO",
+        errorCode: "POLICY_NO_MATCH",
+        plataforma: platform,
+      });
       return technicalResponse({
         correlationId,
         code: "POLICY_NO_MATCH",
@@ -504,13 +560,28 @@ export async function POST(request: Request) {
     if (!completed) {
       throw new Error("No se pudo finalizar la auditoria de evaluacion");
     }
+    await attachDataCreditoToSolicitud({
+      solicitudId,
+      assessmentId: completed.id,
+      status: completed.status,
+      plataforma: platform,
+    });
 
     return NextResponse.json({
       ok: true,
       reused: false,
+      solicitudId,
       ...serializeDataCreditoAssessment(completed),
     });
   } catch (error) {
+    if (error instanceof ActiveSolicitudConflictError) {
+      return technicalResponse({
+        correlationId,
+        code: error.code,
+        error: error.message,
+        status: error.status,
+      });
+    }
     const code =
       error instanceof DataCreditoError
         ? safeProviderValue(error.code, 64) || "PROVIDER_ERROR"
@@ -532,6 +603,14 @@ export async function POST(request: Request) {
             : null,
         durationMs: providerStartedAt ? Date.now() - providerStartedAt : null,
       }).catch(() => undefined);
+      if (solicitudId) {
+        await attachDataCreditoToSolicitud({
+          solicitudId,
+          assessmentId: pendingAssessmentId,
+          status: "NO_EVALUADO",
+          errorCode: code,
+        }).catch(() => undefined);
+      }
     }
 
     console.error("ERROR EVALUACION DATACREDITO:", {

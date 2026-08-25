@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import {
@@ -50,6 +51,7 @@ import {
 } from "@/lib/firmaseguro-credit";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
 import { isAdminRole } from "@/lib/roles";
+import { ensureSolicitudSchema } from "@/lib/solicitudes-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -106,7 +108,6 @@ class CreditValidationError extends Error {
   }
 }
 
-let draftTableReady: Promise<void> | null = null;
 
 function parseDraftId(value: unknown) {
   const parsed = Number(value || 0);
@@ -130,33 +131,7 @@ function toValidDate(value: unknown, fallback: Date) {
 }
 
 async function ensureDraftTable() {
-  if (!draftTableReady) {
-    draftTableReady = (async () => {
-      await prisma.$executeRawUnsafe(`
-        CREATE TABLE IF NOT EXISTS "CreditoBorrador" (
-          "id" SERIAL PRIMARY KEY,
-          "estado" TEXT NOT NULL DEFAULT 'ABIERTO',
-          "usuarioId" INTEGER NOT NULL,
-          "vendedorId" INTEGER,
-          "sedeId" INTEGER NOT NULL,
-          "currentStep" INTEGER NOT NULL DEFAULT 1,
-          "clienteNombre" TEXT,
-          "clienteDocumento" TEXT,
-          "clienteTelefono" TEXT,
-          "imei" TEXT,
-          "payload" JSONB NOT NULL DEFAULT '{}'::jsonb,
-          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          "closedAt" TIMESTAMPTZ
-        )
-      `);
-      await prisma.$executeRawUnsafe(
-        `CREATE INDEX IF NOT EXISTS "CreditoBorrador_sede_estado_idx" ON "CreditoBorrador" ("sedeId", "estado")`
-      );
-    })();
-  }
-
-  await draftTableReady;
+  await ensureSolicitudSchema();
 }
 
 async function readAuthorizedDraft(draftId: number) {
@@ -167,6 +142,7 @@ async function readAuthorizedDraft(draftId: number) {
   }
 
   const admin = isAdminRole(user.rolNombre);
+  const centralAdmin = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
   const sellerSession = admin ? null : await getSellerSessionUser(user);
 
   if (!admin && !sellerSession) {
@@ -182,14 +158,15 @@ async function readAuthorizedDraft(draftId: number) {
   const where = [`d."id" = $1`, `d."estado" = 'ABIERTO'`];
   const values: unknown[] = [draftId];
 
-  if (!admin) {
+  if (admin && !centralAdmin) {
+    values.push(user.aliadoAccesoId || -1);
+    where.push(`s."aliadoId" = $${values.length}`);
+  } else if (!admin) {
     values.push(user.sedeId);
     where.push(`d."sedeId" = $${values.length}`);
 
-    if (sellerSession?.tipoPerfil !== "SUPERVISOR") {
-      values.push(sellerSession?.id || 0);
-      where.push(`d."vendedorId" = $${values.length}`);
-    }
+    values.push(sellerSession?.id || 0);
+    where.push(`d."vendedorId" = $${values.length}`);
   }
 
   const rows = await prisma.$queryRawUnsafe<DraftRow[]>(

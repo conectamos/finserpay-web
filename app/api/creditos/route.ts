@@ -68,7 +68,6 @@ import {
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
-import { getColombiaDepartmentLabel } from "@/lib/colombia-locations";
 import { getFirmaSeguroProcessByUuid } from "@/lib/firmaseguro-storage";
 import {
   linkFirmaSeguroProcessForCredit,
@@ -104,6 +103,12 @@ import {
   DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT,
   resolveDataCreditoOfferFinancingTerms,
 } from "@/lib/datacredito/policy";
+import {
+  ActiveSolicitudConflictError,
+  completeSolicitudForCredit,
+  ensureSolicitudSchema,
+  reserveSolicitudForIdentity,
+} from "@/lib/solicitudes-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -825,6 +830,20 @@ async function recoverDataCreditoCredit(
     });
 
     if (created) {
+      await ensureSolicitudSchema();
+      await prisma.$transaction((transaction) =>
+        completeSolicitudForCredit(
+          {
+            assessmentId: input.assessmentId,
+            clienteDocumento: input.documentNumber,
+            usuarioId: input.userId,
+            vendedorId: input.sellerId,
+            sedeId: input.sedeId,
+            creditoId: created.id,
+          },
+          transaction
+        )
+      );
       return dataCreditoRecoveredCreditResponse(created);
     }
   }
@@ -1658,6 +1677,14 @@ export async function POST(req: Request) {
       );
     }
 
+    const solicitudReservation = await reserveSolicitudForIdentity({
+      usuarioId: user.id,
+      vendedorId: sellerSession?.id || null,
+      sedeId: user.sedeId,
+      clienteDocumento,
+      plataforma: plataformaDispositivo,
+    });
+
     const soldDevice = await prisma.credito.findFirst({
       where: {
         estado: {
@@ -2164,7 +2191,7 @@ export async function POST(req: Request) {
         telefono: clienteTelefono,
         correo: clienteCorreo,
         direccion: clienteDireccion,
-        departamento: getColombiaDepartmentLabel(clienteDepartamento),
+        departamento: clienteDepartamento,
         ciudad: clienteCiudad,
         genero: clienteGenero,
         fechaNacimiento: clienteFechaNacimiento.toISOString(),
@@ -2500,6 +2527,7 @@ export async function POST(req: Request) {
     };
 
     await ensureCreditAmortizationSchema();
+    await ensureSolicitudSchema();
 
     if (dataCreditoAssessment && dataCreditoAssessmentMatch) {
       const claimed = await claimDataCreditoAssessment(
@@ -2608,6 +2636,21 @@ export async function POST(req: Request) {
         amortizationPersistencePlan,
         amortizationParametersSnapshot
       );
+      const linkedSolicitudId = await completeSolicitudForCredit(
+        {
+          solicitudId: solicitudReservation.id,
+          assessmentId: dataCreditoAssessment?.id || null,
+          clienteDocumento,
+          usuarioId: user.id,
+          vendedorId: sellerSession?.id || null,
+          sedeId: user.sedeId,
+          creditoId: credit.id,
+        },
+        transaction
+      );
+      if (!linkedSolicitudId) {
+        throw new Error("SOLICITUD_COMPLETION_CONFLICT");
+      }
       return credit;
     };
 
@@ -2685,6 +2728,16 @@ export async function POST(req: Request) {
   } catch (error) {
     if (dataCreditoClaim && !createdCreditId) {
       await releaseDataCreditoAssessment(dataCreditoClaim).catch(() => undefined);
+    }
+
+    if (error instanceof ActiveSolicitudConflictError) {
+      return NextResponse.json(
+        {
+          code: error.code,
+          error: error.message,
+        },
+        { status: error.status }
+      );
     }
 
     const rawErrorCode =

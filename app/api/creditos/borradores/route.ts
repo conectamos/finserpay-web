@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { getSellerSessionUser } from "@/lib/seller-auth";
-import prisma from "@/lib/prisma";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { sanitizeSearch, sanitizeText } from "@/lib/credit-factory";
+import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
+import { getSellerSessionUser } from "@/lib/seller-auth";
+import {
+  ActiveSolicitudConflictError,
+  desistSolicitud,
+  ensureSolicitudSchema,
+  saveSolicitudDraft,
+} from "@/lib/solicitudes-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,14 +22,15 @@ const PRUNED_DRAFT_MEDIA_FIELDS = new Set([
   "contratoVideoAprobacionDataUrl",
 ]);
 
+type DraftPayload = Record<string, unknown>;
 type SaveDraftBody = {
   id?: unknown;
   currentStep?: unknown;
   payload?: unknown;
   estado?: unknown;
+  action?: unknown;
+  creditoId?: unknown;
 };
-
-type DraftPayload = Record<string, unknown>;
 
 type DraftRow = {
   id: number;
@@ -46,20 +54,9 @@ type DraftRow = {
   sedeNombre: string | null;
 };
 
-let draftTableReady: Promise<void> | null = null;
-
-function toDateIso(value: Date | string | null) {
-  if (!value) {
-    return null;
-  }
-
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-function toLimitedText(value: unknown, maxLength = 180) {
-  const text = sanitizeText(value).slice(0, maxLength);
-  return text || null;
+function parsePositiveId(value: unknown) {
+  const parsed = Number(value || 0);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function clampStep(value: unknown) {
@@ -67,25 +64,25 @@ function clampStep(value: unknown) {
   return Math.max(1, Math.min(5, Number.isFinite(parsed) ? parsed : 1));
 }
 
-function parseDraftId(value: unknown) {
-  const parsed = Number(value || 0);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
 function parseTake(value: unknown) {
   const parsed = Math.trunc(Number(value || 12));
   return Math.max(1, Math.min(30, Number.isFinite(parsed) ? parsed : 12));
 }
 
+function toLimitedText(value: unknown, maxLength = 180) {
+  const text = sanitizeText(value).slice(0, maxLength);
+  return text || null;
+}
+
+function toDateIso(value: Date | string | null) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function pruneDraftPayload(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(pruneDraftPayload);
-  }
-
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
+  if (Array.isArray(value)) return value.map(pruneDraftPayload);
+  if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
       .filter(([key]) => !PRUNED_DRAFT_MEDIA_FIELDS.has(key))
@@ -94,29 +91,22 @@ function pruneDraftPayload(value: unknown): unknown {
 }
 
 function normalizePayload(value: unknown): DraftPayload {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
-  }
-
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const json = JSON.stringify(pruneDraftPayload(value));
-
   if (Buffer.byteLength(json, "utf8") > MAX_DRAFT_PAYLOAD_BYTES) {
     throw new Error("Las evidencias del borrador son demasiado grandes para guardarlas automaticamente");
   }
-
   return JSON.parse(json) as DraftPayload;
 }
 
 function extractDraftFields(payload: DraftPayload) {
   const firstName = toLimitedText(payload.clientePrimerNombre, 90);
   const lastName = toLimitedText(payload.clientePrimerApellido, 90);
-  const fullName =
-    toLimitedText(payload.clienteNombre, 180) ||
-    [firstName, lastName].filter(Boolean).join(" ").trim() ||
-    null;
-
   return {
-    clienteNombre: fullName,
+    clienteNombre:
+      toLimitedText(payload.clienteNombre, 180) ||
+      [firstName, lastName].filter(Boolean).join(" ").trim() ||
+      null,
     clienteDocumento: toLimitedText(payload.clienteDocumento, 60),
     clienteTelefono: toLimitedText(payload.clienteTelefono, 60),
     imei: toLimitedText(payload.imei, 60),
@@ -128,7 +118,6 @@ function serializeDraft(row: DraftRow) {
     row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
       ? (row.payload as DraftPayload)
       : {};
-
   return {
     id: row.id,
     estado: row.estado,
@@ -153,92 +142,64 @@ function serializeDraft(row: DraftRow) {
           documento: row.vendedorDocumento,
         }
       : null,
-    sede: {
-      id: row.sedeId,
-      nombre: row.sedeNombre || "Sede",
-    },
+    sede: { id: row.sedeId, nombre: row.sedeNombre || "Sede" },
   };
 }
 
-async function ensureDraftTable() {
-  if (!draftTableReady) {
-    draftTableReady = (async () => {
-      await prisma.$executeRawUnsafe(`
-        CREATE TABLE IF NOT EXISTS "CreditoBorrador" (
-          "id" SERIAL PRIMARY KEY,
-          "estado" TEXT NOT NULL DEFAULT 'ABIERTO',
-          "usuarioId" INTEGER NOT NULL,
-          "vendedorId" INTEGER,
-          "sedeId" INTEGER NOT NULL,
-          "currentStep" INTEGER NOT NULL DEFAULT 1,
-          "clienteNombre" TEXT,
-          "clienteDocumento" TEXT,
-          "clienteTelefono" TEXT,
-          "imei" TEXT,
-          "payload" JSONB NOT NULL DEFAULT '{}'::jsonb,
-          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          "closedAt" TIMESTAMPTZ
-        )
-      `);
-      await prisma.$executeRawUnsafe(
-        `CREATE INDEX IF NOT EXISTS "CreditoBorrador_estado_updatedAt_idx" ON "CreditoBorrador" ("estado", "updatedAt" DESC)`
-      );
-      await prisma.$executeRawUnsafe(
-        `CREATE INDEX IF NOT EXISTS "CreditoBorrador_sede_estado_idx" ON "CreditoBorrador" ("sedeId", "estado")`
-      );
-      await prisma.$executeRawUnsafe(
-        `CREATE INDEX IF NOT EXISTS "CreditoBorrador_documento_idx" ON "CreditoBorrador" ("clienteDocumento")`
-      );
-      await prisma.$executeRawUnsafe(
-        `CREATE INDEX IF NOT EXISTS "CreditoBorrador_imei_idx" ON "CreditoBorrador" ("imei")`
-      );
-    })();
-  }
+async function getAccess() {
+  const user = await getSessionUser();
+  if (!user) return null;
+  const admin = isAdminRole(user.rolNombre);
+  const seller = admin ? null : await getSellerSessionUser(user);
+  return {
+    user,
+    admin,
+    central: admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo),
+    seller,
+  };
+}
 
-  await draftTableReady;
+function addReadScope(
+  where: string[],
+  values: unknown[],
+  access: NonNullable<Awaited<ReturnType<typeof getAccess>>>,
+  ownerOnly: boolean
+) {
+  if (access.central) return;
+  if (access.admin) {
+    values.push(access.user.aliadoAccesoId || -1);
+    where.push(`s."aliadoId" = $${values.length}`);
+    return;
+  }
+  values.push(access.seller?.sedeId || -1);
+  where.push(`d."sedeId" = $${values.length}`);
+  if (ownerOnly || access.seller?.tipoPerfil !== "SUPERVISOR") {
+    values.push(access.seller?.id || -1);
+    where.push(`d."vendedorId" = $${values.length}`);
+  }
 }
 
 async function readDrafts(
   whereSql: string,
   values: unknown[],
-  take = 20,
-  includeDeliveryEvidence = true
+  take: number,
+  includeEvidence: boolean
 ) {
-  const limitIndex = values.length + 1;
-  const payloadSelection = includeDeliveryEvidence
+  const payload = includeEvidence
     ? `d."payload"`
     : `d."payload"
-        - 'iphoneSelfieCedulaDataUrl'
-        - 'fotoEntregaDataUrl'
-        - 'fotoRemisionDataUrl'
-        - 'contratoSelfieDataUrl'
-        - 'contratoFotoDataUrl'
-        - 'contratoCedulaFrenteDataUrl'
-        - 'cedulaFrenteDataUrl'
-        - 'contratoCedulaRespaldoDataUrl'
-        - 'cedulaRespaldoDataUrl'`;
-  const rows = await prisma.$queryRawUnsafe<DraftRow[]>(
+        - 'iphoneSelfieCedulaDataUrl' - 'fotoEntregaDataUrl' - 'fotoRemisionDataUrl'
+        - 'contratoSelfieDataUrl' - 'contratoFotoDataUrl'
+        - 'contratoCedulaFrenteDataUrl' - 'cedulaFrenteDataUrl'
+        - 'contratoCedulaRespaldoDataUrl' - 'cedulaRespaldoDataUrl'`;
+  return prisma.$queryRawUnsafe<DraftRow[]>(
     `
-      SELECT
-        d."id",
-        d."estado",
-        d."usuarioId",
-        d."vendedorId",
-        d."sedeId",
-        d."currentStep",
-        d."clienteNombre",
-        d."clienteDocumento",
-        d."clienteTelefono",
-        d."imei",
-        ${payloadSelection} AS "payload",
-        d."createdAt",
-        d."updatedAt",
-        d."closedAt",
-        u."nombre" AS "usuarioNombre",
-        u."usuario" AS "usuarioLogin",
-        v."nombre" AS "vendedorNombre",
-        v."documento" AS "vendedorDocumento",
+      SELECT d."id", d."estado", d."usuarioId", d."vendedorId", d."sedeId",
+        d."currentStep", d."clienteNombre", d."clienteDocumento",
+        d."clienteTelefono", d."imei", ${payload} AS "payload",
+        d."createdAt", d."updatedAt", d."closedAt",
+        u."nombre" AS "usuarioNombre", u."usuario" AS "usuarioLogin",
+        v."nombre" AS "vendedorNombre", v."documento" AS "vendedorDocumento",
         s."nombre" AS "sedeNombre"
       FROM "CreditoBorrador" d
       LEFT JOIN "Usuario" u ON u."id" = d."usuarioId"
@@ -246,113 +207,61 @@ async function readDrafts(
       LEFT JOIN "Sede" s ON s."id" = d."sedeId"
       WHERE ${whereSql}
       ORDER BY d."updatedAt" DESC
-      LIMIT $${limitIndex}
+      LIMIT $${values.length + 1}
     `,
     ...values,
     take
   );
-
-  return rows;
-}
-
-function pushScopeWhere(
-  where: string[],
-  values: unknown[],
-  admin: boolean,
-  userSedeId: number,
-  sellerSession: Awaited<ReturnType<typeof getSellerSessionUser>>
-) {
-  if (admin) {
-    return;
-  }
-
-  values.push(userSedeId);
-  where.push(`d."sedeId" = $${values.length}`);
-
-  if (sellerSession?.tipoPerfil !== "SUPERVISOR") {
-    values.push(sellerSession?.id || 0);
-    where.push(`d."vendedorId" = $${values.length}`);
-  }
 }
 
 export async function GET(req: Request) {
   try {
-    const user = await getSessionUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    }
-
-    const admin = isAdminRole(user.rolNombre);
-    const sellerSession = admin ? null : await getSellerSessionUser(user);
-
-    if (!admin && !sellerSession) {
+    const access = await getAccess();
+    if (!access) return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+    if (!access.admin && !access.seller) {
       return NextResponse.json(
         { error: "Debes abrir primero el perfil del vendedor" },
         { status: 403 }
       );
     }
+    await ensureSolicitudSchema();
 
-    await ensureDraftTable();
-
-    const { searchParams } = new URL(req.url);
-    const id = parseDraftId(searchParams.get("id"));
-    const search = sanitizeSearch(searchParams.get("search"));
-    const searchDigits = search.replace(/\D/g, "");
-    const take = parseTake(searchParams.get("take"));
+    const params = new URL(req.url).searchParams;
+    const id = parsePositiveId(params.get("id"));
+    const search = sanitizeSearch(params.get("search"));
+    const take = parseTake(params.get("take"));
     const where = [`d."estado" = 'ABIERTO'`];
     const values: unknown[] = [];
-
-    pushScopeWhere(where, values, admin, user.sedeId, sellerSession);
+    addReadScope(where, values, access, Boolean(id));
 
     if (id) {
       values.push(id);
       where.push(`d."id" = $${values.length}`);
-      const rows = await readDrafts(where.join(" AND "), values, 1);
-      const item = rows[0] ? serializeDraft(rows[0]) : null;
-
-      if (!item) {
+      const rows = await readDrafts(where.join(" AND "), values, 1, true);
+      if (!rows[0]) {
         return NextResponse.json({ error: "Borrador no encontrado" }, { status: 404 });
       }
-
-      return NextResponse.json({ ok: true, item });
+      return NextResponse.json({ ok: true, item: serializeDraft(rows[0]) });
     }
 
     if (!search) {
       return NextResponse.json({
         ok: true,
-        scope: admin ? "global" : "sede",
+        scope: access.central ? "global" : access.admin ? "aliado" : "sede",
         search,
         items: [],
       });
     }
-
-    const searchLike = `%${search}%`;
-    values.push(searchLike);
-    const searchIndex = values.length;
-    const searchWhere = [
-      `d."clienteNombre" ILIKE $${searchIndex}`,
-      `d."clienteDocumento" ILIKE $${searchIndex}`,
-      `d."clienteTelefono" ILIKE $${searchIndex}`,
-      `d."imei" ILIKE $${searchIndex}`,
-    ];
-
-    if (searchDigits.length >= 3 && searchDigits !== search) {
-      values.push(`%${searchDigits}%`);
-      const digitsIndex = values.length;
-      searchWhere.push(
-        `d."clienteDocumento" ILIKE $${digitsIndex}`,
-        `d."clienteTelefono" ILIKE $${digitsIndex}`,
-        `d."imei" ILIKE $${digitsIndex}`
-      );
-    }
-
-    where.push(`(${searchWhere.join(" OR ")})`);
+    values.push(`%${search}%`);
+    const index = values.length;
+    where.push(`(
+      d."clienteNombre" ILIKE $${index} OR d."clienteDocumento" ILIKE $${index}
+      OR d."clienteTelefono" ILIKE $${index} OR d."imei" ILIKE $${index}
+    )`);
     const rows = await readDrafts(where.join(" AND "), values, take, false);
-
     return NextResponse.json({
       ok: true,
-      scope: admin ? "global" : "sede",
+      scope: access.central ? "global" : access.admin ? "aliado" : "sede",
       search,
       items: rows.map(serializeDraft),
     });
@@ -367,192 +276,125 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const user = await getSessionUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    }
-
-    const admin = isAdminRole(user.rolNombre);
-    const sellerSession = admin ? null : await getSellerSessionUser(user);
-
-    if (!admin && !sellerSession) {
+    const access = await getAccess();
+    if (!access) return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+    if (!access.admin && !access.seller) {
       return NextResponse.json(
         { error: "Debes abrir primero el perfil del vendedor" },
         { status: 403 }
       );
     }
-
-    await ensureDraftTable();
-
     const body = (await req.json().catch(() => ({}))) as SaveDraftBody;
-    const draftId = parseDraftId(body.id);
-    const currentStep = clampStep(body.currentStep);
     const payload = normalizePayload(body.payload);
     const fields = extractDraftFields(payload);
-    const payloadJson = JSON.stringify(payload);
-
-    if (draftId) {
-      const where = [`"id" = $1`, `"estado" = 'ABIERTO'`];
-      const values: unknown[] = [draftId];
-
-      if (!admin) {
-        values.push(user.sedeId);
-        where.push(`"sedeId" = $${values.length}`);
-
-        if (sellerSession?.tipoPerfil !== "SUPERVISOR") {
-          values.push(sellerSession?.id || 0);
-          where.push(`"vendedorId" = $${values.length}`);
-        }
-      }
-
-      values.push(
-        currentStep,
-        fields.clienteNombre,
-        fields.clienteDocumento,
-        fields.clienteTelefono,
-        fields.imei,
-        payloadJson
-      );
-
-      const currentStepIndex = values.length - 5;
-      const nombreIndex = values.length - 4;
-      const documentoIndex = values.length - 3;
-      const telefonoIndex = values.length - 2;
-      const imeiIndex = values.length - 1;
-      const payloadIndex = values.length;
-
-      await prisma.$executeRawUnsafe(
-        `
-          UPDATE "CreditoBorrador"
-          SET
-            "currentStep" = $${currentStepIndex},
-            "clienteNombre" = $${nombreIndex},
-            "clienteDocumento" = $${documentoIndex},
-            "clienteTelefono" = $${telefonoIndex},
-            "imei" = $${imeiIndex},
-            "payload" = $${payloadIndex}::jsonb,
-            "updatedAt" = NOW()
-          WHERE ${where.join(" AND ")}
-        `,
-        ...values
-      );
-
-      const readWhere = [`d."id" = $1`];
-      const readValues: unknown[] = [draftId];
-      pushScopeWhere(readWhere, readValues, admin, user.sedeId, sellerSession);
-      const rows = await readDrafts(readWhere.join(" AND "), readValues, 1);
-      const item = rows[0] ? serializeDraft(rows[0]) : null;
-
-      return NextResponse.json({ ok: true, item });
-    }
-
-    const rows = await prisma.$queryRawUnsafe<DraftRow[]>(
-      `
-        INSERT INTO "CreditoBorrador" (
-          "usuarioId",
-          "vendedorId",
-          "sedeId",
-          "currentStep",
-          "clienteNombre",
-          "clienteDocumento",
-          "clienteTelefono",
-          "imei",
-          "payload",
-          "updatedAt"
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
-        RETURNING *
-      `,
-      user.id,
-      sellerSession?.id || null,
-      user.sedeId,
-      currentStep,
-      fields.clienteNombre,
-      fields.clienteDocumento,
-      fields.clienteTelefono,
-      fields.imei,
-      payloadJson
-    );
-
-    const created = rows[0];
-
-    if (!created) {
-      throw new Error("No se pudo crear el borrador");
-    }
-
-    const itemRows = await readDrafts(`d."id" = $1`, [created.id], 1);
-
-    return NextResponse.json({ ok: true, item: serializeDraft(itemRows[0] || created) });
+    const saved = await saveSolicitudDraft({
+      id: parsePositiveId(body.id),
+      usuarioId: access.user.id,
+      vendedorId: access.seller?.id || null,
+      sedeId: access.user.sedeId,
+      currentStep: clampStep(body.currentStep),
+      clienteNombre: fields.clienteNombre,
+      clienteDocumento: fields.clienteDocumento,
+      clienteTelefono: fields.clienteTelefono,
+      imei: fields.imei,
+      plataforma: sanitizeText(payload.plataformaDispositivo),
+      dataCreditoAssessmentId: sanitizeText(payload.dataCreditoAssessmentId),
+      payload,
+    });
+    const rows = await readDrafts(`d."id" = $1`, [saved.id], 1, true);
+    if (!rows[0]) throw new Error("No se pudo leer el borrador guardado");
+    return NextResponse.json({ ok: true, item: serializeDraft(rows[0]) });
   } catch (error) {
     console.error("ERROR GUARDANDO BORRADOR:", error);
+    if (error instanceof ActiveSolicitudConflictError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.status }
+      );
+    }
+    const forbidden = error instanceof Error && error.message === "SOLICITUD_NO_AUTORIZADA";
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "No se pudo guardar el borrador" },
-      { status: 500 }
+      { error: forbidden ? "Solicitud no autorizada" : "No se pudo guardar el borrador" },
+      { status: forbidden ? 403 : 500 }
     );
   }
 }
 
 export async function PATCH(req: Request) {
   try {
-    const user = await getSessionUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    }
-
-    const admin = isAdminRole(user.rolNombre);
-    const sellerSession = admin ? null : await getSellerSessionUser(user);
-
-    if (!admin && !sellerSession) {
+    const access = await getAccess();
+    if (!access) return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+    if (!access.admin && !access.seller) {
       return NextResponse.json(
         { error: "Debes abrir primero el perfil del vendedor" },
         { status: 403 }
       );
     }
-
-    await ensureDraftTable();
-
+    await ensureSolicitudSchema();
     const body = (await req.json().catch(() => ({}))) as SaveDraftBody;
-    const draftId = parseDraftId(body.id);
+    const id = parsePositiveId(body.id);
+    if (!id) return NextResponse.json({ error: "Borrador invalido" }, { status: 400 });
 
-    if (!draftId) {
-      return NextResponse.json({ error: "Borrador invalido" }, { status: 400 });
-    }
-
-    const nextEstado =
-      sanitizeText(body.estado).toUpperCase() === "CERRADO" ? "CERRADO" : "ABIERTO";
-    const where = [`"id" = $1`];
-    const values: unknown[] = [draftId, nextEstado];
-
-    if (!admin) {
-      values.push(user.sedeId);
-      where.push(`"sedeId" = $${values.length}`);
-
-      if (sellerSession?.tipoPerfil !== "SUPERVISOR") {
-        values.push(sellerSession?.id || 0);
-        where.push(`"vendedorId" = $${values.length}`);
+    if (sanitizeText(body.action).toUpperCase() === "DESISTIR") {
+      if (!access.seller || access.seller.tipoPerfil !== "VENDEDOR") {
+        return NextResponse.json({ error: "Accion no autorizada" }, { status: 403 });
       }
+      const changed = await desistSolicitud({
+        solicitudId: id,
+        userId: access.user.id,
+        sellerId: access.seller.id,
+        sedeId: access.seller.sedeId,
+      });
+      return NextResponse.json({ ok: changed }, { status: changed ? 200 : 409 });
     }
 
-    await prisma.$executeRawUnsafe(
+    if (sanitizeText(body.estado).toUpperCase() !== "CERRADO") {
+      return NextResponse.json({ error: "Estado invalido" }, { status: 400 });
+    }
+    const changed = await prisma.$executeRawUnsafe(
       `
         UPDATE "CreditoBorrador"
-        SET
-          "estado" = $2,
-          "closedAt" = CASE WHEN $2 = 'CERRADO' THEN NOW() ELSE NULL END,
-          "updatedAt" = NOW()
-        WHERE ${where.join(" AND ")}
+        SET "estado" = 'CERRADO', "closedReason" = 'FINALIZADA',
+          "creditoId" = COALESCE($2, "creditoId"),
+          "closedAt" = COALESCE("closedAt", CURRENT_TIMESTAMP),
+          "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "id" = $1 AND "estado" = 'ABIERTO'
+          AND "usuarioId" = $3 AND "vendedorId" IS NOT DISTINCT FROM $4
+          AND "sedeId" = $5
       `,
-      ...values
+      id,
+      parsePositiveId(body.creditoId),
+      access.user.id,
+      access.seller?.id || null,
+      access.user.sedeId
     );
+    if (changed > 0) {
+      return NextResponse.json({ ok: true });
+    }
 
-    return NextResponse.json({ ok: true });
+    const alreadyFinalized = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
+      `
+        SELECT "id"
+        FROM "CreditoBorrador"
+        WHERE "id" = $1
+          AND "estado" = 'CERRADO'
+          AND "closedReason" = 'FINALIZADA'
+          AND "usuarioId" = $2
+          AND "vendedorId" IS NOT DISTINCT FROM $3
+          AND "sedeId" = $4
+        LIMIT 1
+      `,
+      id,
+      access.user.id,
+      access.seller?.id || null,
+      access.user.sedeId
+    );
+    return NextResponse.json(
+      { ok: alreadyFinalized.length > 0 },
+      { status: alreadyFinalized.length > 0 ? 200 : 409 }
+    );
   } catch (error) {
     console.error("ERROR ACTUALIZANDO BORRADOR:", error);
-    return NextResponse.json(
-      { error: "No se pudo actualizar el borrador" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "No se pudo actualizar el borrador" }, { status: 500 });
   }
 }

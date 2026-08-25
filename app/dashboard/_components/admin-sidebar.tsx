@@ -5,6 +5,7 @@ import {
   Calculator,
   ChevronDown,
   CircleDollarSign,
+  ClipboardList,
   Equal,
   FileSearch,
   FileText,
@@ -117,6 +118,7 @@ export default function AdminSidebar({
     {
       label: "Operacion",
       items: [
+        { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
         { href: "/dashboard/creditos", icon: FileText, label: "Creditos" },
         ...(adminCentral
           ? [
