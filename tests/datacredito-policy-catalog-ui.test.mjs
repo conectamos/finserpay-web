@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [consoleSource, pageSource] = await Promise.all([
+const [consoleSource, pageSource, manualCapSource] = await Promise.all([
   readFile(
     new URL(
       "../app/dashboard/parametros-credito/datacredito-policy-console.tsx",
@@ -13,6 +13,13 @@ const [consoleSource, pageSource] = await Promise.all([
   readFile(
     new URL(
       "../app/dashboard/parametros-credito/page.tsx",
+      import.meta.url
+    ),
+    "utf8"
+  ),
+  readFile(
+    new URL(
+      "../app/dashboard/parametros-credito/manual-credit-cap-console.tsx",
       import.meta.url
     ),
     "utf8"
@@ -88,8 +95,59 @@ test("la consola conserva navegación accesible y estados responsivos", () => {
   assert.match(consoleSource, /role="tabpanel"/);
   assert.match(consoleSource, /aria-controls="datacredito-policies-panel"/);
   assert.match(consoleSource, /aria-controls="datacredito-assignments-panel"/);
+  assert.match(consoleSource, /aria-controls="datacredito-document-limits-panel"/);
   assert.match(consoleSource, /<DataTable className="mt-5">/);
   assert.match(consoleSource, /aria-label=\{`Política para \$\{ally\.name\}`\}/);
+});
+
+test("integra cupos máximos manuales por cédula como una tercera pestaña", () => {
+  assert.match(consoleSource, /import ManualCreditCapConsole/);
+  assert.match(
+    consoleSource,
+    /type PolicyConsoleTab = "POLICIES" \| "ASSIGNMENTS" \| "DOCUMENT_LIMITS"/
+  );
+  assert.match(consoleSource, /Cupos por cédula/);
+  assert.match(consoleSource, /id="datacredito-document-limits-tab"/);
+  assert.match(consoleSource, /id="datacredito-document-limits-panel"/);
+  assert.match(consoleSource, /<ManualCreditCapConsole \/>/);
+});
+
+test("administra cupos enmascarados con búsqueda exacta y concurrencia", () => {
+  assert.match(
+    manualCapSource,
+    /ENDPOINT = "\/api\/creditos\/datacredito\/cupos-manuales"/
+  );
+  assert.match(manualCapSource, /payload\.items/);
+  assert.match(manualCapSource, /documentLast4/);
+  assert.match(manualCapSource, /return `•••• \$\{last4\}`/);
+  assert.doesNotMatch(manualCapSource, /item\.documentNumber/);
+  assert.match(manualCapSource, /Buscar cédula exacta/);
+  assert.match(manualCapSource, /`\$\{ENDPOINT\}\/buscar`/);
+  assert.match(
+    manualCapSource,
+    /JSON\.stringify\(\{ documentNumber: documentFilter, estado: statusFilter \}\)/
+  );
+  assert.doesNotMatch(manualCapSource, /params\.set\("documento"/);
+  assert.match(manualCapSource, /method: exactSearch \? "POST" : "GET"/);
+  assert.match(manualCapSource, /pendingMutation\.kind === "CREATE" \? "POST" : "PATCH"/);
+  assert.match(manualCapSource, /expectedVersion: pendingMutation\.item\.version/);
+  assert.match(manualCapSource, /mutationId: newMutationId\(\)/);
+  assert.match(manualCapSource, /crypto\.randomUUID\(\)/);
+});
+
+test("confirma crear, editar, desactivar y reactivar un cupo manual", () => {
+  assert.match(manualCapSource, /Crear cupo manual/);
+  assert.match(manualCapSource, /Actualizar cupo manual/);
+  assert.match(manualCapSource, /Desactivar cupo manual/);
+  assert.match(manualCapSource, /Reactivar cupo manual/);
+  assert.match(manualCapSource, /<ConfirmDialog/);
+  assert.match(manualCapSource, /danger=\{confirmation\?\.danger === true\}/);
+  assert.match(manualCapSource, /<LoadingState label="Cargando cupos manuales\.\.\." \/>/);
+  assert.match(manualCapSource, /<EmptyState/);
+  assert.match(manualCapSource, /role="alert"/);
+  assert.match(manualCapSource, /<StatusPill tone=\{item\.active \? "positive" : "neutral"\}>/);
+  assert.match(manualCapSource, /beginCreate\(documentFilter\)/);
+  assert.doesNotMatch(manualCapSource, /#[0-9a-fA-F]{3,8}/);
 });
 
 

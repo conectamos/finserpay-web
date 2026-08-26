@@ -714,6 +714,114 @@ CREATE INDEX IF NOT EXISTS "DataCreditoPolicyAssignmentAudit_ally_created_idx"
 CREATE INDEX IF NOT EXISTS "DataCreditoPolicyAssignmentAudit_policy_created_idx"
   ON "DataCreditoPolicyAssignmentAudit" ("policyId", "createdAt" DESC);
 
+-- Manual financed-amount caps are keyed exclusively by a deterministic HMAC.
+-- The clear document number is intentionally never persisted.
+CREATE TABLE IF NOT EXISTS "DataCreditoManualCreditLimit" (
+  "id" UUID PRIMARY KEY,
+  "documentHash" CHAR(64) NOT NULL,
+  "documentLast4" VARCHAR(4) NOT NULL,
+  "maxFinancedAmount" INTEGER NOT NULL,
+  "reason" VARCHAR(240) NOT NULL,
+  "active" BOOLEAN NOT NULL DEFAULT true,
+  "version" INTEGER NOT NULL DEFAULT 1,
+  "createdByUserId" INTEGER NOT NULL,
+  "updatedByUserId" INTEGER NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "DataCreditoManualCreditLimit_document_hash_check"
+    CHECK ("documentHash" ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT "DataCreditoManualCreditLimit_document_last4_check"
+    CHECK ("documentLast4" ~ '^[0-9]{3,4}$'),
+  CONSTRAINT "DataCreditoManualCreditLimit_amount_check"
+    CHECK ("maxFinancedAmount" BETWEEN 1 AND 100000000),
+  CONSTRAINT "DataCreditoManualCreditLimit_reason_check"
+    CHECK (LENGTH(BTRIM("reason")) BETWEEN 5 AND 240),
+  CONSTRAINT "DataCreditoManualCreditLimit_version_check"
+    CHECK ("version" >= 1),
+  CONSTRAINT "DataCreditoManualCreditLimit_created_by_fkey"
+    FOREIGN KEY ("createdByUserId") REFERENCES "Usuario" ("id") ON DELETE RESTRICT,
+  CONSTRAINT "DataCreditoManualCreditLimit_updated_by_fkey"
+    FOREIGN KEY ("updatedByUserId") REFERENCES "Usuario" ("id") ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "DataCreditoManualCreditLimit_document_key"
+  ON "DataCreditoManualCreditLimit" ("documentHash");
+
+CREATE INDEX IF NOT EXISTS "DataCreditoManualCreditLimit_active_updated_idx"
+  ON "DataCreditoManualCreditLimit" ("active", "updatedAt" DESC, "id" DESC);
+
+CREATE TABLE IF NOT EXISTS "DataCreditoManualCreditLimitAudit" (
+  "id" UUID PRIMARY KEY,
+  "manualLimitId" UUID NOT NULL,
+  "mutationId" UUID NOT NULL,
+  "requestHash" CHAR(64) NOT NULL,
+  "action" VARCHAR(24) NOT NULL,
+  "documentHash" CHAR(64) NOT NULL,
+  "documentLast4" VARCHAR(4) NOT NULL,
+  "previousMaxFinancedAmount" INTEGER,
+  "maxFinancedAmount" INTEGER NOT NULL,
+  "previousReason" VARCHAR(240),
+  "reason" VARCHAR(240) NOT NULL,
+  "previousActive" BOOLEAN,
+  "active" BOOLEAN NOT NULL,
+  "previousVersion" INTEGER,
+  "version" INTEGER NOT NULL,
+  "actorUserId" INTEGER NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "DataCreditoManualCreditLimitAudit_limit_fkey"
+    FOREIGN KEY ("manualLimitId")
+    REFERENCES "DataCreditoManualCreditLimit" ("id")
+    ON DELETE RESTRICT,
+  CONSTRAINT "DataCreditoManualCreditLimitAudit_request_hash_check"
+    CHECK ("requestHash" ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT "DataCreditoManualCreditLimitAudit_document_hash_check"
+    CHECK ("documentHash" ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT "DataCreditoManualCreditLimitAudit_document_last4_check"
+    CHECK ("documentLast4" ~ '^[0-9]{3,4}$'),
+  CONSTRAINT "DataCreditoManualCreditLimitAudit_action_check"
+    CHECK ("action" IN ('CREATED', 'UPDATED', 'DEACTIVATED', 'REACTIVATED')),
+  CONSTRAINT "DataCreditoManualCreditLimitAudit_amount_check"
+    CHECK ("maxFinancedAmount" BETWEEN 1 AND 100000000),
+  CONSTRAINT "DataCreditoManualCreditLimitAudit_reason_check"
+    CHECK (LENGTH(BTRIM("reason")) BETWEEN 5 AND 240),
+  CONSTRAINT "DataCreditoManualCreditLimitAudit_version_check"
+    CHECK ("version" >= 1),
+  CONSTRAINT "DataCreditoManualCreditLimitAudit_actor_fkey"
+    FOREIGN KEY ("actorUserId") REFERENCES "Usuario" ("id") ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "DataCreditoManualCreditLimitAudit_mutation_key"
+  ON "DataCreditoManualCreditLimitAudit" ("mutationId");
+
+CREATE INDEX IF NOT EXISTS "DataCreditoManualCreditLimitAudit_limit_created_idx"
+  ON "DataCreditoManualCreditLimitAudit" ("manualLimitId", "createdAt" DESC);
+
+CREATE OR REPLACE FUNCTION "DataCreditoRejectImmutableAuditMutation"()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'DataCredito audit records are immutable';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "DataCreditoManualCreditLimitAudit_immutable"
+  ON "DataCreditoManualCreditLimitAudit";
+CREATE TRIGGER "DataCreditoManualCreditLimitAudit_immutable"
+  BEFORE UPDATE OR DELETE ON "DataCreditoManualCreditLimitAudit"
+  FOR EACH ROW EXECUTE FUNCTION "DataCreditoRejectImmutableAuditMutation"();
+
+CREATE OR REPLACE FUNCTION "DataCreditoRejectManualLimitDelete"()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'DataCredito manual credit limits must be deactivated, not deleted';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "DataCreditoManualCreditLimit_no_delete"
+  ON "DataCreditoManualCreditLimit";
+CREATE TRIGGER "DataCreditoManualCreditLimit_no_delete"
+  BEFORE DELETE ON "DataCreditoManualCreditLimit"
+  FOR EACH ROW EXECUTE FUNCTION "DataCreditoRejectManualLimitDelete"();
+
 CREATE UNIQUE INDEX IF NOT EXISTS "DataCreditoAssessment_correlation_key"
   ON "DataCreditoAssessment" ("correlationId");
 

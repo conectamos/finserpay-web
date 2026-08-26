@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  BadgeDollarSign,
   CircleAlert,
   Copy,
   Plus,
@@ -13,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
+import ManualCreditCapConsole from "@/app/dashboard/parametros-credito/manual-credit-cap-console";
 import {
   DATACREDITO_MAX_SCORE,
   DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT,
@@ -1534,7 +1536,7 @@ function PlatformEditor({
   );
 }
 
-type PolicyConsoleTab = "POLICIES" | "ASSIGNMENTS";
+type PolicyConsoleTab = "POLICIES" | "ASSIGNMENTS" | "DOCUMENT_LIMITS";
 
 function PriorityRuleEditor({
   rules,
@@ -2578,6 +2580,17 @@ export default function DatacreditoPolicyConsole() {
             </Badge>
           ) : null}
         </button>
+        <button
+          id="datacredito-document-limits-tab"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "DOCUMENT_LIMITS"}
+          aria-controls="datacredito-document-limits-panel"
+          onClick={() => setActiveTab("DOCUMENT_LIMITS")}
+        >
+          <BadgeDollarSign className="mr-2 inline h-4 w-4" aria-hidden="true" />
+          Cupos por cédula
+        </button>
       </Tabs>
 
       {activeTab === "POLICIES" ? (
@@ -3190,7 +3203,7 @@ export default function DatacreditoPolicyConsole() {
             </>
           ) : null}
         </div>
-      ) : (
+      ) : activeTab === "ASSIGNMENTS" ? (
         <div
           id="datacredito-assignments-panel"
           role="tabpanel"
@@ -3347,6 +3360,14 @@ export default function DatacreditoPolicyConsole() {
               </Button>
             </div>
           </Card>
+        </div>
+      ) : (
+        <div
+          id="datacredito-document-limits-panel"
+          role="tabpanel"
+          aria-labelledby="datacredito-document-limits-tab"
+        >
+          <ManualCreditCapConsole />
         </div>
       )}
 

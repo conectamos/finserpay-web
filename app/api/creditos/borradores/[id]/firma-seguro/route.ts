@@ -16,6 +16,7 @@ import {
   resolveDataCreditoOfferFinancingTerms,
   type DataCreditoPolicyFinancialSettings,
 } from "@/lib/datacredito/policy";
+import { resolveDataCreditoManualCreditLimit } from "@/lib/datacredito/manual-credit-limits";
 import {
   calculateRequiredInitialPaymentForFinancingLimit,
   calculateRequiredInitialPaymentByPlatform,
@@ -455,6 +456,14 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
     payload,
     plataformaDispositivo
   );
+  const dataCreditoCreditLimit = dataCreditoOffer
+    ? await resolveDataCreditoManualCreditLimit({
+        documento: clienteDocumento,
+        policyMaxFinancedAmount: dataCreditoOffer.maxFinancedAmount,
+      })
+    : null;
+  const dataCreditoMaxFinancedAmount =
+    dataCreditoCreditLimit?.maxFinancedAmount || 0;
   const creditSettings = dataCreditoOffer
     ? {
         ...effectiveCreditSettings.globalSettings,
@@ -463,10 +472,10 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
       }
     : effectiveCreditSettings.globalSettings;
   const dataCreditoEffectiveMaxFinancedAmount = dataCreditoOffer
-    ? resolveEffectiveDataCreditoFinancingLimit({
-        platform: plataformaDispositivo,
-        maxFinancedAmount: dataCreditoOffer.maxFinancedAmount,
-        precioBaseVenta: precioBaseVentaCatalogo,
+      ? resolveEffectiveDataCreditoFinancingLimit({
+          platform: plataformaDispositivo,
+          maxFinancedAmount: dataCreditoMaxFinancedAmount,
+          precioBaseVenta: precioBaseVentaCatalogo,
         iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
       })
     : 0;
@@ -595,6 +604,21 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
             assessmentId: dataCreditoOffer.assessmentId,
             policyVersion: dataCreditoOffer.policyVersion,
             policyRevisionId: dataCreditoOffer.policyRevisionId,
+            policyMaxFinancedAmount: dataCreditoOffer.maxFinancedAmount,
+            manualMaxFinancedAmount:
+              dataCreditoCreditLimit?.manualLimit?.maxFinancedAmount ?? null,
+            resolvedMaxFinancedAmount: dataCreditoMaxFinancedAmount,
+            maxFinancedAmount: dataCreditoMaxFinancedAmount,
+            financingLimitSource:
+              dataCreditoCreditLimit?.source || "POLICY",
+            manualCreditLimitId:
+              dataCreditoCreditLimit?.manualLimit?.id || null,
+            manualCreditLimitVersion:
+              dataCreditoCreditLimit?.manualLimit?.version || null,
+            manualCreditLimitDocumentLast4:
+              dataCreditoCreditLimit?.manualLimit?.documentLast4 || null,
+            effectiveMaxFinancedAmount:
+              dataCreditoEffectiveMaxFinancedAmount,
             installmentCount: dataCreditoOffer.installmentCount,
             maxInstallmentCount: dataCreditoOffer.installmentCount,
             selectedInstallmentCount: plazoMeses,

@@ -28,6 +28,8 @@ const [
   retentionRoute,
   creditRoute,
   firmaSeguroDraftRoute,
+  creditConfigRoute,
+  manualCreditLimitLookupRoute,
   factoryConsole,
   prequalificationGate,
   policyConsole,
@@ -46,6 +48,10 @@ const [
     readProjectFile("app/api/creditos/route.ts"),
     readProjectFile(
       "app/api/creditos/borradores/[id]/firma-seguro/route.ts"
+    ),
+    readProjectFile("app/api/creditos/configuracion/route.ts"),
+    readProjectFile(
+      "app/api/creditos/configuracion/cupo-manual/route.ts"
     ),
     readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
     readProjectFile(
@@ -748,7 +754,7 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
   );
   assert.match(
     creditBuilder,
-    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoOffer\.maxFinancedAmount/
+    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoMaxFinancedAmount/
   );
   assert.match(
     creditBuilder,
@@ -807,11 +813,99 @@ test("pantalla, cierre y FirmaSeguro respetan el menor tope financiable", () => 
   );
   assert.match(
     firmaSeguroDraftRoute,
-    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoOffer\.maxFinancedAmount[\s\S]*?precioBaseVenta: precioBaseVentaCatalogo/
+    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoMaxFinancedAmount[\s\S]*?precioBaseVenta: precioBaseVentaCatalogo/
   );
   assert.match(
     firmaSeguroDraftRoute,
     /calculateRequiredInitialPaymentForFinancingLimit\([\s\S]*?dataCreditoEffectiveMaxFinancedAmount/
+  );
+});
+
+test("el cupo manual por cedula reemplaza el tope de politica solo en flujos reales", () => {
+  const creditConfigGet = creditConfigRoute.match(
+    /export async function GET\([\s\S]*?(?=export async function PATCH)/
+  )?.[0];
+  assert.ok(creditConfigGet);
+  assert.doesNotMatch(creditConfigGet, /manualCreditLimit/);
+
+  assert.match(
+    manualCreditLimitLookupRoute,
+    /export async function POST\(req: Request\)/
+  );
+  assert.match(
+    manualCreditLimitLookupRoute,
+    /getActiveDataCreditoManualCreditLimit\(documentNumber\)/
+  );
+  assert.match(
+    manualCreditLimitLookupRoute,
+    /manualCreditLimit = activeManualCreditLimit[\s\S]*?id: activeManualCreditLimit\.id[\s\S]*?documentLast4: activeManualCreditLimit\.documentLast4[\s\S]*?maxFinancedAmount: activeManualCreditLimit\.maxFinancedAmount[\s\S]*?version: activeManualCreditLimit\.version/
+  );
+  assert.doesNotMatch(
+    manualCreditLimitLookupRoute.match(
+      /const manualCreditLimit =[\s\S]*?(?=\n\s*return noStoreJson)/
+    )?.[0] || "",
+    /reason|createdAt|updatedAt/
+  );
+  assert.match(
+    manualCreditLimitLookupRoute,
+    /"Cache-Control": "private, no-store, max-age=0"/
+  );
+  assert.match(
+    factoryConsole,
+    /!simulatorMode && normalizedDocument[\s\S]*?"\/api\/creditos\/configuracion\/cupo-manual"[\s\S]*?method: "POST"[\s\S]*?documentNumber: normalizedDocument/
+  );
+  assert.doesNotMatch(factoryConsole, /params\.set\("documento"/);
+  assert.match(
+    factoryConsole,
+    /const activeDataCreditoManualCreditLimit =[\s\S]*?!simulatorMode[\s\S]*?dataCreditoCreditCreationMode[\s\S]*?documentNumber ===[\s\S]*?normalizedCurrentClientDocument/
+  );
+  assert.match(
+    factoryConsole,
+    /const dataCreditoMaxFinancedAmount = activeDataCreditoOffer[\s\S]*?activeDataCreditoManualCreditLimit\?\.maxFinancedAmount[\s\S]*?dataCreditoPolicyMaxFinancedAmount/
+  );
+  assert.match(factoryConsole, /Cupo manual · CC \*\*\*/);
+
+  assert.match(
+    creditRoute,
+    /resolveDataCreditoManualCreditLimit\(\{\s*documento: clienteDocumento,\s*policyMaxFinancedAmount: dataCreditoPolicyMaxFinancedAmount/
+  );
+  assert.match(
+    creditRoute,
+    /Number\.isSafeInteger\(dataCreditoPolicyMaxFinancedAmount\)[\s\S]*?DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT/
+  );
+  assert.doesNotMatch(creditRoute, /body\.manualCreditLimit/);
+
+  assert.match(
+    firmaSeguroDraftRoute,
+    /resolveDataCreditoManualCreditLimit\(\{\s*documento: clienteDocumento,\s*policyMaxFinancedAmount: dataCreditoOffer\.maxFinancedAmount/
+  );
+  assert.doesNotMatch(firmaSeguroDraftRoute, /payload\.manualCreditLimit/);
+
+  for (const source of [creditRoute, firmaSeguroDraftRoute]) {
+    assert.match(source, /policyMaxFinancedAmount:/);
+    assert.match(source, /manualMaxFinancedAmount:/);
+    assert.match(source, /resolvedMaxFinancedAmount:/);
+    assert.match(source, /effectiveMaxFinancedAmount:/);
+    assert.match(source, /manualCreditLimitId:/);
+    assert.match(source, /manualCreditLimitVersion:/);
+  }
+});
+
+test("el autosave sigue activo pero solo presenta carga y errores", () => {
+  assert.match(factoryConsole, /setDraftStatus\("saving"\)/);
+  assert.match(factoryConsole, /setDraftStatus\("saved"\)/);
+  assert.match(
+    factoryConsole,
+    /setDraftStatus\("error"\);[\s\S]{0,240}setNotice\(\{\s*text: message,\s*tone: "red"/
+  );
+  assert.doesNotMatch(factoryConsole, /Guardando borrador\.\.\./);
+  assert.doesNotMatch(
+    factoryConsole,
+    /Borrador #\$\{draftId\} guardado/
+  );
+  assert.match(
+    factoryConsole,
+    /draftStatus === "error" \|\| draftStatus === "loading"/
   );
 });
 

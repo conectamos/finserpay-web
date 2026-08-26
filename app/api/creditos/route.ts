@@ -111,6 +111,7 @@ import {
   DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT,
   resolveDataCreditoOfferFinancingTerms,
 } from "@/lib/datacredito/policy";
+import { resolveDataCreditoManualCreditLimit } from "@/lib/datacredito/manual-credit-limits";
 import {
   ActiveSolicitudConflictError,
   completeSolicitudForCredit,
@@ -1302,7 +1303,7 @@ export async function POST(req: Request) {
     const dataCreditoSuretyPercentage = Number(
       dataCreditoAssessment?.offer?.suretyPercentage
     );
-    const dataCreditoMaxFinancedAmount = Number(
+    const dataCreditoPolicyMaxFinancedAmount = Number(
       dataCreditoAssessment?.offer?.maxFinancedAmount
     );
     const dataCreditoFinancingTerms = dataCreditoAssessment
@@ -1319,9 +1320,9 @@ export async function POST(req: Request) {
         Number.isFinite(dataCreditoSuretyPercentage) &&
         dataCreditoSuretyPercentage >= 0 &&
         dataCreditoSuretyPercentage <= 100 &&
-        Number.isSafeInteger(dataCreditoMaxFinancedAmount) &&
-        dataCreditoMaxFinancedAmount > 0 &&
-        dataCreditoMaxFinancedAmount <=
+        Number.isSafeInteger(dataCreditoPolicyMaxFinancedAmount) &&
+        dataCreditoPolicyMaxFinancedAmount > 0 &&
+        dataCreditoPolicyMaxFinancedAmount <=
           DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT &&
         Boolean(dataCreditoFinancingTerms));
 
@@ -1334,6 +1335,15 @@ export async function POST(req: Request) {
         { status: 503 }
       );
     }
+
+    const dataCreditoCreditLimit = dataCreditoAssessment
+      ? await resolveDataCreditoManualCreditLimit({
+          documento: clienteDocumento,
+          policyMaxFinancedAmount: dataCreditoPolicyMaxFinancedAmount,
+        })
+      : null;
+    const dataCreditoMaxFinancedAmount =
+      dataCreditoCreditLimit?.maxFinancedAmount || 0;
 
     const creditSettings = dataCreditoAssessment
       ? {
@@ -2582,7 +2592,19 @@ export async function POST(req: Request) {
               assessmentId: dataCreditoAssessment.id,
               policyVersion: dataCreditoAssessment.policyVersion,
               policyRevisionId: dataCreditoAssessment.policyRevisionId,
+              policyMaxFinancedAmount: dataCreditoPolicyMaxFinancedAmount,
+              manualMaxFinancedAmount:
+                dataCreditoCreditLimit?.manualLimit?.maxFinancedAmount ?? null,
+              resolvedMaxFinancedAmount: dataCreditoMaxFinancedAmount,
               maxFinancedAmount: dataCreditoMaxFinancedAmount,
+              financingLimitSource:
+                dataCreditoCreditLimit?.source || "POLICY",
+              manualCreditLimitId:
+                dataCreditoCreditLimit?.manualLimit?.id || null,
+              manualCreditLimitVersion:
+                dataCreditoCreditLimit?.manualLimit?.version || null,
+              manualCreditLimitDocumentLast4:
+                dataCreditoCreditLimit?.manualLimit?.documentLast4 || null,
               effectiveMaxFinancedAmount:
                 dataCreditoEffectiveMaxFinancedAmount,
               installmentCount: dataCreditoFinancingTerms?.installmentCount,

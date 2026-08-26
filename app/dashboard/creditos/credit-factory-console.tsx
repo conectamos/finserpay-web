@@ -690,6 +690,23 @@ type CreditSettingsResponse = {
   error?: string;
 };
 
+type ManualCreditLimitLookupResponse = {
+  ok?: boolean;
+  manualCreditLimit?: {
+    id: string;
+    documentLast4: string;
+    maxFinancedAmount: number;
+    version: number;
+  } | null;
+  error?: string;
+};
+
+type LoadedManualCreditLimit = NonNullable<
+  ManualCreditLimitLookupResponse["manualCreditLimit"]
+> & {
+  documentNumber: string;
+};
+
 type DataCreditoPolicySimulation = {
   kind: "POLICY_NO_INFORMATION";
   simulationOnly: true;
@@ -2742,7 +2759,6 @@ export default function CreditFactoryConsole({
     draftResumeHydrationRef.current = active;
     setDraftResumeHydrating(active);
   }, []);
-  const [draftLastSavedAt, setDraftLastSavedAt] = useState("");
   const [draftErrorMessage, setDraftErrorMessage] = useState("");
   const [showPaymentResults, setShowPaymentResults] = useState(false);
   const [paymentsTab, setPaymentsTab] = useState<"pay" | "history">("pay");
@@ -2845,6 +2861,8 @@ export default function CreditFactoryConsole({
       updatedAt: null,
     });
   const [creditSettingsDocument, setCreditSettingsDocument] = useState("");
+  const [dataCreditoManualCreditLimit, setDataCreditoManualCreditLimit] =
+    useState<LoadedManualCreditLimit | null>(null);
   const [imei, setImei] = useState("");
   const [valorEquipoTotal, setValorEquipoTotal] = useState("");
   const [cuotaInicial, setCuotaInicial] = useState("");
@@ -3271,10 +3289,24 @@ export default function CreditFactoryConsole({
       : dataCreditoSimulation?.platform || null;
   const simulationPolicyReady =
     !simulatorMode || Boolean(simulationPolicyOffer);
-  const dataCreditoMaxFinancedAmount =
+  const dataCreditoPolicyMaxFinancedAmount =
     activeDataCreditoOffer
       ? normalizeMoneyLimit(activeDataCreditoOffer.maxFinancedAmount, 0)
       : 0;
+  const normalizedCurrentClientDocument = clienteDocumento.replace(/\D/g, "");
+  const activeDataCreditoManualCreditLimit =
+    !simulatorMode &&
+    dataCreditoCreditCreationMode &&
+    activeDataCreditoOffer &&
+    dataCreditoManualCreditLimit?.documentNumber ===
+      normalizedCurrentClientDocument &&
+    dataCreditoManualCreditLimit.maxFinancedAmount > 0
+      ? dataCreditoManualCreditLimit
+      : null;
+  const dataCreditoMaxFinancedAmount = activeDataCreditoOffer
+    ? activeDataCreditoManualCreditLimit?.maxFinancedAmount ||
+      dataCreditoPolicyMaxFinancedAmount
+    : 0;
   const dataCreditoInstallmentCount =
     activeDataCreditoOffer
       ? normalizeCreditInstallments(
@@ -3547,7 +3579,9 @@ export default function CreditFactoryConsole({
     ? iphoneInstallmentLimitMessage
     : "La cuota supera el limite permitido para iPhone. Aumenta la inicial o ajusta el plazo para continuar.";
   const frecuenciaPagoLabel = getPaymentFrequencyLabel(frecuenciaPagoCredito);
-  const creditSettingsScopeLabel = activeDataCreditoOffer
+  const creditSettingsScopeLabel = activeDataCreditoManualCreditLimit
+    ? "Cupo manual por cédula"
+    : activeDataCreditoOffer
     ? "Política DataCrédito"
     : "Política no disponible";
   const referenciaEquipo = [equipoMarca.trim(), equipoModelo.trim()]
@@ -5189,17 +5223,11 @@ export default function CreditFactoryConsole({
       visibleFactorySteps.findIndex((step) => step.id === activeFactoryStep.id)
     ) + 1;
   const draftStatusLabel =
-    draftStatus === "saving"
-      ? "Guardando automaticamente"
-      : draftStatus === "loading"
-        ? "Cargando solicitud"
-        : draftStatus === "error"
-          ? draftErrorMessage || "No se pudo guardar"
-          : draftId
-            ? `Solicitud #${draftId} guardada${draftLastSavedAt ? ` - ${draftLastSavedAt}` : ""}`
-            : draftHasMeaningfulData
-              ? "Cambios pendientes de guardado"
-              : "Solicitud nueva - Sin guardar";
+    draftStatus === "loading"
+      ? "Cargando solicitud"
+      : draftStatus === "error"
+        ? draftErrorMessage || "No se pudo guardar"
+        : "Completa los pasos para finalizar la venta";
   const nextFactoryStep =
     visibleFactorySteps.find((step) => !step.ready) ||
     visibleFactorySteps[visibleFactorySteps.length - 1];
@@ -5668,14 +5696,29 @@ export default function CreditFactoryConsole({
     const requestGeneration = ++creditSettingsRequestGenerationRef.current;
     try {
       const normalizedDocument = documentValue.replace(/\D/g, "");
+      setDataCreditoManualCreditLimit(null);
       const params = new URLSearchParams({
         platform: iphoneFactory ? "IPHONE" : "ANDROID",
       });
 
       const endpoint = `/api/creditos/configuracion?${params.toString()}`;
-      const result = await requestJson<CreditSettingsResponse>(
-        endpoint
-      );
+      const manualCreditLimitRequest =
+        !simulatorMode && normalizedDocument
+          ? requestJson<ManualCreditLimitLookupResponse>(
+              "/api/creditos/configuracion/cupo-manual",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  documentNumber: normalizedDocument,
+                }),
+              }
+            )
+          : Promise.resolve(null);
+      const [result, manualCreditLimitResult] = await Promise.all([
+        requestJson<CreditSettingsResponse>(endpoint),
+        manualCreditLimitRequest,
+      ]);
 
       if (requestGeneration !== creditSettingsRequestGenerationRef.current) {
         return;
@@ -5686,6 +5729,28 @@ export default function CreditFactoryConsole({
           result.data?.error || "No se pudo cargar la configuracion del credito"
         );
       }
+
+      if (manualCreditLimitResult && !manualCreditLimitResult.ok) {
+        throw new Error(
+          manualCreditLimitResult.data?.error ||
+            "No se pudo consultar el cupo manual"
+        );
+      }
+
+      const manualCreditLimit =
+        manualCreditLimitResult?.data.manualCreditLimit;
+      setDataCreditoManualCreditLimit(
+        !simulatorMode &&
+          normalizedDocument &&
+          manualCreditLimit &&
+          Number.isSafeInteger(manualCreditLimit.maxFinancedAmount) &&
+          manualCreditLimit.maxFinancedAmount > 0
+          ? {
+              ...manualCreditLimit,
+              documentNumber: normalizedDocument,
+            }
+          : null
+      );
 
       const pendingDraftTerms =
         pendingDraftFinancialTermsRef.current?.documento === normalizedDocument
@@ -5705,6 +5770,7 @@ export default function CreditFactoryConsole({
       if (requestGeneration !== creditSettingsRequestGenerationRef.current) {
         return;
       }
+      setDataCreditoManualCreditLimit(null);
       setNotice({
         text:
           error instanceof Error
@@ -6997,9 +7063,6 @@ export default function CreditFactoryConsole({
     }
 
     setDraftId(result.data.item.id);
-    setDraftLastSavedAt(
-      result.data.item.updatedAt ? dateTime(result.data.item.updatedAt) : ""
-    );
     setDraftStatus("saved");
     replaceDraftInUrl(result.data.item.id);
 
@@ -7948,7 +8011,6 @@ export default function CreditFactoryConsole({
     setDraftStatus("idle");
     updateDraftResumeHydration(false);
     restoredDraftSnapshotRef.current = null;
-    setDraftLastSavedAt("");
     setDraftErrorMessage("");
     setClienteNombre("");
     setClientePrimerNombre("");
@@ -8088,9 +8150,6 @@ export default function CreditFactoryConsole({
     }
 
     setDraftId(result.data.item.id);
-    setDraftLastSavedAt(
-      result.data.item.updatedAt ? dateTime(result.data.item.updatedAt) : ""
-    );
     setDraftStatus("saved");
     setPersistedIphoneClosureFingerprint(closureFingerprintAtSave);
 
@@ -9247,7 +9306,6 @@ export default function CreditFactoryConsole({
     setDraftId(draft.id);
     setDraftStatus("saved");
     setDraftErrorMessage("");
-    setDraftLastSavedAt(draft.updatedAt ? dateTime(draft.updatedAt) : "");
     setClientePrimerNombre(value("clientePrimerNombre"));
     setClientePrimerApellido(value("clientePrimerApellido"));
     setClienteTipoDocumento(value("clienteTipoDocumento") || DOCUMENT_TYPE_OPTIONS[0].value);
@@ -9649,9 +9707,6 @@ export default function CreditFactoryConsole({
           }
 
           setDraftId(result.data.item.id);
-          setDraftLastSavedAt(
-            result.data.item.updatedAt ? dateTime(result.data.item.updatedAt) : ""
-          );
           setDraftStatus("saved");
           setDraftErrorMessage("");
           setPersistedIphoneClosureFingerprint(closureFingerprintAtSchedule);
@@ -13084,6 +13139,11 @@ export default function CreditFactoryConsole({
                         <span className="rounded-md bg-[#f1f7df] px-3 py-2">
                           Crédito máximo {currency(dataCreditoEffectiveMaxFinancedAmount)}
                         </span>
+                        {activeDataCreditoManualCreditLimit ? (
+                          <span className="rounded-md bg-[#f1f7df] px-3 py-2">
+                            Cupo manual · CC ***{activeDataCreditoManualCreditLimit.documentLast4}
+                          </span>
+                        ) : null}
                         <span className="rounded-md bg-[#f1f7df] px-3 py-2">
                           Hasta {plazoMaximoCuotas} cuotas
                         </span>
@@ -15329,20 +15389,18 @@ export default function CreditFactoryConsole({
                       Cancelar venta
                     </Link>
 
-                    <span
-                      className={[
-                        "fp-identity-autosave",
-                        draftStatus === "error"
-                          ? "is-error"
-                          : draftStatus === "saving" || draftStatus === "loading"
-                            ? "is-saving"
-                            : "is-saved",
-                      ].join(" ")}
-                      role="status"
-                    >
-                      <Save className="h-4 w-4" strokeWidth={1.8} />
-                      {draftStatusLabel}
-                    </span>
+                    {draftStatus === "error" || draftStatus === "loading" ? (
+                      <span
+                        className={[
+                          "fp-identity-autosave",
+                          draftStatus === "error" ? "is-error" : "is-saving",
+                        ].join(" ")}
+                        role="status"
+                      >
+                        <Save className="h-4 w-4" strokeWidth={1.8} />
+                        {draftStatusLabel}
+                      </span>
+                    ) : null}
 
                     <div className="fp-identity-action-buttons">
                       <button
@@ -15432,27 +15490,21 @@ export default function CreditFactoryConsole({
                 </button>
                 ) : null}
 
-                {createClientMode && draftHasMeaningfulData ? (
+                {createClientMode &&
+                draftHasMeaningfulData &&
+                (draftStatus === "error" || draftStatus === "loading") ? (
                   <span
                     className={[
                       "rounded-2xl border px-4 py-2 text-xs font-semibold",
                       draftStatus === "error"
                         ? "border-red-200 bg-red-50 text-red-700"
-                        : draftStatus === "saving" || draftStatus === "loading"
-                          ? "border-amber-200 bg-amber-50 text-amber-700"
-                          : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                        : "border-amber-200 bg-amber-50 text-amber-700",
                       wizardStep === 5 ? "sm:mx-auto" : "",
                     ].join(" ")}
                   >
-                    {draftStatus === "saving"
-                      ? "Guardando borrador..."
-                      : draftStatus === "loading"
-                        ? "Cargando borrador..."
-                        : draftStatus === "error"
-                          ? draftErrorMessage || "Borrador no guardado"
-                          : draftId
-                            ? `Borrador #${draftId} guardado${draftLastSavedAt ? ` - ${draftLastSavedAt}` : ""}`
-                            : "Borrador listo para guardar"}
+                    {draftStatus === "error"
+                      ? draftErrorMessage || "Borrador no guardado"
+                      : "Cargando borrador..."}
                   </span>
                 ) : null}
 
@@ -15627,8 +15679,10 @@ export default function CreditFactoryConsole({
                   ].join(" ")}
                 >
                   Minimo: {currency(cuotaInicialMinimaNumero)}. Puedes subirla si el cliente da mas.
-                  {dataCreditoApproval && dataCreditoFinancingExcess > 0
-                    ? ` Excedente sobre el crédito máximo pasado a inicial: ${currency(dataCreditoFinancingExcess)}.`
+                  {activeDataCreditoOffer
+                    ? dataCreditoFinancingExcess > 0
+                      ? ` Excedente sobre el crédito máximo pasado a inicial: ${currency(dataCreditoFinancingExcess)}.`
+                      : ""
                     : iphoneFactory && iphoneFinancedExcess > 0
                       ? ` Excedente iPhone pasado a inicial: ${currency(iphoneFinancedExcess)}.`
                       : ""}
