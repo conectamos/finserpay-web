@@ -109,7 +109,14 @@ function normalizePayload(value: unknown): DraftPayload {
   if (Buffer.byteLength(json, "utf8") > MAX_DRAFT_PAYLOAD_BYTES) {
     throw new Error("Las evidencias del borrador son demasiado grandes para guardarlas automaticamente");
   }
-  return JSON.parse(json) as DraftPayload;
+  const payload = JSON.parse(json) as DraftPayload;
+  // El enrolamiento iPhone es controlado exclusivamente por la revisión
+  // autoritativa del analista; nunca se acepta desde el navegador del asesor.
+  delete payload.iphoneEnrolamientoVerificado;
+  delete payload.iphoneEnrolamientoConfirmadoAt;
+  delete payload.iphoneEnrollmentReview;
+  delete payload.iphoneEnrollmentReviewId;
+  return payload;
 }
 
 function extractDraftFields(payload: DraftPayload) {

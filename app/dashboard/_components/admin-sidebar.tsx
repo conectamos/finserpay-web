@@ -17,6 +17,7 @@ import {
   PieChart,
   Plug,
   Settings,
+  ShieldCheck,
   Smartphone,
   TriangleAlert,
   UserRound,
@@ -186,6 +187,11 @@ export default function AdminSidebar({
                 href: "/dashboard/integraciones",
                 icon: Plug,
                 label: "Integraciones",
+              },
+              {
+                href: "/dashboard/integraciones/enrolamiento-iphone",
+                icon: ShieldCheck,
+                label: "Enrolamiento iPhone",
               },
               {
                 href: "/dashboard/datacredito",

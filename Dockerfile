@@ -39,6 +39,7 @@ COPY --from=builder /app/scripts/ensure-iphone-identity-evidence-column.mjs ./sc
 COPY --from=builder /app/scripts/ensure-datacredito-schema.mjs ./scripts/ensure-datacredito-schema.mjs
 COPY --from=builder /app/scripts/ensure-credit-amortization-schema.mjs ./scripts/ensure-credit-amortization-schema.mjs
 COPY --from=builder /app/scripts/ensure-solicitudes-schema.mjs ./scripts/ensure-solicitudes-schema.mjs
+COPY --from=builder /app/scripts/ensure-iphone-enrollment-schema.mjs ./scripts/ensure-iphone-enrollment-schema.mjs
 COPY --from=builder /app/scripts/ensure-aliado-redescuento-schema.mjs ./scripts/ensure-aliado-redescuento-schema.mjs
 COPY --from=builder /app/scripts/railway-predeploy.mjs ./scripts/railway-predeploy.mjs
  

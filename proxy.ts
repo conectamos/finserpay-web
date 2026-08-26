@@ -31,6 +31,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/health",
   "/api/login",
   "/api/logout",
+  "/api/public/iphone-enrollment",
   "/api/wompi",
   "/api/creditos/captura-session/",
 ];

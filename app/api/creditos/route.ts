@@ -119,6 +119,7 @@ import {
   getActiveSolicitudCreditContext,
   reserveSolicitudForIdentity,
 } from "@/lib/solicitudes-storage";
+import { getIphoneEnrollmentReviewForSolicitud } from "@/lib/iphone-enrollment-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -284,8 +285,6 @@ type CreditCreateBody = {
   frecuenciaPago?: string;
   firmaSeguroPasoContratos?: boolean;
   firmaSeguroProcessUuid?: string;
-  iphoneEnrolamientoVerificado?: boolean;
-  iphoneEnrolamientoConfirmadoAt?: string;
   imei?: string;
   montoCredito?: number | string;
   pagareAceptado?: boolean;
@@ -1283,11 +1282,6 @@ export async function POST(req: Request) {
       }
     }
 
-    const iphoneManualEnrollmentVerified =
-      isIphoneCredit && Boolean(body.iphoneEnrolamientoVerificado);
-    const iphoneEnrollmentConfirmedAt = iphoneManualEnrollmentVerified
-      ? toNullableDate(body.iphoneEnrolamientoConfirmadoAt) || new Date()
-      : null;
     const valorEquipoTotalInput = toNumber(body.valorEquipoTotal);
 
     const precioBaseVentaCatalogo = catalogItem?.activo
@@ -1931,6 +1925,19 @@ export async function POST(req: Request) {
         { status: 409 }
       );
     }
+    const iphoneAnalystEnrollmentReview = isIphoneCredit
+      ? await getIphoneEnrollmentReviewForSolicitud({
+          solicitudId: solicitudReservation.id,
+          document: clienteDocumento.replace(/\D/g, ""),
+          imei,
+        })
+      : null;
+    const iphoneAnalystEnrollmentVerified = Boolean(
+      iphoneAnalystEnrollmentReview
+    );
+    const iphoneEnrollmentConfirmedAt = iphoneAnalystEnrollmentReview
+      ? toNullableDate(iphoneAnalystEnrollmentReview.approvedAt)
+      : null;
 
     const soldDevice = await prisma.credito.findFirst({
       where: {
@@ -2269,7 +2276,7 @@ export async function POST(req: Request) {
     const creditClosureReadiness = getCreditClosureReadiness({
       platform: plataformaDispositivo,
       enrollmentConfirmed: isIphoneCredit
-        ? iphoneManualEnrollmentVerified
+        ? iphoneAnalystEnrollmentVerified
         : true,
       cedulaFrenteDataUrl: contratoCedulaFrenteDataUrl,
       cedulaRespaldoDataUrl: contratoCedulaRespaldoDataUrl,
@@ -2383,7 +2390,7 @@ export async function POST(req: Request) {
     const allowPendingDeliveryClose =
       ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION ||
       documentCanSkipDeliveryVerification ||
-      iphoneManualEnrollmentVerified;
+      iphoneAnalystEnrollmentVerified;
 
     if (!isEqualityConfigured() && !allowPendingDeliveryClose) {
       return NextResponse.json(
@@ -2408,7 +2415,7 @@ export async function POST(req: Request) {
     if (
       isEqualityConfigured() &&
       !documentCanSkipDeliveryVerification &&
-      !iphoneManualEnrollmentVerified
+      !iphoneAnalystEnrollmentVerified
     ) {
       try {
         equalityUpload = await runBusinessSafe(() =>
@@ -2467,11 +2474,11 @@ export async function POST(req: Request) {
       );
     }
     const administrativeDeliveryStatus: EqualityDeliveryStatus | null =
-      iphoneManualEnrollmentVerified && !equalityMeta?.deliveryStatus?.ready
+      iphoneAnalystEnrollmentVerified && !equalityMeta?.deliveryStatus?.ready
         ? {
             label: "Enrolamiento iPhone verificado",
             detail:
-              "Entrega permitida con verificacion manual de enrolamiento iPhone.",
+              "Entrega permitida con aprobacion especializada de enrolamiento iPhone.",
             ready: true,
             tone: "emerald",
           }
@@ -2487,14 +2494,37 @@ export async function POST(req: Request) {
     const effectiveDeliveryStatus =
       administrativeDeliveryStatus || equalityMeta?.deliveryStatus || null;
     const pendingDeliveryWarning = administrativeDeliveryStatus
-      ? iphoneManualEnrollmentVerified
-        ? "Credito iPhone creado con verificacion manual de enrolamiento."
+      ? iphoneAnalystEnrollmentVerified
+        ? "Credito iPhone creado con aprobacion especializada de enrolamiento."
         : "Credito creado con excepcion administrativa: entrega permitida sin verificar dispositivo."
       : ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION &&
           !equalityMeta?.deliveryStatus?.ready
         ? "Credito creado en modo prueba: la validacion final de entrega quedo pendiente."
         : undefined;
 
+    const iphoneEnrollmentAudit = iphoneAnalystEnrollmentReview
+      ? {
+          confirmado: true,
+          fuente: "ANALISTA_ENROLAMIENTO",
+          reviewId: iphoneAnalystEnrollmentReview.id,
+          decision: iphoneAnalystEnrollmentReview.decision,
+          analista: iphoneAnalystEnrollmentReview.analystName,
+          analistaId: iphoneAnalystEnrollmentReview.analystExternalId,
+          identityKeyVersion:
+            iphoneAnalystEnrollmentReview.identityKeyVersion,
+          grantId: iphoneAnalystEnrollmentReview.grantId,
+          grantEmitidoPor: iphoneAnalystEnrollmentReview.grantIssuedBy,
+          checklistVersion: iphoneAnalystEnrollmentReview.checklistVersion,
+          checklist: iphoneAnalystEnrollmentReview.checklist,
+          checklistHash: iphoneAnalystEnrollmentReview.checklistHash,
+          correlationId: iphoneAnalystEnrollmentReview.correlationId,
+          confirmadoAt: iphoneEnrollmentConfirmedAt?.toISOString(),
+          registradoAt: new Date().toISOString(),
+          solicitudId: solicitudReservation.id,
+          imei,
+          deviceUid,
+        }
+      : null;
     const contratoSnapshot = {
       template: {
         codigo: "FINSER_CONTRATO_FINANCIACION_EQUIPO_DATOS_HERRAMIENTAS_V3",
@@ -2535,21 +2565,12 @@ export async function POST(req: Request) {
         modelo: equipoModelo,
         imei,
         plataforma: isIphoneCredit ? "IPHONE" : "ANDROID",
-        enrolamientoManualVerificado: iphoneManualEnrollmentVerified,
-        enrolamientoManualAuditoria:
-          isIphoneCredit && iphoneManualEnrollmentVerified
-            ? {
-                confirmado: true,
-                confirmadoAt: iphoneEnrollmentConfirmedAt?.toISOString(),
-                registradoAt: new Date().toISOString(),
-                solicitudId: solicitudReservation.id,
-                usuarioId: creditOwner.usuarioId,
-                vendedorId: creditOwner.vendedorId,
-                sedeId: creditOwner.sedeId,
-                imei,
-                deviceUid,
-              }
-            : null,
+        // Se conserva la llave historica para lectores anteriores, pero su
+        // valor ya proviene exclusivamente de la revision del analista.
+        enrolamientoManualVerificado: iphoneAnalystEnrollmentVerified,
+        enrolamientoManualAuditoria: iphoneEnrollmentAudit,
+        enrolamientoAnalistaVerificado: iphoneAnalystEnrollmentVerified,
+        enrolamientoAnalistaAuditoria: iphoneEnrollmentAudit,
         catalogoId: catalogItem?.id || null,
         precioBaseVenta: precioBaseVentaCatalogo,
         excedentePrecioBase: precioBaseVentaCatalogo

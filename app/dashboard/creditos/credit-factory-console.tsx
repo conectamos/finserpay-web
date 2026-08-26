@@ -216,6 +216,19 @@ type AndroidEnrollmentState = {
   checkedAt: string | null;
 };
 
+type IphoneEnrollmentReviewState = {
+  id: string;
+  decision: "APROBADO";
+  analystName: string;
+  approvedAt: string;
+};
+
+type IphoneEnrollmentStatusResponse = {
+  ok?: boolean;
+  review?: IphoneEnrollmentReviewState | null;
+  error?: string;
+};
+
 type DevicePlatform = "android" | "iphone";
 
 type CedulaValidationState = {
@@ -2946,6 +2959,8 @@ export default function CreditFactoryConsole({
     useState(false);
   const [iphoneEnrollmentConfirmedAt, setIphoneEnrollmentConfirmedAt] =
     useState("");
+  const [iphoneEnrollmentReview, setIphoneEnrollmentReview] =
+    useState<IphoneEnrollmentReviewState | null>(null);
   const [persistedIphoneClosureFingerprint, setPersistedIphoneClosureFingerprint] =
     useState("");
   const [veriffConfig, setVeriffConfig] = useState<VeriffConfigState>({
@@ -3026,6 +3041,7 @@ export default function CreditFactoryConsole({
     })
   );
   const androidAutoEnrollmentKeyRef = useRef("");
+  const iphoneEnrollmentReviewIdRef = useRef("");
   const identityEvidenceClientIdentityRef = useRef(
     identityEvidenceClientIdentity({
       document: clienteDocumento,
@@ -3617,8 +3633,6 @@ export default function CreditFactoryConsole({
       equipoCatalogoId: selectedEquipmentCatalogItem?.id || null,
       imei: imeiDigits,
       plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
-      iphoneEnrolamientoVerificado: iphoneEnrollmentVerified,
-      iphoneEnrolamientoConfirmadoAt: iphoneEnrollmentConfirmedAt || null,
       iphoneSelfieCedulaDataUrl,
       iphoneSelfieCedulaCapturedAt: iphoneSelfieCedulaAudit?.capturedAt || null,
       iphoneSelfieCedulaSource: iphoneSelfieCedulaAudit?.source || null,
@@ -3719,8 +3733,6 @@ export default function CreditFactoryConsole({
       creditSettings.fianzaCuotaPorcentaje,
       creditSettings.seguroCuotaPorcentaje,
       imeiDigits,
-      iphoneEnrollmentVerified,
-      iphoneEnrollmentConfirmedAt,
       iphoneFactory,
       pagareAceptado,
       plazoMeses,
@@ -4846,7 +4858,7 @@ export default function CreditFactoryConsole({
       ? `${missingIphoneRequiredEvidenceLabels.slice(0, -1).join(", ")} y ${missingIphoneRequiredEvidenceLabels[missingIphoneRequiredEvidenceLabels.length - 1]}`
       : missingIphoneRequiredEvidenceLabels[0] || "las evidencias obligatorias";
   const iphoneDeliveryPendingMessage = !iphoneEnrollmentReady
-    ? "Verifica manualmente el enrolamiento del iPhone y adjunta las cinco fotos obligatorias antes de finalizar este credito."
+    ? "Espera la aprobacion del analista de enrolamiento y adjunta las cinco fotos obligatorias antes de finalizar este credito."
     : !iphoneRequiredEvidenceReady
       ? "Adjunta " +
         missingIphoneRequiredEvidenceLabel +
@@ -4872,10 +4884,10 @@ export default function CreditFactoryConsole({
   const deliveryStatusDetail = iphoneFactory
     ? iphoneDeliveryVerified
       ? iphoneEnrollmentVerified
-        ? "El asesor confirmo el enrolamiento y adjunto las cinco evidencias obligatorias."
+        ? `El analista ${iphoneEnrollmentReview?.analystName || "especializado"} aprobo el enrolamiento y las cinco evidencias quedaron adjuntas.`
         : "La excepcion administrativa autoriza el control y las cinco evidencias quedaron adjuntas."
       : !iphoneEnrollmentReady
-        ? "Confirma manualmente el enrolamiento del iPhone. Las cinco fotos siguen siendo obligatorias."
+        ? "El analista especializado debe aprobar el enrolamiento. Las cinco fotos siguen siendo obligatorias."
         : "Adjunta " +
           missingIphoneRequiredEvidenceLabel +
           " para habilitar el cierre."
@@ -5194,13 +5206,13 @@ export default function CreditFactoryConsole({
       id: 5,
       label: iphoneFactory ? "Enrolamiento" : "Entrega",
       detail: iphoneFactory
-        ? "Manual"
+        ? "Analista"
         : entregaSinVerificacionAutorizada
           ? "Excepcion"
           : "Zero Touch",
       ready: entregaValidada,
       action: iphoneFactory
-        ? "Verificar enrolamiento"
+        ? "Esperar aprobacion"
         : entregaSinVerificacionAutorizada
           ? "Entrega autorizada"
           : "Validar entrega",
@@ -6280,6 +6292,8 @@ export default function CreditFactoryConsole({
     androidAutoEnrollmentKeyRef.current = "";
     setIphoneEnrollmentVerified(false);
     setIphoneEnrollmentConfirmedAt("");
+    setIphoneEnrollmentReview(null);
+    iphoneEnrollmentReviewIdRef.current = "";
     setPersistedIphoneClosureFingerprint("");
     setFotoEntregaDataUrl("");
     setFotoEntregaAudit(null);
@@ -8087,6 +8101,8 @@ export default function CreditFactoryConsole({
     androidAutoEnrollmentKeyRef.current = "";
     setIphoneEnrollmentVerified(false);
     setIphoneEnrollmentConfirmedAt("");
+    setIphoneEnrollmentReview(null);
+    iphoneEnrollmentReviewIdRef.current = "";
     setPersistedIphoneClosureFingerprint("");
     setDraftDevicePlatform(devicePlatform);
     veriffClientFormUnlockedRef.current = false;
@@ -8211,7 +8227,7 @@ export default function CreditFactoryConsole({
         setWizardStep(5);
         setNotice({
           text: iphoneFactory
-            ? "FirmaSeguro reporto firma exitosa. Ahora verifica el enrolamiento iPhone y finaliza el credito."
+            ? "FirmaSeguro reporto firma exitosa. Espera la aprobacion del analista de enrolamiento para finalizar el credito."
             : "FirmaSeguro reporto firma exitosa. Ahora valida la entrega y finaliza el credito.",
           tone: "emerald",
         });
@@ -8249,7 +8265,6 @@ export default function CreditFactoryConsole({
       allowPendingDelivery?: boolean;
       firmaSeguroPasoContratos?: boolean;
       firmaSeguroProcessUuid?: string;
-      iphoneEnrolamientoVerificado?: boolean;
     } = {}
   ) => {
     const acceptsByFirmaSeguro = Boolean(options.firmaSeguroPasoContratos);
@@ -8378,10 +8393,6 @@ export default function CreditFactoryConsole({
           equipoCatalogoId: selectedEquipmentCatalogItem?.id || null,
           imei: imeiDigits,
           plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
-          iphoneEnrolamientoVerificado:
-            options.iphoneEnrolamientoVerificado ?? iphoneEnrollmentVerified,
-          iphoneEnrolamientoConfirmadoAt:
-            iphoneEnrollmentConfirmedAt || null,
           iphoneSelfieCedulaDataUrl,
           iphoneSelfieCedulaCapturedAt: iphoneSelfieCedulaAudit?.capturedAt || null,
           iphoneSelfieCedulaSource: iphoneSelfieCedulaAudit?.source || null,
@@ -8573,7 +8584,7 @@ export default function CreditFactoryConsole({
             )}`
           : signed
             ? iphoneFactory
-              ? "FirmaSeguro reporto firma exitosa. Verifica el enrolamiento iPhone para finalizar el credito."
+              ? "FirmaSeguro reporto firma exitosa. Espera la aprobacion del analista de enrolamiento para finalizar el credito."
               : "FirmaSeguro reporto firma exitosa. Valida la entrega para finalizar el credito."
             : uuid
               ? `Expediente enviado a FirmaSeguro. Proceso: ${sanitizeFirmaSeguroVisibleText(
@@ -8618,7 +8629,6 @@ export default function CreditFactoryConsole({
       await createCredit({
         firmaSeguroPasoContratos: true,
         firmaSeguroProcessUuid: firmaSeguroDraftProcess?.processUuid || undefined,
-        iphoneEnrolamientoVerificado: iphoneEnrollmentVerified,
       });
       return;
     }
@@ -8640,9 +8650,7 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    await createCredit({
-      iphoneEnrolamientoVerificado: iphoneEnrollmentVerified,
-    });
+    await createCredit();
   };
 
   const registerPayment = async () => {
@@ -9350,11 +9358,14 @@ export default function CreditFactoryConsole({
     setEquipoModelo(restoredEquipoModelo);
     setImei(restoredImei);
     setDraftDevicePlatform(restoredDevicePlatform);
-    const restoredEnrollmentVerified = checked("iphoneEnrolamientoVerificado");
-    const restoredEnrollmentConfirmedAt =
-      value("iphoneEnrolamientoConfirmadoAt");
-    setIphoneEnrollmentVerified(restoredEnrollmentVerified);
-    setIphoneEnrollmentConfirmedAt(restoredEnrollmentConfirmedAt);
+    // La aprobación iPhone ya no se restaura desde el payload editable del
+    // asesor. El polling autoritativo la carga desde IphoneEnrollmentReview.
+    const restoredEnrollmentVerified = false;
+    const restoredEnrollmentConfirmedAt = "";
+    setIphoneEnrollmentVerified(false);
+    setIphoneEnrollmentConfirmedAt("");
+    setIphoneEnrollmentReview(null);
+    iphoneEnrollmentReviewIdRef.current = "";
     setIphoneSelfieCedulaDataUrl(value("iphoneSelfieCedulaDataUrl"));
     setIphoneSelfieCedulaAudit(
       value("iphoneSelfieCedulaCapturedAt") || value("iphoneSelfieCedulaSource")
@@ -9637,6 +9648,59 @@ export default function CreditFactoryConsole({
       cancelled = true;
     };
   }, [createClientMode, initialDraftId]);
+
+  useEffect(() => {
+    if (!createClientMode || !draftId || !iphoneFactory) {
+      return;
+    }
+
+    let cancelled = false;
+    const syncEnrollmentReview = async () => {
+      try {
+        const result = await requestJson<IphoneEnrollmentStatusResponse>(
+          `/api/creditos/borradores/${draftId}/iphone-enrollment`
+        );
+        if (cancelled) {
+          return;
+        }
+        if (!result.ok || !result.data?.ok) {
+          iphoneEnrollmentReviewIdRef.current = "";
+          setIphoneEnrollmentReview(null);
+          setIphoneEnrollmentVerified(false);
+          setIphoneEnrollmentConfirmedAt("");
+          return;
+        }
+
+        const review = result.data.review || null;
+        const nextReviewId = review?.id || "";
+        if (iphoneEnrollmentReviewIdRef.current === nextReviewId) {
+          return;
+        }
+        iphoneEnrollmentReviewIdRef.current = nextReviewId;
+        setIphoneEnrollmentReview(review);
+        setIphoneEnrollmentVerified(Boolean(review));
+        setIphoneEnrollmentConfirmedAt(review?.approvedAt || "");
+        setPersistedIphoneClosureFingerprint("");
+      } catch {
+        // Ante una lectura no confiable, la interfaz tambien falla de forma
+        // conservadora. Una consulta posterior puede restaurar la aprobacion.
+        iphoneEnrollmentReviewIdRef.current = "";
+        setIphoneEnrollmentReview(null);
+        setIphoneEnrollmentVerified(false);
+        setIphoneEnrollmentConfirmedAt("");
+      }
+    };
+
+    void syncEnrollmentReview();
+    const intervalId = window.setInterval(() => {
+      void syncEnrollmentReview();
+    }, 8_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [createClientMode, draftId, iphoneFactory]);
 
   useEffect(() => {
     if (draftResumeHydrationRef.current) {
@@ -10221,7 +10285,7 @@ export default function CreditFactoryConsole({
                 </p>
                 <h2 className="mt-2 text-3xl font-black">IPHONE</h2>
                 <p className="mt-1 text-sm text-slate-300">
-                  Verificacion manual de enrolamiento
+                  Aprobacion especializada de enrolamiento
                 </p>
               </div>
               <span className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-slate-950">
@@ -14451,7 +14515,7 @@ export default function CreditFactoryConsole({
                         {entregaSinVerificacionAutorizada
                           ? "Esta cedula tiene autorizacion administrativa para cerrar la entrega sin validar el dispositivo."
                           : iphoneFactory
-                            ? "Confirma el enrolamiento y completa las evidencias obligatorias."
+                            ? "Espera la aprobacion del analista y completa las evidencias obligatorias."
                             : "El equipo se inscribe automaticamente en Zero Touch. Despues valida la entrega y adjunta las cinco evidencias obligatorias."}
                       </p>
                     </div>
@@ -14507,35 +14571,53 @@ export default function CreditFactoryConsole({
                         {iphoneFactory ? "Control de enrolamiento" : "Secuencia Zero Touch"}
                       </p>
                       <h4 className="mt-2 text-xl font-black text-slate-950">
-                        {iphoneFactory ? "1. Confirmar enrolamiento" : "1. Inscribir dispositivo"}
+                        {iphoneFactory ? "1. Aprobacion por analista" : "1. Inscribir dispositivo"}
                       </h4>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {iphoneFactory
-                          ? "Verifique el iPhone en SafeUEM antes de continuar."
+                          ? "El analista especializado valida el iPhone por cedula e IMEI. La fabrica se actualiza automaticamente."
                           : "Al llegar a este paso, FINSER PAY registra automaticamente el equipo en Zero Touch."}
                       </p>
 
                       {iphoneFactory && (
-                        <label className="fp-iphone-confirmation mt-5 flex min-h-16 items-center justify-between gap-4 rounded-lg border border-slate-200 bg-[#f7f7f4] p-4 text-sm font-semibold text-slate-950">
-                          <span className="flex items-center gap-3">
-                            <ShieldCheck className="h-8 w-8 text-[#5d7f0f]" strokeWidth={1.7} aria-hidden="true" />
-                            Confirmo que el equipo esta enrolado <span className="text-red-600">*</span>
+                        <div
+                          className={[
+                            "fp-iphone-confirmation mt-5 flex min-h-20 items-start gap-4 rounded-lg border p-4 text-sm",
+                            iphoneEnrollmentVerified
+                              ? "border-[#b9dd65] bg-[#f5fae9] text-slate-950"
+                              : "border-amber-200 bg-amber-50 text-slate-800",
+                          ].join(" ")}
+                          role="status"
+                          aria-live="polite"
+                        >
+                          <span
+                            className={[
+                              "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
+                              iphoneEnrollmentVerified
+                                ? "bg-[#e8f4c8] text-[#5d7f0f]"
+                                : "bg-white text-amber-700",
+                            ].join(" ")}
+                            aria-hidden="true"
+                          >
+                            {iphoneEnrollmentVerified ? (
+                              <ShieldCheck className="h-5 w-5" strokeWidth={1.8} />
+                            ) : (
+                              <Clock3 className="h-5 w-5" strokeWidth={1.8} />
+                            )}
                           </span>
-                          <input
-                            type="checkbox"
-                            checked={iphoneEnrollmentVerified}
-                            onChange={(event) => {
-                              const checked = event.target.checked;
-                              setIphoneEnrollmentVerified(checked);
-                              setIphoneEnrollmentConfirmedAt(
-                                checked ? new Date().toISOString() : ""
-                              );
-                              setPersistedIphoneClosureFingerprint("");
-                            }}
-                            aria-label="Confirmo que el equipo está enrolado"
-                            className="h-6 w-6 shrink-0 accent-[#7da516]"
-                          />
-                        </label>
+                          <div>
+                            <strong className="block text-base">
+                              {iphoneEnrollmentVerified
+                                ? "Enrolamiento aprobado"
+                                : "Esperando aprobacion del analista"}
+                            </strong>
+                            <p className="mt-1 leading-6 text-slate-600">
+                              {iphoneEnrollmentReview
+                                ? `${iphoneEnrollmentReview.analystName} · ${dateTime(iphoneEnrollmentReview.approvedAt)}`
+                                : "El asesor no puede marcar este control. Se consulta automaticamente cada 8 segundos."}
+                            </p>
+                          </div>
+                        </div>
                       )}
 
                       {!iphoneFactory && (
@@ -14711,7 +14793,7 @@ export default function CreditFactoryConsole({
                           <div className="mt-4 flex items-center gap-2 rounded-md border border-slate-200 bg-[#f7f7f4] px-4 py-3 text-sm text-slate-600">
                             <LockKeyhole className="h-4 w-4" strokeWidth={1.8} />
                             {iphoneFactory
-                              ? "Confirma el enrolamiento para habilitar las evidencias."
+                              ? "El analista debe aprobar el enrolamiento para habilitar las evidencias."
                               : "Espera a que termine la inscripcion automatica para habilitar las evidencias."}
                           </div>
                         ) : null}
