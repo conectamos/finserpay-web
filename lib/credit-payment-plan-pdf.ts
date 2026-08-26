@@ -14,7 +14,6 @@ export type CreditPaymentPlanPdfInput = {
   fechaGeneracion: Date;
   valorCuota: number;
   frecuencia: string;
-  saldoContractual: number;
   referenciaEfecty: string;
   convenioEfecty: string;
   plan: PaymentPlan;
@@ -249,11 +248,21 @@ export async function buildCreditPaymentPlanPdf(input: CreditPaymentPlanPdfInput
   const metrics = [
     ["VALOR CUOTA", money(input.valorCuota), `${input.plan.installments.length} cuotas`],
     ["VALOR ABONADO", money(input.plan.totalPaid), `${Math.round(paidPercent)}% completado`],
-    ["SALDO CONTRACTUAL", money(input.saldoContractual), "Saldo del credito"],
     ["PROXIMA CUOTA", money(next?.saldoPendiente || 0), paymentPlanDateLabel(next?.fechaVencimiento)],
   ];
+  const metricGap = 9;
+  const metricWidth = (531 - metricGap * (metrics.length - 1)) / metrics.length;
   metrics.forEach(([label, value, detail], index) =>
-    drawMetric(doc, fonts, 32 + index * 135, 335, index === 3 ? 126 : 126, label, value, detail)
+    drawMetric(
+      doc,
+      fonts,
+      32 + index * (metricWidth + metricGap),
+      335,
+      metricWidth,
+      label,
+      value,
+      detail
+    )
   );
 
   let y = 408;
@@ -298,16 +307,6 @@ export async function buildCreditPaymentPlanPdf(input: CreditPaymentPlanPdfInput
     });
     y += rowHeight;
   });
-
-  const planDifference = Math.round(input.saldoContractual - input.plan.saldoPendiente);
-  if (planDifference !== 0) {
-    doc.fillColor(COLORS.muted).font(fonts.regular).fontSize(6.8).text(
-      `Nota: el saldo contractual difiere ${money(Math.abs(planDifference))} de la suma pendiente del plan por distribucion y redondeo de cuotas.`,
-      32,
-      Math.min(y + 8, 786),
-      { width: 531 }
-    );
-  }
 
   const range = doc.bufferedPageRange();
   for (let index = range.start; index < range.start + range.count; index += 1) {

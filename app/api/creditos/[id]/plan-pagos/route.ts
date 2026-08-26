@@ -104,7 +104,6 @@ export async function GET(
       fechaGeneracion: new Date(),
       valorCuota: Number(credito.valorCuota || 0),
       frecuencia: getPaymentFrequencyLabel(credito.frecuenciaPago),
-      saldoContractual: plan.saldoPendiente,
       referenciaEfecty: credito.clienteDocumento || credito.folio,
       convenioEfecty: EFECTY_CONVENIO_FINSER_PAY,
       plan,
