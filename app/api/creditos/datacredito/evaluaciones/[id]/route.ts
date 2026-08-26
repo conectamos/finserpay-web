@@ -9,6 +9,9 @@ import {
   dataCreditoAssessmentMatchesScope,
   getDataCreditoAssessmentById,
   getDataCreditoAssessmentDocumentState,
+  getDataCreditoAssessmentResumeIdentity,
+  normalizeDataCreditoDocument,
+  normalizeDataCreditoSurname,
   serializeDataCreditoAssessment,
   type DataCreditoAssessmentScope,
 } from "@/lib/datacredito/storage";
@@ -106,11 +109,32 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
 
+    const draftDocument = requestedDraft?.clienteDocumento || "";
+    const draftSurname = requestedDraft?.clientePrimerApellido || "";
+    const draftIdentity =
+      draftId && draftDocument && draftSurname
+        ? buildDataCreditoIdentityHashes({
+            documentNumber: draftDocument,
+            firstSurname: draftSurname,
+          })
+        : null;
+    const draftIdentityMatches = Boolean(
+      draftIdentity &&
+        draftIdentity.documentHash === row.documentHash &&
+        draftIdentity.surnameHash === row.surnameHash
+    );
+    const resumeIdentity =
+      draftId && requestedDraft && !draftIdentityMatches
+        ? await getDataCreditoAssessmentResumeIdentity(
+            id,
+            requestedDraft.clienteDocumento
+          )
+        : null;
     const identityDocument = draftId
-      ? requestedDraft?.clienteDocumento || ""
+      ? resumeIdentity?.documentNumber || draftDocument
       : requestedDocumentNumber || "";
     const identitySurname = draftId
-      ? requestedDraft?.clientePrimerApellido || ""
+      ? resumeIdentity?.firstSurname || draftSurname
       : requestedFirstSurname || "";
 
     if (
@@ -251,7 +275,16 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
 
-    return NextResponse.json({ ok: true, ...serializeDataCreditoAssessment(row) });
+    return NextResponse.json({
+      ok: true,
+      ...serializeDataCreditoAssessment(row),
+      ...(draftId
+        ? {
+            documentNumber: normalizeDataCreditoDocument(identityDocument),
+            firstSurname: normalizeDataCreditoSurname(identitySurname),
+          }
+        : {}),
+    });
   } catch (error) {
     console.error("ERROR GET EVALUACION DATACREDITO:", {
       id,

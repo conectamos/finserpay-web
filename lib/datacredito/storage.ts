@@ -1553,6 +1553,17 @@ type ReusableDataCreditoSecurePayloadRow = {
   plaintextBytes: number;
 };
 
+type DataCreditoAssessmentResumeIdentityRow =
+  ReusableDataCreditoSecurePayloadRow & {
+    documentHash: string;
+    surnameHash: string;
+  };
+
+export type DataCreditoAssessmentResumeIdentity = {
+  documentNumber: string;
+  firstSurname: string;
+};
+
 async function readReusableDataCreditoRiskContext(
   sourceRow: DataCreditoAssessmentRow,
   database: DataCreditoQueryExecutor
@@ -2071,6 +2082,82 @@ export async function getDataCreditoAssessmentById(id: string) {
     id
   );
   return rows[0] || null;
+}
+
+export async function getDataCreditoAssessmentResumeIdentity(
+  id: string,
+  expectedDocumentNumber: unknown
+): Promise<DataCreditoAssessmentResumeIdentity | null> {
+  if (!isUuid(id)) return null;
+  const expectedDocument = normalizeDataCreditoDocument(expectedDocumentNumber);
+  if (!expectedDocument) return null;
+
+  await ensureDataCreditoSchema();
+  const rows = await prisma.$queryRawUnsafe<
+    DataCreditoAssessmentResumeIdentityRow[]
+  >(
+    `
+      SELECT assessment."documentHash", assessment."surnameHash",
+        root."id" AS "assessmentId", root."correlationId",
+        secure."algorithm", secure."keyId", secure."aadVersion",
+        secure."plaintextVersion", secure."nonce", secure."authTag",
+        secure."ciphertext", secure."plaintextBytes"
+      FROM "DataCreditoAssessment" assessment
+      INNER JOIN "DataCreditoAssessment" root
+        ON root."id" = COALESCE(
+          assessment."reusedFromAssessmentId",
+          assessment."id"
+        )
+      INNER JOIN "DataCreditoAssessmentSecurePayload" secure
+        ON secure."assessmentId" = root."id"
+      WHERE assessment."id" = $1
+        AND assessment."retainedUntil" > CURRENT_TIMESTAMP
+        AND root."retainedUntil" > CURRENT_TIMESTAMP
+      LIMIT 1
+    `,
+    id
+  );
+  const row = rows[0];
+  if (!row) return null;
+
+  let secureRecord: ReturnType<typeof decryptDataCreditoSecureRecord>;
+  try {
+    secureRecord = decryptDataCreditoSecureRecord({
+      assessmentId: row.assessmentId,
+      correlationId: row.correlationId,
+      algorithm: row.algorithm,
+      keyId: row.keyId,
+      aadVersion: row.aadVersion,
+      plaintextVersion: row.plaintextVersion,
+      nonce: row.nonce,
+      authTag: row.authTag,
+      ciphertext: row.ciphertext,
+      plaintextBytes: row.plaintextBytes,
+    });
+  } catch {
+    return null;
+  }
+
+  const documentNumber = normalizeDataCreditoDocument(
+    secureRecord.documentNumber
+  );
+  const firstSurname = normalizeDataCreditoSurname(secureRecord.firstSurname);
+  if (!documentNumber || !firstSurname || documentNumber !== expectedDocument) {
+    return null;
+  }
+
+  const identity = buildDataCreditoIdentityHashes({
+    documentNumber,
+    firstSurname,
+  });
+  if (
+    identity.documentHash !== row.documentHash ||
+    identity.surnameHash !== row.surnameHash
+  ) {
+    return null;
+  }
+
+  return { documentNumber, firstSurname };
 }
 
 export async function getDataCreditoAssessmentDocumentState(

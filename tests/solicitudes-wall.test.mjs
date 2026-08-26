@@ -730,6 +730,89 @@ test("el GET del borrador entrega plataforma y Veriff canonicos aunque el JSON e
   );
 });
 
+test("retomar recupera la identidad canónica cifrada solo después de autorizar la evaluación", async () => {
+  const [draftRoute, assessmentRoute, dataCreditoStorage] = await Promise.all([
+    readProjectFile("app/api/creditos/borradores/route.ts"),
+    readProjectFile(
+      "app/api/creditos/datacredito/evaluaciones/[id]/route.ts"
+    ),
+    readProjectFile("lib/datacredito/storage.ts"),
+  ]);
+  const helper = sourceBlock(
+    dataCreditoStorage,
+    "export async function getDataCreditoAssessmentResumeIdentity",
+    "export async function getDataCreditoAssessmentDocumentState"
+  );
+  const assessmentAuthorization = sourceBlock(
+    assessmentRoute,
+    "    const requestedDraft",
+    "    const draftDocument"
+  );
+
+  assert.match(
+    helper,
+    /COALESCE\([\s\S]*assessment\."reusedFromAssessmentId"[\s\S]*assessment\."id"[\s\S]*\)/
+  );
+  assert.match(helper, /DataCreditoAssessmentSecurePayload/);
+  assert.match(
+    helper,
+    /assessment\."retainedUntil" > CURRENT_TIMESTAMP[\s\S]*root\."retainedUntil" > CURRENT_TIMESTAMP/
+  );
+  assert.match(helper, /decryptDataCreditoSecureRecord/);
+  assert.match(
+    helper,
+    /documentNumber !== expectedDocument[\s\S]*identity\.documentHash !== row\.documentHash[\s\S]*identity\.surnameHash !== row\.surnameHash/
+  );
+  assert.doesNotMatch(helper, /providerPayload|queryDataCreditoNaturalPerson/);
+
+  assert.match(
+    assessmentAuthorization,
+    /dataCreditoAssessmentMatchesScope[\s\S]*assessmentBelongsToCentralDraft[\s\S]*requestedDraft\.dataCreditoAssessmentId\.toLowerCase\(\) !== id\.toLowerCase\(\)/
+  );
+  assert.ok(
+    assessmentRoute.indexOf("requestedDraft.dataCreditoAssessmentId.toLowerCase() !== id.toLowerCase()") <
+      assessmentRoute.indexOf("getDataCreditoAssessmentResumeIdentity("),
+    "scope y vínculo assessment-borrador deben validarse antes de descifrar"
+  );
+  assert.doesNotMatch(draftRoute, /getDataCreditoAssessmentResumeIdentity/);
+  assert.doesNotMatch(`${draftRoute}\n${assessmentRoute}`, /queryDataCreditoNaturalPerson/);
+});
+
+test("la evaluación retomada conserva la identidad válida y usa el expediente cifrado solo como fallback", async () => {
+  const assessmentRoute = await readProjectFile(
+    "app/api/creditos/datacredito/evaluaciones/[id]/route.ts"
+  );
+  const identityRestore = sourceBlock(
+    assessmentRoute,
+    "    const draftDocument",
+    "    if (expectedPlatform"
+  );
+  const successResponse = sourceBlock(
+    assessmentRoute,
+    "    return NextResponse.json({\n      ok: true,",
+    "  } catch (error) {"
+  );
+
+  assert.match(
+    identityRestore,
+    /draftIdentity[\s\S]*draftIdentity\.documentHash === row\.documentHash[\s\S]*draftIdentity\.surnameHash === row\.surnameHash/
+  );
+  assert.match(
+    identityRestore,
+    /draftId && requestedDraft && !draftIdentityMatches[\s\S]*getDataCreditoAssessmentResumeIdentity/
+  );
+  assert.match(
+    identityRestore,
+    /resumeIdentity\?\.documentNumber \|\| draftDocument[\s\S]*resumeIdentity\?\.firstSurname \|\| draftSurname/
+  );
+  assert.match(identityRestore, /ASSESSMENT_IDENTITY_MISMATCH/);
+  assert.match(
+    successResponse,
+    /documentNumber: normalizeDataCreditoDocument\(identityDocument\)[\s\S]*firstSurname: normalizeDataCreditoSurname\(identitySurname\)/
+  );
+  assert.doesNotMatch(assessmentRoute, /queryDataCreditoNaturalPerson/);
+});
+
 test("el autosave deriva Veriff del borrador y no confia en el payload del navegador", async () => {
   const storage = await readProjectFile("lib/solicitudes-storage.ts");
   const saveDraft = sourceBlock(
