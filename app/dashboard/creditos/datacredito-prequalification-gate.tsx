@@ -15,6 +15,7 @@ import {
 import { createPortal } from "react-dom";
 import {
   ArrowLeft,
+  ArrowRight,
   CheckCircle2,
   CircleAlert,
   FileCheck2,
@@ -75,6 +76,7 @@ type GateView =
   | "ready"
   | "submitting"
   | "rejected"
+  | "active-request"
   | "unavailable"
   | "technical-error"
   | "approved"
@@ -189,6 +191,17 @@ function getCorrelationId(payload: unknown, response?: Response) {
     response?.headers.get("x-request-id") ||
     null
   );
+}
+
+function getResponseCode(payload: unknown) {
+  const body = isRecord(payload) ? payload : null;
+  const nestedError = body && isRecord(body.error) ? body.error : null;
+
+  return (
+    readString(body?.code) ||
+    readString(nestedError?.code) ||
+    ""
+  ).toUpperCase();
 }
 
 async function readJson(response: Response): Promise<JsonRecord> {
@@ -485,6 +498,7 @@ export default function DatacreditoPrequalificationGate({
   const onAssessmentInvalidatedRef = useRef(onAssessmentInvalidated);
   const approvedHeadingRef = useRef<HTMLHeadingElement>(null);
   const rejectedHeadingRef = useRef<HTMLHeadingElement>(null);
+  const activeRequestHeadingRef = useRef<HTMLHeadingElement>(null);
   const resultDialogRef = useRef<HTMLDivElement>(null);
   const resultPortalReady = useSyncExternalStore(
     subscribeToBrowserReady,
@@ -522,13 +536,21 @@ export default function DatacreditoPrequalificationGate({
 
 
   useEffect(() => {
-    if (view !== "approved" && view !== "rejected") return;
+    if (
+      view !== "approved" &&
+      view !== "rejected" &&
+      view !== "active-request"
+    ) {
+      return;
+    }
 
     const dialog = resultDialogRef.current;
     const heading =
       view === "approved"
         ? approvedHeadingRef.current
-        : rejectedHeadingRef.current;
+        : view === "rejected"
+          ? rejectedHeadingRef.current
+          : activeRequestHeadingRef.current;
     if (!dialog || !heading) return;
 
     const previouslyFocused =
@@ -851,6 +873,12 @@ export default function DatacreditoPrequalificationGate({
       const payload = await readJson(response);
 
       if (!response.ok || payload.ok === false) {
+        if (getResponseCode(payload) === "SOLICITUD_ACTIVA_EXISTENTE") {
+          setCorrelationId(null);
+          setView("active-request");
+          return;
+        }
+
         setCorrelationId(getCorrelationId(payload, response));
         setView("technical-error");
         return;
@@ -1022,6 +1050,59 @@ export default function DatacreditoPrequalificationGate({
             </Link>
           </div>
         </div>
+        </Card>
+      </ResultDialogShell>
+    );
+  }
+
+  if (view === "active-request") {
+    if (!resultPortalReady) return null;
+
+    return (
+      <ResultDialogShell
+        dialogRef={resultDialogRef}
+        labelledBy="datacredito-active-request-title"
+        describedBy="datacredito-active-request-description"
+      >
+        <Card className="mx-auto max-h-[calc(100dvh-2.5rem)] max-w-xl overflow-y-auto overscroll-contain">
+          <div className="px-6 py-8 text-center sm:px-10 sm:py-10">
+            <div
+              className="relative mx-auto grid h-32 w-32 place-items-center rounded-full border border-[var(--fp-lime-strong)] bg-[var(--fp-lime-soft)] text-[var(--fp-graphite)] shadow-[var(--fp-shadow-sm)]"
+              aria-hidden="true"
+            >
+              <Smartphone className="h-20 w-20" strokeWidth={1.7} />
+              <span className="absolute -bottom-1 -right-1 grid h-12 w-12 place-items-center rounded-[var(--fp-radius-md)] border-4 border-[var(--fp-surface)] bg-[var(--fp-lime)] text-[var(--fp-graphite)] shadow-[var(--fp-shadow-sm)]">
+                <FileCheck2 className="h-6 w-6" strokeWidth={2.4} />
+              </span>
+            </div>
+
+            <Badge tone="positive" className="mt-6">
+              Solicitud en proceso
+            </Badge>
+            <h2
+              id="datacredito-active-request-title"
+              ref={activeRequestHeadingRef}
+              tabIndex={-1}
+              className="mt-4 text-3xl font-black uppercase tracking-tight text-[var(--fp-graphite)] outline-none sm:text-4xl"
+            >
+              Cliente ya existe
+            </h2>
+            <p
+              id="datacredito-active-request-description"
+              className="mx-auto mt-4 max-w-md text-base leading-7 text-[var(--fp-muted)]"
+            >
+              Este cliente ya cuenta con una solicitud. Continúe el proceso desde
+              el muro de solicitudes.
+            </p>
+
+            <Link
+              href="/dashboard/solicitudes"
+              className="fp-ui-button is-primary mt-8 w-full justify-center focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
+            >
+              Ir al muro de solicitudes
+              <ArrowRight className="h-5 w-5" aria-hidden="true" />
+            </Link>
+          </div>
         </Card>
       </ResultDialogShell>
     );

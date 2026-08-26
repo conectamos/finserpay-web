@@ -862,6 +862,45 @@ test("muestra los resultados DataCredito aprobados y rechazados como ventanas em
   );
 });
 
+test("muestra una ventana específica cuando el cliente ya tiene una solicitud activa", () => {
+  const conflictBranch = prequalificationGate.indexOf(
+    'getResponseCode(payload) === "SOLICITUD_ACTIVA_EXISTENTE"'
+  );
+  const activeRequestTransition = prequalificationGate.indexOf(
+    'setView("active-request")',
+    conflictBranch
+  );
+  const genericTechnicalTransition = prequalificationGate.indexOf(
+    'setView("technical-error")',
+    conflictBranch
+  );
+
+  assert.ok(conflictBranch >= 0);
+  assert.ok(activeRequestTransition > conflictBranch);
+  assert.ok(genericTechnicalTransition > activeRequestTransition);
+  assert.ok(prequalificationGate.includes('view !== "active-request"'));
+  assert.ok(
+    prequalificationGate.includes(
+      'labelledBy="datacredito-active-request-title"'
+    )
+  );
+  assert.ok(
+    prequalificationGate.includes(
+      'describedBy="datacredito-active-request-description"'
+    )
+  );
+  assert.ok(prequalificationGate.includes("Cliente ya existe"));
+  assert.ok(
+    prequalificationGate.includes(
+      "Este cliente ya cuenta con una solicitud. Continúe el proceso desde"
+    )
+  );
+  assert.ok(
+    prequalificationGate.includes('href="/dashboard/solicitudes"')
+  );
+  assert.ok(prequalificationGate.includes("Ir al muro de solicitudes"));
+});
+
 test("reserva espacio para los iconos de identificacion en la precalificacion", () => {
   const inputsWithLeadingIcon =
     prequalificationGate.match(
