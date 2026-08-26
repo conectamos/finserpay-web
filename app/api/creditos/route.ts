@@ -108,6 +108,7 @@ import {
   ActiveSolicitudConflictError,
   completeSolicitudForCredit,
   ensureSolicitudSchema,
+  getActiveSolicitudCreditContext,
   reserveSolicitudForIdentity,
 } from "@/lib/solicitudes-storage";
 
@@ -263,6 +264,7 @@ type CreditCreateBody = {
   fotoRemisionSource?: string;
   cuotaInicial?: number | string;
   dataCreditoAssessmentId?: string | null;
+  solicitudId?: number | string | null;
   deviceUid?: string;
   equipoMarca?: string;
   equipoModelo?: string;
@@ -964,6 +966,84 @@ export async function POST(req: Request) {
     const clienteDepartamento = sanitizeText(body.clienteDepartamento);
     const clienteCiudad = sanitizeText(body.clienteCiudad);
     const clienteGenero = sanitizeText(body.clienteGenero);
+    const requestedSolicitudIdValue = sanitizeText(body.solicitudId);
+    const requestedSolicitudId = parseId(requestedSolicitudIdValue);
+    if (requestedSolicitudIdValue && !requestedSolicitudId) {
+      return NextResponse.json(
+        {
+          code: "SOLICITUD_INVALIDA",
+          error: "El identificador de la solicitud es invalido.",
+        },
+        { status: 400 }
+      );
+    }
+    const solicitudContext = requestedSolicitudId
+      ? await getActiveSolicitudCreditContext(requestedSolicitudId)
+      : null;
+    if (requestedSolicitudId && !solicitudContext) {
+      return NextResponse.json(
+        {
+          code: "SOLICITUD_NO_DISPONIBLE",
+          error: "La solicitud ya no esta disponible para continuar.",
+        },
+        { status: 409 }
+      );
+    }
+    const canOperateSolicitud =
+      !solicitudContext ||
+      adminCentral ||
+      Boolean(
+        sellerSession &&
+          sellerSession.tipoPerfil === "VENDEDOR" &&
+          solicitudContext.vendedorId === sellerSession.id &&
+          solicitudContext.sedeId === sellerSession.sedeId
+      );
+    if (!canOperateSolicitud) {
+      return NextResponse.json(
+        { code: "SOLICITUD_NO_AUTORIZADA", error: "Solicitud no autorizada" },
+        { status: 403 }
+      );
+    }
+    if (
+      solicitudContext &&
+      !documentValuesMatch(solicitudContext.clienteDocumento, clienteDocumento)
+    ) {
+      return NextResponse.json(
+        {
+          code: "SOLICITUD_DOCUMENTO_DIFERENTE",
+          error: "La cedula no corresponde a la solicitud autorizada.",
+        },
+        { status: 409 }
+      );
+    }
+    const requestedAssessmentId = sanitizeText(body.dataCreditoAssessmentId);
+    if (
+      solicitudContext?.dataCreditoAssessmentId &&
+      requestedAssessmentId &&
+      solicitudContext.dataCreditoAssessmentId.toLowerCase() !==
+        requestedAssessmentId.toLowerCase()
+    ) {
+      return NextResponse.json(
+        {
+          code: "SOLICITUD_DATACREDITO_DIFERENTE",
+          error: "La consulta de DataCredito no corresponde a esta solicitud.",
+        },
+        { status: 409 }
+      );
+    }
+    const creditOwner = solicitudContext
+      ? {
+          usuarioId: solicitudContext.usuarioId,
+          vendedorId: solicitudContext.vendedorId,
+          sedeId: solicitudContext.sedeId,
+          aliadoId: solicitudContext.aliadoId,
+        }
+      : {
+          usuarioId: user.id,
+          vendedorId: sellerSession?.id || null,
+          sedeId: user.sedeId,
+          aliadoId: user.aliadoId || null,
+        };
     const referenciaFamiliar1Nombre = sanitizeText(body.referenciaFamiliar1Nombre);
     const referenciaFamiliar1Parentesco = sanitizeText(
       body.referenciaFamiliar1Parentesco
@@ -1084,7 +1164,7 @@ export async function POST(req: Request) {
         );
       }
 
-      const assessmentId = sanitizeText(body.dataCreditoAssessmentId);
+      const assessmentId = requestedAssessmentId;
       if (
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
           assessmentId
@@ -1106,10 +1186,10 @@ export async function POST(req: Request) {
         firstSurname: clientePrimerApellido,
         platform: dataCreditoPlatform,
         providerEnvironment: dataCreditoProvider.environment,
-        userId: user.id,
-        sellerId: sellerSession?.id || null,
-        sedeId: user.sedeId,
-        aliadoId: user.aliadoId || null,
+        userId: creditOwner.usuarioId,
+        sellerId: creditOwner.vendedorId,
+        sedeId: creditOwner.sedeId,
+        aliadoId: creditOwner.aliadoId,
       };
       dataCreditoAssessment =
         await getApprovedDataCreditoAssessmentForCredit(
@@ -1735,12 +1815,25 @@ export async function POST(req: Request) {
     }
 
     const solicitudReservation = await reserveSolicitudForIdentity({
-      usuarioId: user.id,
-      vendedorId: sellerSession?.id || null,
-      sedeId: user.sedeId,
+      usuarioId: creditOwner.usuarioId,
+      vendedorId: creditOwner.vendedorId,
+      sedeId: creditOwner.sedeId,
       clienteDocumento,
       plataforma: plataformaDispositivo,
     });
+    if (
+      solicitudContext &&
+      solicitudReservation.id !== solicitudContext.id
+    ) {
+      return NextResponse.json(
+        {
+          code: "SOLICITUD_ACTIVA_EXISTENTE",
+          error:
+            "Existe otra solicitud activa para esta cedula. Debe resolverse antes de continuar.",
+        },
+        { status: 409 }
+      );
+    }
 
     const soldDevice = await prisma.credito.findFirst({
       where: {
@@ -2675,9 +2768,9 @@ export async function POST(req: Request) {
         contratoOtpDestino: contratoOtpDestino || null,
         contratoOtpVerificadoAt,
         contratoSnapshot: contratoSnapshot as Prisma.InputJsonValue,
-        usuarioId: user.id,
-        vendedorId: sellerSession?.id || null,
-        sedeId: user.sedeId,
+        usuarioId: creditOwner.usuarioId,
+        vendedorId: creditOwner.vendedorId,
+        sedeId: creditOwner.sedeId,
       },
       include: creditListInclude,
       omit: creditListOmit,
@@ -2698,9 +2791,9 @@ export async function POST(req: Request) {
           solicitudId: solicitudReservation.id,
           assessmentId: dataCreditoAssessment?.id || null,
           clienteDocumento,
-          usuarioId: user.id,
-          vendedorId: sellerSession?.id || null,
-          sedeId: user.sedeId,
+          usuarioId: creditOwner.usuarioId,
+          vendedorId: creditOwner.vendedorId,
+          sedeId: creditOwner.sedeId,
           creditoId: credit.id,
         },
         transaction

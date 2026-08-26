@@ -37,6 +37,7 @@ type SolicitudRow = {
   imei: string | null;
   plataforma: string | null;
   createdAt: Date | string;
+  finalizedAt: Date | string | null;
   updatedAt: Date | string;
   closedAt: Date | string | null;
   expiresAt: Date | string | null;
@@ -241,6 +242,41 @@ async function expireStaleWith(database: Database) {
 export async function expireStaleSolicitudes() {
   await ensureSolicitudSchema();
   await expireStaleWith(prisma);
+}
+
+export type ActiveSolicitudCreditContext = {
+  id: number;
+  usuarioId: number;
+  vendedorId: number | null;
+  sedeId: number;
+  aliadoId: number | null;
+  clienteDocumento: string | null;
+  dataCreditoAssessmentId: string | null;
+};
+
+export async function getActiveSolicitudCreditContext(
+  solicitudId: number
+) {
+  await ensureSolicitudSchema();
+  await expireStaleSolicitudes();
+  const rows = await prisma.$queryRawUnsafe<ActiveSolicitudCreditContext[]>(
+    `
+      SELECT d."id", d."usuarioId", d."vendedorId", d."sedeId",
+        s."aliadoId", d."clienteDocumento",
+        COALESCE(
+          d."dataCreditoAssessmentId"::text,
+          NULLIF(d."payload"->>'dataCreditoAssessmentId', '')
+        ) AS "dataCreditoAssessmentId"
+      FROM "CreditoBorrador" d
+      LEFT JOIN "Sede" s ON s."id" = d."sedeId"
+      WHERE d."id" = $1
+        AND d."estado" = 'ABIERTO'
+        AND COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
+      LIMIT 1
+    `,
+    solicitudId
+  );
+  return rows[0] || null;
 }
 
 function sameOwner(
@@ -622,6 +658,7 @@ function buildCommonWhere(input: {
   filters: SolicitudFilters;
   platformExpression: string;
   numberExpression: string;
+  createdAtExpression: string;
 }) {
   const { alias, viewer, filters } = input;
   const conditions: string[] = [];
@@ -648,8 +685,8 @@ function buildCommonWhere(input: {
   }
   const start = bogotaBoundary(filters.desde, false);
   const end = bogotaBoundary(filters.hasta, true);
-  if (start) addWhere(conditions, values, `${alias}."createdAt" >=`, start);
-  if (end) addWhere(conditions, values, `${alias}."createdAt" <`, end);
+  if (start) addWhere(conditions, values, `${input.createdAtExpression} >=`, start);
+  if (end) addWhere(conditions, values, `${input.createdAtExpression} <`, end);
 
   const compositeId = parseCompositeId(filters.id);
   if (filters.id) {
@@ -680,6 +717,7 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
     filters,
     platformExpression: platform,
     numberExpression: `'SOL-' || LPAD(d."id"::text, 6, '0')`,
+    createdAtExpression: `d."createdAt"`,
   });
   where.conditions.unshift(`
     d."creditoId" IS NULL
@@ -697,7 +735,8 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
         d."estado" AS "rawState", d."closedReason", d."currentStep",
         d."usuarioId", d."vendedorId", d."sedeId", s."aliadoId",
         d."clienteNombre", d."clienteDocumento", d."imei", ${platform} AS "plataforma",
-        d."createdAt", d."updatedAt", d."closedAt", d."expiresAt",
+        d."createdAt", NULL::timestamptz AS "finalizedAt",
+        d."updatedAt", d."closedAt", d."expiresAt",
         u."nombre" AS "usuarioNombre", v."nombre" AS "vendedorNombre",
         s."nombre" AS "sedeNombre", a."nombre" AS "aliadoNombre",
         COALESCE(dc."status", NULLIF(d."payload"->>'dataCreditoStatus', '')) AS "dataCreditoStatus",
@@ -741,6 +780,7 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
 
 async function readCreditRows(viewer: SolicitudViewer, filters: SolicitudFilters) {
   const platform = `COALESCE(NULLIF(c."contratoSnapshot"#>>'{equipo,plataforma}', ''), dc."platform")`;
+  const createdAt = `COALESCE(solicitud."createdAt", c."createdAt")`;
   const where = buildCommonWhere({
     alias: "c",
     source: "CREDIT",
@@ -748,6 +788,7 @@ async function readCreditRows(viewer: SolicitudViewer, filters: SolicitudFilters
     filters,
     platformExpression: platform,
     numberExpression: `c."folio"`,
+    createdAtExpression: createdAt,
   });
   where.conditions.unshift("TRUE");
 
@@ -757,7 +798,8 @@ async function readCreditRows(viewer: SolicitudViewer, filters: SolicitudFilters
         c."estado" AS "rawState", NULL::text AS "closedReason", NULL::integer AS "currentStep",
         c."usuarioId", c."vendedorId", c."sedeId", s."aliadoId",
         c."clienteNombre", c."clienteDocumento", c."imei", ${platform} AS "plataforma",
-        c."createdAt", c."updatedAt", NULL::timestamptz AS "closedAt",
+        ${createdAt} AS "createdAt", c."createdAt" AS "finalizedAt",
+        c."updatedAt", NULL::timestamptz AS "closedAt",
         NULL::timestamptz AS "expiresAt",
         u."nombre" AS "usuarioNombre", v."nombre" AS "vendedorNombre",
         s."nombre" AS "sedeNombre", a."nombre" AS "aliadoNombre",
@@ -772,6 +814,11 @@ async function readCreditRows(viewer: SolicitudViewer, filters: SolicitudFilters
       LEFT JOIN "Vendedor" v ON v."id" = c."vendedorId"
       LEFT JOIN "Sede" s ON s."id" = c."sedeId"
       LEFT JOIN "Aliado" a ON a."id" = s."aliadoId"
+      LEFT JOIN LATERAL (
+        SELECT MIN(draft."createdAt") AS "createdAt"
+        FROM "CreditoBorrador" draft
+        WHERE draft."creditoId" = c."id"
+      ) solicitud ON TRUE
       LEFT JOIN LATERAL (
         SELECT assessment."status", assessment."errorCode", assessment."platform", assessment."updatedAt"
         FROM "DataCreditoAssessment" assessment
@@ -864,7 +911,7 @@ function serializeSolicitudRow(row: SolicitudRow, viewer: SolicitudViewer) {
           key: "CREDITO",
           label: "Venta finalizada",
           status: "APROBADA",
-          at: toIso(row.createdAt),
+          at: toIso(row.finalizedAt || row.createdAt),
         }
       : null,
   ].filter(Boolean);
@@ -1017,8 +1064,11 @@ export async function listSolicitudes(input: {
   const all = [...drafts, ...credits]
     .map((row) => serializeSolicitudRow(row, input.viewer))
     .filter((item) => matchesState(item, input.filters.estado))
-    .sort((left, right) =>
-      String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""))
+    .sort(
+      (left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || "")) ||
+        right.entityId - left.entityId ||
+        right.source.localeCompare(left.source)
     );
   const total = all.length;
   const start = (input.filters.page - 1) * input.filters.pageSize;

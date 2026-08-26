@@ -712,7 +712,7 @@ export default function SolicitudesWallClient({
                       <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Organización</th>
                       <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Responsable</th>
                       <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Equipo</th>
-                      <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Actualización</th>
+                      <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Fecha de creación</th>
                       <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Acciones</th>
                     </tr>
                   </thead>
@@ -738,8 +738,7 @@ export default function SolicitudesWallClient({
                           <span className="mt-1 block font-mono text-xs text-[var(--fp-muted)]">{item.imei || "IMEI no disponible"}</span>
                         </td>
                         <td className="px-4 py-4 text-xs text-[var(--fp-muted)]">
-                          <span className="block">{displayDate(item.updatedAt || item.fechaActualizacion)}</span>
-                          <span className="mt-1 block">Creada {displayDate(item.createdAt || item.fechaCreacion)}</span>
+                          <span className="block">{displayDate(item.createdAt || item.fechaCreacion)}</span>
                         </td>
                         <td className="px-4 py-4">
                           <div className="flex justify-end gap-2">
@@ -797,8 +796,8 @@ export default function SolicitudesWallClient({
                       <dd className="mt-1 font-semibold">{item.plataforma || "—"} · <span className="font-mono text-xs">{item.imei || "—"}</span></dd>
                     </div>
                     <div>
-                      <dt className="text-xs font-bold text-[var(--fp-muted)]">Actualizada</dt>
-                      <dd className="mt-1 font-semibold">{displayDate(item.updatedAt || item.fechaActualizacion)}</dd>
+                      <dt className="text-xs font-bold text-[var(--fp-muted)]">Fecha de creación</dt>
+                      <dd className="mt-1 font-semibold">{displayDate(item.createdAt || item.fechaCreacion)}</dd>
                     </div>
                   </dl>
                   <div className="mt-3 flex flex-wrap justify-end gap-2">

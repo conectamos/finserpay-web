@@ -7348,6 +7348,7 @@ export default function CreditFactoryConsole({
           clienteDepartamento,
           clienteCiudad,
           clienteGenero,
+          solicitudId: draftId,
           dataCreditoAssessmentId: dataCreditoCreditCreationMode
             ? dataCreditoAssessmentId
             : null,

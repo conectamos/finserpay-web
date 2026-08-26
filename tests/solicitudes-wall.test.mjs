@@ -305,6 +305,88 @@ test("consultar el muro nunca dispara una consulta a DataCredito", async () => {
   assert.doesNotMatch(wallSources, /providerPayload|secureRecord/);
 });
 
+test("el muro muestra y ordena por la fecha de creación original", async () => {
+  const [storage, ui] = await Promise.all([
+    readProjectFile("lib/solicitudes-storage.ts"),
+    readProjectFile("app/dashboard/solicitudes/solicitudes-wall-client.tsx"),
+  ]);
+  const listSection = ui.slice(
+    ui.indexOf("<thead"),
+    ui.indexOf('aria-labelledby="solicitud-detail-title"')
+  );
+
+  assert.equal(
+    [...listSection.matchAll(/Fecha de creación/g)].length,
+    2,
+    "debe rotular la fecha de creación en escritorio y celular"
+  );
+  assert.match(listSection, /item\.createdAt \|\| item\.fechaCreacion/);
+  assert.doesNotMatch(listSection, /item\.updatedAt \|\| item\.fechaActualizacion/);
+  assert.match(ui, /Última actualización/);
+
+  assert.match(storage, /createdAtExpression: string/);
+  assert.match(
+    storage,
+    /createdAtExpression: `d\."createdAt"`[\s\S]*createdAtExpression: createdAt/
+  );
+  assert.match(
+    storage,
+    /SELECT MIN\(draft\."createdAt"\) AS "createdAt"[\s\S]*draft\."creditoId" = c\."id"/
+  );
+  assert.match(
+    storage,
+    /String\(right\.createdAt \|\| ""\)\.localeCompare\(String\(left\.createdAt \|\| ""\)\)/
+  );
+  assert.doesNotMatch(
+    storage,
+    /\.sort\([\s\S]{0,180}String\(right\.updatedAt/
+  );
+  assert.match(storage, /at: toIso\(row\.finalizedAt \|\| row\.createdAt\)/);
+});
+
+test("central retoma y finaliza sin reemplazar al asesor propietario", async () => {
+  const [draftRoute, creditRoute, storage, factory] = await Promise.all([
+    readProjectFile("app/api/creditos/borradores/route.ts"),
+    readProjectFile("app/api/creditos/route.ts"),
+    readProjectFile("lib/solicitudes-storage.ts"),
+    readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
+  ]);
+
+  assert.match(
+    draftRoute,
+    /access\.central && draftId[\s\S]*getActiveSolicitudCreditContext\(draftId\)/
+  );
+  assert.match(
+    draftRoute,
+    /usuarioId: owner\.usuarioId[\s\S]*vendedorId: owner\.vendedorId[\s\S]*sedeId: owner\.sedeId/
+  );
+  assert.doesNotMatch(storage, /allowCentralAdminAccess/);
+  assert.match(factory, /solicitudId: draftId/);
+
+  assert.match(
+    creditRoute,
+    /canOperateSolicitud[\s\S]*adminCentral[\s\S]*solicitudContext\.vendedorId === sellerSession\.id/
+  );
+  assert.match(creditRoute, /SOLICITUD_DOCUMENTO_DIFERENTE/);
+  assert.match(creditRoute, /SOLICITUD_DATACREDITO_DIFERENTE/);
+  assert.match(
+    storage,
+    /getActiveSolicitudCreditContext[\s\S]*d\."estado" = 'ABIERTO'[\s\S]*INTERVAL '15 days'/
+  );
+  assert.ok(
+    (creditRoute.match(/creditOwner\.usuarioId/g) || []).length >= 3,
+    "DataCrédito, el crédito y el cierre deben conservar el usuario propietario"
+  );
+  assert.ok(
+    (creditRoute.match(/creditOwner\.vendedorId/g) || []).length >= 3,
+    "DataCrédito, el crédito y el cierre deben conservar el asesor propietario"
+  );
+  assert.ok(
+    (creditRoute.match(/creditOwner\.sedeId/g) || []).length >= 3,
+    "DataCrédito, el crédito y el cierre deben conservar la sede propietaria"
+  );
+});
+
 test("la interfaz conserva filtros en URL y confirma el desistimiento", async () => {
   const ui = await readProjectFile(
     "app/dashboard/solicitudes/solicitudes-wall-client.tsx"

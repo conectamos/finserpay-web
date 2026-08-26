@@ -9,6 +9,7 @@ import {
   ActiveSolicitudConflictError,
   desistSolicitud,
   ensureSolicitudSchema,
+  getActiveSolicitudCreditContext,
   saveSolicitudDraft,
 } from "@/lib/solicitudes-storage";
 
@@ -287,11 +288,24 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => ({}))) as SaveDraftBody;
     const payload = normalizePayload(body.payload);
     const fields = extractDraftFields(payload);
-    const saved = await saveSolicitudDraft({
-      id: parsePositiveId(body.id),
+    const draftId = parsePositiveId(body.id);
+    const centralDraft =
+      access.central && draftId
+        ? await getActiveSolicitudCreditContext(draftId)
+        : null;
+    if (access.central && draftId && !centralDraft) {
+      return NextResponse.json({ error: "Solicitud no autorizada" }, { status: 403 });
+    }
+    const owner = centralDraft || {
       usuarioId: access.user.id,
       vendedorId: access.seller?.id || null,
       sedeId: access.user.sedeId,
+    };
+    const saved = await saveSolicitudDraft({
+      id: draftId,
+      usuarioId: owner.usuarioId,
+      vendedorId: owner.vendedorId,
+      sedeId: owner.sedeId,
       currentStep: clampStep(body.currentStep),
       clienteNombre: fields.clienteNombre,
       clienteDocumento: fields.clienteDocumento,
