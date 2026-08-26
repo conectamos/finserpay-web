@@ -244,11 +244,11 @@ export async function POST(request: Request) {
 
     const central =
       admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
-    const centralSolicitud =
-      central && requestedSolicitudId
+    const solicitudContext =
+      requestedSolicitudId
         ? await getActiveSolicitudCreditContext(requestedSolicitudId)
         : null;
-    if (central && requestedSolicitudId && !centralSolicitud) {
+    if (requestedSolicitudId && !solicitudContext) {
       return technicalResponse({
         correlationId,
         code: "SOLICITUD_NOT_AUTHORIZED",
@@ -256,6 +256,21 @@ export async function POST(request: Request) {
         status: 403,
       });
     }
+    if (
+      solicitudContext &&
+      (normalizeDataCreditoDocument(solicitudContext.clienteDocumento) !==
+        documentNumber ||
+        normalizeDataCreditoSurname(solicitudContext.clientePrimerApellido) !==
+          firstSurname)
+    ) {
+      return technicalResponse({
+        correlationId,
+        code: "SOLICITUD_IDENTITY_MISMATCH",
+        error: "La identidad validada no coincide con la solicitud retomada",
+        status: 409,
+      });
+    }
+    const centralSolicitud = central ? solicitudContext : null;
     const solicitudOwner = centralSolicitud || {
       usuarioId: user.id,
       vendedorId: seller?.id || null,

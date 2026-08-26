@@ -771,7 +771,15 @@ test("la revalidacion DataCredito reutiliza la solicitud retomada sin bloquearse
   assert.match(evaluationRoute, /type EvaluationBody = \{[\s\S]*solicitudId\?: unknown/);
   assert.match(
     evaluationRoute,
-    /isFinserPayCentralAlly[\s\S]*getActiveSolicitudCreditContext\(requestedSolicitudId\)/
+    /requestedSolicitudId[\s\S]*getActiveSolicitudCreditContext\(requestedSolicitudId\)/
+  );
+  assert.match(
+    evaluationRoute,
+    /normalizeDataCreditoDocument\(solicitudContext\.clienteDocumento\)[\s\S]*normalizeDataCreditoSurname\(solicitudContext\.clientePrimerApellido\)[\s\S]*SOLICITUD_IDENTITY_MISMATCH/
+  );
+  assert.match(
+    evaluationRoute,
+    /const centralSolicitud = central \? solicitudContext : null/
   );
   assert.match(
     evaluationRoute,
