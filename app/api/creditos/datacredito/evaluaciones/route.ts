@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSessionUser } from "@/lib/auth";
 import {
   allowsDataCreditoNonProductionProvider,
@@ -47,6 +48,7 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import {
   ActiveSolicitudConflictError,
   attachDataCreditoToSolicitud,
+  getActiveSolicitudCreditContext,
   markSolicitudDataCreditoTechnicalError,
   reserveSolicitudForIdentity,
 } from "@/lib/solicitudes-storage";
@@ -55,6 +57,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type EvaluationBody = {
+  solicitudId?: unknown;
   documentNumber?: unknown;
   firstSurname?: unknown;
   platform?: unknown;
@@ -162,6 +165,11 @@ export async function POST(request: Request) {
     }
 
     const platform = normalizeDataCreditoPlatform(body.platform);
+    const rawSolicitudId = body.solicitudId;
+    const requestedSolicitudId =
+      rawSolicitudId === undefined || rawSolicitudId === null || rawSolicitudId === ""
+        ? null
+        : Number(rawSolicitudId);
     const rawDocumentNumber = String(body.documentNumber || "").trim();
     const documentNumber = normalizeDataCreditoDocument(rawDocumentNumber);
     const firstSurname = normalizeDataCreditoSurname(body.firstSurname);
@@ -171,6 +179,17 @@ export async function POST(request: Request) {
         correlationId,
         code: "INVALID_PLATFORM",
         error: "Selecciona Android o iPhone",
+        status: 400,
+      });
+    }
+    if (
+      requestedSolicitudId !== null &&
+      (!Number.isInteger(requestedSolicitudId) || requestedSolicitudId <= 0)
+    ) {
+      return technicalResponse({
+        correlationId,
+        code: "INVALID_SOLICITUD_ID",
+        error: "La solicitud que intentas retomar no es valida",
         status: 400,
       });
     }
@@ -223,11 +242,31 @@ export async function POST(request: Request) {
       });
     }
 
-    const scope: DataCreditoAssessmentScope = {
-      userId: user.id,
-      sellerId: seller?.id || null,
+    const central =
+      admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
+    const centralSolicitud =
+      central && requestedSolicitudId
+        ? await getActiveSolicitudCreditContext(requestedSolicitudId)
+        : null;
+    if (central && requestedSolicitudId && !centralSolicitud) {
+      return technicalResponse({
+        correlationId,
+        code: "SOLICITUD_NOT_AUTHORIZED",
+        error: "La solicitud que intentas retomar no esta disponible",
+        status: 403,
+      });
+    }
+    const solicitudOwner = centralSolicitud || {
+      usuarioId: user.id,
+      vendedorId: seller?.id || null,
       sedeId: user.sedeId,
       aliadoId: user.aliadoId || null,
+    };
+    const scope: DataCreditoAssessmentScope = {
+      userId: solicitudOwner.usuarioId,
+      sellerId: solicitudOwner.vendedorId,
+      sedeId: solicitudOwner.sedeId,
+      aliadoId: solicitudOwner.aliadoId,
     };
     const hashes = buildDataCreditoIdentityHashes({ documentNumber, firstSurname });
     const metadata = extractRequestMetadata(request);
@@ -277,9 +316,10 @@ export async function POST(request: Request) {
     }
 
     const solicitudReservation = await reserveSolicitudForIdentity({
-      usuarioId: user.id,
-      vendedorId: seller?.id || null,
-      sedeId: user.sedeId,
+      solicitudId: requestedSolicitudId,
+      usuarioId: solicitudOwner.usuarioId,
+      vendedorId: solicitudOwner.vendedorId,
+      sedeId: solicitudOwner.sedeId,
       clienteDocumento: documentNumber,
       clientePrimerApellido: firstSurname,
       plataforma: platform,

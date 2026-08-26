@@ -865,6 +865,7 @@ export default function DatacreditoPrequalificationGate({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            solicitudId: initialSolicitudId,
             documentNumber: validation.documentNumber,
             firstSurname: validation.firstSurname,
             platform,

@@ -756,6 +756,33 @@ test("reserva globalmente la cedula antes de consultar al proveedor", async () =
   assert.ok(providerCall > reuse, "debe reutilizar antes de consultar al proveedor");
 });
 
+test("la revalidacion DataCredito reutiliza la solicitud retomada sin bloquearse a si misma", async () => {
+  const [gate, evaluationRoute] = await Promise.all([
+    readProjectFile(
+      "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
+    ),
+    readProjectFile("app/api/creditos/datacredito/evaluaciones/route.ts"),
+  ]);
+
+  assert.match(
+    gate,
+    /body:\s*JSON\.stringify\(\{[\s\S]{0,180}solicitudId:\s*initialSolicitudId/
+  );
+  assert.match(evaluationRoute, /type EvaluationBody = \{[\s\S]*solicitudId\?: unknown/);
+  assert.match(
+    evaluationRoute,
+    /isFinserPayCentralAlly[\s\S]*getActiveSolicitudCreditContext\(requestedSolicitudId\)/
+  );
+  assert.match(
+    evaluationRoute,
+    /const solicitudOwner = centralSolicitud \|\|[\s\S]*userId: solicitudOwner\.usuarioId[\s\S]*sellerId: solicitudOwner\.vendedorId[\s\S]*sedeId: solicitudOwner\.sedeId/
+  );
+  assert.match(
+    evaluationRoute,
+    /reserveSolicitudForIdentity\(\{[\s\S]*solicitudId: requestedSolicitudId[\s\S]*usuarioId: solicitudOwner\.usuarioId/
+  );
+});
+
 test("consolida duplicados antes de filtrar, ajusta la pagina y retira la nueva consulta tras rechazo", async () => {
   const [storage, gate] = await Promise.all([
     readProjectFile("lib/solicitudes-storage.ts"),
