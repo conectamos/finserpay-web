@@ -3015,7 +3015,13 @@ export default function CreditFactoryConsole({
   const simulatorAndroidRulesActive = simulatorMode && !iphoneFactory;
   const dataCreditoEffectiveMaxFinancedAmount =
     simulatorIphoneRulesActive
-      ? iphoneMaxFinancedAmount
+      ? resolveEffectiveDataCreditoFinancingLimit({
+          platform: "IPHONE",
+          maxFinancedAmount: iphoneMaxFinancedAmount,
+          precioBaseVenta:
+            precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined,
+          iphoneMaxFinancedAmount,
+        })
       : dataCreditoMaxFinancedAmount > 0
       ? resolveEffectiveDataCreditoFinancingLimit({
           platform: activeDataCreditoPlatform || currentDevicePlatform,

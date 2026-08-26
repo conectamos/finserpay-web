@@ -173,6 +173,33 @@ test("resuelve directamente el menor tope por plataforma", () => {
     }),
     3_500_000
   );
+  assert.equal(
+    resolveEffectiveDataCreditoFinancingLimit({
+      platform: "IPHONE",
+      maxFinancedAmount: 3_500_000,
+      precioBaseVenta: 2_200_000,
+      iphoneMaxFinancedAmount: 3_500_000,
+    }),
+    2_200_000
+  );
+  assert.equal(
+    resolveEffectiveDataCreditoFinancingLimit({
+      platform: "IPHONE",
+      maxFinancedAmount: 5_000_000,
+      precioBaseVenta: 4_200_000,
+      iphoneMaxFinancedAmount: 3_500_000,
+    }),
+    3_500_000
+  );
+  assert.equal(
+    resolveEffectiveDataCreditoFinancingLimit({
+      platform: "IPHONE",
+      maxFinancedAmount: 1_800_000,
+      precioBaseVenta: 2_200_000,
+      iphoneMaxFinancedAmount: 3_500_000,
+    }),
+    1_800_000
+  );
 });
 
 test("cobra sobre el tope del equipo aunque el cupo DataCredito sea mayor", () => {
@@ -204,6 +231,29 @@ test("cobra sobre el tope del equipo aunque el cupo DataCredito sea mayor", () =
       "El saldo financiado no debe superar el 80% del tope del equipo"
     );
   }
+});
+
+test("iPhone suma a la inicial el sobrecosto sobre la base del modelo", () => {
+  const effectiveLimit = resolveEffectiveDataCreditoFinancingLimit({
+    platform: "IPHONE",
+    maxFinancedAmount: 3_500_000,
+    precioBaseVenta: 2_200_000,
+    iphoneMaxFinancedAmount: 3_500_000,
+  });
+  const requiredInitial = calculateRequiredInitialPaymentForFinancingLimit(
+    3_000_000,
+    effectiveLimit,
+    20
+  );
+
+  assert.equal(effectiveLimit, 2_200_000);
+  assert.equal(requiredInitial, 1_240_000);
+  assert.equal(3_000_000 - requiredInitial, 1_760_000);
+  assert.equal(
+    requiredInitial,
+    440_000 + 800_000,
+    "La inicial debe sumar el 20% de la base y todo el sobrecosto"
+  );
 });
 
 test("el simulador iPhone ofrece plazos hasta 48 cuotas", () => {

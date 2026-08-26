@@ -266,6 +266,11 @@ equipo de `$700.000`, `$900.000`, `$1.200.000` y `$1.300.000` exigen iniciales
 de `$140.000`, `$260.000`, `$560.000` y `$660.000`, respectivamente. El saldo
 financiado nunca supera `$640.000`, equivalente al `80%` de `$800.000`.
 
+La misma salvaguarda aplica a iPhone. Con precio base de modelo de `$2.200.000`,
+venta de `$3.000.000`, cupo y tope iPhone de `$3.500.000` e inicial del `20%`,
+la inicial mínima es `$440.000 + $800.000 = $1.240.000`. El cupo superior no
+permite financiar el sobrecosto sobre el precio base del equipo.
+
 ## Reutilización de consultas durante 15 días
 
 Una respuesta terminal `APROBADO` o `RECHAZADO` se reutiliza durante 15 días

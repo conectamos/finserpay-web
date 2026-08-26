@@ -690,10 +690,14 @@ export function resolveEffectiveDataCreditoFinancingLimit(options: {
     return 0;
   }
 
+  const iphoneFinancingLimit = normalizeMoneyLimit(
+    options.iphoneMaxFinancedAmount,
+    IPHONE_MAX_FINANCED_AMOUNT
+  );
   const existingFinancingLimit = isIphoneCreditPlatform(options.platform)
-    ? normalizeMoneyLimit(
-        options.iphoneMaxFinancedAmount,
-        IPHONE_MAX_FINANCED_AMOUNT
+    ? Math.min(
+        iphoneFinancingLimit,
+        normalizeMoneyLimit(options.precioBaseVenta, iphoneFinancingLimit)
       )
     : normalizeMoneyLimit(
         options.precioBaseVenta,
