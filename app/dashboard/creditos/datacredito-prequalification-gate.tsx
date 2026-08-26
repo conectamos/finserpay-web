@@ -62,6 +62,7 @@ export type DataCreditoApprovedResult = {
 export type DatacreditoPrequalificationGateProps = {
   platform: DataCreditoPlatform;
   initialAssessmentId?: string | null;
+  initialSolicitudId?: number | null;
   initialDocumentNumber?: string | null;
   initialFirstSurname?: string | null;
   onBypass: () => void;
@@ -444,6 +445,7 @@ function TechnicalErrorPanel({
 export default function DatacreditoPrequalificationGate({
   platform,
   initialAssessmentId = null,
+  initialSolicitudId = null,
   initialDocumentNumber = null,
   initialFirstSurname = null,
   onBypass,
@@ -670,10 +672,14 @@ export default function DatacreditoPrequalificationGate({
           return;
         }
 
+        const assessmentParams = new URLSearchParams({ platform });
+        if (initialSolicitudId) {
+          assessmentParams.set("draftId", String(initialSolicitudId));
+        }
         const assessmentResponse = await fetch(
           `/api/creditos/datacredito/evaluaciones/${encodeURIComponent(
             initialAssessmentId
-          )}?platform=${encodeURIComponent(platform)}`,
+          )}?${assessmentParams.toString()}`,
           {
             cache: "no-store",
             headers: { Accept: "application/json" },
@@ -768,6 +774,7 @@ export default function DatacreditoPrequalificationGate({
     [
       finishBypass,
       initialAssessmentId,
+      initialSolicitudId,
       initialDocumentNumber,
       initialFirstSurname,
       platform,

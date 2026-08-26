@@ -2551,7 +2551,18 @@ export default function CreditFactoryConsole({
     plazoMeses: string;
     fechaPrimerPago: string;
     frecuenciaPago: string;
+    fianzaPorcentaje: string;
     policyControlled?: boolean;
+    restoringDraft?: boolean;
+  } | null>(null);
+  const restoredDraftSnapshotRef = useRef<{
+    draftId: number;
+    assessmentId: string | null;
+    wizardStep: number;
+    plazoMeses: string;
+    fechaPrimerPago: string;
+    frecuenciaPago: string;
+    fianzaPorcentaje: string;
   } | null>(null);
   const creditSettingsRequestGenerationRef = useRef(0);
   const applyingDraftRef = useRef(false);
@@ -4858,9 +4869,16 @@ export default function CreditFactoryConsole({
       plazoMeses: string;
       fechaPrimerPago: string;
       frecuenciaPago: string;
+      fianzaPorcentaje: string;
       policyControlled?: boolean;
+      restoringDraft?: boolean;
     } | null
   ) => {
+    if (preservedTerms?.restoringDraft) {
+      cancelPendingDraftAutosave();
+      applyingDraftRef.current = true;
+    }
+
     const nextMaxInstallments = normalizeCreditInstallmentLimit(
       nextSettingsInput.plazoMaximoCuotas
     );
@@ -4912,7 +4930,9 @@ export default function CreditFactoryConsole({
     setGlobalCreditSettings(nextGlobalSettingsInput || nextSettingsInput);
     setCreditSettingsDocument(documentValue);
     setTasaInteresEa(String(nextSettings.tasaInteresEa));
-    setFianzaPorcentaje(String(nextSettings.fianzaPorcentaje));
+    setFianzaPorcentaje(
+      preservedTerms?.fianzaPorcentaje || String(nextSettings.fianzaPorcentaje)
+    );
     const restoredInstallments = preservedTerms?.plazoMeses
       ? normalizeCreditInstallments(
           preservedTerms.plazoMeses,
@@ -8236,14 +8256,35 @@ export default function CreditFactoryConsole({
       return typeof current === "string" ? current : "";
     };
     const checked = (key: string) => payload[key] === true;
+    const restoredAssessmentId = value("dataCreditoAssessmentId") || null;
+    const restoredWizardStep = clampWizardStep(
+      Number(payload.wizardStep || draft.currentStep || wizardStep)
+    );
+    const restoredInstallments = value("plazoMeses") || plazoMeses;
+    const restoredFirstPaymentDate =
+      value("fechaPrimerPago") || fechaPrimerPago;
+    const restoredPaymentFrequency = value("frecuenciaPago");
+    const restoredSuretyPercentage =
+      value("fianzaPorcentaje") || String(creditSettings.fianzaPorcentaje);
 
     applyingDraftRef.current = true;
+    restoredDraftSnapshotRef.current = {
+      draftId: draft.id,
+      assessmentId: restoredAssessmentId,
+      wizardStep: restoredWizardStep,
+      plazoMeses: restoredInstallments,
+      fechaPrimerPago: restoredFirstPaymentDate,
+      frecuenciaPago: restoredPaymentFrequency,
+      fianzaPorcentaje: restoredSuretyPercentage,
+    };
     pendingDraftFinancialTermsRef.current = {
       documento: value("clienteDocumento").replace(/\D/g, ""),
-      plazoMeses: value("plazoMeses"),
-      fechaPrimerPago: value("fechaPrimerPago"),
-      frecuenciaPago: value("frecuenciaPago"),
-      policyControlled: Boolean(value("dataCreditoAssessmentId")),
+      plazoMeses: restoredInstallments,
+      fechaPrimerPago: restoredFirstPaymentDate,
+      frecuenciaPago: restoredPaymentFrequency,
+      fianzaPorcentaje: restoredSuretyPercentage,
+      policyControlled: Boolean(restoredAssessmentId),
+      restoringDraft: true,
     };
     setDraftId(draft.id);
     setDraftStatus("saved");
@@ -8262,7 +8303,7 @@ export default function CreditFactoryConsole({
     setClienteDepartamento(value("clienteDepartamento"));
     setClienteCiudad(value("clienteCiudad"));
     setClienteGenero(value("clienteGenero"));
-    setDataCreditoAssessmentId(value("dataCreditoAssessmentId") || null);
+    setDataCreditoAssessmentId(restoredAssessmentId);
     setDataCreditoApproval(null);
     setDataCreditoBypassed(false);
     setReferenciaFamiliar1Nombre(value("referenciaFamiliar1Nombre"));
@@ -8327,10 +8368,10 @@ export default function CreditFactoryConsole({
     );
     setValorEquipoTotal(value("valorEquipoTotal"));
     setCuotaInicial(value("cuotaInicial"));
-    setPlazoMeses(value("plazoMeses") || plazoMeses);
+    setPlazoMeses(restoredInstallments);
     setTasaInteresEa(String(creditSettings.tasaInteresEa));
-    setFianzaPorcentaje(String(creditSettings.fianzaPorcentaje));
-    setFechaPrimerPago(value("fechaPrimerPago") || fechaPrimerPago);
+    setFianzaPorcentaje(restoredSuretyPercentage);
+    setFechaPrimerPago(restoredFirstPaymentDate);
     setContratoAceptado(checked("contratoAceptado"));
     setContratoFotoDataUrl(
       value("contratoSelfieDataUrl") || value("contratoFotoDataUrl")
@@ -8686,7 +8727,18 @@ export default function CreditFactoryConsole({
   };
 
   const handleDataCreditoApproved = (result: DataCreditoApprovedResult) => {
-    if (result.solicitudId) {
+    const restoredDraftSnapshot = restoredDraftSnapshotRef.current;
+    const restoredDraftId = result.solicitudId || draftId;
+    const restoringDraftAssessment = Boolean(
+      restoredDraftSnapshot &&
+        restoredDraftSnapshot.draftId === restoredDraftId &&
+        restoredDraftSnapshot.assessmentId === result.assessmentId
+    );
+
+    if (restoringDraftAssessment) {
+      cancelPendingDraftAutosave();
+      applyingDraftRef.current = true;
+    } else if (result.solicitudId) {
       cancelPendingDraftAutosave();
       setDraftId(result.solicitudId);
       setDraftStatus("saved");
@@ -8699,10 +8751,16 @@ export default function CreditFactoryConsole({
       DEFAULT_CREDIT_INSTALLMENTS,
       MAX_CREDIT_INSTALLMENTS
     );
+    const sameAssessment = dataCreditoAssessmentId === result.assessmentId;
     const restoredInstallmentCount =
-      dataCreditoAssessmentId === result.assessmentId
-        ? parseCreditInstallmentSelection(plazoMeses, maxInstallmentCount)
-        : null;
+      restoringDraftAssessment && restoredDraftSnapshot
+        ? parseCreditInstallmentSelection(
+            restoredDraftSnapshot.plazoMeses,
+            maxInstallmentCount
+          )
+        : sameAssessment
+          ? parseCreditInstallmentSelection(plazoMeses, maxInstallmentCount)
+          : null;
     const installmentCount = restoredInstallmentCount ?? maxInstallmentCount;
     const financialSettings = resolveCreditPolicyFinancialSettings({
       globalSettings: globalCreditSettings,
@@ -8713,28 +8771,68 @@ export default function CreditFactoryConsole({
     const policyFrequency = normalizePaymentFrequency(
       financialSettings.frecuenciaPago
     );
-    const firstPaymentDate = getDefaultFirstPaymentDate(
-      new Date(),
-      policyFrequency
+    const restoredFrequency =
+      restoringDraftAssessment && restoredDraftSnapshot
+        ? normalizePaymentFrequency(restoredDraftSnapshot.frecuenciaPago)
+        : sameAssessment
+          ? normalizePaymentFrequency(frecuenciaPagoCredito)
+          : policyFrequency;
+    const firstPaymentDate =
+      restoringDraftAssessment && restoredDraftSnapshot
+        ? restoredDraftSnapshot.fechaPrimerPago
+        : sameAssessment && fechaPrimerPago
+          ? fechaPrimerPago
+          : getDefaultFirstPaymentDate(new Date(), restoredFrequency);
+    const restoredSuretyNumber = Number(
+      restoredDraftSnapshot?.fianzaPorcentaje
     );
+    const restoredSuretyPercentage =
+      restoringDraftAssessment && Number.isFinite(restoredSuretyNumber)
+        ? restoredSuretyNumber
+        : result.offer.suretyPercentage;
+    const resultFinancialSettings = result.offer.financialSettings;
+    const approvedResult = restoringDraftAssessment
+      ? {
+          ...result,
+          offer: {
+            ...result.offer,
+            suretyPercentage: restoredSuretyPercentage,
+            ...(resultFinancialSettings &&
+            typeof resultFinancialSettings === "object" &&
+            !Array.isArray(resultFinancialSettings)
+              ? {
+                  financialSettings: {
+                    ...resultFinancialSettings,
+                    frecuenciaPago: restoredFrequency,
+                  },
+                }
+              : {}),
+          },
+        }
+      : result;
     pendingDraftFinancialTermsRef.current = {
       documento: result.documentNumber.replace(/\D/g, ""),
       plazoMeses: String(installmentCount),
       fechaPrimerPago: firstPaymentDate,
-      frecuenciaPago: policyFrequency,
+      frecuenciaPago: restoredFrequency,
+      fianzaPorcentaje: String(restoredSuretyPercentage),
       policyControlled: true,
+      restoringDraft: restoringDraftAssessment,
     };
     setDataCreditoAssessmentId(result.assessmentId);
-    setDataCreditoApproval(result);
+    setDataCreditoApproval(approvedResult);
     setDataCreditoBypassed(false);
     setClienteTipoDocumento("CEDULA_DE_CIUDADANIA");
     setClienteDocumento(result.documentNumber);
     setClientePrimerApellido(result.firstSurname);
-    setFianzaPorcentaje(String(result.offer.suretyPercentage));
+    setFianzaPorcentaje(String(restoredSuretyPercentage));
     setPlazoMeses(String(installmentCount));
     setFechaPrimerPago(firstPaymentDate);
 
-    if (wizardStep !== 1) {
+    if (restoringDraftAssessment && restoredDraftSnapshot) {
+      setWizardStep(restoredDraftSnapshot.wizardStep);
+      restoredDraftSnapshotRef.current = null;
+    } else if (wizardStep !== 1) {
       setWizardStep(1);
     }
   };
@@ -9923,6 +10021,7 @@ export default function CreditFactoryConsole({
                     <DatacreditoPrequalificationGate
                       platform={dataCreditoPlatform}
                       initialAssessmentId={dataCreditoAssessmentId}
+                      initialSolicitudId={draftId}
                       initialDocumentNumber={clienteDocumento}
                       initialFirstSurname={clientePrimerApellido}
                       onBypass={handleDataCreditoBypass}

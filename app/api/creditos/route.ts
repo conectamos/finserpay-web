@@ -1815,6 +1815,7 @@ export async function POST(req: Request) {
     }
 
     const solicitudReservation = await reserveSolicitudForIdentity({
+      solicitudId: solicitudContext?.id || null,
       usuarioId: creditOwner.usuarioId,
       vendedorId: creditOwner.vendedorId,
       sedeId: creditOwner.sedeId,

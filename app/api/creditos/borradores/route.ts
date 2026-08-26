@@ -5,9 +5,11 @@ import { sanitizeSearch, sanitizeText } from "@/lib/credit-factory";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
+import { SolicitudCanonicalMutationError } from "@/lib/solicitudes";
 import {
   ActiveSolicitudConflictError,
   desistSolicitud,
+  desistSolicitudAsCentralAdmin,
   ensureSolicitudSchema,
   getActiveSolicitudCreditContext,
   saveSolicitudDraft,
@@ -44,6 +46,7 @@ type DraftRow = {
   clienteDocumento: string | null;
   clienteTelefono: string | null;
   imei: string | null;
+  dataCreditoAssessmentId: string | null;
   payload: unknown;
   createdAt: Date | string;
   updatedAt: Date | string;
@@ -119,6 +122,11 @@ function serializeDraft(row: DraftRow) {
     row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
       ? (row.payload as DraftPayload)
       : {};
+  const canonicalAssessmentId = String(row.dataCreditoAssessmentId || "").trim();
+  const serializedPayload = canonicalAssessmentId
+    ? { ...payload, dataCreditoAssessmentId: canonicalAssessmentId }
+    : payload;
+
   return {
     id: row.id,
     estado: row.estado,
@@ -127,7 +135,7 @@ function serializeDraft(row: DraftRow) {
     clienteDocumento: row.clienteDocumento,
     clienteTelefono: row.clienteTelefono,
     imei: row.imei,
-    payload,
+    payload: serializedPayload,
     createdAt: toDateIso(row.createdAt),
     updatedAt: toDateIso(row.updatedAt),
     closedAt: toDateIso(row.closedAt),
@@ -197,7 +205,8 @@ async function readDrafts(
     `
       SELECT d."id", d."estado", d."usuarioId", d."vendedorId", d."sedeId",
         d."currentStep", d."clienteNombre", d."clienteDocumento",
-        d."clienteTelefono", d."imei", ${payload} AS "payload",
+        d."clienteTelefono", d."imei", d."dataCreditoAssessmentId",
+        ${payload} AS "payload",
         d."createdAt", d."updatedAt", d."closedAt",
         u."nombre" AS "usuarioNombre", u."usuario" AS "usuarioLogin",
         v."nombre" AS "vendedorNombre", v."documento" AS "vendedorDocumento",
@@ -320,7 +329,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, item: serializeDraft(rows[0]) });
   } catch (error) {
     console.error("ERROR GUARDANDO BORRADOR:", error);
-    if (error instanceof ActiveSolicitudConflictError) {
+    if (
+      error instanceof ActiveSolicitudConflictError ||
+      error instanceof SolicitudCanonicalMutationError
+    ) {
       return NextResponse.json(
         { error: error.message, code: error.code },
         { status: error.status }
@@ -350,7 +362,14 @@ export async function PATCH(req: Request) {
     if (!id) return NextResponse.json({ error: "Borrador invalido" }, { status: 400 });
 
     if (sanitizeText(body.action).toUpperCase() === "DESISTIR") {
-      if (!access.seller || access.seller.tipoPerfil !== "VENDEDOR") {
+      if (access.central) {
+        const changed = await desistSolicitudAsCentralAdmin({
+          solicitudId: id,
+          userId: access.user.id,
+        });
+        return NextResponse.json({ ok: changed }, { status: changed ? 200 : 409 });
+      }
+      if (access.seller?.tipoPerfil !== "VENDEDOR") {
         return NextResponse.json({ error: "Accion no autorizada" }, { status: 403 });
       }
       const changed = await desistSolicitud({

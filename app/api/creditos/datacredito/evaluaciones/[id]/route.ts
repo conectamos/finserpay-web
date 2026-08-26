@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
+import { getActiveSolicitudCreditContext } from "@/lib/solicitudes-storage";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
 import { normalizeDataCreditoPlatform } from "@/lib/datacredito/policy";
 import {
@@ -39,7 +41,13 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ ok: false, error: "Evaluacion no encontrada" }, { status: 404 });
   }
 
-  const requestedPlatform = new URL(request.url).searchParams.get("platform");
+  const requestUrl = new URL(request.url);
+  const requestedDraftId = requestUrl.searchParams.get("draftId");
+  const draftId =
+    requestedDraftId && /^\d+$/.test(requestedDraftId)
+      ? Number(requestedDraftId)
+      : null;
+  const requestedPlatform = requestUrl.searchParams.get("platform");
   const expectedPlatform =
     requestedPlatform === null
       ? null
@@ -65,7 +73,22 @@ export async function GET(request: Request, context: RouteContext) {
       aliadoId: user.aliadoId || null,
     };
 
-    if (!row || !dataCreditoAssessmentMatchesScope(row, scope)) {
+    const centralDraft =
+      row &&
+      admin &&
+      isFinserPayCentralAlly(user.aliadoAccesoCodigo) &&
+      draftId
+        ? await getActiveSolicitudCreditContext(draftId)
+        : null;
+    const assessmentBelongsToCentralDraft = Boolean(
+      centralDraft?.dataCreditoAssessmentId &&
+        centralDraft.dataCreditoAssessmentId.toLowerCase() === id.toLowerCase()
+    );
+    if (
+      !row ||
+      (!dataCreditoAssessmentMatchesScope(row, scope) &&
+        !assessmentBelongsToCentralDraft)
+    ) {
       return NextResponse.json(
         { ok: false, error: "Evaluacion no encontrada" },
         { status: 404 }

@@ -10,6 +10,7 @@ import {
   isSolicitudExpired,
   normalizeSolicitudFilters,
   resolveSolicitudDeliveryStage,
+  resolveSolicitudProcessStage,
   resolveSolicitudStage,
 } from "../lib/solicitudes.ts";
 
@@ -134,13 +135,13 @@ test("datos sensibles quedan restringidos a administradores", () => {
 
 test("deriva etapas usando los estados reales de los subsistemas", () => {
   const cases = [
-    [{ source: "DRAFT", draftState: "ABIERTO" }, "CONSULTA_PENDIENTE"],
-    [{ source: "DRAFT", dataCreditoStatus: "PENDING" }, "CONSULTA_PENDIENTE"],
-    [{ source: "DRAFT", dataCreditoStatus: "APROBADO" }, "APROBADA"],
+    [{ source: "DRAFT", draftState: "ABIERTO" }, "PROCESO"],
+    [{ source: "DRAFT", dataCreditoStatus: "PENDING" }, "PROCESO"],
+    [{ source: "DRAFT", dataCreditoStatus: "APROBADO" }, "PROCESO"],
     [{ source: "DRAFT", dataCreditoStatus: "RECHAZADO" }, "RECHAZADA"],
     [
       { source: "DRAFT", dataCreditoStatus: "APROBADO", veriffStatus: "REVIEW" },
-      "VALIDACION_FACIAL",
+      "PROCESO",
     ],
     [
       {
@@ -149,7 +150,7 @@ test("deriva etapas usando los estados reales de los subsistemas", () => {
         veriffStatus: "APPROVED",
         currentStep: 4,
       },
-      "CONTRATOS",
+      "PROCESO",
     ],
     [
       {
@@ -158,7 +159,7 @@ test("deriva etapas usando los estados reales de los subsistemas", () => {
         veriffStatus: "APPROVED",
         firmaStatus: "SIGNED",
       },
-      "LISTA_PARA_ENTREGA",
+      "PROCESO",
     ],
     [
       {
@@ -189,6 +190,42 @@ test("deriva etapas usando los estados reales de los subsistemas", () => {
   }
 });
 
+test("mantiene la etapa operativa separada del estado PROCESO", () => {
+  assert.equal(
+    resolveSolicitudProcessStage({ source: "DRAFT", dataCreditoStatus: "PENDING" }),
+    "CONSULTA_PENDIENTE"
+  );
+  assert.equal(
+    resolveSolicitudProcessStage({ source: "DRAFT", dataCreditoStatus: "APROBADO" }),
+    null
+  );
+  assert.equal(
+    resolveSolicitudProcessStage({
+      source: "DRAFT",
+      dataCreditoStatus: "APROBADO",
+      veriffStatus: "REVIEW",
+    }),
+    "VALIDACION_FACIAL"
+  );
+  assert.equal(
+    resolveSolicitudProcessStage({
+      source: "DRAFT",
+      dataCreditoStatus: "APROBADO",
+      veriffStatus: "APPROVED",
+      currentStep: 4,
+    }),
+    "CONTRATOS"
+  );
+  assert.equal(
+    resolveSolicitudProcessStage({
+      source: "DRAFT",
+      dataCreditoStatus: "APROBADO",
+      firmaStatus: "SIGNED",
+    }),
+    "LISTA_PARA_ENTREGA"
+  );
+});
+
 test("mantiene APROBADA como estado comercial y entrega como etapa operativa", () => {
   assert.equal(
     resolveSolicitudStage({ source: "CREDIT", creditState: "ENTREGABLE" }),
@@ -215,7 +252,7 @@ test("la fabrica del borrador respeta central, aliado, sede y asesor titular", (
   const openDraft = {
     ownership: ownSolicitud,
     source: "DRAFT",
-    state: "APROBADA",
+    state: "PROCESO",
     draftState: "ABIERTO",
   };
   assert.deepEqual(getSolicitudActions({ viewer: seller, ...openDraft }), [
@@ -240,6 +277,7 @@ test("la fabrica del borrador respeta central, aliado, sede y asesor titular", (
   assert.deepEqual(getSolicitudActions({ viewer: centralAdmin, ...openDraft }), [
     "VER_DETALLE",
     "ABRIR_FABRICA",
+    "DESISTIR",
   ]);
   assert.deepEqual(
     getSolicitudActions({ viewer: { ...seller, vendedorId: 402 }, ...openDraft }),
@@ -289,13 +327,22 @@ test("solo central abre en fabrica un credito aprobado", () => {
 });
 
 test("el endpoint aplica sesion, alcance y no permite eliminaciones", async () => {
-  const route = await readProjectFile("app/api/solicitudes/route.ts");
+  const [route, storage] = await Promise.all([
+    readProjectFile("app/api/solicitudes/route.ts"),
+    readProjectFile("lib/solicitudes-storage.ts"),
+  ]);
   assert.match(route, /getSessionUser|getDashboardSession|requireDashboardSession/);
   assert.match(route, /normalizeSolicitudFilters/);
   assert.match(route, /viewer|SolicitudViewer/);
   assert.match(route, /Cache-Control[\s\S]{0,100}no-store|no-store[\s\S]{0,100}Cache-Control/i);
   assert.match(route, /DESISTIR/);
+  assert.match(route, /CENTRAL_ADMIN[\s\S]*desistSolicitudAsCentralAdmin/);
+  assert.match(
+    storage,
+    /desistSolicitudAsCentralAdmin[\s\S]*"closedReason" = 'DESISTIDA'[\s\S]*"desistedBySellerId" = NULL/
+  );
   assert.doesNotMatch(route, /export\s+async\s+function\s+DELETE/);
+  assert.doesNotMatch(storage, /DELETE\s+FROM\s+"CreditoBorrador"/i);
 });
 
 test("consultar el muro nunca dispara una consulta a DataCredito", async () => {
@@ -353,12 +400,17 @@ test("el muro muestra y ordena por la fecha de creación original", async () => 
 });
 
 test("central retoma y finaliza sin reemplazar al asesor propietario", async () => {
-  const [draftRoute, creditRoute, storage, factory] = await Promise.all([
-    readProjectFile("app/api/creditos/borradores/route.ts"),
-    readProjectFile("app/api/creditos/route.ts"),
-    readProjectFile("lib/solicitudes-storage.ts"),
-    readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
-  ]);
+  const [draftRoute, creditRoute, storage, factory, assessmentRoute, gate] =
+    await Promise.all([
+      readProjectFile("app/api/creditos/borradores/route.ts"),
+      readProjectFile("app/api/creditos/route.ts"),
+      readProjectFile("lib/solicitudes-storage.ts"),
+      readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
+      readProjectFile("app/api/creditos/datacredito/evaluaciones/[id]/route.ts"),
+      readProjectFile(
+        "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
+      ),
+    ]);
 
   assert.match(
     draftRoute,
@@ -370,10 +422,58 @@ test("central retoma y finaliza sin reemplazar al asesor propietario", async () 
   );
   assert.doesNotMatch(storage, /allowCentralAdminAccess/);
   assert.match(factory, /solicitudId: draftId/);
+  assert.match(factory, /initialSolicitudId={draftId}/);
+  assert.match(
+    factory,
+    /restoredDraftSnapshotRef = useRef<\{[\s\S]*wizardStep: number;[\s\S]*plazoMeses: string;[\s\S]*fechaPrimerPago: string;[\s\S]*frecuenciaPago: string;[\s\S]*fianzaPorcentaje: string;/
+  );
+  assert.match(
+    factory,
+    /if \(restoringDraftAssessment\) \{[\s\S]{0,180}cancelPendingDraftAutosave\(\);[\s\S]{0,140}applyingDraftRef\.current = true;[\s\S]{0,140}\} else if \(result\.solicitudId\)/
+  );
+  assert.match(
+    factory,
+    /restoringDraftAssessment && restoredDraftSnapshot[\s\S]{0,220}parseCreditInstallmentSelection\([\s\S]{0,120}restoredDraftSnapshot\.plazoMeses/
+  );
+  assert.match(
+    factory,
+    /normalizePaymentFrequency\(restoredDraftSnapshot\.frecuenciaPago\)[\s\S]{0,500}restoredDraftSnapshot\.fechaPrimerPago/
+  );
+  assert.match(
+    factory,
+    /setDataCreditoApproval\(approvedResult\)[\s\S]{0,400}setFianzaPorcentaje\(String\(restoredSuretyPercentage\)\)[\s\S]{0,400}setWizardStep\(restoredDraftSnapshot\.wizardStep\)/
+  );
+  assert.match(
+    factory,
+    /preservedTerms\?\.restoringDraft[\s\S]{0,160}cancelPendingDraftAutosave\(\);[\s\S]{0,120}applyingDraftRef\.current = true;/
+  );
+  assert.doesNotMatch(
+    factory,
+    /!restoringDraftAssessment && wizardStep !== 1/
+  );
+  assert.match(gate, /initialSolicitudId[\s\S]*assessmentParams\.set\("draftId"/);
+  assert.match(
+    assessmentRoute,
+    /isFinserPayCentralAlly[\s\S]*getActiveSolicitudCreditContext\(draftId\)[\s\S]*assessmentBelongsToCentralDraft/
+  );
+  assert.doesNotMatch(assessmentRoute, /queryDataCreditoNaturalPerson/);
+  assert.match(draftRoute, /canonicalAssessmentId[\s\S]*serializedPayload/);
+  assert.match(
+    draftRoute,
+    /d\."dataCreditoAssessmentId"[\s\S]*\$\{payload\} AS "payload"/
+  );
 
   assert.match(
     creditRoute,
     /canOperateSolicitud[\s\S]*adminCentral[\s\S]*solicitudContext\.vendedorId === sellerSession\.id/
+  );
+  assert.match(
+    creditRoute,
+    /reserveSolicitudForIdentity\(\{[\s\S]*solicitudId: solicitudContext\?\.id \|\| null/
+  );
+  assert.match(
+    storage,
+    /if \(input\.solicitudId\)[\s\S]*WHERE "id" = \$1[\s\S]*return \{ id: selected\[0\]\.id, reused: true \}/
   );
   assert.match(creditRoute, /SOLICITUD_DOCUMENTO_DIFERENTE/);
   assert.match(creditRoute, /SOLICITUD_DATACREDITO_DIFERENTE/);

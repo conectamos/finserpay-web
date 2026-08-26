@@ -813,11 +813,11 @@ test("la fábrica presenta el plazo DataCredito como máximo seleccionable", () 
   );
   assert.match(
     factoryConsole,
-    /dataCreditoAssessmentId === result\.assessmentId[\s\S]{0,180}parseCreditInstallmentSelection\(plazoMeses, maxInstallmentCount\)/
+    /restoringDraftAssessment && restoredDraftSnapshot[\s\S]{0,240}parseCreditInstallmentSelection\([\s\S]{0,120}restoredDraftSnapshot\.plazoMeses/
   );
   assert.match(
     factoryConsole,
-    /policyControlled: Boolean\(value\("dataCreditoAssessmentId"\)\)/
+    /policyControlled: Boolean\(restoredAssessmentId\)[\s\S]{0,100}restoringDraft: true/
   );
   assert.match(
     factoryConsole,

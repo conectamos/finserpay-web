@@ -1,20 +1,36 @@
 export const SOLICITUD_EXPIRATION_DAYS = 15;
 
 export const SOLICITUD_STATES = [
-  "CONSULTA_PENDIENTE",
+  "PROCESO",
   "APROBADA",
   "RECHAZADA",
-  "VALIDACION_FACIAL",
-  "CONTRATOS",
-  "LISTA_PARA_ENTREGA",
-  "ENTREGADA",
   "CANCELADA",
   "ERROR_TECNICO",
 ] as const;
 
 export type SolicitudState = (typeof SOLICITUD_STATES)[number];
 
-export const SOLICITUD_STATE_LABELS: Record<SolicitudState, string> = {
+export const SOLICITUD_STAGE_STATES = [
+  "CONSULTA_PENDIENTE",
+  "VALIDACION_FACIAL",
+  "CONTRATOS",
+  "LISTA_PARA_ENTREGA",
+  "ENTREGADA",
+] as const;
+
+export type SolicitudStage = (typeof SOLICITUD_STAGE_STATES)[number];
+export type SolicitudFilterState = SolicitudState | SolicitudStage;
+
+export const SOLICITUD_FILTER_STATES = [
+  ...SOLICITUD_STATES,
+  ...SOLICITUD_STAGE_STATES,
+] as const;
+
+export const SOLICITUD_STATE_LABELS: Record<
+  SolicitudState | SolicitudStage,
+  string
+> = {
+  PROCESO: "Proceso",
   CONSULTA_PENDIENTE: "Consulta pendiente",
   APROBADA: "Aprobada",
   RECHAZADA: "Rechazada",
@@ -64,7 +80,7 @@ export type SolicitudFilters = {
   sedeId: number | null;
   asesorId: number | null;
   plataforma: string;
-  estado: SolicitudState | "";
+  estado: SolicitudFilterState | "";
   page: number;
   pageSize: number;
   id: string;
@@ -83,6 +99,99 @@ function compactText(value: unknown, maxLength: number) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maxLength);
+}
+
+export type SolicitudCanonicalMutationCode =
+  | "SOLICITUD_DOCUMENTO_INMUTABLE"
+  | "SOLICITUD_DATACREDITO_INMUTABLE";
+
+export class SolicitudCanonicalMutationError extends Error {
+  readonly status = 409;
+  readonly code: SolicitudCanonicalMutationCode;
+
+  constructor(code: SolicitudCanonicalMutationCode) {
+    super(
+      code === "SOLICITUD_DOCUMENTO_INMUTABLE"
+        ? "La cedula de una solicitud consultada no se puede cambiar."
+        : "La consulta de DataCredito asociada a la solicitud no se puede cambiar."
+    );
+    this.code = code;
+    this.name = "SolicitudCanonicalMutationError";
+  }
+}
+
+const SOLICITUD_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function canonicalSolicitudUuid(value: unknown) {
+  const uuid = compactText(value, 80);
+  return SOLICITUD_UUID_PATTERN.test(uuid) ? uuid : null;
+}
+
+function canonicalSolicitudDocumentKey(value: unknown) {
+  const text = compactText(value, 80);
+  const digits = text.replace(/\D/g, "").slice(0, 40);
+  return digits || text.toUpperCase();
+}
+
+export function resolveSolicitudDraftCanonicalIdentity(input: {
+  materialized: boolean;
+  storedDocument?: unknown;
+  storedPayloadDocument?: unknown;
+  storedAssessmentId?: unknown;
+  storedPayloadAssessmentId?: unknown;
+  incomingDocument?: unknown;
+  incomingAssessmentId?: unknown;
+  payload: Record<string, unknown>;
+}) {
+  const storedDocument =
+    compactText(input.storedDocument, 80) ||
+    compactText(input.storedPayloadDocument, 80) ||
+    null;
+  const incomingDocument = compactText(input.incomingDocument, 80) || null;
+  const storedAssessmentId =
+    canonicalSolicitudUuid(input.storedAssessmentId) ||
+    canonicalSolicitudUuid(input.storedPayloadAssessmentId);
+  const incomingAssessmentText = compactText(input.incomingAssessmentId, 80);
+  const incomingAssessmentId = canonicalSolicitudUuid(incomingAssessmentText);
+
+  if (!input.materialized) {
+    return {
+      clienteDocumento: incomingDocument,
+      dataCreditoAssessmentId: incomingAssessmentId,
+      payload: { ...input.payload },
+    };
+  }
+
+  if (
+    incomingDocument &&
+    (!storedDocument ||
+      canonicalSolicitudDocumentKey(incomingDocument) !==
+        canonicalSolicitudDocumentKey(storedDocument))
+  ) {
+    throw new SolicitudCanonicalMutationError("SOLICITUD_DOCUMENTO_INMUTABLE");
+  }
+
+  if (
+    incomingAssessmentText &&
+    (!incomingAssessmentId ||
+      !storedAssessmentId ||
+      incomingAssessmentId.toLowerCase() !== storedAssessmentId.toLowerCase())
+  ) {
+    throw new SolicitudCanonicalMutationError("SOLICITUD_DATACREDITO_INMUTABLE");
+  }
+
+  const payload = { ...input.payload };
+  if (storedDocument) payload.clienteDocumento = storedDocument;
+  else delete payload.clienteDocumento;
+  if (storedAssessmentId) payload.dataCreditoAssessmentId = storedAssessmentId;
+  else delete payload.dataCreditoAssessmentId;
+
+  return {
+    clienteDocumento: storedDocument,
+    dataCreditoAssessmentId: storedAssessmentId,
+    payload,
+  };
 }
 
 function positiveInteger(value: unknown) {
@@ -112,8 +221,10 @@ export function normalizeSolicitudFilters(source: FilterSource): SolicitudFilter
     sedeId: positiveInteger(readFilter(source, "sedeId")),
     asesorId: positiveInteger(readFilter(source, "asesorId")),
     plataforma: compactText(readFilter(source, "plataforma"), 60).toUpperCase(),
-    estado: SOLICITUD_STATES.includes(requestedState as SolicitudState)
-      ? (requestedState as SolicitudState)
+    estado: SOLICITUD_FILTER_STATES.includes(
+      requestedState as SolicitudFilterState
+    )
+      ? (requestedState as SolicitudFilterState)
       : "",
     page: Math.min(requestedPage, 10_000),
     pageSize: Math.min(requestedPageSize, 100),
@@ -162,7 +273,6 @@ export function resolveSolicitudStage(signals: SolicitudSignals): SolicitudState
   const dataCreditoStatus = normalized(signals.dataCreditoStatus);
   const dataCreditoError = normalized(signals.dataCreditoErrorCode);
   const veriffStatus = normalized(signals.veriffStatus);
-  const firmaStatus = normalized(signals.firmaStatus);
 
   if (signals.source === "CREDIT") {
     return ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(creditState)
@@ -189,28 +299,37 @@ export function resolveSolicitudStage(signals: SolicitudSignals): SolicitudState
     return "ERROR_TECNICO";
   }
 
+  return "PROCESO";
+}
+
+export function resolveSolicitudProcessStage(
+  signals: SolicitudSignals
+): Exclude<SolicitudStage, "ENTREGADA"> | null {
+  if (signals.source !== "DRAFT" || resolveSolicitudStage(signals) !== "PROCESO") {
+    return null;
+  }
+
+  const dataCreditoStatus = normalized(signals.dataCreditoStatus);
+  const veriffStatus = normalized(signals.veriffStatus);
+  const firmaStatus = normalized(signals.firmaStatus);
+  const currentStep = Number(signals.currentStep || 0);
+
   if (!dataCreditoStatus || dataCreditoStatus === "PENDING") {
     return "CONSULTA_PENDIENTE";
   }
-
-  if (dataCreditoStatus !== "APROBADO") {
-    return "CONSULTA_PENDIENTE";
-  }
-
-  if (!veriffStatus) return "APROBADA";
-
-  if (veriffStatus !== "APPROVED") {
-    return "VALIDACION_FACIAL";
-  }
-
+  if (dataCreditoStatus !== "APROBADO") return "CONSULTA_PENDIENTE";
   if (
     ["SIGNED", "COMPLETED", "COMPLETADO", "FIRMADO"].includes(firmaStatus) ||
-    Number(signals.currentStep || 0) >= 5
+    currentStep >= 5
   ) {
     return "LISTA_PARA_ENTREGA";
   }
-
-  return "CONTRATOS";
+  if (veriffStatus && veriffStatus !== "APPROVED") {
+    return "VALIDACION_FACIAL";
+  }
+  if (veriffStatus === "APPROVED" || currentStep >= 4) return "CONTRATOS";
+  if (currentStep >= 3) return "VALIDACION_FACIAL";
+  return null;
 }
 
 export function resolveSolicitudDeliveryStage(input: {
@@ -218,7 +337,7 @@ export function resolveSolicitudDeliveryStage(input: {
   deliverableReady?: boolean | null;
   deliveredAt?: Date | string | null;
   hasDeliveryEvidence?: boolean | null;
-}): "LISTA_PARA_ENTREGA" | "ENTREGADA" | null {
+}): Extract<SolicitudStage, "LISTA_PARA_ENTREGA" | "ENTREGADA"> | null {
   const creditState = normalized(input.creditState);
   if (
     input.deliveredAt ||
@@ -264,7 +383,7 @@ export function getSolicitudActions(input: {
   if (isActive && canOpenFactory) {
     actions.push("ABRIR_FABRICA");
   }
-  if (isActive && isOwner) {
+  if (isActive && (isOwner || input.viewer.kind === "CENTRAL_ADMIN")) {
     actions.push("DESISTIR");
   }
   return actions;

@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  SolicitudCanonicalMutationError,
+  resolveSolicitudDraftCanonicalIdentity,
+} from "../lib/solicitudes.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
@@ -141,4 +145,123 @@ test("la aprobacion enlaza el id canonico antes del autosave", async () => {
   assert.match(factory, /deliveryMode \|\|\s*!draftId \|\|/);
   assert.match(factory, /setDraftId\(result\.solicitudId\)/);
   assert.match(factory, /replaceDraftInUrl\(result\.solicitudId\)/);
+});
+
+test("el autosave preserva documento y assessment canonicos de solicitudes materializadas", () => {
+  const legacyAssessmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const result = resolveSolicitudDraftCanonicalIdentity({
+    materialized: true,
+    storedDocument: "1.083.028.847",
+    storedAssessmentId: null,
+    storedPayloadAssessmentId: legacyAssessmentId,
+    incomingDocument: "1083028847",
+    incomingAssessmentId: legacyAssessmentId.toUpperCase(),
+    payload: { clienteNombre: "Cliente" },
+  });
+
+  assert.equal(result.clienteDocumento, "1.083.028.847");
+  assert.equal(result.dataCreditoAssessmentId, legacyAssessmentId);
+  assert.equal(result.payload.clienteDocumento, "1.083.028.847");
+  assert.equal(result.payload.dataCreditoAssessmentId, legacyAssessmentId);
+  assert.equal(result.payload.clienteNombre, "Cliente");
+});
+
+test("el autosave rechaza cambios de cedula o assessment en solicitudes materializadas", () => {
+  const canonicalAssessmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const base = {
+    materialized: true,
+    storedDocument: "1083028847",
+    storedAssessmentId: canonicalAssessmentId,
+    payload: {},
+  };
+
+  assert.throws(
+    () =>
+      resolveSolicitudDraftCanonicalIdentity({
+        ...base,
+        incomingDocument: "1083028848",
+        incomingAssessmentId: canonicalAssessmentId,
+      }),
+    (error) =>
+      error instanceof SolicitudCanonicalMutationError &&
+      error.code === "SOLICITUD_DOCUMENTO_INMUTABLE" &&
+      error.status === 409
+  );
+  assert.throws(
+    () =>
+      resolveSolicitudDraftCanonicalIdentity({
+        ...base,
+        incomingDocument: "1083028847",
+        incomingAssessmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      }),
+    (error) =>
+      error instanceof SolicitudCanonicalMutationError &&
+      error.code === "SOLICITUD_DATACREDITO_INMUTABLE" &&
+      error.status === 409
+  );
+});
+
+test("una solicitud materializada sin assessment canonico no acepta uno del payload", () => {
+  assert.throws(
+    () =>
+      resolveSolicitudDraftCanonicalIdentity({
+        materialized: true,
+        storedDocument: "1083028847",
+        storedAssessmentId: null,
+        storedPayloadAssessmentId: null,
+        incomingDocument: "1083028847",
+        incomingAssessmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        payload: {},
+      }),
+    (error) =>
+      error instanceof SolicitudCanonicalMutationError &&
+      error.code === "SOLICITUD_DATACREDITO_INMUTABLE"
+  );
+});
+
+test("la reserva generica bloquea y el autosave usa la identidad canonica", async () => {
+  const source = await readProjectFile("lib/solicitudes-storage.ts");
+  const reservation = sourceBetween(
+    source,
+    "export async function reserveSolicitudForIdentity",
+    "export async function saveSolicitudDraft"
+  );
+  const exactResume = sourceBetween(
+    reservation,
+    "if (input.solicitudId)",
+    "const active = await findActiveByIdentity"
+  );
+  const activeReuse = sourceBetween(
+    reservation,
+    "const active = await findActiveByIdentity",
+    "const rows = await transaction.$queryRawUnsafe"
+  );
+  const autosave = sourceBetween(
+    source,
+    "export async function saveSolicitudDraft",
+    "export async function attachDataCreditoToSolicitud"
+  );
+
+  assert.match(exactResume, /return \{ id: selected\[0\]\.id, reused: true \}/);
+  assert.match(activeReuse, /if \(active\) \{\s*throw new ActiveSolicitudConflictError\(\)/);
+  assert.doesNotMatch(activeReuse, /sameOwner|UPDATE|reused/);
+  assert.match(autosave, /resolveSolicitudDraftCanonicalIdentity/);
+  assert.match(autosave, /targetRow\.payload\?\.dataCreditoAssessmentId/);
+  assert.match(autosave, /canonical\.clienteDocumento/);
+  assert.match(autosave, /canonical\.dataCreditoAssessmentId/);
+});
+
+test("la API devuelve 409 y codigo ante una mutacion de identidad canonica", async () => {
+  const route = await readProjectFile("app/api/creditos/borradores/route.ts");
+  const post = sourceBetween(route, "export async function POST", "export async function PATCH");
+  const errorHandling = sourceBetween(post, "} catch (error) {", "const forbidden");
+
+  assert.match(route, /import \{ SolicitudCanonicalMutationError \} from "@\/lib\/solicitudes"/);
+  assert.match(errorHandling, /error instanceof SolicitudCanonicalMutationError/);
+  assert.match(errorHandling, /\{ error: error\.message, code: error\.code \}/);
+  assert.match(errorHandling, /\{ status: error\.status \}/);
+  assert.ok(
+    post.indexOf("SolicitudCanonicalMutationError") <
+      post.indexOf("const forbidden")
+  );
 });

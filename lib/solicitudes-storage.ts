@@ -5,17 +5,19 @@ import { ensureDataCreditoSchema } from "@/lib/datacredito/storage";
 import { ensureFirmaSeguroSchema } from "@/lib/firmaseguro-storage";
 import { ensureVeriffSchema } from "@/lib/veriff-storage";
 import {
+  SOLICITUD_FILTER_STATES,
   SOLICITUD_STATE_LABELS,
-  SOLICITUD_STATES,
   canSeeSensitiveSolicitudData,
   getSolicitudActions,
   maskDocument,
   maskImei,
+  resolveSolicitudDraftCanonicalIdentity,
   resolveSolicitudDeliveryStage,
+  resolveSolicitudProcessStage,
   resolveSolicitudStage,
+  type SolicitudFilterState,
   type SolicitudFilters,
   type SolicitudOwnership,
-  type SolicitudState,
   type SolicitudViewer,
 } from "@/lib/solicitudes";
 
@@ -306,6 +308,11 @@ type ActiveDraftOwnerRow = {
   usuarioId: number;
   vendedorId: number | null;
   sedeId: number;
+  clienteDocumento: string | null;
+  imei: string | null;
+  dataCreditoAssessmentId?: string | null;
+  payload?: Record<string, unknown> | null;
+  materialized?: boolean;
 };
 
 async function findActiveByIdentity(
@@ -316,7 +323,16 @@ async function findActiveByIdentity(
 ) {
   const rows = await database.$queryRawUnsafe<ActiveDraftOwnerRow[]>(
     `
-      SELECT "id", "usuarioId", "vendedorId", "sedeId"
+      SELECT "id", "usuarioId", "vendedorId", "sedeId",
+        "clienteDocumento", "imei",
+        "dataCreditoAssessmentId"::text AS "dataCreditoAssessmentId",
+        "payload",
+        (
+          "dataCreditoAssessmentId" IS NOT NULL
+          OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+          OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+          OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+        ) AS "materialized"
       FROM "CreditoBorrador"
       WHERE "estado" = 'ABIERTO'
         AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
@@ -343,6 +359,7 @@ async function findActiveByIdentity(
 }
 
 export async function reserveSolicitudForIdentity(input: {
+  solicitudId?: number | null;
   usuarioId: number;
   vendedorId: number | null;
   sedeId: number;
@@ -356,26 +373,42 @@ export async function reserveSolicitudForIdentity(input: {
   return prisma.$transaction(async (transaction) => {
     await lockIdentity(transaction, "document", document);
     await expireStaleWith(transaction);
-    const active = await findActiveByIdentity(transaction, document, "");
-    if (active) {
-      if (!sameOwner(active, input)) throw new ActiveSolicitudConflictError();
+
+    if (input.solicitudId) {
+      const selected = await transaction.$queryRawUnsafe<ActiveDraftOwnerRow[]>(
+        `
+          SELECT "id", "usuarioId", "vendedorId", "sedeId",
+            "clienteDocumento", "imei"
+          FROM "CreditoBorrador"
+          WHERE "id" = $1
+            AND "estado" = 'ABIERTO'
+            AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
+            AND regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $2
+          LIMIT 1
+          FOR UPDATE
+        `,
+        input.solicitudId,
+        document
+      );
+      if (!selected[0] || !sameOwner(selected[0], input)) {
+        throw new ActiveSolicitudConflictError();
+      }
       await transaction.$executeRawUnsafe(
         `
           UPDATE "CreditoBorrador"
           SET "plataforma" = COALESCE($2, "plataforma"),
-              "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
-                'solicitudOrigen', 'DATACREDITO',
-                'dataCreditoStatus', 'PENDING',
-                'dataCreditoErrorCode', NULL,
-                'dataCreditoUpdatedAt', CURRENT_TIMESTAMP
-              ),
               "updatedAt" = CURRENT_TIMESTAMP
           WHERE "id" = $1 AND "estado" = 'ABIERTO'
         `,
-        active.id,
+        selected[0].id,
         normalizePlatform(input.plataforma)
       );
-      return { id: active.id, reused: true };
+      return { id: selected[0].id, reused: true };
+    }
+
+    const active = await findActiveByIdentity(transaction, document, "");
+    if (active) {
+      throw new ActiveSolicitudConflictError();
     }
 
     const rows = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
@@ -420,10 +453,21 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     await expireStaleWith(transaction);
 
     let targetId = input.id || null;
+    let targetRow: ActiveDraftOwnerRow | null = null;
+    let mustCheckIdentity = Boolean(document || imei);
     if (targetId) {
       const rows = await transaction.$queryRawUnsafe<ActiveDraftOwnerRow[]>(
         `
-          SELECT "id", "usuarioId", "vendedorId", "sedeId"
+          SELECT "id", "usuarioId", "vendedorId", "sedeId",
+            "clienteDocumento", "imei",
+            "dataCreditoAssessmentId"::text AS "dataCreditoAssessmentId",
+            "payload",
+            (
+              "dataCreditoAssessmentId" IS NOT NULL
+              OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+              OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+              OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+            ) AS "materialized"
           FROM "CreditoBorrador"
           WHERE "id" = $1 AND "estado" = 'ABIERTO'
             AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
@@ -432,9 +476,14 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         targetId
       );
       if (!rows[0] || !sameOwner(rows[0], input)) throw new Error("SOLICITUD_NO_AUTORIZADA");
+      targetRow = rows[0];
+      mustCheckIdentity = Boolean(
+        (document && document !== normalizeDigits(rows[0].clienteDocumento)) ||
+          (imei && imei !== normalizeDigits(rows[0].imei))
+      );
     }
 
-    if (document || imei) {
+    if (mustCheckIdentity) {
       const conflicting = await findActiveByIdentity(
         transaction,
         document,
@@ -446,17 +495,39 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           throw new ActiveSolicitudConflictError();
         }
         targetId = conflicting.id;
+        targetRow = conflicting;
       }
     }
 
-    const payloadJson = JSON.stringify(input.payload);
+    const incomingAssessmentId =
+      String(input.dataCreditoAssessmentId || "").trim() ||
+      input.payload.dataCreditoAssessmentId;
+    const canonical = targetRow
+      ? resolveSolicitudDraftCanonicalIdentity({
+          materialized: Boolean(targetRow.materialized),
+          storedDocument: targetRow.clienteDocumento,
+          storedPayloadDocument: targetRow.payload?.clienteDocumento,
+          storedAssessmentId: targetRow.dataCreditoAssessmentId,
+          storedPayloadAssessmentId: targetRow.payload?.dataCreditoAssessmentId,
+          incomingDocument: input.clienteDocumento,
+          incomingAssessmentId,
+          payload: input.payload,
+        })
+      : {
+          clienteDocumento: input.clienteDocumento,
+          dataCreditoAssessmentId: assessmentId,
+          payload: input.payload,
+        };
+    const payloadJson = JSON.stringify(canonical.payload);
     if (targetId) {
       const updated = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
         `
           UPDATE "CreditoBorrador"
           SET "currentStep" = $2,
               "clienteNombre" = $3,
-              "clienteDocumento" = $4,
+              "clienteDocumento" = COALESCE(
+                NULLIF($4::text, ''), "clienteDocumento"
+              ),
               "clienteTelefono" = $5,
               "imei" = $6,
               "plataforma" = COALESCE($7, "plataforma"),
@@ -469,11 +540,11 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         targetId,
         input.currentStep,
         input.clienteNombre,
-        input.clienteDocumento,
+        canonical.clienteDocumento,
         input.clienteTelefono,
         input.imei,
         normalizePlatform(input.plataforma),
-        assessmentId,
+        canonical.dataCreditoAssessmentId,
         payloadJson
       );
       if (!updated[0]) throw new Error("SOLICITUD_NO_DISPONIBLE");
@@ -576,12 +647,35 @@ export async function desistSolicitud(input: {
           "desistedByUserId" = $2, "desistedBySellerId" = $3
       WHERE "id" = $1 AND "estado" = 'ABIERTO'
         AND "vendedorId" = $3 AND "sedeId" = $4
+        AND "creditoId" IS NULL
       RETURNING "id"
     `,
     input.solicitudId,
     input.userId,
     input.sellerId,
     input.sedeId
+  );
+  return Boolean(rows[0]);
+}
+
+export async function desistSolicitudAsCentralAdmin(input: {
+  solicitudId: number;
+  userId: number;
+}) {
+  await ensureSolicitudSchema();
+  await expireStaleSolicitudes();
+  const rows = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
+    `
+      UPDATE "CreditoBorrador"
+      SET "estado" = 'CERRADO', "closedReason" = 'DESISTIDA',
+          "closedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP,
+          "desistedByUserId" = $2, "desistedBySellerId" = NULL
+      WHERE "id" = $1 AND "estado" = 'ABIERTO'
+        AND "creditoId" IS NULL
+      RETURNING "id"
+    `,
+    input.solicitudId,
+    input.userId
   );
   return Boolean(rows[0]);
 }
@@ -600,24 +694,86 @@ export async function completeSolicitudForCredit(
 ) {
   const document = normalizeDigits(input.clienteDocumento);
   const assessmentId = isUuid(input.assessmentId) ? String(input.assessmentId) : null;
+
+  if (input.solicitudId) {
+    const rows = await database.$queryRawUnsafe<Array<{ id: number }>>(
+      `
+        UPDATE "CreditoBorrador"
+        SET "estado" = 'CERRADO', "closedReason" = 'FINALIZADA',
+            "creditoId" = $7, "closedAt" = COALESCE("closedAt", CURRENT_TIMESTAMP),
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "id" = $1
+          AND "estado" = 'ABIERTO'
+          AND ($2 = '' OR regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $2)
+          AND (
+            $3::uuid IS NULL
+            OR COALESCE(
+              "dataCreditoAssessmentId"::text,
+              NULLIF("payload"->>'dataCreditoAssessmentId', '')
+            ) = $3::text
+          )
+          AND "usuarioId" = $4
+          AND "vendedorId" IS NOT DISTINCT FROM $5
+          AND "sedeId" = $6
+        RETURNING "id"
+      `,
+      input.solicitudId,
+      document,
+      assessmentId,
+      input.usuarioId,
+      input.vendedorId,
+      input.sedeId,
+      input.creditoId
+    );
+    return rows.length === 1 ? rows[0].id : null;
+  }
+
   const rows = await database.$queryRawUnsafe<Array<{ id: number }>>(
     `
-      UPDATE "CreditoBorrador"
+      WITH candidate AS (
+        SELECT "id"
+        FROM "CreditoBorrador"
+        WHERE "estado" = 'ABIERTO'
+          AND "usuarioId" = $3
+          AND "vendedorId" IS NOT DISTINCT FROM $4
+          AND "sedeId" = $5
+          AND (
+            (
+              $1::uuid IS NOT NULL
+              AND COALESCE(
+                "dataCreditoAssessmentId"::text,
+                NULLIF("payload"->>'dataCreditoAssessmentId', '')
+              ) = $1::text
+            )
+            OR (
+              $2 <> ''
+              AND regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $2
+            )
+          )
+        ORDER BY
+          CASE
+            WHEN $1::uuid IS NOT NULL
+              AND COALESCE(
+                "dataCreditoAssessmentId"::text,
+                NULLIF("payload"->>'dataCreditoAssessmentId', '')
+              ) = $1::text
+            THEN 0
+            ELSE 1
+          END,
+          "currentStep" DESC,
+          "updatedAt" DESC,
+          "id" DESC
+        LIMIT 1
+        FOR UPDATE
+      )
+      UPDATE "CreditoBorrador" draft
       SET "estado" = 'CERRADO', "closedReason" = 'FINALIZADA',
-          "creditoId" = $7, "closedAt" = COALESCE("closedAt", CURRENT_TIMESTAMP),
+          "creditoId" = $6, "closedAt" = COALESCE("closedAt", CURRENT_TIMESTAMP),
           "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "estado" = 'ABIERTO'
-        AND "usuarioId" = $4
-        AND "vendedorId" IS NOT DISTINCT FROM $5
-        AND "sedeId" = $6
-        AND (
-          ($1::integer IS NOT NULL AND "id" = $1)
-          OR ($2::uuid IS NOT NULL AND "dataCreditoAssessmentId" = $2::uuid)
-          OR ($3 <> '' AND regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $3)
-        )
-      RETURNING "id"
+      FROM candidate
+      WHERE draft."id" = candidate."id"
+      RETURNING draft."id"
     `,
-    input.solicitudId || null,
     assessmentId,
     document,
     input.usuarioId,
@@ -625,7 +781,7 @@ export async function completeSolicitudForCredit(
     input.sedeId,
     input.creditoId
   );
-  return rows[0]?.id || null;
+  return rows.length === 1 ? rows[0].id : null;
 }
 
 function addWhere(
@@ -850,7 +1006,7 @@ function serializeSolicitudRow(row: SolicitudRow, viewer: SolicitudViewer) {
     vendedorId: row.vendedorId,
     usuarioId: row.usuarioId,
   };
-  const estado = resolveSolicitudStage({
+  const signals = {
     source: row.source,
     draftState: row.rawState,
     closedReason: row.closedReason,
@@ -861,7 +1017,9 @@ function serializeSolicitudRow(row: SolicitudRow, viewer: SolicitudViewer) {
     firmaStatus: row.firmaStatus,
     firmaLastError: row.firmaLastError,
     creditState: row.rawState,
-  });
+  };
+  const estado = resolveSolicitudStage(signals);
+  const processStage = resolveSolicitudProcessStage(signals);
   const deliveryStage =
     row.source === "CREDIT"
       ? resolveSolicitudDeliveryStage({
@@ -927,6 +1085,8 @@ function serializeSolicitudRow(row: SolicitudRow, viewer: SolicitudViewer) {
     plataforma: normalizePlatform(row.plataforma),
     estado,
     estadoLabel: SOLICITUD_STATE_LABELS[estado],
+    processStage,
+    processStageLabel: processStage ? SOLICITUD_STATE_LABELS[processStage] : null,
     deliveryStage,
     deliveryStageLabel: deliveryStage ? SOLICITUD_STATE_LABELS[deliveryStage] : null,
     rawState: row.rawState,
@@ -966,14 +1126,14 @@ function serializeSolicitudRow(row: SolicitudRow, viewer: SolicitudViewer) {
 
 function matchesState(
   item: ReturnType<typeof serializeSolicitudRow>,
-  state: SolicitudState | ""
+  state: SolicitudFilterState | ""
 ) {
   if (!state) return true;
-  if (state === "ENTREGADA") return item.deliveryStage === "ENTREGADA";
-  if (state === "LISTA_PARA_ENTREGA") {
-    return item.estado === state || item.deliveryStage === state;
-  }
-  return item.estado === state;
+  return (
+    item.estado === state ||
+    item.processStage === state ||
+    item.deliveryStage === state
+  );
 }
 
 async function getFilterOptions(viewer: SolicitudViewer) {
@@ -1038,7 +1198,7 @@ async function getFilterOptions(viewer: SolicitudViewer) {
       { value: "ANDROID", label: "Android" },
       { value: "IPHONE", label: "iPhone" },
     ],
-    estados: SOLICITUD_STATES.map((value) => ({
+    estados: SOLICITUD_FILTER_STATES.map((value) => ({
       value,
       label: SOLICITUD_STATE_LABELS[value],
     })),

@@ -6,6 +6,7 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import { normalizeSolicitudFilters, type SolicitudViewer } from "@/lib/solicitudes";
 import {
   desistSolicitud,
+  desistSolicitudAsCentralAdmin,
   getSolicitudDetail,
   listSolicitudes,
 } from "@/lib/solicitudes-storage";
@@ -83,7 +84,7 @@ export async function PATCH(req: Request) {
   try {
     const access = await getViewer();
     if (!access) return response({ error: "No autenticado" }, { status: 401 });
-    if (!access.viewer || !access.seller) {
+    if (!access.viewer) {
       return response({ error: "Acción no autorizada" }, { status: 403 });
     }
 
@@ -96,22 +97,30 @@ export async function PATCH(req: Request) {
     if (action !== "DESISTIR" || !match) {
       return response({ error: "Acción inválida" }, { status: 400 });
     }
-    if (access.viewer.kind !== "SELLER") {
+
+    let changed = false;
+    if (access.viewer.kind === "CENTRAL_ADMIN") {
+      changed = await desistSolicitudAsCentralAdmin({
+        solicitudId: Number(match[1]),
+        userId: access.user.id,
+      });
+    } else if (access.viewer.kind === "SELLER" && access.seller) {
+      changed = await desistSolicitud({
+        solicitudId: Number(match[1]),
+        userId: access.user.id,
+        sellerId: access.seller.id,
+        sedeId: access.seller.sedeId,
+      });
+    } else {
       return response(
-        { error: "Solo el asesor titular puede desistir esta solicitud" },
+        { error: "Solo el asesor titular o el administrador central pueden desistir esta solicitud" },
         { status: 403 }
       );
     }
 
-    const changed = await desistSolicitud({
-      solicitudId: Number(match[1]),
-      userId: access.user.id,
-      sellerId: access.seller.id,
-      sedeId: access.seller.sedeId,
-    });
     if (!changed) {
       return response(
-        { error: "La solicitud ya no está disponible o no pertenece al asesor" },
+        { error: "La solicitud ya no está disponible para desistir" },
         { status: 409 }
       );
     }

@@ -33,9 +33,10 @@ import {
   StatusPill,
 } from "@/app/_components/finser-ui";
 import {
+  SOLICITUD_FILTER_STATES,
   SOLICITUD_STATE_LABELS,
-  SOLICITUD_STATES,
   type SolicitudAction,
+  type SolicitudStage,
   type SolicitudState,
 } from "@/lib/solicitudes";
 
@@ -52,6 +53,7 @@ type SolicitudItem = {
   imei: string | null;
   plataforma: string | null;
   estado: SolicitudState;
+  processStage?: Exclude<SolicitudStage, "ENTREGADA"> | null;
   deliveryStage?: "LISTA_PARA_ENTREGA" | "ENTREGADA" | null;
   creadoPor: string | null;
   aliado: NamedEntity | null;
@@ -160,7 +162,12 @@ function StateBadges({ item }: { item: SolicitudItem }) {
       <StatusPill tone={stateTone(item.estado)}>
         {SOLICITUD_STATE_LABELS[item.estado] || item.estado}
       </StatusPill>
-      {item.deliveryStage && item.deliveryStage !== item.estado ? (
+      {item.processStage ? (
+        <Badge tone="warning">
+          {SOLICITUD_STATE_LABELS[item.processStage]}
+        </Badge>
+      ) : null}
+      {item.deliveryStage ? (
         <Badge tone="positive">
           {SOLICITUD_STATE_LABELS[item.deliveryStage]}
         </Badge>
@@ -568,7 +575,7 @@ export default function SolicitudesWallClient({
               }
             >
               <option value="">Todos</option>
-              {SOLICITUD_STATES.map((state) => (
+              {SOLICITUD_FILTER_STATES.map((state) => (
                 <option key={state} value={state}>
                   {SOLICITUD_STATE_LABELS[state]}
                 </option>
