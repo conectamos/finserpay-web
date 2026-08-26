@@ -4865,6 +4865,8 @@ export default function CreditFactoryConsole({
     stepContratoReady &&
     stepDocumentosReady &&
     deliveryRequirementReady;
+  const creditClosureReady =
+    ventaLista && (!firmaSeguroProcessExists || firmaSeguroProcessSigned);
   const paymentOverview = paymentSummary ||
     (selectedCredit
       ? {
@@ -14317,12 +14319,12 @@ export default function CreditFactoryConsole({
                     <div
                       className={[
                         "fp-stage-status inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
-                        entregaValidada
+                        creditClosureReady
                           ? "is-success border-emerald-200 bg-emerald-50 text-emerald-700"
                           : "is-pending border-amber-200 bg-amber-50 text-amber-700",
                       ].join(" ")}
                     >
-                      {entregaValidada
+                      {creditClosureReady
                         ? "Lista para cierre"
                         : iphoneFactory
                           ? "Pendiente"
@@ -15328,9 +15330,7 @@ export default function CreditFactoryConsole({
                     disabled={
                       creating ||
                       firmaSeguroSubmitting ||
-                      (firmaSeguroProcessExists
-                        ? !firmaSeguroProcessSigned || !deliveryRequirementReady
-                        : !ventaLista)
+                      !creditClosureReady
                     }
                     className="fp-action order-last ml-auto min-h-11 rounded-md bg-[#161a1b] px-6 py-3 text-sm font-semibold uppercase text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45"
                   >

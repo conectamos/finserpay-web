@@ -459,6 +459,16 @@ test("la interfaz recupera borradores, vencimientos y conflictos sin repetir con
   assert.match(policyConsole, /Descartar y recargar/);
 });
 
+test("la restauracion no confunde la reserva de la misma evaluacion con otra operacion", () => {
+  const documentStateGetter = storage.match(
+    /export async function getDataCreditoAssessmentDocumentState\([\s\S]*?\n\}/
+  )?.[0];
+
+  assert.ok(documentStateGetter);
+  assert.match(documentStateGetter, /consumed\."id" <> \$1/);
+  assert.match(documentStateGetter, /claimed\."id" <> \$1/);
+});
+
 test("la ausencia explicita usa politica y puede consumirse sin exponer el sentinel", () => {
   assert.match(evaluationRoute, /result\.outcome === "SIN_INFORMACION"/);
   assert.match(evaluationRoute, /isDataCreditoNoInformationScore/);

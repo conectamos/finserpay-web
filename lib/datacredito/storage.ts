@@ -2098,7 +2098,8 @@ export async function getDataCreditoAssessmentDocumentState(
         EXISTS (
           SELECT 1
           FROM "DataCreditoAssessment" claimed
-          WHERE claimed."documentHash" = $2
+          WHERE claimed."id" <> $1
+            AND claimed."documentHash" = $2
             AND claimed."providerEnvironment" = $3
             AND claimed."status" = 'APROBADO'
             AND claimed."expiresAt" > CURRENT_TIMESTAMP

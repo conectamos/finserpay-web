@@ -31,3 +31,18 @@ test("el navegador no repite el cierre ni redirige silenciosamente al inicio", (
     /JSON\.stringify\(\{ id: closedDraftId, estado: "CERRADO" \}\)/
   );
 });
+
+test("el estado y el boton final comparten todas las condiciones de cierre", () => {
+  assert.match(
+    factorySource,
+    /const creditClosureReady =[\s\S]{0,140}firmaSeguroProcessSigned/
+  );
+  assert.match(
+    factorySource,
+    /creditClosureReady[\s\S]{0,240}"Lista para cierre"/
+  );
+  assert.match(
+    factorySource,
+    /disabled=\{[\s\S]{0,180}!creditClosureReady/
+  );
+});
