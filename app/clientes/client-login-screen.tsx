@@ -1,11 +1,12 @@
 import type { FormEvent } from "react";
+import Image from "next/image";
 import {
   ArrowRight,
+  ChevronRight,
   Headphones,
   IdCard,
   LockKeyhole,
   ShieldCheck,
-  Smartphone,
 } from "lucide-react";
 import FinserSupportLink from "@/app/_components/finser-support-link";
 import styles from "./client-login-screen.module.css";
@@ -50,14 +51,19 @@ export default function ClientLoginScreen({
           </header>
 
           <div className={styles.illustration} aria-hidden="true">
-            <span className={styles.speedLineOne} />
-            <span className={styles.speedLineTwo} />
-            <span className={styles.phoneGlow} />
-            <Smartphone className={styles.phone} strokeWidth={1.35} />
-            <span className={styles.shield}>
-              <ShieldCheck strokeWidth={1.7} />
+            <span className={styles.mascotGlow} />
+            <Image
+              className={styles.mascot}
+              src="/assets/creditos/identity-approved-mascot.png"
+              alt=""
+              width={1024}
+              height={1536}
+              sizes="(max-width: 460px) 176px, 176px"
+              preload
+            />
+            <span className={styles.shieldBadge}>
+              <ShieldCheck fill="currentColor" strokeWidth={1.65} />
             </span>
-            <span className={styles.phoneBase} />
           </div>
 
           <div className={styles.heroCopy}>
@@ -68,8 +74,7 @@ export default function ClientLoginScreen({
               </span>
             </h1>
             <p className={styles.description}>
-              Consulta tus cuotas, pagos y saldo
-              <span>cuando quieras.</span>
+              Consulta tus cuotas, pagos y saldo.
             </p>
           </div>
         </section>
@@ -107,6 +112,9 @@ export default function ClientLoginScreen({
                   inputMode="numeric"
                   autoComplete="username"
                   placeholder="Número de documento"
+                  required
+                  minLength={5}
+                  maxLength={20}
                   aria-describedby={notice ? "client-login-notice" : undefined}
                   aria-invalid={notice?.tone === "red" || undefined}
                   className={styles.input}
@@ -144,6 +152,7 @@ export default function ClientLoginScreen({
               <Headphones size={29} strokeWidth={1.55} />
             </span>
             <span>¿Necesitas ayuda?</span>
+            <ChevronRight className={styles.supportArrow} size={25} aria-hidden="true" />
           </FinserSupportLink>
 
           <footer className={styles.footer}>
