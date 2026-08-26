@@ -281,6 +281,7 @@ export async function POST(request: Request) {
       vendedorId: seller?.id || null,
       sedeId: user.sedeId,
       clienteDocumento: documentNumber,
+      clientePrimerApellido: firstSurname,
       plataforma: platform,
     });
     solicitudId = solicitudReservation.id;

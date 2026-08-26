@@ -1905,6 +1905,7 @@ export async function POST(req: Request) {
       vendedorId: creditOwner.vendedorId,
       sedeId: creditOwner.sedeId,
       clienteDocumento,
+      clientePrimerApellido,
       plataforma: plataformaDispositivo,
     });
     if (

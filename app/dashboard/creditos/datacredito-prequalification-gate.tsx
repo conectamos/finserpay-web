@@ -468,10 +468,10 @@ export default function DatacreditoPrequalificationGate({
   const normalizedInitialDocument = String(initialDocumentNumber || "")
     .replace(/\D/g, "")
     .slice(0, 13);
-  const normalizedInitialSurname = String(initialFirstSurname || "").slice(
-    0,
-    80
-  );
+  const normalizedInitialSurname = String(initialFirstSurname || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 80);
   const [view, setView] = useState<GateView>("loading");
   const [documentNumber, setDocumentNumber] = useState(
     normalizedInitialDocument
@@ -696,6 +696,12 @@ export default function DatacreditoPrequalificationGate({
         }
 
         const assessmentParams = new URLSearchParams({ platform });
+        if (normalizedInitialDocument) {
+          assessmentParams.set("documentNumber", normalizedInitialDocument);
+        }
+        if (normalizedInitialSurname.trim()) {
+          assessmentParams.set("firstSurname", normalizedInitialSurname.trim());
+        }
         if (initialSolicitudId) {
           assessmentParams.set("draftId", String(initialSolicitudId));
         }
@@ -757,14 +763,8 @@ export default function DatacreditoPrequalificationGate({
         if (decision === "APROBADO") {
           const approved = normalizeApprovedAssessment(assessmentPayload, {
             assessmentId: initialAssessmentId,
-            documentNumber:
-              String(initialDocumentNumber || "")
-                .replace(/\D/g, "")
-                .slice(0, 13) || undefined,
-            firstSurname:
-              String(initialFirstSurname || "")
-                .trim()
-                .replace(/\s+/g, " ") || undefined,
+            documentNumber: normalizedInitialDocument || undefined,
+            firstSurname: normalizedInitialSurname || undefined,
           });
 
           if (approved && approved.platform !== platform) {
@@ -798,8 +798,8 @@ export default function DatacreditoPrequalificationGate({
       finishBypass,
       initialAssessmentId,
       initialSolicitudId,
-      initialDocumentNumber,
-      initialFirstSurname,
+      normalizedInitialDocument,
+      normalizedInitialSurname,
       platform,
       showApproved,
     ]

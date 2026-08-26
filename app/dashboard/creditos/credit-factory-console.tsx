@@ -137,6 +137,13 @@ import {
   veriffIdentityMatchesExpectedDocument,
 } from "@/lib/veriff-identity";
 import {
+  formatFirmaSeguroApiFailure,
+  formatFirmaSeguroProcessIssue,
+  isFirmaSeguroSuccessfulProcess,
+  resolveFirmaSeguroProcessUiState,
+  sanitizeFirmaSeguroVisibleText,
+} from "@/app/dashboard/creditos/firmaseguro-ui";
+import {
   runCedulaValidation,
   type CedulaValidationCheck,
   type CedulaValidationResult,
@@ -751,6 +758,7 @@ type FirmaSeguroResponse = {
   ok?: boolean;
   message?: string;
   error?: string;
+  detail?: unknown;
   documentUrl?: string | null;
   process?: {
     id?: number;
@@ -769,37 +777,6 @@ type FirmaSeguroResponse = {
 };
 
 type FirmaSeguroProcess = NonNullable<FirmaSeguroResponse["process"]>;
-
-function isFirmaSeguroSuccessfulProcess(process?: FirmaSeguroProcess | null) {
-  if (!process) {
-    return false;
-  }
-
-  const normalized = String(process.status || "")
-    .trim()
-    .toUpperCase();
-
-  return Boolean(
-    process.completedAt ||
-      process.hasSignedDocument ||
-      [
-        "COMPLETED",
-        "COMPLETE",
-        "COMPLETADO",
-        "FINALIZED",
-        "FINALIZADO",
-        "FINISHED",
-        "SIGNED",
-        "FIRMADO",
-        "APROBADO",
-        "APROBADA",
-        "EXITOSO",
-        "EXITOSA",
-        "SUCCESS",
-        "SUCCESSFUL",
-      ].some((item) => normalized.includes(item))
-  );
-}
 
 type CreditPaymentItem = {
   id: number;
@@ -4704,11 +4681,19 @@ export default function CreditFactoryConsole({
     plazoMesesNumero > 0 &&
     !iphoneInstallmentLimitExceeded;
   const contratoListo = stepClienteReady && stepContratoReady && stepEquipoReady;
-  const firmaSeguroProcessSent = Boolean(firmaSeguroDraftProcess?.processUuid);
-  const firmaSeguroProcessSigned = Boolean(
-    firmaSeguroDraftProcess?.completedAt ||
-      firmaSeguroDraftProcess?.hasSignedDocument
+  const firmaSeguroProcessUiState = resolveFirmaSeguroProcessUiState(
+    firmaSeguroDraftProcess
   );
+  const firmaSeguroProcessExists = Boolean(
+    firmaSeguroDraftProcess?.processUuid
+  );
+  const firmaSeguroProcessSigned = firmaSeguroProcessUiState === "signed";
+  const firmaSeguroProcessFailed = firmaSeguroProcessUiState === "error";
+  const firmaSeguroProcessSent =
+    firmaSeguroProcessUiState === "waiting" || firmaSeguroProcessSigned;
+  const firmaSeguroProcessIssue = firmaSeguroProcessFailed
+    ? formatFirmaSeguroProcessIssue(firmaSeguroDraftProcess)
+    : "";
   const firmaSeguroDraftFolio = firmaSeguroDraftProcess?.draftFolio || "";
   const stepDocumentosReady =
     firmaSeguroProcessSigned ||
@@ -8063,7 +8048,10 @@ export default function CreditFactoryConsole({
 
     if (!result.ok || !result.data?.ok) {
       throw new Error(
-        result.data?.error || "No se pudo enviar el expediente a FirmaSeguro"
+        formatFirmaSeguroApiFailure(
+          result.data,
+          "No se pudo enviar el expediente a FirmaSeguro"
+        )
       );
     }
 
@@ -8090,20 +8078,31 @@ export default function CreditFactoryConsole({
 
       if (!result.ok || !result.data?.ok) {
         throw new Error(
-          result.data?.error || "No se pudo actualizar el estado de FirmaSeguro"
+          formatFirmaSeguroApiFailure(
+            result.data,
+            "No se pudo actualizar el estado de FirmaSeguro"
+          )
         );
       }
 
       const process = result.data.process || null;
+      const processUiState = resolveFirmaSeguroProcessUiState(process);
       setFirmaSeguroDraftProcess(process);
 
-      if (process?.completedAt || process?.hasSignedDocument) {
+      if (processUiState === "signed") {
         setWizardStep(5);
         setNotice({
           text: iphoneFactory
             ? "FirmaSeguro reporto firma exitosa. Ahora verifica el enrolamiento iPhone y finaliza el credito."
             : "FirmaSeguro reporto firma exitosa. Ahora valida la entrega y finaliza el credito.",
           tone: "emerald",
+        });
+      } else if (processUiState === "error") {
+        setNotice({
+          text: `FirmaSeguro reportó un error: ${formatFirmaSeguroProcessIssue(
+            process
+          )}`,
+          tone: "red",
         });
       } else {
         setNotice({
@@ -8453,22 +8452,31 @@ export default function CreditFactoryConsole({
       const signature = await submitFirmaSeguroDraft(currentDraftId);
       const process = signature.process || null;
       const uuid = process?.processUuid;
-      const signed = Boolean(process?.completedAt || process?.hasSignedDocument);
+      const processUiState = resolveFirmaSeguroProcessUiState(process);
+      const signed = processUiState === "signed";
+      const failed = processUiState === "error";
 
       if (signed) {
         setWizardStep(5);
       }
 
       setNotice({
-        text: signed
-          ? iphoneFactory
-            ? "FirmaSeguro reporto firma exitosa. Verifica el enrolamiento iPhone para finalizar el credito."
-            : "FirmaSeguro reporto firma exitosa. Valida la entrega para finalizar el credito."
-          : uuid
-            ? `Expediente enviado a FirmaSeguro. Proceso: ${uuid}. Espera la firma exitosa para continuar.`
-            : signature.message ||
-              "Expediente enviado a FirmaSeguro. Espera la firma exitosa para continuar.",
-        tone: signed ? "emerald" : "amber",
+        text: failed
+          ? `FirmaSeguro reportó un error: ${formatFirmaSeguroProcessIssue(
+              process
+            )}`
+          : signed
+            ? iphoneFactory
+              ? "FirmaSeguro reporto firma exitosa. Verifica el enrolamiento iPhone para finalizar el credito."
+              : "FirmaSeguro reporto firma exitosa. Valida la entrega para finalizar el credito."
+            : uuid
+              ? `Expediente enviado a FirmaSeguro. Proceso: ${sanitizeFirmaSeguroVisibleText(
+                  uuid,
+                  100
+                )}. Espera la firma exitosa para continuar.`
+              : signature.message ||
+                "Expediente enviado a FirmaSeguro. Espera la firma exitosa para continuar.",
+        tone: failed ? "red" : signed ? "emerald" : "amber",
       });
     } catch (error) {
       setNotice({
@@ -8941,7 +8949,10 @@ export default function CreditFactoryConsole({
 
       if (!result.ok || !result.data?.ok) {
         throw new Error(
-          result.data?.error || "No se pudo consultar el expediente firmado"
+          formatFirmaSeguroApiFailure(
+            result.data,
+            "No se pudo consultar el expediente firmado"
+          )
         );
       }
 
@@ -8955,8 +8966,9 @@ export default function CreditFactoryConsole({
       }
 
       const process = result.data.process || null;
-      const processStatus = process?.status || "pendiente";
-      const lastError = process?.lastError;
+      const processStatus =
+        sanitizeFirmaSeguroVisibleText(process?.status, 80) || "pendiente";
+      const lastError = sanitizeFirmaSeguroVisibleText(process?.lastError, 420);
 
       setNotice({
         text: process
@@ -9010,7 +9022,10 @@ export default function CreditFactoryConsole({
 
       if (!result.ok || !result.data?.ok) {
         throw new Error(
-          result.data?.error || "No se pudo consultar el estado de FirmaSeguro"
+          formatFirmaSeguroApiFailure(
+            result.data,
+            "No se pudo consultar el estado de FirmaSeguro"
+          )
         );
       }
 
@@ -9024,8 +9039,12 @@ export default function CreditFactoryConsole({
       }
 
       const process = result.data.process || null;
-      const processStatus = process?.status || "pendiente";
-      const lastError = result.data.process?.lastError;
+      const processStatus =
+        sanitizeFirmaSeguroVisibleText(process?.status, 80) || "pendiente";
+      const lastError = sanitizeFirmaSeguroVisibleText(
+        result.data.process?.lastError,
+        420
+      );
       const signedWithoutPdf = isFirmaSeguroSuccessfulProcess(process);
       setNotice({
         text: process
@@ -9449,21 +9468,43 @@ export default function CreditFactoryConsole({
         }
 
         applyDraftPayload(result.data.item);
-        const firmaSeguroResult = await requestJson<FirmaSeguroResponse>(
-          `/api/creditos/borradores/${result.data.item.id}/firma-seguro`
-        ).catch(() => null);
+        let firmaSeguroLoadIssue = "";
 
-        if (
-          firmaSeguroResult?.ok &&
-          firmaSeguroResult.data?.ok &&
-          !cancelled
-        ) {
-          setFirmaSeguroDraftProcess(firmaSeguroResult.data.process || null);
+        try {
+          const firmaSeguroResult = await requestJson<FirmaSeguroResponse>(
+            `/api/creditos/borradores/${result.data.item.id}/firma-seguro`
+          );
+
+          if (!firmaSeguroResult.ok || !firmaSeguroResult.data?.ok) {
+            firmaSeguroLoadIssue = formatFirmaSeguroApiFailure(
+              firmaSeguroResult.data,
+              "No se pudo consultar el estado de FirmaSeguro"
+            );
+          } else if (!cancelled) {
+            const process = firmaSeguroResult.data.process || null;
+            setFirmaSeguroDraftProcess(process);
+
+            if (resolveFirmaSeguroProcessUiState(process) === "error") {
+              firmaSeguroLoadIssue = formatFirmaSeguroProcessIssue(process);
+            }
+          }
+        } catch (firmaSeguroError) {
+          firmaSeguroLoadIssue = sanitizeFirmaSeguroVisibleText(
+            firmaSeguroError instanceof Error
+              ? firmaSeguroError.message
+              : "No se pudo consultar el estado de FirmaSeguro"
+          );
+        }
+
+        if (cancelled) {
+          return;
         }
 
         setNotice({
-          text: "Borrador cargado. Puedes continuar o corregir el proceso del asesor.",
-          tone: "emerald",
+          text: firmaSeguroLoadIssue
+            ? `Borrador cargado, pero FirmaSeguro requiere atención: ${firmaSeguroLoadIssue}`
+            : "Borrador cargado. Puedes continuar o corregir el proceso del asesor.",
+          tone: firmaSeguroLoadIssue ? "red" : "emerald",
         });
       } catch (error) {
         if (cancelled) {
@@ -13765,6 +13806,8 @@ export default function CreditFactoryConsole({
                         "fp-stage-status inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
                         firmaSeguroProcessSigned
                           ? "is-success border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : firmaSeguroProcessFailed
+                            ? "is-error border-red-200 bg-red-50 text-red-700"
                           : firmaSeguroProcessSent
                             ? "is-waiting border-amber-200 bg-amber-50 text-amber-700"
                             : "is-pending border-amber-200 bg-amber-50 text-amber-700",
@@ -13774,6 +13817,8 @@ export default function CreditFactoryConsole({
                         ? "Enviando"
                         : firmaSeguroProcessSigned
                           ? "Firma exitosa"
+                          : firmaSeguroProcessFailed
+                            ? "Error de firma"
                           : firmaSeguroProcessSent
                             ? "Esperando firma"
                             : "Pendiente de envío"}
@@ -13840,6 +13885,8 @@ export default function CreditFactoryConsole({
                               "rounded-2xl border bg-white px-4 py-3 text-xs font-semibold",
                               firmaSeguroProcessSigned
                                 ? "border-emerald-200 text-emerald-700"
+                                : firmaSeguroProcessFailed
+                                  ? "border-red-200 text-red-700"
                                 : "border-amber-200 text-amber-700",
                             ].join(" ")}
                           >
@@ -13909,12 +13956,14 @@ export default function CreditFactoryConsole({
                         <Send className="h-4 w-4" strokeWidth={2} />
                         {creating || firmaSeguroSubmitting
                           ? "Enviando a FirmaSeguro..."
+                          : firmaSeguroProcessFailed
+                            ? "Reintentar FirmaSeguro"
                           : firmaSeguroProcessSent
                             ? "Reenviar FirmaSeguro"
                             : "Enviar a FirmaSeguro"}
                       </button>
 
-                      {firmaSeguroProcessSent ? (
+                      {firmaSeguroProcessExists ? (
                         <button
                           type="button"
                           onClick={() => void refreshFirmaSeguroDraftProcess()}
@@ -13935,6 +13984,13 @@ export default function CreditFactoryConsole({
                       ) : firmaSeguroProcessSigned ? (
                         <p className="mt-3 text-xs font-medium leading-5 text-emerald-700">
                           Firma exitosa. Continua al paso 5 para validar la entrega y crear el credito.
+                        </p>
+                      ) : firmaSeguroProcessFailed ? (
+                        <p
+                          className="mt-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold leading-5 text-red-700"
+                          role="alert"
+                        >
+                          FirmaSeguro reportó un error: {firmaSeguroProcessIssue}
                         </p>
                       ) : firmaSeguroProcessSent ? (
                         <p className="mt-3 text-xs font-medium leading-5 text-amber-700">
@@ -14127,6 +14183,8 @@ export default function CreditFactoryConsole({
                           >
                             {firmaSeguroProcessSent
                               ? "FirmaSeguro enviado"
+                              : firmaSeguroProcessFailed
+                                ? "Reintentar FirmaSeguro"
                               : "Listo, enviar FirmaSeguro"}
                           </button>
                         </div>
@@ -15173,7 +15231,7 @@ export default function CreditFactoryConsole({
                     disabled={
                       creating ||
                       firmaSeguroSubmitting ||
-                      (firmaSeguroProcessSent
+                      (firmaSeguroProcessExists
                         ? !firmaSeguroProcessSigned || !deliveryRequirementReady
                         : !ventaLista)
                     }
@@ -15181,7 +15239,7 @@ export default function CreditFactoryConsole({
                   >
                     {creating || firmaSeguroSubmitting
                       ? "Finalizando credito..."
-                      : firmaSeguroProcessSent
+                      : firmaSeguroProcessExists
                         ? "Finalizar credito firmado"
                         : "Finalizar credito"}
                   </button>

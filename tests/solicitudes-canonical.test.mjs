@@ -147,30 +147,38 @@ test("la aprobacion enlaza el id canonico antes del autosave", async () => {
   assert.match(factory, /replaceDraftInUrl\(result\.solicitudId\)/);
 });
 
-test("el autosave preserva documento y assessment canonicos de solicitudes materializadas", () => {
+test("el autosave preserva documento, apellido y assessment canonicos de solicitudes materializadas", () => {
   const legacyAssessmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const result = resolveSolicitudDraftCanonicalIdentity({
     materialized: true,
     storedDocument: "1.083.028.847",
+    storedPayloadFirstSurname: "De La Cruz",
     storedAssessmentId: null,
     storedPayloadAssessmentId: legacyAssessmentId,
     incomingDocument: "1083028847",
+    incomingFirstSurname: "  de   la cruz ",
     incomingAssessmentId: legacyAssessmentId.toUpperCase(),
-    payload: { clienteNombre: "Cliente" },
+    payload: {
+      clienteNombre: "Cliente",
+      clientePrimerApellido: "  de   la cruz ",
+    },
   });
 
   assert.equal(result.clienteDocumento, "1.083.028.847");
+  assert.equal(result.clientePrimerApellido, "De La Cruz");
   assert.equal(result.dataCreditoAssessmentId, legacyAssessmentId);
   assert.equal(result.payload.clienteDocumento, "1.083.028.847");
+  assert.equal(result.payload.clientePrimerApellido, "De La Cruz");
   assert.equal(result.payload.dataCreditoAssessmentId, legacyAssessmentId);
   assert.equal(result.payload.clienteNombre, "Cliente");
 });
 
-test("el autosave rechaza cambios de cedula o assessment en solicitudes materializadas", () => {
+test("el autosave rechaza cambios de cedula, apellido o assessment en solicitudes materializadas", () => {
   const canonicalAssessmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const base = {
     materialized: true,
     storedDocument: "1083028847",
+    storedPayloadFirstSurname: "Mendoza",
     storedAssessmentId: canonicalAssessmentId,
     payload: {},
   };
@@ -192,6 +200,19 @@ test("el autosave rechaza cambios de cedula o assessment en solicitudes material
       resolveSolicitudDraftCanonicalIdentity({
         ...base,
         incomingDocument: "1083028847",
+        incomingFirstSurname: "Mendoza Rojas",
+        incomingAssessmentId: canonicalAssessmentId,
+      }),
+    (error) =>
+      error instanceof SolicitudCanonicalMutationError &&
+      error.code === "SOLICITUD_APELLIDO_INMUTABLE" &&
+      error.status === 409
+  );
+  assert.throws(
+    () =>
+      resolveSolicitudDraftCanonicalIdentity({
+        ...base,
+        incomingDocument: "1083028847",
         incomingAssessmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       }),
     (error) =>
@@ -199,6 +220,37 @@ test("el autosave rechaza cambios de cedula o assessment en solicitudes material
       error.code === "SOLICITUD_DATACREDITO_INMUTABLE" &&
       error.status === 409
   );
+});
+
+test("la restauracion de DataCredito compara cedula y primer apellido antes de mostrar aprobacion", async () => {
+  const route = await readProjectFile(
+    "app/api/creditos/datacredito/evaluaciones/[id]/route.ts"
+  );
+  const gate = await readProjectFile(
+    "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
+  );
+
+  assert.match(route, /buildDataCreditoIdentityHashes/);
+  assert.match(route, /identity\.documentHash !== row\.documentHash/);
+  assert.match(route, /identity\.surnameHash !== row\.surnameHash/);
+  assert.match(route, /ASSESSMENT_IDENTITY_MISMATCH/);
+  assert.match(route, /requestedDraft\?\.clientePrimerApellido/);
+  assert.match(gate, /assessmentParams\.set\("documentNumber"/);
+  assert.match(gate, /assessmentParams\.set\("firstSurname"/);
+});
+
+test("la reserva inicial persiste el primer apellido consultado como identidad canonica", async () => {
+  const storage = await readProjectFile("lib/solicitudes-storage.ts");
+  const evaluationRoute = await readProjectFile(
+    "app/api/creditos/datacredito/evaluaciones/route.ts"
+  );
+
+  assert.match(storage, /clientePrimerApellido: string;/);
+  assert.match(
+    storage,
+    /clientePrimerApellido: String\(input\.clientePrimerApellido \|\| ""\)/
+  );
+  assert.match(evaluationRoute, /clientePrimerApellido: firstSurname/);
 });
 
 test("una solicitud materializada sin assessment canonico no acepta uno del payload", () => {

@@ -265,6 +265,7 @@ export type ActiveSolicitudCreditContext = {
   sedeId: number;
   aliadoId: number | null;
   clienteDocumento: string | null;
+  clientePrimerApellido: string | null;
   dataCreditoAssessmentId: string | null;
 };
 
@@ -277,6 +278,7 @@ export async function getActiveSolicitudCreditContext(
     `
       SELECT d."id", d."usuarioId", d."vendedorId", d."sedeId",
         s."aliadoId", d."clienteDocumento",
+        NULLIF(d."payload"->>'clientePrimerApellido', '') AS "clientePrimerApellido",
         COALESCE(
           d."dataCreditoAssessmentId"::text,
           NULLIF(d."payload"->>'dataCreditoAssessmentId', '')
@@ -442,6 +444,7 @@ export async function reserveSolicitudForIdentity(input: {
   vendedorId: number | null;
   sedeId: number;
   clienteDocumento: string;
+  clientePrimerApellido: string;
   plataforma?: string | null;
 }) {
   await ensureSolicitudSchema();
@@ -511,6 +514,11 @@ export async function reserveSolicitudForIdentity(input: {
       normalizePlatform(input.plataforma),
       JSON.stringify({
         clienteDocumento: input.clienteDocumento.trim(),
+        clientePrimerApellido: String(input.clientePrimerApellido || "")
+          .replace(/[\u0000-\u001f\u007f]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 90),
         plataformaDispositivo: normalizePlatform(input.plataforma),
         solicitudOrigen: "DATACREDITO",
         dataCreditoStatus: "PENDING",
@@ -591,9 +599,12 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           materialized: Boolean(targetRow.materialized),
           storedDocument: targetRow.clienteDocumento,
           storedPayloadDocument: targetRow.payload?.clienteDocumento,
+          storedPayloadFirstSurname:
+            targetRow.payload?.clientePrimerApellido,
           storedAssessmentId: targetRow.dataCreditoAssessmentId,
           storedPayloadAssessmentId: targetRow.payload?.dataCreditoAssessmentId,
           incomingDocument: input.clienteDocumento,
+          incomingFirstSurname: input.payload.clientePrimerApellido,
           incomingAssessmentId,
           payload: input.payload,
         })

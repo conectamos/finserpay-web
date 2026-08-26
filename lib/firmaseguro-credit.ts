@@ -725,7 +725,7 @@ function addFirmaSeguroConfigContext(
   const balanceTypeId = getCreditPackageBalanceTypeId(config);
   const authMethodId = delivery?.authMethodId ?? config.authMethodId;
   return new FirmaSeguroApiError(
-    `${error.message}. Configuracion enviada: signatureMethodId=${config.signatureMethodId}, authMethodId=${authMethodId}, balanceTypeId=${balanceTypeId}, email=${delivery?.notifyByEmail ? "si" : "no"}, whatsapp=${delivery?.notifyByWhatsApp ? "si" : "no"}, authSource=${delivery?.authMethodSource || "config"}`,
+    `${error.message}. Configuracion enviada: signatureMethodId=${config.signatureMethodId}, authMethodId=${authMethodId}, balanceTypeId=${balanceTypeId}, email=${delivery?.sendByEmail ? "si" : "no"}, whatsapp=${delivery?.sendByWhatsApp ? "si" : "no"}, authSource=${delivery?.authMethodSource || "config"}`,
     error.status,
     {
       ...(typeof error.detail === "object" && error.detail
@@ -736,8 +736,8 @@ function addFirmaSeguroConfigContext(
         signatureMethodId: config.signatureMethodId,
         authMethodId,
         balanceTypeId,
-        sendByEmail: delivery?.notifyByEmail ?? false,
-        sendByWhatsApp: delivery?.notifyByWhatsApp ?? false,
+        sendByEmail: delivery?.sendByEmail ?? false,
+        sendByWhatsApp: delivery?.sendByWhatsApp ?? false,
         authMethodSource: delivery?.authMethodSource,
       },
     }
@@ -765,8 +765,8 @@ function buildCreateFullByCompanyPayload(
       language: "es",
       is_hand_written: config.handwrittenEvidence,
       is_photographic: config.photographicEvidence,
-      isSendByEmail: delivery.notifyByEmail,
-      isSendByWhatsApp: delivery.notifyByWhatsApp,
+      isSendByEmail: delivery.sendByEmail,
+      isSendByWhatsApp: delivery.sendByWhatsApp,
       deadline_days: config.deadlineDays,
       callback: callbackUrl,
       ...(delivery.notifyByEmail
@@ -822,8 +822,8 @@ function buildCreateFullPayload(
     isInOrder: false,
     tags: getFirmaSeguroTags(credito),
     isRead: true,
-    isSendByEmail: delivery.notifyByEmail,
-    isSendByWhatsApp: delivery.notifyByWhatsApp,
+    isSendByEmail: delivery.sendByEmail,
+    isSendByWhatsApp: delivery.sendByWhatsApp,
     language: "es",
     isHandWritten: config.handwrittenEvidence,
     isPhotographic: config.photographicEvidence,

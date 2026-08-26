@@ -5,6 +5,7 @@ import { getActiveSolicitudCreditContext } from "@/lib/solicitudes-storage";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
 import { normalizeDataCreditoPlatform } from "@/lib/datacredito/policy";
 import {
+  buildDataCreditoIdentityHashes,
   dataCreditoAssessmentMatchesScope,
   getDataCreditoAssessmentById,
   getDataCreditoAssessmentDocumentState,
@@ -48,6 +49,8 @@ export async function GET(request: Request, context: RouteContext) {
       ? Number(requestedDraftId)
       : null;
   const requestedPlatform = requestUrl.searchParams.get("platform");
+  const requestedDocumentNumber = requestUrl.searchParams.get("documentNumber");
+  const requestedFirstSurname = requestUrl.searchParams.get("firstSurname");
   const expectedPlatform =
     requestedPlatform === null
       ? null
@@ -73,16 +76,13 @@ export async function GET(request: Request, context: RouteContext) {
       aliadoId: user.aliadoId || null,
     };
 
-    const centralDraft =
-      row &&
-      admin &&
-      isFinserPayCentralAlly(user.aliadoAccesoCodigo) &&
-      draftId
-        ? await getActiveSolicitudCreditContext(draftId)
-        : null;
+    const requestedDraft =
+      row && draftId ? await getActiveSolicitudCreditContext(draftId) : null;
     const assessmentBelongsToCentralDraft = Boolean(
-      centralDraft?.dataCreditoAssessmentId &&
-        centralDraft.dataCreditoAssessmentId.toLowerCase() === id.toLowerCase()
+      admin &&
+        isFinserPayCentralAlly(user.aliadoAccesoCodigo) &&
+        requestedDraft?.dataCreditoAssessmentId &&
+        requestedDraft.dataCreditoAssessmentId.toLowerCase() === id.toLowerCase()
     );
     if (
       !row ||
@@ -93,6 +93,54 @@ export async function GET(request: Request, context: RouteContext) {
         { ok: false, error: "Evaluacion no encontrada" },
         { status: 404 }
       );
+    }
+
+    if (
+      draftId &&
+      (!requestedDraft?.dataCreditoAssessmentId ||
+        requestedDraft.dataCreditoAssessmentId.toLowerCase() !== id.toLowerCase())
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "Evaluacion no encontrada" },
+        { status: 404 }
+      );
+    }
+
+    const identityDocument = draftId
+      ? requestedDraft?.clienteDocumento || ""
+      : requestedDocumentNumber || "";
+    const identitySurname = draftId
+      ? requestedDraft?.clientePrimerApellido || ""
+      : requestedFirstSurname || "";
+
+    if (
+      draftId ||
+      requestedDocumentNumber !== null ||
+      requestedFirstSurname !== null
+    ) {
+      const identity = buildDataCreditoIdentityHashes({
+        documentNumber: identityDocument,
+        firstSurname: identitySurname,
+      });
+
+      if (
+        !identityDocument ||
+        !identitySurname ||
+        identity.documentHash !== row.documentHash ||
+        identity.surnameHash !== row.surnameHash
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            status: "NO_EVALUADO",
+            code: "ASSESSMENT_IDENTITY_MISMATCH",
+            error:
+              "La cedula o el primer apellido ya no coinciden con la consulta de DataCredito. Recarga los datos del titular antes de continuar.",
+            correlationId: row.correlationId,
+          },
+          { status: 409 }
+        );
+      }
     }
 
     if (expectedPlatform && row.platform !== expectedPlatform) {

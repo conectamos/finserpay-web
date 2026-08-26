@@ -44,7 +44,11 @@ import {
   findEquipmentCatalogItem,
   findEquipmentCatalogItemById,
 } from "@/lib/equipment-catalog";
-import { FirmaSeguroApiError } from "@/lib/firmaseguro";
+import {
+  FirmaSeguroApiError,
+  isFirmaSeguroCompletedStatus,
+} from "@/lib/firmaseguro";
+import { isFirmaSeguroFailedStatus } from "@/lib/firmaseguro-status";
 import {
   createFirmaSeguroProcessForDraft,
   getLatestFirmaSeguroProcessForDraft,
@@ -52,6 +56,7 @@ import {
   serializeFirmaSeguroProcess,
 } from "@/lib/firmaseguro-credit";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
+import { tryAcquireFirmaSeguroDraftDispatchLock } from "@/lib/firmaseguro-storage";
 import { isAdminRole } from "@/lib/roles";
 import { ensureSolicitudSchema } from "@/lib/solicitudes-storage";
 
@@ -102,12 +107,63 @@ type BuiltDraftCredit = {
 
 class CreditValidationError extends Error {
   readonly status: number;
+  readonly code: string;
 
-  constructor(message: string, status = 400) {
+  constructor(
+    message: string,
+    status = 400,
+    code = "FIRMASEGURO_CREDIT_INVALID"
+  ) {
     super(message);
     this.name = "CreditValidationError";
     this.status = status;
+    this.code = code;
   }
+}
+
+function canReuseFirmaSeguroProcess(process: {
+  completedAt?: unknown;
+  lastError?: unknown;
+  signedDocumentBase64?: unknown;
+  status?: unknown;
+}) {
+  const normalized = sanitizeText(process.status).toUpperCase();
+
+  if (
+    process.completedAt ||
+    sanitizeText(process.signedDocumentBase64) ||
+    isFirmaSeguroCompletedStatus(normalized)
+  ) {
+    return true;
+  }
+
+  if (sanitizeText(process.lastError)) {
+    return false;
+  }
+
+  return Boolean(normalized && !isFirmaSeguroFailedStatus(normalized));
+}
+
+function logFirmaSeguroDraftError(
+  operation: "GET" | "POST",
+  draftId: number | null,
+  error: unknown
+) {
+  console.error("ERROR FIRMASEGURO BORRADOR:", {
+    operation,
+    draftId,
+    errorType: error instanceof Error ? error.name : "UnknownError",
+    status:
+      error instanceof CreditValidationError || error instanceof FirmaSeguroApiError
+        ? error.status
+        : 500,
+    code:
+      error instanceof CreditValidationError
+        ? error.code
+        : error instanceof FirmaSeguroApiError
+          ? "FIRMASEGURO_PROVIDER_ERROR"
+          : "FIRMASEGURO_UNEXPECTED_ERROR",
+  });
 }
 
 
@@ -259,8 +315,9 @@ async function getDraftDataCreditoOffer(
 
   if (!assessment) {
     throw new CreditValidationError(
-      "La precalificacion no esta aprobada, vencio o no corresponde al titular, asesor, sede y plataforma de este credito.",
-      409
+      "La precalificacion no esta aprobada, vencio o no coincide con la cedula y el primer apellido consultados para este credito.",
+      409,
+      "DATACREDITO_ASSESSMENT_INVALID"
     );
   }
 
@@ -616,7 +673,12 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
 function firmaSeguroErrorResponse(error: unknown) {
   if (error instanceof CreditValidationError) {
     return NextResponse.json(
-      { ok: false, error: error.message },
+      {
+        ok: false,
+        code: error.code,
+        stage: "credit_validation",
+        error: error.message,
+      },
       { status: error.status }
     );
   }
@@ -625,6 +687,8 @@ function firmaSeguroErrorResponse(error: unknown) {
     return NextResponse.json(
       {
         ok: false,
+        code: "FIRMASEGURO_PROVIDER_ERROR",
+        stage: "provider_dispatch",
         error: error.message,
         detail: error.detail,
       },
@@ -644,9 +708,11 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  let draftIdForLog: number | null = null;
   try {
     const params = await context.params;
     const draftId = parseDraftId(params.id);
+    draftIdForLog = draftId;
 
     if (!draftId) {
       return NextResponse.json(
@@ -677,6 +743,7 @@ export async function GET(
       process: serializeFirmaSeguroProcess(process),
     });
   } catch (error) {
+    logFirmaSeguroDraftError("GET", draftIdForLog, error);
     return firmaSeguroErrorResponse(error);
   }
 }
@@ -685,9 +752,11 @@ export async function POST(
   _request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  let draftIdForLog: number | null = null;
   try {
     const params = await context.params;
     const draftId = parseDraftId(params.id);
+    draftIdForLog = draftId;
 
     if (!draftId) {
       return NextResponse.json(
@@ -705,66 +774,112 @@ export async function POST(
     }
 
     const current = await getLatestFirmaSeguroProcessForDraft(draftId);
-    const { credit, amortizationPlan, financingParameters } =
-      await buildDraftCredit(authorized.row);
-    const draftFolio = current?.draftFolio || credit.folio;
-    const payload = {
-      ...payloadObject(authorized.row.payload),
-      firmaSeguroDraftFolio: draftFolio,
-    };
-    const firmaSeguroDraftPayload: Record<string, unknown> = {
-      ...payload,
-    };
-    delete firmaSeguroDraftPayload.iphoneSelfieCedulaDataUrl;
-    delete firmaSeguroDraftPayload.iphoneSelfieCedulaCapturedAt;
-    delete firmaSeguroDraftPayload.iphoneSelfieCedulaSource;
+    if (current && canReuseFirmaSeguroProcess(current)) {
+      return NextResponse.json({
+        ok: true,
+        idempotent: true,
+        process: serializeFirmaSeguroProcess(current),
+        message: "La solicitud ya tiene un proceso activo en FirmaSeguro",
+      });
+    }
+    const built = await buildDraftCredit(authorized.row);
+    const dispatchLock = await tryAcquireFirmaSeguroDraftDispatchLock(draftId);
+    if (!dispatchLock) {
+      const concurrentProcess = await getLatestFirmaSeguroProcessForDraft(draftId);
+      if (concurrentProcess && canReuseFirmaSeguroProcess(concurrentProcess)) {
+        return NextResponse.json({
+          ok: true,
+          idempotent: true,
+          process: serializeFirmaSeguroProcess(concurrentProcess),
+          message: "La solicitud ya tiene un proceso activo en FirmaSeguro",
+        });
+      }
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "FIRMASEGURO_DISPATCH_IN_PROGRESS",
+          stage: "provider_dispatch",
+          error:
+            "El expediente ya se esta enviando a FirmaSeguro. Espera unos segundos y actualiza el estado.",
+        },
+        { status: 409, headers: { "Retry-After": "2" } }
+      );
+    }
 
-    credit.folio = draftFolio;
-    credit.referenciaPago = generatePaymentReference(
-      draftFolio,
-      credit.clienteDocumento || ""
-    );
-    firmaSeguroDraftPayload.financialTermsSeal = createFinancingTermsSeal({
-      folio: draftFolio,
-      documento: credit.clienteDocumento || "",
-      contrato: {
-        tipoDocumento: credit.clienteTipoDocumento || "",
-        clienteNombre: credit.clienteNombre,
-        clienteTelefono: credit.clienteTelefono || "",
-        clienteCorreo: credit.clienteCorreo || "",
-        clienteDireccion: credit.clienteDireccion || "",
-        equipoMarca: credit.equipoMarca || "",
-        equipoModelo: credit.equipoModelo || "",
-        referenciaEquipo: credit.referenciaEquipo || "",
-        imei: credit.imei || credit.deviceUid || "",
-      },
-      amortizacion: amortizationPlan,
-      parametros: financingParameters,
-    });
+    try {
+      const lockedCurrent = await getLatestFirmaSeguroProcessForDraft(draftId);
+      if (lockedCurrent && canReuseFirmaSeguroProcess(lockedCurrent)) {
+        return NextResponse.json({
+          ok: true,
+          idempotent: true,
+          process: serializeFirmaSeguroProcess(lockedCurrent),
+          message: "La solicitud ya tiene un proceso activo en FirmaSeguro",
+        });
+      }
 
-    await prisma.$executeRawUnsafe(
-      `
-        UPDATE "CreditoBorrador"
-        SET "payload" = $2::jsonb,
-            "updatedAt" = NOW()
-        WHERE "id" = $1
-      `,
-      draftId,
-      JSON.stringify(payload)
-    );
+      const { credit, amortizationPlan, financingParameters } = built;
+      const draftFolio = lockedCurrent?.draftFolio || credit.folio;
+      const payload = {
+        ...payloadObject(authorized.row.payload),
+        firmaSeguroDraftFolio: draftFolio,
+      };
+      const firmaSeguroDraftPayload: Record<string, unknown> = {
+        ...payload,
+      };
+      delete firmaSeguroDraftPayload.iphoneSelfieCedulaDataUrl;
+      delete firmaSeguroDraftPayload.iphoneSelfieCedulaCapturedAt;
+      delete firmaSeguroDraftPayload.iphoneSelfieCedulaSource;
 
-    const process = await createFirmaSeguroProcessForDraft(credit, {
-      draftId,
-      draftFolio,
-      draftPayload: firmaSeguroDraftPayload,
-    });
+      credit.folio = draftFolio;
+      credit.referenciaPago = generatePaymentReference(
+        draftFolio,
+        credit.clienteDocumento || ""
+      );
+      firmaSeguroDraftPayload.financialTermsSeal = createFinancingTermsSeal({
+        folio: draftFolio,
+        documento: credit.clienteDocumento || "",
+        contrato: {
+          tipoDocumento: credit.clienteTipoDocumento || "",
+          clienteNombre: credit.clienteNombre,
+          clienteTelefono: credit.clienteTelefono || "",
+          clienteCorreo: credit.clienteCorreo || "",
+          clienteDireccion: credit.clienteDireccion || "",
+          equipoMarca: credit.equipoMarca || "",
+          equipoModelo: credit.equipoModelo || "",
+          referenciaEquipo: credit.referenciaEquipo || "",
+          imei: credit.imei || credit.deviceUid || "",
+        },
+        amortizacion: amortizationPlan,
+        parametros: financingParameters,
+      });
 
-    return NextResponse.json({
-      ok: true,
-      process: serializeFirmaSeguroProcess(process),
-      message: "Proceso de firma enviado a FirmaSeguro",
-    });
+      await prisma.$executeRawUnsafe(
+        `
+          UPDATE "CreditoBorrador"
+          SET "payload" = $2::jsonb,
+              "updatedAt" = NOW()
+          WHERE "id" = $1
+        `,
+        draftId,
+        JSON.stringify(payload)
+      );
+
+      const process = await createFirmaSeguroProcessForDraft(credit, {
+        draftId,
+        draftFolio,
+        draftPayload: firmaSeguroDraftPayload,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        process: serializeFirmaSeguroProcess(process),
+        message: "Proceso de firma enviado a FirmaSeguro",
+      });
+    } finally {
+      await dispatchLock.release();
+    }
   } catch (error) {
+    logFirmaSeguroDraftError("POST", draftIdForLog, error);
     return firmaSeguroErrorResponse(error);
   }
 }

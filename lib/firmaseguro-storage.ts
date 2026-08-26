@@ -1,3 +1,4 @@
+import { Client } from "pg";
 import prisma from "@/lib/prisma";
 
 export type FirmaSeguroProcessRow = {
@@ -322,6 +323,55 @@ export async function getLatestFirmaSeguroProcessByDraft(draftId: number) {
   );
 
   return rows[0] || null;
+}
+
+export async function tryAcquireFirmaSeguroDraftDispatchLock(draftId: number) {
+  if (!Number.isSafeInteger(draftId) || draftId <= 0 || draftId > 2_147_483_647) {
+    throw new Error("FIRMASEGURO_DRAFT_LOCK_INVALID");
+  }
+
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    connectionTimeoutMillis: 10_000,
+    query_timeout: 15_000,
+  });
+  let connected = false;
+  let acquired = false;
+
+  try {
+    await client.connect();
+    connected = true;
+    const result = await client.query<{ acquired: boolean }>(
+      `SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired`,
+      [1_179_865_177, draftId]
+    );
+    acquired = result.rows[0]?.acquired === true;
+    if (!acquired) {
+      await client.end();
+      return null;
+    }
+  } catch (error) {
+    if (connected) await client.end().catch(() => undefined);
+    throw error;
+  }
+
+  let released = false;
+  return {
+    release: async () => {
+      if (released) return;
+      released = true;
+      try {
+        if (acquired) {
+          await client.query(
+            `SELECT pg_advisory_unlock($1::integer, $2::integer)`,
+            [1_179_865_177, draftId]
+          );
+        }
+      } finally {
+        await client.end().catch(() => undefined);
+      }
+    },
+  };
 }
 
 export async function getFirmaSeguroProcessByUuid(processUuid: string) {

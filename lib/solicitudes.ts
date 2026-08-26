@@ -103,6 +103,7 @@ function compactText(value: unknown, maxLength: number) {
 
 export type SolicitudCanonicalMutationCode =
   | "SOLICITUD_DOCUMENTO_INMUTABLE"
+  | "SOLICITUD_APELLIDO_INMUTABLE"
   | "SOLICITUD_DATACREDITO_INMUTABLE";
 
 export class SolicitudCanonicalMutationError extends Error {
@@ -113,7 +114,9 @@ export class SolicitudCanonicalMutationError extends Error {
     super(
       code === "SOLICITUD_DOCUMENTO_INMUTABLE"
         ? "La cedula de una solicitud consultada no se puede cambiar."
-        : "La consulta de DataCredito asociada a la solicitud no se puede cambiar."
+        : code === "SOLICITUD_APELLIDO_INMUTABLE"
+          ? "El primer apellido usado en la consulta de DataCredito no se puede cambiar."
+          : "La consulta de DataCredito asociada a la solicitud no se puede cambiar."
     );
     this.code = code;
     this.name = "SolicitudCanonicalMutationError";
@@ -216,13 +219,19 @@ export function selectCanonicalSolicitudesByDocument<
   return [...selected.values()];
 }
 
+function canonicalSolicitudSurnameKey(value: unknown) {
+  return compactText(value, 90).normalize("NFKC").toLocaleUpperCase("es-CO");
+}
+
 export function resolveSolicitudDraftCanonicalIdentity(input: {
   materialized: boolean;
   storedDocument?: unknown;
   storedPayloadDocument?: unknown;
+  storedPayloadFirstSurname?: unknown;
   storedAssessmentId?: unknown;
   storedPayloadAssessmentId?: unknown;
   incomingDocument?: unknown;
+  incomingFirstSurname?: unknown;
   incomingAssessmentId?: unknown;
   payload: Record<string, unknown>;
 }) {
@@ -231,6 +240,10 @@ export function resolveSolicitudDraftCanonicalIdentity(input: {
     compactText(input.storedPayloadDocument, 80) ||
     null;
   const incomingDocument = compactText(input.incomingDocument, 80) || null;
+  const storedFirstSurname =
+    compactText(input.storedPayloadFirstSurname, 90) || null;
+  const incomingFirstSurname =
+    compactText(input.incomingFirstSurname, 90) || null;
   const storedAssessmentId =
     canonicalSolicitudUuid(input.storedAssessmentId) ||
     canonicalSolicitudUuid(input.storedPayloadAssessmentId);
@@ -240,6 +253,7 @@ export function resolveSolicitudDraftCanonicalIdentity(input: {
   if (!input.materialized) {
     return {
       clienteDocumento: incomingDocument,
+      clientePrimerApellido: incomingFirstSurname,
       dataCreditoAssessmentId: incomingAssessmentId,
       payload: { ...input.payload },
     };
@@ -263,14 +277,26 @@ export function resolveSolicitudDraftCanonicalIdentity(input: {
     throw new SolicitudCanonicalMutationError("SOLICITUD_DATACREDITO_INMUTABLE");
   }
 
+  if (
+    incomingFirstSurname &&
+    (!storedFirstSurname ||
+      canonicalSolicitudSurnameKey(incomingFirstSurname) !==
+        canonicalSolicitudSurnameKey(storedFirstSurname))
+  ) {
+    throw new SolicitudCanonicalMutationError("SOLICITUD_APELLIDO_INMUTABLE");
+  }
+
   const payload = { ...input.payload };
   if (storedDocument) payload.clienteDocumento = storedDocument;
   else delete payload.clienteDocumento;
+  if (storedFirstSurname) payload.clientePrimerApellido = storedFirstSurname;
+  else delete payload.clientePrimerApellido;
   if (storedAssessmentId) payload.dataCreditoAssessmentId = storedAssessmentId;
   else delete payload.dataCreditoAssessmentId;
 
   return {
     clienteDocumento: storedDocument,
+    clientePrimerApellido: storedFirstSurname,
     dataCreditoAssessmentId: storedAssessmentId,
     payload,
   };
