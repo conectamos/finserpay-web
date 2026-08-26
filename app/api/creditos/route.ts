@@ -84,9 +84,15 @@ import {
 } from "@/lib/veriff-storage";
 import {
   extractVeriffIdentityData,
+  extractVeriffIdentityDocumentEvidence,
   getVeriffPublicSummary,
   isVeriffRequired,
 } from "@/lib/veriff";
+import {
+  compareDataCreditoVeriffIdentityEvidence,
+  getDataCreditoVeriffIdentityRejectionCode,
+} from "@/lib/veriff-identity";
+import { rejectVeriffDraftForIdentityFailure } from "@/lib/veriff-retry-policy";
 import {
   allowsDataCreditoNonProductionProvider,
   getDataCreditoPublicConfig,
@@ -1214,6 +1220,20 @@ export async function POST(req: Request) {
           { status: 409 }
         );
       }
+
+      const linkedAssessmentId = String(
+        solicitudContext?.dataCreditoAssessmentId || ""
+      ).toLowerCase();
+      if (!linkedAssessmentId || linkedAssessmentId !== dataCreditoAssessment.id.toLowerCase()) {
+        return NextResponse.json(
+          {
+            code: "SOLICITUD_DATACREDITO_NO_VINCULADA",
+            error:
+              "La consulta de DataCredito no esta vinculada a esta solicitud. El credito fue rechazado.",
+          },
+          { status: 409 }
+        );
+      }
     }
 
     const iphoneManualEnrollmentVerified =
@@ -1992,63 +2012,23 @@ export async function POST(req: Request) {
     }
 
     if (veriffValidation) {
-      const verifiedIdentity =
-        extractVeriffIdentityData(veriffValidation.decisionPayload) ||
-        extractVeriffIdentityData(veriffValidation.webhookPayload);
-      const verifiedDocument = sanitizeText(
-        verifiedIdentity?.documentNumber || veriffValidation.clienteDocumento
+      const decisionIdentity = extractVeriffIdentityData(
+        veriffValidation.decisionPayload
       );
-      const storedValidationDocument = sanitizeText(veriffValidation.clienteDocumento);
-      const verifiedDocumentIsNumeric = documentDigits(verifiedDocument).length >= 5;
-      const verifiedDocumentMatches = documentValuesMatch(
-        verifiedDocument,
-        clienteDocumento
+      const webhookIdentity = extractVeriffIdentityData(
+        veriffValidation.webhookPayload
       );
-      const storedValidationDocumentMatches = documentValuesMatch(
-        storedValidationDocument,
-        clienteDocumento
+      const decisionIdentityEvidence = extractVeriffIdentityDocumentEvidence(
+        veriffValidation.decisionPayload
       );
-      const validationDocumentAvailable = Boolean(
-        verifiedDocumentIsNumeric ||
-          documentDigits(storedValidationDocument).length >= 5 ||
-          verifiedDocumentMatches ||
-          storedValidationDocumentMatches
+      const webhookIdentityEvidence = extractVeriffIdentityDocumentEvidence(
+        veriffValidation.webhookPayload
       );
       const sameSede = veriffValidation.sedeId === user.sedeId;
       const sameAlly =
         admin &&
         user.aliadoAccesoId &&
         veriffValidation.aliadoId === user.aliadoAccesoId;
-
-      if (
-        (verifiedDocumentIsNumeric && !verifiedDocumentMatches) ||
-        (!verifiedDocumentIsNumeric &&
-          documentKey(verifiedDocument) &&
-          !verifiedDocumentMatches &&
-          !storedValidationDocumentMatches)
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "La validacion Veriff no corresponde a la cedula de este credito.",
-          },
-          { status: 409 }
-        );
-      }
-
-      if (
-        veriffRequired &&
-        isVeriffApproved(veriffValidation) &&
-        !validationDocumentAvailable
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Veriff aprobo la identidad, pero no retorno un documento verificable para este credito.",
-          },
-          { status: 409 }
-        );
-      }
 
       if (!adminCentral && !sameSede && !sameAlly) {
         return NextResponse.json(
@@ -2058,6 +2038,120 @@ export async function POST(req: Request) {
           },
           { status: 403 }
         );
+      }
+
+      if (dataCreditoAssessment) {
+        if (veriffValidation.creditoId) {
+          return NextResponse.json(
+            {
+              code: "DATACREDITO_VERIFF_ALREADY_LINKED",
+              error:
+                "La validacion facial ya esta asociada a otro credito. Este credito fue rechazado para evitar reutilizar la identidad.",
+            },
+            { status: 409 }
+          );
+        }
+
+        if (veriffValidation.draftId !== solicitudReservation.id) {
+          return NextResponse.json(
+            {
+              code: "DATACREDITO_VERIFF_SOLICITUD_MISMATCH",
+              error:
+                "La validacion facial no corresponde a la solicitud consultada en DataCredito. El credito fue rechazado.",
+            },
+            { status: 409 }
+          );
+        }
+
+        if (isVeriffApproved(veriffValidation)) {
+          const identityComparison = compareDataCreditoVeriffIdentityEvidence(
+            [decisionIdentityEvidence, webhookIdentityEvidence],
+            clienteDocumento
+          );
+
+          if (!identityComparison.ok) {
+            const rejectionCode = getDataCreditoVeriffIdentityRejectionCode(
+              identityComparison.status
+            );
+            const rejectionMessage =
+              identityComparison.status === "missing"
+                ? "La validacion facial no devolvio una cedula verificable. El credito fue rechazado."
+                : identityComparison.status === "invalid-format"
+                  ? "La validacion facial devolvio una cedula invalida. El credito fue rechazado."
+                  : identityComparison.status === "invalid-document-type"
+                    ? "La validacion facial no corresponde a una cedula de ciudadania. El credito fue rechazado."
+                    : identityComparison.status === "invalid-document-country"
+                      ? "La validacion facial no corresponde a un documento colombiano. El credito fue rechazado."
+                      : "La cedula de la validacion facial no coincide con la cedula consultada en DataCredito. El credito fue rechazado.";
+
+            await rejectVeriffDraftForIdentityFailure(
+              veriffValidation,
+              rejectionCode,
+              dataCreditoAssessment.id
+            );
+            return NextResponse.json(
+              {
+                code: rejectionCode,
+                error: rejectionMessage,
+              },
+              { status: 409 }
+            );
+          }
+        }
+      } else {
+        const verifiedIdentity = decisionIdentity || webhookIdentity;
+        const verifiedDocument = sanitizeText(
+          verifiedIdentity?.documentNumber || veriffValidation.clienteDocumento
+        );
+        const storedValidationDocument = sanitizeText(
+          veriffValidation.clienteDocumento
+        );
+        const verifiedDocumentIsNumeric =
+          documentDigits(verifiedDocument).length >= 5;
+        const verifiedDocumentMatches = documentValuesMatch(
+          verifiedDocument,
+          clienteDocumento
+        );
+        const storedValidationDocumentMatches = documentValuesMatch(
+          storedValidationDocument,
+          clienteDocumento
+        );
+        const validationDocumentAvailable = Boolean(
+          verifiedDocumentIsNumeric ||
+            documentDigits(storedValidationDocument).length >= 5 ||
+            verifiedDocumentMatches ||
+            storedValidationDocumentMatches
+        );
+
+        if (
+          (verifiedDocumentIsNumeric && !verifiedDocumentMatches) ||
+          (!verifiedDocumentIsNumeric &&
+            documentKey(verifiedDocument) &&
+            !verifiedDocumentMatches &&
+            !storedValidationDocumentMatches)
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "La validacion Veriff no corresponde a la cedula de este credito.",
+            },
+            { status: 409 }
+          );
+        }
+
+        if (
+          veriffRequired &&
+          isVeriffApproved(veriffValidation) &&
+          !validationDocumentAvailable
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "Veriff aprobo la identidad, pero no retorno un documento verificable para este credito.",
+            },
+            { status: 409 }
+          );
+        }
       }
     }
 

@@ -127,7 +127,10 @@ import {
   validateCreditContactPhones,
 } from "@/lib/credit-contact-phones";
 import { buildCreditPaymentHref } from "@/lib/credit-payment-navigation";
-import { veriffIdentityMatchesExpectedDocument } from "@/lib/veriff-identity";
+import {
+  compareStrictIdentityDocuments,
+  veriffIdentityMatchesExpectedDocument,
+} from "@/lib/veriff-identity";
 import {
   runCedulaValidation,
   type CedulaValidationCheck,
@@ -257,6 +260,14 @@ type VeriffValidationState = {
   veriffSessionId: string | null;
   sessionUrl: string | null;
   identityData: VeriffIdentityDataState | null;
+  identityDocumentNumber?: string | null;
+  identityDocumentStatus?:
+    | "match"
+    | "missing"
+    | "invalid-format"
+    | "mismatch"
+    | "invalid-document-type"
+    | "invalid-document-country";
   code: string | null;
   reason: string | null;
   lastError: string | null;
@@ -301,7 +312,17 @@ function veriffApprovalCanUnlockClient(
     }
   }
 
-  if (
+  if (typeof expectedDocumentNumber === "string") {
+    if (
+      validation.identityDocumentStatus !== "match" ||
+      !compareStrictIdentityDocuments(
+        validation.identityDocumentNumber,
+        expectedDocumentNumber
+      ).ok
+    ) {
+      return false;
+    }
+  } else if (
     !veriffIdentityMatchesExpectedDocument(
       validation.identityData?.documentNumber,
       expectedDocumentNumber
@@ -311,6 +332,54 @@ function veriffApprovalCanUnlockClient(
   }
 
   return veriffIdentityHasAutofillData(validation);
+}
+
+function getDataCreditoVeriffDocumentRejectionMessage(
+  validation: VeriffValidationState | null | undefined,
+  expectedDocumentNumber: string | null | undefined
+) {
+  if (!validation?.approved || !validation.decidedAt) {
+    return "";
+  }
+
+  if (validation.identityDocumentStatus === "mismatch") {
+    return "La cédula de la validación facial no coincide con la cédula consultada en DataCrédito. El crédito fue rechazado.";
+  }
+
+  if (validation.identityDocumentStatus === "invalid-document-type") {
+    return "La validación facial no corresponde a una cédula de ciudadanía. El crédito fue rechazado.";
+  }
+
+  if (validation.identityDocumentStatus === "invalid-document-country") {
+    return "La validación facial no corresponde a un documento colombiano. El crédito fue rechazado.";
+  }
+
+  if (validation.identityDocumentStatus === "missing") {
+    return "";
+  }
+
+  if (validation.identityDocumentStatus !== "match") {
+    return "La validación facial no devolvió una cédula válida para comparar. El crédito fue rechazado.";
+  }
+
+  const comparison = compareStrictIdentityDocuments(
+    validation.identityDocumentNumber,
+    expectedDocumentNumber
+  );
+
+  if (comparison.ok) {
+    return "";
+  }
+
+  if (comparison.status === "mismatch") {
+    return "La cédula de la validación facial no coincide con la cédula consultada en DataCrédito. El crédito fue rechazado.";
+  }
+
+  if (comparison.field === "expected" || comparison.field === "both") {
+    return "No se pudo verificar la cédula consultada en DataCrédito. El crédito fue rechazado.";
+  }
+
+  return "La validación facial no devolvió una cédula válida para comparar. El crédito fue rechazado.";
 }
 
 type VeriffConfigState = {
@@ -4179,15 +4248,31 @@ export default function CreditFactoryConsole({
     veriffExpectedDraftId,
     dataCreditoApproval?.documentNumber
   );
+  const dataCreditoVeriffDocumentRejectionMessage = dataCreditoRequiresVeriff
+    ? getDataCreditoVeriffDocumentRejectionMessage(
+        veriffValidation,
+        dataCreditoApproval?.documentNumber
+      )
+    : "";
+  const dataCreditoVeriffDocumentRejected = Boolean(
+    dataCreditoVeriffDocumentRejectionMessage
+  );
+  const veriffIdentityEvidencePending = Boolean(
+    dataCreditoRequiresVeriff &&
+      veriffValidation?.approved &&
+      veriffValidation?.decidedAt &&
+      veriffValidation.identityDocumentStatus === "missing"
+  );
   const veriffRejected = Boolean(
-    veriffValidation?.status === "DECLINED" ||
+    dataCreditoVeriffDocumentRejected ||
+      veriffValidation?.status === "DECLINED" ||
       veriffValidation?.status === "ERROR" ||
       veriffValidation?.status === "EXPIRED" ||
       veriffValidation?.status === "ABANDONED"
   );
   const veriffRiskOnly = Boolean(veriffValidation?.riskBlocked && !veriffRejected);
   const veriffHasFinalDecision = Boolean(
-    veriffValidation?.approved ||
+    (veriffValidation?.approved && !veriffIdentityEvidencePending) ||
       veriffRiskOnly ||
       veriffValidation?.status === "DECLINED" ||
       veriffValidation?.status === "ERROR" ||
@@ -4205,11 +4290,14 @@ export default function CreditFactoryConsole({
       : veriffValidation?.status === "EXPIRED" ||
           veriffValidation?.status === "ABANDONED"
         ? "expired"
-        : veriffValidation?.status === "DECLINED" || veriffRiskOnly
+        : dataCreditoVeriffDocumentRejected ||
+            veriffValidation?.status === "DECLINED" ||
+            veriffRiskOnly
           ? "rejected"
           : veriffConnectionError
             ? "error"
             : veriffRefreshing ||
+                veriffIdentityEvidencePending ||
                 veriffValidation?.status === "REVIEW" ||
                 veriffValidation?.status === "RESUBMISSION" ||
                 Boolean(veriffValidation?.submittedAt)
@@ -4238,6 +4326,7 @@ export default function CreditFactoryConsole({
     veriffConfig.configured &&
     !veriffUnavailableForDataCredito &&
     !veriffApproved &&
+    !dataCreditoVeriffDocumentRejected &&
     !veriffRetryPolicy.applicationRejected &&
     (!veriffValidation?.sessionUrl || veriffHasFinalDecision || veriffConnectionError);
   const veriffQrValidityLabel = veriffValidation?.createdAt
@@ -6251,6 +6340,16 @@ export default function CreditFactoryConsole({
     }
 
     if (
+      dataCreditoRequiresVeriff &&
+      getDataCreditoVeriffDocumentRejectionMessage(
+        validation,
+        dataCreditoApproval?.documentNumber
+      )
+    ) {
+      return "Rechazada";
+    }
+
+    if (
       veriffApprovalCanUnlockClient(
         validation,
         veriffExpectedDraftId,
@@ -6529,9 +6628,17 @@ export default function CreditFactoryConsole({
         expectedDraftId,
         dataCreditoApproval?.documentNumber
       );
+      const documentRejectionMessage = dataCreditoRequiresVeriff
+        ? getDataCreditoVeriffDocumentRejectionMessage(
+            validation,
+            dataCreditoApproval?.documentNumber
+          )
+        : "";
       const filledClientData = applyVeriffIdentityData(validation, expectedDraftId);
       setVeriffInlineMessage(
-        validation?.status === "DECLINED"
+        documentRejectionMessage
+          ? documentRejectionMessage
+          : validation?.status === "DECLINED"
           ? veriffRejectedMessage
           : validation?.riskBlocked
             ? veriffRiskMessage
@@ -6553,7 +6660,9 @@ export default function CreditFactoryConsole({
 
       if (shouldNotify) {
         setNotice({
-          text: validation?.status === "DECLINED"
+          text: documentRejectionMessage
+            ? documentRejectionMessage
+            : validation?.status === "DECLINED"
             ? "Validacion rechazada por Veriff."
             : validation?.riskBlocked
             ? "Validacion requiere revision por riesgo."
@@ -6568,7 +6677,8 @@ export default function CreditFactoryConsole({
               : validation
                 ? `${veriffStatusLabel(validation)}.`
                 : "Sin resultado.",
-          tone: validation?.status === "DECLINED" ||
+          tone: documentRejectionMessage ||
+            validation?.status === "DECLINED" ||
             validation?.status === "ERROR" ||
             validation?.riskBlocked
             ? "red"
@@ -6698,12 +6808,20 @@ export default function CreditFactoryConsole({
         expectedDraftId,
         dataCreditoApproval?.documentNumber
       );
+      const documentRejectionMessage = dataCreditoRequiresVeriff
+        ? getDataCreditoVeriffDocumentRejectionMessage(
+            validation,
+            dataCreditoApproval?.documentNumber
+          )
+        : "";
       const filledClientData = applyVeriffIdentityData(
         validation,
         expectedDraftId
       );
       setVeriffInlineMessage(
-        validation?.status === "DECLINED"
+        documentRejectionMessage
+          ? documentRejectionMessage
+          : validation?.status === "DECLINED"
           ? veriffRejectedMessage
           : validation?.riskBlocked
             ? veriffRiskMessage
@@ -6712,7 +6830,9 @@ export default function CreditFactoryConsole({
             : ""
       );
       setNotice({
-        text: validation?.status === "DECLINED"
+        text: documentRejectionMessage
+          ? documentRejectionMessage
+          : validation?.status === "DECLINED"
           ? "Validacion rechazada por Veriff."
           : validation?.riskBlocked
           ? "Validacion requiere revision por riesgo."
@@ -6724,7 +6844,9 @@ export default function CreditFactoryConsole({
             ? "Identidad aprobada sin datos para autocompletar. Reintenta la validacion."
           : "QR de validacion listo.",
         tone:
-          validation?.status === "DECLINED" || validation?.riskBlocked
+          documentRejectionMessage ||
+          validation?.status === "DECLINED" ||
+          validation?.riskBlocked
             ? "red"
             : usableApproval
               ? "emerald"
@@ -6811,6 +6933,14 @@ export default function CreditFactoryConsole({
     [...visibleFactorySteps].reverse().find((step) => step.id < currentStep)?.id || 1;
 
   const goToStep = (targetStep: number) => {
+    if (targetStep > 1 && dataCreditoVeriffDocumentRejected) {
+      setNotice({
+        text: dataCreditoVeriffDocumentRejectionMessage,
+        tone: "red",
+      });
+      return;
+    }
+
     if (canAdminMoveFreelyInFactory) {
       setWizardStep(clampWizardStep(targetStep));
       return;
@@ -6925,6 +7055,14 @@ export default function CreditFactoryConsole({
   };
 
   const advanceToStep = async (targetStep: number) => {
+    if (targetStep > 1 && dataCreditoVeriffDocumentRejected) {
+      setNotice({
+        text: dataCreditoVeriffDocumentRejectionMessage,
+        tone: "red",
+      });
+      return;
+    }
+
     if (canAdminMoveFreelyInFactory) {
       setWizardStep(clampWizardStep(targetStep));
       return;
@@ -7536,6 +7674,14 @@ export default function CreditFactoryConsole({
     if (iphoneInstallmentLimitExceeded) {
       setNotice({
         text: visibleIphoneInstallmentLimitMessage,
+        tone: "red",
+      });
+      return null;
+    }
+
+    if (dataCreditoVeriffDocumentRejected) {
+      setNotice({
+        text: dataCreditoVeriffDocumentRejectionMessage,
         tone: "red",
       });
       return null;
@@ -10329,6 +10475,25 @@ export default function CreditFactoryConsole({
                       </div>
                     </div>
                   ) : null}
+                  {dataCreditoVeriffDocumentRejected ? (
+                    <div
+                      className="mb-5 flex items-start gap-3 rounded-[22px] border border-red-200 bg-red-50 px-4 py-4 text-red-900"
+                      role="alert"
+                    >
+                      <span
+                        className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-red-100 text-red-700"
+                        aria-hidden="true"
+                      >
+                        <XCircle className="h-5 w-5" strokeWidth={2} />
+                      </span>
+                      <div>
+                        <p className="text-sm font-black">Crédito rechazado</p>
+                        <p className="mt-1 text-sm leading-6 text-red-800">
+                          {dataCreditoVeriffDocumentRejectionMessage}
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
                   {veriffApproved ? (
                     <button
                       type="button"
@@ -10430,7 +10595,8 @@ export default function CreditFactoryConsole({
                                 className="h-5 w-5 animate-spin"
                                 strokeWidth={2}
                               />
-                            ) : veriffRetryPolicy.applicationRejected ||
+                            ) : dataCreditoVeriffDocumentRejected ||
+                              veriffRetryPolicy.applicationRejected ||
                               veriffValidation?.status === "DECLINED" ? (
                               <XCircle className="h-5 w-5" strokeWidth={2} />
                             ) : (
@@ -10439,6 +10605,8 @@ export default function CreditFactoryConsole({
                           </span>
                           {veriffSubmitting
                             ? "Generando codigo QR"
+                            : dataCreditoVeriffDocumentRejected
+                              ? "Ver rechazo del crédito"
                             : veriffRetryPolicy.applicationRejected
                               ? "Ver rechazo de la solicitud"
                               : veriffValidation?.status === "DECLINED"
@@ -10515,6 +10683,53 @@ export default function CreditFactoryConsole({
                             strokeWidth={1.9}
                             aria-hidden="true"
                           />
+                        </button>
+                      </div>
+                    ) : dataCreditoVeriffDocumentRejected ? (
+                      <div className="fp-identity-modal-content is-result">
+                        <p className="fp-identity-modal-kicker is-rejected">
+                          Cédula no verificada
+                        </p>
+                        <h2 id="fp-identity-modal-title">
+                          Crédito rechazado
+                        </h2>
+                        <p className="fp-identity-modal-lead">
+                          {dataCreditoVeriffDocumentRejectionMessage}
+                        </p>
+                        <div
+                          className="fp-identity-modal-illustration is-rejected"
+                          aria-hidden="true"
+                        >
+                          <NextImage
+                            src="/assets/creditos/identity-rejected-mascot.png"
+                            alt=""
+                            width={1024}
+                            height={1536}
+                            sizes="220px"
+                            className="fp-identity-modal-mascot"
+                          />
+                          <div className="fp-identity-result-callout">
+                            <strong>Identidad no validada</strong>
+                            <span className="fp-identity-result-mark">
+                              <X
+                                className="h-7 w-7"
+                                strokeWidth={2.4}
+                                aria-hidden="true"
+                              />
+                            </span>
+                          </div>
+                        </div>
+                        <p className="fp-identity-modal-result-copy">
+                          La consulta DataCrédito y la validación facial deben
+                          corresponder al mismo cliente. Esta solicitud no puede
+                          continuar.
+                        </p>
+                        <button
+                          type="button"
+                          className="fp-identity-modal-primary"
+                          onClick={() => setIdentityValidationModalOpen(false)}
+                        >
+                          Cerrar
                         </button>
                       </div>
                     ) : veriffRetryPolicy.applicationRejected ? (

@@ -49,6 +49,16 @@ export type VeriffIdentityData = {
   placeOfBirth: string | null;
 };
 
+export type VeriffIdentityDocumentEvidence = {
+  personNumbers: string[];
+  documents: Array<{
+    number: string;
+    type: string | null;
+    country: string | null;
+  }>;
+  allNumbers: string[];
+};
+
 export type VeriffRiskLabel = {
   category: string | null;
   label: string;
@@ -401,6 +411,64 @@ export function normalizeVeriffStatus(value: unknown): VeriffStatus {
   }
 
   return "PENDING";
+}
+
+const VERIFF_NON_APPROVED_FINAL_STATUSES = new Set<VeriffStatus>([
+  "ABANDONED",
+  "DECLINED",
+  "ERROR",
+  "EXPIRED",
+]);
+
+export type VeriffStatusEvidenceResolution = {
+  conflict: boolean;
+  status: VeriffStatus;
+  statuses: VeriffStatus[];
+};
+
+/**
+ * Resuelve varias fuentes de estado sin permitir que un APPROVED oculte otra
+ * decisión final no aprobada. Los estados del payload prevalecen sobre el
+ * fallback persistido; este solo se usa cuando no existe evidencia remota.
+ */
+export function resolveVeriffStatusEvidence(
+  values: readonly unknown[],
+  fallback?: unknown
+): VeriffStatusEvidenceResolution {
+  const statuses = values
+    .filter((value) => value !== null && value !== undefined && String(value).trim())
+    .map(normalizeVeriffStatus);
+  const finalStatuses = statuses.filter(
+    (status) => status === "APPROVED" || VERIFF_NON_APPROVED_FINAL_STATUSES.has(status)
+  );
+  const nonApprovedFinal = finalStatuses.find((status) => status !== "APPROVED");
+  const activeBlock = statuses.find(
+    (status) => status === "REVIEW" || status === "RESUBMISSION"
+  );
+  const conflict = new Set(statuses.filter((status) => status !== "PENDING")).size > 1;
+
+  if (nonApprovedFinal) {
+    return { conflict, status: nonApprovedFinal, statuses };
+  }
+
+  if (activeBlock) {
+    return { conflict, status: activeBlock, statuses };
+  }
+
+  if (finalStatuses.includes("APPROVED")) {
+    return { conflict, status: "APPROVED", statuses };
+  }
+
+  const activeStatus = statuses.find((status) => status !== "PENDING");
+  if (activeStatus) {
+    return { conflict, status: activeStatus, statuses };
+  }
+
+  return {
+    conflict,
+    status: statuses[0] || normalizeVeriffStatus(fallback),
+    statuses,
+  };
 }
 
 function rootAndVerification(payload: unknown) {
@@ -992,6 +1060,169 @@ export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData 
   };
 
   return Object.values(identityData).some(Boolean) ? identityData : null;
+}
+
+/**
+ * Recoge todas las cedulas devueltas dentro de una decision o webhook de Veriff.
+ * Deliberadamente omite ramas de request/create porque contienen datos enviados
+ * por FINSER PAY, no evidencia extraida por Veriff.
+ */
+export function extractVeriffIdentityDocumentEvidence(
+  payload: unknown
+): VeriffIdentityDocumentEvidence {
+  const personNumbers: string[] = [];
+  const personNumberSet = new Set<string>();
+  const documents: VeriffIdentityDocumentEvidence["documents"] = [];
+  const documentKeys = new Set<string>();
+  const visited = new WeakSet<object>();
+
+  const addPersonNumber = (value: unknown) => {
+    const number = cleanText(value);
+    if (!number || personNumberSet.has(number)) {
+      return;
+    }
+
+    personNumberSet.add(number);
+    personNumbers.push(number);
+  };
+
+  const addDocument = (record: Record<string, unknown>) => {
+    const type = cleanText(record.type) || null;
+    const country = cleanText(record.country) || null;
+
+    for (const value of [record.number, record.documentNumber, record.idNumber]) {
+      const number = cleanText(value);
+      if (!number) {
+        continue;
+      }
+
+      const key = JSON.stringify([number, type, country]);
+      if (documentKeys.has(key)) {
+        continue;
+      }
+
+      documentKeys.add(key);
+      documents.push({ number, type, country });
+    }
+  };
+
+  const addPerson = (record: Record<string, unknown>) => {
+    addPersonNumber(record.idNumber);
+    addPersonNumber(record.idCode);
+    addPersonNumber(record.documentNumber);
+  };
+
+  const externalBranchKeys = new Set([
+    "create",
+    "createdata",
+    "createpayload",
+    "createresponse",
+    "creation",
+    "creationpayload",
+    "clientdata",
+    "clientpayload",
+    "initdata",
+    "initpayload",
+    "initialdata",
+    "initializationdata",
+    "input",
+    "request",
+    "requestbody",
+    "requestdata",
+    "requestpayload",
+    "submission",
+    "submissionpayload",
+    "submit",
+    "submitpayload",
+    "sessioncreate",
+    "sessioncreatepayload",
+    "sessionrequest",
+    "sessionrequestpayload",
+    "sourcedata",
+    "sourcepayload",
+  ]);
+  const externalBranchMarkers = [
+    "create",
+    "creation",
+    "declared",
+    "expected",
+    "input",
+    "outbound",
+    "prefill",
+    "provided",
+    "request",
+    "submission",
+    "submit",
+    "supplied",
+  ];
+  const isExternalBranch = (normalizedKey: string) =>
+    externalBranchKeys.has(normalizedKey) ||
+    externalBranchMarkers.some((marker) => normalizedKey.includes(marker));
+  const personBranchKeys = new Set(["person", "persondata", "persons"]);
+  const documentBranchKeys = new Set([
+    "document",
+    "documentdata",
+    "documents",
+    "identitydocument",
+  ]);
+
+  const visit = (
+    value: unknown,
+    role: "document" | "person" | null = null,
+    depth = 0
+  ): void => {
+    if (depth > 10 || value === null || value === undefined) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item, role, depth + 1);
+      }
+      return;
+    }
+
+    const record = asRecord(value);
+    if (!record || visited.has(record)) {
+      return;
+    }
+    visited.add(record);
+
+    if (role === "person") {
+      addPerson(record);
+    } else if (role === "document") {
+      addDocument(record);
+    }
+
+    for (const [key, child] of Object.entries(record)) {
+      const normalizedKey = normalizeVeriffFieldKey(key);
+      if (isExternalBranch(normalizedKey)) {
+        continue;
+      }
+
+      const childRole = personBranchKeys.has(normalizedKey)
+        ? "person"
+        : documentBranchKeys.has(normalizedKey)
+          ? "document"
+          : null;
+      visit(child, childRole, depth + 1);
+    }
+  };
+
+  const { root, verification } = rootAndVerification(payload);
+  visit(verification);
+  if (verification !== root) {
+    visit(root);
+  }
+
+  const allNumbers = Array.from(
+    new Set([
+      ...personNumbers,
+      ...documents.map((document) => document.number),
+    ])
+  );
+
+  return { personNumbers, documents, allNumbers };
 }
 
 export async function veriffCreateSession(input: CreateSessionInput) {

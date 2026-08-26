@@ -3,13 +3,16 @@ import prisma from "@/lib/prisma";
 import {
   areVeriffDecisionsTrusted,
   extractVeriffIdentityData,
+  extractVeriffIdentityDocumentEvidence,
   extractVeriffSessionUrl,
   normalizeVeriffStatus,
   redactVeriffPayload,
+  resolveVeriffStatusEvidence,
   summarizeVeriffDecision,
   summarizeVeriffRisk,
   type VeriffStatus,
 } from "@/lib/veriff";
+import { compareDataCreditoVeriffIdentityEvidence } from "@/lib/veriff-identity";
 
 export type VeriffValidationRow = {
   id: number;
@@ -229,11 +232,13 @@ function resolveVeriffRowStatus(row: VeriffValidationRow | null | undefined) {
     return "PENDING" satisfies VeriffStatus;
   }
 
-  return (
-    statusFromDecisionPayload(row.webhookPayload) ||
-    statusFromDecisionPayload(row.decisionPayload) ||
+  return resolveVeriffStatusEvidence(
+    [
+      statusFromDecisionPayload(row.decisionPayload),
+      statusFromDecisionPayload(row.webhookPayload),
+    ],
     normalizeVeriffStatus(row.decision || row.status)
-  );
+  ).status;
 }
 
 export function isVeriffApproved(row: VeriffValidationRow | null | undefined) {
@@ -251,6 +256,16 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
   const risk = summarizeVeriffRisk(row.decisionPayload, row.webhookPayload);
   const approved = technicalApproved && trusted;
   const riskBlocked = !technicalApproved && risk.blocked;
+  const decisionIdentity = extractVeriffIdentityData(row.decisionPayload);
+  const webhookIdentity = extractVeriffIdentityData(row.webhookPayload);
+  const identityData = decisionIdentity || webhookIdentity;
+  const identityDocumentComparison = compareDataCreditoVeriffIdentityEvidence(
+    [
+      extractVeriffIdentityDocumentEvidence(row.decisionPayload),
+      extractVeriffIdentityDocumentEvidence(row.webhookPayload),
+    ],
+    row.clienteDocumento
+  );
 
   return {
     id: row.id,
@@ -259,9 +274,11 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
     captureToken: row.captureToken,
     veriffSessionId: row.veriffSessionId,
     sessionUrl: extractVeriffSessionUrl(row.createPayload),
-    identityData:
-      extractVeriffIdentityData(row.decisionPayload) ||
-      extractVeriffIdentityData(row.webhookPayload),
+    identityData,
+    identityDocumentNumber: identityDocumentComparison.ok
+      ? identityDocumentComparison.documentNumber
+      : null,
+    identityDocumentStatus: identityDocumentComparison.status,
     attemptId: row.attemptId,
     vendorData: row.vendorData,
     status,
@@ -498,9 +515,9 @@ export function buildVeriffSnapshot(row: VeriffValidationRow | null) {
     code: row.code,
     reason: row.reason,
     reasonCode: row.reasonCode,
-    identityData:
-      extractVeriffIdentityData(row.decisionPayload) ||
-      extractVeriffIdentityData(row.webhookPayload),
+    identityData: serialized?.identityData || null,
+    identityDocumentNumber: serialized?.identityDocumentNumber || null,
+    identityDocumentStatus: serialized?.identityDocumentStatus || "missing",
     riskSignals: serialized?.riskSignals || null,
     riskBlocked: Boolean(serialized?.riskBlocked),
     checkedAt: row.decidedAt?.toISOString() || row.updatedAt?.toISOString() || null,
