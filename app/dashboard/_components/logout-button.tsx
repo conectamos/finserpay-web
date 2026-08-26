@@ -2,12 +2,17 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { LogOut } from "lucide-react";
 
 type LogoutButtonProps = {
   className?: string;
+  showIcon?: boolean;
 };
 
-export default function LogoutButton({ className = "" }: LogoutButtonProps) {
+export default function LogoutButton({
+  className = "",
+  showIcon = false,
+}: LogoutButtonProps) {
   const router = useRouter();
   const [cerrando, setCerrando] = useState(false);
 
@@ -41,6 +46,9 @@ export default function LogoutButton({ className = "" }: LogoutButtonProps) {
         className,
       ].join(" ")}
     >
+      {showIcon && !cerrando ? (
+        <LogOut className="mr-2 h-[18px] w-[18px]" strokeWidth={1.8} aria-hidden="true" />
+      ) : null}
       {cerrando ? "Cerrando..." : "Cerrar sesion"}
     </button>
   );
