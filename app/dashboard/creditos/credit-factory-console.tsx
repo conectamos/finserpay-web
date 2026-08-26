@@ -10415,14 +10415,23 @@ export default function CreditFactoryConsole({
                           aria-hidden="true"
                         >
                           <NextImage
-                            src="/assets/creditos/datacredito-approved-hero.png"
+                            src="/assets/creditos/identity-approved-mascot.png"
                             alt=""
-                            width={941}
-                            height={1672}
-                            sizes="180px"
+                            width={1024}
+                            height={1536}
+                            sizes="220px"
                             className="fp-identity-modal-mascot"
                           />
-                          <strong>¡Aprobado!</strong>
+                          <div className="fp-identity-result-callout">
+                            <strong>¡Aprobado!</strong>
+                            <span className="fp-identity-result-mark">
+                              <Check
+                                className="h-7 w-7"
+                                strokeWidth={2.4}
+                                aria-hidden="true"
+                              />
+                            </span>
+                          </div>
                         </div>
                         <p className="fp-identity-modal-result-copy">
                           Los datos verificados fueron vinculados a esta solicitud.
@@ -10460,14 +10469,23 @@ export default function CreditFactoryConsole({
                           aria-hidden="true"
                         >
                           <NextImage
-                            src="/assets/creditos/datacredito-rejected-hero.png"
+                            src="/assets/creditos/identity-rejected-mascot.png"
                             alt=""
-                            width={941}
-                            height={1672}
-                            sizes="180px"
+                            width={1024}
+                            height={1536}
+                            sizes="220px"
                             className="fp-identity-modal-mascot"
                           />
-                          <strong>Credito rechazado</strong>
+                          <div className="fp-identity-result-callout">
+                            <strong>Credito rechazado</strong>
+                            <span className="fp-identity-result-mark">
+                              <X
+                                className="h-7 w-7"
+                                strokeWidth={2.4}
+                                aria-hidden="true"
+                              />
+                            </span>
+                          </div>
                         </div>
                         <p className="fp-identity-modal-result-copy">
                           La solicitud se cerro y no permite nuevos intentos de
@@ -10511,14 +10529,23 @@ export default function CreditFactoryConsole({
                           aria-hidden="true"
                         >
                           <NextImage
-                            src="/assets/creditos/datacredito-rejected-hero.png"
+                            src="/assets/creditos/identity-rejected-mascot.png"
                             alt=""
-                            width={941}
-                            height={1672}
-                            sizes="180px"
+                            width={1024}
+                            height={1536}
+                            sizes="220px"
                             className="fp-identity-modal-mascot"
                           />
-                          <strong>Identidad no validada</strong>
+                          <div className="fp-identity-result-callout">
+                            <strong>Identidad no validada</strong>
+                            <span className="fp-identity-result-mark">
+                              <X
+                                className="h-7 w-7"
+                                strokeWidth={2.4}
+                                aria-hidden="true"
+                              />
+                            </span>
+                          </div>
                         </div>
                         <p className="fp-identity-modal-result-copy">
                           Verifica los datos antes de intentarlo nuevamente.

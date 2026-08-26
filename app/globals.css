@@ -4161,6 +4161,10 @@ body {
   text-align: center;
 }
 
+.fp-identity-modal-content.is-result {
+  padding: 44px 42px 32px;
+}
+
 .fp-identity-modal-content.is-loading {
   display: grid;
   min-height: 360px;
@@ -4338,40 +4342,98 @@ body {
 }
 
 .fp-identity-modal-illustration {
-  display: flex;
-  min-height: 210px;
+  display: grid;
+  width: min(500px, 100%);
+  min-height: 300px;
+  grid-template-columns: minmax(170px, 220px) minmax(170px, 210px);
   align-items: center;
   justify-content: center;
-  gap: 24px;
-  margin: 18px auto 0;
+  gap: 34px;
+  margin: 20px auto 0;
 }
 
 .fp-identity-modal-mascot {
-  width: 180px;
-  height: 220px;
-  flex: 0 0 180px;
-  border-radius: var(--fp-radius-md);
-  object-fit: cover;
-  object-position: top center;
+  display: block;
+  width: 220px;
+  height: 300px;
+  object-fit: contain;
+  object-position: center;
+  filter: drop-shadow(0 18px 24px rgba(13, 17, 18, 0.16));
 }
 
-.fp-identity-modal-illustration > strong {
-  max-width: 190px;
-  padding: 12px 16px;
+.fp-identity-result-callout {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-direction: column;
+  gap: 42px;
+}
+
+.fp-identity-result-callout > strong {
+  position: relative;
+  width: max-content;
+  max-width: 205px;
+  padding: 15px 18px;
   border: 2px solid var(--fp-lime-strong);
   border-radius: var(--fp-radius-md);
+  background: #fff;
   color: var(--fp-ink);
-  font-size: 1.15rem;
+  box-shadow: 0 10px 24px rgba(13, 17, 18, 0.06);
+  font-size: 1.18rem;
   font-weight: 900;
+  line-height: 1.1;
   text-transform: uppercase;
+}
+
+.fp-identity-result-callout > strong::before {
+  position: absolute;
+  top: 50%;
+  left: -10px;
+  width: 18px;
+  height: 18px;
+  border-bottom: 2px solid var(--fp-lime-strong);
+  border-left: 2px solid var(--fp-lime-strong);
+  background: #fff;
+  content: "";
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.fp-identity-result-mark {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--fp-lime-strong);
+  color: #fff;
+  box-shadow: 0 12px 24px rgba(113, 163, 25, 0.2);
 }
 
 .fp-identity-modal-illustration.is-rejected > svg {
   color: var(--fp-danger);
 }
 
-.fp-identity-modal-illustration.is-rejected > strong {
+.fp-identity-modal-illustration.is-rejected .fp-identity-result-callout > strong {
   border-color: #e5484d;
+}
+
+.fp-identity-modal-illustration.is-rejected
+  .fp-identity-result-callout
+  > strong::before {
+  border-color: #e5484d;
+}
+
+.fp-identity-modal-illustration.is-rejected .fp-identity-result-mark {
+  background: var(--fp-danger);
+  box-shadow: 0 12px 24px rgba(213, 52, 58, 0.18);
+}
+
+.fp-identity-modal-content.is-result .fp-identity-modal-result-copy {
+  margin-top: 4px;
+}
+
+.fp-identity-modal-content.is-result .fp-identity-modal-primary {
+  margin-top: 18px;
 }
 
 .fp-identity-modal-illustration.is-neutral {
@@ -4417,6 +4479,10 @@ body {
     padding: 34px 20px 22px;
   }
 
+  .fp-identity-modal-content.is-result {
+    padding: 38px 20px 24px;
+  }
+
   .fp-identity-modal-qr {
     width: min(210px, 70vw);
   }
@@ -4432,20 +4498,29 @@ body {
   }
 
   .fp-identity-modal-illustration {
-    min-height: 190px;
-    gap: 14px;
+    min-height: 242px;
+    grid-template-columns: minmax(120px, 148px) minmax(125px, 148px);
+    gap: 12px;
   }
 
   .fp-identity-modal-mascot {
-    width: 132px;
-    height: 166px;
-    flex-basis: 132px;
+    width: 148px;
+    height: 220px;
   }
 
-  .fp-identity-modal-illustration > strong {
+  .fp-identity-result-callout {
+    gap: 28px;
+  }
+
+  .fp-identity-result-callout > strong {
     max-width: 145px;
-    padding: 10px 12px;
-    font-size: 0.9rem;
+    padding: 11px 12px;
+    font-size: 0.88rem;
+  }
+
+  .fp-identity-result-mark {
+    width: 44px;
+    height: 44px;
   }
 }
 
@@ -4454,19 +4529,32 @@ body {
     padding-top: 28px;
   }
 
+  .fp-identity-modal-content.is-result {
+    padding-top: 26px;
+  }
+
   .fp-identity-modal-qr {
     width: 190px;
     margin-top: 16px;
   }
 
   .fp-identity-modal-illustration {
-    min-height: 154px;
+    min-height: 198px;
+    margin-top: 10px;
   }
 
   .fp-identity-modal-mascot {
-    width: 112px;
-    height: 138px;
-    flex-basis: 112px;
+    width: 132px;
+    height: 194px;
+  }
+
+  .fp-identity-result-callout {
+    gap: 20px;
+  }
+
+  .fp-identity-result-mark {
+    width: 40px;
+    height: 40px;
   }
 }
 
