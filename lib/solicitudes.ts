@@ -128,11 +128,13 @@ export function canViewSolicitud(
   if (viewer.kind === "CENTRAL_ADMIN") return true;
   if (!viewer.aliadoId || viewer.aliadoId !== ownership.aliadoId) return false;
   if (viewer.kind === "ALLY_ADMIN") return true;
+  if (viewer.kind === "SELLER") {
+    return Boolean(
+      viewer.vendedorId && viewer.vendedorId === ownership.vendedorId
+    );
+  }
   if (!viewer.sedeId || viewer.sedeId !== ownership.sedeId) return false;
-  if (viewer.kind === "SUPERVISOR") return true;
-  return Boolean(
-    viewer.vendedorId && viewer.vendedorId === ownership.vendedorId
-  );
+  return viewer.kind === "SUPERVISOR";
 }
 
 export function canSeeSensitiveSolicitudData(viewer: SolicitudViewer) {
@@ -252,7 +254,9 @@ export function getSolicitudActions(input: {
   const isOwner = Boolean(
     input.viewer.kind === "SELLER" &&
       input.viewer.vendedorId &&
-      input.viewer.vendedorId === input.ownership.vendedorId
+      input.viewer.vendedorId === input.ownership.vendedorId &&
+      input.viewer.sedeId &&
+      input.viewer.sedeId === input.ownership.sedeId
   );
   const canOpenFactory = input.viewer.kind === "CENTRAL_ADMIN" || isOwner;
   const isActive = isOpen && !["RECHAZADA", "CANCELADA"].includes(input.state);

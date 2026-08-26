@@ -668,7 +668,7 @@ function buildCommonWhere(input: {
     if (!viewer.aliadoId) conditions.push("FALSE");
     else addWhere(conditions, values, `s."aliadoId" =`, viewer.aliadoId);
   }
-  if (viewer.kind === "SUPERVISOR" || viewer.kind === "SELLER") {
+  if (viewer.kind === "SUPERVISOR") {
     if (!viewer.sedeId) conditions.push("FALSE");
     else addWhere(conditions, values, `${alias}."sedeId" =`, viewer.sedeId);
   }

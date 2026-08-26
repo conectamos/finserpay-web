@@ -532,6 +532,7 @@ export default function SolicitudesWallClient({
                 }
                 placeholder="Cédula, nombre, solicitud o IMEI"
                 className="pl-10"
+                style={{ paddingLeft: "2.5rem" }}
               />
             </span>
           </label>
