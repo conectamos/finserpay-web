@@ -328,20 +328,13 @@ function isRecoverableInitialAssessmentFailure(
   payload: JsonRecord
 ) {
   const code = String(payload.code || "").trim().toUpperCase();
-  const status = String(payload.status || "").trim().toUpperCase();
 
-  if (code === 'ASSESSMENT_CONSUMED') return false;
-
+  // Reabrir una solicitud nunca debe convertir inconsistencias de identidad,
+  // plataforma o consumo en una consulta nueva. Solo una expiración explícita
+  // habilita al asesor para volver a consultar.
   return (
-    response.status === 404 ||
-    response.status === 410 ||
-    response.status === 422 ||
-    code === "ASSESSMENT_EXPIRED" ||
-    code === "ASSESSMENT_ENVIRONMENT_MISMATCH" ||
-    code === "ASSESSMENT_PLATFORM_MISMATCH" ||
-    (status === "NO_EVALUADO" &&
-      [409, 410, 422].includes(response.status) &&
-      code !== "EVALUATION_IN_PROGRESS")
+    code === "ASSESSMENT_EXPIRED" &&
+    [409, 410, 422].includes(response.status)
   );
 }
 
@@ -480,6 +473,7 @@ export default function DatacreditoPrequalificationGate({
   const [lastInitialIdentity, setLastInitialIdentity] = useState(() => ({
     platform,
     assessmentId: initialAssessmentId,
+    solicitudId: initialSolicitudId,
     documentNumber: normalizedInitialDocument,
     firstSurname: normalizedInitialSurname,
   }));
@@ -510,12 +504,14 @@ export default function DatacreditoPrequalificationGate({
   if (
     lastInitialIdentity.platform !== platform ||
     lastInitialIdentity.assessmentId !== initialAssessmentId ||
+    lastInitialIdentity.solicitudId !== initialSolicitudId ||
     lastInitialIdentity.documentNumber !== normalizedInitialDocument ||
     lastInitialIdentity.firstSurname !== normalizedInitialSurname
   ) {
     setLastInitialIdentity({
       platform,
       assessmentId: initialAssessmentId,
+      solicitudId: initialSolicitudId,
       documentNumber: normalizedInitialDocument,
       firstSurname: normalizedInitialSurname,
     });
@@ -762,17 +758,17 @@ export default function DatacreditoPrequalificationGate({
 
         if (decision === "APROBADO") {
           const approved = normalizeApprovedAssessment(assessmentPayload, {
+            solicitudId: initialSolicitudId,
             assessmentId: initialAssessmentId,
             documentNumber: normalizedInitialDocument || undefined,
             firstSurname: normalizedInitialSurname || undefined,
           });
 
           if (approved && approved.platform !== platform) {
-            onAssessmentInvalidatedRef.current?.();
-            setConsentAccepted(false);
-            setFormErrors({});
-            setCorrelationId(null);
-            setView("ready");
+            setCorrelationId(
+              getCorrelationId(assessmentPayload, assessmentResponse)
+            );
+            setView("technical-error");
             return;
           }
 
@@ -780,6 +776,19 @@ export default function DatacreditoPrequalificationGate({
             setDocumentNumber(approved.documentNumber);
             setFirstSurname(approved.firstSurname);
             setConsentAccepted(true);
+            if (initialSolicitudId) {
+              if (
+                !approvedAssessmentIdsRef.current.has(approved.assessmentId)
+              ) {
+                approvedAssessmentIdsRef.current.add(approved.assessmentId);
+                setView("bypassing");
+                onApprovedRef.current({
+                  ...approved,
+                  solicitudId: initialSolicitudId,
+                });
+              }
+              return;
+            }
             showApproved(approved);
             return;
           }

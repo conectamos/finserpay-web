@@ -432,15 +432,15 @@ test("la interfaz recupera borradores, vencimientos y conflictos sin repetir con
   assert.match(assessmentRoute, /ASSESSMENT_ENVIRONMENT_MISMATCH/);
   assert.match(assessmentRoute, /getDataCreditoPublicConfig/);
   assert.ok(environmentCheck < assessmentRoute.indexOf("const expiresAt"));
-  assert.match(
-    prequalificationGate,
-    /code === "ASSESSMENT_ENVIRONMENT_MISMATCH"/
+  const recoverableBootstrap = prequalificationGate.match(
+    /function isRecoverableInitialAssessmentFailure[\s\S]*?\n}/
+  )?.[0] || "";
+  assert.match(recoverableBootstrap, /code === "ASSESSMENT_EXPIRED"/);
+  assert.doesNotMatch(
+    recoverableBootstrap,
+    /ASSESSMENT_(?:ENVIRONMENT|PLATFORM|IDENTITY)_MISMATCH|ASSESSMENT_CONSUMED/
   );
-  assert.match(
-    prequalificationGate,
-    /if \(code === ['"]ASSESSMENT_CONSUMED['"]\) return false/
-  );
-  assert.match(prequalificationGate, /response\.status === 404/);
+  assert.doesNotMatch(recoverableBootstrap, /response\.status === 404/);
   assert.match(prequalificationGate, /setConsumedCreditId/);
   assert.match(prequalificationGate, /El cr[eé]dito ya fue creado/);
   assert.match(factoryConsole, /Date\.parse\(dataCreditoApproval\.expiresAt\)/);

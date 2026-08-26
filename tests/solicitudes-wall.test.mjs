@@ -17,7 +17,21 @@ import {
 } from "../lib/solicitudes.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
+const readProjectFile = async (file) =>
+  (await readFile(path.join(projectRoot, file), "utf8")).replace(/\r\n/g, "\n");
+
+function sourceBlock(source, start, end) {
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end, startIndex);
+
+  assert.notEqual(startIndex, -1, `No se encontro el inicio: ${start}`);
+  assert.notEqual(endIndex, -1, `No se encontro el final: ${end}`);
+  return source.slice(startIndex, endIndex);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 const centralAdmin = {
   kind: "CENTRAL_ADMIN",
@@ -644,6 +658,249 @@ test("central retoma y finaliza sin reemplazar al asesor propietario", async () 
   assert.ok(
     (creditRoute.match(/creditOwner\.sedeId/g) || []).length >= 3,
     "DataCrédito, el crédito y el cierre deben conservar la sede propietaria"
+  );
+});
+
+test("retomar una solicitud usa el paso canonico y no retrocede por un payload obsoleto", async () => {
+  const [factory, draftRoute] = await Promise.all([
+    readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
+    readProjectFile("app/api/creditos/borradores/route.ts"),
+  ]);
+  const applyDraft = sourceBlock(
+    factory,
+    "const applyDraftPayload",
+    "const createNewSaleFromClient"
+  );
+  const restoredStep = applyDraft.match(
+    /const restoredWizardStep\s*=\s*clampWizardStep\(([\s\S]{0,220}?)\);/
+  );
+  const serverCanonicalizesPayload =
+    /const canonicalStep\s*=\s*Math\.max\([\s\S]{0,180}row\.currentStep[\s\S]{0,180}payloadStep[\s\S]{0,400}wizardStep:\s*canonicalStep/.test(
+      draftRoute
+    );
+  const clientPrefersCanonicalColumn = Boolean(
+    restoredStep &&
+      restoredStep[1].indexOf("draft.currentStep") >= 0 &&
+      restoredStep[1].indexOf("payload.wizardStep") >= 0 &&
+      restoredStep[1].indexOf("draft.currentStep") <
+        restoredStep[1].indexOf("payload.wizardStep")
+  );
+
+  assert.ok(
+    serverCanonicalizesPayload || clientPrefersCanonicalColumn,
+    "currentStep debe prevalecer sobre payload.wizardStep al reabrir"
+  );
+  if (!serverCanonicalizesPayload) {
+    assert.match(applyDraft, /setWizardStep\(restoredWizardStep\)/);
+    assert.doesNotMatch(
+      applyDraft,
+      /setWizardStep\(\s*clampWizardStep\(\s*Number\(\s*payload\.wizardStep/
+    );
+  }
+});
+
+test("el GET del borrador entrega plataforma y Veriff canonicos aunque el JSON este incompleto", async () => {
+  const draftRoute = await readProjectFile(
+    "app/api/creditos/borradores/route.ts"
+  );
+  const serializer = sourceBlock(
+    draftRoute,
+    "function serializeDraft",
+    "async function getAccess"
+  );
+  const reader = sourceBlock(
+    draftRoute,
+    "async function readDrafts",
+    "export async function GET"
+  );
+
+  assert.match(reader, /d\."plataforma"/);
+  assert.match(reader, /"VeriffIdentityValidation"/);
+  assert.match(
+    reader,
+    /validation\."draftId"\s*=\s*d\."id"[\s\S]*ORDER BY validation\."updatedAt" DESC[\s\S]*LIMIT 1/
+  );
+  assert.match(
+    reader,
+    /(?:validation|latest_veriff)\."id"[^\n]*"veriffValidationId"/
+  );
+  assert.match(
+    serializer,
+    /serializedPayload[\s\S]*\.\.\.payload[\s\S]*plataformaDispositivo:\s*(?:row\.plataforma|canonicalPlatform)[\s\S]*veriffValidationId:\s*(?:row\.veriffValidationId|canonicalVeriffValidationId)/
+  );
+});
+
+test("el autosave deriva Veriff del borrador y no confia en el payload del navegador", async () => {
+  const storage = await readProjectFile("lib/solicitudes-storage.ts");
+  const saveDraft = sourceBlock(
+    storage,
+    "export async function saveSolicitudDraft",
+    "export async function desistSolicitud"
+  );
+
+  assert.match(
+    saveDraft,
+    /FROM "VeriffIdentityValidation" validation[\s\S]*validation\."draftId"\s*=\s*\$1[\s\S]*targetId/
+  );
+  assert.match(
+    saveDraft,
+    /veriffValidationId:\s*canonicalVeriffValidationId/
+  );
+  assert.doesNotMatch(
+    saveDraft,
+    /canonical\.payload\.veriffValidationId\s*\|\|/
+  );
+});
+
+test("la hidratacion bloquea invalidaciones y autosave hasta restaurar DataCredito y Veriff", async () => {
+  const factory = await readProjectFile(
+    "app/dashboard/creditos/credit-factory-console.tsx"
+  );
+  const hydrationStateMatch = factory.match(
+    /const\s*\[\s*([A-Za-z_$][\w$]*(?:resume|hydrat)[\w$]*)\s*,\s*([A-Za-z_$][\w$]*)\s*\]\s*=\s*useState(?:<[^;]+?>)?\(\s*Boolean\(initialDraftId\)\s*\)/i
+  );
+  const hydrationRefMatch = factory.match(
+    /const\s+([A-Za-z_$][\w$]*(?:resume|hydrat)[\w$]*Ref)\s*=\s*useRef(?:<[^;]+?>)?\(\s*Boolean\(initialDraftId\)\s*\);/i
+  );
+  const hydrationUpdaterMatch = factory.match(
+    /const\s+([A-Za-z_$][\w$]*(?:resume|hydrat)[\w$]*)\s*=\s*useCallback\(\(active:\s*boolean\)\s*=>\s*\{([\s\S]{0,400}?)\},\s*\[\]\);/i
+  );
+
+  assert.ok(
+    hydrationStateMatch || hydrationRefMatch,
+    "la fabrica debe conservar una guarda explicita para toda la hidratacion"
+  );
+  const hydrationGuard = hydrationRefMatch
+    ? `${hydrationRefMatch[1]}.current`
+    : hydrationStateMatch[1];
+  const escapedGuard = escapeRegExp(hydrationGuard);
+  const startHydration = hydrationUpdaterMatch
+    ? new RegExp(`${escapeRegExp(hydrationUpdaterMatch[1])}\\(true\\)`)
+    : hydrationStateMatch
+      ? new RegExp(`${escapeRegExp(hydrationStateMatch[2])}\\(true\\)`)
+      : new RegExp(`${escapedGuard}\\s*=\\s*true`);
+  const finishHydration = hydrationUpdaterMatch
+    ? new RegExp(`${escapeRegExp(hydrationUpdaterMatch[1])}\\(false\\)`)
+    : hydrationStateMatch
+      ? new RegExp(`${escapeRegExp(hydrationStateMatch[2])}\\(false\\)`)
+      : new RegExp(`${escapedGuard}\\s*=\\s*false`);
+  const identityReset = sourceBlock(
+    factory,
+    "useEffect(() => {\n    setCedulaValidation",
+    "useEffect(() => {\n    if (!dataCreditoApproval)"
+  );
+  const loadDraft = sourceBlock(
+    factory,
+    "const loadDraft = async",
+    "void loadDraft();"
+  );
+  const autosaveStart = factory.indexOf(
+    "useEffect(() => {",
+    factory.indexOf("void loadDraft();")
+  );
+  const autosaveEnd = factory.indexOf("const handleDataCreditoBypass", autosaveStart);
+  const autosave = factory.slice(autosaveStart, autosaveEnd);
+  const applyDraft = sourceBlock(
+    factory,
+    "const applyDraftPayload",
+    "const createNewSaleFromClient"
+  );
+  const approvedHandler = sourceBlock(
+    factory,
+    "const handleDataCreditoApproved",
+    "const openLookupCredit"
+  );
+
+  if (hydrationUpdaterMatch && hydrationRefMatch && hydrationStateMatch) {
+    assert.match(
+      hydrationUpdaterMatch[2],
+      new RegExp(`${escapeRegExp(hydrationRefMatch[1])}\\.current\\s*=\\s*active`)
+    );
+    assert.match(
+      hydrationUpdaterMatch[2],
+      new RegExp(`${escapeRegExp(hydrationStateMatch[2])}\\(active\\)`)
+    );
+  }
+  assert.match(identityReset, new RegExp(`if\\s*\\(\\s*${escapedGuard}\\s*\\)`));
+  assert.match(
+    autosave,
+    new RegExp(
+      `if\\s*\\([\\s\\S]{0,320}${escapedGuard}[\\s\\S]{0,320}\\)\\s*\\{[\\s\\S]{0,240}cancelPendingDraftAutosave\\(\\);[\\s\\S]{0,100}return;`
+    ),
+    "el autosave debe salir antes de programar o enviar cambios durante la hidratacion"
+  );
+  assert.match(loadDraft, startHydration);
+  assert.match(applyDraft, /restoredDraftSnapshotRef\.current\s*=\s*\{/);
+  assert.match(
+    approvedHandler,
+    new RegExp(
+      `restoringDraftAssessment[\\s\\S]*setWizardStep\\(restoredDraftSnapshot\\.wizardStep\\)[\\s\\S]*restoredDraftSnapshot\\.veriffValidationId[\\s\\S]*await\\s+refreshVeriffValidation\\([\\s\\S]*finally\\s*\\{[\\s\\S]*${finishHydration.source}`
+    ),
+    "DataCredito y Veriff deben restaurarse antes de liberar la hidratacion"
+  );
+  assert.match(approvedHandler, finishHydration);
+  assert.match(approvedHandler, /lockDataCreditoIdentity:\s*true/);
+});
+
+test("DataCredito aprobado se reanuda por GET en la misma solicitud sin POST ni redireccion", async () => {
+  const [factory, gate] = await Promise.all([
+    readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
+    readProjectFile(
+      "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
+    ),
+  ]);
+  const bootstrap = sourceBlock(
+    gate,
+    "const loadInitialState",
+    "const validateForm"
+  );
+  const normalizer = sourceBlock(
+    gate,
+    "function normalizeApprovedAssessment",
+    "function normalizeDecision"
+  );
+  const approvedStart = bootstrap.indexOf('if (decision === "APROBADO")');
+  const approvedEnd = bootstrap.indexOf("} catch (error)", approvedStart);
+  const approvedBootstrap = bootstrap.slice(approvedStart, approvedEnd);
+  const resumeBranch = approvedBootstrap.match(
+    /if\s*\(\s*initialSolicitudId\s*\)\s*\{([\s\S]{0,1200}?)\n\s*\}/
+  );
+  const applyDraft = sourceBlock(
+    factory,
+    "const applyDraftPayload",
+    "const createNewSaleFromClient"
+  );
+  const loadDraft = sourceBlock(
+    factory,
+    "const loadDraft = async",
+    "void loadDraft();"
+  );
+  const approvedHandler = sourceBlock(
+    factory,
+    "const handleDataCreditoApproved",
+    "const openLookupCredit"
+  );
+
+  assert.doesNotMatch(bootstrap, /method:\s*["']POST["']/);
+  assert.ok(
+    resumeBranch && /onApprovedRef\.current\(/.test(resumeBranch[1]),
+    "un assessment aprobado de una solicitud retomada debe hidratarse automaticamente"
+  );
+  assert.match(
+    approvedBootstrap,
+    /normalizeApprovedAssessment\(assessmentPayload,\s*\{[\s\S]*solicitudId:\s*initialSolicitudId/
+  );
+  assert.match(normalizer, /fallback\.solicitudId/);
+  assert.match(normalizer, /return\s*\{[\s\S]*solicitudId,/);
+  assert.match(applyDraft, /veriffValidationId:\s*restoredVeriffValidationId/);
+  assert.match(
+    approvedHandler,
+    /restoredDraftSnapshot\.veriffValidationId[\s\S]*await\s+refreshVeriffValidation/
+  );
+  assert.doesNotMatch(applyDraft, /validateIdentityWithVeriff/);
+  assert.doesNotMatch(
+    `${loadDraft}\n${applyDraft}`,
+    /window\.location\.(?:assign|replace)|window\.history\.replaceState/
   );
 });
 

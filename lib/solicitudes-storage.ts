@@ -108,6 +108,14 @@ function normalizePlatform(value: unknown) {
   return platform === "ANDROID" || platform === "IPHONE" ? platform : null;
 }
 
+function normalizeDraftStep(value: unknown, fallback = 1) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(1, Math.min(5, parsed));
+}
+
 function lockDigest(kind: "document" | "imei", value: string) {
   return createHash("sha256").update(`${kind}:${value}`).digest("hex");
 }
@@ -322,8 +330,10 @@ type ActiveDraftOwnerRow = {
   usuarioId: number;
   vendedorId: number | null;
   sedeId: number;
+  currentStep?: number | null;
   clienteDocumento: string | null;
   imei: string | null;
+  plataforma?: string | null;
   dataCreditoAssessmentId?: string | null;
   payload?: Record<string, unknown> | null;
   materialized?: boolean;
@@ -550,8 +560,8 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     if (targetId) {
       const rows = await transaction.$queryRawUnsafe<ActiveDraftOwnerRow[]>(
         `
-          SELECT "id", "usuarioId", "vendedorId", "sedeId",
-            "clienteDocumento", "imei",
+          SELECT "id", "usuarioId", "vendedorId", "sedeId", "currentStep",
+            "clienteDocumento", "imei", "plataforma",
             "dataCreditoAssessmentId"::text AS "dataCreditoAssessmentId",
             "payload",
             (
@@ -613,19 +623,55 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           dataCreditoAssessmentId: assessmentId,
           payload: input.payload,
         };
-    const payloadJson = JSON.stringify(canonical.payload);
+    const storedStep = normalizeDraftStep(targetRow?.currentStep);
+    const storedPayloadStep = normalizeDraftStep(
+      targetRow?.payload?.wizardStep,
+      storedStep
+    );
+    const incomingStep = normalizeDraftStep(input.currentStep);
+    const persistedStep = Math.max(storedStep, storedPayloadStep, incomingStep);
+    const canonicalVeriffRows = targetId
+      ? await transaction.$queryRawUnsafe<Array<{ id: number }>>(
+          `
+            SELECT validation."id"
+            FROM "VeriffIdentityValidation" validation
+            WHERE validation."draftId" = $1
+            ORDER BY validation."updatedAt" DESC, validation."id" DESC
+            LIMIT 1
+          `,
+          targetId
+        )
+      : [];
+    const latestVeriffValidationId = Number(canonicalVeriffRows[0]?.id || 0);
+    const canonicalVeriffValidationId =
+      Number.isInteger(latestVeriffValidationId) &&
+      latestVeriffValidationId > 0
+        ? latestVeriffValidationId
+        : null;
+    const canonicalPlatform =
+      normalizePlatform(targetRow?.plataforma) ||
+      normalizePlatform(input.plataforma);
+    const persistedPayload = {
+      ...canonical.payload,
+      wizardStep: persistedStep,
+      veriffValidationId: canonicalVeriffValidationId,
+      ...(canonicalPlatform
+        ? { plataformaDispositivo: canonicalPlatform }
+        : {}),
+    };
+    const payloadJson = JSON.stringify(persistedPayload);
     if (targetId) {
       const updated = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
         `
           UPDATE "CreditoBorrador"
-          SET "currentStep" = $2,
+          SET "currentStep" = GREATEST("currentStep", $2),
               "clienteNombre" = $3,
               "clienteDocumento" = COALESCE(
                 NULLIF($4::text, ''), "clienteDocumento"
               ),
               "clienteTelefono" = $5,
               "imei" = $6,
-              "plataforma" = COALESCE($7, "plataforma"),
+              "plataforma" = COALESCE("plataforma", $7),
               "dataCreditoAssessmentId" = COALESCE($8::uuid, "dataCreditoAssessmentId"),
               "payload" = $9::jsonb,
               "updatedAt" = CURRENT_TIMESTAMP
@@ -633,7 +679,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           RETURNING "id"
         `,
         targetId,
-        input.currentStep,
+        persistedStep,
         input.clienteNombre,
         canonical.clienteDocumento,
         input.clienteTelefono,

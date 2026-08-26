@@ -2734,6 +2734,14 @@ export default function CreditFactoryConsole({
   const [draftStatus, setDraftStatus] = useState<
     "idle" | "loading" | "saving" | "saved" | "error"
   >(initialDraftId ? "loading" : "idle");
+  const [draftResumeHydrating, setDraftResumeHydrating] = useState(
+    Boolean(initialDraftId)
+  );
+  const draftResumeHydrationRef = useRef(Boolean(initialDraftId));
+  const updateDraftResumeHydration = useCallback((active: boolean) => {
+    draftResumeHydrationRef.current = active;
+    setDraftResumeHydrating(active);
+  }, []);
   const [draftLastSavedAt, setDraftLastSavedAt] = useState("");
   const [draftErrorMessage, setDraftErrorMessage] = useState("");
   const [showPaymentResults, setShowPaymentResults] = useState(false);
@@ -2972,6 +2980,7 @@ export default function CreditFactoryConsole({
   const restoredDraftSnapshotRef = useRef<{
     draftId: number;
     assessmentId: string | null;
+    veriffValidationId: number | null;
     wizardStep: number;
     plazoMeses: string;
     fechaPrimerPago: string;
@@ -3017,7 +3026,9 @@ export default function CreditFactoryConsole({
     dataCreditoCreditCreationMode && !dataCreditoFlowReady;
   const showDataCreditoGate =
     dataCreditoGatePending &&
-    (!canAdminMoveFreelyInFactory || wizardStep === 1);
+    (draftResumeHydrating ||
+      !canAdminMoveFreelyInFactory ||
+      wizardStep === 1);
   const dataCreditoDraftLoading =
     dataCreditoGatePending && Boolean(initialDraftId) && draftStatus === "loading";
 
@@ -4168,6 +4179,9 @@ export default function CreditFactoryConsole({
             checks: [],
           }
     );
+    if (draftResumeHydrationRef.current) {
+      return;
+    }
     if (applyingVeriffIdentityRef.current) {
       applyingVeriffIdentityRef.current = false;
       return;
@@ -6814,20 +6828,31 @@ export default function CreditFactoryConsole({
 
   const applyVeriffIdentityData = (
     validation: VeriffValidationState | null,
-    expectedDraftId: number | null | undefined = veriffExpectedDraftId
+    expectedDraftId: number | null | undefined = veriffExpectedDraftId,
+    options: {
+      expectedDocumentNumber?: string | null;
+      lockDataCreditoIdentity?: boolean;
+    } = {}
   ) => {
     const identity = validation?.identityData;
+    const expectedDocumentNumber =
+      options.expectedDocumentNumber !== undefined
+        ? options.expectedDocumentNumber
+        : dataCreditoApproval?.documentNumber;
     if (
       !veriffApprovalCanUnlockClient(
         validation,
         expectedDraftId,
-        dataCreditoApproval?.documentNumber
+        expectedDocumentNumber
       ) ||
       !identity
     ) {
       return false;
     }
-    const dataCreditoIdentityLocked = Boolean(dataCreditoApproval);
+    const dataCreditoIdentityLocked =
+      Boolean(options.lockDataCreditoIdentity) ||
+      Boolean(dataCreditoApproval) ||
+      Boolean(dataCreditoAssessmentId);
 
     const fullNameParts = String(identity.fullName || "")
       .replace(/\s+/g, " ")
@@ -6983,7 +7008,12 @@ export default function CreditFactoryConsole({
 
   const refreshVeriffValidation = async (
     validationId = veriffValidation?.id || null,
-    options: { expectedDraftId?: number | null; silent?: boolean } = {}
+    options: {
+      expectedDraftId?: number | null;
+      expectedDocumentNumber?: string | null;
+      lockDataCreditoIdentity?: boolean;
+      silent?: boolean;
+    } = {}
   ) => {
     if (!validationId) {
       if (!options.silent) {
@@ -7019,18 +7049,29 @@ export default function CreditFactoryConsole({
         options.expectedDraftId !== undefined
           ? options.expectedDraftId
           : veriffExpectedDraftId;
+      const expectedDocumentNumber =
+        options.expectedDocumentNumber !== undefined
+          ? options.expectedDocumentNumber
+          : dataCreditoApproval?.documentNumber;
       const usableApproval = veriffApprovalCanUnlockClient(
         validation,
         expectedDraftId,
-        dataCreditoApproval?.documentNumber
+        expectedDocumentNumber
       );
       const documentRejectionMessage = dataCreditoRequiresVeriff
         ? getDataCreditoVeriffDocumentRejectionMessage(
             validation,
-            dataCreditoApproval?.documentNumber
+            expectedDocumentNumber
           )
         : "";
-      const filledClientData = applyVeriffIdentityData(validation, expectedDraftId);
+      const filledClientData = applyVeriffIdentityData(
+        validation,
+        expectedDraftId,
+        {
+          expectedDocumentNumber,
+          lockDataCreditoIdentity: options.lockDataCreditoIdentity,
+        }
+      );
       setVeriffInlineMessage(
         documentRejectionMessage
           ? documentRejectionMessage
@@ -7905,6 +7946,8 @@ export default function CreditFactoryConsole({
     setWizardStep(1);
     setDraftId(null);
     setDraftStatus("idle");
+    updateDraftResumeHydration(false);
+    restoredDraftSnapshotRef.current = null;
     setDraftLastSavedAt("");
     setDraftErrorMessage("");
     setClienteNombre("");
@@ -9149,6 +9192,7 @@ export default function CreditFactoryConsole({
 
   const applyDraftPayload = (draft: CreditDraftItem) => {
     cancelPendingDraftAutosave();
+    updateDraftResumeHydration(true);
     const payload = draft.payload || {};
     const value = (key: string) => {
       const current = payload[key];
@@ -9161,8 +9205,17 @@ export default function CreditFactoryConsole({
     };
     const checked = (key: string) => payload[key] === true;
     const restoredAssessmentId = value("dataCreditoAssessmentId") || null;
+    const savedVeriffValidationId = Number(value("veriffValidationId") || 0);
+    const restoredVeriffValidationId =
+      Number.isInteger(savedVeriffValidationId) &&
+      savedVeriffValidationId > 0
+        ? savedVeriffValidationId
+        : null;
     const restoredWizardStep = clampWizardStep(
-      Number(payload.wizardStep || draft.currentStep || wizardStep)
+      Math.max(
+        Number(payload.wizardStep || 1),
+        Number(draft.currentStep || 1)
+      )
     );
     const restoredInstallments = value("plazoMeses") || plazoMeses;
     const restoredFirstPaymentDate =
@@ -9175,6 +9228,7 @@ export default function CreditFactoryConsole({
     restoredDraftSnapshotRef.current = {
       draftId: draft.id,
       assessmentId: restoredAssessmentId,
+      veriffValidationId: restoredVeriffValidationId,
       wizardStep: restoredWizardStep,
       plazoMeses: restoredInstallments,
       fechaPrimerPago: restoredFirstPaymentDate,
@@ -9360,18 +9414,12 @@ export default function CreditFactoryConsole({
     setVeriffRetryPolicy(EMPTY_VERIFF_RETRY_POLICY);
     setIdentityValidationModalOpen(false);
     setIdentityClientDetailsOpen(false);
-    const savedVeriffValidationId = Number(value("veriffValidationId") || 0);
-    if (Number.isInteger(savedVeriffValidationId) && savedVeriffValidationId > 0) {
+    if (restoredVeriffValidationId) {
       veriffAutoSessionRef.current = true;
-      void refreshVeriffValidation(savedVeriffValidationId, {
-        expectedDraftId: draft.id,
-      });
     } else {
       veriffAutoSessionRef.current = false;
     }
-    setWizardStep(
-      clampWizardStep(Number(payload.wizardStep || draft.currentStep || wizardStep))
-    );
+    setWizardStep(restoredWizardStep);
 
   };
 
@@ -9420,7 +9468,7 @@ export default function CreditFactoryConsole({
   };
 
   useEffect(() => {
-    if (!createClientMode) {
+    if (!createClientMode || initialDraftId) {
       return;
     }
 
@@ -9446,7 +9494,7 @@ export default function CreditFactoryConsole({
     } finally {
       window.sessionStorage.removeItem("finserpay-client-prefill");
     }
-  }, [createClientMode]);
+  }, [createClientMode, initialDraftId]);
 
   useEffect(() => {
     if (!createClientMode || !initialDraftId) {
@@ -9457,6 +9505,7 @@ export default function CreditFactoryConsole({
 
     const loadDraft = async () => {
       try {
+        updateDraftResumeHydration(true);
         setDraftStatus("loading");
         const params = new URLSearchParams({ id: String(initialDraftId) });
         const result = await requestJson<CreditDraftSingleResponse>(
@@ -9516,6 +9565,7 @@ export default function CreditFactoryConsole({
         }
 
         setDraftStatus("error");
+        updateDraftResumeHydration(false);
         setNotice({
           text: error instanceof Error ? error.message : "No se pudo abrir el borrador",
           tone: "red",
@@ -9531,10 +9581,16 @@ export default function CreditFactoryConsole({
   }, [createClientMode, initialDraftId]);
 
   useEffect(() => {
+    if (draftResumeHydrationRef.current) {
+      cancelPendingDraftAutosave();
+      return;
+    }
     if (
       !createClientMode ||
       simulatorMode ||
       deliveryMode ||
+      draftResumeHydrating ||
+      draftStatus === "loading" ||
       !draftId ||
       !draftHasMeaningfulData
     ) {
@@ -9651,6 +9707,8 @@ export default function CreditFactoryConsole({
     deliveryMode,
     draftHasMeaningfulData,
     draftId,
+    draftResumeHydrating,
+    draftStatus,
     factoryDraftPayload,
     currentIphoneClosureFingerprint,
     nextFactoryStep.id,
@@ -9668,6 +9726,7 @@ export default function CreditFactoryConsole({
     setDataCreditoAssessmentId(null);
     setDataCreditoApproval(null);
     setDataCreditoBypassed(true);
+    updateDraftResumeHydration(false);
   };
 
   const handleDataCreditoAssessmentInvalidated = () => {
@@ -9677,7 +9736,9 @@ export default function CreditFactoryConsole({
     setFianzaPorcentaje(String(creditSettings.fianzaPorcentaje));
   };
 
-  const handleDataCreditoApproved = (result: DataCreditoApprovedResult) => {
+  const handleDataCreditoApproved = async (
+    result: DataCreditoApprovedResult
+  ) => {
     const restoredDraftSnapshot = restoredDraftSnapshotRef.current;
     const restoredDraftId = result.solicitudId || draftId;
     const restoringDraftAssessment = Boolean(
@@ -9782,9 +9843,27 @@ export default function CreditFactoryConsole({
 
     if (restoringDraftAssessment && restoredDraftSnapshot) {
       setWizardStep(restoredDraftSnapshot.wizardStep);
-      restoredDraftSnapshotRef.current = null;
+      try {
+        if (restoredDraftSnapshot.veriffValidationId) {
+          await refreshVeriffValidation(
+            restoredDraftSnapshot.veriffValidationId,
+            {
+              expectedDraftId: restoredDraftSnapshot.draftId,
+              expectedDocumentNumber: result.documentNumber,
+              lockDataCreditoIdentity: true,
+              silent: true,
+            }
+          );
+        }
+      } finally {
+        restoredDraftSnapshotRef.current = null;
+        updateDraftResumeHydration(false);
+      }
     } else if (wizardStep !== 1) {
       setWizardStep(1);
+      updateDraftResumeHydration(false);
+    } else {
+      updateDraftResumeHydration(false);
     }
   };
 

@@ -6,6 +6,9 @@ import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { SolicitudCanonicalMutationError } from "@/lib/solicitudes";
+import { isFirmaSeguroSuccessfulStatus } from "@/lib/firmaseguro-status";
+import { ensureFirmaSeguroSchema } from "@/lib/firmaseguro-storage";
+import { ensureVeriffSchema } from "@/lib/veriff-storage";
 import {
   ActiveSolicitudConflictError,
   desistSolicitud,
@@ -46,7 +49,13 @@ type DraftRow = {
   clienteDocumento: string | null;
   clienteTelefono: string | null;
   imei: string | null;
+  plataforma: string | null;
   dataCreditoAssessmentId: string | null;
+  veriffValidationId: number | null;
+  veriffStatus: string | null;
+  veriffDecision: string | null;
+  firmaStatus: string | null;
+  firmaProcessUuid: string | null;
   payload: unknown;
   createdAt: Date | string;
   updatedAt: Date | string;
@@ -123,14 +132,34 @@ function serializeDraft(row: DraftRow) {
       ? (row.payload as DraftPayload)
       : {};
   const canonicalAssessmentId = String(row.dataCreditoAssessmentId || "").trim();
-  const serializedPayload = canonicalAssessmentId
-    ? { ...payload, dataCreditoAssessmentId: canonicalAssessmentId }
-    : payload;
+  const canonicalPlatform = String(row.plataforma || "").trim().toUpperCase();
+  const canonicalVeriffValidationId = Number(row.veriffValidationId || 0);
+  const payloadStep = clampStep(payload.wizardStep);
+  const firmaStep = row.firmaProcessUuid
+    ? isFirmaSeguroSuccessfulStatus(row.firmaStatus)
+      ? 5
+      : 4
+    : 1;
+  const canonicalStep = Math.max(clampStep(row.currentStep), payloadStep, firmaStep);
+  const serializedPayload: DraftPayload = {
+    ...payload,
+    wizardStep: canonicalStep,
+    ...(canonicalAssessmentId
+      ? { dataCreditoAssessmentId: canonicalAssessmentId }
+      : {}),
+    ...(canonicalPlatform === "ANDROID" || canonicalPlatform === "IPHONE"
+      ? { plataformaDispositivo: canonicalPlatform }
+      : {}),
+    ...(Number.isInteger(canonicalVeriffValidationId) &&
+    canonicalVeriffValidationId > 0
+      ? { veriffValidationId: canonicalVeriffValidationId }
+      : {}),
+  };
 
   return {
     id: row.id,
     estado: row.estado,
-    currentStep: row.currentStep,
+    currentStep: canonicalStep,
     clienteNombre: row.clienteNombre,
     clienteDocumento: row.clienteDocumento,
     clienteTelefono: row.clienteTelefono,
@@ -205,7 +234,12 @@ async function readDrafts(
     `
       SELECT d."id", d."estado", d."usuarioId", d."vendedorId", d."sedeId",
         d."currentStep", d."clienteNombre", d."clienteDocumento",
-        d."clienteTelefono", d."imei", d."dataCreditoAssessmentId",
+        d."clienteTelefono", d."imei", d."plataforma", d."dataCreditoAssessmentId",
+        latest_veriff."id" AS "veriffValidationId",
+        latest_veriff."status" AS "veriffStatus",
+        latest_veriff."decision" AS "veriffDecision",
+        latest_firma."status" AS "firmaStatus",
+        latest_firma."processUuid" AS "firmaProcessUuid",
         ${payload} AS "payload",
         d."createdAt", d."updatedAt", d."closedAt",
         u."nombre" AS "usuarioNombre", u."usuario" AS "usuarioLogin",
@@ -215,6 +249,20 @@ async function readDrafts(
       LEFT JOIN "Usuario" u ON u."id" = d."usuarioId"
       LEFT JOIN "Vendedor" v ON v."id" = d."vendedorId"
       LEFT JOIN "Sede" s ON s."id" = d."sedeId"
+      LEFT JOIN LATERAL (
+        SELECT validation."id", validation."status", validation."decision"
+        FROM "VeriffIdentityValidation" validation
+        WHERE validation."draftId" = d."id"
+        ORDER BY validation."updatedAt" DESC, validation."id" DESC
+        LIMIT 1
+      ) latest_veriff ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT process."status", process."processUuid"
+        FROM "FirmaSeguroProcess" process
+        WHERE process."draftId" = d."id"
+        ORDER BY process."createdAt" DESC, process."id" DESC
+        LIMIT 1
+      ) latest_firma ON TRUE
       WHERE ${whereSql}
       ORDER BY d."updatedAt" DESC
       LIMIT $${values.length + 1}
@@ -234,7 +282,11 @@ export async function GET(req: Request) {
         { status: 403 }
       );
     }
-    await ensureSolicitudSchema();
+    await Promise.all([
+      ensureSolicitudSchema(),
+      ensureVeriffSchema(),
+      ensureFirmaSeguroSchema(),
+    ]);
 
     const params = new URL(req.url).searchParams;
     const id = parsePositiveId(params.get("id"));
@@ -294,6 +346,11 @@ export async function POST(req: Request) {
         { status: 403 }
       );
     }
+    await Promise.all([
+      ensureSolicitudSchema(),
+      ensureVeriffSchema(),
+      ensureFirmaSeguroSchema(),
+    ]);
     const body = (await req.json().catch(() => ({}))) as SaveDraftBody;
     const payload = normalizePayload(body.payload);
     const fields = extractDraftFields(payload);

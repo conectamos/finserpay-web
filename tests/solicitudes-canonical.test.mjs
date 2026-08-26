@@ -142,7 +142,7 @@ test("la aprobacion enlaza el id canonico antes del autosave", async () => {
 
   assert.match(gate, /solicitudId: number \| null/);
   assert.match(gate, /readNumber\(payload\.solicitudId\)/);
-  assert.match(factory, /deliveryMode \|\|\s*!draftId \|\|/);
+  assert.match(factory, /deliveryMode \|\|[\s\S]{0,240}!draftId \|\|/);
   assert.match(factory, /setDraftId\(result\.solicitudId\)/);
   assert.match(factory, /replaceDraftInUrl\(result\.solicitudId\)/);
 });
