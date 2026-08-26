@@ -47,6 +47,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ClipboardEvent,
   type PointerEvent,
   type ReactNode,
 } from "react";
@@ -119,6 +120,12 @@ import {
   findCreditCreatedAfterConnectionLoss,
   isCreditCreationNetworkError,
 } from "@/lib/credit-create-recovery";
+import {
+  CREDIT_CONTACT_PHONE_LENGTH,
+  isValidCreditContactPhone,
+  normalizeCreditContactPhoneInput,
+  validateCreditContactPhones,
+} from "@/lib/credit-contact-phones";
 import { buildCreditPaymentHref } from "@/lib/credit-payment-navigation";
 import { veriffIdentityMatchesExpectedDocument } from "@/lib/veriff-identity";
 import {
@@ -4104,23 +4111,52 @@ export default function CreditFactoryConsole({
     wizardStep,
   ]);
   const imeiValido = imeiDigits.length === 15;
+  const contactPhoneValidation = validateCreditContactPhones({
+    clienteTelefono,
+    referenciaFamiliar1Telefono,
+    referenciaFamiliar2Telefono,
+  });
+  const clienteTelefonoValido = isValidCreditContactPhone(clienteTelefono);
+  const referenciaFamiliar1TelefonoValido = isValidCreditContactPhone(
+    referenciaFamiliar1Telefono
+  );
+  const referenciaFamiliar2TelefonoValido = isValidCreditContactPhone(
+    referenciaFamiliar2Telefono
+  );
+  const clienteTelefonoRepetido =
+    clienteTelefonoValido &&
+    (clienteTelefono === referenciaFamiliar1Telefono ||
+      clienteTelefono === referenciaFamiliar2Telefono);
+  const referenciaFamiliar1TelefonoRepetido =
+    referenciaFamiliar1TelefonoValido &&
+    (referenciaFamiliar1Telefono === clienteTelefono ||
+      referenciaFamiliar1Telefono === referenciaFamiliar2Telefono);
+  const referenciaFamiliar2TelefonoRepetido =
+    referenciaFamiliar2TelefonoValido &&
+    (referenciaFamiliar2Telefono === clienteTelefono ||
+      referenciaFamiliar2Telefono === referenciaFamiliar1Telefono);
+  const pasteCreditContactPhone = (
+    event: ClipboardEvent<HTMLInputElement>,
+    setValue: (value: string) => void
+  ) => {
+    event.preventDefault();
+    setValue(normalizeCreditContactPhoneInput(event.clipboardData.getData("text")));
+  };
   const stepClienteReady =
     dataCreditoFlowReady &&
     Boolean(clientePrimerNombre.trim()) &&
     Boolean(clientePrimerApellido.trim()) &&
     Boolean(clienteTipoDocumento.trim()) &&
     Boolean(clienteDocumento.trim()) &&
-    Boolean(clienteTelefono.trim()) &&
+    contactPhoneValidation.ok &&
     Boolean(clienteCorreo.trim()) &&
     Boolean(clienteDepartamento.trim()) &&
     Boolean(clienteCiudad.trim()) &&
     Boolean(clienteGenero.trim()) &&
     Boolean(referenciaFamiliar1Nombre.trim()) &&
     Boolean(referenciaFamiliar1Parentesco.trim()) &&
-    Boolean(referenciaFamiliar1Telefono.trim()) &&
     Boolean(referenciaFamiliar2Nombre.trim()) &&
     Boolean(referenciaFamiliar2Parentesco.trim()) &&
-    Boolean(referenciaFamiliar2Telefono.trim()) &&
     Boolean(clienteDireccion.trim()) &&
     Boolean(clienteFechaNacimiento) &&
     Boolean(clienteFechaExpedicion);
@@ -4680,7 +4716,10 @@ export default function CreditFactoryConsole({
       { label: "Nombre", ready: Boolean(clientePrimerNombre.trim()) },
       { label: "Apellido", ready: Boolean(clientePrimerApellido.trim()) },
       { label: "Documento", ready: Boolean(clienteDocumento.trim()) },
-      { label: "Celular", ready: Boolean(clienteTelefono.trim()) },
+      {
+        label: "Celular (10 digitos)",
+        ready: clienteTelefonoValido && !clienteTelefonoRepetido,
+      },
       { label: "Correo", ready: Boolean(clienteCorreo.trim()) },
       { label: "Ubicacion", ready: Boolean(clienteDepartamento.trim() && clienteCiudad.trim()) },
       { label: "Direccion", ready: Boolean(clienteDireccion.trim()) },
@@ -4689,10 +4728,12 @@ export default function CreditFactoryConsole({
         ready: Boolean(
           referenciaFamiliar1Nombre.trim() &&
             referenciaFamiliar1Parentesco.trim() &&
-            referenciaFamiliar1Telefono.trim() &&
+            referenciaFamiliar1TelefonoValido &&
+            !referenciaFamiliar1TelefonoRepetido &&
             referenciaFamiliar2Nombre.trim() &&
             referenciaFamiliar2Parentesco.trim() &&
-            referenciaFamiliar2Telefono.trim()
+            referenciaFamiliar2TelefonoValido &&
+            !referenciaFamiliar2TelefonoRepetido
         ),
       },
     ],
@@ -6807,6 +6848,14 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    if (wizardStep === 1 && !contactPhoneValidation.ok) {
+      setNotice({
+        text: contactPhoneValidation.message,
+        tone: "red",
+      });
+      return;
+    }
+
     if (wizardStep === 1 && !stepClienteReady) {
       setNotice({
         text: "Completa los datos del cliente antes de avanzar al equipo.",
@@ -6913,6 +6962,14 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    if (wizardStep === 1 && !contactPhoneValidation.ok) {
+      setNotice({
+        text: contactPhoneValidation.message,
+        tone: "red",
+      });
+      return;
+    }
+
     if (wizardStep === 1 && !stepClienteReady) {
       setNotice({
         text: "Completa los datos del cliente antes de avanzar al equipo.",
@@ -6995,10 +7052,10 @@ export default function CreditFactoryConsole({
   };
 
   const createWhatsAppOtp = async () => {
-    if (!clienteTelefono.trim()) {
+    if (!clienteTelefonoValido) {
       setNotice({
-        text: "Ingresa primero el telefono del cliente para generar el OTP.",
-        tone: "amber",
+        text: "El número de WhatsApp debe tener exactamente 10 dígitos.",
+        tone: "red",
       });
       return;
     }
@@ -7505,6 +7562,14 @@ export default function CreditFactoryConsole({
       setNotice({
         text: iphoneDeliveryPendingMessage,
         tone: "amber",
+      });
+      return null;
+    }
+
+    if (!contactPhoneValidation.ok) {
+      setNotice({
+        text: contactPhoneValidation.message,
+        tone: "red",
       });
       return null;
     }
@@ -11076,19 +11141,59 @@ export default function CreditFactoryConsole({
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Numero de celular con WhatsApp
                         </label>
-                        <div className="flex items-center overflow-hidden rounded-2xl border border-[#c3d8dc] bg-white">
+                        <div
+                          className={[
+                            "flex items-center overflow-hidden rounded-2xl border bg-white transition",
+                            clienteTelefono &&
+                            (!clienteTelefonoValido || clienteTelefonoRepetido)
+                              ? "border-red-300 focus-within:border-red-500 focus-within:ring-2 focus-within:ring-red-100"
+                              : "border-[#c3d8dc] focus-within:border-[#145a5a] focus-within:ring-2 focus-within:ring-[#d6eef2]",
+                          ].join(" ")}
+                        >
                           <span className="border-r border-[#d9e7ea] px-4 py-3 text-base font-semibold text-slate-600">
                             +57
                           </span>
                           <input
+                            type="tel"
+                            inputMode="numeric"
+                            maxLength={CREDIT_CONTACT_PHONE_LENGTH}
+                            autoComplete="tel-national"
                             value={clienteTelefono}
                             onChange={(event) =>
-                              setClienteTelefono(event.target.value.replace(/\D/g, ""))
+                              setClienteTelefono(
+                                normalizeCreditContactPhoneInput(event.target.value)
+                              )
+                            }
+                            onPaste={(event) =>
+                              pasteCreditContactPhone(event, setClienteTelefono)
                             }
                             placeholder="3001234567"
+                            aria-invalid={
+                              Boolean(clienteTelefono) &&
+                              (!clienteTelefonoValido || clienteTelefonoRepetido)
+                            }
+                            aria-describedby="cliente-telefono-help"
                             className="flex-1 px-4 py-3 text-base text-slate-900 outline-none"
                           />
                         </div>
+                        <p
+                          id="cliente-telefono-help"
+                          className={[
+                            "mt-2 text-xs",
+                            clienteTelefono &&
+                            (!clienteTelefonoValido || clienteTelefonoRepetido)
+                              ? "font-semibold text-red-600"
+                              : "text-slate-500",
+                          ].join(" ")}
+                        >
+                          {clienteTelefonoRepetido
+                            ? "Este número ya está usado en una referencia."
+                            : clienteTelefono && !clienteTelefonoValido
+                              ? "Debe tener exactamente 10 dígitos (" +
+                                clienteTelefono.length +
+                                "/10)."
+                              : "10 dígitos. Debe ser diferente a los teléfonos de las referencias."}
+                        </p>
                       </div>
 
                       <div>
@@ -11265,15 +11370,57 @@ export default function CreditFactoryConsole({
                                   className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                                 />
                                 <input
+                                  type="tel"
+                                  inputMode="numeric"
+                                  maxLength={CREDIT_CONTACT_PHONE_LENGTH}
                                   value={referenciaFamiliar1Telefono}
                                   onChange={(event) =>
                                     setReferenciaFamiliar1Telefono(
-                                      event.target.value.replace(/\D/g, "")
+                                      normalizeCreditContactPhoneInput(event.target.value)
                                     )
                                   }
-                                  placeholder="Telefono"
-                                  className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
+                                  onPaste={(event) =>
+                                    pasteCreditContactPhone(
+                                      event,
+                                      setReferenciaFamiliar1Telefono
+                                    )
+                                  }
+                                  placeholder="Teléfono de 10 dígitos"
+                                  aria-invalid={
+                                    Boolean(referenciaFamiliar1Telefono) &&
+                                    (!referenciaFamiliar1TelefonoValido ||
+                                      referenciaFamiliar1TelefonoRepetido)
+                                  }
+                                  aria-describedby="referencia-1-telefono-help"
+                                  className={[
+                                    "w-full rounded-2xl border bg-white px-4 py-3 text-base text-slate-900 outline-none transition",
+                                    referenciaFamiliar1Telefono &&
+                                    (!referenciaFamiliar1TelefonoValido ||
+                                      referenciaFamiliar1TelefonoRepetido)
+                                      ? "border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                                      : "border-[#c3d8dc] focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]",
+                                  ].join(" ")}
                                 />
+                                <p
+                                  id="referencia-1-telefono-help"
+                                  className={[
+                                    "text-xs",
+                                    referenciaFamiliar1Telefono &&
+                                    (!referenciaFamiliar1TelefonoValido ||
+                                      referenciaFamiliar1TelefonoRepetido)
+                                      ? "font-semibold text-red-600"
+                                      : "text-slate-500",
+                                  ].join(" ")}
+                                >
+                                  {referenciaFamiliar1TelefonoRepetido
+                                    ? "Este número ya está usado en otro campo."
+                                    : referenciaFamiliar1Telefono &&
+                                        !referenciaFamiliar1TelefonoValido
+                                      ? "Debe tener exactamente 10 dígitos (" +
+                                        referenciaFamiliar1Telefono.length +
+                                        "/10)."
+                                      : "10 dígitos y diferente a los otros dos números."}
+                                </p>
                               </div>
                             </div>
 
@@ -11299,15 +11446,57 @@ export default function CreditFactoryConsole({
                                   className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                                 />
                                 <input
+                                  type="tel"
+                                  inputMode="numeric"
+                                  maxLength={CREDIT_CONTACT_PHONE_LENGTH}
                                   value={referenciaFamiliar2Telefono}
                                   onChange={(event) =>
                                     setReferenciaFamiliar2Telefono(
-                                      event.target.value.replace(/\D/g, "")
+                                      normalizeCreditContactPhoneInput(event.target.value)
                                     )
                                   }
-                                  placeholder="Telefono"
-                                  className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
+                                  onPaste={(event) =>
+                                    pasteCreditContactPhone(
+                                      event,
+                                      setReferenciaFamiliar2Telefono
+                                    )
+                                  }
+                                  placeholder="Teléfono de 10 dígitos"
+                                  aria-invalid={
+                                    Boolean(referenciaFamiliar2Telefono) &&
+                                    (!referenciaFamiliar2TelefonoValido ||
+                                      referenciaFamiliar2TelefonoRepetido)
+                                  }
+                                  aria-describedby="referencia-2-telefono-help"
+                                  className={[
+                                    "w-full rounded-2xl border bg-white px-4 py-3 text-base text-slate-900 outline-none transition",
+                                    referenciaFamiliar2Telefono &&
+                                    (!referenciaFamiliar2TelefonoValido ||
+                                      referenciaFamiliar2TelefonoRepetido)
+                                      ? "border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                                      : "border-[#c3d8dc] focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]",
+                                  ].join(" ")}
                                 />
+                                <p
+                                  id="referencia-2-telefono-help"
+                                  className={[
+                                    "text-xs",
+                                    referenciaFamiliar2Telefono &&
+                                    (!referenciaFamiliar2TelefonoValido ||
+                                      referenciaFamiliar2TelefonoRepetido)
+                                      ? "font-semibold text-red-600"
+                                      : "text-slate-500",
+                                  ].join(" ")}
+                                >
+                                  {referenciaFamiliar2TelefonoRepetido
+                                    ? "Este número ya está usado en otro campo."
+                                    : referenciaFamiliar2Telefono &&
+                                        !referenciaFamiliar2TelefonoValido
+                                      ? "Debe tener exactamente 10 dígitos (" +
+                                        referenciaFamiliar2Telefono.length +
+                                        "/10)."
+                                      : "10 dígitos y diferente a los otros dos números."}
+                                </p>
                               </div>
                             </div>
                           </div>

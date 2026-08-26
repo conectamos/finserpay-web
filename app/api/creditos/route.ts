@@ -34,6 +34,7 @@ import {
   toNumber,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
+import { validateCreditContactPhones } from "@/lib/credit-contact-phones";
 import { calculateFrenchAmortization } from "@/lib/credit-amortization";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
 import {
@@ -1779,6 +1780,21 @@ export async function POST(req: Request) {
     if (!referenciaFamiliar2Nombre || !referenciaFamiliar2Parentesco || !referenciaFamiliar2Telefono) {
       return NextResponse.json(
         { error: "Debes registrar la segunda referencia familiar" },
+        { status: 400 }
+      );
+    }
+
+    const contactPhoneValidation = validateCreditContactPhones({
+      clienteTelefono,
+      referenciaFamiliar1Telefono,
+      referenciaFamiliar2Telefono,
+    });
+    if (!contactPhoneValidation.ok) {
+      return NextResponse.json(
+        {
+          code: contactPhoneValidation.code,
+          error: contactPhoneValidation.message,
+        },
         { status: 400 }
       );
     }

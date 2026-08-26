@@ -14,7 +14,7 @@
     "test:wompi": "node --experimental-strip-types --test tests/wompi-early-payoff-intent.test.mjs tests/credit-payment-plan-settled.test.mjs tests/payment-date-and-rounding.test.mjs",
     "test:pwa": "node --test tests/pwa-update-policy.test.mjs",
     "test:client-documents": "node --test tests/client-document-download.test.mjs",
-    "test:credit-close": "node --experimental-strip-types --test tests/credit-create-recovery.test.mjs tests/credit-wizard-navigation.test.mjs tests/credit-simulator-platform.test.mjs tests/veriff-mobile-return.test.mjs",
+    "test:credit-close": "node --experimental-strip-types --test tests/credit-create-recovery.test.mjs tests/credit-contact-phones.test.mjs tests/credit-wizard-navigation.test.mjs tests/credit-simulator-platform.test.mjs tests/veriff-mobile-return.test.mjs",
     "test:amortization": "node --test tests/credit-amortization.test.mjs",
     "test:datacredito": "node --test tests/datacredito-client.test.mjs tests/datacredito-admin-report.test.mjs tests/datacredito-policy.test.mjs tests/datacredito-storage-controls.test.mjs tests/datacredito-financing-cap.test.mjs tests/datacredito-secure-record.test.mjs tests/datacredito-evaluation-security.test.mjs tests/datacredito-policy-assignment.test.mjs tests/datacredito-policy-catalog-ui.test.mjs tests/datacredito-policy-financial-settings.test.mjs",
     "test:aliados": "node --experimental-strip-types --test tests/ally-platform-rediscount.test.mjs",

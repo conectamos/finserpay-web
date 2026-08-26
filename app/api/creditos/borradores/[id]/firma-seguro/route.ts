@@ -35,6 +35,7 @@ import {
   toNumber,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
+import { validateCreditContactPhones } from "@/lib/credit-contact-phones";
 import { calculateFrenchAmortization } from "@/lib/credit-amortization";
 import { createFinancingTermsSeal } from "@/lib/credit-amortization-contract";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
@@ -314,10 +315,24 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
     [clientePrimerNombre, clientePrimerApellido].filter(Boolean).join(" ");
   const clienteDocumento = sanitizeText(payload.clienteDocumento);
   const clienteTelefono = sanitizeText(payload.clienteTelefono);
+  const referenciaFamiliar1Telefono = sanitizeText(
+    payload.referenciaFamiliar1Telefono
+  );
+  const referenciaFamiliar2Telefono = sanitizeText(
+    payload.referenciaFamiliar2Telefono
+  );
   const clienteCorreo = sanitizeText(payload.clienteCorreo);
   const clienteDireccion = sanitizeText(payload.clienteDireccion);
   const equipoMarca = sanitizeText(payload.equipoMarca);
   const equipoModelo = sanitizeText(payload.equipoModelo);
+  const contactPhoneValidation = validateCreditContactPhones({
+    clienteTelefono,
+    referenciaFamiliar1Telefono,
+    referenciaFamiliar2Telefono,
+  });
+  if (!contactPhoneValidation.ok) {
+    throw new CreditValidationError(contactPhoneValidation.message);
+  }
   const contratoFotoDataUrl = sanitizeImageDataUrl(
     payload.contratoSelfieDataUrl || payload.contratoFotoDataUrl
   );
