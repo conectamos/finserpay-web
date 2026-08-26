@@ -14,6 +14,7 @@ import {
   veriffGetPerson,
   VeriffApiError,
 } from "@/lib/veriff";
+import { enforceVeriffRetryPolicy } from "@/lib/veriff-retry-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -89,19 +90,30 @@ export async function GET(
         }
       } catch (error) {
         if (error instanceof VeriffApiError && [404, 409].includes(error.status)) {
-          row =
-            (await updateVeriffValidation(current.id, {
-              status: "PENDING",
-            })) || current;
+          const currentStatus = serializeVeriffValidation(current)?.status;
+          const currentHasFinalDecision = Boolean(
+            currentStatus &&
+              ["APPROVED", "DECLINED", "ERROR", "EXPIRED", "ABANDONED"].includes(
+                currentStatus
+              )
+          );
+          row = currentHasFinalDecision
+            ? current
+            : (await updateVeriffValidation(current.id, {
+                status: "PENDING",
+              })) || current;
         } else {
           throw error;
         }
       }
     }
 
+    const retryPolicy = await enforceVeriffRetryPolicy(row);
+
     return NextResponse.json({
       ok: true,
       validation: serializeVeriffValidation(row),
+      retryPolicy,
       veriff: getVeriffPublicSummary(),
     });
   } catch (error) {

@@ -9,6 +9,7 @@ import {
   serializeVeriffValidation,
   updateVeriffValidationFromDecision,
 } from "@/lib/veriff-storage";
+import { enforceVeriffRetryPolicy } from "@/lib/veriff-retry-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -75,8 +76,10 @@ export async function POST(request: Request) {
     "webhookPayload"
   );
 
+  const retryPolicy = await enforceVeriffRetryPolicy(updated);
   return NextResponse.json({
     ok: true,
+    retryPolicy,
     validation: serializeVeriffValidation(updated),
   });
 }

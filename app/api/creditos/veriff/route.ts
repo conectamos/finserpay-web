@@ -22,6 +22,7 @@ import {
   VeriffApiError,
 } from "@/lib/veriff";
 import { buildVeriffCompletionUrl } from "@/lib/veriff-callback";
+import { getVeriffRetryPolicy } from "@/lib/veriff-retry-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -168,6 +169,20 @@ export async function POST(request: Request) {
     const clienteNombre = [clientePrimerNombre, clientePrimerApellido]
       .filter(Boolean)
       .join(" ");
+    const retryPolicy = await getVeriffRetryPolicy(draftId);
+
+    if (retryPolicy.applicationRejected) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "La solicitud fue rechazada despues de agotar los intentos de validacion de identidad.",
+          retryPolicy,
+        },
+        { status: 409 }
+      );
+    }
+
 
     const reusableValidation = await getReusableVeriffValidationForDraft({
       aliadoId: draft.aliadoId,
@@ -179,6 +194,7 @@ export async function POST(request: Request) {
     if (reusableValidation) {
       return NextResponse.json({
         ok: true,
+        retryPolicy,
         reused: true,
         validation: serializeVeriffValidation(reusableValidation),
         veriff: getVeriffPublicSummary(),
@@ -244,6 +260,7 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({
+      retryPolicy,
       ok: true,
       validation: serializeVeriffValidation(row),
       veriff: getVeriffPublicSummary(),
