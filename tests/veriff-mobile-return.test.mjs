@@ -105,6 +105,7 @@ test("la identidad conserva los campos ancla de DataCrédito y no reinicia el as
   assert.match(applyIdentity, /lastName && !dataCreditoIdentityLocked/);
   assert.match(applyIdentity, /documentNumber && !dataCreditoIdentityLocked/);
   assert.match(applyIdentity, /identity\.documentType && !dataCreditoIdentityLocked/);
+  assert.doesNotMatch(applyIdentity, /setClienteFechaExpedicion/);
   assert.doesNotMatch(applyIdentity, /setWizardStep\(1\)/);
   assert.doesNotMatch(
     factoryConsole,

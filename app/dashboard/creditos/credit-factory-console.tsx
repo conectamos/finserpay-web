@@ -6303,7 +6303,6 @@ export default function CreditFactoryConsole({
       .trim();
     const documentNumber = String(identity.documentNumber || "").replace(/\D/g, "");
     const birthDate = dateOnly(identity.dateOfBirth);
-    const issueDate = dateOnly(identity.issueDate);
     const gender = normalizeVeriffGender(identity.gender);
 
     let copiedFields = 0;
@@ -6327,10 +6326,6 @@ export default function CreditFactoryConsole({
     if (birthDate) {
       copiedFields += 1;
       setClienteFechaNacimiento(birthDate);
-    }
-    if (issueDate) {
-      copiedFields += 1;
-      setClienteFechaExpedicion(issueDate);
     }
     if (gender) {
       copiedFields += 1;
