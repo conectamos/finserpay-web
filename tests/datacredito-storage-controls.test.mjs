@@ -892,13 +892,14 @@ test("muestra una ventana específica cuando el cliente ya tiene una solicitud a
   assert.ok(prequalificationGate.includes("Cliente ya existe"));
   assert.ok(
     prequalificationGate.includes(
-      "Este cliente ya cuenta con una solicitud. Continúe el proceso desde"
+      "Ya existe una solicitud para esta cédula. Debe retomarse o desistirse antes de iniciar otra."
     )
   );
   assert.ok(
-    prequalificationGate.includes('href="/dashboard/solicitudes"')
+    prequalificationGate.includes("Si eres el asesor titular, búscala en el muro")
   );
-  assert.ok(prequalificationGate.includes("Ir al muro de solicitudes"));
+  assert.ok(prequalificationGate.includes("href={solicitudWallHref}"));
+  assert.ok(prequalificationGate.includes("Buscar en mi muro"));
 });
 
 test("reserva espacio para los iconos de identificacion en la precalificacion", () => {

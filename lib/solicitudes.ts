@@ -128,10 +128,92 @@ function canonicalSolicitudUuid(value: unknown) {
   return SOLICITUD_UUID_PATTERN.test(uuid) ? uuid : null;
 }
 
-function canonicalSolicitudDocumentKey(value: unknown) {
+export function canonicalSolicitudDocumentKey(value: unknown) {
   const text = compactText(value, 80);
   const digits = text.replace(/\D/g, "").slice(0, 40);
   return digits || text.toUpperCase();
+}
+
+const SOLICITUD_RELEASE_REASONS = new Set([
+  "DESISTIDA",
+  "DESISTIDO",
+  "EXPIRADA_15_DIAS",
+  "EXPIRADA",
+]);
+
+export function isSolicitudIdentityReleased(input: {
+  source: "DRAFT" | "CREDIT";
+  draftState?: string | null;
+  closedReason?: string | null;
+}) {
+  if (input.source !== "DRAFT") return false;
+  const draftState = compactText(input.draftState, 40).toUpperCase();
+  const closedReason = compactText(input.closedReason, 80).toUpperCase();
+  return draftState === "CERRADO" && SOLICITUD_RELEASE_REASONS.has(closedReason);
+}
+
+export type SolicitudCanonicalCandidate = {
+  source: "DRAFT" | "CREDIT";
+  entityId: number;
+  clienteDocumento?: string | null;
+  createdAt?: Date | string | null;
+  rawState?: string | null;
+  closedReason?: string | null;
+};
+
+function canonicalCandidateTimestamp(value: Date | string | null | undefined) {
+  if (!value) return Number.NEGATIVE_INFINITY;
+  const timestamp = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function isNewerCanonicalCandidate(
+  candidate: SolicitudCanonicalCandidate,
+  current: SolicitudCanonicalCandidate
+) {
+  const candidateRank =
+    candidate.source === "CREDIT"
+      ? 3
+      : isSolicitudIdentityReleased({
+            source: candidate.source,
+            draftState: candidate.rawState,
+            closedReason: candidate.closedReason,
+          })
+        ? 1
+        : 2;
+  const currentRank =
+    current.source === "CREDIT"
+      ? 3
+      : isSolicitudIdentityReleased({
+            source: current.source,
+            draftState: current.rawState,
+            closedReason: current.closedReason,
+          })
+        ? 1
+        : 2;
+  if (candidateRank !== currentRank) return candidateRank > currentRank;
+  const timestampDifference =
+    canonicalCandidateTimestamp(candidate.createdAt) -
+    canonicalCandidateTimestamp(current.createdAt);
+  if (timestampDifference !== 0) return timestampDifference > 0;
+  return candidate.entityId > current.entityId;
+}
+
+export function selectCanonicalSolicitudesByDocument<
+  T extends SolicitudCanonicalCandidate,
+>(items: readonly T[]) {
+  const selected = new Map<string, T>();
+
+  for (const item of items) {
+    const documentKey = canonicalSolicitudDocumentKey(item.clienteDocumento);
+    const key = documentKey || `${item.source}:${item.entityId}`;
+    const current = selected.get(key);
+    if (!current || isNewerCanonicalCandidate(item, current)) {
+      selected.set(key, item);
+    }
+  }
+
+  return [...selected.values()];
 }
 
 export function resolveSolicitudDraftCanonicalIdentity(input: {
@@ -379,11 +461,12 @@ export function getSolicitudActions(input: {
   );
   const canOpenFactory = input.viewer.kind === "CENTRAL_ADMIN" || isOwner;
   const isActive = isOpen && !["RECHAZADA", "CANCELADA"].includes(input.state);
+  const canDesist = input.source === "DRAFT" && input.state !== "CANCELADA";
 
   if (isActive && canOpenFactory) {
     actions.push("ABRIR_FABRICA");
   }
-  if (isActive && (isOwner || input.viewer.kind === "CENTRAL_ADMIN")) {
+  if (canDesist && (isOwner || input.viewer.kind === "CENTRAL_ADMIN")) {
     actions.push("DESISTIR");
   }
   return actions;

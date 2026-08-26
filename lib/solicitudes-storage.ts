@@ -7,6 +7,7 @@ import { ensureVeriffSchema } from "@/lib/veriff-storage";
 import {
   SOLICITUD_FILTER_STATES,
   SOLICITUD_STATE_LABELS,
+  canonicalSolicitudDocumentKey,
   canSeeSensitiveSolicitudData,
   getSolicitudActions,
   maskDocument,
@@ -15,6 +16,7 @@ import {
   resolveSolicitudDeliveryStage,
   resolveSolicitudProcessStage,
   resolveSolicitudStage,
+  selectCanonicalSolicitudesByDocument,
   type SolicitudFilterState,
   type SolicitudFilters,
   type SolicitudOwnership,
@@ -80,10 +82,11 @@ export class ActiveSolicitudConflictError extends Error {
   readonly code = "SOLICITUD_ACTIVA_EXISTENTE";
   readonly status = 409;
 
-  constructor() {
-    super(
+  constructor(
+    message =
       "Ya existe una solicitud en proceso. El asesor titular debe retomarla o desistirla antes de iniciar otra."
-    );
+  ) {
+    super(message);
     this.name = "ActiveSolicitudConflictError";
   }
 }
@@ -212,6 +215,14 @@ export async function ensureSolicitudSchema() {
         `CREATE INDEX IF NOT EXISTS "CreditoBorrador_credito_idx" ON "CreditoBorrador" ("creditoId")`
       );
       await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS "CreditoBorrador_document_idx"
+        ON "CreditoBorrador" ((regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g')))
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS "Credito_document_idx"
+        ON "Credito" ((regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g')))
+      `);
+      await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS "CreditoBorrador_active_document_idx"
         ON "CreditoBorrador" ((regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g')))
         WHERE "estado" = 'ABIERTO'
@@ -237,6 +248,7 @@ async function expireStaleWith(database: Database) {
         "closedAt" = COALESCE("closedAt", CURRENT_TIMESTAMP),
         "updatedAt" = CURRENT_TIMESTAMP
     WHERE "estado" = 'ABIERTO'
+      AND "creditoId" IS NULL
       AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') <= CURRENT_TIMESTAMP
   `);
 }
@@ -315,6 +327,72 @@ type ActiveDraftOwnerRow = {
   materialized?: boolean;
 };
 
+type BlockingSolicitudIdentityRow = {
+  source: "DRAFT" | "CREDIT";
+  entityId: number;
+  rawState: string;
+  closedReason: string | null;
+  clienteDocumento: string | null;
+  createdAt: Date | string;
+};
+
+async function findBlockingSolicitudByDocument(
+  database: Database,
+  document: string,
+  excludedDraftId?: number | null
+) {
+  if (!document) return null;
+  const rows = await database.$queryRawUnsafe<BlockingSolicitudIdentityRow[]>(
+    `
+      SELECT candidate.*
+      FROM (
+        SELECT 'DRAFT'::text AS "source", draft."id" AS "entityId",
+          draft."estado" AS "rawState", draft."closedReason",
+          draft."clienteDocumento", draft."createdAt"
+        FROM "CreditoBorrador" draft
+        WHERE regexp_replace(COALESCE(draft."clienteDocumento", ''), '[^0-9]', '', 'g') = $1
+          AND ($2::integer IS NULL OR draft."id" <> $2)
+          AND draft."creditoId" IS NULL
+          AND (
+            draft."dataCreditoAssessmentId" IS NOT NULL
+            OR UPPER(COALESCE(draft."payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+            OR NULLIF(draft."payload"->>'dataCreditoStatus', '') IS NOT NULL
+            OR NULLIF(draft."payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+          )
+          AND NOT (
+            draft."estado" = 'CERRADO'
+            AND COALESCE(draft."closedReason", '') IN (
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA'
+            )
+          )
+        UNION ALL
+        SELECT 'CREDIT'::text AS "source", credit."id" AS "entityId",
+          credit."estado" AS "rawState", NULL::text AS "closedReason",
+          credit."clienteDocumento", credit."createdAt"
+        FROM "Credito" credit
+        WHERE regexp_replace(COALESCE(credit."clienteDocumento", ''), '[^0-9]', '', 'g') = $1
+      ) candidate
+      ORDER BY CASE WHEN candidate."source" = 'CREDIT' THEN 0 ELSE 1 END,
+        candidate."createdAt" DESC,
+        candidate."entityId" DESC
+      LIMIT 1
+    `,
+    document,
+    excludedDraftId || null
+  );
+  return rows[0] || null;
+}
+
+function solicitudConflictFromBlocker(blocker: BlockingSolicitudIdentityRow) {
+  return new ActiveSolicitudConflictError(
+    blocker.source === "CREDIT"
+      ? "Ya existe un crédito finalizado para esta cédula. No se puede iniciar otra solicitud."
+      : blocker.rawState !== "ABIERTO"
+        ? "Ya existe una solicitud para esta cédula. La solicitud anterior debe quedar desistida antes de iniciar otra."
+        : undefined
+  );
+}
+
 async function findActiveByIdentity(
   database: Database,
   document: string,
@@ -347,7 +425,7 @@ async function findActiveByIdentity(
           ($1 <> '' AND regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $1)
           OR ($2 <> '' AND regexp_replace(COALESCE("imei", ''), '[^0-9]', '', 'g') = $2)
         )
-      ORDER BY "createdAt" ASC
+      ORDER BY "createdAt" DESC, "id" DESC
       LIMIT 1
       FOR UPDATE
     `,
@@ -393,6 +471,12 @@ export async function reserveSolicitudForIdentity(input: {
       if (!selected[0] || !sameOwner(selected[0], input)) {
         throw new ActiveSolicitudConflictError();
       }
+      const blocker = await findBlockingSolicitudByDocument(
+        transaction,
+        document,
+        selected[0].id
+      );
+      if (blocker) throw solicitudConflictFromBlocker(blocker);
       await transaction.$executeRawUnsafe(
         `
           UPDATE "CreditoBorrador"
@@ -406,9 +490,9 @@ export async function reserveSolicitudForIdentity(input: {
       return { id: selected[0].id, reused: true };
     }
 
-    const active = await findActiveByIdentity(transaction, document, "");
-    if (active) {
-      throw new ActiveSolicitudConflictError();
+    const blocker = await findBlockingSolicitudByDocument(transaction, document);
+    if (blocker) {
+      throw solicitudConflictFromBlocker(blocker);
     }
 
     const rows = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
@@ -639,23 +723,89 @@ export async function desistSolicitud(input: {
 }) {
   await ensureSolicitudSchema();
   await expireStaleSolicitudes();
-  const rows = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
-    `
-      UPDATE "CreditoBorrador"
-      SET "estado" = 'CERRADO', "closedReason" = 'DESISTIDA',
-          "closedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP,
-          "desistedByUserId" = $2, "desistedBySellerId" = $3
-      WHERE "id" = $1 AND "estado" = 'ABIERTO'
-        AND "vendedorId" = $3 AND "sedeId" = $4
-        AND "creditoId" IS NULL
-      RETURNING "id"
-    `,
-    input.solicitudId,
-    input.userId,
-    input.sellerId,
-    input.sedeId
-  );
-  return Boolean(rows[0]);
+  return prisma.$transaction(async (transaction) => {
+    const target = await transaction.$queryRawUnsafe<
+      Array<{ id: number; clienteDocumento: string | null }>
+    >(
+      `
+        SELECT "id", "clienteDocumento"
+        FROM "CreditoBorrador"
+        WHERE "id" = $1
+          AND "creditoId" IS NULL
+          AND "vendedorId" = $2 AND "sedeId" = $3
+          AND (
+            "dataCreditoAssessmentId" IS NOT NULL
+            OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+            OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+            OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+          )
+          AND NOT (
+            "estado" = 'CERRADO'
+            AND COALESCE("closedReason", '') IN (
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+            )
+          )
+        LIMIT 1
+      `,
+      input.solicitudId,
+      input.sellerId,
+      input.sedeId
+    );
+    if (!target[0]) return { changed: false, identityReleased: false };
+
+    const document = normalizeDigits(target[0].clienteDocumento);
+    if (document) await lockIdentity(transaction, "document", document);
+    const rows = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
+      `
+        UPDATE "CreditoBorrador"
+        SET "estado" = 'CERRADO', "closedReason" = 'DESISTIDA',
+            "closedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP,
+            "desistedByUserId" = $2, "desistedBySellerId" = $3
+        WHERE "creditoId" IS NULL
+          AND "vendedorId" = $3 AND "sedeId" = $4
+          AND EXISTS (
+            SELECT 1
+            FROM "CreditoBorrador" selected
+            WHERE selected."id" = $1
+              AND selected."creditoId" IS NULL
+              AND selected."vendedorId" = $3 AND selected."sedeId" = $4
+              AND NOT (
+                selected."estado" = 'CERRADO'
+                AND COALESCE(selected."closedReason", '') IN (
+                  'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+                )
+              )
+          )
+          AND (
+            ($5 <> '' AND regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $5)
+            OR ($5 = '' AND "id" = $1)
+          )
+          AND (
+            "dataCreditoAssessmentId" IS NOT NULL
+            OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+            OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+            OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+          )
+          AND NOT (
+            "estado" = 'CERRADO'
+            AND COALESCE("closedReason", '') IN (
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+            )
+          )
+        RETURNING "id"
+      `,
+      input.solicitudId,
+      input.userId,
+      input.sellerId,
+      input.sedeId,
+      document
+    );
+    const changed = rows.length > 0;
+    const blocker = changed
+      ? await findBlockingSolicitudByDocument(transaction, document)
+      : null;
+    return { changed, identityReleased: changed && !blocker };
+  });
 }
 
 export async function desistSolicitudAsCentralAdmin(input: {
@@ -664,20 +814,82 @@ export async function desistSolicitudAsCentralAdmin(input: {
 }) {
   await ensureSolicitudSchema();
   await expireStaleSolicitudes();
-  const rows = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
-    `
-      UPDATE "CreditoBorrador"
-      SET "estado" = 'CERRADO', "closedReason" = 'DESISTIDA',
-          "closedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP,
-          "desistedByUserId" = $2, "desistedBySellerId" = NULL
-      WHERE "id" = $1 AND "estado" = 'ABIERTO'
-        AND "creditoId" IS NULL
-      RETURNING "id"
-    `,
-    input.solicitudId,
-    input.userId
-  );
-  return Boolean(rows[0]);
+  return prisma.$transaction(async (transaction) => {
+    const target = await transaction.$queryRawUnsafe<
+      Array<{ id: number; clienteDocumento: string | null }>
+    >(
+      `
+        SELECT "id", "clienteDocumento"
+        FROM "CreditoBorrador"
+        WHERE "id" = $1
+          AND "creditoId" IS NULL
+          AND (
+            "dataCreditoAssessmentId" IS NOT NULL
+            OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+            OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+            OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+          )
+          AND NOT (
+            "estado" = 'CERRADO'
+            AND COALESCE("closedReason", '') IN (
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+            )
+          )
+        LIMIT 1
+      `,
+      input.solicitudId
+    );
+    if (!target[0]) return { changed: false, identityReleased: false };
+
+    const document = normalizeDigits(target[0].clienteDocumento);
+    if (document) await lockIdentity(transaction, "document", document);
+    const rows = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
+      `
+        UPDATE "CreditoBorrador"
+        SET "estado" = 'CERRADO', "closedReason" = 'DESISTIDA',
+            "closedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP,
+            "desistedByUserId" = $2, "desistedBySellerId" = NULL
+        WHERE "creditoId" IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM "CreditoBorrador" selected
+            WHERE selected."id" = $1
+              AND selected."creditoId" IS NULL
+              AND NOT (
+                selected."estado" = 'CERRADO'
+                AND COALESCE(selected."closedReason", '') IN (
+                  'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+                )
+              )
+          )
+          AND (
+            ($3 <> '' AND regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $3)
+            OR ($3 = '' AND "id" = $1)
+          )
+          AND (
+            "dataCreditoAssessmentId" IS NOT NULL
+            OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+            OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+            OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+          )
+          AND NOT (
+            "estado" = 'CERRADO'
+            AND COALESCE("closedReason", '') IN (
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+            )
+          )
+        RETURNING "id"
+      `,
+      input.solicitudId,
+      input.userId,
+      document
+    );
+    const changed = rows.length > 0;
+    const blocker = changed
+      ? await findBlockingSolicitudByDocument(transaction, document)
+      : null;
+    return { changed, identityReleased: changed && !blocker };
+  });
 }
 
 export async function completeSolicitudForCredit(
@@ -877,10 +1089,17 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
   });
   where.conditions.unshift(`
     d."creditoId" IS NULL
-    AND COALESCE(dc."status", NULLIF(d."payload"->>'dataCreditoStatus', '')) IS NOT NULL
+    AND (
+      d."dataCreditoAssessmentId" IS NOT NULL
+      OR UPPER(COALESCE(d."payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+      OR COALESCE(dc."status", NULLIF(d."payload"->>'dataCreditoStatus', '')) IS NOT NULL
+      OR NULLIF(d."payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+    )
     AND (
       d."estado" = 'ABIERTO'
-      OR d."closedReason" IN ('DESISTIDA', 'EXPIRADA_15_DIAS', 'RECHAZADA')
+      OR d."closedReason" IN (
+        'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'RECHAZADA'
+      )
     )
   `);
 
@@ -1136,6 +1355,79 @@ function matchesState(
   );
 }
 
+function solicitudRowGroupKey(row: SolicitudRow) {
+  return (
+    canonicalSolicitudDocumentKey(row.clienteDocumento) ||
+    `${row.source}:${row.entityId}`
+  );
+}
+
+function rawRowMatchesQuery(row: SolicitudRow, query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+  const textMatch = [
+    row.clienteNombre,
+    row.clienteDocumento,
+    row.imei,
+    row.numero,
+  ].some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
+  if (textMatch) return true;
+
+  if (!/^[\d\s.\-]+$/.test(query)) return false;
+  const digitQuery = normalizeDigits(query);
+  return Boolean(
+    digitQuery &&
+      [row.clienteDocumento, row.imei].some((value) =>
+        normalizeDigits(value).includes(digitQuery)
+      )
+  );
+}
+
+function matchesOperationalFilters(
+  row: SolicitudRow,
+  item: ReturnType<typeof serializeSolicitudRow>,
+  filters: SolicitudFilters,
+  queryGroupKeys: ReadonlySet<string> | null
+) {
+  if (queryGroupKeys && !queryGroupKeys.has(solicitudRowGroupKey(row))) return false;
+  if (filters.aliadoId && row.aliadoId !== filters.aliadoId) return false;
+  if (filters.sedeId && row.sedeId !== filters.sedeId) return false;
+  if (filters.asesorId && row.vendedorId !== filters.asesorId) return false;
+  if (
+    filters.plataforma &&
+    String(normalizePlatform(row.plataforma) || "") !== filters.plataforma
+  ) {
+    return false;
+  }
+
+  const createdAt = new Date(row.createdAt).getTime();
+  const start = bogotaBoundary(filters.desde, false)?.getTime();
+  const end = bogotaBoundary(filters.hasta, true)?.getTime();
+  if (start !== undefined && (!Number.isFinite(createdAt) || createdAt < start)) {
+    return false;
+  }
+  if (end !== undefined && (!Number.isFinite(createdAt) || createdAt >= end)) {
+    return false;
+  }
+  return matchesState(item, filters.estado);
+}
+
+function scopeOnlyFilters(filters: SolicitudFilters): SolicitudFilters {
+  return {
+    ...filters,
+    q: "",
+    desde: "",
+    hasta: "",
+    aliadoId: null,
+    sedeId: null,
+    asesorId: null,
+    plataforma: "",
+    estado: "",
+    id: "",
+    page: 1,
+  };
+}
+
 async function getFilterOptions(viewer: SolicitudViewer) {
   const aliadoWhere =
     viewer.kind === "CENTRAL_ADMIN"
@@ -1216,28 +1508,45 @@ export async function listSolicitudes(input: {
     ensureFirmaSeguroSchema(),
   ]);
   await expireStaleSolicitudes();
+  const scopeFilters = scopeOnlyFilters(input.filters);
   const [drafts, credits, options] = await Promise.all([
-    readDraftRows(input.viewer, input.filters),
-    readCreditRows(input.viewer, input.filters),
+    readDraftRows(input.viewer, scopeFilters),
+    readCreditRows(input.viewer, scopeFilters),
     getFilterOptions(input.viewer),
   ]);
-  const all = [...drafts, ...credits]
-    .map((row) => serializeSolicitudRow(row, input.viewer))
-    .filter((item) => matchesState(item, input.filters.estado))
+  const rawRows = [...drafts, ...credits];
+  const queryGroupKeys = input.filters.q
+    ? new Set(
+        rawRows
+          .filter((row) => rawRowMatchesQuery(row, input.filters.q))
+          .map(solicitudRowGroupKey)
+      )
+    : null;
+  const all = selectCanonicalSolicitudesByDocument(rawRows)
+    .map((row) => ({ row, item: serializeSolicitudRow(row, input.viewer) }))
+    .filter(({ row, item }) =>
+      matchesOperationalFilters(row, item, input.filters, queryGroupKeys)
+    )
     .sort(
       (left, right) =>
-        String(right.createdAt || "").localeCompare(String(left.createdAt || "")) ||
-        right.entityId - left.entityId ||
-        right.source.localeCompare(left.source)
+        String(right.item.createdAt || "").localeCompare(
+          String(left.item.createdAt || "")
+        ) ||
+        right.item.entityId - left.item.entityId ||
+        right.item.source.localeCompare(left.item.source)
     );
   const total = all.length;
-  const start = (input.filters.page - 1) * input.filters.pageSize;
+  const totalPages = Math.max(1, Math.ceil(total / input.filters.pageSize));
+  const page = Math.min(input.filters.page, totalPages);
+  const start = (page - 1) * input.filters.pageSize;
   return {
-    items: all.slice(start, start + input.filters.pageSize),
+    items: all
+      .slice(start, start + input.filters.pageSize)
+      .map(({ item }) => item),
     total,
-    page: input.filters.page,
+    page,
     pageSize: input.filters.pageSize,
-    filters: input.filters,
+    filters: { ...input.filters, page },
     options,
   };
 }
@@ -1246,10 +1555,23 @@ export async function getSolicitudDetail(input: {
   viewer: SolicitudViewer;
   filters: SolicitudFilters;
 }) {
-  if (!parseCompositeId(input.filters.id)) return null;
-  const result = await listSolicitudes({
-    viewer: input.viewer,
-    filters: { ...input.filters, page: 1, pageSize: 1, estado: "" },
-  });
-  return result.items[0] || null;
+  const compositeId = parseCompositeId(input.filters.id);
+  if (!compositeId) return null;
+  await Promise.all([
+    ensureSolicitudSchema(),
+    ensureDataCreditoSchema(),
+    ensureVeriffSchema(),
+    ensureFirmaSeguroSchema(),
+  ]);
+  await expireStaleSolicitudes();
+  const detailFilters: SolicitudFilters = {
+    ...scopeOnlyFilters(input.filters),
+    id: input.filters.id,
+    pageSize: 1,
+  };
+  const rows =
+    compositeId.source === "DRAFT"
+      ? await readDraftRows(input.viewer, detailFilters)
+      : await readCreditRows(input.viewer, detailFilters);
+  return rows[0] ? serializeSolicitudRow(rows[0], input.viewer) : null;
 }

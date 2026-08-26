@@ -449,13 +449,17 @@ export default function SolicitudesWallClient({
         body: JSON.stringify({ id: desistTarget.id, action: "DESISTIR" }),
       });
       const payload = (await response.json().catch(() => null)) as
-        | { error?: string }
+        | { error?: string; identityReleased?: boolean }
         | null;
       if (!response.ok) {
         throw new Error(payload?.error || "No fue posible desistir la solicitud.");
       }
       setDesistTarget(null);
-      setNotice("La solicitud fue desistida y dejó de bloquear una nueva venta.");
+      setNotice(
+        payload?.identityReleased
+          ? "La solicitud fue desistida y dejó de bloquear una nueva venta."
+          : "La solicitud fue desistida, pero existen otros expedientes para esta cédula. El administrador central debe gestionarlos antes de iniciar otra venta."
+      );
       updateUrl((params) => params.delete("id"));
       setReloadToken((value) => value + 1);
     } catch (requestError) {
@@ -1000,7 +1004,7 @@ export default function SolicitudesWallClient({
       <ConfirmDialog
         open={Boolean(desistTarget)}
         title="Desistir esta solicitud"
-        description={`La solicitud ${desistTarget?.numero || "seleccionada"} se cerrará, conservará su historial y dejará de bloquear una nueva venta. Esta acción requiere confirmación.`}
+        description={`La solicitud ${desistTarget?.numero || "seleccionada"} se cerrará y conservará su historial. Si existen otros expedientes para la misma cédula, el administrador central deberá gestionarlos antes de iniciar otra venta.`}
         confirmLabel="Sí, desistir"
         danger
         busy={desisting}

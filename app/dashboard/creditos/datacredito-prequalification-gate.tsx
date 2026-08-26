@@ -487,6 +487,7 @@ export default function DatacreditoPrequalificationGate({
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [correlationId, setCorrelationId] = useState<string | null>(null);
+  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   const [consumedCreditId, setConsumedCreditId] = useState<number | null>(null);
   const [retryMode, setRetryMode] = useState<"bootstrap" | "form">("bootstrap");
   const [approvedResult, setApprovedResult] =
@@ -850,6 +851,7 @@ export default function DatacreditoPrequalificationGate({
 
     setView("submitting");
     setCorrelationId(null);
+    setConflictMessage(null);
     setRetryMode("form");
 
     try {
@@ -874,11 +876,14 @@ export default function DatacreditoPrequalificationGate({
 
       if (!response.ok || payload.ok === false) {
         if (getResponseCode(payload) === "SOLICITUD_ACTIVA_EXISTENTE") {
+          setConflictMessage(
+            readString(payload.error) ||
+              "Ya existe una solicitud para esta cédula. Debe retomarse o desistirse antes de iniciar otra."
+          );
           setCorrelationId(null);
           setView("active-request");
           return;
         }
-
         setCorrelationId(getCorrelationId(payload, response));
         setView("technical-error");
         return;
@@ -921,18 +926,9 @@ export default function DatacreditoPrequalificationGate({
     setView("ready");
   };
 
-  const startNewAssessment = () => {
-    setDocumentNumber("");
-    setFirstSurname("");
-    setConsentAccepted(false);
-    setFormErrors({});
-    setCorrelationId(null);
-    setConsumedCreditId(null);
-    setApprovedResult(null);
-    setRetryMode("form");
-    onAssessmentInvalidatedRef.current?.();
-    setView("ready");
-  };
+  const solicitudWallHref = documentNumber
+    ? `/dashboard/solicitudes?q=${encodeURIComponent(documentNumber)}`
+    : "/dashboard/solicitudes";
 
   if (view === "loading" || view === "bypassing") {
     const label =
@@ -1091,15 +1087,20 @@ export default function DatacreditoPrequalificationGate({
               id="datacredito-active-request-description"
               className="mx-auto mt-4 max-w-md text-base leading-7 text-[var(--fp-muted)]"
             >
-              Este cliente ya cuenta con una solicitud. Continúe el proceso desde
-              el muro de solicitudes.
+              {conflictMessage ||
+                "Este cliente ya cuenta con una solicitud que debe retomarse desde el muro."}
+            </p>
+            <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-[var(--fp-muted)]">
+              Si eres el asesor titular, búscala en el muro para retomarla. Si no
+              aparece, debe gestionarla el asesor titular o el administrador central
+              de FINSER PAY.
             </p>
 
             <Link
-              href="/dashboard/solicitudes"
+              href={solicitudWallHref}
               className="fp-ui-button is-primary mt-8 w-full justify-center focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
             >
-              Ir al muro de solicitudes
+              Buscar en mi muro
               <ArrowRight className="h-5 w-5" aria-hidden="true" />
             </Link>
           </div>
@@ -1213,10 +1214,12 @@ export default function DatacreditoPrequalificationGate({
           </p>
 
           <div className="mt-7 flex flex-col gap-3 sm:flex-row-reverse sm:justify-center">
-            <Button onClick={startNewAssessment}>
-              <RotateCw className="h-4 w-4" aria-hidden="true" />
-              Realizar nueva consulta
-            </Button>
+            <Link
+              href={solicitudWallHref}
+              className="fp-ui-button focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
+            >
+              Ver solicitud en el muro
+            </Link>
             <Link
               href="/dashboard"
               className="fp-ui-button is-secondary focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"

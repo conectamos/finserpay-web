@@ -64,6 +64,14 @@ const statements = [
   `CREATE INDEX IF NOT EXISTS "CreditoBorrador_assessment_idx" ON public."CreditoBorrador" ("dataCreditoAssessmentId")`,
   `CREATE INDEX IF NOT EXISTS "CreditoBorrador_credito_idx" ON public."CreditoBorrador" ("creditoId")`,
   `
+    CREATE INDEX IF NOT EXISTS "CreditoBorrador_document_idx"
+    ON public."CreditoBorrador" ((regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g')))
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS "Credito_document_idx"
+    ON public."Credito" ((regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g')))
+  `,
+  `
     CREATE INDEX IF NOT EXISTS "CreditoBorrador_active_document_idx"
     ON public."CreditoBorrador" ((regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g')))
     WHERE "estado" = 'ABIERTO'
@@ -89,9 +97,12 @@ const expectedIndexes = new Set([
   "CreditoBorrador_expiresAt_idx",
   "CreditoBorrador_assessment_idx",
   "CreditoBorrador_credito_idx",
+  "CreditoBorrador_document_idx",
   "CreditoBorrador_active_document_idx",
   "CreditoBorrador_active_imei_idx",
 ]);
+
+const expectedCreditIndexes = new Set(["Credito_document_idx"]);
 
 async function assertCompatibleSchema() {
   const columns = await client.query(
@@ -120,6 +131,22 @@ async function assertCompatibleSchema() {
   const actualIndexes = new Set(indexes.rows.map((row) => row.indexname));
   for (const index of expectedIndexes) {
     if (!actualIndexes.has(index)) {
+      throw new Error(`Indice faltante para solicitudes: ${index}.`);
+    }
+  }
+
+  const creditIndexes = await client.query(
+    `
+      SELECT indexname
+      FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'Credito'
+    `
+  );
+  const actualCreditIndexes = new Set(
+    creditIndexes.rows.map((row) => row.indexname)
+  );
+  for (const index of expectedCreditIndexes) {
+    if (!actualCreditIndexes.has(index)) {
       throw new Error(`Indice faltante para solicitudes: ${index}.`);
     }
   }

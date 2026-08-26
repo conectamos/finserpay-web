@@ -363,22 +363,34 @@ export async function PATCH(req: Request) {
 
     if (sanitizeText(body.action).toUpperCase() === "DESISTIR") {
       if (access.central) {
-        const changed = await desistSolicitudAsCentralAdmin({
+        const result = await desistSolicitudAsCentralAdmin({
           solicitudId: id,
           userId: access.user.id,
         });
-        return NextResponse.json({ ok: changed }, { status: changed ? 200 : 409 });
+        return NextResponse.json(
+          {
+            ok: result.changed,
+            identityReleased: result.identityReleased,
+          },
+          { status: result.changed ? 200 : 409 }
+        );
       }
       if (access.seller?.tipoPerfil !== "VENDEDOR") {
         return NextResponse.json({ error: "Accion no autorizada" }, { status: 403 });
       }
-      const changed = await desistSolicitud({
+      const result = await desistSolicitud({
         solicitudId: id,
         userId: access.user.id,
         sellerId: access.seller.id,
         sedeId: access.seller.sedeId,
       });
-      return NextResponse.json({ ok: changed }, { status: changed ? 200 : 409 });
+      return NextResponse.json(
+        {
+          ok: result.changed,
+          identityReleased: result.identityReleased,
+        },
+        { status: result.changed ? 200 : 409 }
+      );
     }
 
     if (sanitizeText(body.estado).toUpperCase() !== "CERRADO") {

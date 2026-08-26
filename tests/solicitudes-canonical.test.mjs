@@ -226,29 +226,119 @@ test("la reserva generica bloquea y el autosave usa la identidad canonica", asyn
     "export async function reserveSolicitudForIdentity",
     "export async function saveSolicitudDraft"
   );
-  const exactResume = sourceBetween(
-    reservation,
-    "if (input.solicitudId)",
-    "const active = await findActiveByIdentity"
-  );
-  const activeReuse = sourceBetween(
-    reservation,
-    "const active = await findActiveByIdentity",
-    "const rows = await transaction.$queryRawUnsafe"
-  );
   const autosave = sourceBetween(
     source,
     "export async function saveSolicitudDraft",
     "export async function attachDataCreditoToSolicitud"
   );
 
-  assert.match(exactResume, /return \{ id: selected\[0\]\.id, reused: true \}/);
-  assert.match(activeReuse, /if \(active\) \{\s*throw new ActiveSolicitudConflictError\(\)/);
-  assert.doesNotMatch(activeReuse, /sameOwner|UPDATE|reused/);
+  assert.match(
+    reservation,
+    /if \(input\.solicitudId\)[\s\S]*findBlockingSolicitudByDocument\([\s\S]*selected\[0\]\.id[\s\S]*return \{ id: selected\[0\]\.id, reused: true \}/
+  );
+  assert.match(reservation, /if \(blocker\)[\s\S]*solicitudConflictFromBlocker/);
+  assert.doesNotMatch(reservation, /isSolicitudIdentityReleased/);
   assert.match(autosave, /resolveSolicitudDraftCanonicalIdentity/);
   assert.match(autosave, /targetRow\.payload\?\.dataCreditoAssessmentId/);
   assert.match(autosave, /canonical\.clienteDocumento/);
   assert.match(autosave, /canonical\.dataCreditoAssessmentId/);
+});
+
+test("cualquier credito o borrador no liberado bloquea globalmente la cedula", async () => {
+  const source = await readProjectFile("lib/solicitudes-storage.ts");
+  const blocker = sourceBetween(
+    source,
+    "async function findBlockingSolicitudByDocument",
+    "async function findActiveByIdentity"
+  );
+  const reservation = sourceBetween(
+    source,
+    "export async function reserveSolicitudForIdentity",
+    "export async function saveSolicitudDraft"
+  );
+
+  assert.match(blocker, /FROM "CreditoBorrador" draft/);
+  assert.match(blocker, /UNION ALL[\s\S]*FROM "Credito" credit/);
+  assert.match(
+    blocker,
+    /NOT \([\s\S]*draft\."estado" = 'CERRADO'[\s\S]*'DESISTIDA'[\s\S]*'EXPIRADA_15_DIAS'[\s\S]*\)/
+  );
+  assert.match(
+    blocker,
+    /ORDER BY[\s\S]*candidate\."source" = 'CREDIT'[\s\S]*candidate\."createdAt" DESC/
+  );
+  assert.doesNotMatch(
+    blocker,
+    /FROM "Credito" credit[\s\S]*credit\."estado"\s*(?:=|IN)/
+  );
+  assert.match(reservation, /const blocker = await findBlockingSolicitudByDocument/);
+  assert.match(reservation, /if \(blocker\)[\s\S]*solicitudConflictFromBlocker/);
+  assert.match(blocker, /new ActiveSolicitudConflictError/);
+  assert.match(blocker, /excludedDraftId\?: number \| null/);
+  assert.match(blocker, /draft\."id" <> \$2/);
+  assert.doesNotMatch(reservation, /isSolicitudIdentityReleased/);
+  assert.match(blocker, /debe quedar desistida antes de iniciar otra/);
+  assert.doesNotMatch(reservation, /closedReason[^\n]*RECHAZADA[^\n]*INSERT/);
+});
+
+test("solo las solicitudes abiertas vencen automaticamente a los 15 dias", async () => {
+  const source = await readProjectFile("lib/solicitudes-storage.ts");
+  const expiration = sourceBetween(
+    source,
+    "async function expireStaleWith",
+    "export async function expireStaleSolicitudes"
+  );
+
+  assert.match(
+    expiration,
+    /"closedReason" = (?:COALESCE\("closedReason", )?'EXPIRADA_15_DIAS'\)?/
+  );
+  assert.match(expiration, /WHERE "estado" = 'ABIERTO'/);
+  assert.match(expiration, /COALESCE\("expiresAt", "createdAt" \+ INTERVAL '15 days'\)/);
+  assert.doesNotMatch(expiration, /"closedReason"[^\n]*RECHAZADA/);
+  assert.doesNotMatch(expiration, /NOT \([\s\S]*'FINALIZADA'/);
+});
+
+test("desistir libera de una vez los duplicados no finalizados de la misma cedula", async () => {
+  const [source, draftRoute] = await Promise.all([
+    readProjectFile("lib/solicitudes-storage.ts"),
+    readProjectFile("app/api/creditos/borradores/route.ts"),
+  ]);
+  const sellerDesist = sourceBetween(
+    source,
+    "export async function desistSolicitud",
+    "export async function desistSolicitudAsCentralAdmin"
+  );
+  const centralDesist = sourceBetween(
+    source,
+    "export async function desistSolicitudAsCentralAdmin",
+    "export async function completeSolicitudForCredit"
+  );
+
+  for (const desist of [sellerDesist, centralDesist]) {
+    assert.match(desist, /prisma\.\$transaction/);
+    assert.match(desist, /SELECT "id", "clienteDocumento"[\s\S]*WHERE "id" = \$1/);
+    assert.match(desist, /const document = normalizeDigits\(target\[0\]\.clienteDocumento\)/);
+    assert.match(desist, /lockIdentity\(transaction, "document", document\)/);
+    assert.match(desist, /UPDATE "CreditoBorrador"/);
+    assert.match(
+      desist,
+      /regexp_replace\(COALESCE\("clienteDocumento", ''\), '\[\^0-9\]', '', 'g'\) = \$\d/
+    );
+    assert.match(desist, /"creditoId" IS NULL/);
+    assert.match(desist, /"closedReason" = 'DESISTIDA'/);
+    assert.match(desist, /'EXPIRADA_15_DIAS'/);
+    assert.match(desist, /findBlockingSolicitudByDocument\(transaction, document\)/);
+    assert.match(desist, /identityReleased: changed && !blocker/);
+  }
+
+  assert.match(sellerDesist, /"vendedorId" = \$3 AND "sedeId" = \$4/);
+  const centralUpdate = centralDesist.slice(centralDesist.indexOf('UPDATE "CreditoBorrador"'));
+  assert.doesNotMatch(centralUpdate, /"vendedorId"\s*=|"sedeId"\s*=/);
+  assert.match(draftRoute, /ok: result\.changed/);
+  assert.match(draftRoute, /identityReleased: result\.identityReleased/);
+  assert.match(draftRoute, /status: result\.changed \? 200 : 409/);
+  assert.doesNotMatch(draftRoute, /status: changed \? 200 : 409/);
 });
 
 test("la API devuelve 409 y codigo ante una mutacion de identidad canonica", async () => {

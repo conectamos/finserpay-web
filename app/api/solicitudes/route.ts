@@ -98,14 +98,14 @@ export async function PATCH(req: Request) {
       return response({ error: "Acción inválida" }, { status: 400 });
     }
 
-    let changed = false;
+    let result = { changed: false, identityReleased: false };
     if (access.viewer.kind === "CENTRAL_ADMIN") {
-      changed = await desistSolicitudAsCentralAdmin({
+      result = await desistSolicitudAsCentralAdmin({
         solicitudId: Number(match[1]),
         userId: access.user.id,
       });
     } else if (access.viewer.kind === "SELLER" && access.seller) {
-      changed = await desistSolicitud({
+      result = await desistSolicitud({
         solicitudId: Number(match[1]),
         userId: access.user.id,
         sellerId: access.seller.id,
@@ -118,13 +118,18 @@ export async function PATCH(req: Request) {
       );
     }
 
-    if (!changed) {
+    if (!result.changed) {
       return response(
         { error: "La solicitud ya no está disponible para desistir" },
         { status: 409 }
       );
     }
-    return response({ ok: true, id: body.id, estado: "CANCELADA" });
+    return response({
+      ok: true,
+      id: body.id,
+      estado: "CANCELADA",
+      identityReleased: result.identityReleased,
+    });
   } catch (error) {
     console.error("ERROR DESISTIENDO SOLICITUD:", error);
     return response({ error: "No se pudo desistir la solicitud" }, { status: 500 });

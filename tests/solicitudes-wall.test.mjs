@@ -7,11 +7,13 @@ import {
   canSeeSensitiveSolicitudData,
   canViewSolicitud,
   getSolicitudActions,
+  isSolicitudIdentityReleased,
   isSolicitudExpired,
   normalizeSolicitudFilters,
   resolveSolicitudDeliveryStage,
   resolveSolicitudProcessStage,
   resolveSolicitudStage,
+  selectCanonicalSolicitudesByDocument,
 } from "../lib/solicitudes.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -248,6 +250,137 @@ test("expira exactamente al cumplir 15 dias calendario", () => {
   assert.equal(isSolicitudExpired("fecha-invalida", new Date()), false);
 });
 
+test("solo desistimiento o vencimiento liberan la cedula canonica", () => {
+  assert.equal(
+    isSolicitudIdentityReleased({
+      source: "DRAFT",
+      draftState: "CERRADO",
+      closedReason: "DESISTIDA",
+    }),
+    true
+  );
+  assert.equal(
+    isSolicitudIdentityReleased({
+      source: "DRAFT",
+      draftState: "CERRADO",
+      closedReason: "EXPIRADA_15_DIAS",
+    }),
+    true
+  );
+  for (const input of [
+    { source: "DRAFT", draftState: "ABIERTO", closedReason: null },
+    { source: "DRAFT", draftState: "CERRADO", closedReason: "RECHAZADA" },
+    { source: "DRAFT", draftState: "CERRADO", closedReason: "FINALIZADA" },
+    { source: "CREDIT", draftState: null, closedReason: null },
+  ]) {
+    assert.equal(isSolicitudIdentityReleased(input), false);
+  }
+});
+
+test("el muro elige una sola solicitud reciente por cedula sin agrupar documentos vacios", () => {
+  const rows = [
+    {
+      source: "DRAFT",
+      entityId: 394,
+      clienteDocumento: "93.448.416",
+      createdAt: "2026-08-26T16:15:00.000Z",
+    },
+    {
+      source: "DRAFT",
+      entityId: 395,
+      clienteDocumento: "93448416",
+      createdAt: "2026-08-26T16:16:00.000Z",
+    },
+    {
+      source: "DRAFT",
+      entityId: 396,
+      clienteDocumento: "93448416",
+      createdAt: "2026-08-26T16:19:00.000Z",
+    },
+    {
+      source: "DRAFT",
+      entityId: 500,
+      clienteDocumento: null,
+      createdAt: "2026-08-26T16:20:00.000Z",
+    },
+    {
+      source: "DRAFT",
+      entityId: 501,
+      clienteDocumento: "",
+      createdAt: "2026-08-26T16:21:00.000Z",
+    },
+    {
+      source: "DRAFT",
+      entityId: 700,
+      clienteDocumento: "10000001",
+      createdAt: "2026-08-26T17:00:00.000Z",
+    },
+    {
+      source: "CREDIT",
+      entityId: 701,
+      clienteDocumento: "10000001",
+      createdAt: "2026-08-26T17:00:00.000Z",
+    },
+  ];
+
+  const selected = selectCanonicalSolicitudesByDocument(rows);
+  assert.deepEqual(
+    selected.map((item) => `${item.source}-${item.entityId}`),
+    ["DRAFT-396", "DRAFT-500", "DRAFT-501", "CREDIT-701"]
+  );
+});
+
+test("un credito finalizado es siempre el canonico aunque exista un borrador mas reciente", () => {
+  const selected = selectCanonicalSolicitudesByDocument([
+    {
+      source: "CREDIT",
+      entityId: 801,
+      clienteDocumento: "1.083.028.847",
+      createdAt: "2026-08-20T12:00:00.000Z",
+      rawState: "ENTREGABLE",
+    },
+    {
+      source: "DRAFT",
+      entityId: 802,
+      clienteDocumento: "1083028847",
+      createdAt: "2026-08-26T12:00:00.000Z",
+      rawState: "CERRADO",
+      closedReason: "RECHAZADA",
+    },
+  ]);
+
+  assert.deepEqual(
+    selected.map((item) => `${item.source}-${item.entityId}`),
+    ["CREDIT-801"]
+  );
+});
+
+test("una solicitud no liberada prevalece sobre una desistida mas reciente", () => {
+  const selected = selectCanonicalSolicitudesByDocument([
+    {
+      source: "DRAFT",
+      entityId: 901,
+      clienteDocumento: "93448416",
+      createdAt: "2026-08-20T12:00:00.000Z",
+      rawState: "CERRADO",
+      closedReason: "RECHAZADA",
+    },
+    {
+      source: "DRAFT",
+      entityId: 902,
+      clienteDocumento: "93.448.416",
+      createdAt: "2026-08-26T12:00:00.000Z",
+      rawState: "CERRADO",
+      closedReason: "DESISTIDA",
+    },
+  ]);
+
+  assert.deepEqual(
+    selected.map((item) => `${item.source}-${item.entityId}`),
+    ["DRAFT-901"]
+  );
+});
+
 test("la fabrica del borrador respeta central, aliado, sede y asesor titular", () => {
   const openDraft = {
     ownership: ownSolicitud,
@@ -267,6 +400,24 @@ test("la fabrica del borrador respeta central, aliado, sede y asesor titular", (
       ownership: { ...ownSolicitud, sedeId: 102 },
     }),
     ["VER_DETALLE"]
+  );
+  assert.deepEqual(
+    getSolicitudActions({
+      viewer: seller,
+      ...openDraft,
+      state: "RECHAZADA",
+      draftState: "CERRADO",
+    }),
+    ["VER_DETALLE", "DESISTIR"]
+  );
+  assert.deepEqual(
+    getSolicitudActions({
+      viewer: centralAdmin,
+      ...openDraft,
+      state: "RECHAZADA",
+      draftState: "CERRADO",
+    }),
+    ["VER_DETALLE", "DESISTIR"]
   );
   assert.deepEqual(getSolicitudActions({ viewer: supervisor, ...openDraft }), [
     "VER_DETALLE",
@@ -337,6 +488,7 @@ test("el endpoint aplica sesion, alcance y no permite eliminaciones", async () =
   assert.match(route, /Cache-Control[\s\S]{0,100}no-store|no-store[\s\S]{0,100}Cache-Control/i);
   assert.match(route, /DESISTIR/);
   assert.match(route, /CENTRAL_ADMIN[\s\S]*desistSolicitudAsCentralAdmin/);
+  assert.match(route, /identityReleased: result\.identityReleased/);
   assert.match(
     storage,
     /desistSolicitudAsCentralAdmin[\s\S]*"closedReason" = 'DESISTIDA'[\s\S]*"desistedBySellerId" = NULL/
@@ -390,7 +542,7 @@ test("el muro muestra y ordena por la fecha de creación original", async () => 
   );
   assert.match(
     storage,
-    /String\(right\.createdAt \|\| ""\)\.localeCompare\(String\(left\.createdAt \|\| ""\)\)/
+    /String\(right\.(?:item\.)?createdAt \|\| ""\)\.localeCompare\(\s*String\(left\.(?:item\.)?createdAt \|\| ""\)\s*\)/
   );
   assert.doesNotMatch(
     storage,
@@ -520,6 +672,8 @@ test("la interfaz conserva filtros en URL y confirma el desistimiento", async ()
   assert.match(ui, /factoryHref/);
   assert.match(ui, /mode=correction/);
   assert.match(ui, /ConfirmDialog/);
+  assert.match(ui, /identityReleased/);
+  assert.match(ui, /administrador central debe gestionarlos/);
   assert.match(ui, /style=\{\{ paddingLeft: "2\.5rem" \}\}/);
 });
 
@@ -578,7 +732,12 @@ test("reserva globalmente la cedula antes de consultar al proveedor", async () =
 
   assert.match(storage, /pg_advisory_xact_lock/);
   assert.match(storage, /solicitud:\$\{lockDigest\(kind, value\)\}/);
-  assert.match(storage, /"estado" = 'ABIERTO'/);
+  assert.match(storage, /findBlockingSolicitudByDocument/);
+  assert.match(storage, /FROM "CreditoBorrador" draft[\s\S]*UNION ALL[\s\S]*FROM "Credito" credit/);
+  assert.match(
+    storage,
+    /findBlockingSolicitudByDocument[\s\S]*candidate\."source" = 'CREDIT'[\s\S]*candidate\."createdAt" DESC/
+  );
   assert.match(storage, /ActiveSolicitudConflictError/);
   assert.match(storage, /EXPIRADA_15_DIAS/);
   assert.match(storage, /INTERVAL '15 days'/);
@@ -595,6 +754,44 @@ test("reserva globalmente la cedula antes de consultar al proveedor", async () =
   assert.ok(reservation >= 0, "debe reservar la solicitud");
   assert.ok(reuse > reservation, "debe reservar antes de reutilizar DataCredito");
   assert.ok(providerCall > reuse, "debe reutilizar antes de consultar al proveedor");
+});
+
+test("consolida duplicados antes de filtrar, ajusta la pagina y retira la nueva consulta tras rechazo", async () => {
+  const [storage, gate] = await Promise.all([
+    readProjectFile("lib/solicitudes-storage.ts"),
+    readProjectFile(
+      "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
+    ),
+  ]);
+  const list = storage.slice(
+    storage.indexOf("export async function listSolicitudes"),
+    storage.indexOf("export async function getSolicitudDetail")
+  );
+
+  assert.match(
+    storage,
+    /function scopeOnlyFilters[\s\S]*q:\s*""[\s\S]*desde:\s*""[\s\S]*hasta:\s*""[\s\S]*estado:\s*""[\s\S]*id:\s*""/
+  );
+  assert.match(list, /const scopeFilters = scopeOnlyFilters\(input\.filters\)/);
+  assert.match(list, /readDraftRows\(input\.viewer, scopeFilters\)/);
+  assert.match(list, /readCreditRows\(input\.viewer, scopeFilters\)/);
+  assert.match(list, /const rawRows = \[\.\.\.drafts, \.\.\.credits\]/);
+  assert.match(list, /selectCanonicalSolicitudesByDocument\(rawRows\)/);
+  assert.ok(
+    list.indexOf("selectCanonicalSolicitudesByDocument") <
+      list.indexOf("matchesOperationalFilters")
+  );
+  assert.ok(
+    list.indexOf("matchesOperationalFilters") <
+      list.indexOf("const total = all.length")
+  );
+  assert.match(list, /const totalPages = Math\.max\(1, Math\.ceil\(total \/ input\.filters\.pageSize\)\)/);
+  assert.match(list, /const page = Math\.min\(input\.filters\.page, totalPages\)/);
+  assert.match(list, /const start = \(page - 1\) \* input\.filters\.pageSize/);
+  assert.match(list, /page,[\s\S]*filters:\s*\{\s*\.\.\.input\.filters,\s*page\s*\}/);
+  assert.doesNotMatch(gate, /Realizar nueva consulta/);
+  assert.match(gate, /SOLICITUD_ACTIVA_EXISTENTE/);
+  assert.match(gate, /Ver solicitud en el muro|Buscar en mi muro/);
 });
 
 test("cierra y vincula el borrador dentro de la transaccion del credito", async () => {
