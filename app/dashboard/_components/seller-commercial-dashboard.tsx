@@ -3,29 +3,26 @@ import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
+  Bell,
   Calculator,
   ChevronDown,
   CircleDollarSign,
   ClipboardList,
-  Clock3,
+  DollarSign,
   FileText,
   LayoutDashboard,
   Menu,
-  PackageCheck,
+  Package,
   Plus,
   ReceiptText,
   Search,
   ShieldCheck,
-  Smartphone,
-  UserRoundSearch,
+  UserRound,
   Users,
 } from "lucide-react";
 import FinserBrand from "@/app/_components/finser-brand";
 import LogoutButton from "./logout-button";
-
-const CLIENT_APP_PLAY_STORE_URL =
-  "https://play.google.com/store/apps/details?id=com.finserpay.clientes";
-const CLIENT_APP_QR_PATH = "/downloads/finserpay-clientes-qr.svg";
+import SellerClientAppDialog from "./seller-client-app-dialog";
 
 type RecentCredit = {
   clienteNombre: string;
@@ -62,9 +59,41 @@ type NavItem = {
 };
 
 type ActionItem = NavItem & {
-  description: string;
   primary?: boolean;
 };
+
+const CORE_NAV_ITEMS: NavItem[] = [
+  { href: "/dashboard/creditos", icon: Plus, label: "Nueva venta" },
+  { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
+  { href: "/dashboard/creditos?mode=simulator", icon: Calculator, label: "Simulador" },
+  { href: "/dashboard/pin", icon: ShieldCheck, label: "Cambiar PIN" },
+];
+
+const SUPERVISOR_NAV_ITEMS: NavItem[] = [
+  { href: "/dashboard/clientes", icon: Users, label: "Clientes" },
+  { href: "/dashboard/abonos", icon: CircleDollarSign, label: "Recaudos" },
+  { href: "/dashboard/reportes/creditos", icon: BarChart3, label: "Cr\u00e9ditos por fecha" },
+  { href: "/dashboard/reportes/abonos", icon: ReceiptText, label: "Abonos por fecha" },
+];
+
+const QUICK_ACTIONS: ActionItem[] = [
+  {
+    href: "/dashboard/creditos",
+    icon: Plus,
+    label: "Nueva venta",
+    primary: true,
+  },
+  {
+    href: "/dashboard/solicitudes",
+    icon: ClipboardList,
+    label: "Retomar solicitud",
+  },
+  {
+    href: "/dashboard/creditos?mode=simulator",
+    icon: Calculator,
+    label: "Simular cr\u00e9dito",
+  },
+];
 
 function money(value: number) {
   return `$ ${Math.round(value).toLocaleString("es-CO")}`;
@@ -72,7 +101,7 @@ function money(value: number) {
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("es-CO", {
-    day: "2-digit",
+    day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     month: "short",
@@ -80,14 +109,36 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function creditStatus(credit: RecentCredit) {
+  const label = credit.listoEntrega ? "Entregable" : credit.estado.replaceAll("_", " ");
+  const normalized = label.toUpperCase();
+
+  if (/ANUL|RECHAZ|ERROR/.test(normalized)) {
+    return { label, className: "border-red-200 bg-red-50 text-red-700" };
+  }
+
+  if (/PEND|PROCES|REVISION|BORRADOR/.test(normalized)) {
+    return { label, className: "border-amber-200 bg-amber-50 text-amber-800" };
+  }
+
+  if (/ENTREG|APROB|GENERAD|PAGAD|ACTIV/.test(normalized)) {
+    return {
+      label,
+      className:
+        "border-[color-mix(in_srgb,var(--fp-lime-strong)_35%,white)] bg-[var(--fp-lime-soft)] text-[var(--fp-lime-strong)]",
+    };
+  }
+
+  return {
+    label,
+    className: "border-[var(--fp-border)] bg-[var(--fp-bg)] text-[var(--fp-muted)]",
+  };
+}
+
 function Navigation({ activeHref, items }: { activeHref: string; items: NavItem[] }) {
-  const links: NavItem[] = [
-    { href: "/dashboard", icon: LayoutDashboard, label: "Inicio" },
-    ...items,
-  ];
   return (
-    <nav className="space-y-1">
-      {links.map(({ href, icon: Icon, label }) => {
+    <nav className="space-y-1" aria-label="Navegacion comercial">
+      {items.map(({ href, icon: Icon, label }) => {
         const active = href === activeHref;
         return (
           <Link
@@ -95,13 +146,13 @@ function Navigation({ activeHref, items }: { activeHref: string; items: NavItem[
             href={href}
             aria-current={active ? "page" : undefined}
             className={[
-              "flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition",
+              "relative flex min-h-11 items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime)]",
               active
-                ? "relative bg-white/10 text-[#dafa70] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-[#b7e63d]"
-                : "text-slate-300 hover:bg-white/8 hover:text-white",
+                ? "bg-white/10 text-white before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-[var(--fp-lime)]"
+                : "text-white/70 hover:bg-white/[0.06] hover:text-white",
             ].join(" ")}
           >
-            <Icon className="h-5 w-5 shrink-0" strokeWidth={1.8} />
+            <Icon className="h-[19px] w-[19px] shrink-0" strokeWidth={1.8} aria-hidden="true" />
             {label}
           </Link>
         );
@@ -121,141 +172,280 @@ export function CommercialSidebar({
   isSupervisor: boolean;
   nombre: string;
 }) {
-  const navItems: NavItem[] = isSupervisor
-    ? [
-        { href: "/dashboard/creditos", icon: Plus, label: "Nueva venta" },
-        { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
-        { href: "/dashboard/clientes", icon: Users, label: "Clientes" },
-        { href: "/dashboard/abonos", icon: CircleDollarSign, label: "Recaudos" },
-        { href: "/dashboard/creditos?mode=simulator", icon: Calculator, label: "Simulador" },
-        { href: "/dashboard/reportes/creditos", icon: BarChart3, label: "Creditos por fecha" },
-        { href: "/dashboard/reportes/abonos", icon: ReceiptText, label: "Abonos por fecha" },
-        { href: "/dashboard/pin", icon: ShieldCheck, label: "Cambiar PIN" },
-      ]
-    : [
-        { href: "/dashboard/creditos", icon: Plus, label: "Nueva venta" },
-        { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
-        { href: "/dashboard/creditos?mode=simulator", icon: Calculator, label: "Simulador" },
-        { href: "/dashboard/pin", icon: ShieldCheck, label: "Cambiar PIN" },
-      ];
+  const primaryItems: NavItem[] = [
+    { href: "/dashboard", icon: LayoutDashboard, label: "Inicio" },
+    ...CORE_NAV_ITEMS,
+  ];
 
   return (
-    <aside className="bg-[#071827] text-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col">
-      <div className="flex items-center justify-between border-b border-white/10 px-4 py-4 lg:block lg:border-0 lg:px-5 lg:py-6">
-        <FinserBrand compact dark showTagline={false} />
-        <LogoutButton className="!rounded-lg !border-white/15 !px-3 lg:hidden" />
+    <aside className="bg-[#0d1112] text-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col">
+      <div className="flex min-h-20 items-center justify-between border-b border-white/10 px-4 lg:border-0 lg:px-5">
+        <FinserBrand mini dark accentPay plainMark showTagline={false} />
+        <LogoutButton
+          showIcon
+          className="!min-h-11 !rounded-md !border-white/15 !bg-transparent !px-3 lg:hidden"
+        />
       </div>
 
       <details className="group border-b border-white/10 lg:hidden">
-        <summary className="flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 text-sm font-bold [&::-webkit-details-marker]:hidden">
-          <Menu className="h-5 w-5" strokeWidth={1.8} />
-          Modulos comerciales
-          <ChevronDown className="ml-auto h-4 w-4 transition group-open:rotate-180" />
+        <summary className="flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 text-sm font-semibold [&::-webkit-details-marker]:hidden">
+          <Menu className="h-[19px] w-[19px]" strokeWidth={1.8} aria-hidden="true" />
+          Menu comercial
+          <ChevronDown className="ml-auto h-[18px] w-[18px] transition group-open:rotate-180" strokeWidth={1.8} />
         </summary>
         <div className="max-h-[70vh] overflow-y-auto px-3 pb-4 pt-2">
-          <Navigation activeHref={activeHref} items={navItems} />
+          <Navigation activeHref={activeHref} items={primaryItems} />
+          {isSupervisor ? (
+            <div className="mt-4 border-t border-white/10 pt-4">
+              <p className="mb-2 px-3 text-[10px] font-semibold uppercase text-white/45">Supervisi&oacute;n</p>
+              <Navigation activeHref={activeHref} items={SUPERVISOR_NAV_ITEMS} />
+            </div>
+          ) : null}
         </div>
       </details>
 
-      <div className="hidden min-h-0 flex-1 overflow-y-auto px-3 pb-4 lg:block">
-        <p className="mb-2 px-3 text-[10px] font-bold uppercase text-slate-500">
-          Panel comercial
-        </p>
-        <Navigation activeHref={activeHref} items={navItems} />
+      <div className="hidden min-h-0 flex-1 overflow-y-auto px-2.5 pb-4 pt-8 lg:block">
+        <p className="mb-3 px-3 text-[10px] font-semibold uppercase text-white/45">Principal</p>
+        <Navigation activeHref={activeHref} items={primaryItems} />
+
+        {isSupervisor ? (
+          <details className="group mt-5 border-t border-white/10 pt-4">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center px-3 text-[10px] font-semibold uppercase text-white/45 [&::-webkit-details-marker]:hidden">
+              Supervisi&oacute;n
+              <ChevronDown className="ml-auto h-4 w-4 transition group-open:rotate-180" strokeWidth={1.8} />
+            </summary>
+            <Navigation activeHref={activeHref} items={SUPERVISOR_NAV_ITEMS} />
+          </details>
+        ) : null}
       </div>
 
-      <div className="mt-auto hidden border-t border-white/15 px-5 py-5 lg:block">
+      <div className="mt-auto hidden border-t border-white/15 px-4 py-5 lg:block">
         <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-white/15 bg-white/10">
+          <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full border border-white/15 bg-white/[0.06]">
             {avatarSrc ? (
-              <Image src={avatarSrc} alt={nombre} width={40} height={40} className="h-full w-full object-cover" />
+              <Image src={avatarSrc} alt={nombre} width={44} height={44} className="h-full w-full object-cover" />
             ) : (
-              <Smartphone className="h-5 w-5" strokeWidth={1.8} />
+              <UserRound className="h-[19px] w-[19px]" strokeWidth={1.8} aria-hidden="true" />
             )}
           </span>
           <div className="min-w-0">
-            <p className="truncate text-sm font-bold text-white">{nombre}</p>
-            <p className="mt-0.5 text-xs font-semibold uppercase text-[#43c7bd]">
+            <p className="truncate text-sm font-semibold text-white">{nombre}</p>
+            <p className="mt-0.5 text-[11px] font-medium uppercase text-[var(--fp-lime)]">
               {isSupervisor ? "Supervisor" : "Vendedor"}
             </p>
           </div>
         </div>
-        <LogoutButton className="mt-4 w-full !rounded-lg !border-white/15 !bg-transparent" />
+        <LogoutButton
+          showIcon
+          className="mt-4 min-h-11 w-full !rounded-md !border-white/15 !bg-transparent"
+        />
       </div>
     </aside>
   );
 }
 
-function MetricCard({
-  detail,
-  icon: Icon,
-  label,
-  tone = "teal",
-  value,
+function MetricStrip({
+  isSupervisor,
+  stats,
 }: {
-  detail: string;
-  icon: LucideIcon;
-  label: string;
-  tone?: "teal" | "amber" | "slate";
-  value: string;
+  isSupervisor: boolean;
+  stats: SellerDashboardStats;
 }) {
-  const toneClasses = {
-    amber: "bg-amber-50 text-amber-700",
-    slate: "bg-slate-100 text-slate-700",
-    teal: "bg-[#e7f5f3] text-[#087a73]",
-  };
+  const metrics = [
+    {
+      detail: isSupervisor ? "Toda la sede" : "Tus operaciones",
+      icon: FileText,
+      label: "Cr\u00e9ditos hoy",
+      value: String(stats.creditosHoy),
+    },
+    {
+      detail: "Acumulado del mes",
+      icon: BarChart3,
+      label: "Cr\u00e9ditos del mes",
+      value: String(stats.creditosMes),
+    },
+    {
+      detail: "Requieren validaci\u00f3n",
+      icon: Package,
+      label: "Pendientes de entrega",
+      value: String(stats.pendientesEntrega),
+    },
+    {
+      detail: "Asociado al perfil",
+      icon: DollarSign,
+      label: "Recaudo hoy",
+      value: money(stats.abonosHoy),
+    },
+  ];
+
+  const responsiveBorders = [
+    "border-t-0",
+    "border-l border-t-0",
+    "border-t xl:border-l xl:border-t-0",
+    "border-l border-t xl:border-t-0",
+  ];
 
   return (
-    <article className="rounded-lg border border-[#d9e1e7] bg-white p-4 shadow-[0_5px_18px_rgba(16,24,40,0.04)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-bold text-[#667085]">{label}</p>
-          <p className="mt-2 text-2xl font-black text-[#101828]">{value}</p>
-        </div>
-        <span className={["grid h-10 w-10 place-items-center rounded-lg", toneClasses[tone]].join(" ")}>
-          <Icon className="h-5 w-5" strokeWidth={1.8} />
-        </span>
-      </div>
-      <p className="mt-2 text-xs text-[#98a2b3]">{detail}</p>
-    </article>
+    <section
+      className="mt-6 grid grid-cols-2 overflow-hidden border-y border-[var(--fp-border)] bg-white xl:grid-cols-4"
+      aria-label="Indicadores comerciales"
+    >
+      {metrics.map(({ detail, icon: Icon, label, value }, index) => (
+        <article
+          key={label}
+          className={`border-t border-[var(--fp-border)] px-5 py-5 ${responsiveBorders[index]}`}
+        >
+          <div className="flex items-center gap-3 text-sm text-[var(--fp-muted)]">
+            <Icon className="h-[19px] w-[19px] text-[var(--fp-graphite)]" strokeWidth={1.8} aria-hidden="true" />
+            <span>{label}</span>
+          </div>
+          <p className="mt-3 text-2xl font-semibold text-[var(--fp-graphite)]">{value}</p>
+          <p className="mt-1 text-xs text-[var(--fp-muted)]">{detail}</p>
+        </article>
+      ))}
+    </section>
   );
 }
 
-function ActionCard({
-  description,
-  href,
-  icon: Icon,
-  label,
-  primary = false,
-}: ActionItem) {
+function QuickActions() {
   return (
-    <Link
-      href={href}
-      className={[
-        "group flex min-h-28 items-start gap-4 rounded-lg border p-4 transition hover:-translate-y-0.5",
-        primary
-          ? "border-[#087a73] bg-[#087a73] text-white hover:bg-[#06645f]"
-          : "border-[#d9e1e7] bg-white text-[#101828] hover:border-[#98a2b3] hover:shadow-[0_8px_22px_rgba(16,24,40,0.06)]",
-      ].join(" ")}
-    >
-      <span
-        className={[
-          "grid h-10 w-10 shrink-0 place-items-center rounded-lg",
-          primary ? "bg-white/15 text-white" : "bg-[#e7f5f3] text-[#087a73]",
-        ].join(" ")}
-      >
-        <Icon className="h-5 w-5" strokeWidth={1.9} />
-      </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-black">{label}</span>
-        <span className={[
-          "mt-1 block text-xs leading-5",
-          primary ? "text-white/75" : "text-[#667085]",
-        ].join(" ")}>
-          {description}
-        </span>
-      </span>
-    </Link>
+    <section className="mt-7" aria-labelledby="quick-actions-title">
+      <h2 id="quick-actions-title" className="text-lg font-semibold">
+        Acciones r&aacute;pidas
+      </h2>
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        {QUICK_ACTIONS.map(({ href, icon: Icon, label, primary }) => (
+          <Link
+            key={label}
+            href={href}
+            className={[
+              "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border px-5 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime-strong)] focus-visible:ring-offset-2 sm:min-w-52",
+              primary
+                ? "border-[var(--fp-graphite)] bg-[var(--fp-graphite)] text-white hover:bg-black"
+                : "border-[var(--fp-border)] bg-white text-[var(--fp-graphite)] hover:border-[var(--fp-muted)]",
+            ].join(" ")}
+          >
+            <Icon
+              className={primary ? "h-[19px] w-[19px] text-[var(--fp-lime)]" : "h-[19px] w-[19px]"}
+              strokeWidth={1.8}
+              aria-hidden="true"
+            />
+            {label}
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RecentCreditsTable({
+  isSupervisor,
+  recentCredits,
+}: {
+  isSupervisor: boolean;
+  recentCredits: RecentCredit[];
+}) {
+  const allCreditsHref = isSupervisor ? "/dashboard/reportes/creditos" : "/dashboard/solicitudes";
+
+  return (
+    <section className="mt-7 border border-[var(--fp-border)] bg-white" aria-labelledby="recent-credits-title">
+      <div className="flex items-end justify-between gap-4 border-b border-[var(--fp-border)] px-5 py-5 sm:px-7">
+        <div>
+          <p className="text-xs font-semibold uppercase text-[var(--fp-lime-strong)]">Actividad reciente</p>
+          <h2 id="recent-credits-title" className="mt-1 text-xl font-semibold">
+            &Uacute;ltimos cr&eacute;ditos
+          </h2>
+        </div>
+        <Link
+          href={allCreditsHref}
+          className="min-h-11 py-3 text-sm font-semibold underline decoration-[var(--fp-lime-strong)] underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fp-lime-strong)]"
+        >
+          Ver todas
+        </Link>
+      </div>
+
+      {recentCredits.length ? (
+        <>
+          <div className="divide-y divide-[var(--fp-border)] sm:hidden">
+            {recentCredits.map((credit) => {
+              const status = creditStatus(credit);
+              return (
+                <article key={credit.id} className="px-5 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-[var(--fp-graphite)]">
+                        {credit.clienteNombre}
+                      </p>
+                      <p className="mt-1 truncate text-xs text-[var(--fp-muted)]">{credit.folio}</p>
+                    </div>
+                    <span
+                      className={`inline-flex shrink-0 rounded-md border px-2 py-1 text-[10px] font-semibold uppercase ${status.className}`}
+                    >
+                      {status.label}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex items-end justify-between gap-3 text-xs">
+                    <p className="min-w-0 truncate text-[var(--fp-graphite)]">{credit.equipo}</p>
+                    <time className="shrink-0 whitespace-nowrap text-[var(--fp-muted)]">
+                      {formatDate(credit.fecha)}
+                    </time>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="hidden overflow-x-auto sm:block">
+            <table className="w-full min-w-[720px] border-collapse text-left">
+            <thead>
+              <tr className="border-b border-[var(--fp-border)] text-xs font-medium uppercase text-[var(--fp-muted)]">
+                <th scope="col" className="px-5 py-3 sm:px-7">Cliente</th>
+                <th scope="col" className="px-5 py-3">Equipo</th>
+                <th scope="col" className="px-5 py-3">Estado</th>
+                <th scope="col" className="px-5 py-3 sm:pr-7">Fecha</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--fp-border)]">
+              {recentCredits.map((credit) => {
+                const status = creditStatus(credit);
+                return (
+                  <tr key={credit.id} className="transition hover:bg-[var(--fp-bg)]">
+                    <td className="px-5 py-4 sm:px-7">
+                      <span className="block max-w-[300px] truncate text-sm font-semibold text-[var(--fp-graphite)]">
+                        {credit.clienteNombre}
+                      </span>
+                      <span className="mt-1 block max-w-[300px] truncate text-xs text-[var(--fp-muted)]">
+                        {credit.folio}
+                      </span>
+                    </td>
+                    <td className="max-w-[260px] truncate px-5 py-4 text-sm text-[var(--fp-graphite)]">
+                      {credit.equipo}
+                    </td>
+                    <td className="px-5 py-4">
+                      <span
+                        className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-semibold uppercase ${status.className}`}
+                      >
+                        {status.label}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-5 py-4 text-sm text-[var(--fp-muted)] sm:pr-7">
+                      {formatDate(credit.fecha)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            </table>
+          </div>
+        </>
+      ) : (
+        <div className="flex min-h-44 flex-col items-center justify-center px-5 py-10 text-center">
+          <ClipboardList className="h-6 w-6 text-[var(--fp-muted)]" strokeWidth={1.8} aria-hidden="true" />
+          <p className="mt-3 text-sm font-semibold text-[var(--fp-graphite)]">Sin cr&eacute;ditos recientes</p>
+          <p className="mt-1 text-xs text-[var(--fp-muted)]">Las ventas recientes apareceran en este espacio.</p>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -269,256 +459,93 @@ export default function SellerCommercialDashboard({
   stats,
 }: SellerCommercialDashboardProps) {
   const firstName = nombre.split(" ")[0] || nombre;
-  const actions: ActionItem[] = isSupervisor
-    ? [
-        {
-          href: "/dashboard/creditos",
-          icon: Plus,
-          label: "Nueva venta",
-          description: "Crear cliente e iniciar credito.",
-          primary: true,
-        },
-        {
-          href: "/dashboard/clientes",
-          icon: UserRoundSearch,
-          label: "Buscar cliente",
-          description: "Abrir expediente y documentos.",
-        },
-        {
-          href: "/dashboard/abonos",
-          icon: CircleDollarSign,
-          label: "Recibir abono",
-          description: "Registrar una cuota del cliente.",
-        },
-        {
-          href: "/dashboard/creditos?mode=simulator",
-          icon: Calculator,
-          label: "Simular credito",
-          description: "Calcular inicial, plazo y cuota.",
-        },
-      ]
-    : [
-        {
-          href: "/dashboard/creditos",
-          icon: Plus,
-          label: "Nueva venta",
-          description: "Crear cliente e iniciar credito.",
-          primary: true,
-        },
-        {
-          href: "/dashboard/solicitudes",
-          icon: ClipboardList,
-          label: "Retomar solicitud",
-          description: "Continuar una venta en proceso desde el muro.",
-        },
-        {
-          href: "/dashboard/creditos?mode=simulator",
-          icon: Calculator,
-          label: "Simular credito",
-          description: "Calcular inicial, plazo y cuota.",
-        },
-      ];
 
   return (
-    <div className="min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[260px_minmax(0,1fr)]">
-      <CommercialSidebar
-        avatarSrc={avatarSrc}
-        isSupervisor={isSupervisor}
-        nombre={nombre}
-      />
+    <div className="min-h-screen bg-[var(--fp-bg)] text-[var(--fp-graphite)] lg:grid lg:grid-cols-[236px_minmax(0,1fr)]">
+      <CommercialSidebar avatarSrc={avatarSrc} isSupervisor={isSupervisor} nombre={nombre} />
 
-      <main className="min-w-0 px-4 py-5 sm:px-6 lg:px-7 xl:px-8">
-        <header className="flex flex-col gap-4 border-b border-[#d9e1e7] pb-5 sm:flex-row sm:items-center sm:justify-between">
+      <main className="min-w-0 px-4 py-5 sm:px-6 lg:px-8 lg:py-8 xl:px-10">
+        <header className="flex flex-col gap-5 border-b border-[var(--fp-border)] pb-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase text-[#087a73]">Panel comercial</p>
-            <h1 className="mt-1 text-3xl font-black">Buen dia, {firstName}</h1>
-            <p className="mt-1 text-sm text-[#667085]">
-              {sedeNombre} | {isSupervisor ? "Supervision de sede" : "Gestion de ventas"}
+            <p className="text-xs font-medium uppercase text-[var(--fp-muted)]">
+              PANEL COMERCIAL &middot; {sedeNombre}
             </p>
+            <h1 className="mt-1 text-3xl font-semibold sm:text-4xl">Buen d&iacute;a, {firstName}</h1>
+            <p className="mt-1 text-sm text-[var(--fp-muted)]">Gesti&oacute;n de ventas</p>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <p className="text-sm font-bold text-[#344054]">{nombre}</p>
-              <p className="text-xs text-[#667085]">{isSupervisor ? "Supervisor" : "Vendedor"}</p>
-            </div>
-            <span className="grid h-12 w-12 place-items-center overflow-hidden rounded-lg border border-[#d0d5dd] bg-white">
-              {avatarSrc ? (
-                <Image src={avatarSrc} alt={nombre} width={48} height={48} className="h-full w-full object-cover" />
-              ) : (
-                <Smartphone className="h-5 w-5 text-[#087a73]" strokeWidth={1.8} />
-              )}
+
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <SellerClientAppDialog />
+            <span
+              className="grid h-11 w-11 place-items-center border-l border-[var(--fp-border)] text-[var(--fp-graphite)]"
+              role="img"
+              aria-label="Notificaciones"
+            >
+              <Bell className="h-[19px] w-[19px]" strokeWidth={1.8} aria-hidden="true" />
             </span>
+            <div className="flex min-h-11 items-center gap-3 border-l border-[var(--fp-border)] pl-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full border border-[var(--fp-border)] bg-white">
+                {avatarSrc ? (
+                  <Image src={avatarSrc} alt={nombre} width={40} height={40} className="h-full w-full object-cover" />
+                ) : (
+                  <UserRound className="h-[19px] w-[19px]" strokeWidth={1.8} aria-hidden="true" />
+                )}
+              </span>
+              <div className="hidden min-w-0 md:block">
+                <p className="max-w-48 truncate text-sm font-semibold">{nombre}</p>
+                <p className="text-xs text-[var(--fp-muted)]">{isSupervisor ? "Supervisor" : "Vendedor"}</p>
+              </div>
+            </div>
           </div>
         </header>
 
         {debeCambiarPin ? (
-          <section className="mt-5 flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <section className="mt-5 flex flex-col gap-3 border border-amber-300 bg-amber-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-black text-amber-900">Actualiza tu PIN inicial</p>
-              <p className="mt-1 text-xs text-amber-700">Protege el acceso antes de continuar con la operacion.</p>
+              <p className="text-sm font-semibold text-amber-950">Actualiza tu PIN inicial</p>
+              <p className="mt-1 text-xs text-amber-800">Protege el acceso antes de continuar con la operaci&oacute;n.</p>
             </div>
-            <Link href="/dashboard/pin" className="inline-flex h-10 items-center justify-center rounded-lg bg-amber-800 px-4 text-sm font-bold text-white">
+            <Link
+              href="/dashboard/pin"
+              className="inline-flex min-h-11 items-center justify-center rounded-md bg-[var(--fp-graphite)] px-4 text-sm font-semibold text-white"
+            >
               Cambiar PIN
             </Link>
           </section>
         ) : null}
 
-        <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
-            detail={isSupervisor ? "Toda la sede" : "Tus operaciones"}
-            icon={FileText}
-            label="Creditos hoy"
-            value={String(stats.creditosHoy)}
-          />
-          <MetricCard
-            detail="Acumulado del mes"
-            icon={BarChart3}
-            label="Creditos del mes"
-            tone="slate"
-            value={String(stats.creditosMes)}
-          />
-          <MetricCard
-            detail="Requieren validacion"
-            icon={PackageCheck}
-            label="Pendientes de entrega"
-            tone="amber"
-            value={String(stats.pendientesEntrega)}
-          />
-          <MetricCard
-            detail={isSupervisor ? `${stats.creditosActivos} creditos activos` : "Recaudo asociado al perfil"}
-            icon={CircleDollarSign}
-            label="Recaudo hoy"
-            value={money(stats.abonosHoy)}
-          />
-        </section>
+        <MetricStrip isSupervisor={isSupervisor} stats={stats} />
+        <QuickActions />
 
         {isSupervisor ? (
-          <section id="busqueda-rapida" className="mt-5 rounded-lg border border-[#b9ded9] bg-[#eaf7f5] p-4 sm:p-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase text-[#087a73]">Busqueda rapida</p>
-                <h2 className="mt-1 text-xl font-black">Abrir expediente de cliente</h2>
-              </div>
-              <form action="/dashboard/clientes" className="flex w-full flex-col gap-2 sm:flex-row lg:max-w-2xl">
-                <div className="relative min-w-0 flex-1">
-                  <Search className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#98a2b3]" strokeWidth={1.8} />
-                  <input
-                    type="text"
-                    name="search"
-                    aria-label="Buscar cliente"
-                    placeholder="Cedula, telefono, folio o IMEI"
-                    className="h-11 w-full rounded-lg border border-[#b7c8cd] bg-white pl-11 pr-4 text-sm outline-none transition focus:border-[#087a73] focus:ring-4 focus:ring-[#087a73]/10"
-                  />
-                </div>
-                <button type="submit" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#087a73] px-5 text-sm font-bold text-white hover:bg-[#06645f]">
-                  <Search className="h-4 w-4" strokeWidth={2} />
-                  Buscar
-                </button>
-              </form>
+          <section className="mt-7 flex flex-col gap-3 border-y border-[var(--fp-border)] py-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-sm font-semibold">Buscar expediente</p>
+              <p className="mt-0.5 text-xs text-[var(--fp-muted)]">Consulta por c&eacute;dula, tel&eacute;fono, folio o IMEI.</p>
             </div>
+            <form action="/dashboard/clientes" className="flex w-full flex-col gap-2 sm:flex-row lg:max-w-2xl">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[var(--fp-muted)]" strokeWidth={1.8} aria-hidden="true" />
+                <input
+                  type="text"
+                  name="search"
+                  aria-label="Buscar cliente"
+                  placeholder="Cedula, telefono, folio o IMEI"
+                  className="h-11 w-full rounded-md border border-[var(--fp-border)] bg-white pl-11 pr-4 text-sm outline-none transition focus:border-[var(--fp-lime-strong)] focus:ring-2 focus:ring-[var(--fp-lime)]/30"
+                />
+              </div>
+              <button
+                type="submit"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-[var(--fp-graphite)] px-5 text-sm font-semibold text-white hover:bg-black"
+              >
+                <Search className="h-[18px] w-[18px]" strokeWidth={1.8} aria-hidden="true" />
+                Buscar
+              </button>
+            </form>
           </section>
         ) : null}
 
-        <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
-          <div className="min-w-0 space-y-7">
-            <section>
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <h2 className="text-lg font-black">Acciones rapidas</h2>
-                <span className="text-xs font-semibold text-[#667085]">
-                  {isSupervisor ? "Operacion de sede" : "Flujo de venta"}
-                </span>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {actions.map((action) => (
-                  <ActionCard key={action.label} {...action} />
-                ))}
-              </div>
-            </section>
-
-            <section className="overflow-hidden rounded-lg border border-[#d9e1e7] bg-white">
-              <div className="flex items-center justify-between gap-3 border-b border-[#e4e7ec] px-4 py-4 sm:px-5">
-                <div>
-                  <p className="text-xs font-bold uppercase text-[#087a73]">Actividad reciente</p>
-                  <h2 className="mt-1 text-lg font-black">Ultimos creditos</h2>
-                </div>
-                {isSupervisor ? (
-                  <Link href="/dashboard/reportes/creditos" className="text-sm font-bold text-[#087a73] hover:underline">
-                    Ver reporte
-                  </Link>
-                ) : null}
-              </div>
-
-              {recentCredits.length ? (
-                <div className="overflow-x-auto">
-                  <div className="min-w-[720px]">
-                    <div className="grid grid-cols-[1.25fr_1fr_0.8fr_0.75fr] gap-4 bg-[#101820] px-5 py-3 text-[11px] font-bold uppercase text-white">
-                      <span>Cliente</span>
-                      <span>Equipo</span>
-                      <span>Estado</span>
-                      <span>Fecha</span>
-                    </div>
-                    <div className="divide-y divide-[#e4e7ec]">
-                      {recentCredits.map((credit) => (
-                        <div key={credit.id} className="grid grid-cols-[1.25fr_1fr_0.8fr_0.75fr] gap-4 px-5 py-3.5 text-sm">
-                          <span className="min-w-0">
-                            <span className="block truncate font-bold text-[#101828]">{credit.clienteNombre}</span>
-                            <span className="mt-0.5 block truncate text-xs text-[#667085]">{credit.folio}</span>
-                          </span>
-                          <span className="truncate text-[#475467]">{credit.equipo}</span>
-                          <span className="font-semibold text-[#344054]">{credit.listoEntrega ? "Entregable" : credit.estado}</span>
-                          <span className="text-xs text-[#667085]">{formatDate(credit.fecha)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex min-h-36 flex-col items-center justify-center px-5 py-8 text-center">
-                  <Clock3 className="h-6 w-6 text-[#98a2b3]" strokeWidth={1.7} />
-                  <p className="mt-2 text-sm font-bold text-[#475467]">Sin creditos recientes</p>
-                </div>
-              )}
-            </section>
-          </div>
-
-          <aside className="space-y-5">
-            <section className="rounded-lg border border-[#d9e1e7] bg-white p-5">
-              <p className="text-xs font-bold uppercase text-[#087a73]">App de clientes</p>
-              <h2 className="mt-1 text-lg font-black">Instalacion y actualizacion</h2>
-              <div className="mt-4 flex items-center gap-4">
-                <Image
-                  src={CLIENT_APP_QR_PATH}
-                  alt="QR de FINSER PAY Clientes"
-                  width={112}
-                  height={112}
-                  className="h-28 w-28 rounded-lg border border-[#d9e1e7] bg-white p-1"
-                />
-                <p className="text-xs leading-5 text-[#667085]">
-                  Escanear desde el telefono del cliente al finalizar la venta.
-                </p>
-              </div>
-              <a
-                href={CLIENT_APP_PLAY_STORE_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[#087a73] text-sm font-bold text-[#087a73] hover:bg-[#eaf7f5]"
-              >
-                <Smartphone className="h-4 w-4" strokeWidth={1.8} />
-                Abrir Google Play
-              </a>
-            </section>
-
-            <section className="rounded-lg border border-[#d9e1e7] bg-[#101820] p-5 text-white">
-              <p className="text-xs font-bold uppercase text-[#55d2c7]">Perfil activo</p>
-              <p className="mt-2 text-xl font-black">{isSupervisor ? "Supervisor" : "Vendedor"}</p>
-              <p className="mt-2 text-sm text-slate-300">{sedeNombre}</p>
-              <div className="mt-4 flex items-center gap-2 border-t border-white/10 pt-4 text-xs text-slate-300">
-                <ShieldCheck className="h-4 w-4 text-[#55d2c7]" strokeWidth={1.8} />
-                Sesion comercial activa
-              </div>
-            </section>
-          </aside>
-        </div>
+        <RecentCreditsTable isSupervisor={isSupervisor} recentCredits={recentCredits} />
       </main>
     </div>
   );
