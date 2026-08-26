@@ -13,7 +13,7 @@ import {
   generateCreditFolio,
   generatePagareNumber,
   generatePaymentReference,
-  getIphoneClosureReadiness,
+  getCreditClosureReadiness,
   getDefaultFirstPaymentDateObject,
   hasDuplicateEvidenceValues,
   resolveCreditEquipmentPlatform,
@@ -1165,6 +1165,8 @@ export async function POST(req: Request) {
 
     const plataformaDispositivo = platformResolution.platform;
     const isIphoneCredit = plataformaDispositivo === "IPHONE";
+    const requiresDeliveryEvidence =
+      isIphoneCredit || plataformaDispositivo === "ANDROID";
     const dataCreditoPlatform = plataformaDispositivo;
     const dataCreditoProvider = getDataCreditoPublicConfig();
     const dataCreditoRequired = dataCreditoProvider.enabled;
@@ -1505,23 +1507,23 @@ export async function POST(req: Request) {
         )
       : sanitizeImageDataUrl(body.contratoSelfieDataUrl || body.contratoFotoDataUrl);
     const contratoSelfieDataUrl = contratoFotoDataUrl;
-    const contratoCedulaFrenteDataUrl = isIphoneCredit
+    const contratoCedulaFrenteDataUrl = requiresDeliveryEvidence
       ? await sanitizeIphoneDeliveryEvidenceDataUrl(
           body.contratoCedulaFrenteDataUrl
         )
       : sanitizeImageDataUrl(body.contratoCedulaFrenteDataUrl);
-    const contratoCedulaRespaldoDataUrl = isIphoneCredit
+    const contratoCedulaRespaldoDataUrl = requiresDeliveryEvidence
       ? await sanitizeIphoneDeliveryEvidenceDataUrl(
           body.contratoCedulaRespaldoDataUrl
         )
       : sanitizeImageDataUrl(body.contratoCedulaRespaldoDataUrl);
-    const fotoEntregaDataUrl = isIphoneCredit
+    const fotoEntregaDataUrl = requiresDeliveryEvidence
       ? await sanitizeIphoneDeliveryEvidenceDataUrl(body.fotoEntregaDataUrl)
       : "";
-    const fotoRemisionDataUrl = isIphoneCredit
+    const fotoRemisionDataUrl = requiresDeliveryEvidence
       ? await sanitizeIphoneDeliveryEvidenceDataUrl(body.fotoRemisionDataUrl)
       : "";
-    const iphoneSelfieCedulaDataUrl = isIphoneCredit
+    const iphoneSelfieCedulaDataUrl = requiresDeliveryEvidence
       ? await sanitizeIphoneDeliveryEvidenceDataUrl(
           body.iphoneSelfieCedulaDataUrl
         )
@@ -2253,9 +2255,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const iphoneClosureReadiness = getIphoneClosureReadiness({
+    const creditClosureReadiness = getCreditClosureReadiness({
       platform: plataformaDispositivo,
-      enrollmentConfirmed: iphoneManualEnrollmentVerified,
+      enrollmentConfirmed: isIphoneCredit
+        ? iphoneManualEnrollmentVerified
+        : true,
       cedulaFrenteDataUrl: contratoCedulaFrenteDataUrl,
       cedulaRespaldoDataUrl: contratoCedulaRespaldoDataUrl,
       selfieCedulaDataUrl: iphoneSelfieCedulaDataUrl,
@@ -2263,16 +2267,18 @@ export async function POST(req: Request) {
       fotoRemisionDataUrl,
     });
     const missingIphoneRequiredEvidence =
-      iphoneClosureReadiness.missingEvidence;
+      creditClosureReadiness.missingEvidence;
 
     if (
-      isIphoneCredit &&
+      requiresDeliveryEvidence &&
       iphoneIdentityHashes.length === 3 &&
       hasDuplicateEvidenceValues(iphoneIdentityHashes)
     ) {
       return NextResponse.json(
         {
-          code: "IPHONE_IDENTITY_EVIDENCE_DUPLICATED",
+          code: isIphoneCredit
+            ? "IPHONE_IDENTITY_EVIDENCE_DUPLICATED"
+            : "ANDROID_IDENTITY_EVIDENCE_DUPLICATED",
           error: "Las fotos de la cedula y la selfie con cedula deben ser imagenes diferentes.",
         },
         { status: 400 }
@@ -2298,8 +2304,10 @@ export async function POST(req: Request) {
 
       return NextResponse.json(
         {
-          code: "IPHONE_CLOSURE_EVIDENCE_REQUIRED",
-          error: `Debes cargar ${missingLabel} antes de finalizar el credito iPhone.`,
+          code: isIphoneCredit
+            ? "IPHONE_CLOSURE_EVIDENCE_REQUIRED"
+            : "ANDROID_CLOSURE_EVIDENCE_REQUIRED",
+          error: `Debes cargar ${missingLabel} antes de finalizar el credito ${isIphoneCredit ? "iPhone" : "Android"}.`,
           missing: missingIphoneRequiredEvidence,
         },
         { status: 400 }
@@ -2351,7 +2359,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (isIphoneCredit && !iphoneClosureReadiness.enrollmentConfirmed) {
+    if (isIphoneCredit && !creditClosureReadiness.enrollmentConfirmed) {
       return NextResponse.json(
         {
           code: "IPHONE_ENROLLMENT_REQUIRED",
@@ -2626,7 +2634,7 @@ export async function POST(req: Request) {
             "Cedula frente",
             "Cedula respaldo",
             "Firma digital",
-            ...(isIphoneCredit
+            ...(requiresDeliveryEvidence
               ? ["Foto de entrega", "Foto de remision"]
               : []),
             ...(veriffValidation ? ["Veriff"] : []),

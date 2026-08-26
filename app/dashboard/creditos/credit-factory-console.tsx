@@ -83,7 +83,7 @@ import {
   DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
   generatePagareNumber,
-  getIphoneClosureReadiness,
+  getCreditClosureReadiness,
   getDefaultFirstPaymentDate,
   getCreditInstallmentOptions,
   getPaymentFrequencyLabel,
@@ -201,6 +201,12 @@ type DeliveryValidationState = {
   resultMessage: string | null;
   serviceDetails: string | null;
   status: DeliveryStatus;
+};
+
+type AndroidEnrollmentState = {
+  status: "idle" | "enrolling" | "enrolled" | "error";
+  message: string;
+  checkedAt: string | null;
 };
 
 type DevicePlatform = "android" | "iphone";
@@ -411,6 +417,12 @@ const EMPTY_VERIFF_RETRY_POLICY: VeriffRetryPolicyState = {
   maxAttempts: 2,
   remainingAttempts: 2,
   retryAllowed: false,
+};
+
+const EMPTY_ANDROID_ENROLLMENT_STATE: AndroidEnrollmentState = {
+  status: "idle",
+  message: "Preparando la inscripcion automatica en Zero Touch.",
+  checkedAt: null,
 };
 
 type VeriffResponse = {
@@ -2911,6 +2923,8 @@ export default function CreditFactoryConsole({
   const [paymentSummary, setPaymentSummary] = useState<CreditPaymentsResponse["credito"] | null>(null);
   const [deliveryValidation, setDeliveryValidation] =
     useState<DeliveryValidationState | null>(null);
+  const [androidEnrollment, setAndroidEnrollment] =
+    useState<AndroidEnrollmentState>(EMPTY_ANDROID_ENROLLMENT_STATE);
   const [iphoneEnrollmentVerified, setIphoneEnrollmentVerified] =
     useState(false);
   const [iphoneEnrollmentConfirmedAt, setIphoneEnrollmentConfirmedAt] =
@@ -2993,6 +3007,7 @@ export default function CreditFactoryConsole({
       imei,
     })
   );
+  const androidAutoEnrollmentKeyRef = useRef("");
   const identityEvidenceClientIdentityRef = useRef(
     identityEvidenceClientIdentity({
       document: clienteDocumento,
@@ -4703,10 +4718,15 @@ export default function CreditFactoryConsole({
       autorizacionDatosAceptada);
   const entregaSinVerificacionAutorizada = false;
   const iphoneSelfieWithDocumentReady = Boolean(iphoneSelfieCedulaDataUrl);
-  const iphoneClosureReadiness = getIphoneClosureReadiness({
+  const androidEnrollmentReady =
+    androidEnrollment.status === "enrolled" ||
+    entregaSinVerificacionAutorizada;
+  const deliveryEnrollmentReady = iphoneFactory
+    ? iphoneEnrollmentVerified || entregaSinVerificacionAutorizada
+    : androidEnrollmentReady;
+  const iphoneClosureReadiness = getCreditClosureReadiness({
     platform: currentDevicePlatform,
-    enrollmentConfirmed:
-      iphoneEnrollmentVerified || entregaSinVerificacionAutorizada,
+    enrollmentConfirmed: deliveryEnrollmentReady,
     cedulaFrenteDataUrl: contratoCedulaFrenteDataUrl,
     cedulaRespaldoDataUrl: contratoCedulaRespaldoDataUrl,
     selfieCedulaDataUrl: iphoneSelfieCedulaDataUrl,
@@ -4730,32 +4750,39 @@ export default function CreditFactoryConsole({
     iphoneClosureReadiness.evidenceComplete;
   const iphoneEvidenceCount = iphoneClosureReadiness.evidenceCount;
   const iphoneClosurePersisted =
-    !iphoneFactory ||
-    (Boolean(persistedIphoneClosureFingerprint) &&
-      persistedIphoneClosureFingerprint === currentIphoneClosureFingerprint);
+    Boolean(persistedIphoneClosureFingerprint) &&
+    persistedIphoneClosureFingerprint === currentIphoneClosureFingerprint;
   const iphoneEvidencePersistencePending =
     draftStatus === "saving" ||
     draftStatus === "loading" ||
-    (iphoneFactory &&
-      iphoneEvidenceCount > 0 &&
+    (iphoneEvidenceCount > 0 &&
       !iphoneClosurePersisted &&
       draftStatus !== "error");
   const iphoneEvidencePersistenceError = draftStatus === "error";
   const iphoneEnrollmentReady =
-    iphoneClosureReadiness.enrollmentConfirmed;
-  const iphoneFinalizationReady =
-    iphoneClosureReadiness.complete &&
+    iphoneFactory && iphoneClosureReadiness.enrollmentConfirmed;
+  const evidenceFinalizationReady =
+    iphoneRequiredEvidenceReady &&
     iphoneClosurePersisted &&
     !iphoneEvidencePersistencePending &&
     !iphoneEvidencePersistenceError;
+  const iphoneFinalizationReady =
+    iphoneFactory &&
+    iphoneClosureReadiness.complete &&
+    evidenceFinalizationReady;
+  const androidFinalizationReady =
+    !iphoneFactory &&
+    androidEnrollmentReady &&
+    Boolean(
+      deliveryValidation?.status?.ready ||
+        entregaSinVerificacionAutorizada
+    ) &&
+    evidenceFinalizationReady;
   const iphoneDeliveryVerified =
     iphoneFactory && iphoneEnrollmentReady && iphoneRequiredEvidenceReady;
   const entregaValidada = iphoneFactory
-    ? iphoneDeliveryVerified
-    : Boolean(
-        deliveryValidation?.status?.ready ||
-          entregaSinVerificacionAutorizada
-      );
+    ? iphoneFinalizationReady
+    : androidFinalizationReady;
   const missingIphoneRequiredEvidenceLabels = missingIphoneRequiredEvidence.map((key) =>
     key === "cedulaFrente"
       ? "la foto frontal de la cedula"
@@ -4777,7 +4804,11 @@ export default function CreditFactoryConsole({
       ? "Adjunta " +
         missingIphoneRequiredEvidenceLabel +
         " antes de finalizar este credito."
-      : "Completa la verificacion de entrega antes de finalizar este credito.";
+      : iphoneEvidencePersistenceError
+        ? "No se pudieron guardar las evidencias. Reintenta antes de finalizar este credito."
+        : !iphoneClosurePersisted || iphoneEvidencePersistencePending
+          ? "Espera a que las cinco evidencias queden guardadas."
+          : "El enrolamiento y las evidencias estan listos.";
   const deliveryStatusLabel = iphoneFactory
     ? iphoneDeliveryVerified
       ? iphoneEnrollmentVerified
@@ -4807,12 +4838,28 @@ export default function CreditFactoryConsole({
         ? "Esta cedula tiene excepcion administrativa para entregar sin verificar dispositivo."
         : deliveryValidation?.status?.detail ||
           "Aun no se ha ejecutado la validacion final de entrega.";
+  const androidDeliveryPendingMessage = !androidEnrollmentReady
+    ? androidEnrollment.message
+    : !deliveryValidation?.status?.ready
+      ? "El equipo ya esta inscrito. Valida la entrega con Zero Touch para continuar."
+      : !iphoneRequiredEvidenceReady
+        ? "Adjunta " +
+          missingIphoneRequiredEvidenceLabel +
+          " antes de finalizar este credito."
+        : iphoneEvidencePersistenceError
+          ? "No se pudieron guardar las evidencias. Reintenta antes de finalizar este credito."
+          : !iphoneClosurePersisted || iphoneEvidencePersistencePending
+            ? "Espera a que las cinco evidencias queden guardadas."
+            : "La entrega y las evidencias estan listas.";
   const deliveryPendingMessage = iphoneFactory
     ? iphoneDeliveryPendingMessage
-    : "Valida primero la entrega con Zero Touch antes de finalizar este credito.";
-  const deliveryRequirementReady = iphoneFactory
-    ? iphoneFinalizationReady
-    : FLEXIBLE_WIZARD_FOR_TESTING || entregaValidada;
+    : androidDeliveryPendingMessage;
+  const deliveryEvidenceUnlocked = iphoneFactory
+    ? iphoneEnrollmentReady
+    : androidEnrollmentReady;
+  const deliveryRequirementReady =
+    FLEXIBLE_WIZARD_FOR_TESTING ||
+    (iphoneFactory ? iphoneFinalizationReady : androidFinalizationReady);
   const ventaLista =
     stepClienteReady &&
     stepEquipoReady &&
@@ -6148,6 +6195,8 @@ export default function CreditFactoryConsole({
     }
 
     setDeliveryValidation(null);
+    setAndroidEnrollment(EMPTY_ANDROID_ENROLLMENT_STATE);
+    androidAutoEnrollmentKeyRef.current = "";
     setIphoneEnrollmentVerified(false);
     setIphoneEnrollmentConfirmedAt("");
     setPersistedIphoneClosureFingerprint("");
@@ -7668,7 +7717,7 @@ export default function CreditFactoryConsole({
       }),
     });
 
-    if (!result.ok) {
+    if (!result.ok || result.data?.ok === false) {
       throw new Error(
         result.data?.error ||
           (action === "enroll"
@@ -7680,38 +7729,75 @@ export default function CreditFactoryConsole({
     return result.data;
   };
 
-  const enrollDeviceBeforeFinalize = async () => {
+  const enrollDeviceBeforeFinalize = async (
+    options: { automatic?: boolean } = {}
+  ) => {
+    if (iphoneFactory) {
+      return false;
+    }
+
     if (!ensureDeliveryReadyToRequest("inscribir el equipo")) {
-      return;
+      return false;
     }
 
     try {
       setEnrollingDelivery(true);
       setNotice(null);
       setDeliveryValidation(null);
+      setAndroidEnrollment({
+        status: "enrolling",
+        message: options.automatic
+          ? "Inscribiendo automaticamente el dispositivo en Zero Touch..."
+          : "Reintentando la inscripcion del dispositivo en Zero Touch...",
+        checkedAt: null,
+      });
 
       const result = await requestDeliveryAction("enroll");
+
+      setAndroidEnrollment({
+        status: "enrolled",
+        message:
+          result.resultMessage ||
+          "Equipo inscrito correctamente. Ya puedes validar la entrega.",
+        checkedAt: new Date().toISOString(),
+      });
 
       setNotice({
         text:
           result.resultMessage ||
-          "Inscripcion enviada a Zero Touch. Ahora valida la entrega para confirmar si se puede cerrar.",
+          "Equipo inscrito correctamente. Ya puedes validar la entrega.",
         tone: "emerald",
       });
+      return true;
     } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "No se pudo inscribir el equipo en Zero Touch";
+      setAndroidEnrollment({
+        status: "error",
+        message,
+        checkedAt: new Date().toISOString(),
+      });
       setNotice({
-        text:
-          error instanceof Error
-            ? error.message
-            : "No se pudo inscribir el equipo en Zero Touch",
+        text: message,
         tone: "red",
       });
+      return false;
     } finally {
       setEnrollingDelivery(false);
     }
   };
 
   const validateDeliveryBeforeFinalize = async () => {
+    if (!iphoneFactory && !androidEnrollmentReady) {
+      setNotice({
+        text: "Espera a que finalice la inscripcion automatica antes de validar la entrega.",
+        tone: "amber",
+      });
+      return;
+    }
+
     if (!ensureDeliveryReadyToRequest("validar la entrega")) {
       return;
     }
@@ -7763,6 +7849,47 @@ export default function CreditFactoryConsole({
       setValidatingDelivery(false);
     }
   };
+
+  useEffect(() => {
+    if (
+      wizardStep !== 5 ||
+      iphoneFactory ||
+      entregaSinVerificacionAutorizada ||
+      !imeiValido ||
+      !stepClienteReady ||
+      !stepEquipoReady ||
+      !stepContratoReady ||
+      !stepDocumentosReady ||
+      androidEnrollment.status !== "idle" ||
+      enrollingDelivery ||
+      validatingDelivery
+    ) {
+      return;
+    }
+
+    const enrollmentKey = `${draftId ?? "new"}:${imeiDigits}`;
+
+    if (androidAutoEnrollmentKeyRef.current === enrollmentKey) {
+      return;
+    }
+
+    androidAutoEnrollmentKeyRef.current = enrollmentKey;
+    void enrollDeviceBeforeFinalize({ automatic: true });
+  }, [
+    androidEnrollment.status,
+    draftId,
+    enrollingDelivery,
+    entregaSinVerificacionAutorizada,
+    imeiDigits,
+    imeiValido,
+    iphoneFactory,
+    stepClienteReady,
+    stepContratoReady,
+    stepDocumentosReady,
+    stepEquipoReady,
+    validatingDelivery,
+    wizardStep,
+  ]);
 
   const resetForm = () => {
     cancelPendingDraftAutosave();
@@ -7850,6 +7977,8 @@ export default function CreditFactoryConsole({
     setAutorizacionDatosAceptada(false);
     setFirmaSeguroDraftProcess(null);
     setDeliveryValidation(null);
+    setAndroidEnrollment(EMPTY_ANDROID_ENROLLMENT_STATE);
+    androidAutoEnrollmentKeyRef.current = "";
     setIphoneEnrollmentVerified(false);
     setIphoneEnrollmentConfirmedAt("");
     setPersistedIphoneClosureFingerprint("");
@@ -8010,11 +8139,10 @@ export default function CreditFactoryConsole({
     const documentsReadyForCreate = acceptsByFirmaSeguro
       ? firmaSeguroProcessSigned
       : stepDocumentosReady;
-    const iphoneEvidenceReadyForCreate =
-      !iphoneFactory || iphoneRequiredEvidenceReady;
+    const requiredEvidenceReadyForCreate = iphoneRequiredEvidenceReady;
     const deliveryReadyForCreate =
       (Boolean(options.allowPendingDelivery) || deliveryRequirementReady) &&
-      iphoneEvidenceReadyForCreate;
+      requiredEvidenceReadyForCreate;
     const readyToCreate =
       dataCreditoFlowReady &&
       stepClienteReady &&
@@ -8056,9 +8184,9 @@ export default function CreditFactoryConsole({
       return null;
     }
 
-    if (iphoneFactory && !iphoneRequiredEvidenceReady) {
+    if (!iphoneRequiredEvidenceReady) {
       setNotice({
-        text: iphoneDeliveryPendingMessage,
+        text: deliveryPendingMessage,
         tone: "amber",
       });
       return null;
@@ -9202,6 +9330,8 @@ export default function CreditFactoryConsole({
     setAutorizacionDatosAceptada(checked("autorizacionDatosAceptada"));
     setFirmaSeguroDraftProcess(null);
     setDeliveryValidation(null);
+    setAndroidEnrollment(EMPTY_ANDROID_ENROLLMENT_STATE);
+    androidAutoEnrollmentKeyRef.current = "";
     veriffClientFormUnlockedRef.current = false;
     setVeriffValidation(null);
     setVeriffRetryPolicy(EMPTY_VERIFF_RETRY_POLICY);
@@ -14019,14 +14149,14 @@ export default function CreditFactoryConsole({
                         {hideIdentityWizardStep ? "Paso 4" : "Paso 5"}
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        {iphoneFactory ? "Verificacion y entrega" : "Validacion del equipo"}
+                        Verificacion y entrega
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {entregaSinVerificacionAutorizada
                           ? "Esta cedula tiene autorizacion administrativa para cerrar la entrega sin validar el dispositivo."
                           : iphoneFactory
                             ? "Confirma el enrolamiento y completa las evidencias obligatorias."
-                            : "El cierre queda reservado para validar la entregabilidad del dispositivo con Zero Touch antes de cerrar la entrega."}
+                            : "El equipo se inscribe automaticamente en Zero Touch. Despues valida la entrega y adjunta las cinco evidencias obligatorias."}
                       </p>
                     </div>
                     <div
@@ -14074,37 +14204,20 @@ export default function CreditFactoryConsole({
 
                   <div className={[
                     "fp-delivery-layout mt-4 grid gap-4",
-                    iphoneFactory ? "grid-cols-1" : "xl:grid-cols-[0.92fr_1.08fr]",
+                    iphoneFactory ? "grid-cols-1" : "xl:grid-cols-2",
                   ].join(" ")}>
                     <section className="fp-delivery-sequence rounded-lg border border-slate-200 bg-white px-5 py-5">
                       <p className="fp-section-eyebrow text-[11px] font-semibold uppercase tracking-[0.18em] text-[#5d7f0f]">
                         {iphoneFactory ? "Control de enrolamiento" : "Secuencia Zero Touch"}
                       </p>
                       <h4 className="mt-2 text-xl font-black text-slate-950">
-                        {iphoneFactory ? "1. Confirmar enrolamiento" : "Inscribe y valida el dispositivo"}
+                        {iphoneFactory ? "1. Confirmar enrolamiento" : "1. Inscribir dispositivo"}
                       </h4>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {iphoneFactory
                           ? "Verifique el iPhone en SafeUEM antes de continuar."
-                          : "Ejecuta los controles en orden. La validacion remota decide si el credito puede cerrarse."}
+                          : "Al llegar a este paso, FINSER PAY registra automaticamente el equipo en Zero Touch."}
                       </p>
-
-                      {!iphoneFactory ? <div className="fp-delivery-sequence-list">
-                        <div>
-                          <span>1</span>
-                          <div>
-                            <strong>Inscribir equipo</strong>
-                            <p>Registra el dispositivo en Zero Touch.</p>
-                          </div>
-                        </div>
-                        <div>
-                          <span>2</span>
-                          <div>
-                            <strong>Validar entrega</strong>
-                            <p>Confirma que el dispositivo ya es entregable.</p>
-                          </div>
-                        </div>
-                      </div> : null}
 
                       {iphoneFactory && (
                         <label className="fp-iphone-confirmation mt-5 flex min-h-16 items-center justify-between gap-4 rounded-lg border border-slate-200 bg-[#f7f7f4] p-4 text-sm font-semibold text-slate-950">
@@ -14130,62 +14243,96 @@ export default function CreditFactoryConsole({
                       )}
 
                       {!iphoneFactory && (
-                        <div className="fp-delivery-controls flex flex-wrap gap-3">
-                          <button
-                            type="button"
-                            onClick={() => void enrollDeviceBeforeFinalize()}
-                            disabled={
-                              enrollingDelivery ||
-                              validatingDelivery ||
-                              entregaSinVerificacionAutorizada
-                            }
-                            className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
-                          >
-                            <Smartphone className="h-4 w-4" strokeWidth={2} />
-                            {entregaSinVerificacionAutorizada
-                              ? "Inscripcion no requerida"
-                              : enrollingDelivery
-                                ? "Inscribiendo..."
-                                : "Inscribir equipo"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void validateDeliveryBeforeFinalize()}
-                            disabled={
-                              validatingDelivery ||
-                              enrollingDelivery ||
-                              entregaSinVerificacionAutorizada
-                            }
-                            className="rounded-2xl border border-[#145a5a]/25 bg-white px-5 py-3 text-sm font-semibold text-[#145a5a] transition hover:bg-[#e9f7f4] disabled:opacity-70"
-                          >
-                            <ShieldCheck className="h-4 w-4" strokeWidth={2} />
-                            {entregaSinVerificacionAutorizada
-                              ? "Verificacion no requerida"
-                              : validatingDelivery
-                                ? "Validando..."
-                                : "Validar entrega"}
-                          </button>
+                        <div
+                          className={[
+                            "mt-5 rounded-md border p-4",
+                            androidEnrollmentReady
+                              ? "border-[#b9dd65] bg-[#f5fae9]"
+                              : androidEnrollment.status === "error"
+                                ? "border-red-200 bg-red-50"
+                                : "border-slate-200 bg-[#f7f7f4]",
+                          ].join(" ")}
+                          role="status"
+                          aria-live="polite"
+                        >
+                          <div className="flex items-start gap-3">
+                            <span
+                              className={[
+                                "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
+                                androidEnrollmentReady
+                                  ? "bg-[#e8f4c8] text-[#5d7f0f]"
+                                  : androidEnrollment.status === "error"
+                                    ? "bg-red-100 text-red-700"
+                                    : "bg-white text-slate-700",
+                              ].join(" ")}
+                              aria-hidden="true"
+                            >
+                              {androidEnrollment.status === "enrolling" ? (
+                                <LoaderCircle className="h-5 w-5 animate-spin" strokeWidth={1.8} />
+                              ) : androidEnrollmentReady ? (
+                                <ShieldCheck className="h-5 w-5" strokeWidth={1.8} />
+                              ) : androidEnrollment.status === "error" ? (
+                                <AlertCircle className="h-5 w-5" strokeWidth={1.8} />
+                              ) : (
+                                <Smartphone className="h-5 w-5" strokeWidth={1.8} />
+                              )}
+                            </span>
+                            <div className="min-w-0">
+                              <strong className="block text-sm text-slate-950">
+                                {entregaSinVerificacionAutorizada
+                                  ? "Inscripcion no requerida"
+                                  : androidEnrollment.status === "enrolling"
+                                    ? "Inscribiendo automaticamente"
+                                    : androidEnrollmentReady
+                                      ? "Dispositivo inscrito"
+                                      : androidEnrollment.status === "error"
+                                        ? "No se pudo inscribir el dispositivo"
+                                        : "Preparando inscripcion automatica"}
+                              </strong>
+                              <p className="mt-1 text-sm leading-6 text-slate-600">
+                                {entregaSinVerificacionAutorizada
+                                  ? "La excepcion administrativa permite continuar sin enrolamiento remoto."
+                                  : androidEnrollment.message}
+                              </p>
+                              {androidEnrollment.checkedAt ? (
+                                <p className="mt-1 text-xs text-slate-500">
+                                  Actualizado: {dateTime(androidEnrollment.checkedAt)}
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+                          {androidEnrollment.status === "error" ? (
+                            <button
+                              type="button"
+                              onClick={() => void enrollDeviceBeforeFinalize()}
+                              disabled={enrollingDelivery || validatingDelivery}
+                              className="mt-4 min-h-11 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Reintentar inscripcion
+                            </button>
+                          ) : null}
                         </div>
                       )}
                     </section>
 
                     {!iphoneFactory ? (
                     <section className={[
-                      "fp-delivery-status-panel rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-5 py-5",
+                      "fp-delivery-status-panel rounded-lg border border-slate-200 bg-white px-5 py-5",
                       entregaValidada ? "is-ready" : deliveryValidation ? "is-review" : "is-pending",
                     ].join(" ")}>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                        {iphoneFactory ? "Enrolamiento iPhone" : "Validacion de entrega"}
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#5d7f0f]">
+                        Control Zero Touch
                       </p>
+                      <h4 className="mt-2 text-xl font-black text-slate-950">
+                        2. Validacion de entrega
+                      </h4>
                       <div className="mt-4 space-y-3 text-sm text-slate-700">
                         <p>
-                          {iphoneFactory
-                            ? "Confirma el control del iPhone y adjunta la foto de entrega y la foto de remision. Las dos evidencias son obligatorias para cerrar."
-                            : "Primero inscribe el equipo en Zero Touch. Luego valida la entrega para confirmar si el dispositivo ya permite cerrar el credito."}
+                          Cuando termine la inscripcion automatica, valida que Zero Touch permita entregar el dispositivo.
                         </p>
                         <div
                           className={[
-                            "rounded-2xl border px-4 py-4",
+                            "rounded-md border px-4 py-4",
                             entregaValidada
                               ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                               : deliveryValidation
@@ -14212,17 +14359,37 @@ export default function CreditFactoryConsole({
                             </div>
                           )}
                         </div>
-
+                        <button
+                          type="button"
+                          onClick={() => void validateDeliveryBeforeFinalize()}
+                          disabled={
+                            !androidEnrollmentReady ||
+                            validatingDelivery ||
+                            enrollingDelivery ||
+                            entregaSinVerificacionAutorizada
+                          }
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                        >
+                          {validatingDelivery ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" strokeWidth={2} aria-hidden="true" />
+                          ) : (
+                            <ShieldCheck className="h-4 w-4 text-[#a8d62d]" strokeWidth={2} aria-hidden="true" />
+                          )}
+                          {entregaSinVerificacionAutorizada
+                            ? "Verificacion no requerida"
+                            : validatingDelivery
+                              ? "Validando entrega..."
+                              : "Validar entrega"}
+                        </button>
                       </div>
                     </section>
                     ) : null}
 
-                    {iphoneFactory && (
-                      <section className="fp-delivery-closure rounded-lg border border-slate-200 bg-white px-5 py-5">
+                    <section className="fp-delivery-closure rounded-lg border border-slate-200 bg-white px-5 py-5 xl:col-span-2">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div>
                             <h4 className="mt-2 text-xl font-black text-slate-950">
-                              2. Evidencias de entrega
+                              {iphoneFactory ? "2. Evidencias de entrega" : "3. Evidencias de entrega"}
                             </h4>
                             <p className="mt-2 text-sm leading-6 text-slate-600">
                               Cedula frontal y posterior, selfie con cedula, foto de entrega y remision.
@@ -14244,17 +14411,19 @@ export default function CreditFactoryConsole({
                           </span>
                         </div>
 
-                        {!iphoneEnrollmentReady ? (
+                        {!deliveryEvidenceUnlocked ? (
                           <div className="mt-4 flex items-center gap-2 rounded-md border border-slate-200 bg-[#f7f7f4] px-4 py-3 text-sm text-slate-600">
                             <LockKeyhole className="h-4 w-4" strokeWidth={1.8} />
-                            Confirma el enrolamiento para habilitar las evidencias.
+                            {iphoneFactory
+                              ? "Confirma el enrolamiento para habilitar las evidencias."
+                              : "Espera a que termine la inscripcion automatica para habilitar las evidencias."}
                           </div>
                         ) : null}
 
                         <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
                           <DeliveryEvidenceCard
                             index={1}
-                            disabled={!iphoneEnrollmentReady}
+                            disabled={!deliveryEvidenceUnlocked}
                             persisted={iphoneClosurePersisted}
                             title="Cédula frontal"
                             description="La cara frontal debe quedar completa, enfocada y con los datos legibles."
@@ -14266,7 +14435,7 @@ export default function CreditFactoryConsole({
                                   (contratoCedulaFrenteAudit.source === "camera"
                                     ? "Camara"
                                     : "Archivo")
-                                : "Obligatoria para cerrar el credito iPhone."
+                                : `Obligatoria para cerrar el credito ${iphoneFactory ? "iPhone" : "Android"}.`
                             }
                             value={contratoCedulaFrenteDataUrl}
                             tone="amber"
@@ -14288,7 +14457,7 @@ export default function CreditFactoryConsole({
                           />
                           <DeliveryEvidenceCard
                             index={2}
-                            disabled={!iphoneEnrollmentReady}
+                            disabled={!deliveryEvidenceUnlocked}
                             persisted={iphoneClosurePersisted}
                             title="Cédula posterior"
                             description="La cara posterior debe quedar completa, enfocada y con los datos legibles."
@@ -14300,7 +14469,7 @@ export default function CreditFactoryConsole({
                                   (contratoCedulaRespaldoAudit.source === "camera"
                                     ? "Camara"
                                     : "Archivo")
-                                : "Obligatoria para cerrar el credito iPhone."
+                                : `Obligatoria para cerrar el credito ${iphoneFactory ? "iPhone" : "Android"}.`
                             }
                             value={contratoCedulaRespaldoDataUrl}
                             tone="amber"
@@ -14322,7 +14491,7 @@ export default function CreditFactoryConsole({
                           />
                           <DeliveryEvidenceCard
                             index={3}
-                            disabled={!iphoneEnrollmentReady}
+                            disabled={!deliveryEvidenceUnlocked}
                             persisted={iphoneClosurePersisted}
                             title="Selfie con cédula"
                             description="Deben verse claramente el rostro del cliente y la cedula sostenida en su mano."
@@ -14334,7 +14503,7 @@ export default function CreditFactoryConsole({
                                   (iphoneSelfieCedulaAudit.source === "camera"
                                     ? "Camara"
                                     : "Archivo")
-                                : "Obligatoria para cerrar el credito iPhone."
+                                : `Obligatoria para cerrar el credito ${iphoneFactory ? "iPhone" : "Android"}.`
                             }
                             value={iphoneSelfieCedulaDataUrl}
                             tone="slate"
@@ -14356,10 +14525,10 @@ export default function CreditFactoryConsole({
                           />
                           <DeliveryEvidenceCard
                             index={4}
-                            disabled={!iphoneEnrollmentReady}
+                            disabled={!deliveryEvidenceUnlocked}
                             persisted={iphoneClosurePersisted}
                             title="Foto de entrega"
-                            description="Debe mostrar el iPhone entregado al cliente y permitir identificar el equipo."
+                            description={`Debe mostrar el ${iphoneFactory ? "iPhone" : "equipo Android"} entregado al cliente y permitir identificar el equipo.`}
                             metaLabel={
                               fotoEntregaAudit
                                 ? "Capturada: " +
@@ -14368,7 +14537,7 @@ export default function CreditFactoryConsole({
                                   (fotoEntregaAudit.source === "camera"
                                     ? "Camara"
                                     : "Archivo")
-                                : "Obligatoria para cerrar el credito iPhone."
+                                : `Obligatoria para cerrar el credito ${iphoneFactory ? "iPhone" : "Android"}.`
                             }
                             value={fotoEntregaDataUrl}
                             tone="slate"
@@ -14389,7 +14558,7 @@ export default function CreditFactoryConsole({
                           />
                           <DeliveryEvidenceCard
                             index={5}
-                            disabled={!iphoneEnrollmentReady}
+                            disabled={!deliveryEvidenceUnlocked}
                             persisted={iphoneClosurePersisted}
                             title="Foto de remisión"
                             description="La remision debe verse completa, enfocada y con sus datos legibles."
@@ -14401,7 +14570,7 @@ export default function CreditFactoryConsole({
                                   (fotoRemisionAudit.source === "camera"
                                     ? "Camara"
                                     : "Archivo")
-                                : "Obligatoria para cerrar el credito iPhone."
+                                : `Obligatoria para cerrar el credito ${iphoneFactory ? "iPhone" : "Android"}.`
                             }
                             value={fotoRemisionDataUrl}
                             tone="amber"
@@ -14427,59 +14596,7 @@ export default function CreditFactoryConsole({
                           Las cinco evidencias son obligatorias para finalizar el crédito.
                         </div>
                       </section>
-                    )}
 
-                    {!iphoneFactory ? (
-                    <section className="fp-delivery-closure rounded-[24px] border border-[#e2d6c5] bg-white px-5 py-5 xl:col-span-2">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Flujo de cierre
-                      </p>
-                      <div className="fp-delivery-checklist mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        {[
-                          { label: "Cliente", ready: stepClienteReady },
-                          { label: "Equipo", ready: stepEquipoReady },
-                          ...(!hideIdentityWizardStep
-                            ? [{ label: "Identidad", ready: stepContratoReady }]
-                            : []),
-                          { label: "Contratos", ready: stepDocumentosReady },
-                          ...(iphoneFactory
-                            ? [
-                                { label: "Enrolamiento", ready: iphoneEnrollmentReady },
-                                { label: "CC frente", ready: Boolean(contratoCedulaFrenteDataUrl) },
-                                { label: "CC posterior", ready: Boolean(contratoCedulaRespaldoDataUrl) },
-                                { label: "Selfie con CC", ready: iphoneSelfieWithDocumentReady },
-                                { label: "Foto entrega", ready: Boolean(fotoEntregaDataUrl) },
-                                { label: "Foto remision", ready: Boolean(fotoRemisionDataUrl) },
-                              ]
-                            : [{ label: "Entregable", ready: entregaValidada }]),
-                        ].map(({ label, ready }) => (
-                          <div
-                            key={label}
-                            className={[
-                              "rounded-2xl border px-4 py-4 text-sm font-semibold",
-                              ready
-                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                : "border-amber-200 bg-amber-50 text-amber-700",
-                            ].join(" ")}
-                          >
-                            <span>{label}</span>
-                            <strong>
-                              {ready ? <Check className="h-4 w-4" strokeWidth={2.5} /> : null}
-                              {ready ? "Listo" : "Pendiente"}
-                            </strong>
-                          </div>
-                        ))}
-                      </div>
-
-                      {!entregaValidada && !FLEXIBLE_WIZARD_FOR_TESTING && (
-                        <div className="mt-5 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
-                          {iphoneFactory
-                            ? deliveryPendingMessage
-                            : "El credito solo se puede finalizar cuando Zero Touch confirme que el equipo esta entregable."}
-                        </div>
-                      )}
-                    </section>
-                    ) : null}
                   </div>
                 </div>
               )}
@@ -15113,9 +15230,7 @@ export default function CreditFactoryConsole({
 
                 {wizardStep === 5 && !ventaLista && !FLEXIBLE_WIZARD_FOR_TESTING && (
                   <span className="text-sm font-medium text-amber-700">
-                    {iphoneFactory
-                      ? deliveryPendingMessage
-                      : "Primero valida la entregabilidad del dispositivo para habilitar el cierre."}
+                    {deliveryPendingMessage}
                   </span>
                 )}
                   </>

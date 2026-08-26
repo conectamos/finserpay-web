@@ -433,6 +433,14 @@ export type IphoneClosureEvidenceKey =
   | IphoneIdentityEvidenceKey
   | IphoneDeliveryEvidenceKey;
 
+export type CreditClosureEvidenceKey = IphoneClosureEvidenceKey;
+
+export function isCreditDeliveryEvidencePlatform(value: unknown) {
+  const normalized = String(value ?? "").trim().toUpperCase();
+
+  return normalized === "ANDROID" || isIphoneCreditPlatform(value);
+}
+
 export function getMissingIphoneIdentityEvidence(options: {
   platform?: unknown;
   cedulaFrenteDataUrl?: unknown;
@@ -512,6 +520,74 @@ export function getIphoneClosureReadiness(options: {
   const evidenceComplete = missingEvidence.length === 0;
 
   return {
+    isIphone,
+    enrollmentConfirmed,
+    evidenceCount,
+    requiredEvidenceCount,
+    missingEvidence,
+    evidenceComplete,
+    complete: enrollmentConfirmed && evidenceComplete,
+  };
+}
+
+export function getCreditClosureReadiness(options: {
+  platform?: unknown;
+  enrollmentConfirmed?: unknown;
+  cedulaFrenteDataUrl?: unknown;
+  cedulaRespaldoDataUrl?: unknown;
+  selfieCedulaDataUrl?: unknown;
+  fotoEntregaDataUrl?: unknown;
+  fotoRemisionDataUrl?: unknown;
+}) {
+  const isIphone = isIphoneCreditPlatform(options.platform);
+  const platformRequiresEvidence = isCreditDeliveryEvidencePlatform(
+    options.platform
+  );
+  const missingEvidence: CreditClosureEvidenceKey[] = [];
+
+  if (
+    platformRequiresEvidence &&
+    !String(options.cedulaFrenteDataUrl ?? "").trim()
+  ) {
+    missingEvidence.push("cedulaFrente");
+  }
+
+  if (
+    platformRequiresEvidence &&
+    !String(options.cedulaRespaldoDataUrl ?? "").trim()
+  ) {
+    missingEvidence.push("cedulaRespaldo");
+  }
+
+  if (
+    platformRequiresEvidence &&
+    !String(options.selfieCedulaDataUrl ?? "").trim()
+  ) {
+    missingEvidence.push("selfieCedula");
+  }
+
+  if (
+    platformRequiresEvidence &&
+    !String(options.fotoEntregaDataUrl ?? "").trim()
+  ) {
+    missingEvidence.push("fotoEntrega");
+  }
+
+  if (
+    platformRequiresEvidence &&
+    !String(options.fotoRemisionDataUrl ?? "").trim()
+  ) {
+    missingEvidence.push("fotoRemision");
+  }
+
+  const requiredEvidenceCount = platformRequiresEvidence ? 5 : 0;
+  const evidenceCount = requiredEvidenceCount - missingEvidence.length;
+  const enrollmentConfirmed =
+    !platformRequiresEvidence || Boolean(options.enrollmentConfirmed);
+  const evidenceComplete = missingEvidence.length === 0;
+
+  return {
+    platformRequiresEvidence,
     isIphone,
     enrollmentConfirmed,
     evidenceCount,
