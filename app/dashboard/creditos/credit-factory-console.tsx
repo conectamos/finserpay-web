@@ -718,14 +718,26 @@ type DataCreditoSimulationStatus =
 
 type CreateCreditResponse = {
   ok: boolean;
+  recovered?: boolean;
   warning?: string;
   item: CreditItem;
   deliveryStatus: DeliveryStatus | null;
+  solicitud?: {
+    id: number;
+    estado: "CERRADO";
+    creditoId: number;
+  } | null;
   identityValidation?: {
     id?: number | null;
     estado?: string | null;
     sessionId?: string | null;
   } | null;
+};
+
+type CompletedCreditState = {
+  item: CreditItem;
+  recovered: boolean;
+  solicitudId: number | null;
 };
 
 type CommandResponse = {
@@ -2710,6 +2722,8 @@ export default function CreditFactoryConsole({
   const [loadingList, setLoadingList] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [completedCredit, setCompletedCredit] =
+    useState<CompletedCreditState | null>(null);
   const [registeringPayment, setRegisteringPayment] = useState(false);
   const [runningCommand, setRunningCommand] = useState<CreditAdminCommand | null>(null);
   const [searchTerm, setSearchTerm] = useState(normalizedInitialSearch);
@@ -8330,24 +8344,24 @@ export default function CreditFactoryConsole({
       }
 
       const createdCredit = result.data.item;
-      upsertCredit(createdCredit);
-      const planLookup = encodeURIComponent(
-        String(createdCredit.folio || createdCredit.id)
-      );
-      window.open(`/api/creditos/${planLookup}/plan-pagos`, "_blank");
-      const closedDraftId = draftId;
+      const closureConfirmed =
+        result.data.recovered === true ||
+        (result.data.solicitud?.estado === "CERRADO" &&
+          result.data.solicitud.creditoId === createdCredit.id);
 
-      if (closedDraftId) {
-        await requestJson<CreditDraftSingleResponse>("/api/creditos/borradores", {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ id: closedDraftId, estado: "CERRADO" }),
-        }).catch(() => null);
+      if (!closureConfirmed) {
+        throw new Error(
+          "El credito fue procesado, pero el servidor no confirmo el cierre de la solicitud."
+        );
       }
 
+      upsertCredit(createdCredit);
       resetForm();
+      setCompletedCredit({
+        item: createdCredit,
+        recovered: Boolean(result.data.recovered),
+        solicitudId: result.data.solicitud?.id ?? draftId,
+      });
 
       if (result.data.deliveryStatus?.ready) {
         setNotice({
@@ -8368,7 +8382,6 @@ export default function CreditFactoryConsole({
         });
       }
 
-      window.location.assign("/app");
       return createdCredit;
     } catch (error) {
       if (isCreditCreationNetworkError(error)) {
@@ -8385,27 +8398,16 @@ export default function CreditFactoryConsole({
 
         if (recoveredCredit) {
           upsertCredit(recoveredCredit);
-          const closedDraftId = draftId;
-
-          if (closedDraftId) {
-            await requestJson<CreditDraftSingleResponse>(
-              "/api/creditos/borradores",
-              {
-                method: "PATCH",
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ id: closedDraftId, estado: "CERRADO" }),
-              }
-            ).catch(() => null);
-          }
-
           resetForm();
+          setCompletedCredit({
+            item: recoveredCredit,
+            recovered: true,
+            solicitudId: draftId,
+          });
           setNotice({
             text: recoveredCredit.folio + " quedo creado correctamente.",
             tone: "emerald",
           });
-          window.location.assign("/app");
           return recoveredCredit;
         }
 
@@ -10110,6 +10112,101 @@ export default function CreditFactoryConsole({
             ].join(" ")
       }
     >
+      {completedCredit ? (
+        <div
+          className="fixed inset-0 z-[140] grid place-items-center overflow-y-auto bg-[#0d1112]/70 px-4 py-6 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="credit-close-title"
+        >
+          <section className="w-full max-w-[560px] rounded-lg border border-[#d8ddd9] bg-[#fffefa] p-6 shadow-2xl sm:p-8">
+            <div className="flex flex-col items-center text-center">
+              <span className="grid h-16 w-16 place-items-center rounded-full bg-[#eef8dc] text-[#5d8b14]">
+                <BadgeCheck aria-hidden="true" size={36} strokeWidth={1.8} />
+              </span>
+              <p className="mt-5 text-xs font-black uppercase tracking-[0.16em] text-[#5d8b14]">
+                Cierre confirmado
+              </p>
+              <h2
+                id="credit-close-title"
+                className="mt-2 text-2xl font-black text-[#111514] sm:text-3xl"
+              >
+                Credito cerrado correctamente
+              </h2>
+              <p className="mt-3 max-w-[440px] text-sm leading-6 text-[#59615e]">
+                La solicitud quedo cerrada y el credito fue guardado. Ya no volvera
+                a aparecer como una venta pendiente.
+              </p>
+            </div>
+
+            <dl className="mt-7 divide-y divide-[#e2e5e1] border-y border-[#e2e5e1]">
+              <div className="grid gap-1 py-4 sm:grid-cols-[140px_1fr] sm:items-center">
+                <dt className="text-xs font-bold uppercase text-[#737b77]">Folio</dt>
+                <dd className="break-all font-black text-[#111514]">
+                  {completedCredit.item.folio}
+                </dd>
+              </div>
+              <div className="grid gap-1 py-4 sm:grid-cols-[140px_1fr] sm:items-center">
+                <dt className="text-xs font-bold uppercase text-[#737b77]">Cliente</dt>
+                <dd className="font-bold text-[#111514]">
+                  {completedCredit.item.clienteNombre}
+                </dd>
+              </div>
+              <div className="grid gap-1 py-4 sm:grid-cols-[140px_1fr] sm:items-center">
+                <dt className="text-xs font-bold uppercase text-[#737b77]">Equipo</dt>
+                <dd className="font-bold text-[#111514]">
+                  {completedCredit.item.referenciaEquipo ||
+                    [
+                      completedCredit.item.equipoMarca,
+                      completedCredit.item.equipoModelo,
+                    ]
+                      .filter(Boolean)
+                      .join(" ") ||
+                    "Equipo registrado"}
+                </dd>
+              </div>
+              {completedCredit.solicitudId ? (
+                <div className="grid gap-1 py-4 sm:grid-cols-[140px_1fr] sm:items-center">
+                  <dt className="text-xs font-bold uppercase text-[#737b77]">
+                    Solicitud
+                  </dt>
+                  <dd className="font-bold text-[#111514]">
+                    #{completedCredit.solicitudId} cerrada
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+
+            {completedCredit.recovered ? (
+              <p className="mt-4 rounded-md border border-[#dce8c8] bg-[#f7fbe9] px-4 py-3 text-sm text-[#445625]">
+                La conexion se interrumpio, pero confirmamos que el credito si quedo
+                creado y la solicitud cerrada.
+              </p>
+            ) : null}
+
+            <div className="mt-7 grid gap-3 sm:grid-cols-2">
+              <a
+                href={`/api/creditos/${encodeURIComponent(
+                  String(completedCredit.item.folio || completedCredit.item.id)
+                )}/plan-pagos`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-[#cfd5d1] bg-white px-4 text-sm font-black text-[#111514] transition hover:border-[#9ca59f] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7da819]"
+              >
+                <FileText aria-hidden="true" size={18} />
+                Plan de pagos
+              </a>
+              <Link
+                href="/dashboard"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-[#111514] px-4 text-sm font-black text-white transition hover:bg-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9bd321]"
+              >
+                Volver al panel
+                <ArrowRight aria-hidden="true" size={18} />
+              </Link>
+            </div>
+          </section>
+        </div>
+      ) : null}
       {paymentsView ? (
         <RecaudoSidebar
           adminCentral={canSeeInternalPricing}

@@ -3039,6 +3039,11 @@ export async function POST(req: Request) {
       warning: pendingDeliveryWarning,
       item: serializeCredit(created),
       deliveryStatus: effectiveDeliveryStatus,
+      solicitud: {
+        id: solicitudReservation.id,
+        estado: "CERRADO",
+        creditoId: created.id,
+      },
       identityValidation: buildVeriffSnapshot(veriffValidation),
       equality: equalitySummary
         ? {
