@@ -106,7 +106,7 @@ test("acepta URLSearchParams y valida fechas calendario reales", () => {
   });
 });
 
-test("aplica alcance central, de aliado, de sede y de asesor", () => {
+test("aplica alcance central, de aliado, de sede y de asesor propietario", () => {
   const anotherAlly = { ...ownSolicitud, aliadoId: 20 };
   const anotherSite = { ...ownSolicitud, sedeId: 102 };
   const anotherSeller = { ...ownSolicitud, vendedorId: 402 };
@@ -121,7 +121,7 @@ test("aplica alcance central, de aliado, de sede y de asesor", () => {
   assert.equal(canViewSolicitud(supervisor, anotherAlly), false);
   assert.equal(canViewSolicitud(seller, ownSolicitud), true);
   assert.equal(canViewSolicitud(seller, anotherSeller), false);
-  assert.equal(canViewSolicitud(seller, anotherSite), false);
+  assert.equal(canViewSolicitud(seller, anotherSite), true);
   assert.equal(canViewSolicitud(seller, anotherAlly), false);
 });
 
@@ -223,6 +223,14 @@ test("la fabrica del borrador respeta central, aliado, sede y asesor titular", (
     "ABRIR_FABRICA",
     "DESISTIR",
   ]);
+  assert.deepEqual(
+    getSolicitudActions({
+      viewer: seller,
+      ...openDraft,
+      ownership: { ...ownSolicitud, sedeId: 102 },
+    }),
+    ["VER_DETALLE"]
+  );
   assert.deepEqual(getSolicitudActions({ viewer: supervisor, ...openDraft }), [
     "VER_DETALLE",
   ]);
@@ -412,6 +420,26 @@ test("la interfaz conserva filtros en URL y confirma el desistimiento", async ()
   assert.match(ui, /factoryHref/);
   assert.match(ui, /mode=correction/);
   assert.match(ui, /ConfirmDialog/);
+  assert.match(ui, /style=\{\{ paddingLeft: "2\.5rem" \}\}/);
+});
+
+test("el asesor consulta sus solicitudes propias sin quedar atado a la sede activa", async () => {
+  const storage = await readProjectFile("lib/solicitudes-storage.ts");
+  const commonWhere = storage.slice(
+    storage.indexOf("function buildCommonWhere"),
+    storage.indexOf("async function readDraftRows")
+  );
+
+  assert.match(commonWhere, /viewer\.kind === "SUPERVISOR"/);
+  assert.doesNotMatch(
+    commonWhere,
+    /viewer\.kind === "SUPERVISOR" \|\| viewer\.kind === "SELLER"/
+  );
+  assert.match(
+    commonWhere,
+    /viewer\.kind === "SELLER"[\s\S]*vendedorId/
+  );
+  assert.match(commonWhere, /s\."aliadoId" =/);
 });
 
 test("el muro enlaza la correccion aprobada sin convertir el detalle en fabrica", async () => {
