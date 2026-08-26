@@ -176,24 +176,16 @@ test("el simulador oculta la política DataCrédito y sus términos internos", (
   );
   assert.match(
     consoleSource,
-    /\{!simulatorMode \? \([\s\S]{0,700}\{creditSettingsScopeLabel\}/
+    /\{!simulatorMode \? \([\s\S]*?\{creditSettingsScopeLabel\}/
   );
+  assert.match(consoleSource, /\{activeDataCreditoOffer && !simulatorMode \? \(/);
+  assert.match(consoleSource, /Oferta DataCrédito aprobada/);
+  assert.match(consoleSource, /Inicial mínima \{formatPercent\(initialPaymentPercentage\)\}/);
   assert.match(
     consoleSource,
-    /\{activeDataCreditoOffer && !simulatorMode \? \([\s\S]{0,350}Oferta DataCrédito/
+    /Crédito máximo \{currency\(dataCreditoEffectiveMaxFinancedAmount\)\}/
   );
-  assert.match(
-    consoleSource,
-    /\{simulatorMode\s*\? `Inicial base: \$\{initialPaymentPercentage\}%\.`\s*: activeDataCreditoOffer/
-  );
-  assert.match(
-    consoleSource,
-    /\{!simulatorMode && dataCreditoInstallmentCount \? \(/
-  );
-  assert.match(
-    consoleSource,
-    /simulatorMode\s*\? "Valor equipo - inicial\."\s*: activeDataCreditoOffer/
-  );
+  assert.match(consoleSource, /Hasta \{plazoMaximoCuotas\} cuotas/);
 });
 
 test("el simulador iPhone conserva el tope global configurado", () => {
@@ -207,11 +199,11 @@ test("el simulador iPhone conserva el tope global configurado", () => {
   );
   assert.match(
     consoleSource,
-    /Crédito máximo\{" "\}[\s\S]{0,120}currency\(dataCreditoEffectiveMaxFinancedAmount\)/
+    /Crédito máximo \{currency\(dataCreditoEffectiveMaxFinancedAmount\)\}/
   );
   assert.match(
     consoleSource,
-    /Plazo máximo \{plazoMaximoCuotas\} cuotas/
+    /Hasta \{plazoMaximoCuotas\} cuotas/
   );
   assert.match(consoleSource, /IPHONE_MAX_INSTALLMENT_VALUE/);
 });
@@ -219,7 +211,7 @@ test("el simulador iPhone conserva el tope global configurado", () => {
 test("el desglose interno solo se muestra al administrador central", () => {
   assert.match(
     consoleSource,
-    /\{canSeeInternalPricing && amortizationPlan \? \([\s\S]{0,500}<p>Exacta:/
+    /stepEquipoReady && canSeeInternalPricing && amortizationPlan[\s\S]{0,300}Cuota exacta/
   );
   assert.match(
     consoleSource,

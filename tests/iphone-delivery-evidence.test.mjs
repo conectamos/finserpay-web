@@ -13,6 +13,7 @@ const readProjectFile = (file) =>
   readFile(path.join(projectRoot, file), "utf8");
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const {
+  getIphoneClosureReadiness,
   getMissingIphoneDeliveryEvidence,
   getMissingIphoneIdentityEvidence,
   hasDuplicateEvidenceValues,
@@ -111,6 +112,57 @@ test("exige cedula por ambos lados y selfie con cedula solo para iPhone", () => 
   }
 });
 
+test("el cierre iPhone exige enrolamiento y cinco evidencias guardadas", () => {
+  const evidence = {
+    platform: "IPHONE",
+    cedulaFrenteDataUrl: jpeg,
+    cedulaRespaldoDataUrl: png,
+    selfieCedulaDataUrl: webp,
+    fotoEntregaDataUrl: jpeg,
+    fotoRemisionDataUrl: png,
+  };
+
+  assert.deepEqual(getIphoneClosureReadiness(evidence), {
+    isIphone: true,
+    enrollmentConfirmed: false,
+    missingEvidence: [],
+    evidenceCount: 5,
+    requiredEvidenceCount: 5,
+    evidenceComplete: true,
+    complete: false,
+  });
+
+  assert.equal(
+    getIphoneClosureReadiness({
+      ...evidence,
+      enrollmentConfirmed: true,
+    }).complete,
+    true
+  );
+
+  const afterRemovingOne = getIphoneClosureReadiness({
+    ...evidence,
+    enrollmentConfirmed: true,
+    fotoRemisionDataUrl: "",
+  });
+  assert.equal(afterRemovingOne.evidenceCount, 4);
+  assert.deepEqual(afterRemovingOne.missingEvidence, ["fotoRemision"]);
+  assert.equal(afterRemovingOne.complete, false);
+
+  assert.deepEqual(
+    getIphoneClosureReadiness({ platform: "ANDROID" }),
+    {
+      isIphone: false,
+      enrollmentConfirmed: true,
+      missingEvidence: [],
+      evidenceCount: 0,
+      requiredEvidenceCount: 0,
+      evidenceComplete: true,
+      complete: true,
+    }
+  );
+});
+
 test("rechaza reutilizar una foto entre las evidencias de identidad", () => {
   assert.equal(hasDuplicateEvidenceValues(["frente", "respaldo", "selfie"]), false);
   assert.equal(hasDuplicateEvidenceValues(["frente", "respaldo", "frente"]), true);
@@ -174,30 +226,32 @@ test("el formulario integra HEIC, camara, borrador, cierre y envio final", () =>
   assert.match(factoryConsole, /"foto-entrega"/);
   assert.match(factoryConsole, /"foto-remision"/);
   assert.match(factoryConsole, /"selfie-cedula"/);
-  assert.match(factoryConsole, /Cedula frente/);
-  assert.match(factoryConsole, /Cedula posterior/);
-  assert.match(factoryConsole, /Selfie con cedula en mano/);
+  assert.match(factoryConsole, /Cédula frontal/);
+  assert.match(factoryConsole, /Cédula posterior/);
+  assert.match(factoryConsole, /Selfie con cédula/);
   assert.match(factoryConsole, /Foto de entrega/);
-  assert.match(factoryConsole, /Foto de remision/);
+  assert.match(factoryConsole, /Foto de remisión/);
   assert.match(factoryConsole, /iphoneSelfieCedulaDataUrl/);
   assert.match(factoryConsole, /setIphoneSelfieCedulaDataUrl/);
   assert.match(factoryConsole, /iphoneSelfieWithDocumentReady/);
-  assert.ok(factoryConsole.includes('aria-label={`Tomar foto para ${title.toLowerCase()}`}'));
+  assert.ok(factoryConsole.includes('aria-label={`Agregar foto de ${title.toLowerCase()}`}'));
   assert.match(factoryConsole, /fotoEntregaDataUrl/);
   assert.match(factoryConsole, /fotoRemisionDataUrl/);
   assert.match(factoryConsole, /setFotoEntregaDataUrl\(""\)/);
   assert.match(factoryConsole, /setFotoRemisionDataUrl\(""\)/);
-  assert.match(factoryConsole, /getMissingIphoneDeliveryEvidence/);
-  assert.match(factoryConsole, /getMissingIphoneIdentityEvidence/);
+  assert.match(factoryConsole, /getIphoneClosureReadiness/);
   assert.match(factoryConsole, /iphoneDeliveryEvidenceReady/);
   assert.match(factoryConsole, /iphoneRequiredEvidenceReady/);
+  assert.match(factoryConsole, /persistedIphoneClosureFingerprint/);
+  assert.match(factoryConsole, /iphoneEnrolamientoConfirmadoAt/);
+  assert.match(factoryConsole, /Finalizar credito/);
+  assert.doesNotMatch(factoryConsole, /ABRIR SAFEUEM|Abrir SafeUEM/);
 });
 
 test("la API exige las cinco evidencias iPhone y conserva la auditoria", () => {
   assert.match(creditRoute, /IPHONE_CLOSURE_EVIDENCE_REQUIRED/);
   assert.match(creditRoute, /IPHONE_ENROLLMENT_REQUIRED/);
-  assert.match(creditRoute, /getMissingIphoneDeliveryEvidence/);
-  assert.match(creditRoute, /getMissingIphoneIdentityEvidence/);
+  assert.match(creditRoute, /getIphoneClosureReadiness/);
   assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(\s*body\.iphoneSelfieCedulaDataUrl/);
   assert.match(creditRoute, /selfieCedulaDataUrl: iphoneSelfieCedulaDataUrl/);
   assert.match(creditRoute, /IPHONE_IDENTITY_EVIDENCE_DUPLICATED/);
@@ -205,7 +259,9 @@ test("la API exige las cinco evidencias iPhone y conserva la auditoria", () => {
   assert.match(creditRoute, /contratoFotoDataUrl = isIphoneCredit/);
   assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(\s*body\.contratoCedulaFrenteDataUrl/);
   assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(\s*body\.contratoCedulaRespaldoDataUrl/);
-  assert.match(creditRoute, /\.\.\.missingIphoneIdentityEvidence/);
+  assert.match(creditRoute, /missingEvidence/);
+  assert.match(creditRoute, /enrolamientoManualAuditoria/);
+  assert.match(creditRoute, /registradoAt/);
   assert.match(creditRoute, /fotoEntregaDataUrl = isIphoneCredit/);
   assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(body\.fotoEntregaDataUrl\)/);
   assert.match(creditRoute, /sanitizeIphoneDeliveryEvidenceDataUrl\(body\.fotoRemisionDataUrl\)/);

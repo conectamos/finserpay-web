@@ -429,6 +429,10 @@ export type IphoneIdentityEvidenceKey =
   | "cedulaRespaldo"
   | "selfieCedula";
 
+export type IphoneClosureEvidenceKey =
+  | IphoneIdentityEvidenceKey
+  | IphoneDeliveryEvidenceKey;
+
 export function getMissingIphoneIdentityEvidence(options: {
   platform?: unknown;
   cedulaFrenteDataUrl?: unknown;
@@ -486,6 +490,36 @@ export function getMissingIphoneDeliveryEvidence(options: {
   }
 
   return missing;
+}
+
+export function getIphoneClosureReadiness(options: {
+  platform?: unknown;
+  enrollmentConfirmed?: unknown;
+  cedulaFrenteDataUrl?: unknown;
+  cedulaRespaldoDataUrl?: unknown;
+  selfieCedulaDataUrl?: unknown;
+  fotoEntregaDataUrl?: unknown;
+  fotoRemisionDataUrl?: unknown;
+}) {
+  const isIphone = isIphoneCreditPlatform(options.platform);
+  const missingEvidence: IphoneClosureEvidenceKey[] = [
+    ...getMissingIphoneIdentityEvidence(options),
+    ...getMissingIphoneDeliveryEvidence(options),
+  ];
+  const requiredEvidenceCount = isIphone ? 5 : 0;
+  const evidenceCount = requiredEvidenceCount - missingEvidence.length;
+  const enrollmentConfirmed = !isIphone || Boolean(options.enrollmentConfirmed);
+  const evidenceComplete = missingEvidence.length === 0;
+
+  return {
+    isIphone,
+    enrollmentConfirmed,
+    evidenceCount,
+    requiredEvidenceCount,
+    missingEvidence,
+    evidenceComplete,
+    complete: enrollmentConfirmed && evidenceComplete,
+  };
 }
 
 export function isIphoneEquipmentCatalogBrand(value: unknown) {

@@ -13,9 +13,8 @@ import {
   generateCreditFolio,
   generatePagareNumber,
   generatePaymentReference,
+  getIphoneClosureReadiness,
   getDefaultFirstPaymentDateObject,
-  getMissingIphoneDeliveryEvidence,
-  getMissingIphoneIdentityEvidence,
   hasDuplicateEvidenceValues,
   resolveCreditEquipmentPlatform,
   normalizeCreditInstallmentLimit,
@@ -36,6 +35,7 @@ import {
 } from "@/lib/credit-factory";
 import { validateCreditContactPhones } from "@/lib/credit-contact-phones";
 import { calculateFrenchAmortization } from "@/lib/credit-amortization";
+import { validateCreditClientForm } from "@/lib/credit-client-validation";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
 import {
   createFinancingTermsSeal,
@@ -228,6 +228,8 @@ type CreditCreateBody = {
   clienteFechaExpedicion?: string;
   clienteFechaNacimiento?: string;
   clienteGenero?: string;
+  clienteEstadoCivil?: string;
+  clienteEstrato?: string;
   clienteNombre?: string;
   clientePrimerApellido?: string;
   clientePrimerNombre?: string;
@@ -282,6 +284,7 @@ type CreditCreateBody = {
   firmaSeguroPasoContratos?: boolean;
   firmaSeguroProcessUuid?: string;
   iphoneEnrolamientoVerificado?: boolean;
+  iphoneEnrolamientoConfirmadoAt?: string;
   imei?: string;
   montoCredito?: number | string;
   pagareAceptado?: boolean;
@@ -966,13 +969,17 @@ export async function POST(req: Request) {
     const clienteDireccion = sanitizeText(body.clienteDireccion);
     const clienteNombre = sanitizeText(body.clienteNombre);
     const clienteDocumento = sanitizeText(body.clienteDocumento);
-    const clienteFechaNacimiento = toNullableDate(body.clienteFechaNacimiento);
-    const clienteFechaExpedicion = toNullableDate(body.clienteFechaExpedicion);
+    const clienteFechaNacimientoValue = sanitizeText(body.clienteFechaNacimiento);
+    const clienteFechaExpedicionValue = sanitizeText(body.clienteFechaExpedicion);
+    const clienteFechaNacimiento = toNullableDate(clienteFechaNacimientoValue);
+    const clienteFechaExpedicion = toNullableDate(clienteFechaExpedicionValue);
     const clienteTelefono = sanitizeText(body.clienteTelefono);
     const clienteCorreo = sanitizeText(body.clienteCorreo);
     const clienteDepartamento = sanitizeText(body.clienteDepartamento);
     const clienteCiudad = sanitizeText(body.clienteCiudad);
     const clienteGenero = sanitizeText(body.clienteGenero);
+    const clienteEstadoCivil = sanitizeText(body.clienteEstadoCivil);
+    const clienteEstrato = sanitizeText(body.clienteEstrato);
     const requestedSolicitudIdValue = sanitizeText(body.solicitudId);
     const requestedSolicitudId = parseId(requestedSolicitudIdValue);
     if (requestedSolicitudIdValue && !requestedSolicitudId) {
@@ -1061,6 +1068,43 @@ export async function POST(req: Request) {
       body.referenciaFamiliar2Parentesco
     );
     const referenciaFamiliar2Telefono = sanitizeText(body.referenciaFamiliar2Telefono);
+    const clientValidation = validateCreditClientForm({
+      clientePrimerNombre,
+      clientePrimerApellido,
+      clienteTipoDocumento,
+      clienteDocumento,
+      clienteFechaExpedicion: clienteFechaExpedicionValue,
+      clienteFechaNacimiento: clienteFechaNacimientoValue,
+      clienteTelefono,
+      clienteCorreo,
+      clienteDepartamento,
+      clienteCiudad,
+      clienteGenero,
+      clienteEstadoCivil,
+      clienteEstrato,
+      clienteDireccion,
+      referenciaFamiliar1Nombre,
+      referenciaFamiliar1Parentesco,
+      referenciaFamiliar1Telefono,
+      referenciaFamiliar2Nombre,
+      referenciaFamiliar2Parentesco,
+      referenciaFamiliar2Telefono,
+    });
+
+    if (!clientValidation.complete) {
+      const firstError = clientValidation.firstInvalidField
+        ? clientValidation.errors[clientValidation.firstInvalidField]
+        : null;
+
+      return NextResponse.json(
+        {
+          code: "CLIENTE_INCOMPLETO",
+          error: firstError || "Completa todos los datos obligatorios del cliente.",
+          fieldErrors: clientValidation.errors,
+        },
+        { status: 400 }
+      );
+    }
     const clienteNombreFinal =
       sanitizeText([clientePrimerNombre, clientePrimerApellido].filter(Boolean).join(" ")) ||
       clienteNombre;
@@ -1238,6 +1282,9 @@ export async function POST(req: Request) {
 
     const iphoneManualEnrollmentVerified =
       isIphoneCredit && Boolean(body.iphoneEnrolamientoVerificado);
+    const iphoneEnrollmentConfirmedAt = iphoneManualEnrollmentVerified
+      ? toNullableDate(body.iphoneEnrolamientoConfirmadoAt) || new Date()
+      : null;
     const valorEquipoTotalInput = toNumber(body.valorEquipoTotal);
 
     const precioBaseVentaCatalogo = catalogItem?.activo
@@ -2206,21 +2253,17 @@ export async function POST(req: Request) {
       );
     }
 
-    const missingIphoneIdentityEvidence = getMissingIphoneIdentityEvidence({
+    const iphoneClosureReadiness = getIphoneClosureReadiness({
       platform: plataformaDispositivo,
+      enrollmentConfirmed: iphoneManualEnrollmentVerified,
       cedulaFrenteDataUrl: contratoCedulaFrenteDataUrl,
       cedulaRespaldoDataUrl: contratoCedulaRespaldoDataUrl,
       selfieCedulaDataUrl: iphoneSelfieCedulaDataUrl,
-    });
-    const missingIphoneDeliveryEvidence = getMissingIphoneDeliveryEvidence({
-      platform: plataformaDispositivo,
       fotoEntregaDataUrl,
       fotoRemisionDataUrl,
     });
-    const missingIphoneRequiredEvidence = [
-      ...missingIphoneIdentityEvidence,
-      ...missingIphoneDeliveryEvidence,
-    ];
+    const missingIphoneRequiredEvidence =
+      iphoneClosureReadiness.missingEvidence;
 
     if (
       isIphoneCredit &&
@@ -2308,11 +2351,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (
-      isIphoneCredit &&
-      !iphoneManualEnrollmentVerified &&
-      !documentCanSkipDeliveryVerification
-    ) {
+    if (isIphoneCredit && !iphoneClosureReadiness.enrollmentConfirmed) {
       return NextResponse.json(
         {
           code: "IPHONE_ENROLLMENT_REQUIRED",
@@ -2455,6 +2494,8 @@ export async function POST(req: Request) {
         departamento: clienteDepartamento,
         ciudad: clienteCiudad,
         genero: clienteGenero,
+        estadoCivil: clienteEstadoCivil,
+        estrato: clienteEstrato,
         fechaNacimiento: clienteFechaNacimiento.toISOString(),
         fechaExpedicion: clienteFechaExpedicion.toISOString(),
         referenciasFamiliares: [
@@ -2476,6 +2517,20 @@ export async function POST(req: Request) {
         imei,
         plataforma: isIphoneCredit ? "IPHONE" : "ANDROID",
         enrolamientoManualVerificado: iphoneManualEnrollmentVerified,
+        enrolamientoManualAuditoria:
+          isIphoneCredit && iphoneManualEnrollmentVerified
+            ? {
+                confirmado: true,
+                confirmadoAt: iphoneEnrollmentConfirmedAt?.toISOString(),
+                registradoAt: new Date().toISOString(),
+                solicitudId: solicitudReservation.id,
+                usuarioId: creditOwner.usuarioId,
+                vendedorId: creditOwner.vendedorId,
+                sedeId: creditOwner.sedeId,
+                imei,
+                deviceUid,
+              }
+            : null,
         catalogoId: catalogItem?.id || null,
         precioBaseVenta: precioBaseVentaCatalogo,
         excedentePrecioBase: precioBaseVentaCatalogo

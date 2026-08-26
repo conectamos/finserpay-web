@@ -12,6 +12,7 @@ import {
   BadgeCheck,
   Building2,
   CalendarDays,
+  Camera,
   Check,
   ChevronRight,
   CircleHelp,
@@ -21,6 +22,7 @@ import {
   FileText,
   History,
   IdCard,
+  Info,
   LoaderCircle,
   LockKeyhole,
   MoreHorizontal,
@@ -81,8 +83,7 @@ import {
   DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
   generatePagareNumber,
-  getMissingIphoneDeliveryEvidence,
-  getMissingIphoneIdentityEvidence,
+  getIphoneClosureReadiness,
   getDefaultFirstPaymentDate,
   getCreditInstallmentOptions,
   getPaymentFrequencyLabel,
@@ -103,6 +104,10 @@ import {
   resolveEffectiveDataCreditoFinancingLimit,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
+import {
+  validateCreditClientForm,
+  type CreditClientField,
+} from "@/lib/credit-client-validation";
 import {
   calculateFrenchAmortization,
   DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE,
@@ -2355,6 +2360,175 @@ function EvidenceCaptureCard({
   );
 }
 
+function evidenceFingerprintPart(value: string) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) return "0";
+
+  return [
+    normalized.length,
+    normalized.slice(0, 32),
+    normalized.slice(-32),
+  ].join(":");
+}
+
+function iphoneClosureFingerprint(options: {
+  enrollmentVerified: boolean;
+  enrollmentConfirmedAt: string;
+  cedulaFrenteDataUrl: string;
+  cedulaRespaldoDataUrl: string;
+  selfieCedulaDataUrl: string;
+  fotoEntregaDataUrl: string;
+  fotoRemisionDataUrl: string;
+}) {
+  return [
+    options.enrollmentVerified ? "1" : "0",
+    options.enrollmentConfirmedAt,
+    evidenceFingerprintPart(options.cedulaFrenteDataUrl),
+    evidenceFingerprintPart(options.cedulaRespaldoDataUrl),
+    evidenceFingerprintPart(options.selfieCedulaDataUrl),
+    evidenceFingerprintPart(options.fotoEntregaDataUrl),
+    evidenceFingerprintPart(options.fotoRemisionDataUrl),
+  ].join("|");
+}
+
+function DeliveryEvidenceCard({
+  index,
+  title,
+  value,
+  previewFit = "cover",
+  disabled = false,
+  persisted = false,
+  onRemove,
+  onFileChange,
+}: {
+  index: number;
+  title: string;
+  description?: string;
+  metaLabel?: string;
+  value: string;
+  tone?: "teal" | "amber" | "slate";
+  previewFit?: "cover" | "contain";
+  disabled?: boolean;
+  persisted?: boolean;
+  onOpenCamera?: () => void;
+  onRemove: () => void;
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const selectFile = () => {
+    if (disabled || !fileInputRef.current) return;
+    fileInputRef.current.value = "";
+    fileInputRef.current.click();
+    setMenuOpen(false);
+  };
+
+  return (
+    <article
+      className={[
+        "relative min-h-[250px] rounded-lg border bg-white p-3 transition",
+        disabled
+          ? "border-slate-200 bg-slate-50 opacity-55"
+          : value
+            ? persisted
+              ? "border-[#9bd321]"
+              : "border-slate-300"
+            : "border-slate-200",
+      ].join(" ")}
+    >
+      <div className="flex min-h-8 items-start justify-between gap-2">
+        <h5 className="text-sm font-semibold text-slate-950">
+          {index}. {title}
+        </h5>
+        {value ? (
+          <div className="relative flex items-center gap-2">
+            <span
+              className={[
+                "inline-flex h-7 w-7 items-center justify-center rounded-full",
+                persisted
+                  ? "bg-[#2f9f4f] text-white"
+                  : "border border-slate-300 bg-white text-slate-500",
+              ].join(" ")}
+              aria-label={persisted ? "Evidencia guardada" : "Guardando evidencia"}
+            >
+              {persisted ? (
+                <Check className="h-4 w-4" strokeWidth={2.5} />
+              ) : (
+                <LoaderCircle className="h-4 w-4 animate-spin" strokeWidth={2} />
+              )}
+            </span>
+            <button
+              type="button"
+              aria-label={`Opciones de ${title.toLowerCase()}`}
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((current) => !current)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+            >
+              <MoreHorizontal className="h-4 w-4" strokeWidth={2} />
+            </button>
+            {menuOpen ? (
+              <div className="absolute right-0 top-10 z-10 w-36 rounded-md border border-slate-200 bg-white p-1 shadow-lg">
+                <button type="button" onClick={selectFile} className="flex min-h-10 w-full items-center rounded px-3 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                  Reemplazar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onRemove();
+                    setMenuOpen(false);
+                  }}
+                  className="flex min-h-10 w-full items-center rounded px-3 text-left text-xs font-semibold text-red-700 hover:bg-red-50"
+                >
+                  Eliminar
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <span className="h-7 w-7 rounded-full border border-slate-300" aria-hidden="true" />
+        )}
+      </div>
+
+      <div className="mt-3 flex h-36 items-center justify-center overflow-hidden rounded-md bg-[#f5f5f2]">
+        {value ? (
+          <img
+            src={value}
+            alt={title}
+            className={[
+              "h-full w-full",
+              previewFit === "contain" ? "object-contain" : "object-cover",
+            ].join(" ")}
+          />
+        ) : (
+          <Camera className="h-14 w-14 text-slate-800" strokeWidth={1.35} aria-hidden="true" />
+        )}
+      </div>
+
+      {!value ? (
+        <button
+          type="button"
+          onClick={selectFile}
+          disabled={disabled}
+          className="mt-3 min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-bold uppercase text-slate-950 hover:border-slate-950 disabled:cursor-not-allowed"
+        >
+          Agregar foto
+        </button>
+      ) : null}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
+        aria-label={`Agregar foto de ${title.toLowerCase()}`}
+        disabled={disabled}
+        onChange={onFileChange}
+        className="hidden"
+      />
+    </article>
+  );
+}
+
 function esAliadoFinserPay(codigo: string | null | undefined) {
   return String(codigo || "").trim().toUpperCase() === "FINSERPAY";
 }
@@ -2614,6 +2788,15 @@ export default function CreditFactoryConsole({
     useState("");
   const [referenciaFamiliar2Telefono, setReferenciaFamiliar2Telefono] =
     useState("");
+  const [clientValidationAttempted, setClientValidationAttempted] = useState(false);
+  const [clientTouchedFields, setClientTouchedFields] = useState<
+    Partial<Record<CreditClientField, boolean>>
+  >({});
+  const clientContactBlockRef = useRef<HTMLElement | null>(null);
+  const clientReferencesBlockRef = useRef<HTMLElement | null>(null);
+  const clientValidationInitializedRef = useRef(false);
+  const previousPersonalCompleteRef = useRef(false);
+  const previousContactCompleteRef = useRef(false);
   const [equipoMarca, setEquipoMarca] = useState("");
   const [equipoModelo, setEquipoModelo] = useState("");
   const [equipmentCatalog, setEquipmentCatalog] = useState<EquipmentCatalogItem[]>([]);
@@ -2730,6 +2913,10 @@ export default function CreditFactoryConsole({
     useState<DeliveryValidationState | null>(null);
   const [iphoneEnrollmentVerified, setIphoneEnrollmentVerified] =
     useState(false);
+  const [iphoneEnrollmentConfirmedAt, setIphoneEnrollmentConfirmedAt] =
+    useState("");
+  const [persistedIphoneClosureFingerprint, setPersistedIphoneClosureFingerprint] =
+    useState("");
   const [veriffConfig, setVeriffConfig] = useState<VeriffConfigState>({
     configured: false,
     mode: "soft",
@@ -3380,6 +3567,7 @@ export default function CreditFactoryConsole({
       imei: imeiDigits,
       plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
       iphoneEnrolamientoVerificado: iphoneEnrollmentVerified,
+      iphoneEnrolamientoConfirmadoAt: iphoneEnrollmentConfirmedAt || null,
       iphoneSelfieCedulaDataUrl,
       iphoneSelfieCedulaCapturedAt: iphoneSelfieCedulaAudit?.capturedAt || null,
       iphoneSelfieCedulaSource: iphoneSelfieCedulaAudit?.source || null,
@@ -3481,6 +3669,7 @@ export default function CreditFactoryConsole({
       creditSettings.seguroCuotaPorcentaje,
       imeiDigits,
       iphoneEnrollmentVerified,
+      iphoneEnrollmentConfirmedAt,
       iphoneFactory,
       pagareAceptado,
       plazoMeses,
@@ -3494,6 +3683,27 @@ export default function CreditFactoryConsole({
       valorEquipoTotal,
       veriffValidation?.id,
       wizardStep,
+    ]
+  );
+  const currentIphoneClosureFingerprint = useMemo(
+    () =>
+      iphoneClosureFingerprint({
+        enrollmentVerified: iphoneEnrollmentVerified,
+        enrollmentConfirmedAt: iphoneEnrollmentConfirmedAt,
+        cedulaFrenteDataUrl: contratoCedulaFrenteDataUrl,
+        cedulaRespaldoDataUrl: contratoCedulaRespaldoDataUrl,
+        selfieCedulaDataUrl: iphoneSelfieCedulaDataUrl,
+        fotoEntregaDataUrl,
+        fotoRemisionDataUrl,
+      }),
+    [
+      contratoCedulaFrenteDataUrl,
+      contratoCedulaRespaldoDataUrl,
+      fotoEntregaDataUrl,
+      fotoRemisionDataUrl,
+      iphoneEnrollmentConfirmedAt,
+      iphoneEnrollmentVerified,
+      iphoneSelfieCedulaDataUrl,
     ]
   );
   const draftHasMeaningfulData = useMemo(() => {
@@ -4211,24 +4421,136 @@ export default function CreditFactoryConsole({
     event.preventDefault();
     setValue(normalizeCreditContactPhoneInput(event.clipboardData.getData("text")));
   };
+  const clientFormValidation = useMemo(
+    () =>
+      validateCreditClientForm({
+        clientePrimerNombre,
+        clientePrimerApellido,
+        clienteTipoDocumento,
+        clienteDocumento,
+        clienteFechaExpedicion,
+        clienteFechaNacimiento,
+        clienteTelefono,
+        clienteCorreo,
+        clienteDepartamento,
+        clienteCiudad,
+        clienteGenero,
+        clienteEstadoCivil,
+        clienteEstrato,
+        clienteDireccion,
+        referenciaFamiliar1Nombre,
+        referenciaFamiliar1Parentesco,
+        referenciaFamiliar1Telefono,
+        referenciaFamiliar2Nombre,
+        referenciaFamiliar2Parentesco,
+        referenciaFamiliar2Telefono,
+      }),
+    [
+      clienteCiudad, clienteCorreo, clienteDepartamento, clienteDireccion,
+      clienteDocumento, clienteEstadoCivil, clienteEstrato, clienteFechaExpedicion,
+      clienteFechaNacimiento, clienteGenero, clientePrimerApellido,
+      clientePrimerNombre, clienteTelefono, clienteTipoDocumento,
+      referenciaFamiliar1Nombre, referenciaFamiliar1Parentesco,
+      referenciaFamiliar1Telefono, referenciaFamiliar2Nombre,
+      referenciaFamiliar2Parentesco, referenciaFamiliar2Telefono,
+    ]
+  );
   const stepClienteReady =
     dataCreditoFlowReady &&
-    Boolean(clientePrimerNombre.trim()) &&
-    Boolean(clientePrimerApellido.trim()) &&
-    Boolean(clienteTipoDocumento.trim()) &&
-    Boolean(clienteDocumento.trim()) &&
-    contactPhoneValidation.ok &&
-    Boolean(clienteCorreo.trim()) &&
-    Boolean(clienteDepartamento.trim()) &&
-    Boolean(clienteCiudad.trim()) &&
-    Boolean(clienteGenero.trim()) &&
-    Boolean(referenciaFamiliar1Nombre.trim()) &&
-    Boolean(referenciaFamiliar1Parentesco.trim()) &&
-    Boolean(referenciaFamiliar2Nombre.trim()) &&
-    Boolean(referenciaFamiliar2Parentesco.trim()) &&
-    Boolean(clienteDireccion.trim()) &&
-    Boolean(clienteFechaNacimiento) &&
-    Boolean(clienteFechaExpedicion);
+    clientFormValidation.complete &&
+    contactPhoneValidation.ok;
+  const markClientFieldTouched = useCallback((field: CreditClientField) => {
+    setClientTouchedFields((current) => ({ ...current, [field]: true }));
+  }, []);
+  const clientFieldError = useCallback(
+    (field: CreditClientField) =>
+      clientValidationAttempted || clientTouchedFields[field]
+        ? clientFormValidation.errors[field] || ""
+        : "",
+    [clientFormValidation.errors, clientTouchedFields, clientValidationAttempted]
+  );
+  const clientFieldInputProps = useCallback(
+    (field: CreditClientField) => {
+      const error = clientFieldError(field);
+
+      return {
+        id: field,
+        onBlur: () => markClientFieldTouched(field),
+        "aria-invalid": error ? true : undefined,
+        "aria-describedby": error ? `${field}-error` : undefined,
+      };
+    },
+    [clientFieldError, markClientFieldTouched]
+  );
+  const renderClientFieldError = useCallback(
+    (field: CreditClientField) => {
+      const error = clientFieldError(field);
+      return error ? (
+        <p id={`${field}-error`} className="mt-1.5 text-xs font-semibold text-red-600" role="alert">
+          {error}
+        </p>
+      ) : null;
+    },
+    [clientFieldError]
+  );
+  const focusFirstInvalidClientField = useCallback(() => {
+    setClientValidationAttempted(true);
+    const field = clientFormValidation.firstInvalidField;
+
+    if (!field) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      const element = document.getElementById(field);
+      element?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (element instanceof HTMLElement) {
+        element.focus({ preventScroll: true });
+      }
+    });
+  }, [clientFormValidation.firstInvalidField]);
+
+  useEffect(() => {
+    if (!clientValidationInitializedRef.current) {
+      clientValidationInitializedRef.current = true;
+      previousPersonalCompleteRef.current = clientFormValidation.personalComplete;
+      previousContactCompleteRef.current = clientFormValidation.contactComplete;
+      return;
+    }
+
+    if (
+      clientFormValidation.personalComplete &&
+      !previousPersonalCompleteRef.current &&
+      !clientFormValidation.contactComplete
+    ) {
+      window.requestAnimationFrame(() => {
+        clientContactBlockRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      });
+    }
+
+    if (
+      clientFormValidation.contactComplete &&
+      !previousContactCompleteRef.current &&
+      !clientFormValidation.referencesComplete
+    ) {
+      window.requestAnimationFrame(() => {
+        clientReferencesBlockRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      });
+    }
+
+    previousPersonalCompleteRef.current = clientFormValidation.personalComplete;
+    previousContactCompleteRef.current = clientFormValidation.contactComplete;
+  }, [
+    clientFormValidation.contactComplete,
+    clientFormValidation.personalComplete,
+    clientFormValidation.referencesComplete,
+  ]);
   const otpReady = Boolean(otpVerifiedAt);
   const identityEvidenceReady =
     Boolean(contratoFotoDataUrl) &&
@@ -4381,25 +4703,51 @@ export default function CreditFactoryConsole({
       autorizacionDatosAceptada);
   const entregaSinVerificacionAutorizada = false;
   const iphoneSelfieWithDocumentReady = Boolean(iphoneSelfieCedulaDataUrl);
-  const missingIphoneIdentityEvidence = getMissingIphoneIdentityEvidence({
+  const iphoneClosureReadiness = getIphoneClosureReadiness({
     platform: currentDevicePlatform,
+    enrollmentConfirmed:
+      iphoneEnrollmentVerified || entregaSinVerificacionAutorizada,
     cedulaFrenteDataUrl: contratoCedulaFrenteDataUrl,
     cedulaRespaldoDataUrl: contratoCedulaRespaldoDataUrl,
     selfieCedulaDataUrl: iphoneSelfieCedulaDataUrl,
-  });
-  const missingIphoneDeliveryEvidence = getMissingIphoneDeliveryEvidence({
-    platform: currentDevicePlatform,
     fotoEntregaDataUrl,
     fotoRemisionDataUrl,
   });
+  const missingIphoneRequiredEvidence =
+    iphoneClosureReadiness.missingEvidence;
   const iphoneDeliveryEvidenceReady =
-    missingIphoneDeliveryEvidence.length === 0;
+    !missingIphoneRequiredEvidence.some(
+      (key) => key === "fotoEntrega" || key === "fotoRemision"
+    );
   const iphoneIdentityEvidenceReady =
-    missingIphoneIdentityEvidence.length === 0;
+    !missingIphoneRequiredEvidence.some(
+      (key) =>
+        key === "cedulaFrente" ||
+        key === "cedulaRespaldo" ||
+        key === "selfieCedula"
+    );
   const iphoneRequiredEvidenceReady =
-    iphoneIdentityEvidenceReady && iphoneDeliveryEvidenceReady;
+    iphoneClosureReadiness.evidenceComplete;
+  const iphoneEvidenceCount = iphoneClosureReadiness.evidenceCount;
+  const iphoneClosurePersisted =
+    !iphoneFactory ||
+    (Boolean(persistedIphoneClosureFingerprint) &&
+      persistedIphoneClosureFingerprint === currentIphoneClosureFingerprint);
+  const iphoneEvidencePersistencePending =
+    draftStatus === "saving" ||
+    draftStatus === "loading" ||
+    (iphoneFactory &&
+      iphoneEvidenceCount > 0 &&
+      !iphoneClosurePersisted &&
+      draftStatus !== "error");
+  const iphoneEvidencePersistenceError = draftStatus === "error";
   const iphoneEnrollmentReady =
-    iphoneEnrollmentVerified || entregaSinVerificacionAutorizada;
+    iphoneClosureReadiness.enrollmentConfirmed;
+  const iphoneFinalizationReady =
+    iphoneClosureReadiness.complete &&
+    iphoneClosurePersisted &&
+    !iphoneEvidencePersistencePending &&
+    !iphoneEvidencePersistenceError;
   const iphoneDeliveryVerified =
     iphoneFactory && iphoneEnrollmentReady && iphoneRequiredEvidenceReady;
   const entregaValidada = iphoneFactory
@@ -4408,10 +4756,6 @@ export default function CreditFactoryConsole({
         deliveryValidation?.status?.ready ||
           entregaSinVerificacionAutorizada
       );
-  const missingIphoneRequiredEvidence = [
-    ...missingIphoneIdentityEvidence,
-    ...missingIphoneDeliveryEvidence,
-  ];
   const missingIphoneRequiredEvidenceLabels = missingIphoneRequiredEvidence.map((key) =>
     key === "cedulaFrente"
       ? "la foto frontal de la cedula"
@@ -4467,7 +4811,7 @@ export default function CreditFactoryConsole({
     ? iphoneDeliveryPendingMessage
     : "Valida primero la entrega con Zero Touch antes de finalizar este credito.";
   const deliveryRequirementReady = iphoneFactory
-    ? entregaValidada
+    ? iphoneFinalizationReady
     : FLEXIBLE_WIZARD_FOR_TESTING || entregaValidada;
   const ventaLista =
     stepClienteReady &&
@@ -5805,6 +6149,8 @@ export default function CreditFactoryConsole({
 
     setDeliveryValidation(null);
     setIphoneEnrollmentVerified(false);
+    setIphoneEnrollmentConfirmedAt("");
+    setPersistedIphoneClosureFingerprint("");
     setFotoEntregaDataUrl("");
     setFotoEntregaAudit(null);
     setFotoRemisionDataUrl("");
@@ -6987,6 +7333,7 @@ export default function CreditFactoryConsole({
     }
 
     if (wizardStep === 1 && !stepClienteReady) {
+      focusFirstInvalidClientField();
       setNotice({
         text: "Completa los datos del cliente antes de avanzar al equipo.",
         tone: "amber",
@@ -7109,6 +7456,7 @@ export default function CreditFactoryConsole({
     }
 
     if (wizardStep === 1 && !stepClienteReady) {
+      focusFirstInvalidClientField();
       setNotice({
         text: "Completa los datos del cliente antes de avanzar al equipo.",
         tone: "amber",
@@ -7503,6 +7851,8 @@ export default function CreditFactoryConsole({
     setFirmaSeguroDraftProcess(null);
     setDeliveryValidation(null);
     setIphoneEnrollmentVerified(false);
+    setIphoneEnrollmentConfirmedAt("");
+    setPersistedIphoneClosureFingerprint("");
     setDraftDevicePlatform(devicePlatform);
     veriffClientFormUnlockedRef.current = false;
     setVeriffValidation(null);
@@ -7541,6 +7891,7 @@ export default function CreditFactoryConsole({
       ? nextFactoryStep.id
       : wizardStep
   ) => {
+    const closureFingerprintAtSave = currentIphoneClosureFingerprint;
     const result = await requestJson<CreditDraftSingleResponse>(
       "/api/creditos/borradores",
       {
@@ -7568,6 +7919,7 @@ export default function CreditFactoryConsole({
       result.data.item.updatedAt ? dateTime(result.data.item.updatedAt) : ""
     );
     setDraftStatus("saved");
+    setPersistedIphoneClosureFingerprint(closureFingerprintAtSave);
 
     return result.data.item.id;
   };
@@ -7763,6 +8115,8 @@ export default function CreditFactoryConsole({
           clienteDepartamento,
           clienteCiudad,
           clienteGenero,
+          clienteEstadoCivil,
+          clienteEstrato,
           solicitudId: draftId,
           dataCreditoAssessmentId: dataCreditoCreditCreationMode
             ? dataCreditoAssessmentId
@@ -7781,6 +8135,8 @@ export default function CreditFactoryConsole({
           plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
           iphoneEnrolamientoVerificado:
             options.iphoneEnrolamientoVerificado ?? iphoneEnrollmentVerified,
+          iphoneEnrolamientoConfirmadoAt:
+            iphoneEnrollmentConfirmedAt || null,
           iphoneSelfieCedulaDataUrl,
           iphoneSelfieCedulaCapturedAt: iphoneSelfieCedulaAudit?.capturedAt || null,
           iphoneSelfieCedulaSource: iphoneSelfieCedulaAudit?.source || null,
@@ -8731,7 +9087,11 @@ export default function CreditFactoryConsole({
     setEquipoModelo(restoredEquipoModelo);
     setImei(restoredImei);
     setDraftDevicePlatform(restoredDevicePlatform);
-    setIphoneEnrollmentVerified(checked("iphoneEnrolamientoVerificado"));
+    const restoredEnrollmentVerified = checked("iphoneEnrolamientoVerificado");
+    const restoredEnrollmentConfirmedAt =
+      value("iphoneEnrolamientoConfirmadoAt");
+    setIphoneEnrollmentVerified(restoredEnrollmentVerified);
+    setIphoneEnrollmentConfirmedAt(restoredEnrollmentConfirmedAt);
     setIphoneSelfieCedulaDataUrl(value("iphoneSelfieCedulaDataUrl"));
     setIphoneSelfieCedulaAudit(
       value("iphoneSelfieCedulaCapturedAt") || value("iphoneSelfieCedulaSource")
@@ -8764,6 +9124,17 @@ export default function CreditFactoryConsole({
               value("fotoRemisionSource") === "upload" ? "upload" : "camera",
           }
         : null
+    );
+    setPersistedIphoneClosureFingerprint(
+      iphoneClosureFingerprint({
+        enrollmentVerified: restoredEnrollmentVerified,
+        enrollmentConfirmedAt: restoredEnrollmentConfirmedAt,
+        cedulaFrenteDataUrl: value("contratoCedulaFrenteDataUrl"),
+        cedulaRespaldoDataUrl: value("contratoCedulaRespaldoDataUrl"),
+        selfieCedulaDataUrl: value("iphoneSelfieCedulaDataUrl"),
+        fotoEntregaDataUrl: value("fotoEntregaDataUrl"),
+        fotoRemisionDataUrl: value("fotoRemisionDataUrl"),
+      })
     );
     setValorEquipoTotal(value("valorEquipoTotal"));
     setCuotaInicial(value("cuotaInicial"));
@@ -9002,6 +9373,7 @@ export default function CreditFactoryConsole({
 
     cancelPendingDraftAutosave();
     const saveGeneration = draftSaveGenerationRef.current;
+    const closureFingerprintAtSchedule = currentIphoneClosureFingerprint;
     let requestController: AbortController | null = null;
     const timerId = window.setTimeout(() => {
       draftSaveTimerRef.current = null;
@@ -9051,6 +9423,7 @@ export default function CreditFactoryConsole({
           );
           setDraftStatus("saved");
           setDraftErrorMessage("");
+          setPersistedIphoneClosureFingerprint(closureFingerprintAtSchedule);
         } catch (error) {
           if (
             requestController?.signal.aborted ||
@@ -9104,6 +9477,7 @@ export default function CreditFactoryConsole({
     draftHasMeaningfulData,
     draftId,
     factoryDraftPayload,
+    currentIphoneClosureFingerprint,
     nextFactoryStep.id,
     simulatorMode,
     wizardStep,
@@ -11254,9 +11628,17 @@ export default function CreditFactoryConsole({
                   )}
 
                   {showIdentityClientForm ? (
-                  <div id="fp-identity-client-details" className="fp-identity-client-form mt-5 rounded-[22px] border border-slate-200 bg-white p-4">
+                  <div
+                    id="fp-identity-client-details"
+                    className="fp-identity-client-form mt-5 space-y-3"
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                      }
+                    }}
+                  >
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
+                      <div className="px-1">
                         <p className="text-base font-black tracking-tight text-slate-950">
                           Ingresa los datos del cliente
                         </p>
@@ -11264,25 +11646,56 @@ export default function CreditFactoryConsole({
                           Todos los campos son obligatorios para preparar contrato, pagare e identidad comercial.
                         </p>
                       </div>
-                      {!canAdmin && initialSeller && (
-                        <div className="rounded-[18px] border border-[#d6e4e1] bg-white px-4 py-3 text-sm text-slate-600">
-                          <p className="font-semibold text-slate-950">Vendedor activo</p>
-                          <p className="mt-1">{initialSeller.nombre}</p>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-3">
+                        <span className="rounded-full border border-[#dfe7cf] bg-[#f6faed] px-3 py-1 text-xs font-bold text-[#557812]">
+                          {clientFormValidation.referencesComplete
+                            ? 3
+                            : clientFormValidation.personalComplete
+                              ? clientFormValidation.contactComplete
+                                ? 3
+                                : 2
+                              : 1}{" "}
+                          de 3
+                        </span>
+                        {!canAdmin && initialSeller && (
+                          <div className="rounded-[8px] border border-[#dfe3e5] bg-white px-4 py-2 text-sm text-slate-600">
+                            <p className="font-semibold text-slate-950">Vendedor activo</p>
+                            <p className="mt-1">{initialSeller.nombre}</p>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="mt-6 grid gap-4 md:grid-cols-2">
+                    <section className="rounded-[8px] border border-[#dfe3e5] bg-white p-5 shadow-[0_10px_28px_rgba(13,17,18,0.04)]">
+                      <div className="mb-5 flex items-start justify-between gap-4">
+                        <div className="flex items-start gap-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-[#f2f7e8] text-[#6f9d17]">
+                            <UserRound className="h-5 w-5" strokeWidth={1.8} />
+                          </span>
+                          <div>
+                            <h4 className="text-sm font-black text-[#171b1c]">1. Datos personales</h4>
+                            <p className="mt-1 text-xs text-slate-500">Informacion basica del cliente verificado.</p>
+                          </div>
+                        </div>
+                        {clientFormValidation.personalComplete ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#5f8d10]">
+                            <Check className="h-4 w-4" strokeWidth={2.2} /> Completo
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="grid gap-4 md:grid-cols-2">
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Primer nombre
                         </label>
                         <input
+                          {...clientFieldInputProps("clientePrimerNombre")}
                           value={clientePrimerNombre}
                           onChange={(event) => setClientePrimerNombre(event.target.value)}
                           placeholder="Ejemplo: Carlos"
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                         />
+                        {renderClientFieldError("clientePrimerNombre")}
                       </div>
 
                       <div>
@@ -11290,11 +11703,13 @@ export default function CreditFactoryConsole({
                           Primer apellido
                         </label>
                         <input
+                          {...clientFieldInputProps("clientePrimerApellido")}
                           value={clientePrimerApellido}
                           onChange={(event) => setClientePrimerApellido(event.target.value)}
                           placeholder="Ejemplo: Ochoa"
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                         />
+                        {renderClientFieldError("clientePrimerApellido")}
                       </div>
 
                       <div>
@@ -11302,6 +11717,7 @@ export default function CreditFactoryConsole({
                           Tipo de documento
                         </label>
                         <select
+                          {...clientFieldInputProps("clienteTipoDocumento")}
                           value={clienteTipoDocumento}
                           onChange={(event) => setClienteTipoDocumento(event.target.value)}
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
@@ -11312,6 +11728,7 @@ export default function CreditFactoryConsole({
                             </option>
                           ))}
                         </select>
+                        {renderClientFieldError("clienteTipoDocumento")}
                       </div>
 
                       <div>
@@ -11319,6 +11736,7 @@ export default function CreditFactoryConsole({
                           Numero de documento
                         </label>
                         <input
+                          {...clientFieldInputProps("clienteDocumento")}
                           value={clienteDocumento}
                           onChange={(event) =>
                             setClienteDocumento(event.target.value.replace(/\D/g, ""))
@@ -11326,6 +11744,7 @@ export default function CreditFactoryConsole({
                           placeholder="Ejemplo: 1234567890"
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                         />
+                        {renderClientFieldError("clienteDocumento")}
                       </div>
 
                       <div>
@@ -11333,11 +11752,13 @@ export default function CreditFactoryConsole({
                           Fecha de expedicion del documento
                         </label>
                         <input
+                          {...clientFieldInputProps("clienteFechaExpedicion")}
                           type="date"
                           value={clienteFechaExpedicion}
                           onChange={(event) => setClienteFechaExpedicion(event.target.value)}
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                         />
+                        {renderClientFieldError("clienteFechaExpedicion")}
                       </div>
 
                       <div>
@@ -11345,12 +11766,35 @@ export default function CreditFactoryConsole({
                           Fecha de nacimiento
                         </label>
                         <input
+                          {...clientFieldInputProps("clienteFechaNacimiento")}
                           type="date"
                           value={clienteFechaNacimiento}
                           onChange={(event) => setClienteFechaNacimiento(event.target.value)}
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                         />
+                        {renderClientFieldError("clienteFechaNacimiento")}
                       </div>
+                      </div>
+                    </section>
+                    {clientFormValidation.personalComplete ? (
+                      <section ref={clientContactBlockRef} className="rounded-[8px] border border-[#dfe3e5] bg-white p-5 shadow-[0_10px_28px_rgba(13,17,18,0.04)]">
+                        <div className="mb-5 flex items-start justify-between gap-4">
+                          <div className="flex items-start gap-3">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-[#f2f7e8] text-[#6f9d17]">
+                              <Building2 className="h-5 w-5" strokeWidth={1.8} />
+                            </span>
+                            <div>
+                              <h4 className="text-sm font-black text-[#171b1c]">2. Contacto y ubicacion</h4>
+                              <p className="mt-1 text-xs text-slate-500">Medios de contacto y ubicacion del cliente.</p>
+                            </div>
+                          </div>
+                          {clientFormValidation.contactComplete ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#5f8d10]">
+                              <Check className="h-4 w-4" strokeWidth={2.2} /> Completo
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-2">
 
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
@@ -11369,6 +11813,7 @@ export default function CreditFactoryConsole({
                             +57
                           </span>
                           <input
+                            {...clientFieldInputProps("clienteTelefono")}
                             type="tel"
                             inputMode="numeric"
                             maxLength={CREDIT_CONTACT_PHONE_LENGTH}
@@ -11384,8 +11829,10 @@ export default function CreditFactoryConsole({
                             }
                             placeholder="3001234567"
                             aria-invalid={
-                              Boolean(clienteTelefono) &&
-                              (!clienteTelefonoValido || clienteTelefonoRepetido)
+                              Boolean(clientFieldError("clienteTelefono")) ||
+                              (Boolean(clienteTelefono) &&
+                                (!clienteTelefonoValido ||
+                                  clienteTelefonoRepetido))
                             }
                             aria-describedby="cliente-telefono-help"
                             className="flex-1 px-4 py-3 text-base text-slate-900 outline-none"
@@ -11395,19 +11842,21 @@ export default function CreditFactoryConsole({
                           id="cliente-telefono-help"
                           className={[
                             "mt-2 text-xs",
-                            clienteTelefono &&
-                            (!clienteTelefonoValido || clienteTelefonoRepetido)
+                            clientFieldError("clienteTelefono") ||
+                            (clienteTelefono &&
+                              (!clienteTelefonoValido || clienteTelefonoRepetido))
                               ? "font-semibold text-red-600"
                               : "text-slate-500",
                           ].join(" ")}
                         >
-                          {clienteTelefonoRepetido
-                            ? "Este número ya está usado en una referencia."
-                            : clienteTelefono && !clienteTelefonoValido
-                              ? "Debe tener exactamente 10 dígitos (" +
-                                clienteTelefono.length +
-                                "/10)."
-                              : "10 dígitos. Debe ser diferente a los teléfonos de las referencias."}
+                          {clientFieldError("clienteTelefono") ||
+                            (clienteTelefonoRepetido
+                              ? "Este número ya está usado en una referencia."
+                              : clienteTelefono && !clienteTelefonoValido
+                                ? "Debe tener exactamente 10 dígitos (" +
+                                  clienteTelefono.length +
+                                  "/10)."
+                                : "10 dígitos. Debe ser diferente a los teléfonos de las referencias.")}
                         </p>
                       </div>
 
@@ -11416,12 +11865,14 @@ export default function CreditFactoryConsole({
                           Correo electronico
                         </label>
                         <input
+                          {...clientFieldInputProps("clienteCorreo")}
                           type="email"
                           value={clienteCorreo}
                           onChange={(event) => setClienteCorreo(event.target.value)}
                           placeholder="Ejemplo: cliente@gmail.com"
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                         />
+                        {renderClientFieldError("clienteCorreo")}
                       </div>
 
                       <div>
@@ -11429,6 +11880,7 @@ export default function CreditFactoryConsole({
                           En qué departamento vive el cliente
                         </label>
                         <select
+                          {...clientFieldInputProps("clienteDepartamento")}
                           value={clienteDepartamento}
                           onChange={(event) => {
                             setClienteDepartamento(event.target.value);
@@ -11443,6 +11895,7 @@ export default function CreditFactoryConsole({
                             </option>
                           ))}
                         </select>
+                        {renderClientFieldError("clienteDepartamento")}
                       </div>
 
                       <div>
@@ -11450,6 +11903,7 @@ export default function CreditFactoryConsole({
                           En qué ciudad vive el cliente
                         </label>
                         <input
+                          {...clientFieldInputProps("clienteCiudad")}
                           type="text"
                           list="cliente-ciudad-options"
                           value={clienteCiudad}
@@ -11474,6 +11928,7 @@ export default function CreditFactoryConsole({
                             Puedes seleccionar una sugerencia o escribir cualquier municipio.
                           </p>
                         ) : null}
+                        {renderClientFieldError("clienteCiudad")}
                       </div>
 
                       <div className="grid gap-4 md:col-span-2 md:grid-cols-3">
@@ -11482,6 +11937,7 @@ export default function CreditFactoryConsole({
                             Genero
                           </label>
                           <select
+                            {...clientFieldInputProps("clienteGenero")}
                             value={clienteGenero}
                             onChange={(event) => setClienteGenero(event.target.value)}
                             className="w-full rounded-2xl border border-[#cbd2d7] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#789d17] focus:ring-2 focus:ring-[#e9f4cb]"
@@ -11493,6 +11949,7 @@ export default function CreditFactoryConsole({
                               </option>
                             ))}
                           </select>
+                          {renderClientFieldError("clienteGenero")}
                         </div>
 
                         <div>
@@ -11500,6 +11957,7 @@ export default function CreditFactoryConsole({
                             Estado civil
                           </label>
                           <select
+                            {...clientFieldInputProps("clienteEstadoCivil")}
                             value={clienteEstadoCivil}
                             onChange={(event) =>
                               setClienteEstadoCivil(event.target.value)
@@ -11513,6 +11971,7 @@ export default function CreditFactoryConsole({
                               </option>
                             ))}
                           </select>
+                          {renderClientFieldError("clienteEstadoCivil")}
                         </div>
 
                         <div>
@@ -11520,6 +11979,7 @@ export default function CreditFactoryConsole({
                             Estrato
                           </label>
                           <select
+                            {...clientFieldInputProps("clienteEstrato")}
                             value={clienteEstrato}
                             onChange={(event) => setClienteEstrato(event.target.value)}
                             className="w-full rounded-2xl border border-[#cbd2d7] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#789d17] focus:ring-2 focus:ring-[#e9f4cb]"
@@ -11531,6 +11991,7 @@ export default function CreditFactoryConsole({
                               </option>
                             ))}
                           </select>
+                          {renderClientFieldError("clienteEstrato")}
                         </div>
                       </div>
 
@@ -11539,12 +12000,44 @@ export default function CreditFactoryConsole({
                           Direccion completa
                         </label>
                         <input
+                          {...clientFieldInputProps("clienteDireccion")}
                           value={clienteDireccion}
                           onChange={(event) => setClienteDireccion(event.target.value)}
                           placeholder="Barrio, carrera, calle, numero y complemento"
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                         />
-                      </div>
+                        {renderClientFieldError("clienteDireccion")}
+                        </div>
+                        </div>
+                      </section>
+                    ) : (
+                      <section className="flex min-h-24 items-center gap-4 rounded-[8px] border border-dashed border-[#d7dcde] bg-[#f4f5f3] px-5 py-4 opacity-70">
+                        <LockKeyhole className="h-5 w-5 shrink-0 text-slate-500" strokeWidth={1.8} />
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-700">2. Contacto y ubicacion</h4>
+                          <p className="mt-1 text-xs text-slate-500">Complete el bloque anterior para continuar.</p>
+                        </div>
+                      </section>
+                    )}
+
+                    {clientFormValidation.contactComplete ? (
+                      <section ref={clientReferencesBlockRef} className="rounded-[8px] border border-[#dfe3e5] bg-white p-5 shadow-[0_10px_28px_rgba(13,17,18,0.04)]">
+                        <div className="mb-5 flex items-start justify-between gap-4">
+                          <div className="flex items-start gap-3">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-[#f2f7e8] text-[#6f9d17]">
+                              <UserRound className="h-5 w-5" strokeWidth={1.8} />
+                            </span>
+                            <div>
+                              <h4 className="text-sm font-black text-[#171b1c]">3. Referencias familiares obligatorias</h4>
+                              <p className="mt-1 text-xs text-slate-500">Dos contactos requeridos para completar la validacion comercial.</p>
+                            </div>
+                          </div>
+                          {clientFormValidation.referencesComplete ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#5f8d10]">
+                              <Check className="h-4 w-4" strokeWidth={2.2} /> Completo
+                            </span>
+                          ) : null}
+                        </div>
 
                       <div className="md:col-span-2">
                         <div className="rounded-[24px] border border-[#c3d8dc] bg-white/80 p-4">
@@ -11569,6 +12062,7 @@ export default function CreditFactoryConsole({
                               </p>
                               <div className="mt-3 grid gap-3">
                                 <input
+                                  {...clientFieldInputProps("referenciaFamiliar1Nombre")}
                                   value={referenciaFamiliar1Nombre}
                                   onChange={(event) =>
                                     setReferenciaFamiliar1Nombre(event.target.value)
@@ -11576,7 +12070,9 @@ export default function CreditFactoryConsole({
                                   placeholder="Nombre completo"
                                   className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                                 />
+                                {renderClientFieldError("referenciaFamiliar1Nombre")}
                                 <input
+                                  {...clientFieldInputProps("referenciaFamiliar1Parentesco")}
                                   value={referenciaFamiliar1Parentesco}
                                   onChange={(event) =>
                                     setReferenciaFamiliar1Parentesco(event.target.value)
@@ -11584,7 +12080,9 @@ export default function CreditFactoryConsole({
                                   placeholder="Parentesco"
                                   className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                                 />
+                                {renderClientFieldError("referenciaFamiliar1Parentesco")}
                                 <input
+                                  {...clientFieldInputProps("referenciaFamiliar1Telefono")}
                                   type="tel"
                                   inputMode="numeric"
                                   maxLength={CREDIT_CONTACT_PHONE_LENGTH}
@@ -11602,9 +12100,10 @@ export default function CreditFactoryConsole({
                                   }
                                   placeholder="Teléfono de 10 dígitos"
                                   aria-invalid={
-                                    Boolean(referenciaFamiliar1Telefono) &&
-                                    (!referenciaFamiliar1TelefonoValido ||
-                                      referenciaFamiliar1TelefonoRepetido)
+                                    Boolean(clientFieldError("referenciaFamiliar1Telefono")) ||
+                                    (Boolean(referenciaFamiliar1Telefono) &&
+                                      (!referenciaFamiliar1TelefonoValido ||
+                                        referenciaFamiliar1TelefonoRepetido))
                                   }
                                   aria-describedby="referencia-1-telefono-help"
                                   className={[
@@ -11620,21 +12119,23 @@ export default function CreditFactoryConsole({
                                   id="referencia-1-telefono-help"
                                   className={[
                                     "text-xs",
-                                    referenciaFamiliar1Telefono &&
-                                    (!referenciaFamiliar1TelefonoValido ||
-                                      referenciaFamiliar1TelefonoRepetido)
+                                    clientFieldError("referenciaFamiliar1Telefono") ||
+                                    (referenciaFamiliar1Telefono &&
+                                      (!referenciaFamiliar1TelefonoValido ||
+                                        referenciaFamiliar1TelefonoRepetido))
                                       ? "font-semibold text-red-600"
                                       : "text-slate-500",
                                   ].join(" ")}
                                 >
-                                  {referenciaFamiliar1TelefonoRepetido
-                                    ? "Este número ya está usado en otro campo."
-                                    : referenciaFamiliar1Telefono &&
-                                        !referenciaFamiliar1TelefonoValido
-                                      ? "Debe tener exactamente 10 dígitos (" +
-                                        referenciaFamiliar1Telefono.length +
-                                        "/10)."
-                                      : "10 dígitos y diferente a los otros dos números."}
+                                  {clientFieldError("referenciaFamiliar1Telefono") ||
+                                    (referenciaFamiliar1TelefonoRepetido
+                                      ? "Este número ya está usado en otro campo."
+                                      : referenciaFamiliar1Telefono &&
+                                          !referenciaFamiliar1TelefonoValido
+                                        ? "Debe tener exactamente 10 dígitos (" +
+                                          referenciaFamiliar1Telefono.length +
+                                          "/10)."
+                                        : "10 dígitos y diferente a los otros dos números.")}
                                 </p>
                               </div>
                             </div>
@@ -11645,6 +12146,7 @@ export default function CreditFactoryConsole({
                               </p>
                               <div className="mt-3 grid gap-3">
                                 <input
+                                  {...clientFieldInputProps("referenciaFamiliar2Nombre")}
                                   value={referenciaFamiliar2Nombre}
                                   onChange={(event) =>
                                     setReferenciaFamiliar2Nombre(event.target.value)
@@ -11652,7 +12154,9 @@ export default function CreditFactoryConsole({
                                   placeholder="Nombre completo"
                                   className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                                 />
+                                {renderClientFieldError("referenciaFamiliar2Nombre")}
                                 <input
+                                  {...clientFieldInputProps("referenciaFamiliar2Parentesco")}
                                   value={referenciaFamiliar2Parentesco}
                                   onChange={(event) =>
                                     setReferenciaFamiliar2Parentesco(event.target.value)
@@ -11660,7 +12164,9 @@ export default function CreditFactoryConsole({
                                   placeholder="Parentesco"
                                   className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                                 />
+                                {renderClientFieldError("referenciaFamiliar2Parentesco")}
                                 <input
+                                  {...clientFieldInputProps("referenciaFamiliar2Telefono")}
                                   type="tel"
                                   inputMode="numeric"
                                   maxLength={CREDIT_CONTACT_PHONE_LENGTH}
@@ -11678,9 +12184,10 @@ export default function CreditFactoryConsole({
                                   }
                                   placeholder="Teléfono de 10 dígitos"
                                   aria-invalid={
-                                    Boolean(referenciaFamiliar2Telefono) &&
-                                    (!referenciaFamiliar2TelefonoValido ||
-                                      referenciaFamiliar2TelefonoRepetido)
+                                    Boolean(clientFieldError("referenciaFamiliar2Telefono")) ||
+                                    (Boolean(referenciaFamiliar2Telefono) &&
+                                      (!referenciaFamiliar2TelefonoValido ||
+                                        referenciaFamiliar2TelefonoRepetido))
                                   }
                                   aria-describedby="referencia-2-telefono-help"
                                   className={[
@@ -11696,28 +12203,39 @@ export default function CreditFactoryConsole({
                                   id="referencia-2-telefono-help"
                                   className={[
                                     "text-xs",
-                                    referenciaFamiliar2Telefono &&
-                                    (!referenciaFamiliar2TelefonoValido ||
-                                      referenciaFamiliar2TelefonoRepetido)
+                                    clientFieldError("referenciaFamiliar2Telefono") ||
+                                    (referenciaFamiliar2Telefono &&
+                                      (!referenciaFamiliar2TelefonoValido ||
+                                        referenciaFamiliar2TelefonoRepetido))
                                       ? "font-semibold text-red-600"
                                       : "text-slate-500",
                                   ].join(" ")}
                                 >
-                                  {referenciaFamiliar2TelefonoRepetido
-                                    ? "Este número ya está usado en otro campo."
-                                    : referenciaFamiliar2Telefono &&
-                                        !referenciaFamiliar2TelefonoValido
-                                      ? "Debe tener exactamente 10 dígitos (" +
-                                        referenciaFamiliar2Telefono.length +
-                                        "/10)."
-                                      : "10 dígitos y diferente a los otros dos números."}
+                                  {clientFieldError("referenciaFamiliar2Telefono") ||
+                                    (referenciaFamiliar2TelefonoRepetido
+                                      ? "Este número ya está usado en otro campo."
+                                      : referenciaFamiliar2Telefono &&
+                                          !referenciaFamiliar2TelefonoValido
+                                        ? "Debe tener exactamente 10 dígitos (" +
+                                          referenciaFamiliar2Telefono.length +
+                                          "/10)."
+                                        : "10 dígitos y diferente a los otros dos números.")}
                                 </p>
                               </div>
                             </div>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    </section>
+                    ) : (
+                      <section className="flex min-h-24 items-center gap-4 rounded-[8px] border border-dashed border-[#d7dcde] bg-[#f4f5f3] px-5 py-4 opacity-70">
+                        <LockKeyhole className="h-5 w-5 shrink-0 text-slate-500" strokeWidth={1.8} />
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-700">3. Referencias familiares obligatorias</h4>
+                          <p className="mt-1 text-xs text-slate-500">Complete el bloque anterior para continuar.</p>
+                        </div>
+                      </section>
+                    )}
                   </div>
                   ) : (
                     null
@@ -12201,38 +12719,40 @@ export default function CreditFactoryConsole({
                   ) : null}
 
                   {activeDataCreditoOffer && !simulatorMode ? (
-                    <div className="mt-5 flex flex-wrap items-center gap-2 rounded-[20px] border border-[#c9df91] bg-[#f4f9e8] px-4 py-3 text-sm text-slate-700">
-                      <span className="font-black text-slate-950">
-                        Oferta DataCrédito
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span>
-                        Inicial mínima {formatPercent(initialPaymentPercentage)}
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span>
-                        Crédito máximo{" "}
-                        {currency(dataCreditoEffectiveMaxFinancedAmount)}
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span>
-                        Plazo máximo {plazoMaximoCuotas} cuotas
-                      </span>
-                      {canSeeInternalPricing &&
-                      policySummaryMaxInstallmentValue > 0 ? (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <span>
-                            Tope por cuota{" "}
-                            {currency(policySummaryMaxInstallmentValue)}
+                    <div className="mt-5 flex flex-col gap-4 rounded-lg border border-slate-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[#f1f7df] text-[#6f9414]" aria-hidden="true">
+                          <ShieldCheck className="h-6 w-6" strokeWidth={1.8} />
+                        </span>
+                        <strong className="text-base text-slate-950">
+                          Oferta DataCrédito aprobada
+                        </strong>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-xs font-semibold text-[#55710f]">
+                        <span className="rounded-md bg-[#f1f7df] px-3 py-2">
+                          Inicial mínima {formatPercent(initialPaymentPercentage)}
+                        </span>
+                        <span className="rounded-md bg-[#f1f7df] px-3 py-2">
+                          Crédito máximo {currency(dataCreditoEffectiveMaxFinancedAmount)}
+                        </span>
+                        <span className="rounded-md bg-[#f1f7df] px-3 py-2">
+                          Hasta {plazoMaximoCuotas} cuotas
+                        </span>
+                        {canSeeInternalPricing && policySummaryMaxInstallmentValue > 0 ? (
+                          <span className="rounded-md bg-[#f1f7df] px-3 py-2">
+                            Tope por cuota {currency(policySummaryMaxInstallmentValue)}
                           </span>
-                        </>
-                      ) : null}
+                        ) : null}
+                      </div>
                     </div>
                   ) : null}
 
-                  <div className="fp-simulator-layout mt-6 grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-                    <div className="fp-simulator-form grid gap-4 md:grid-cols-2">
+                  <div className="fp-simulator-layout mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.85fr)_minmax(320px,1fr)]">
+                    <div className="fp-simulator-form space-y-4">
+                      <section className="grid gap-4 rounded-lg border border-slate-200 bg-white p-5 md:grid-cols-2">
+                        <div className="md:col-span-2">
+                          <h4 className="text-lg font-black text-slate-950">1. Selección del equipo</h4>
+                        </div>
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Marca
@@ -12380,7 +12900,12 @@ export default function CreditFactoryConsole({
                           </p>
                         )}
                       </div>
+                      </section>
 
+                      <section className="grid gap-4 rounded-lg border border-slate-200 bg-white p-5 md:grid-cols-2">
+                        <div className="md:col-span-2">
+                          <h4 className="text-lg font-black text-slate-950">2. Configuración del plan</h4>
+                        </div>
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Cuota inicial
@@ -12487,127 +13012,57 @@ export default function CreditFactoryConsole({
                             : "definida por la política."}
                         </p>
                       </div>
+                      </section>
                     </div>
 
-                    <div className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Equipo
-                          </p>
-                          <p className="mt-2 text-lg font-black text-slate-950">
-                            {referenciaEquipo || "Pendiente"}
-                          </p>
-                        </div>
-                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Valor del equipo
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {currency(valorTotalEquipoNumero)}
-                          </p>
-                        </div>
-                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Inicial
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {currency(cuotaInicialNumero)}
-                          </p>
-                          <p className="mt-1 text-xs font-medium text-slate-500">
-                            {simulatorMode
-                              ? `Minimo ${currency(cuotaInicialMinimaNumero)}.`
-                              : activeDataCreditoOffer
-                              ? dataCreditoFinancingExcess > 0
-                                ? `Incluye excedente sobre el tope efectivo ${currency(dataCreditoFinancingExcess)}.`
-                                : `Minimo ${currency(cuotaInicialMinimaNumero)}.`
-                              : iphoneFactory && iphoneFinancedExcess > 0
-                                ? `Incluye excedente iPhone ${currency(iphoneFinancedExcess)}.`
-                                : `Minimo ${currency(cuotaInicialMinimaNumero)}.`}
-                          </p>
-                        </div>
-                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Valor credito
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {currency(saldoBaseFinanciado)}
-                          </p>
-                          <p className="mt-1 text-xs font-medium text-slate-500">
-                            {simulatorMode
-                              ? "Valor equipo - inicial."
-                              : activeDataCreditoOffer
-                              ? `Tope efectivo ${currency(dataCreditoEffectiveMaxFinancedAmount)}.`
-                              : iphoneFactory
-                                ? `Maximo base financiada ${currency(iphoneMaxFinancedAmount)}.`
-                                : "Valor equipo - inicial."}
-                          </p>
-                        </div>
-                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Plazo
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {plazoMesesNumero || 0}
-                          </p>
-                          <p className="mt-1 text-xs font-medium text-slate-500">
-                            cuotas
-                          </p>
-                        </div>
-                        {canSeeInternalPricing ? (
-                          <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                              Total a pagar
-                            </p>
-                            <p className="mt-2 text-xl font-black text-slate-950">
-                              {currency(saldoFinanciado)}
-                            </p>
-                            <p className="mt-1 text-xs font-medium text-slate-500">
-                              Valor final distribuido en cuotas.
-                            </p>
+                    <div className="space-y-4 xl:sticky xl:top-24 xl:self-start">
+                      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
+                        <h4 className="text-lg font-black text-slate-950">Resumen del crédito</h4>
+                        <div className="mt-5 flex items-center gap-4 border-b border-slate-200 pb-5">
+                          <span className="inline-flex h-20 w-14 shrink-0 items-center justify-center rounded-md bg-[#f2f3ef] text-slate-800" aria-hidden="true">
+                            <Smartphone className="h-8 w-8" strokeWidth={1.6} />
+                          </span>
+                          <div className="min-w-0">
+                            <strong className="block truncate text-base text-slate-950">{referenciaEquipo || "Equipo sin seleccionar"}</strong>
+                            <span className="mt-1 block text-xs font-semibold uppercase text-slate-500">{equipoMarca || "Pendiente"}</span>
                           </div>
-                        ) : null}
-                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Frecuencia
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {frecuenciaPagoLabel}
-                          </p>
                         </div>
-                        <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Cuota comercial
-                          </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {currency(valorCuota)}
-                          </p>
-                          {canSeeInternalPricing && amortizationPlan ? (
-                            <div className="mt-2 space-y-1 text-xs font-semibold text-slate-500">
-                              <p>Exacta: {exactCurrency(amortizationPlan.cuotaTotal)}</p>
-                              <p>
-                                Credito {exactCurrency(amortizationPlan.cuotaCredito)} ·
-                                Fianza {exactCurrency(amortizationPlan.cuotaFianza)} ·
-                                Seguro {exactCurrency(amortizationPlan.cuotaSeguro)}
-                              </p>
+
+                        <dl className="mt-5 space-y-3 text-sm">
+                          {[
+                            ["Valor del equipo", currency(valorTotalEquipoNumero)],
+                            ["Inicial", currency(cuotaInicialNumero)],
+                            ["Valor financiado", currency(saldoBaseFinanciado)],
+                            ["Plazo", `${plazoMesesNumero || 0} cuotas`],
+                            ["Frecuencia", frecuenciaPagoLabel],
+                            ...(canSeeInternalPricing ? [["Total a pagar", currency(saldoFinanciado)]] : []),
+                          ].map(([label, value]) => (
+                            <div key={label} className="flex items-start justify-between gap-4 border-b border-slate-100 pb-3 last:border-0">
+                              <dt className="text-slate-500">{label}</dt>
+                              <dd className="text-right font-semibold text-slate-950">{value}</dd>
                             </div>
-                          ) : null}
-                          {canSeeInternalPricing && iphoneFactory ? (
-                            <p
-                              className={[
-                                "mt-1 text-xs font-bold",
-                                iphoneInstallmentLimitExceeded
-                                  ? "text-red-600"
-                                  : "text-slate-500",
-                              ].join(" ")}
-                            >
-                              Tope iPhone {currency(iphoneMaxInstallmentValue)}
+                          ))}
+                        </dl>
+
+                        <div className="mt-5 rounded-lg bg-[#161a1b] p-5 text-white">
+                          <p className="text-xs font-semibold text-slate-300">Cuota {frecuenciaPagoLabel.toLowerCase()}</p>
+                          <strong className="mt-2 block text-3xl font-black">
+                            {stepEquipoReady ? currency(valorCuota) : "-"}
+                          </strong>
+                          <p className="mt-2 text-xs leading-5 text-slate-300">
+                            {stepEquipoReady
+                              ? "Cálculo actualizado con los datos actuales del plan."
+                              : "Complete los datos para calcular"}
+                          </p>
+                          {stepEquipoReady && canSeeInternalPricing && amortizationPlan ? (
+                            <p className="mt-3 border-t border-white/15 pt-3 text-xs text-slate-300">
+                              Cuota exacta {exactCurrency(amortizationPlan.cuotaTotal)}
                             </p>
                           ) : null}
                         </div>
-                      </div>
+                      </section>
                       {iphoneInstallmentLimitExceeded ? (
-                        <div className="rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-700">
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-700">
                           {visibleIphoneInstallmentLimitMessage}
                         </div>
                       ) : null}
@@ -13169,10 +13624,10 @@ export default function CreditFactoryConsole({
                         {hideIdentityWizardStep ? "Paso 3" : "Paso 4"}
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        FirmaSeguro
+                        Firma de documentos
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Envia un PDF legal consolidado por el canal habilitado en FirmaSeguro.
+                        Prepara el expediente y envíalo al cliente para firmar.
                       </p>
                     </div>
                     <div
@@ -13191,40 +13646,62 @@ export default function CreditFactoryConsole({
                           ? "Firma exitosa"
                           : firmaSeguroProcessSent
                             ? "Esperando firma"
-                            : "Pendiente envio"}
+                            : "Pendiente de envío"}
                     </div>
                   </div>
 
-                  <div className="fp-firma-banner">
-                    <span className="fp-firma-banner-icon" aria-hidden="true">
-                      <ShieldCheck className="h-7 w-7" strokeWidth={1.8} />
-                    </span>
-                    <div>
-                      <p>Canal de firma certificado</p>
-                      <strong>Un expediente, una firma y trazabilidad completa</strong>
-                    </div>
-                    <span className="fp-firma-banner-state">
-                      {firmaSeguroProcessSigned
-                        ? "Firmado"
-                        : firmaSeguroProcessSent
-                          ? "En seguimiento"
-                          : "Listo para preparar"}
-                    </span>
+                  <div className="mt-6 grid gap-3 border-y border-slate-200 py-5 md:grid-cols-3">
+                    {[
+                      {
+                        number: 1,
+                        label: "Preparar expediente",
+                        active: !firmaSeguroProcessSent,
+                        complete: firmaSeguroProcessSent,
+                      },
+                      {
+                        number: 2,
+                        label: "Cliente firma",
+                        active: firmaSeguroProcessSent && !firmaSeguroProcessSigned,
+                        complete: firmaSeguroProcessSigned,
+                      },
+                      {
+                        number: 3,
+                        label: "Firma confirmada",
+                        active: firmaSeguroProcessSigned,
+                        complete: firmaSeguroProcessSigned,
+                      },
+                    ].map((stage) => (
+                      <div key={stage.label} className="flex items-center gap-3">
+                        <span
+                          className={[
+                            "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-sm font-black",
+                            stage.complete
+                              ? "border-[#85ad1c] bg-[#f1f7df] text-[#638510]"
+                              : stage.active
+                                ? "border-[#85ad1c] bg-white text-[#638510]"
+                                : "border-slate-200 bg-white text-slate-400",
+                          ].join(" ")}
+                        >
+                          {stage.complete ? <Check className="h-5 w-5" strokeWidth={2.4} /> : stage.number}
+                        </span>
+                        <strong className={stage.active || stage.complete ? "text-slate-950" : "text-slate-400"}>{stage.label}</strong>
+                      </div>
+                    ))}
                   </div>
 
-                  <div className="fp-firma-layout mt-6 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                    <section className="fp-firma-main rounded-[24px] border border-emerald-200 bg-[#f2fbf7] px-5 py-5">
+                  <div className="fp-firma-layout mt-6 grid gap-4 xl:grid-cols-[1.45fr_0.75fr]">
+                    <section className="fp-firma-main rounded-lg border border-slate-200 bg-white px-6 py-6">
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                         <div>
-                          <p className="fp-section-eyebrow text-[11px] font-semibold uppercase tracking-[0.18em] text-[#0f766e]">
-                            FirmaSeguro
+                          <p className="fp-section-eyebrow text-[11px] font-semibold uppercase tracking-[0.18em] text-[#638510]">
+                            Expediente preparado
                           </p>
                           <h4 className="mt-2 flex items-center gap-2 text-xl font-black tracking-tight text-slate-950">
-                            <Send className="h-5 w-5 text-[#0e7a6f]" strokeWidth={2} />
-                            Preparar y enviar expediente
+                            <FileText className="h-5 w-5 text-[#638510]" strokeWidth={1.9} />
+                            Expediente listo
                           </h4>
                           <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
-                            Se creara un expediente de borrador con los documentos legales. El credito solo se inscribe cuando FirmaSeguro reporte firma exitosa y valides la entrega.
+                            Revisa los datos principales y envía el paquete documental por el canal certificado de FirmaSeguro.
                           </p>
                         </div>
                         {firmaSeguroDraftFolio ? (
@@ -13255,7 +13732,7 @@ export default function CreditFactoryConsole({
                         ].map(([label, value]) => (
                           <div
                             key={label}
-                            className="rounded-2xl border border-emerald-100 bg-white/80 px-4 py-3"
+                            className="rounded-md border border-slate-200 bg-[#fafaf8] px-4 py-3"
                           >
                             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                               {label}
@@ -13271,24 +13748,20 @@ export default function CreditFactoryConsole({
                         {[
                           { label: "Cliente", ready: stepClienteReady },
                           { label: "Equipo", ready: stepEquipoReady },
-                          ...(!hideIdentityWizardStep
-                            ? [{ label: "Identidad", ready: stepContratoReady }]
-                            : []),
                         ].map(({ label, ready }) => (
                           <div
                             key={label}
                             className={[
-                              "rounded-2xl border px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em]",
+                              "flex items-center gap-2 rounded-md border px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em]",
                               ready
-                                ? "border-emerald-200 bg-white text-emerald-700"
-                                : "border-amber-200 bg-amber-50 text-amber-700",
+                                ? "border-[#d7e7ad] bg-[#f6f9ed] text-[#638510]"
+                                : "border-slate-200 bg-[#f7f7f4] text-slate-500",
                             ].join(" ")}
                           >
-                            <span>{label}</span>
                             <strong>
                               {ready ? <Check className="h-4 w-4" strokeWidth={2.5} /> : null}
-                              {ready ? "Listo" : "Pendiente"}
                             </strong>
+                            <span>{label} {ready ? "confirmado" : "pendiente"}</span>
                           </div>
                         ))}
                       </div>
@@ -13301,7 +13774,7 @@ export default function CreditFactoryConsole({
                           creating ||
                           firmaSeguroSubmitting
                         }
-                        className="fp-firma-primary mt-5 w-full rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
+                        className="fp-firma-primary mt-5 w-full rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold uppercase text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         <Send className="h-4 w-4" strokeWidth={2} />
                         {creating || firmaSeguroSubmitting
@@ -13316,7 +13789,7 @@ export default function CreditFactoryConsole({
                           type="button"
                           onClick={() => void refreshFirmaSeguroDraftProcess()}
                           disabled={firmaSeguroRefreshing || firmaSeguroSubmitting}
-                          className="fp-firma-secondary mt-3 w-full rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa] disabled:cursor-not-allowed disabled:opacity-70 sm:ml-3 sm:w-auto"
+                          className="fp-firma-secondary mt-3 w-full rounded-md border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f7f7f4] disabled:cursor-not-allowed disabled:opacity-70"
                         >
                           <RefreshCw className="h-4 w-4" strokeWidth={2} />
                           {firmaSeguroRefreshing
@@ -13340,23 +13813,16 @@ export default function CreditFactoryConsole({
                       ) : null}
                     </section>
 
-                    <section className="fp-firma-docs rounded-[24px] border border-[#d9e7ea] bg-[#f8fbfd] px-5 py-5">
+                    <section className="fp-firma-docs rounded-lg border border-slate-200 bg-[#fafaf8] px-5 py-5">
                       <div className="fp-firma-docs-heading">
-                        <span aria-hidden="true"><FileText className="h-5 w-5" strokeWidth={1.9} /></span>
                         <div>
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                            Paquete documental unico
-                          </p>
-                          <h4>Contenido del expediente</h4>
+                          <h4>Documentos incluidos</h4>
                         </div>
                       </div>
-                      <div className="fp-firma-bundle-summary mt-4 rounded-2xl border border-emerald-200 bg-white px-4 py-4">
-                        <strong>1</strong>
+                      <div className="fp-firma-bundle-summary mt-4 rounded-md border border-slate-200 bg-white px-4 py-4">
+                        <strong>5</strong>
                         <div>
-                          <p className="text-sm font-black text-slate-950">PDF consolidado para firmar</p>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                          FirmaSeguro recibira un solo archivo con todos los soportes integrados.
-                        </p>
+                          <p className="text-sm font-black text-slate-950">documentos</p>
                         </div>
                       </div>
                       <div className="fp-firma-doc-list mt-4 space-y-3 text-sm font-semibold text-slate-700">
@@ -13369,14 +13835,14 @@ export default function CreditFactoryConsole({
                         ].map((item) => (
                           <div
                             key={item}
-                            className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                            className="flex items-center gap-3 border-b border-slate-200 px-1 py-3 last:border-0"
                           >
-                            <Check className="h-4 w-4" strokeWidth={2.5} />
+                            <Check className="h-4 w-4 text-[#6f9414]" strokeWidth={2.5} />
                             <span>{item}</span>
                           </div>
                         ))}
                       </div>
-                      <div className="fp-firma-doc-note mt-5 rounded-[20px] border border-dashed border-emerald-200 bg-white px-4 py-4 text-sm leading-6 text-slate-600">
+                      <div className="fp-firma-doc-note mt-5 border-t border-slate-200 pt-4 text-sm leading-6 text-slate-600">
                         El cliente firma desde FirmaSeguro. Luego validas la entrega del equipo en el paso 5.
                       </div>
                     </section>
@@ -13553,15 +14019,13 @@ export default function CreditFactoryConsole({
                         {hideIdentityWizardStep ? "Paso 4" : "Paso 5"}
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        {iphoneFactory
-                          ? "Verificacion de enrolamiento"
-                          : "Validacion del equipo"}
+                        {iphoneFactory ? "Verificacion y entrega" : "Validacion del equipo"}
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {entregaSinVerificacionAutorizada
                           ? "Esta cedula tiene autorizacion administrativa para cerrar la entrega sin validar el dispositivo."
                           : iphoneFactory
-                            ? "El cierre queda reservado para confirmar manualmente que el iPhone ya quedo enrolado."
+                            ? "Confirma el enrolamiento y completa las evidencias obligatorias."
                             : "El cierre queda reservado para validar la entregabilidad del dispositivo con Zero Touch antes de cerrar la entrega."}
                       </p>
                     </div>
@@ -13576,81 +14040,92 @@ export default function CreditFactoryConsole({
                       {entregaValidada
                         ? "Lista para cierre"
                         : iphoneFactory
-                          ? "Pendiente enrolamiento"
+                          ? "Pendiente"
                           : "Pendiente validacion"}
                     </div>
                   </div>
 
-                  <section className="fp-delivery-summary">
-                    <div className="fp-delivery-summary-heading">
-                      <span aria-hidden="true"><Smartphone className="h-5 w-5" strokeWidth={1.9} /></span>
-                      <div>
-                        <p>Resumen del equipo</p>
-                        <strong>Datos que se validaran antes de entregar</strong>
+                  <section className="mt-6 rounded-lg border border-slate-200 bg-white px-5 py-4">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-4">
+                        <span className="inline-flex h-12 w-10 shrink-0 items-center justify-center rounded-md bg-[#161a1b] text-white" aria-hidden="true">
+                          <Smartphone className="h-6 w-6" strokeWidth={1.7} />
+                        </span>
+                        <div className="min-w-0">
+                          <strong className="block truncate text-base text-slate-950">{referenciaEquipo || "Equipo sin seleccionar"}</strong>
+                          <p className="mt-1 truncate text-sm text-slate-600">
+                            {clienteNombre || "Cliente sin registrar"} · Doc. .... {String(clienteDocumento || "").slice(-4) || "----"}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                    <div className="fp-delivery-summary-grid">
-                      <div><span>Cliente</span><strong>{clienteNombre || "-"}</strong></div>
-                      <div><span>Documento</span><strong>{clienteDocumento || "-"}</strong></div>
-                      <div><span>Equipo</span><strong>{referenciaEquipo || "-"}</strong></div>
-                      <div><span>IMEI</span><strong>{imei || "-"}</strong></div>
-                      {canSeeInternalPricing ? (
-                        <div><span>Total financiado</span><strong>{currency(saldoFinanciado)}</strong></div>
-                      ) : null}
-                      <div><span>Cuota comercial</span><strong>{currency(valorCuota)}</strong></div>
-                      {canSeeInternalPricing ? (
-                        <div><span>Cuota exacta para recaudo</span><strong>{exactCurrency(valorCuotaExacta)}</strong></div>
-                      ) : null}
+                      <details className="group shrink-0 text-sm">
+                        <summary className="min-h-11 cursor-pointer list-none content-center font-semibold text-slate-950 underline underline-offset-4">
+                          Ver detalles
+                        </summary>
+                        <div className="mt-3 grid min-w-[250px] gap-2 rounded-md border border-slate-200 bg-[#f7f7f4] p-3 text-xs text-slate-600 sm:absolute sm:right-10 sm:z-10 sm:shadow-lg">
+                          <span>Equipo: <strong className="text-slate-950">{equipoMarca || "-"} {equipoModelo || "-"}</strong></span>
+                          <span>IMEI: <strong className="text-slate-950">.... {String(imei || "").slice(-4) || "----"}</strong></span>
+                          <span>Solicitud: <strong className="text-slate-950">{draftId ? `#${draftId}` : "En guardado"}</strong></span>
+                          <span>Cuota: <strong className="text-slate-950">{currency(valorCuota)}</strong></span>
+                        </div>
+                      </details>
                     </div>
                   </section>
 
-                  <div className="fp-delivery-layout mt-6 grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-                    <section className="fp-delivery-sequence rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-5 py-5">
-                      <p className="fp-section-eyebrow text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
+                  <div className={[
+                    "fp-delivery-layout mt-4 grid gap-4",
+                    iphoneFactory ? "grid-cols-1" : "xl:grid-cols-[0.92fr_1.08fr]",
+                  ].join(" ")}>
+                    <section className="fp-delivery-sequence rounded-lg border border-slate-200 bg-white px-5 py-5">
+                      <p className="fp-section-eyebrow text-[11px] font-semibold uppercase tracking-[0.18em] text-[#5d7f0f]">
                         {iphoneFactory ? "Control de enrolamiento" : "Secuencia Zero Touch"}
                       </p>
                       <h4 className="mt-2 text-xl font-black text-slate-950">
-                        {iphoneFactory ? "Confirma el enrolamiento" : "Inscribe y valida el dispositivo"}
+                        {iphoneFactory ? "1. Confirmar enrolamiento" : "Inscribe y valida el dispositivo"}
                       </h4>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {iphoneFactory
-                          ? "Verifica el iPhone en el sistema externo antes de habilitar la finalizacion."
+                          ? "Verifique el iPhone en SafeUEM antes de continuar."
                           : "Ejecuta los controles en orden. La validacion remota decide si el credito puede cerrarse."}
                       </p>
 
-                      <div className="fp-delivery-sequence-list">
+                      {!iphoneFactory ? <div className="fp-delivery-sequence-list">
                         <div>
                           <span>1</span>
                           <div>
-                            <strong>{iphoneFactory ? "Revisar enrolamiento" : "Inscribir equipo"}</strong>
-                            <p>{iphoneFactory ? "Consulta el estado en el sistema externo." : "Registra el dispositivo en Zero Touch."}</p>
+                            <strong>Inscribir equipo</strong>
+                            <p>Registra el dispositivo en Zero Touch.</p>
                           </div>
                         </div>
                         <div>
                           <span>2</span>
                           <div>
-                            <strong>{iphoneFactory ? "Confirmar control" : "Validar entrega"}</strong>
-                            <p>{iphoneFactory ? "Deja constancia antes de finalizar." : "Confirma que el dispositivo ya es entregable."}</p>
+                            <strong>Validar entrega</strong>
+                            <p>Confirma que el dispositivo ya es entregable.</p>
                           </div>
                         </div>
-                      </div>
+                      </div> : null}
 
                       {iphoneFactory && (
-                        <label className="fp-iphone-confirmation flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-black text-emerald-900">
+                        <label className="fp-iphone-confirmation mt-5 flex min-h-16 items-center justify-between gap-4 rounded-lg border border-slate-200 bg-[#f7f7f4] p-4 text-sm font-semibold text-slate-950">
+                          <span className="flex items-center gap-3">
+                            <ShieldCheck className="h-8 w-8 text-[#5d7f0f]" strokeWidth={1.7} aria-hidden="true" />
+                            Confirmo que el equipo esta enrolado <span className="text-red-600">*</span>
+                          </span>
                           <input
                             type="checkbox"
                             checked={iphoneEnrollmentVerified}
-                            onChange={(event) =>
-                              setIphoneEnrollmentVerified(event.target.checked)
-                            }
-                            className="mt-1 h-5 w-5 accent-emerald-600"
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setIphoneEnrollmentVerified(checked);
+                              setIphoneEnrollmentConfirmedAt(
+                                checked ? new Date().toISOString() : ""
+                              );
+                              setPersistedIphoneClosureFingerprint("");
+                            }}
+                            aria-label="Confirmo que el equipo está enrolado"
+                            className="h-6 w-6 shrink-0 accent-[#7da516]"
                           />
-                          <span>
-                            Enrolamiento iPhone verificado
-                            <span className="mt-1 block text-xs font-semibold text-emerald-700">
-                              Confirmo manualmente que el equipo quedo enrolado antes de finalizar.
-                            </span>
-                          </span>
                         </label>
                       )}
 
@@ -13694,6 +14169,7 @@ export default function CreditFactoryConsole({
                       )}
                     </section>
 
+                    {!iphoneFactory ? (
                     <section className={[
                       "fp-delivery-status-panel rounded-[24px] border border-[#d9e6ea] bg-[#f8fdff] px-5 py-5",
                       entregaValidada ? "is-ready" : deliveryValidation ? "is-review" : "is-pending",
@@ -13739,19 +14215,17 @@ export default function CreditFactoryConsole({
 
                       </div>
                     </section>
+                    ) : null}
 
                     {iphoneFactory && (
-                      <section className="fp-delivery-closure rounded-[24px] border border-[#d7dee3] bg-white px-5 py-5 xl:col-span-2">
+                      <section className="fp-delivery-closure rounded-lg border border-slate-200 bg-white px-5 py-5">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                              Evidencias de cierre
-                            </p>
                             <h4 className="mt-2 text-xl font-black text-slate-950">
-                              Adjunta las cinco fotos obligatorias
+                              2. Evidencias de entrega
                             </h4>
                             <p className="mt-2 text-sm leading-6 text-slate-600">
-                              Incluye la identidad del cliente, el equipo entregado y la remision. Las cinco evidencias son obligatorias para finalizar.
+                              Cedula frontal y posterior, selfie con cedula, foto de entrega y remision.
                             </p>
                           </div>
                           <span
@@ -13762,15 +14236,27 @@ export default function CreditFactoryConsole({
                                 : "border-amber-200 bg-amber-50 text-amber-700",
                             ].join(" ")}
                           >
-                            {iphoneRequiredEvidenceReady
-                              ? "Evidencias listas"
-                              : "Faltan evidencias"}
+                            {iphoneEvidencePersistencePending && iphoneEvidenceCount > 0
+                              ? `${iphoneEvidenceCount} de 5 seleccionadas · Guardando`
+                              : iphoneClosurePersisted
+                                ? `${iphoneEvidenceCount} de 5 cargadas`
+                                : `${iphoneEvidenceCount} de 5 seleccionadas`}
                           </span>
                         </div>
 
-                        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                          <EvidenceCaptureCard
-                            title="Cedula frente"
+                        {!iphoneEnrollmentReady ? (
+                          <div className="mt-4 flex items-center gap-2 rounded-md border border-slate-200 bg-[#f7f7f4] px-4 py-3 text-sm text-slate-600">
+                            <LockKeyhole className="h-4 w-4" strokeWidth={1.8} />
+                            Confirma el enrolamiento para habilitar las evidencias.
+                          </div>
+                        ) : null}
+
+                        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                          <DeliveryEvidenceCard
+                            index={1}
+                            disabled={!iphoneEnrollmentReady}
+                            persisted={iphoneClosurePersisted}
+                            title="Cédula frontal"
                             description="La cara frontal debe quedar completa, enfocada y con los datos legibles."
                             metaLabel={
                               contratoCedulaFrenteAudit
@@ -13800,8 +14286,11 @@ export default function CreditFactoryConsole({
                               )
                             }
                           />
-                          <EvidenceCaptureCard
-                            title="Cedula posterior"
+                          <DeliveryEvidenceCard
+                            index={2}
+                            disabled={!iphoneEnrollmentReady}
+                            persisted={iphoneClosurePersisted}
+                            title="Cédula posterior"
                             description="La cara posterior debe quedar completa, enfocada y con los datos legibles."
                             metaLabel={
                               contratoCedulaRespaldoAudit
@@ -13831,8 +14320,11 @@ export default function CreditFactoryConsole({
                               )
                             }
                           />
-                          <EvidenceCaptureCard
-                            title="Selfie con cedula en mano"
+                          <DeliveryEvidenceCard
+                            index={3}
+                            disabled={!iphoneEnrollmentReady}
+                            persisted={iphoneClosurePersisted}
+                            title="Selfie con cédula"
                             description="Deben verse claramente el rostro del cliente y la cedula sostenida en su mano."
                             metaLabel={
                               iphoneSelfieCedulaAudit
@@ -13862,7 +14354,10 @@ export default function CreditFactoryConsole({
                               )
                             }
                           />
-                          <EvidenceCaptureCard
+                          <DeliveryEvidenceCard
+                            index={4}
+                            disabled={!iphoneEnrollmentReady}
+                            persisted={iphoneClosurePersisted}
                             title="Foto de entrega"
                             description="Debe mostrar el iPhone entregado al cliente y permitir identificar el equipo."
                             metaLabel={
@@ -13892,8 +14387,11 @@ export default function CreditFactoryConsole({
                               )
                             }
                           />
-                          <EvidenceCaptureCard
-                            title="Foto de remision"
+                          <DeliveryEvidenceCard
+                            index={5}
+                            disabled={!iphoneEnrollmentReady}
+                            persisted={iphoneClosurePersisted}
+                            title="Foto de remisión"
                             description="La remision debe verse completa, enfocada y con sus datos legibles."
                             metaLabel={
                               fotoRemisionAudit
@@ -13924,9 +14422,14 @@ export default function CreditFactoryConsole({
                             }
                           />
                         </div>
+                        <div className="mt-4 flex items-center gap-2 border-t border-slate-200 pt-4 text-sm text-slate-600">
+                          <Info className="h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+                          Las cinco evidencias son obligatorias para finalizar el crédito.
+                        </div>
                       </section>
                     )}
 
+                    {!iphoneFactory ? (
                     <section className="fp-delivery-closure rounded-[24px] border border-[#e2d6c5] bg-white px-5 py-5 xl:col-span-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                         Flujo de cierre
@@ -13976,6 +14479,7 @@ export default function CreditFactoryConsole({
                         </div>
                       )}
                     </section>
+                    ) : null}
                   </div>
                 </div>
               )}
@@ -14461,7 +14965,7 @@ export default function CreditFactoryConsole({
             {!simulatorMode && !showDataCreditoGate && (
               <div
                 className={[
-                  "fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-[24px] border border-[#d8e6e5] bg-white/92 px-4 py-4 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur",
+                  "fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white/95 px-4 py-4 shadow-[0_10px_28px_rgba(15,23,42,0.09)] backdrop-blur",
                   createClientMode && wizardStep === 1 ? "fp-identity-actions" : "",
                 ].join(" ")}
               >
@@ -14556,7 +15060,7 @@ export default function CreditFactoryConsole({
                         ? !firmaSeguroProcessSigned || !deliveryRequirementReady
                         : !ventaLista)
                     }
-                    className="fp-action rounded-2xl px-5 py-3 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:opacity-70"
+                    className="fp-action order-last ml-auto min-h-11 rounded-md bg-[#161a1b] px-6 py-3 text-sm font-semibold uppercase text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     {creating || firmaSeguroSubmitting
                       ? "Finalizando credito..."
@@ -14566,6 +15070,7 @@ export default function CreditFactoryConsole({
                   </button>
                 )}
 
+                {wizardStep !== 5 ? (
                 <button
                   type="button"
                   onClick={() => resetForm()}
@@ -14574,6 +15079,7 @@ export default function CreditFactoryConsole({
                 >
                   Limpiar
                 </button>
+                ) : null}
 
                 {createClientMode && draftHasMeaningfulData ? (
                   <span
@@ -14584,6 +15090,7 @@ export default function CreditFactoryConsole({
                         : draftStatus === "saving" || draftStatus === "loading"
                           ? "border-amber-200 bg-amber-50 text-amber-700"
                           : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                      wizardStep === 5 ? "sm:mx-auto" : "",
                     ].join(" ")}
                   >
                     {draftStatus === "saving"
