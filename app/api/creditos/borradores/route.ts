@@ -260,7 +260,7 @@ async function readDrafts(
         SELECT validation."id", validation."status", validation."decision"
         FROM "VeriffIdentityValidation" validation
         WHERE validation."draftId" = d."id"
-        ORDER BY validation."updatedAt" DESC, validation."id" DESC
+        ORDER BY validation."id" DESC
         LIMIT 1
       ) latest_veriff ON TRUE
       LEFT JOIN LATERAL (

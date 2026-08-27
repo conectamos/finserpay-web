@@ -7,7 +7,7 @@ import { createJiti } from "jiti";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
-const { buildVeriffRetryPolicy } = await jiti.import(
+const { buildVeriffRetryPolicy, veriffDeclineWasCanonicalAtDecision } = await jiti.import(
   "../lib/veriff-retry-policy-core.ts"
 );
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
@@ -39,10 +39,35 @@ test("la politica Veriff permite exactamente un reintento despues del primer rec
 test("solo DECLINED consume intentos y el segundo rechazo cierra el borrador", async () => {
   const policy = await readProjectFile("lib/veriff-retry-policy.ts");
 
-  assert.match(policy, /AND "status" = 'DECLINED'/);
+  assert.match(policy, /AND declined\."status" = 'DECLINED'/);
+  assert.match(
+    policy,
+    /AND NOT EXISTS \([\s\S]*?newer\."id" > declined\."id"[\s\S]*?newer\."createdAt" < COALESCE/
+  );
   assert.match(policy, /SET "estado" = 'CERRADO'/);
   assert.match(policy, /"closedReason" = 'RECHAZADA'/);
   assert.match(policy, /"creditoId" IS NULL/);
+});
+
+test("la hora de decisión excluye un DECLINED recibido después de crear otro intento", () => {
+  const newerAttempt = { id: 2, createdAt: new Date("2026-01-01T10:01:00Z") };
+
+  assert.equal(
+    veriffDeclineWasCanonicalAtDecision({
+      declinedId: 1,
+      decidedAt: new Date("2026-01-01T10:00:00Z"),
+      newerAttempts: [newerAttempt],
+    }),
+    true
+  );
+  assert.equal(
+    veriffDeclineWasCanonicalAtDecision({
+      declinedId: 1,
+      decidedAt: new Date("2026-01-01T10:02:00Z"),
+      newerAttempts: [newerAttempt],
+    }),
+    false
+  );
 });
 
 test("la API bloquea nuevas sesiones cuando se agotaron los intentos", async () => {

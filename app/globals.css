@@ -4194,6 +4194,17 @@ body {
   color: var(--fp-danger);
 }
 
+.fp-veriff-status.is-conflict,
+.fp-veriff-status.is-incomplete {
+  border-color: var(--fp-amber);
+  background: var(--fp-amber-soft);
+  color: #744006;
+}
+
+.fp-identity-modal-kicker.is-conflict {
+  color: var(--fp-amber);
+}
+
 .fp-identity-modal-lead {
   margin: 10px auto 0;
   max-width: 470px;
@@ -4330,6 +4341,11 @@ body {
   color: #10140b;
 }
 
+.fp-identity-modal-primary.is-conflict {
+  border-color: var(--fp-amber);
+  box-shadow: 0 0 0 2px var(--fp-amber-soft);
+}
+
 .fp-identity-modal-primary:hover:not(:disabled) {
   filter: brightness(0.97);
 }
@@ -4439,6 +4455,11 @@ body {
 .fp-identity-modal-illustration.is-neutral {
   min-height: 150px;
   color: #67727e;
+}
+
+.fp-identity-modal-illustration.is-conflict {
+  min-height: 150px;
+  color: var(--fp-amber);
 }
 
 .fp-identity-modal-content a:focus-visible,

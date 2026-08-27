@@ -8,6 +8,17 @@ export type VeriffRetryPolicy = {
   retryAllowed: boolean;
 };
 
+export function veriffDeclineWasCanonicalAtDecision(input: {
+  declinedId: number;
+  decidedAt: Date;
+  newerAttempts: Array<{ createdAt: Date; id: number }>;
+}) {
+  return !input.newerAttempts.some(
+    (attempt) =>
+      attempt.id > input.declinedId && attempt.createdAt < input.decidedAt
+  );
+}
+
 export function buildVeriffRetryPolicy(
   declinedAttempts: number
 ): VeriffRetryPolicy {

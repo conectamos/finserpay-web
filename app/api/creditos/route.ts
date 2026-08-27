@@ -81,12 +81,15 @@ import {
   getVeriffValidationById,
   isVeriffApproved,
   linkVeriffValidationToCredit,
+  lockVeriffDraftAttempts,
+  type VeriffValidationRow,
 } from "@/lib/veriff-storage";
 import {
   extractVeriffIdentityData,
   extractVeriffIdentityDocumentEvidence,
   getVeriffPublicSummary,
   isVeriffRequired,
+  summarizeVeriffRisk,
 } from "@/lib/veriff";
 import {
   compareDataCreditoVeriffIdentityEvidence,
@@ -125,6 +128,31 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION = false;
+
+class VeriffValidationSupersededError extends Error {
+  readonly code = "DATACREDITO_VERIFF_ATTEMPT_SUPERSEDED";
+  readonly status = 409;
+
+  constructor() {
+    super(
+      "Esta validación facial fue reemplazada por un intento más reciente. Retoma la validación vigente antes de finalizar."
+    );
+    this.name = "VeriffValidationSupersededError";
+  }
+}
+
+class VeriffValidationFinalizationError extends Error {
+  readonly status = 409;
+
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly retryable: boolean
+  ) {
+    super(message);
+    this.name = "VeriffValidationFinalizationError";
+  }
+}
 
 function hashImageDataUrl(value: string) {
   if (!value) {
@@ -2130,6 +2158,30 @@ export async function POST(req: Request) {
           );
         }
 
+        const latestVeriffRows = await prisma.$queryRawUnsafe<
+          Array<{ id: number }>
+        >(
+          `
+            SELECT validation."id"
+            FROM "VeriffIdentityValidation" validation
+            WHERE validation."draftId" = $1
+            ORDER BY validation."id" DESC
+            LIMIT 1
+          `,
+          solicitudReservation.id
+        );
+        if (Number(latestVeriffRows[0]?.id || 0) !== veriffValidation.id) {
+          return NextResponse.json(
+            {
+              code: "DATACREDITO_VERIFF_ATTEMPT_SUPERSEDED",
+              error:
+                "Esta validación facial fue reemplazada por un intento más reciente. Retoma la validación vigente antes de finalizar.",
+              retryable: true,
+            },
+            { status: 409 }
+          );
+        }
+
         if (isVeriffApproved(veriffValidation)) {
           const identityComparison = compareDataCreditoVeriffIdentityEvidence(
             [decisionIdentityEvidence, webhookIdentityEvidence],
@@ -2140,22 +2192,47 @@ export async function POST(req: Request) {
             const rejectionCode = getDataCreditoVeriffIdentityRejectionCode(
               identityComparison.status
             );
-            const rejectionMessage =
+            if (
+              identityComparison.status === "conflict" ||
               identityComparison.status === "missing"
-                ? "La validacion facial no devolvio una cedula verificable. El credito fue rechazado."
-                : identityComparison.status === "invalid-format"
-                  ? "La validacion facial devolvio una cedula invalida. El credito fue rechazado."
-                  : identityComparison.status === "invalid-document-type"
-                    ? "La validacion facial no corresponde a una cedula de ciudadania. El credito fue rechazado."
-                    : identityComparison.status === "invalid-document-country"
-                      ? "La validacion facial no corresponde a un documento colombiano. El credito fue rechazado."
-                      : "La cedula de la validacion facial no coincide con la cedula consultada en DataCredito. El credito fue rechazado.";
+            ) {
+              return NextResponse.json(
+                {
+                  code: rejectionCode,
+                  error:
+                    identityComparison.status === "conflict"
+                      ? "Veriff devolvió datos de identidad contradictorios. La solicitud no fue rechazada: repite la validación facial."
+                      : "Veriff todavía no devolvió una cédula verificable. La solicitud no fue rechazada: espera el resultado o repite la validación facial.",
+                  retryable: true,
+                },
+                { status: 409 }
+              );
+            }
+            const rejectionMessage =
+              identityComparison.status === "invalid-format"
+                ? "La validacion facial devolvio una cedula invalida. El credito fue rechazado."
+                : identityComparison.status === "invalid-document-type"
+                  ? "La validacion facial no corresponde a una cedula de ciudadania. El credito fue rechazado."
+                  : identityComparison.status === "invalid-document-country"
+                    ? "La validacion facial no corresponde a un documento colombiano. El credito fue rechazado."
+                    : "La cedula de la validacion facial no coincide con la cedula consultada en DataCredito. El credito fue rechazado.";
 
-            await rejectVeriffDraftForIdentityFailure(
+            const applicationRejected = await rejectVeriffDraftForIdentityFailure(
               veriffValidation,
               rejectionCode,
               dataCreditoAssessment.id
             );
+            if (!applicationRejected) {
+              return NextResponse.json(
+                {
+                  code: "DATACREDITO_VERIFF_STATE_CHANGED",
+                  error:
+                    "La validación facial cambió antes de registrar el rechazo. Revisa el intento vigente y vuelve a intentarlo.",
+                  retryable: true,
+                },
+                { status: 409 }
+              );
+            }
             return NextResponse.json(
               {
                 code: rejectionCode,
@@ -2997,13 +3074,132 @@ export async function POST(req: Request) {
     const createCreditWithAmortization = async (
       transaction: Prisma.TransactionClient
     ) => {
-      const credit = await transaction.credito.create(creditCreateArgs);
+      let transactionVeriffValidation = veriffValidation;
+
+      if (veriffValidation) {
+        await lockVeriffDraftAttempts(transaction, solicitudReservation.id);
+        const latestVeriffRows = await transaction.$queryRawUnsafe<
+          VeriffValidationRow[]
+        >(
+          `
+            SELECT validation.*
+            FROM "VeriffIdentityValidation" validation
+            WHERE validation."draftId" = $1
+            ORDER BY validation."id" DESC
+            LIMIT 1
+            FOR UPDATE
+          `,
+          solicitudReservation.id
+        );
+        const lockedVeriffValidation = latestVeriffRows[0] || null;
+
+        if (
+          !lockedVeriffValidation ||
+          lockedVeriffValidation.id !== veriffValidation.id
+        ) {
+          throw new VeriffValidationSupersededError();
+        }
+
+        if (lockedVeriffValidation.creditoId) {
+          throw new VeriffValidationFinalizationError(
+            "DATACREDITO_VERIFF_ALREADY_LINKED",
+            "La validación facial ya está vinculada a otro crédito. No se creó un crédito nuevo.",
+            false
+          );
+        }
+
+        const lockedVeriffSnapshot = buildVeriffSnapshot(
+          lockedVeriffValidation
+        );
+        const lockedVeriffRisk = summarizeVeriffRisk(
+          lockedVeriffValidation.decisionPayload,
+          lockedVeriffValidation.webhookPayload
+        );
+        if (
+          !isVeriffApproved(lockedVeriffValidation) ||
+          lockedVeriffSnapshot?.riskBlocked ||
+          lockedVeriffRisk.blocked
+        ) {
+          throw new VeriffValidationFinalizationError(
+            "DATACREDITO_VERIFF_STATE_CHANGED",
+            "La validación facial cambió antes del cierre. Revisa el estado vigente antes de intentar finalizar nuevamente.",
+            true
+          );
+        }
+
+        if (dataCreditoAssessment) {
+          const lockedIdentityComparison =
+            compareDataCreditoVeriffIdentityEvidence(
+              [
+                extractVeriffIdentityDocumentEvidence(
+                  lockedVeriffValidation.decisionPayload
+                ),
+                extractVeriffIdentityDocumentEvidence(
+                  lockedVeriffValidation.webhookPayload
+                ),
+              ],
+              clienteDocumento
+            );
+
+          if (!lockedIdentityComparison.ok) {
+            const retryable =
+              lockedIdentityComparison.status === "conflict" ||
+              lockedIdentityComparison.status === "missing";
+            throw new VeriffValidationFinalizationError(
+              getDataCreditoVeriffIdentityRejectionCode(
+                lockedIdentityComparison.status
+              ),
+              retryable
+                ? "La evidencia de identidad vigente está incompleta o es contradictoria. La solicitud no fue rechazada: repite la validación facial."
+                : "La identidad facial vigente no cumple la coincidencia exigida. El crédito no fue creado.",
+              retryable
+            );
+          }
+        }
+
+        transactionVeriffValidation = lockedVeriffValidation;
+      }
+
+      const transactionCreditCreateArgs = transactionVeriffValidation
+        ? {
+            ...creditCreateArgs,
+            data: {
+              ...creditCreateArgs.data,
+              contratoSnapshot: {
+                ...contratoSnapshot,
+                evidencia: {
+                  ...contratoSnapshot.evidencia,
+                  identidad: buildVeriffSnapshot(transactionVeriffValidation),
+                },
+              } as Prisma.InputJsonValue,
+            },
+          }
+        : creditCreateArgs;
+      const credit = await transaction.credito.create(
+        transactionCreditCreateArgs
+      );
       await persistCreditAmortization(
         transaction as unknown as CreditAmortizationDbClient,
         credit.id,
         amortizationPersistencePlan,
         amortizationParametersSnapshot
       );
+      let linkedVeriffValidation = transactionVeriffValidation;
+      if (transactionVeriffValidation) {
+        linkedVeriffValidation =
+          await linkVeriffValidationToCredit(
+            transactionVeriffValidation.id,
+            credit.id,
+            transaction
+          );
+        if (!linkedVeriffValidation) {
+          throw new VeriffValidationFinalizationError(
+            "DATACREDITO_VERIFF_LINK_CONFLICT",
+            "La validación facial cambió durante el cierre. El crédito no fue creado; intenta nuevamente.",
+            true
+          );
+        }
+      }
       const linkedSolicitudId = await completeSolicitudForCredit(
         {
           solicitudId: solicitudReservation.id,
@@ -3019,20 +3215,20 @@ export async function POST(req: Request) {
       if (!linkedSolicitudId) {
         throw new Error("SOLICITUD_COMPLETION_CONFLICT");
       }
-      return credit;
+      return { credit, veriffValidation: linkedVeriffValidation };
     };
 
-    let created;
+    let creationResult;
     if (dataCreditoClaim) {
       const claimedAssessment = dataCreditoClaim;
 
-      created = await prisma.$transaction(async (transaction) => {
-        const credit = await createCreditWithAmortization(transaction);
+      creationResult = await prisma.$transaction(async (transaction) => {
+        const result = await createCreditWithAmortization(transaction);
         const consumed = await consumeDataCreditoAssessment(
           {
             assessmentId: claimedAssessment.assessmentId,
             claimToken: claimedAssessment.claimToken,
-            creditId: credit.id,
+            creditId: result.credit.id,
           },
           transaction
         );
@@ -3041,14 +3237,16 @@ export async function POST(req: Request) {
           throw new Error("DATACREDITO_ASSESSMENT_CONSUME_CONFLICT");
         }
 
-        return credit;
+        return result;
       });
       dataCreditoClaim = null;
     } else {
-      created = await prisma.$transaction((transaction) =>
+      creationResult = await prisma.$transaction((transaction) =>
         createCreditWithAmortization(transaction)
       );
     }
+    let created = creationResult.credit;
+    veriffValidation = creationResult.veriffValidation;
     createdCreditId = created.id;
 
     if (firmaSeguroProcess) {
@@ -3069,12 +3267,6 @@ export async function POST(req: Request) {
       if (linkedCredit) {
         created = linkedCredit;
       }
-    }
-
-    if (veriffValidation) {
-      veriffValidation =
-        (await linkVeriffValidationToCredit(veriffValidation.id, created.id)) ||
-        veriffValidation;
     }
 
     return NextResponse.json({
@@ -3108,6 +3300,28 @@ export async function POST(req: Request) {
         {
           code: error.code,
           error: error.message,
+        },
+        { status: error.status }
+      );
+    }
+
+    if (error instanceof VeriffValidationSupersededError) {
+      return NextResponse.json(
+        {
+          code: error.code,
+          error: error.message,
+          retryable: true,
+        },
+        { status: error.status }
+      );
+    }
+
+    if (error instanceof VeriffValidationFinalizationError) {
+      return NextResponse.json(
+        {
+          code: error.code,
+          error: error.message,
+          retryable: error.retryable,
         },
         { status: error.status }
       );

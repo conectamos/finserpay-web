@@ -15,6 +15,8 @@ import {
 import {
   extractVeriffIdentityDocumentEvidence,
   resolveVeriffStatusEvidence,
+  shouldPreserveVeriffStatusTransition,
+  summarizeVeriffRisk,
 } from "../lib/veriff.ts";
 
 const veriffRoute = readFileSync(
@@ -38,6 +40,26 @@ const factoryConsole = readFileSync(
     "../app/dashboard/creditos/credit-factory-console.tsx",
     import.meta.url
   ),
+  "utf8"
+);
+const veriffStatusRoute = readFileSync(
+  new URL("../app/api/creditos/veriff/[id]/route.ts", import.meta.url),
+  "utf8"
+);
+const globalStyles = readFileSync(
+  new URL("../app/globals.css", import.meta.url),
+  "utf8"
+);
+const draftRoute = readFileSync(
+  new URL("../app/api/creditos/borradores/route.ts", import.meta.url),
+  "utf8"
+);
+const solicitudesStorage = readFileSync(
+  new URL("../lib/solicitudes-storage.ts", import.meta.url),
+  "utf8"
+);
+const iphoneEnrollmentStorage = readFileSync(
+  new URL("../lib/iphone-enrollment-storage.ts", import.meta.url),
   "utf8"
 );
 const completionPage = readFileSync(
@@ -231,7 +253,7 @@ test("la evidencia Veriff compara todos los campos y exige el documento capturad
     { ok: true, status: "match", documentNumber: expectedDocument }
   );
 
-  const internalConflict = extractVeriffIdentityDocumentEvidence({
+  const physicalDocumentSerial = extractVeriffIdentityDocumentEvidence({
     verification: {
       person: { idNumber: expectedDocument, firstName: "Ana" },
       document: { number: "9999999999", type: "ID_CARD", country: "CO" },
@@ -239,10 +261,10 @@ test("la evidencia Veriff compara todos los campos y exige el documento capturad
   });
   assert.equal(
     compareDataCreditoVeriffIdentityEvidence(
-      internalConflict,
+      physicalDocumentSerial,
       expectedDocument
     ).status,
-    "mismatch"
+    "match"
   );
 
   const requestEchoOnly = extractVeriffIdentityDocumentEvidence({
@@ -261,6 +283,22 @@ test("la evidencia Veriff compara todos los campos y exige el documento capturad
     ).status,
     "missing"
   );
+
+  for (const incompleteDocument of [
+    { number: "SERIAL-A9X-123", type: null, country: "CO" },
+    { number: "SERIAL-A9X-123", type: "ID_CARD", country: null },
+  ]) {
+    assert.equal(
+      compareDataCreditoVeriffIdentityEvidence(
+        {
+          personNumbers: [expectedDocument],
+          documents: [incompleteDocument],
+        },
+        expectedDocument
+      ).status,
+      "missing"
+    );
+  }
 
   for (const externalWrapper of [
     "originalRequest",
@@ -296,7 +334,7 @@ test("la evidencia Veriff compara todos los campos y exige el documento capturad
   }
 });
 
-test("la evidencia rechaza conflictos entre fuentes, tipo distinto o país distinto", () => {
+test("la evidencia separa conflictos técnicos de una identidad distinta consistente", () => {
   const expectedDocument = "1110178524";
   const decision = extractVeriffIdentityDocumentEvidence({
     verification: {
@@ -306,7 +344,7 @@ test("la evidencia rechaza conflictos entre fuentes, tipo distinto o país disti
   });
   const conflictingWebhook = extractVeriffIdentityDocumentEvidence({
     verification: {
-      person: { idNumber: expectedDocument, firstName: "Ana" },
+      person: { idNumber: "9999999999", firstName: "Ana" },
       document: { number: "9999999999", type: "ID_CARD", country: "CO" },
     },
   });
@@ -314,6 +352,30 @@ test("la evidencia rechaza conflictos entre fuentes, tipo distinto o país disti
   assert.equal(
     compareDataCreditoVeriffIdentityEvidence(
       [decision, conflictingWebhook],
+      expectedDocument
+    ).status,
+    "conflict"
+  );
+  const consistentOtherIdentity = {
+    personNumbers: ["9999999999"],
+    documents: [
+      { number: "9999999999", type: "ID_CARD", country: "CO" },
+    ],
+  };
+  assert.deepEqual(
+    compareDataCreditoVeriffIdentityEvidence(
+      consistentOtherIdentity,
+      expectedDocument
+    ),
+    {
+      ok: false,
+      status: "mismatch",
+      documentNumber: "9999999999",
+    }
+  );
+  assert.equal(
+    compareDataCreditoVeriffIdentityEvidence(
+      { personNumbers: ["9999999999"], documents: [] },
       expectedDocument
     ).status,
     "mismatch"
@@ -340,11 +402,36 @@ test("la evidencia rechaza conflictos entre fuentes, tipo distinto o país disti
   );
 });
 
-test("el cierre DataCrédito rechaza la identidad facial ausente, inválida o diferente antes del claim", () => {
+test("una CC autoritativa de 10 dígitos coincide aunque document traiga un serial físico", () => {
+  const expectedDocument = "1234567890";
+  const evidence = extractVeriffIdentityDocumentEvidence({
+    verification: {
+      status: "approved",
+      person: { idNumber: expectedDocument },
+      document: {
+        number: "SERIAL-A9X-123",
+        type: "ID_CARD",
+        country: "CO",
+      },
+    },
+  });
+
+  assert.deepEqual(
+    compareDataCreditoVeriffIdentityEvidence(evidence, expectedDocument),
+    { ok: true, status: "match", documentNumber: expectedDocument }
+  );
+});
+
+test("el cierre deja missing/conflict reintentables y solo rechaza identidad inválida o diferente antes del claim", () => {
   const strictRouteGuard = sourceBlock(
     creditRoute,
     "const decisionIdentity = extractVeriffIdentityData(",
     "      } else {"
+  );
+  const retryableIdentityBranch = sourceBlock(
+    creditRoute,
+    'if (\n              identityComparison.status === "conflict"',
+    "            const rejectionMessage ="
   );
 
   assert.match(strictRouteGuard, /veriffValidation\.decisionPayload/);
@@ -360,6 +447,12 @@ test("el cierre DataCrédito rechaza la identidad facial ausente, inválida o di
   assert.match(strictRouteGuard, /DATACREDITO_VERIFF_SOLICITUD_MISMATCH/);
   assert.match(strictRouteGuard, /DATACREDITO_VERIFF_ALREADY_LINKED/);
   assert.doesNotMatch(strictRouteGuard, /veriffValidation\.clienteDocumento/);
+  assert.match(retryableIdentityBranch, /identityComparison\.status === "missing"/);
+  assert.match(retryableIdentityBranch, /retryable: true/);
+  assert.doesNotMatch(
+    retryableIdentityBranch,
+    /rejectVeriffDraftForIdentityFailure/
+  );
   assert.ok(
     creditRoute.indexOf("compareDataCreditoVeriffIdentityEvidence(") <
       creditRoute.indexOf("claimDataCreditoAssessment("),
@@ -404,7 +497,7 @@ test("la respuesta pública de Veriff expone el resultado integral sin alterar i
   assert.match(veriffStorage, /identityData: serialized\?\.identityData \|\| null/);
 });
 
-test("un conflicto documental cierra la solicitud DataCrédito y bloquea nuevos intentos", () => {
+test("solo un fallo duro del intento vigente cierra la solicitud DataCrédito", () => {
   const identityEnforcement = sourceBlock(
     veriffRetryPolicy,
     "  if (row?.draftId) {",
@@ -421,11 +514,165 @@ test("un conflicto documental cierra la solicitud DataCrédito y bloquea nuevos 
     /NULLIF\("payload"->>'dataCreditoAssessmentId', ''\)/
   );
   assert.match(veriffRetryPolicy, /identityComparison\.status !== "missing"/);
+  assert.match(veriffRetryPolicy, /identityComparison\.status !== "conflict"/);
+  assert.match(
+    veriffRetryPolicy,
+    /SELECT MAX\(validation\."id"\)[\s\S]*?WHERE validation\."draftId" = \$1/
+  );
   assert.match(veriffRetryPolicy, /veriffIdentityRejectionCode/);
   assert.match(veriffRetryPolicy, /applicationRejected: true/);
   assert.match(creditRoute, /SOLICITUD_DATACREDITO_NO_VINCULADA/);
   assert.match(identityEnforcement, /compareDataCreditoVeriffIdentityEvidence/);
   assert.doesNotMatch(identityEnforcement, /serialized\?\.approved/);
+});
+
+test("conflict y missing devuelven 409 reintentable sin llamar al rechazo", () => {
+  const identityGuard = sourceBlock(
+    creditRoute,
+    "if (!identityComparison.ok) {",
+    "            const rejectionMessage ="
+  );
+
+  assert.match(
+    identityGuard,
+    /identityComparison\.status === "conflict"[\s\S]*?identityComparison\.status === "missing"/
+  );
+  assert.match(identityGuard, /retryable: true/);
+  assert.doesNotMatch(identityGuard, /rejectVeriffDraftForIdentityFailure/);
+  assert.match(
+    creditRoute,
+    /const applicationRejected = await rejectVeriffDraftForIdentityFailure\([\s\S]*?if \(!applicationRejected\) \{[\s\S]*?DATACREDITO_VERIFF_STATE_CHANGED[\s\S]*?retryable: true/
+  );
+  assert.ok(
+    creditRoute.indexOf("identityComparison.status === \"conflict\"") <
+      creditRoute.indexOf("await rejectVeriffDraftForIdentityFailure(")
+  );
+});
+
+test("la UI muestra conflicto o evidencia incompleta en ámbar y permite repetir", () => {
+  assert.match(factoryConsole, /veriffTechnicalRetryRequired/);
+  assert.match(factoryConsole, /Conflicto técnico/);
+  assert.match(factoryConsole, /Evidencia incompleta/);
+  assert.match(factoryConsole, /Repetir validación/);
+  assert.match(factoryConsole, /La solicitud no fue rechazada y conserva la consulta DataCrédito/);
+  assert.match(globalStyles, /\.fp-veriff-status\.is-conflict/);
+  assert.match(globalStyles, /\.fp-veriff-status\.is-incomplete/);
+  assert.match(globalStyles, /background: var\(--fp-amber-soft\)/);
+  assert.match(globalStyles, /color: var\(--fp-amber\)/);
+});
+
+test("un webhook tardío no vuelve canónico un intento Veriff superado", () => {
+  for (const source of [draftRoute, solicitudesStorage, iphoneEnrollmentStorage]) {
+    assert.match(source, /ORDER BY validation\."id" DESC/);
+  }
+  assert.match(
+    creditRoute,
+    /DATACREDITO_VERIFF_ATTEMPT_SUPERSEDED/
+  );
+  assert.match(
+    creditRoute,
+    /SELECT validation\."id"[\s\S]*?ORDER BY validation\."id" DESC/
+  );
+  assert.match(
+    veriffRetryPolicy,
+    /AND \$3 = \([\s\S]*?SELECT MAX\(validation\."id"\)/
+  );
+});
+
+test("una decisión vinculada queda congelada y los eventos tardíos son auditables", () => {
+  assert.match(veriffStorage, /CREATE TABLE IF NOT EXISTS "VeriffIdentityValidationEvent"/);
+  assert.match(veriffStorage, /"eventKey" VARCHAR\(64\) NOT NULL UNIQUE/);
+  assert.match(veriffStorage, /createHash\("sha256"\)/);
+  assert.match(veriffStorage, /redactVeriffPayload\(payload\)/);
+  assert.match(veriffStorage, /ON CONFLICT \("eventKey"\) DO NOTHING/);
+  assert.equal(
+    summarizeVeriffRisk({ verification: { highRisk: true } }).blocked,
+    true
+  );
+  assert.match(veriffStorage, /incomingRisk\.blocked/);
+  assert.match(
+    veriffStorage,
+    /if \(current\.creditoId \|\| preserveCanonicalStatus\) \{[\s\S]*?VERIFF_POST_LINK_REVIEW_ERROR[\s\S]*?return reviewRows\[0\] \|\| current;/
+  );
+  assert.match(
+    veriffStorage,
+    /WHERE "id" = \$1[\s\S]*?AND "creditoId" IS NULL[\s\S]*?RETURNING \*/
+  );
+  assert.match(
+    veriffStatusRoute,
+    /if \(current\.creditoId\) \{[\s\S]*?serializeVeriffValidation\(current\)[\s\S]*?getVeriffRetryPolicy/
+  );
+});
+
+test("crear QR y cerrar crédito se serializan por solicitud sin duplicar intentos", () => {
+  const transactionalClose = sourceBlock(
+    creditRoute,
+    "const createCreditWithAmortization = async",
+    "    let creationResult;"
+  );
+
+  assert.match(veriffStorage, /pg_advisory_xact_lock\(\$1, \$2\)/);
+  assert.match(
+    veriffStorage,
+    /lockVeriffDraftAttempts\(transaction, input\.draftId\)/
+  );
+  assert.match(
+    veriffStorage,
+    /validation\."veriffSessionId" IS NOT NULL[\s\S]*?validation\."createPayload" IS NOT NULL[\s\S]*?INTERVAL '24 hours'[\s\S]*?validation\."veriffSessionId" IS NULL[\s\S]*?validation\."createPayload" IS NULL[\s\S]*?INTERVAL '2 minutes'/
+  );
+  assert.match(
+    veriffStorage,
+    /SELECT MAX\(latest\."id"\)[\s\S]*?WHERE latest\."draftId" = \$1/
+  );
+  assert.equal(
+    [...veriffStorage.matchAll(/SELECT MAX\(latest\."id"\)/g)].length,
+    2,
+    "la reserva interna y la consulta rápida solo pueden reutilizar el intento más reciente"
+  );
+  assert.match(
+    veriffRoute,
+    /if \(!validationReservation\.created\)[\s\S]*?VERIFF_SESSION_PREPARING[\s\S]*?retryable: true/
+  );
+  assert.match(
+    creditRoute,
+    /lockVeriffDraftAttempts\(transaction, solicitudReservation\.id\);[\s\S]*?ORDER BY validation\."id" DESC/
+  );
+  assert.match(
+    transactionalClose,
+    /SELECT validation\.\*[\s\S]*?FOR UPDATE/
+  );
+  assert.match(transactionalClose, /isVeriffApproved\(lockedVeriffValidation\)/);
+  assert.match(transactionalClose, /summarizeVeriffRisk\(/);
+  assert.match(
+    creditRoute,
+    /lockedIdentityComparison[\s\S]*?getDataCreditoVeriffIdentityRejectionCode/
+  );
+  assert.ok(
+    transactionalClose.indexOf("linkVeriffValidationToCredit(") <
+      transactionalClose.indexOf("completeSolicitudForCredit("),
+    "Veriff debe quedar vinculado dentro de la misma transacción antes de cerrar la solicitud"
+  );
+  assert.match(veriffStorage, /AND "creditoId" IS NULL/);
+});
+
+test("un DECLINED tardío de un intento superado no consume reintentos", () => {
+  assert.match(
+    veriffRetryPolicy,
+    /newer\."id" > declined\."id"[\s\S]*?newer\."createdAt" < COALESCE\([\s\S]*?declined\."decidedAt"[\s\S]*?declined\."updatedAt"/
+  );
+  assert.match(
+    veriffRetryPolicy,
+    /AND \$3 = \([\s\S]*?SELECT MAX\(validation\."id"\)/
+  );
+  assert.ok(
+    (veriffRetryPolicy.match(/lockVeriffDraftAttempts\(transaction, row\.draftId!\)/g) || [])
+      .length >= 2,
+    "rechazo de identidad y agotamiento deben compartir el lock con la creación de QR"
+  );
+  assert.match(
+    veriffRetryPolicy,
+    /if \(!applicationRejected\) \{[\s\S]*?return getVeriffRetryPolicy\(row\.draftId\)/
+  );
 });
 
 test("los estados finales contradictorios de Veriff fallan de forma conservadora", () => {
@@ -457,27 +704,96 @@ test("los estados finales contradictorios de Veriff fallan de forma conservadora
   assert.equal(approvedWithReview.conflict, true);
   assert.equal(approvedWithResubmission.status, "RESUBMISSION");
   assert.equal(approvedWithResubmission.conflict, true);
+  assert.equal(
+    shouldPreserveVeriffStatusTransition(
+      "DECLINED",
+      "APPROVED",
+      "webhookPayload"
+    ),
+    true,
+    "un APPROVED tardío no puede sobrescribir un DECLINED canónico"
+  );
+  assert.equal(
+    shouldPreserveVeriffStatusTransition(
+      "ERROR",
+      "APPROVED",
+      "decisionPayload"
+    ),
+    true
+  );
+  assert.equal(
+    shouldPreserveVeriffStatusTransition(
+      "REVIEW",
+      "APPROVED",
+      "webhookPayload"
+    ),
+    true,
+    "un APPROVED tardío del webhook no puede sacar la sesión de REVIEW"
+  );
+  assert.equal(
+    shouldPreserveVeriffStatusTransition(
+      "RESUBMISSION",
+      "APPROVED",
+      "webhookPayload"
+    ),
+    true,
+    "un APPROVED tardío del webhook no puede sacar la sesión de RESUBMISSION"
+  );
+  assert.equal(
+    shouldPreserveVeriffStatusTransition(
+      "REVIEW",
+      "APPROVED",
+      "decisionPayload"
+    ),
+    false,
+    "la consulta actual del proveedor sí puede resolver REVIEW como APPROVED"
+  );
+  assert.match(
+    veriffStorage,
+    /resolvesActiveBlockWithCurrentDecision[\s\S]*?source === "decisionPayload"[\s\S]*?currentStatus === "REVIEW"[\s\S]*?summary\.status === "APPROVED"/
+  );
+  assert.match(
+    veriffStorage,
+    /clearWebhookPayload: resolvesActiveBlockWithCurrentDecision/
+  );
+  assert.match(
+    veriffStorage,
+    /WHEN \$17::boolean THEN NULL[\s\S]*?ELSE COALESCE\(\$13::jsonb, "webhookPayload"\)/
+  );
+  assert.equal(
+    shouldPreserveVeriffStatusTransition(
+      "PENDING",
+      "APPROVED",
+      "webhookPayload"
+    ),
+    false,
+    "PENDING debe poder avanzar a APPROVED desde cualquier fuente"
+  );
   assert.match(veriffStorage, /resolveVeriffStatusEvidence/);
   assert.match(
+    veriffStorage,
+    /preserveCanonicalStatus[\s\S]*?VERIFF_DECISION_ORDER_REVIEW_ERROR/
+  );
+  assert.match(
+    veriffStorage,
+    /statusEvidence\.conflict[\s\S]*?incomingRisk\.blocked/
+  );
+  assert.match(
     veriffRetryPolicy,
-    /serialized\?\.status === "DECLINED"[\s\S]*?UPDATE "VeriffIdentityValidation"/
+    /serialized\?\.status === "DECLINED"[\s\S]*?UPDATE "VeriffIdentityValidation"[\s\S]*?AND "creditoId" IS NULL/
   );
 });
 
-test("un APPROVED parcial sigue consultando hasta recibir el documento", () => {
+test("un APPROVED sin evidencia no desbloquea y ofrece repetir la validación", () => {
   assert.match(
     factoryConsole,
     /validation\.identityDocumentStatus === "missing"\) \{\s*return "";/
   );
   assert.match(factoryConsole, /const veriffIdentityEvidencePending = Boolean/);
-  assert.match(
-    factoryConsole,
-    /veriffValidation\?\.approved && !veriffIdentityEvidencePending/
-  );
-  assert.match(
-    factoryConsole,
-    /veriffRefreshing \|\|\s*veriffIdentityEvidencePending/
-  );
+  assert.match(factoryConsole, /veriffIdentityEvidenceMissing/);
+  assert.match(factoryConsole, /veriffTechnicalRetryRequired/);
+  assert.match(factoryConsole, /VERIFF_IDENTITY_MISSING_MESSAGE/);
+  assert.match(factoryConsole, /Repetir validación/);
 });
 
 test("todos los caminos persisten los mismos códigos de rechazo documental", () => {
@@ -492,6 +808,10 @@ test("todos los caminos persisten los mismos códigos de rechazo documental", ()
   assert.equal(
     getDataCreditoVeriffIdentityRejectionCode("mismatch"),
     "DATACREDITO_VERIFF_DOCUMENT_MISMATCH"
+  );
+  assert.equal(
+    getDataCreditoVeriffIdentityRejectionCode("conflict"),
+    "DATACREDITO_VERIFF_DOCUMENT_CONFLICT"
   );
   assert.equal(
     getDataCreditoVeriffIdentityRejectionCode("invalid-document-type"),

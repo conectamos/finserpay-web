@@ -636,7 +636,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
             SELECT validation."id"
             FROM "VeriffIdentityValidation" validation
             WHERE validation."draftId" = $1
-            ORDER BY validation."updatedAt" DESC, validation."id" DESC
+            ORDER BY validation."id" DESC
             LIMIT 1
           `,
           targetId
@@ -1196,7 +1196,7 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
         SELECT validation."status", validation."updatedAt"
         FROM "VeriffIdentityValidation" validation
         WHERE validation."draftId" = d."id"
-        ORDER BY validation."updatedAt" DESC LIMIT 1
+        ORDER BY validation."id" DESC LIMIT 1
       ) veriff ON TRUE
       LEFT JOIN LATERAL (
         SELECT process."status", process."lastError", process."updatedAt"
@@ -1261,7 +1261,7 @@ async function readCreditRows(viewer: SolicitudViewer, filters: SolicitudFilters
         SELECT validation."status", validation."updatedAt"
         FROM "VeriffIdentityValidation" validation
         WHERE validation."creditoId" = c."id"
-        ORDER BY validation."updatedAt" DESC LIMIT 1
+        ORDER BY validation."id" DESC LIMIT 1
       ) veriff ON TRUE
       LEFT JOIN LATERAL (
         SELECT process."status", process."lastError", process."updatedAt"

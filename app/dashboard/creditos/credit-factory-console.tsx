@@ -296,6 +296,7 @@ type VeriffValidationState = {
     | "match"
     | "missing"
     | "invalid-format"
+    | "conflict"
     | "mismatch"
     | "invalid-document-type"
     | "invalid-document-country";
@@ -373,6 +374,10 @@ function getDataCreditoVeriffDocumentRejectionMessage(
     return "";
   }
 
+  if (validation.identityDocumentStatus === "conflict") {
+    return "";
+  }
+
   if (validation.identityDocumentStatus === "mismatch") {
     return "La cédula de la validación facial no coincide con la cédula consultada en DataCrédito. El crédito fue rechazado.";
   }
@@ -438,6 +443,11 @@ const EMPTY_VERIFF_RETRY_POLICY: VeriffRetryPolicyState = {
   remainingAttempts: 2,
   retryAllowed: false,
 };
+
+const VERIFF_IDENTITY_CONFLICT_MESSAGE =
+  "Veriff devolvió datos de identidad contradictorios. La solicitud no fue rechazada y conserva la consulta DataCrédito.";
+const VERIFF_IDENTITY_MISSING_MESSAGE =
+  "Veriff no devolvió evidencia suficiente para comparar la cédula. La solicitud no fue rechazada y conserva la consulta DataCrédito.";
 
 const EMPTY_ANDROID_ENROLLMENT_STATE: AndroidEnrollmentState = {
   status: "idle",
@@ -4645,12 +4655,23 @@ export default function CreditFactoryConsole({
   const dataCreditoVeriffDocumentRejected = Boolean(
     dataCreditoVeriffDocumentRejectionMessage
   );
-  const veriffIdentityEvidencePending = Boolean(
+  const veriffIdentityEvidenceConflict = Boolean(
+    dataCreditoRequiresVeriff &&
+      veriffValidation?.approved &&
+      veriffValidation?.decidedAt &&
+      veriffValidation.identityDocumentStatus === "conflict"
+  );
+  const veriffIdentityEvidenceMissing = Boolean(
     dataCreditoRequiresVeriff &&
       veriffValidation?.approved &&
       veriffValidation?.decidedAt &&
       veriffValidation.identityDocumentStatus === "missing"
   );
+  const veriffIdentityEvidencePending = Boolean(
+    veriffIdentityEvidenceMissing
+  );
+  const veriffTechnicalRetryRequired =
+    veriffIdentityEvidenceConflict || veriffIdentityEvidenceMissing;
   const veriffRejected = Boolean(
     dataCreditoVeriffDocumentRejected ||
       veriffValidation?.status === "DECLINED" ||
@@ -4660,7 +4681,8 @@ export default function CreditFactoryConsole({
   );
   const veriffRiskOnly = Boolean(veriffValidation?.riskBlocked && !veriffRejected);
   const veriffHasFinalDecision = Boolean(
-    (veriffValidation?.approved && !veriffIdentityEvidencePending) ||
+    veriffTechnicalRetryRequired ||
+      (veriffValidation?.approved && !veriffIdentityEvidencePending) ||
       veriffRiskOnly ||
       veriffValidation?.status === "DECLINED" ||
       veriffValidation?.status === "ERROR" ||
@@ -4675,6 +4697,10 @@ export default function CreditFactoryConsole({
     ? "generating"
     : veriffApproved
       ? "approved"
+      : veriffIdentityEvidenceConflict
+        ? "conflict"
+      : veriffIdentityEvidenceMissing
+        ? "incomplete"
       : veriffValidation?.status === "EXPIRED" ||
           veriffValidation?.status === "ABANDONED"
         ? "expired"
@@ -4698,6 +4724,10 @@ export default function CreditFactoryConsole({
       ? "Generando codigo"
       : veriffVisualState === "approved"
         ? "Aprobada"
+        : veriffVisualState === "conflict"
+          ? "Repetir validación"
+        : veriffVisualState === "incomplete"
+          ? "Evidencia incompleta"
         : veriffVisualState === "expired"
           ? "Codigo vencido"
           : veriffVisualState === "rejected"
@@ -7141,6 +7171,23 @@ export default function CreditFactoryConsole({
             expectedDocumentNumber
           )
         : "";
+      const identityEvidenceConflict = Boolean(
+        dataCreditoRequiresVeriff &&
+          validation?.approved &&
+          validation.decidedAt &&
+          validation.identityDocumentStatus === "conflict"
+      );
+      const identityEvidenceMissing = Boolean(
+        dataCreditoRequiresVeriff &&
+          validation?.approved &&
+          validation.decidedAt &&
+          validation.identityDocumentStatus === "missing"
+      );
+      const identityEvidenceRetryMessage = identityEvidenceConflict
+        ? VERIFF_IDENTITY_CONFLICT_MESSAGE
+        : identityEvidenceMissing
+          ? VERIFF_IDENTITY_MISSING_MESSAGE
+          : "";
       const filledClientData = applyVeriffIdentityData(
         validation,
         expectedDraftId,
@@ -7150,7 +7197,9 @@ export default function CreditFactoryConsole({
         }
       );
       setVeriffInlineMessage(
-        documentRejectionMessage
+        identityEvidenceRetryMessage
+          ? identityEvidenceRetryMessage
+          : documentRejectionMessage
           ? documentRejectionMessage
           : validation?.status === "DECLINED"
           ? veriffRejectedMessage
@@ -7165,6 +7214,8 @@ export default function CreditFactoryConsole({
       const shouldNotify =
         !options.silent ||
         usableApproval ||
+        identityEvidenceConflict ||
+        identityEvidenceMissing ||
         Boolean(validation?.approved && !usableApproval) ||
         Boolean(validation?.riskBlocked) ||
         validation?.status === "DECLINED" ||
@@ -7174,7 +7225,9 @@ export default function CreditFactoryConsole({
 
       if (shouldNotify) {
         setNotice({
-          text: documentRejectionMessage
+          text: identityEvidenceRetryMessage
+            ? identityEvidenceRetryMessage
+            : documentRejectionMessage
             ? documentRejectionMessage
             : validation?.status === "DECLINED"
             ? "Validacion rechazada por Veriff."
@@ -7328,12 +7381,31 @@ export default function CreditFactoryConsole({
             dataCreditoApproval?.documentNumber
           )
         : "";
+      const identityEvidenceConflict = Boolean(
+        dataCreditoRequiresVeriff &&
+          validation?.approved &&
+          validation.decidedAt &&
+          validation.identityDocumentStatus === "conflict"
+      );
+      const identityEvidenceMissing = Boolean(
+        dataCreditoRequiresVeriff &&
+          validation?.approved &&
+          validation.decidedAt &&
+          validation.identityDocumentStatus === "missing"
+      );
+      const identityEvidenceRetryMessage = identityEvidenceConflict
+        ? VERIFF_IDENTITY_CONFLICT_MESSAGE
+        : identityEvidenceMissing
+          ? VERIFF_IDENTITY_MISSING_MESSAGE
+          : "";
       const filledClientData = applyVeriffIdentityData(
         validation,
         expectedDraftId
       );
       setVeriffInlineMessage(
-        documentRejectionMessage
+        identityEvidenceRetryMessage
+          ? identityEvidenceRetryMessage
+          : documentRejectionMessage
           ? documentRejectionMessage
           : validation?.status === "DECLINED"
           ? veriffRejectedMessage
@@ -7344,7 +7416,9 @@ export default function CreditFactoryConsole({
             : ""
       );
       setNotice({
-        text: documentRejectionMessage
+        text: identityEvidenceRetryMessage
+          ? identityEvidenceRetryMessage
+          : documentRejectionMessage
           ? documentRejectionMessage
           : validation?.status === "DECLINED"
           ? "Validacion rechazada por Veriff."
@@ -11467,6 +11541,8 @@ export default function CreditFactoryConsole({
                                 className="h-5 w-5 animate-spin"
                                 strokeWidth={2}
                               />
+                            ) : veriffTechnicalRetryRequired ? (
+                              <AlertCircle className="h-5 w-5" strokeWidth={2} />
                             ) : dataCreditoVeriffDocumentRejected ||
                               veriffRetryPolicy.applicationRejected ||
                               veriffValidation?.status === "DECLINED" ? (
@@ -11477,6 +11553,8 @@ export default function CreditFactoryConsole({
                           </span>
                           {veriffSubmitting
                             ? "Generando codigo QR"
+                            : veriffTechnicalRetryRequired
+                              ? "Repetir validación"
                             : dataCreditoVeriffDocumentRejected
                               ? "Ver rechazo del crédito"
                             : veriffRetryPolicy.applicationRejected
@@ -11555,6 +11633,49 @@ export default function CreditFactoryConsole({
                             strokeWidth={1.9}
                             aria-hidden="true"
                           />
+                        </button>
+                      </div>
+                    ) : veriffTechnicalRetryRequired ? (
+                      <div className="fp-identity-modal-content is-result">
+                        <p className="fp-identity-modal-kicker is-conflict">
+                          {veriffIdentityEvidenceConflict
+                            ? "Conflicto técnico"
+                            : "Evidencia incompleta"}
+                        </p>
+                        <h2 id="fp-identity-modal-title">
+                          Repite la validación de identidad
+                        </h2>
+                        <p className="fp-identity-modal-lead">
+                          {veriffIdentityEvidenceConflict
+                            ? VERIFF_IDENTITY_CONFLICT_MESSAGE
+                            : VERIFF_IDENTITY_MISSING_MESSAGE}
+                        </p>
+                        <div
+                          className="fp-identity-modal-illustration is-conflict"
+                          aria-hidden="true"
+                        >
+                          <AlertCircle className="h-20 w-20" strokeWidth={1.35} />
+                        </div>
+                        <p className="fp-identity-modal-result-copy">
+                          Este resultado no consume una nueva consulta a
+                          DataCrédito. El cliente debe realizar otra captura
+                          facial y documental.
+                        </p>
+                        <button
+                          type="button"
+                          className="fp-identity-modal-primary is-conflict"
+                          disabled={!veriffCanGenerateNewQr}
+                          onClick={() => {
+                            veriffAutoSessionRef.current = true;
+                            void validateIdentityWithVeriff();
+                          }}
+                        >
+                          <RefreshCw
+                            className="h-5 w-5"
+                            strokeWidth={1.9}
+                            aria-hidden="true"
+                          />
+                          Repetir validación
                         </button>
                       </div>
                     ) : dataCreditoVeriffDocumentRejected ? (

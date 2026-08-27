@@ -13,6 +13,7 @@ import {
 } from "@/lib/veriff-identity";
 import {
   ensureVeriffSchema,
+  lockVeriffDraftAttempts,
   serializeVeriffValidation,
   type VeriffValidationRow,
 } from "@/lib/veriff-storage";
@@ -24,6 +25,7 @@ type DeclinedCountRow = {
 type DataCreditoDraftIdentityRow = {
   clienteDocumento: string | null;
   dataCreditoAssessmentId: string | null;
+  activeVeriffValidationId: number | null;
 };
 
 type RejectedDraftRow = {
@@ -63,6 +65,7 @@ export async function rejectVeriffDraftForIdentityFailure(
   const expectedAssessmentId = normalizeAssessmentId(dataCreditoAssessmentId);
 
   return prisma.$transaction(async (transaction) => {
+    await lockVeriffDraftAttempts(transaction, row.draftId!);
     const drafts = await transaction.$queryRawUnsafe<RejectedDraftRow[]>(
       `
         UPDATE "CreditoBorrador"
@@ -88,6 +91,11 @@ export async function rejectVeriffDraftForIdentityFailure(
         WHERE "id" = $1
           AND "estado" = 'ABIERTO'
           AND "creditoId" IS NULL
+          AND $3 = (
+            SELECT MAX(validation."id")
+            FROM "VeriffIdentityValidation" validation
+            WHERE validation."draftId" = $1
+          )
           AND (
             (
               "dataCreditoAssessmentId" IS NOT NULL
@@ -141,9 +149,19 @@ export async function getVeriffRetryPolicy(draftId: number | null | undefined) {
   const rows = await prisma.$queryRawUnsafe<DeclinedCountRow[]>(
     `
       SELECT COUNT(*)::bigint AS "count"
-      FROM "VeriffIdentityValidation"
-      WHERE "draftId" = $1
-        AND "status" = 'DECLINED'
+      FROM "VeriffIdentityValidation" declined
+      WHERE declined."draftId" = $1
+        AND declined."status" = 'DECLINED'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "VeriffIdentityValidation" newer
+          WHERE newer."draftId" = declined."draftId"
+            AND newer."id" > declined."id"
+            AND newer."createdAt" < COALESCE(
+              declined."decidedAt",
+              declined."updatedAt"
+            )
+        )
     `,
     draftId
   );
@@ -163,6 +181,7 @@ export async function enforceVeriffRetryPolicy(
             "updatedAt" = CURRENT_TIMESTAMP
         WHERE "id" = $1
           AND "status" <> 'DECLINED'
+          AND "creditoId" IS NULL
       `,
       row.id
     );
@@ -176,22 +195,28 @@ export async function enforceVeriffRetryPolicy(
           COALESCE(
             "dataCreditoAssessmentId"::text,
             NULLIF("payload"->>'dataCreditoAssessmentId', '')
-          ) AS "dataCreditoAssessmentId"
+          ) AS "dataCreditoAssessmentId",
+          (
+            SELECT MAX(validation."id")
+            FROM "VeriffIdentityValidation" validation
+            WHERE validation."draftId" = "CreditoBorrador"."id"
+          ) AS "activeVeriffValidationId"
         FROM "CreditoBorrador"
         WHERE "id" = $1
           AND "estado" = 'ABIERTO'
           AND "creditoId" IS NULL
-          AND COALESCE(
-            "dataCreditoAssessmentId"::text,
-            NULLIF("payload"->>'dataCreditoAssessmentId', '')
-          ) IS NOT NULL
         LIMIT 1
       `,
       row.draftId
     );
-    const expectedDocument = drafts[0]?.clienteDocumento;
+    const draft = drafts[0];
+    const activeValidation =
+      Number(draft?.activeVeriffValidationId || 0) === row.id;
+    const expectedDocument = draft?.dataCreditoAssessmentId
+      ? draft.clienteDocumento
+      : null;
 
-    if (expectedDocument) {
+    if (activeValidation && expectedDocument) {
       const identityComparison = compareDataCreditoVeriffIdentityEvidence(
         [
           extractVeriffIdentityDocumentEvidence(row.decisionPayload),
@@ -200,12 +225,20 @@ export async function enforceVeriffRetryPolicy(
         expectedDocument
       );
 
-      if (!identityComparison.ok && identityComparison.status !== "missing") {
-        await rejectVeriffDraftForIdentityFailure(
+      if (
+        !identityComparison.ok &&
+        identityComparison.status !== "missing" &&
+        identityComparison.status !== "conflict"
+      ) {
+        const applicationRejected = await rejectVeriffDraftForIdentityFailure(
           row,
           getDataCreditoVeriffIdentityRejectionCode(identityComparison.status),
-          drafts[0]?.dataCreditoAssessmentId
+          draft.dataCreditoAssessmentId
         );
+
+        if (!applicationRejected) {
+          return getVeriffRetryPolicy(row.draftId);
+        }
 
         return {
           ...retryPolicy,
@@ -222,25 +255,34 @@ export async function enforceVeriffRetryPolicy(
     serialized?.status === "DECLINED" &&
     retryPolicy.applicationRejected
   ) {
-    await prisma.$executeRawUnsafe(
-      `
-        UPDATE "CreditoBorrador"
-        SET "estado" = 'CERRADO',
-            "closedReason" = 'RECHAZADA',
-            "closedAt" = COALESCE("closedAt", CURRENT_TIMESTAMP),
-            "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
-              'veriffStatus', 'DECLINED',
-              'veriffDeclinedAttempts', $2::integer,
-              'veriffRejectedAt', CURRENT_TIMESTAMP
-            ),
-            "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "id" = $1
-          AND "estado" = 'ABIERTO'
-          AND "creditoId" IS NULL
-      `,
-      row.draftId,
-      retryPolicy.declinedAttempts
-    );
+    await prisma.$transaction(async (transaction) => {
+      await lockVeriffDraftAttempts(transaction, row.draftId!);
+      await transaction.$executeRawUnsafe(
+        `
+          UPDATE "CreditoBorrador"
+          SET "estado" = 'CERRADO',
+              "closedReason" = 'RECHAZADA',
+              "closedAt" = COALESCE("closedAt", CURRENT_TIMESTAMP),
+              "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
+                'veriffStatus', 'DECLINED',
+                'veriffDeclinedAttempts', $2::integer,
+                'veriffRejectedAt', CURRENT_TIMESTAMP
+              ),
+              "updatedAt" = CURRENT_TIMESTAMP
+          WHERE "id" = $1
+            AND "estado" = 'ABIERTO'
+            AND "creditoId" IS NULL
+            AND $3 = (
+              SELECT MAX(validation."id")
+              FROM "VeriffIdentityValidation" validation
+              WHERE validation."draftId" = $1
+            )
+        `,
+        row.draftId,
+        retryPolicy.declinedAttempts,
+        row.id
+      );
+    });
   }
 
   return retryPolicy;

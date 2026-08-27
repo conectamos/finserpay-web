@@ -50,6 +50,7 @@ export type VeriffIdentityDocumentEvidenceInput = {
 export type DataCreditoVeriffIdentityFailureStatus =
   | "missing"
   | "invalid-format"
+  | "conflict"
   | "mismatch"
   | "invalid-document-type"
   | "invalid-document-country";
@@ -181,13 +182,18 @@ export function getDataCreditoVeriffIdentityRejectionCode(
   if (status === "invalid-document-country") {
     return "DATACREDITO_VERIFF_DOCUMENT_COUNTRY_INVALID";
   }
+  if (status === "conflict") {
+    return "DATACREDITO_VERIFF_DOCUMENT_CONFLICT";
+  }
   return "DATACREDITO_VERIFF_DOCUMENT_MISMATCH";
 }
 
 /**
  * Evalúa toda la evidencia de identidad devuelta por Veriff para un crédito
- * originado en DataCrédito. Exige al menos un número proveniente del documento
- * capturado y rechaza si cualquier candidato de person/document difiere.
+ * originado en DataCrédito. Exige evidencia tanto de `person` como del documento
+ * capturado. `person.idNumber`/`idCode` representa la identificación nacional;
+ * `document.number` puede ser un serial físico distinto de la identificación
+ * nacional y por eso no participa en la comparación de la cédula.
  */
 export function compareDataCreditoVeriffIdentityEvidence(
   evidenceInput:
@@ -198,16 +204,81 @@ export function compareDataCreditoVeriffIdentityEvidence(
   const evidenceItems = Array.isArray(evidenceInput)
     ? evidenceInput
     : [evidenceInput];
+  const expected = parseStrictIdentityDocument(expectedDocumentNumber);
+  if (expected.status !== "valid") {
+    return {
+      ok: false,
+      status: expected.status,
+      documentNumber: null,
+    };
+  }
+
+  const personNumbers = Array.from(
+    new Set(
+      evidenceItems
+        .flatMap((item) => item?.personNumbers || [])
+        .map(compactEvidenceText)
+        .filter(Boolean)
+    )
+  );
+
+  // Un número presente únicamente bajo `document` no basta para identificar a
+  // la persona: Veriff puede devolver allí el serial físico de la cédula.
+  if (!personNumbers.length) {
+    return { ok: false, status: "missing", documentNumber: null };
+  }
+
+  const parsedPersonNumbers = personNumbers.map(parseStrictIdentityDocument);
+  const validPersonNumbers = parsedPersonNumbers
+    .filter(
+      (
+        candidate
+      ): candidate is Extract<
+        ParsedStrictIdentityDocument,
+        { status: "valid" }
+      > => candidate.status === "valid"
+    )
+    .map((candidate) => candidate.normalized);
+  const hasInvalidPersonNumber = parsedPersonNumbers.some(
+    (candidate) => candidate.status !== "valid"
+  );
+
+  if (hasInvalidPersonNumber) {
+    return {
+      ok: false,
+      status: "conflict",
+      documentNumber: null,
+    };
+  }
+
+  const distinctPersonNumbers = new Set(validPersonNumbers);
+  if (distinctPersonNumbers.size !== 1) {
+    return { ok: false, status: "conflict", documentNumber: null };
+  }
+
+  const authoritativePersonNumber = validPersonNumbers[0];
+  if (authoritativePersonNumber !== expected.normalized) {
+    return {
+      ok: false,
+      status: "mismatch",
+      documentNumber: authoritativePersonNumber,
+    };
+  }
+
   const documents = evidenceItems.flatMap((item) => item?.documents || []);
   const documentNumbers = documents
     .map((document) => compactEvidenceText(document.number))
     .filter(Boolean);
-
   if (!documentNumbers.length) {
     return { ok: false, status: "missing", documentNumber: null };
   }
 
   for (const document of documents) {
+    const documentNumber = compactEvidenceText(document.number);
+    if (!documentNumber) {
+      continue;
+    }
+
     const documentType = normalizeEvidenceMetadata(document.type);
     if (
       documentType &&
@@ -216,7 +287,7 @@ export function compareDataCreditoVeriffIdentityEvidence(
       return {
         ok: false,
         status: "invalid-document-type",
-        documentNumber: compactEvidenceText(document.number) || null,
+        documentNumber,
       };
     }
 
@@ -228,55 +299,28 @@ export function compareDataCreditoVeriffIdentityEvidence(
       return {
         ok: false,
         status: "invalid-document-country",
-        documentNumber: compactEvidenceText(document.number) || null,
+        documentNumber,
       };
     }
   }
 
-  const candidates = Array.from(
-    new Set(
-      evidenceItems
-        .flatMap((item) => [
-          ...(item?.allNumbers || []),
-          ...(item?.personNumbers || []),
-          ...(item?.documents || []).map(
-            (document: { number?: unknown }) => document.number
-          ),
-        ])
-        .map(compactEvidenceText)
-        .filter(Boolean)
-    )
-  );
-  const primaryDocumentComparison = compareStrictIdentityDocuments(
-    documentNumbers[0],
-    expectedDocumentNumber
-  );
-
-  if (!primaryDocumentComparison.ok) {
-    return {
-      ok: false,
-      status: primaryDocumentComparison.status,
-      documentNumber: documentNumbers[0] || null,
-    };
-  }
-
-  for (const candidate of candidates) {
-    const comparison = compareStrictIdentityDocuments(
-      candidate,
-      expectedDocumentNumber
+  const hasCompleteColombianIdentityDocument = documents.some((document) => {
+    const documentNumber = compactEvidenceText(document.number);
+    const documentType = normalizeEvidenceMetadata(document.type);
+    const documentCountry = normalizeEvidenceMetadata(document.country);
+    return Boolean(
+      documentNumber &&
+        COLOMBIAN_IDENTITY_DOCUMENT_TYPES.has(documentType) &&
+        COLOMBIAN_DOCUMENT_COUNTRIES.has(documentCountry)
     );
-    if (!comparison.ok) {
-      return {
-        ok: false,
-        status: comparison.status,
-        documentNumber: primaryDocumentComparison.received,
-      };
-    }
+  });
+  if (!hasCompleteColombianIdentityDocument) {
+    return { ok: false, status: "missing", documentNumber: null };
   }
 
   return {
     ok: true,
     status: "match",
-    documentNumber: primaryDocumentComparison.received,
+    documentNumber: expected.normalized,
   };
 }

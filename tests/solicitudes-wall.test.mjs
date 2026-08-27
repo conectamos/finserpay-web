@@ -718,7 +718,7 @@ test("el GET del borrador entrega plataforma y Veriff canonicos aunque el JSON e
   assert.match(reader, /"VeriffIdentityValidation"/);
   assert.match(
     reader,
-    /validation\."draftId"\s*=\s*d\."id"[\s\S]*ORDER BY validation\."updatedAt" DESC[\s\S]*LIMIT 1/
+    /validation\."draftId"\s*=\s*d\."id"[\s\S]*ORDER BY validation\."id" DESC[\s\S]*LIMIT 1/
   );
   assert.match(
     reader,

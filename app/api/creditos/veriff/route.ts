@@ -206,7 +206,7 @@ export async function POST(request: Request) {
       sedeId: draft.sedeId,
     });
     const endUserId = randomUUID();
-    const validation = await createVeriffValidation({
+    const validationReservation = await createVeriffValidation({
       aliadoId: draft.aliadoId,
       captureToken: sanitizeText(body.captureToken) || null,
       clienteDocumento,
@@ -225,8 +225,45 @@ export async function POST(request: Request) {
       vendorData,
     });
 
+    const validation = validationReservation.row;
+
     if (!validation) {
-      throw new Error("No se pudo crear la auditoria de Veriff");
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "VERIFF_DRAFT_UNAVAILABLE",
+          error:
+            "La solicitud ya no está disponible para iniciar otra validación facial.",
+        },
+        { status: 409 }
+      );
+    }
+
+    if (!validationReservation.created) {
+      const serializedValidation = serializeVeriffValidation(validation);
+
+      if (serializedValidation?.sessionUrl) {
+        return NextResponse.json({
+          ok: true,
+          retryPolicy,
+          reused: true,
+          validation: serializedValidation,
+          veriff: getVeriffPublicSummary(),
+        });
+      }
+
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "VERIFF_SESSION_PREPARING",
+          error:
+            "Ya se está preparando una validación facial para esta solicitud. Intenta nuevamente en unos segundos.",
+          retryable: true,
+          retryPolicy,
+          validation: serializedValidation,
+        },
+        { status: 409 }
+      );
     }
 
     const createPayload = await veriffCreateSession({

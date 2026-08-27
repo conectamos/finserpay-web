@@ -14,7 +14,10 @@ import {
   veriffGetPerson,
   VeriffApiError,
 } from "@/lib/veriff";
-import { enforceVeriffRetryPolicy } from "@/lib/veriff-retry-policy";
+import {
+  enforceVeriffRetryPolicy,
+  getVeriffRetryPolicy,
+} from "@/lib/veriff-retry-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,6 +61,15 @@ export async function GET(
         { ok: false, error: "No tienes acceso a esta validacion" },
         { status: 403 }
       );
+    }
+
+    if (current.creditoId) {
+      return NextResponse.json({
+        ok: true,
+        validation: serializeVeriffValidation(current),
+        retryPolicy: await getVeriffRetryPolicy(current.draftId),
+        veriff: getVeriffPublicSummary(),
+      });
     }
 
     let row = current;

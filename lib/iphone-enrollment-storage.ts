@@ -623,7 +623,7 @@ async function hasAuthorizedVeriffApprovalForEnrollment(
         AND validation."vendedorId" IS NOT DISTINCT FROM $3
         AND validation."sedeId" = $4
         AND validation."aliadoId" IS NOT DISTINCT FROM $5
-      ORDER BY validation."updatedAt" DESC, validation."id" DESC
+      ORDER BY validation."id" DESC
       LIMIT 1
       ${lock ? "FOR SHARE" : ""}
     `,

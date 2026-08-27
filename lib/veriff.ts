@@ -420,6 +420,24 @@ const VERIFF_NON_APPROVED_FINAL_STATUSES = new Set<VeriffStatus>([
   "EXPIRED",
 ]);
 
+export function shouldPreserveVeriffStatusTransition(
+  currentValue: unknown,
+  incomingValue: unknown,
+  source: "decisionPayload" | "webhookPayload"
+) {
+  const currentStatus = normalizeVeriffStatus(currentValue);
+  const incomingStatus = normalizeVeriffStatus(incomingValue);
+  const preservesAdverseFinal =
+    VERIFF_NON_APPROVED_FINAL_STATUSES.has(currentStatus) &&
+    incomingStatus !== currentStatus;
+  const preservesActiveWebhookBlock = Boolean(
+    source === "webhookPayload" &&
+      (currentStatus === "REVIEW" || currentStatus === "RESUBMISSION") &&
+      incomingStatus === "APPROVED"
+  );
+  return preservesAdverseFinal || preservesActiveWebhookBlock;
+}
+
 export type VeriffStatusEvidenceResolution = {
   conflict: boolean;
   status: VeriffStatus;

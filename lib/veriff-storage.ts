@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import {
@@ -8,6 +9,7 @@ import {
   normalizeVeriffStatus,
   redactVeriffPayload,
   resolveVeriffStatusEvidence,
+  shouldPreserveVeriffStatusTransition,
   summarizeVeriffDecision,
   summarizeVeriffRisk,
   type VeriffStatus,
@@ -63,6 +65,7 @@ type CreateInput = {
 
 type UpdateInput = {
   attemptId?: string | null;
+  clearWebhookPayload?: boolean;
   code?: string | null;
   createPayload?: unknown;
   decision?: string | null;
@@ -80,9 +83,46 @@ type UpdateInput = {
 };
 
 let veriffSchemaPromise: Promise<void> | null = null;
+const VERIFF_DRAFT_ATTEMPT_LOCK_NAMESPACE = 620_917;
+const VERIFF_POST_LINK_REVIEW_ERROR =
+  "VERIFF_POST_LINK_DECISION_REVIEW_REQUIRED";
+const VERIFF_DECISION_ORDER_REVIEW_ERROR =
+  "VERIFF_DECISION_ORDER_REVIEW_REQUIRED";
+type VeriffQueryDatabase = Pick<Prisma.TransactionClient, "$queryRawUnsafe">;
 
 function jsonValue(value: unknown) {
   return value === undefined ? null : JSON.stringify(redactVeriffPayload(value));
+}
+
+function stableAuditValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableAuditValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, stableAuditValue(child)])
+    );
+  }
+  return value ?? null;
+}
+
+function buildVeriffEventKey(
+  validationId: number,
+  source: "decisionPayload" | "webhookPayload",
+  payload: unknown
+) {
+  const redactedPayload = redactVeriffPayload(payload);
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        payload: stableAuditValue(redactedPayload),
+        source,
+        validationId,
+      })
+    )
+    .digest("hex");
 }
 
 function toDate(value: string | null) {
@@ -176,6 +216,26 @@ async function runVeriffSchemaSetup() {
   `);
 
   await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "VeriffIdentityValidationEvent" (
+      "id" BIGSERIAL PRIMARY KEY,
+      "validationId" INTEGER NOT NULL
+        REFERENCES "VeriffIdentityValidation"("id") ON DELETE CASCADE,
+      "eventKey" VARCHAR(64) NOT NULL UNIQUE,
+      "source" TEXT NOT NULL,
+      "status" TEXT,
+      "payload" JSONB,
+      "postLink" BOOLEAN NOT NULL DEFAULT FALSE,
+      "reviewRequired" BOOLEAN NOT NULL DEFAULT FALSE,
+      "receivedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "VeriffIdentityValidationEvent_validation_idx"
+      ON "VeriffIdentityValidationEvent" ("validationId", "receivedAt" DESC)
+  `);
+
+  await prisma.$executeRawUnsafe(`
     CREATE INDEX IF NOT EXISTS "VeriffIdentityValidation_documento_idx"
       ON "VeriffIdentityValidation" ("clienteDocumento", "createdAt" DESC)
   `);
@@ -200,6 +260,17 @@ export async function ensureVeriffSchema() {
   }
 
   await veriffSchemaPromise;
+}
+
+export async function lockVeriffDraftAttempts(
+  database: Pick<Prisma.TransactionClient, "$queryRawUnsafe">,
+  draftId: number
+) {
+  await database.$queryRawUnsafe(
+    `SELECT pg_advisory_xact_lock($1, $2)`,
+    VERIFF_DRAFT_ATTEMPT_LOCK_NAMESPACE,
+    draftId
+  );
 }
 
 function objectValue(value: unknown, key: string) {
@@ -307,39 +378,106 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
 export async function createVeriffValidation(input: CreateInput) {
   await ensureVeriffSchema();
 
-  const rows = await prisma.$queryRawUnsafe<VeriffValidationRow[]>(
-    `
-      INSERT INTO "VeriffIdentityValidation" (
-        "draftId",
-        "captureToken",
-        "vendorData",
-        "endUserId",
-        "status",
-        "clienteDocumento",
-        "clienteNombre",
-        "usuarioId",
-        "vendedorId",
-        "sedeId",
-        "aliadoId",
-        "requestPayload"
-      )
-      VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, $8, $9, $10, $11::jsonb)
-      RETURNING *
-    `,
-    input.draftId || null,
-    input.captureToken || null,
-    input.vendorData || null,
-    input.endUserId || null,
-    input.clienteDocumento || null,
-    input.clienteNombre || null,
-    input.usuarioId,
-    input.vendedorId || null,
-    input.sedeId,
-    input.aliadoId || null,
-    jsonValue(input.requestPayload)
-  );
+  return prisma.$transaction(async (transaction) => {
+    if (input.draftId) {
+      await lockVeriffDraftAttempts(transaction, input.draftId);
+      const reusableRows =
+        await transaction.$queryRawUnsafe<VeriffValidationRow[]>(
+          `
+            SELECT validation.*
+            FROM "VeriffIdentityValidation" validation
+            WHERE validation."draftId" = $1
+              AND validation."sedeId" = $2
+              AND validation."aliadoId" IS NOT DISTINCT FROM $3
+              AND validation."id" = (
+                SELECT MAX(latest."id")
+                FROM "VeriffIdentityValidation" latest
+                WHERE latest."draftId" = $1
+              )
+              AND validation."creditoId" IS NULL
+              AND regexp_replace(
+                COALESCE(validation."clienteDocumento", ''),
+                '[^0-9]',
+                '',
+                'g'
+              ) = $4
+              AND validation."status" NOT IN (
+                'APPROVED',
+                'DECLINED',
+                'ERROR',
+                'EXPIRED',
+                'ABANDONED'
+              )
+              AND (
+                (
+                  validation."veriffSessionId" IS NOT NULL
+                  AND validation."createPayload" IS NOT NULL
+                  AND validation."createdAt" >= NOW() - INTERVAL '24 hours'
+                )
+                OR (
+                  (
+                    validation."veriffSessionId" IS NULL
+                    OR validation."createPayload" IS NULL
+                  )
+                  AND validation."createdAt" >= NOW() - INTERVAL '2 minutes'
+                )
+              )
+            ORDER BY validation."id" DESC
+            LIMIT 1
+          `,
+          input.draftId,
+          input.sedeId,
+          input.aliadoId || null,
+          String(input.clienteDocumento || "").replace(/\D/g, "")
+        );
+      if (reusableRows[0]) {
+        return { created: false, row: reusableRows[0] };
+      }
+    }
 
-  return rows[0] || null;
+    const rows = await transaction.$queryRawUnsafe<VeriffValidationRow[]>(
+      `
+        INSERT INTO "VeriffIdentityValidation" (
+          "draftId",
+          "captureToken",
+          "vendorData",
+          "endUserId",
+          "status",
+          "clienteDocumento",
+          "clienteNombre",
+          "usuarioId",
+          "vendedorId",
+          "sedeId",
+          "aliadoId",
+          "requestPayload"
+        )
+        SELECT
+          $1, $2, $3, $4, 'PENDING', $5, $6, $7, $8, $9, $10, $11::jsonb
+        WHERE $1::integer IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM "CreditoBorrador" draft
+            WHERE draft."id" = $1
+              AND draft."estado" = 'ABIERTO'
+              AND draft."creditoId" IS NULL
+          )
+        RETURNING *
+      `,
+      input.draftId || null,
+      input.captureToken || null,
+      input.vendorData || null,
+      input.endUserId || null,
+      input.clienteDocumento || null,
+      input.clienteNombre || null,
+      input.usuarioId,
+      input.vendedorId || null,
+      input.sedeId,
+      input.aliadoId || null,
+      jsonValue(input.requestPayload)
+    );
+
+    return { created: true, row: rows[0] || null };
+  });
 }
 
 export async function getReusableVeriffValidationForDraft(input: {
@@ -357,13 +495,18 @@ export async function getReusableVeriffValidationForDraft(input: {
       WHERE "draftId" = $1
         AND "sedeId" = $2
         AND "aliadoId" IS NOT DISTINCT FROM $3
+        AND "id" = (
+          SELECT MAX(latest."id")
+          FROM "VeriffIdentityValidation" latest
+          WHERE latest."draftId" = $1
+        )
         AND "creditoId" IS NULL
         AND "decidedAt" IS NULL
         AND "veriffSessionId" IS NOT NULL
         AND "createPayload" IS NOT NULL
         AND "status" NOT IN ('APPROVED', 'DECLINED', 'ERROR', 'EXPIRED', 'ABANDONED')
         AND "createdAt" >= NOW() - INTERVAL '24 hours'
-      ORDER BY "createdAt" DESC
+      ORDER BY "id" DESC
       LIMIT 5
     `,
     input.draftId,
@@ -385,10 +528,12 @@ export async function getReusableVeriffValidationForDraft(input: {
   );
 }
 
-export async function updateVeriffValidation(id: number, input: UpdateInput) {
-  await ensureVeriffSchema();
-
-  const rows = await prisma.$queryRawUnsafe<VeriffValidationRow[]>(
+async function updateVeriffValidationRecord(
+  database: VeriffQueryDatabase,
+  id: number,
+  input: UpdateInput
+) {
+  const rows = await database.$queryRawUnsafe<VeriffValidationRow[]>(
     `
       UPDATE "VeriffIdentityValidation"
       SET
@@ -403,12 +548,16 @@ export async function updateVeriffValidation(id: number, input: UpdateInput) {
         "mediaPayload" = COALESCE($10::jsonb, "mediaPayload"),
         "submitPayload" = COALESCE($11::jsonb, "submitPayload"),
         "decisionPayload" = COALESCE($12::jsonb, "decisionPayload"),
-        "webhookPayload" = COALESCE($13::jsonb, "webhookPayload"),
+        "webhookPayload" = CASE
+          WHEN $17::boolean THEN NULL
+          ELSE COALESCE($13::jsonb, "webhookPayload")
+        END,
         "lastError" = $14,
         "submittedAt" = COALESCE($15, "submittedAt"),
         "decidedAt" = COALESCE($16, "decidedAt"),
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = $1
+        AND "creditoId" IS NULL
       RETURNING *
     `,
     id,
@@ -426,10 +575,16 @@ export async function updateVeriffValidation(id: number, input: UpdateInput) {
     jsonValue(input.webhookPayload),
     input.lastError ?? null,
     input.submittedAt || null,
-    input.decidedAt || null
+    input.decidedAt || null,
+    input.clearWebhookPayload ?? false
   );
 
   return rows[0] || null;
+}
+
+export async function updateVeriffValidation(id: number, input: UpdateInput) {
+  await ensureVeriffSchema();
+  return updateVeriffValidationRecord(prisma, id, input);
 }
 
 export async function updateVeriffValidationFromDecision(
@@ -437,20 +592,116 @@ export async function updateVeriffValidationFromDecision(
   payload: unknown,
   source: "decisionPayload" | "webhookPayload"
 ) {
+  await ensureVeriffSchema();
   const summary = summarizeVeriffDecision(payload);
   const finalDecision = ["APPROVED", "DECLINED", "ERROR", "EXPIRED", "ABANDONED"].includes(
     summary.status
   );
 
-  return updateVeriffValidation(id, {
-    attemptId: summary.attemptId,
-    code: summary.code,
-    decision: summary.decision,
-    decidedAt: finalDecision ? toDate(summary.decidedAt) || new Date() : null,
-    reason: summary.reason,
-    reasonCode: summary.reasonCode,
-    status: summary.status,
-    [source]: payload,
+  return prisma.$transaction(async (transaction) => {
+    const currentRows = await transaction.$queryRawUnsafe<VeriffValidationRow[]>(
+      `
+        SELECT *
+        FROM "VeriffIdentityValidation"
+        WHERE "id" = $1
+        LIMIT 1
+        FOR UPDATE
+      `,
+      id
+    );
+    const current = currentRows[0] || null;
+    if (!current) {
+      return null;
+    }
+
+    const currentStatus = resolveVeriffRowStatus(current);
+    const statusEvidence = resolveVeriffStatusEvidence([
+      currentStatus,
+      summary.status,
+    ]);
+    const preserveCanonicalStatus = shouldPreserveVeriffStatusTransition(
+      currentStatus,
+      summary.status,
+      source
+    );
+    const resolvesActiveBlockWithCurrentDecision = Boolean(
+      source === "decisionPayload" &&
+        (currentStatus === "REVIEW" || currentStatus === "RESUBMISSION") &&
+        summary.status === "APPROVED"
+    );
+    const incomingIdentity = compareDataCreditoVeriffIdentityEvidence(
+      extractVeriffIdentityDocumentEvidence(payload),
+      current.clienteDocumento
+    );
+    const incomingRisk = summarizeVeriffRisk(payload);
+    const reviewRequired = Boolean(
+      preserveCanonicalStatus ||
+        (current.creditoId &&
+          (statusEvidence.conflict ||
+          (!incomingIdentity.ok && incomingIdentity.status !== "missing") ||
+          incomingRisk.blocked))
+    );
+    const eventKey = buildVeriffEventKey(id, source, payload);
+    const eventRows = await transaction.$queryRawUnsafe<Array<{ id: bigint }>>(
+      `
+        INSERT INTO "VeriffIdentityValidationEvent" (
+          "validationId",
+          "eventKey",
+          "source",
+          "status",
+          "payload",
+          "postLink",
+          "reviewRequired"
+        )
+        VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+        ON CONFLICT ("eventKey") DO NOTHING
+        RETURNING "id"
+      `,
+      id,
+      eventKey,
+      source,
+      summary.status,
+      jsonValue(payload),
+      Boolean(current.creditoId),
+      reviewRequired
+    );
+
+    if (!eventRows[0]) {
+      return current;
+    }
+
+    if (current.creditoId || preserveCanonicalStatus) {
+      if (!reviewRequired) {
+        return current;
+      }
+
+      const reviewRows = await transaction.$queryRawUnsafe<VeriffValidationRow[]>(
+        `
+          UPDATE "VeriffIdentityValidation"
+          SET "lastError" = $2,
+              "updatedAt" = CURRENT_TIMESTAMP
+          WHERE "id" = $1
+          RETURNING *
+        `,
+        id,
+        current.creditoId
+          ? VERIFF_POST_LINK_REVIEW_ERROR
+          : VERIFF_DECISION_ORDER_REVIEW_ERROR
+      );
+      return reviewRows[0] || current;
+    }
+
+    return updateVeriffValidationRecord(transaction, id, {
+      attemptId: summary.attemptId,
+      clearWebhookPayload: resolvesActiveBlockWithCurrentDecision,
+      code: summary.code,
+      decision: summary.decision,
+      decidedAt: finalDecision ? toDate(summary.decidedAt) || new Date() : null,
+      reason: summary.reason,
+      reasonCode: summary.reasonCode,
+      status: summary.status,
+      [source]: payload,
+    });
   });
 }
 
@@ -478,16 +729,18 @@ export async function getVeriffValidationBySessionId(sessionId: string) {
 
 export async function linkVeriffValidationToCredit(
   validationId: number,
-  creditoId: number
+  creditoId: number,
+  database: Pick<Prisma.TransactionClient, "$queryRawUnsafe"> = prisma
 ) {
   await ensureVeriffSchema();
 
-  const rows = await prisma.$queryRawUnsafe<VeriffValidationRow[]>(
+  const rows = await database.$queryRawUnsafe<VeriffValidationRow[]>(
     `
       UPDATE "VeriffIdentityValidation"
       SET "creditoId" = $2,
           "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = $1
+        AND "creditoId" IS NULL
       RETURNING *
     `,
     validationId,
