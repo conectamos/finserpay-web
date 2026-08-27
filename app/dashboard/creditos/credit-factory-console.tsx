@@ -4858,7 +4858,7 @@ export default function CreditFactoryConsole({
       ? `${missingIphoneRequiredEvidenceLabels.slice(0, -1).join(", ")} y ${missingIphoneRequiredEvidenceLabels[missingIphoneRequiredEvidenceLabels.length - 1]}`
       : missingIphoneRequiredEvidenceLabels[0] || "las evidencias obligatorias";
   const iphoneDeliveryPendingMessage = !iphoneEnrollmentReady
-    ? "Espera la aprobacion del analista de enrolamiento y adjunta las cinco fotos obligatorias antes de finalizar este credito."
+    ? "Espera la confirmacion ENROLADO CORRECTAMENTE del especialista. Despues se habilitaran las cinco fotos obligatorias."
     : !iphoneRequiredEvidenceReady
       ? "Adjunta " +
         missingIphoneRequiredEvidenceLabel +
@@ -4884,10 +4884,10 @@ export default function CreditFactoryConsole({
   const deliveryStatusDetail = iphoneFactory
     ? iphoneDeliveryVerified
       ? iphoneEnrollmentVerified
-        ? `El analista ${iphoneEnrollmentReview?.analystName || "especializado"} aprobo el enrolamiento y las cinco evidencias quedaron adjuntas.`
+        ? "El especialista confirmo ENROLADO CORRECTAMENTE y las cinco evidencias quedaron adjuntas."
         : "La excepcion administrativa autoriza el control y las cinco evidencias quedaron adjuntas."
       : !iphoneEnrollmentReady
-        ? "El analista especializado debe aprobar el enrolamiento. Las cinco fotos siguen siendo obligatorias."
+        ? "El especialista debe terminar la prueba y confirmar ENROLADO CORRECTAMENTE. Las cinco fotos siguen siendo obligatorias."
         : "Adjunta " +
           missingIphoneRequiredEvidenceLabel +
           " para habilitar el cierre."
@@ -5212,7 +5212,7 @@ export default function CreditFactoryConsole({
           : "Zero Touch",
       ready: entregaValidada,
       action: iphoneFactory
-        ? "Esperar aprobacion"
+        ? "Esperar enrolamiento"
         : entregaSinVerificacionAutorizada
           ? "Entrega autorizada"
           : "Validar entrega",
@@ -7702,7 +7702,31 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    setWizardStep(clampWizardStep(targetStep));
+    const nextStep = clampWizardStep(targetStep);
+    if (iphoneFactory && nextStep === 5 && draftId) {
+      try {
+        cancelPendingDraftAutosave();
+        setDraftStatus("saving");
+        setDraftErrorMessage("");
+        await saveDraftPayloadForVeriff(
+          factoryDraftPayload,
+          nextStep,
+          draftId
+        );
+        setWizardStep(nextStep);
+        return;
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "No se pudo dejar la solicitud lista para enrolamiento.";
+        setDraftStatus("error");
+        setDraftErrorMessage(message);
+        setNotice({ text: message, tone: "red" });
+        return;
+      }
+    }
+    setWizardStep(nextStep);
   };
 
   const createWhatsAppOtp = async () => {
@@ -8574,6 +8598,12 @@ export default function CreditFactoryConsole({
       const failed = processUiState === "error";
 
       if (signed) {
+        cancelPendingDraftAutosave();
+        await saveDraftPayloadForVeriff(
+          factoryDraftPayload,
+          5,
+          currentDraftId
+        );
         setWizardStep(5);
       }
 
@@ -8584,7 +8614,7 @@ export default function CreditFactoryConsole({
             )}`
           : signed
             ? iphoneFactory
-              ? "FirmaSeguro reporto firma exitosa. Espera la aprobacion del analista de enrolamiento para finalizar el credito."
+              ? "FirmaSeguro reporto firma exitosa. Espera que el especialista confirme ENROLADO CORRECTAMENTE para continuar con las fotos."
               : "FirmaSeguro reporto firma exitosa. Valida la entrega para finalizar el credito."
             : uuid
               ? `Expediente enviado a FirmaSeguro. Proceso: ${sanitizeFirmaSeguroVisibleText(
@@ -14571,11 +14601,11 @@ export default function CreditFactoryConsole({
                         {iphoneFactory ? "Control de enrolamiento" : "Secuencia Zero Touch"}
                       </p>
                       <h4 className="mt-2 text-xl font-black text-slate-950">
-                        {iphoneFactory ? "1. Aprobacion por analista" : "1. Inscribir dispositivo"}
+                        {iphoneFactory ? "1. Confirmacion del especialista" : "1. Inscribir dispositivo"}
                       </h4>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {iphoneFactory
-                          ? "El analista especializado valida el iPhone por cedula e IMEI. La fabrica se actualiza automaticamente."
+                          ? "El especialista prueba el iPhone por cedula e IMEI y confirma ENROLADO CORRECTAMENTE. La fabrica se actualiza automaticamente."
                           : "Al llegar a este paso, FINSER PAY registra automaticamente el equipo en Zero Touch."}
                       </p>
 
@@ -14608,13 +14638,13 @@ export default function CreditFactoryConsole({
                           <div>
                             <strong className="block text-base">
                               {iphoneEnrollmentVerified
-                                ? "Enrolamiento aprobado"
-                                : "Esperando aprobacion del analista"}
+                                ? "ENROLADO CORRECTAMENTE"
+                                : "Esperando prueba de enrolamiento"}
                             </strong>
                             <p className="mt-1 leading-6 text-slate-600">
                               {iphoneEnrollmentReview
                                 ? `${iphoneEnrollmentReview.analystName} · ${dateTime(iphoneEnrollmentReview.approvedAt)}`
-                                : "El asesor no puede marcar este control. Se consulta automaticamente cada 8 segundos."}
+                                : "El asesor no puede marcar este control. Se consulta automaticamente cada 8 segundos y luego se habilitan las fotos."}
                             </p>
                           </div>
                         </div>
@@ -14793,7 +14823,7 @@ export default function CreditFactoryConsole({
                           <div className="mt-4 flex items-center gap-2 rounded-md border border-slate-200 bg-[#f7f7f4] px-4 py-3 text-sm text-slate-600">
                             <LockKeyhole className="h-4 w-4" strokeWidth={1.8} />
                             {iphoneFactory
-                              ? "El analista debe aprobar el enrolamiento para habilitar las evidencias."
+                              ? "El especialista debe confirmar ENROLADO CORRECTAMENTE para habilitar las evidencias."
                               : "Espera a que termine la inscripcion automatica para habilitar las evidencias."}
                           </div>
                         ) : null}

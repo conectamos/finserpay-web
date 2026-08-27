@@ -120,7 +120,10 @@ test("la identidad conserva los campos ancla de DataCrédito y no reinicia el as
     "const veriffMissingIdentityMessage"
   );
 
-  assert.match(applyIdentity, /const dataCreditoIdentityLocked = Boolean\(dataCreditoApproval\)/);
+  assert.match(
+    applyIdentity,
+    /const dataCreditoIdentityLocked =\s*Boolean\(options\.lockDataCreditoIdentity\) \|\|\s*Boolean\(dataCreditoApproval\) \|\|\s*Boolean\(dataCreditoAssessmentId\)/
+  );
   assert.match(applyIdentity, /lastName && !dataCreditoIdentityLocked/);
   assert.match(applyIdentity, /documentNumber && !dataCreditoIdentityLocked/);
   assert.match(applyIdentity, /identity\.documentType && !dataCreditoIdentityLocked/);

@@ -70,6 +70,27 @@ export async function POST(request: NextRequest) {
       limited.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
       return limited;
     }
+    if (grantSession.accessMode === "SHARED") {
+      const sharedRateLimit = await consumeIphoneEnrollmentRateLimit({
+        subjectHash: hashIphoneEnrollmentRateLimitKey(
+          "grant",
+          grantSession.accessFingerprint
+        ),
+        action: "APPROVE",
+        maximum: 300,
+      });
+      if (!sharedRateLimit.allowed) {
+        const limited = response(
+          { ok: false, error: "Demasiadas aprobaciones. Intenta mas tarde." },
+          429
+        );
+        limited.headers.set(
+          "Retry-After",
+          String(sharedRateLimit.retryAfterSeconds)
+        );
+        return limited;
+      }
+    }
 
     const caseToken = verifyIphoneEnrollmentCaseToken(body.caseToken);
     const checklist = buildIphoneEnrollmentChecklist(body.enrollmentApproved);

@@ -17,6 +17,7 @@ const environmentKeys = [
   "IPHONE_ENROLLMENT_SESSION_SECRET",
   "IPHONE_ENROLLMENT_IDENTITY_PEPPER",
   "IPHONE_ENROLLMENT_IDENTITY_KEY_VERSION",
+  "IPHONE_ENROLLMENT_SHARED_ACCESS_SECRET",
   "IPHONE_ENROLLMENT_PUBLIC_ORIGIN",
   "NEXT_PUBLIC_APP_URL",
   "NODE_ENV",
@@ -28,6 +29,7 @@ const originalEnvironment = Object.fromEntries(
 const sessionSecret = "session-secret-for-tests-0123456789abcdef";
 const identityPepper = "identity-pepper-for-tests-0123456789abcdef";
 const identityKeyVersion = "test-v7";
+const sharedAccessSecret = "S".repeat(43);
 const testGrantId = "11111111-1111-4111-8111-111111111111";
 const secondGrantId = "22222222-2222-4222-8222-222222222222";
 
@@ -36,6 +38,7 @@ before(() => {
   process.env.IPHONE_ENROLLMENT_SESSION_SECRET = sessionSecret;
   process.env.IPHONE_ENROLLMENT_IDENTITY_PEPPER = identityPepper;
   process.env.IPHONE_ENROLLMENT_IDENTITY_KEY_VERSION = identityKeyVersion;
+  process.env.IPHONE_ENROLLMENT_SHARED_ACCESS_SECRET = sharedAccessSecret;
   process.env.IPHONE_ENROLLMENT_PUBLIC_ORIGIN = "https://finserpay.com";
   process.env.NEXT_PUBLIC_APP_URL = "https://finserpay.com";
   process.env.NODE_ENV = "test";
@@ -179,6 +182,7 @@ test("separa el secreto de sesión del pepper estable y versionado de identidad"
     sessionSecret,
     identityPepper,
     identityKeyVersion,
+    sharedAccessSecret,
   });
   assert.equal("accessToken" in configuration, false);
   assert.equal("signingSecret" in configuration, false);
@@ -252,6 +256,8 @@ test("firma sesión con grant e identidad preasignada y rechaza tamper o expirac
   );
 
   assert.equal(verified?.grantId, testGrantId);
+  assert.equal(verified?.accessMode, "GRANT");
+  assert.match(verified?.accessFingerprint || "", /^[a-f0-9]{64}$/);
   assert.equal(verified?.analystName, "Ana Pérez");
   assert.equal(verified?.analystExternalId, "ANA-42");
   assert.match(verified?.sessionId || "", /^[A-Za-z0-9_-]{43}$/);
@@ -277,6 +283,48 @@ test("firma sesión con grant e identidad preasignada y rechaza tamper o expirac
       }),
     /IPHONE_ENROLLMENT_GRANT_EXPIRED/
   );
+});
+
+test("el acceso compartido es reutilizable, genera sesiones distintas y se revoca al rotar el secreto", () => {
+  assert.equal(
+    enrollment.iphoneEnrollmentSharedAccessSecretMatches(sharedAccessSecret),
+    true
+  );
+  assert.equal(
+    enrollment.iphoneEnrollmentSharedAccessSecretMatches("X".repeat(43)),
+    false
+  );
+
+  const now = new Date("2026-08-26T15:00:00.000Z");
+  const first = enrollment.issueIphoneEnrollmentSharedPortalSession(now);
+  const second = enrollment.issueIphoneEnrollmentSharedPortalSession(now);
+  const verified = enrollment.verifyIphoneEnrollmentPortalSession(
+    first.value,
+    new Date("2026-08-26T15:01:00.000Z")
+  );
+  assert.equal(verified?.accessMode, "SHARED");
+  assert.equal(
+    verified?.grantId,
+    enrollment.IPHONE_ENROLLMENT_SHARED_GRANT_ID
+  );
+  assert.equal(
+    verified?.analystExternalId,
+    enrollment.IPHONE_ENROLLMENT_SHARED_ANALYST.externalId
+  );
+  assert.notEqual(first.value, second.value);
+
+  process.env.IPHONE_ENROLLMENT_SHARED_ACCESS_SECRET = "R".repeat(43);
+  try {
+    assert.equal(
+      enrollment.verifyIphoneEnrollmentPortalSession(
+        first.value,
+        new Date("2026-08-26T15:01:00.000Z")
+      ),
+      null
+    );
+  } finally {
+    process.env.IPHONE_ENROLLMENT_SHARED_ACCESS_SECRET = sharedAccessSecret;
+  }
 });
 
 test("el token de caso queda ligado al grant y a la sesión exacta", () => {
@@ -514,7 +562,7 @@ test("los grants son de un uso y cada sesión se revalida contra la base", () =>
   assert.doesNotMatch(serializedGrantSource, /tokenHash|sessionIdHash/);
 });
 
-test("solo el administrador central emite o revoca accesos con identidad fija", () => {
+test("solo el administrador central obtiene el único acceso compartido", () => {
   assert.match(adminAccessRouteSource, /getSessionUser\(\)/);
   assert.match(adminAccessRouteSource, /isAdminRole\(user\.rolNombre\)/);
   assert.match(
@@ -522,12 +570,10 @@ test("solo el administrador central emite o revoca accesos con identidad fija", 
     /isFinserPayCentralAlly\(user\.aliadoAccesoCodigo\)/
   );
   assert.match(adminAccessRouteSource, /requireCentralAdmin\(\)/g);
-  assert.match(adminAccessRouteSource, /readLimitedIphoneEnrollmentJson/);
   assert.match(
     adminAccessRouteSource,
-    /isSameOriginIphoneEnrollmentRequest\(request\)/
+    /configuration\.sharedAccessSecret/
   );
-  assert.match(adminAccessRouteSource, /expiresInMinutes > 8 \* 60/);
   assert.match(
     adminAccessRouteSource,
     /const configuration = getIphoneEnrollmentPortalConfiguration\(\)/
@@ -537,38 +583,36 @@ test("solo el administrador central emite o revoca accesos con identidad fija", 
     /!configuration\.enabled \|\| !configuration\.configured/
   );
   assert.match(adminAccessRouteSource, /IPHONE_ENROLLMENT_NOT_CONFIGURED/);
-  assert.ok(
-    adminAccessRouteSource.indexOf("!configuration.enabled") <
-      adminAccessRouteSource.indexOf("createIphoneEnrollmentAccessGrant({"),
-    "la configuracion debe validarse antes de crear el grant"
+  assert.match(
+    adminAccessRouteSource,
+    /reusable: true/
   );
   assert.match(
     adminAccessRouteSource,
-    /issuedByUserId: access\.user\.id/
+    /\/enrolamiento-iphone#acceso=\$\{encodeURIComponent\([\s\S]*configuration\.sharedAccessSecret/
   );
-  assert.match(adminAccessRouteSource, /issuedByName: access\.user\.nombre/);
-  assert.match(
+  assert.doesNotMatch(
     adminAccessRouteSource,
-    /\/enrolamiento-iphone#acceso=\$\{encodeURIComponent\(created\.token\)\}/
+    /export async function (?:POST|PATCH|DELETE)/
   );
-  assert.match(
+  assert.doesNotMatch(
     adminAccessRouteSource,
-    /revokeIphoneEnrollmentAccessGrant/
+    /createIphoneEnrollmentAccessGrant|revokeIphoneEnrollmentAccessGrant/
   );
   assert.match(adminPageSource, /requireCentralAdminDashboardAccess\(\)/);
-  assert.match(adminManagerSource, /Generar enlace/);
-  assert.match(adminManagerSource, /Revocar/);
-  assert.match(
-    adminManagerSource,
-    /el token no volverá a mostrarse/i
-  );
+  assert.match(adminManagerSource, /Acceso compartido de enrolamiento/);
+  assert.match(adminManagerSource, /Enlace único y reutilizable/);
+  assert.match(adminManagerSource, /Copiar acceso/);
+  assert.doesNotMatch(adminManagerSource, /Generar enlace|Revocar acceso/);
+  assert.doesNotMatch(adminManagerSource, /analystName|expiresInMinutes/);
+  assert.match(adminPageSource, /No necesita emitir autorizaciones/);
   assert.match(
     sidebarSource,
     /\/dashboard\/integraciones\/enrolamiento-iphone/
   );
 });
 
-test("las rutas públicas exigen origen, cuerpo limitado, cookie, grant y no-store", () => {
+test("las rutas públicas exigen origen, cuerpo limitado, cookie, acceso y no-store", () => {
   assert.match(
     accessRouteSource,
     /isSameOriginIphoneEnrollmentRequest\(request\)/
@@ -578,6 +622,15 @@ test("las rutas públicas exigen origen, cuerpo limitado, cookie, grant y no-sto
     accessRouteSource,
     /exchangeIphoneEnrollmentAccessGrant\(token\)/
   );
+  assert.match(
+    accessRouteSource,
+    /iphoneEnrollmentSharedAccessSecretMatches\(body\.token\)/
+  );
+  assert.match(
+    accessRouteSource,
+    /issueIphoneEnrollmentSharedPortalSession\(\)/
+  );
+  assert.match(accessRouteSource, /SHARED_ACCESS_TOKEN_MAXIMUM = 120/);
   assert.match(storageSource, /"action"\)[\s\S]*VALUES \(\$1, 'ACCESS'\)/);
   assert.match(accessRouteSource, /httpOnly: true/);
   assert.match(accessRouteSource, /sameSite: "strict"/);
@@ -585,8 +638,6 @@ test("las rutas públicas exigen origen, cuerpo limitado, cookie, grant y no-sto
     accessRouteSource,
     /path: getIphoneEnrollmentPortalCookiePath\(\)/
   );
-  assert.doesNotMatch(accessRouteSource, /IPHONE_ENROLLMENT_ACCESS_TOKEN/);
-  assert.doesNotMatch(accessRouteSource, /iphoneEnrollmentAccessTokenMatches/);
   assert.match(
     accessRouteSource,
     /const token = normalizeIphoneEnrollmentGrantSecret\(body\.token\)/
@@ -603,7 +654,12 @@ test("las rutas públicas exigen origen, cuerpo limitado, cookie, grant y no-sto
   );
   assert.doesNotMatch(accessRouteSource, /portal-access-global-v1/);
   assert.doesNotMatch(accessRouteSource, /ACCESS_INSTANCE_MAXIMUM/);
-  assert.doesNotMatch(accessRouteSource, /consumeIphoneEnrollmentRateLimit/);
+  assert.match(accessRouteSource, /consumeIphoneEnrollmentRateLimit/);
+  assert.match(accessRouteSource, /action: "ACCESS"/);
+  assert.match(
+    accessRouteSource,
+    /maximum: SHARED_ACCESS_TOKEN_MAXIMUM/
+  );
   assert.match(
     storageSource,
     /const accessSubjectHash = hashIphoneEnrollmentRateLimitKey\([\s\S]*"grant",[\s\S]*grant\.id/
@@ -624,6 +680,10 @@ test("las rutas públicas exigen origen, cuerpo limitado, cookie, grant y no-sto
   assert.match(
     sessionRouteSource,
     /validateIphoneEnrollmentPortalSession\(signedSession\)/
+  );
+  assert.match(
+    storageSource,
+    /session\.accessMode === "SHARED"[\s\S]*sharedSessionFromPayload\(session\)/
   );
 
   for (const source of [casesRouteSource, approveRouteSource]) {
@@ -651,6 +711,14 @@ test("las rutas públicas exigen origen, cuerpo limitado, cookie, grant y no-sto
   assert.match(
     approveRouteSource,
     /hashIphoneEnrollmentRateLimitKey\([\s\S]*"session"/
+  );
+  assert.match(
+    casesRouteSource,
+    /grantSession\.accessMode === "SHARED"[\s\S]*"grant",[\s\S]*grantSession\.accessFingerprint[\s\S]*action: "LOOKUP",[\s\S]*maximum: 600/
+  );
+  assert.match(
+    approveRouteSource,
+    /grantSession\.accessMode === "SHARED"[\s\S]*"grant",[\s\S]*grantSession\.accessFingerprint[\s\S]*action: "APPROVE",[\s\S]*maximum: 300/
   );
   assert.doesNotMatch(
     [
@@ -714,6 +782,7 @@ test("el intento durable se confirma antes de rechazar un grant real", () => {
 test("el lookup usa cédula e IMEI exactos y una evaluación canónica aprobada", () => {
   assert.match(storageSource, /d\."estado" = 'ABIERTO'/);
   assert.match(storageSource, /d\."creditoId" IS NULL/);
+  assert.match(storageSource, /d\."currentStep" >= 5/);
   assert.match(
     storageSource,
     /COALESCE\(d\."expiresAt", d\."createdAt" \+ INTERVAL '15 days'\) > CURRENT_TIMESTAMP/
@@ -731,6 +800,26 @@ test("el lookup usa cédula e IMEI exactos y una evaluación canónica aprobada"
   assert.match(storageSource, /dc\."platform" = 'IPHONE'/);
   assert.match(storageSource, /dc\."userId" = d\."usuarioId"/);
   assert.match(storageSource, /dc\."sedeId" = d\."sedeId"/);
+  assert.match(storageSource, /function authoritativeFirmaSeguroWhere/);
+  assert.match(
+    storageSource,
+    /FROM "FirmaSeguroProcess" firma[\s\S]*firma\."completedAt" IS NOT NULL[\s\S]*firma\."signedDocumentBase64"/
+  );
+  assert.match(
+    storageSource,
+    /SELECT latest_firma\."id"[\s\S]*ORDER BY latest_firma\."createdAt" DESC, latest_firma\."id" DESC[\s\S]*LIMIT 1/
+  );
+  assert.match(
+    storageSource,
+    /firma\."draftPayload"->>'clienteDocumento'[\s\S]*firma\."draftPayload"->>'imei'/
+  );
+  assert.match(
+    storageSource,
+    /function hasAuthorizedVeriffApprovalForEnrollment/
+  );
+  assert.match(storageSource, /serializeVeriffValidation\(rows\[0\] \|\| null\)/);
+  assert.match(storageSource, /validation\.identityDocumentStatus === "match"/);
+  assert.match(storageSource, /compareStrictIdentityDocuments/);
   assert.match(
     storageSource,
     /dc\."sellerId" IS NOT DISTINCT FROM d\."vendedorId"/
@@ -747,8 +836,25 @@ test("el lookup usa cédula e IMEI exactos y una evaluación canónica aprobada"
     storageSource,
     /hmacDataCreditoValue\("document", input\.document\)/
   );
-  assert.match(storageSource, /rows\.length !== 1/);
+  assert.match(storageSource, /rows\.length > 1/);
+  assert.match(storageSource, /eligibleRows\.length !== 1/);
   assert.match(storageSource, /kind: "AMBIGUOUS"/);
+  assert.match(storageSource, /kind: "NOT_READY"/);
+  assert.match(storageSource, /kind: "FINALIZED"/);
+  assert.match(
+    storageSource,
+    /d\."estado" = 'ABIERTO'[\s\S]*d\."creditoId" IS NULL[\s\S]*AS "waitingForStepFour"/
+  );
+  assert.match(
+    storageSource,
+    /d\."creditoId" IS NOT NULL[\s\S]*d\."closedReason" = 'FINALIZADA'[\s\S]*AS "finalized"/
+  );
+  assert.match(casesRouteSource, /NOT_READY_FOR_ENROLLMENT/);
+  assert.match(casesRouteSource, /CREDIT_ALREADY_FINALIZED/);
+  assert.match(
+    casesRouteSource,
+    /Por seguridad no se modifican créditos históricos/
+  );
   assert.doesNotMatch(
     storageSource,
     /payload"->>'dataCreditoStatus'|payload->>'dataCreditoStatus'/
@@ -773,6 +879,8 @@ test("el DTO público está enmascarado y no expone score, fotos ni finanzas", (
     "equipo",
     "sede",
     "aliado",
+    "creditDecision",
+    "enrollmentStatus",
     "review",
   ]) {
     assert.match(dtoSource, new RegExp("\\b" + field + "\\b"));
@@ -784,9 +892,12 @@ test("el DTO público está enmascarado y no expone score, fotos ni finanzas", (
   assert.match(storageSource, /clienteNombre: limitedClientName/);
   assert.match(storageSource, /documentoMasked: maskDocument/);
   assert.match(storageSource, /imeiMasked: maskImei/);
+  assert.match(casesRouteSource, /creditDecision: "APROBADA"/);
+  assert.match(casesRouteSource, /"ENROLADO_CORRECTAMENTE"/);
+  assert.match(casesRouteSource, /"LISTO_PARA_ENROLAR"/);
 });
 
-test("la aprobación toma la identidad del grant y es transaccional e idempotente", () => {
+test("la aprobación toma la identidad del acceso y es transaccional e idempotente", () => {
   assert.match(
     approveRouteSource,
     /isIphoneEnrollmentCaseTokenForSession\(caseToken, signedSession\)/
@@ -802,7 +913,7 @@ test("la aprobación toma la identidad del grant y es transaccional e idempotent
 
   assert.match(
     storageSource,
-    /readActiveGrantForSession\([\s\S]*input\.grant\.session,[\s\S]*transaction,[\s\S]*true/
+    /readActivePortalAccessForSession\([\s\S]*input\.grant\.session,[\s\S]*transaction,[\s\S]*true/
   );
   assert.match(
     storageSource,
@@ -826,13 +937,33 @@ test("la aprobación toma la identidad del grant y es transaccional e idempotent
     storageSource,
     /return \{ review: serializeReview\(existing\), alreadyApproved: true \}/
   );
+  const existingReviewCheck = storageSource.indexOf(
+    "const existingResult = existingReviewApprovalResult"
+  );
+  const activeCaseLookup = storageSource.indexOf(
+    "const rows = await transaction.$queryRawUnsafe<EnrollmentCaseRow[]>",
+    existingReviewCheck
+  );
+  assert.ok(existingReviewCheck >= 0 && activeCaseLookup > existingReviewCheck);
+  assert.match(
+    storageSource.slice(existingReviewCheck, activeCaseLookup),
+    /pg_advisory_xact_lock\(\$1::integer, \$2::integer\)[\s\S]*FIRMASEGURO_DRAFT_LOCK_NAMESPACE/
+  );
   assert.match(storageSource, /INSERT INTO "IphoneEnrollmentReview"/);
   assert.match(storageSource, /activeGrant\.analyst\.name/);
   assert.match(storageSource, /activeGrant\.analyst\.externalId/);
-  assert.match(storageSource, /activeGrant\.issuedBy\.userId/);
-  assert.match(storageSource, /activeGrant\.issuedBy\.name/);
-  assert.match(storageSource, /activeGrant\.grantId/);
-  assert.match(storageSource, /review\."grantId" IS NOT NULL/);
+  assert.match(storageSource, /activeGrant\.issuedBy\?\.userId \|\| null/);
+  assert.match(storageSource, /activeGrant\.issuedBy\?\.name \|\| null/);
+  assert.match(
+    storageSource,
+    /activeGrant\.accessMode === "GRANT" \? activeGrant\.grantId : null/
+  );
+  assert.match(
+    storageSource,
+    /activeGrant\.accessMode === "GRANT"[\s\S]*hashIphoneEnrollmentSharedReviewFingerprint\(\)/
+  );
+  assert.match(storageSource, /function hasValidReviewAccessProvenance/);
+  assert.match(storageSource, /IPHONE_ENROLLMENT_SHARED_ANALYST\.externalId/);
   assert.match(storageSource, /review\."identityKeyVersion" = \$4/);
   assert.match(storageSource, /function hasValidReviewChecklistIntegrity/);
   assert.match(
@@ -920,7 +1051,7 @@ test("el borrador descarta banderas manuales y el cierre obtiene la revisión se
   );
 });
 
-test("la fábrica solo sincroniza y el portal muestra la identidad firmada como lectura", () => {
+test("la fábrica sincroniza el resultado y el portal usa un acceso compartido sin autorizaciones individuales", () => {
   assert.doesNotMatch(
     factorySource,
     /Confirmo que el equipo est[aá] enrolado|aria-label="Confirmo que el equipo está enrolado"/
@@ -936,18 +1067,31 @@ test("la fábrica solo sincroniza y el portal muestra la identidad firmada como 
   assert.match(factorySource, /window\.setInterval/);
   assert.match(factorySource, /8_000/);
   assert.match(factorySource, /window\.clearInterval\(intervalId\)/);
-  assert.match(factorySource, /iphoneEnrollmentReview\?\.analystName/);
-  assert.match(factorySource, /review\?\.approvedAt/);
+  assert.match(factorySource, /iphoneEnrollmentReview\.analystName/);
+  assert.match(factorySource, /iphoneEnrollmentReview\.approvedAt/);
   assert.match(factorySource, /El asesor no puede marcar este control/);
+  assert.match(factorySource, /iphoneFactory && nextStep === 5 && draftId/);
+  assert.match(
+    factorySource,
+    /await saveDraftPayloadForVeriff\(\s*factoryDraftPayload,\s*nextStep,\s*draftId\s*\)/
+  );
 
   assert.match(portalSource, /fragment\.get\("acceso"\)/);
   assert.match(portalSource, /window\.history\.replaceState/);
   assert.match(portalSource, /setAnalyst\(data\.analyst\)/);
   assert.doesNotMatch(portalSource, /setAnalystName|setAnalystExternalId/);
-  assert.match(portalSource, /\{analyst\.name\}/);
-  assert.match(portalSource, /\{analyst\.externalId\}/);
+  assert.doesNotMatch(portalSource, /\{analyst\.name\}|\{analyst\.externalId\}/);
+  assert.match(portalSource, /Acceso de especialistas activo/);
   assert.match(portalSource, /inputMode="numeric"/);
-  assert.match(portalSource, /Aprobar enrolamiento/);
+  assert.match(portalSource, /Aprobada/);
+  assert.match(portalSource, /Solo falta enrolar/);
+  assert.match(portalSource, /La venta llegó al paso 4/);
+  assert.match(portalSource, /ENROLADO CORRECTAMENTE/);
+  assert.match(portalSource, /import ConfirmDialog/);
+  assert.match(
+    portalSource,
+    /confirmLabel="Confirmar ENROLADO CORRECTAMENTE"/
+  );
 
   const approvalRequestStart = portalSource.indexOf(
     "/api/public/iphone-enrollment/cases/approve"
@@ -1034,7 +1178,18 @@ test("Railway crea y verifica grants, revisiones y rate limit antes de iniciar",
   assert.match(schemaSource, /assertCompatibleIndexes\(\)/);
   assert.match(schemaSource, /assertCompatibleConstraints\(\)/);
   assert.match(schemaSource, /async function assertNoLegacyReviews\(\)/);
-  assert.match(schemaSource, /WHERE "grantId" IS NULL/);
+  assert.match(schemaSource, /"grantId" IS NULL/);
+  assert.match(schemaSource, /"analystName" = \$1/);
+  assert.match(schemaSource, /"analystExternalId" = \$2/);
+  assert.match(
+    schemaSource,
+    /BTRIM\("accessFingerprint"\) = \$3/
+  );
+  assert.match(schemaSource, /"identityKeyVersion" = \$4/);
+  assert.match(
+    schemaSource,
+    /createHmac\("sha256", identityPepper\)[\s\S]*shared-review/
+  );
   assert.match(
     schemaSource,
     /LOWER\(COALESCE\("identityKeyVersion", ''\)\) = 'legacy'/

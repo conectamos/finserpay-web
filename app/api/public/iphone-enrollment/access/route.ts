@@ -4,14 +4,18 @@ import {
   getIphoneEnrollmentPortalCookieName,
   getIphoneEnrollmentPortalCookiePath,
   hashIphoneEnrollmentGrantToken,
+  hashIphoneEnrollmentRateLimitKey,
+  iphoneEnrollmentSharedAccessSecretMatches,
   iphoneEnrollmentBodyErrorResponse,
   IphoneEnrollmentRequestBodyError,
   IPHONE_ENROLLMENT_RESPONSE_HEADERS,
   isSameOriginIphoneEnrollmentRequest,
+  issueIphoneEnrollmentSharedPortalSession,
   normalizeIphoneEnrollmentGrantSecret,
   readLimitedIphoneEnrollmentJson,
 } from "@/lib/iphone-enrollment";
 import {
+  consumeIphoneEnrollmentRateLimit,
   exchangeIphoneEnrollmentAccessGrant,
   IphoneEnrollmentGrantError,
 } from "@/lib/iphone-enrollment-storage";
@@ -21,6 +25,7 @@ export const dynamic = "force-dynamic";
 
 const ACCESS_INSTANCE_WINDOW_MS = 15 * 60_000;
 const ACCESS_TOKEN_MAXIMUM = 8;
+const SHARED_ACCESS_TOKEN_MAXIMUM = 120;
 const ACCESS_MAX_TRACKED_TOKENS = 2_048;
 type AccessTokenBucket = {
   windowStartedAt: number;
@@ -33,7 +38,11 @@ type AccessGuardGlobal = typeof globalThis & {
   };
 };
 
-function consumeInstanceAccessGuard(tokenHash: string, now = Date.now()) {
+function consumeInstanceAccessGuard(
+  tokenHash: string,
+  maximum = ACCESS_TOKEN_MAXIMUM,
+  now = Date.now()
+) {
   const shared = globalThis as AccessGuardGlobal;
   const state =
     shared.__finserIphoneEnrollmentAccessTokenGuards ||
@@ -72,7 +81,7 @@ function consumeInstanceAccessGuard(tokenHash: string, now = Date.now()) {
   }
   current.count += 1;
   return {
-    allowed: current.count <= ACCESS_TOKEN_MAXIMUM,
+    allowed: current.count <= maximum,
     retryAfterSeconds: Math.max(
       1,
       Math.ceil(
@@ -89,6 +98,38 @@ function response(body: object, status: number) {
   });
 }
 
+function authorizedResponse(session: {
+  value: string;
+  expiresAt: Date;
+  payload: {
+    analystName: string;
+    analystExternalId: string;
+  };
+}) {
+  const authorized = response(
+    {
+      ok: true,
+      authorized: true,
+      analyst: {
+        name: session.payload.analystName,
+        externalId: session.payload.analystExternalId,
+      },
+      expiresAt: session.expiresAt.toISOString(),
+    },
+    200
+  );
+  authorized.cookies.set({
+    name: getIphoneEnrollmentPortalCookieName(),
+    value: session.value,
+    expires: session.expiresAt,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    path: getIphoneEnrollmentPortalCookiePath(),
+  });
+  return authorized;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const configuration = getIphoneEnrollmentPortalConfiguration();
@@ -101,6 +142,47 @@ export async function POST(request: NextRequest) {
     const body = await readLimitedIphoneEnrollmentJson<{ token?: unknown }>(
       request
     );
+    if (iphoneEnrollmentSharedAccessSecretMatches(body.token)) {
+      const sharedTokenHash = hashIphoneEnrollmentGrantToken(
+        String(body.token || "").trim()
+      );
+      const instanceGuard = consumeInstanceAccessGuard(
+        sharedTokenHash,
+        SHARED_ACCESS_TOKEN_MAXIMUM
+      );
+      if (!instanceGuard.allowed) {
+        const limited = response(
+          { ok: false, error: "Demasiados intentos. Intenta mas tarde." },
+          429
+        );
+        limited.headers.set(
+          "Retry-After",
+          String(instanceGuard.retryAfterSeconds)
+        );
+        return limited;
+      }
+      const durableGuard = await consumeIphoneEnrollmentRateLimit({
+        subjectHash: hashIphoneEnrollmentRateLimitKey(
+          "grant",
+          sharedTokenHash
+        ),
+        action: "ACCESS",
+        maximum: SHARED_ACCESS_TOKEN_MAXIMUM,
+      });
+      if (!durableGuard.allowed) {
+        const limited = response(
+          { ok: false, error: "Demasiados intentos. Intenta mas tarde." },
+          429
+        );
+        limited.headers.set(
+          "Retry-After",
+          String(durableGuard.retryAfterSeconds)
+        );
+        return limited;
+      }
+      return authorizedResponse(issueIphoneEnrollmentSharedPortalSession());
+    }
+
     const token = normalizeIphoneEnrollmentGrantSecret(body.token);
     if (!token) {
       return response(
@@ -130,25 +212,7 @@ export async function POST(request: NextRequest) {
     }
 
     const exchange = await exchangeIphoneEnrollmentAccessGrant(token);
-    const authorized = response(
-      {
-        ok: true,
-        authorized: true,
-        analyst: exchange.grant.analyst,
-        expiresAt: exchange.session.expiresAt.toISOString(),
-      },
-      200
-    );
-    authorized.cookies.set({
-      name: getIphoneEnrollmentPortalCookieName(),
-      value: exchange.session.value,
-      expires: exchange.session.expiresAt,
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      path: getIphoneEnrollmentPortalCookiePath(),
-    });
-    return authorized;
+    return authorizedResponse(exchange.session);
   } catch (error) {
     if (error instanceof IphoneEnrollmentRequestBodyError) {
       const failure = iphoneEnrollmentBodyErrorResponse(error);

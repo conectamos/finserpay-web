@@ -284,7 +284,7 @@ test("el formulario integra HEIC, camara, borrador, cierre y envio final", () =>
   assert.match(factoryConsole, /iphoneRequiredEvidenceReady/);
   assert.match(factoryConsole, /persistedIphoneClosureFingerprint/);
   assert.match(factoryConsole, /iphoneEnrollmentReview/);
-  assert.match(factoryConsole, /Esperando aprobacion del analista/);
+  assert.match(factoryConsole, /confirmar ENROLADO CORRECTAMENTE/);
   assert.doesNotMatch(
     factoryConsole,
     /iphoneEnrolamientoVerificado:\s*(?:options\.|iphoneEnrollmentVerified)/

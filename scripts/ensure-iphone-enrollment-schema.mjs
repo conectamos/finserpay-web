@@ -1,7 +1,23 @@
+import { createHmac } from "node:crypto";
 import pg from "pg";
 
 const { Client } = pg;
 const connectionString = String(process.env.DATABASE_URL || "").trim();
+const sharedAnalystName = "Especialista de enrolamiento";
+const sharedAnalystExternalId = "ACCESO-COMPARTIDO";
+const sharedGrantId = "00000000-0000-4000-8000-000000000001";
+const identityPepper = String(
+  process.env.IPHONE_ENROLLMENT_IDENTITY_PEPPER || ""
+).trim();
+const identityKeyVersion = String(
+  process.env.IPHONE_ENROLLMENT_IDENTITY_KEY_VERSION || "v1"
+).trim();
+const sharedReviewAccessFingerprint =
+  identityPepper.length >= 32 && /^[A-Za-z0-9._-]{1,32}$/.test(identityKeyVersion)
+    ? createHmac("sha256", identityPepper)
+        .update(`${identityKeyVersion}:shared-review:${sharedGrantId}`)
+        .digest("hex")
+    : "";
 
 if (!connectionString) {
   throw new Error(
@@ -463,15 +479,31 @@ async function assertNoLegacyReviews() {
     `
       SELECT COUNT(*)::integer AS count
       FROM public."IphoneEnrollmentReview"
-      WHERE "grantId" IS NULL
-        OR LOWER(COALESCE("identityKeyVersion", '')) = 'legacy'
-    `
+      WHERE LOWER(COALESCE("identityKeyVersion", '')) = 'legacy'
+        OR (
+          "grantId" IS NULL
+          AND NOT (
+            "analystName" = $1
+            AND "analystExternalId" = $2
+            AND "grantIssuedByUserId" IS NULL
+            AND "grantIssuedByName" IS NULL
+            AND BTRIM("accessFingerprint") = $3
+            AND "identityKeyVersion" = $4
+          )
+        )
+    `,
+    [
+      sharedAnalystName,
+      sharedAnalystExternalId,
+      sharedReviewAccessFingerprint,
+      identityKeyVersion,
+    ]
   );
   const count = Number(result.rows[0]?.count || 0);
   if (count > 0) {
     throw Object.assign(
       new Error(
-        `IPHONE_ENROLLMENT_LEGACY_REVIEWS: hay ${count} revision(es) sin grant o version criptografica vigente; requieren migracion auditada antes de desplegar.`
+        `IPHONE_ENROLLMENT_LEGACY_REVIEWS: hay ${count} revision(es) sin trazabilidad de acceso o version criptografica vigente; requieren migracion auditada antes de desplegar.`
       ),
       { code: "IPHONE_ENROLLMENT_LEGACY_REVIEWS" }
     );

@@ -70,6 +70,27 @@ export async function POST(request: NextRequest) {
       limited.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
       return limited;
     }
+    if (grantSession.accessMode === "SHARED") {
+      const sharedRateLimit = await consumeIphoneEnrollmentRateLimit({
+        subjectHash: hashIphoneEnrollmentRateLimitKey(
+          "grant",
+          grantSession.accessFingerprint
+        ),
+        action: "LOOKUP",
+        maximum: 600,
+      });
+      if (!sharedRateLimit.allowed) {
+        const limited = response(
+          { ok: false, error: "Demasiadas consultas. Intenta mas tarde." },
+          429
+        );
+        limited.headers.set(
+          "Retry-After",
+          String(sharedRateLimit.retryAfterSeconds)
+        );
+        return limited;
+      }
+    }
 
     const document = normalizeIphoneEnrollmentDocument(body.document);
     const imei = normalizeIphoneEnrollmentImei(body.imei);
@@ -84,6 +105,28 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await findIphoneEnrollmentCase({ document, imei });
+    if (result.kind === "NOT_READY") {
+      return response(
+        {
+          ok: false,
+          code: "NOT_READY_FOR_ENROLLMENT",
+          error:
+            "La solicitud está aprobada, pero el asesor todavía no ha llegado al paso 4 de enrolamiento.",
+        },
+        409
+      );
+    }
+    if (result.kind === "FINALIZED") {
+      return response(
+        {
+          ok: false,
+          code: "CREDIT_ALREADY_FINALIZED",
+          error:
+            "Este crédito ya fue finalizado. Por seguridad no se modifican créditos históricos desde este módulo.",
+        },
+        409
+      );
+    }
     if (result.kind === "NOT_FOUND") {
       return response(
         {
@@ -124,6 +167,10 @@ export async function POST(request: NextRequest) {
           equipo: item.equipo,
           sede: item.sede,
           aliado: item.aliado,
+          creditDecision: "APROBADA",
+          enrollmentStatus: item.review
+            ? "ENROLADO_CORRECTAMENTE"
+            : "LISTO_PARA_ENROLAR",
           review: item.review
             ? {
                 id: item.review.id,

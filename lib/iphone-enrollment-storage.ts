@@ -11,7 +11,10 @@ import {
   hashIphoneEnrollmentImei,
   hashIphoneEnrollmentRateLimitKey,
   hashIphoneEnrollmentSessionId,
+  hashIphoneEnrollmentSharedReviewFingerprint,
+  IPHONE_ENROLLMENT_SHARED_ANALYST,
   isIphoneEnrollmentCaseTokenForSession,
+  isSharedIphoneEnrollmentPortalSession,
   issueIphoneEnrollmentPortalSession,
   normalizeIphoneEnrollmentGrantSecret,
   type IphoneEnrollmentCaseTokenPayload,
@@ -21,15 +24,29 @@ import {
 import prisma from "@/lib/prisma";
 import { hmacDataCreditoValue } from "@/lib/datacredito/storage";
 import {
+  ensureFirmaSeguroSchema,
+  FIRMASEGURO_DRAFT_LOCK_NAMESPACE,
+} from "@/lib/firmaseguro-storage";
+import {
   ensureSolicitudSchema,
   expireStaleSolicitudes,
 } from "@/lib/solicitudes-storage";
+import { compareStrictIdentityDocuments } from "@/lib/veriff-identity";
+import {
+  ensureVeriffSchema,
+  serializeVeriffValidation,
+  type VeriffValidationRow,
+} from "@/lib/veriff-storage";
 
 type Database = typeof prisma | Prisma.TransactionClient;
 
 type EnrollmentCaseRow = {
   solicitudId: number;
   currentStep: number;
+  usuarioId: number;
+  vendedorId: number | null;
+  sedeId: number;
+  aliadoId: number | null;
   clienteNombre: string | null;
   clienteDocumento: string | null;
   imei: string | null;
@@ -59,9 +76,17 @@ type ReviewRow = {
   grantId: string | null;
   grantIssuedByUserId: number | null;
   grantIssuedByName: string | null;
+  accessFingerprint: string;
   correlationId: string;
   approvedAt: Date | string;
   createdAt: Date | string;
+};
+
+type ReviewWithDraftScopeRow = ReviewRow & {
+  draftUsuarioId: number;
+  draftVendedorId: number | null;
+  draftSedeId: number;
+  draftAliadoId: number | null;
 };
 
 type GrantRow = {
@@ -82,9 +107,11 @@ type GrantRow = {
 };
 
 export type IphoneEnrollmentGrantSession = {
+  accessMode: "GRANT" | "SHARED";
+  accessFingerprint: string;
   grantId: string;
   analyst: { name: string; externalId: string };
-  issuedBy: { userId: number; name: string };
+  issuedBy: { userId: number; name: string } | null;
   expiresAt: Date;
   sessionIdHash: string;
   session: IphoneEnrollmentPortalSessionPayload;
@@ -129,6 +156,8 @@ export type IphoneEnrollmentCase = {
 
 export type IphoneEnrollmentLookupResult =
   | { kind: "FOUND"; item: IphoneEnrollmentCase }
+  | { kind: "NOT_READY" }
+  | { kind: "FINALIZED" }
   | { kind: "NOT_FOUND" }
   | { kind: "AMBIGUOUS" };
 
@@ -484,7 +513,7 @@ const REVIEW_SELECT = `
   "checklist", "documentHash", "imeiHash", "checklistHash",
   "analystName", "analystExternalId", "identityKeyVersion",
   "grantId"::text, "grantIssuedByUserId", "grantIssuedByName",
-  "correlationId"::text, "approvedAt", "createdAt"
+  "accessFingerprint", "correlationId"::text, "approvedAt", "createdAt"
 `;
 
 function hasValidReviewChecklistIntegrity(row: ReviewRow) {
@@ -523,6 +552,27 @@ function hasValidReviewChecklistIntegrity(row: ReviewRow) {
   );
 }
 
+function hasValidReviewAccessProvenance(row: ReviewRow) {
+  const accessFingerprint = row.accessFingerprint.trim();
+  if (!/^[a-f0-9]{64}$/.test(accessFingerprint)) {
+    return false;
+  }
+  if (row.grantId) {
+    return Boolean(
+      accessFingerprint === hashIphoneEnrollmentGrantFingerprint(row.grantId) &&
+        row.grantIssuedByUserId &&
+        row.grantIssuedByName?.trim()
+    );
+  }
+  return (
+    row.analystName === IPHONE_ENROLLMENT_SHARED_ANALYST.name &&
+    row.analystExternalId === IPHONE_ENROLLMENT_SHARED_ANALYST.externalId &&
+    row.grantIssuedByUserId === null &&
+    row.grantIssuedByName === null &&
+    accessFingerprint === hashIphoneEnrollmentSharedReviewFingerprint()
+  );
+}
+
 function maskDocument(value: string) {
   return value.length <= 4 ? value : `${"•".repeat(value.length - 4)}${value.slice(-4)}`;
 }
@@ -551,11 +601,119 @@ function equipmentLabel(row: EnrollmentCaseRow) {
     .join(" ") || "iPhone";
 }
 
-const ACTIVE_IPHONE_CASE_WHERE = `
-  d."estado" = 'ABIERTO'
-  AND d."creditoId" IS NULL
-  AND COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
-  AND UPPER(COALESCE(d."plataforma", '')) = 'IPHONE'
+async function hasAuthorizedVeriffApprovalForEnrollment(
+  input: {
+    solicitudId: number;
+    usuarioId: number;
+    vendedorId: number | null;
+    sedeId: number;
+    aliadoId: number | null;
+    document: string;
+  },
+  database: Database = prisma,
+  lock = false
+) {
+  const rows = await database.$queryRawUnsafe<VeriffValidationRow[]>(
+    `
+      SELECT validation.*
+      FROM "VeriffIdentityValidation" validation
+      WHERE validation."draftId" = $1
+        AND validation."creditoId" IS NULL
+        AND validation."usuarioId" = $2
+        AND validation."vendedorId" IS NOT DISTINCT FROM $3
+        AND validation."sedeId" = $4
+        AND validation."aliadoId" IS NOT DISTINCT FROM $5
+      ORDER BY validation."updatedAt" DESC, validation."id" DESC
+      LIMIT 1
+      ${lock ? "FOR SHARE" : ""}
+    `,
+    input.solicitudId,
+    input.usuarioId,
+    input.vendedorId,
+    input.sedeId,
+    input.aliadoId
+  );
+  const validation = serializeVeriffValidation(rows[0] || null);
+  return Boolean(
+    validation?.approved &&
+      validation.decidedAt &&
+      validation.draftId === input.solicitudId &&
+      validation.identityDocumentStatus === "match" &&
+      compareStrictIdentityDocuments(
+        validation.identityDocumentNumber,
+        input.document
+      ).ok
+  );
+}
+
+function authoritativeFirmaSeguroWhere(draftAlias: "d" | "draft") {
+  return `
+    EXISTS (
+      SELECT 1
+      FROM "FirmaSeguroProcess" firma
+      WHERE firma."id" = (
+          SELECT latest_firma."id"
+          FROM "FirmaSeguroProcess" latest_firma
+          WHERE latest_firma."draftId" = ${draftAlias}."id"
+          ORDER BY latest_firma."createdAt" DESC, latest_firma."id" DESC
+          LIMIT 1
+        )
+        AND (
+          firma."completedAt" IS NOT NULL
+          OR NULLIF(BTRIM(firma."signedDocumentBase64"), '') IS NOT NULL
+        )
+        AND regexp_replace(
+          COALESCE(firma."draftPayload"->>'clienteDocumento', ''),
+          '[^0-9]', '', 'g'
+        ) = regexp_replace(
+          COALESCE(${draftAlias}."clienteDocumento", ''),
+          '[^0-9]', '', 'g'
+        )
+        AND regexp_replace(
+          COALESCE(firma."draftPayload"->>'imei', ''),
+          '[^0-9]', '', 'g'
+        ) = regexp_replace(
+          COALESCE(${draftAlias}."imei", ''),
+          '[^0-9]', '', 'g'
+        )
+    )
+  `;
+}
+
+function existingReviewApprovalResult(
+  existing: ReviewRow | undefined,
+  caseToken: IphoneEnrollmentCaseTokenPayload
+) {
+  if (!existing) return null;
+  if (
+    !hasValidReviewAccessProvenance(existing) ||
+    existing.identityKeyVersion !== getIphoneEnrollmentIdentityKeyVersion()
+  ) {
+    throw new IphoneEnrollmentApprovalError(
+      "CASE_ALREADY_APPROVED_DIFFERENTLY",
+      "La solicitud tiene una revision anterior sin trazabilidad valida."
+    );
+  }
+  if (!hasValidReviewChecklistIntegrity(existing)) {
+    throw new IphoneEnrollmentApprovalError(
+      "CASE_REVIEW_INCONSISTENT",
+      "La revision existente no supera la validacion de integridad."
+    );
+  }
+  if (
+    existing.documentHash.trim() !== caseToken.documentHash ||
+    existing.imeiHash.trim() !== caseToken.imeiHash
+  ) {
+    throw new IphoneEnrollmentApprovalError(
+      "CASE_ALREADY_APPROVED_DIFFERENTLY",
+      "La solicitud tiene una aprobacion asociada a otra identidad de equipo."
+    );
+  }
+  return { review: serializeReview(existing), alreadyApproved: true };
+}
+
+const APPROVED_IPHONE_CASE_WHERE = `
+  UPPER(COALESCE(d."plataforma", '')) = 'IPHONE'
   AND dc."status" = 'APROBADO'
   AND dc."decision" = 'APROBADO'
   AND dc."platform" = 'IPHONE'
@@ -563,6 +721,15 @@ const ACTIVE_IPHONE_CASE_WHERE = `
   AND dc."sedeId" = d."sedeId"
   AND dc."sellerId" IS NOT DISTINCT FROM d."vendedorId"
   AND dc."aliadoId" IS NOT DISTINCT FROM aliado."id"
+`;
+
+const ACTIVE_IPHONE_CASE_WHERE = `
+  d."estado" = 'ABIERTO'
+  AND d."creditoId" IS NULL
+  AND d."currentStep" >= 5
+  AND COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
+  AND ${authoritativeFirmaSeguroWhere("d")}
+  AND ${APPROVED_IPHONE_CASE_WHERE}
 `;
 
 const ACTIVE_IPHONE_CASE_JOINS = `
@@ -577,6 +744,8 @@ function grantSessionFromRow(
   session: IphoneEnrollmentPortalSessionPayload
 ): IphoneEnrollmentGrantSession {
   return {
+    accessMode: "GRANT",
+    accessFingerprint: hashIphoneEnrollmentGrantFingerprint(row.id),
     grantId: row.id,
     analyst: {
       name: row.analystName,
@@ -587,6 +756,27 @@ function grantSessionFromRow(
       name: row.issuedByName,
     },
     expiresAt: new Date(row.sessionExpiresAt || row.expiresAt),
+    sessionIdHash: hashIphoneEnrollmentSessionId(session.sessionId),
+    session,
+  };
+}
+
+function sharedSessionFromPayload(
+  session: IphoneEnrollmentPortalSessionPayload
+): IphoneEnrollmentGrantSession | null {
+  if (!isSharedIphoneEnrollmentPortalSession(session)) {
+    return null;
+  }
+  return {
+    accessMode: "SHARED",
+    accessFingerprint: session.accessFingerprint,
+    grantId: session.grantId,
+    analyst: {
+      name: session.analystName,
+      externalId: session.analystExternalId,
+    },
+    issuedBy: null,
+    expiresAt: new Date(session.expiresAt * 1000),
     sessionIdHash: hashIphoneEnrollmentSessionId(session.sessionId),
     session,
   };
@@ -866,21 +1056,38 @@ async function readActiveGrantForSession(
   return grantSessionFromRow(row, session);
 }
 
+async function readActivePortalAccessForSession(
+  session: IphoneEnrollmentPortalSessionPayload,
+  database: Database = prisma,
+  lock = false
+) {
+  if (session.accessMode === "SHARED") {
+    return sharedSessionFromPayload(session);
+  }
+  return readActiveGrantForSession(session, database, lock);
+}
+
 export async function validateIphoneEnrollmentPortalSession(
   session: IphoneEnrollmentPortalSessionPayload
 ) {
   await ensureIphoneEnrollmentSchema();
-  return readActiveGrantForSession(session);
+  return readActivePortalAccessForSession(session);
 }
 
 export async function findIphoneEnrollmentCase(input: {
   document: string;
   imei: string;
 }): Promise<IphoneEnrollmentLookupResult> {
-  await Promise.all([ensureIphoneEnrollmentSchema(), expireStaleSolicitudes()]);
+  await Promise.all([
+    ensureIphoneEnrollmentSchema(),
+    ensureFirmaSeguroSchema(),
+    ensureVeriffSchema(),
+    expireStaleSolicitudes(),
+  ]);
   const rows = await prisma.$queryRawUnsafe<EnrollmentCaseRow[]>(
     `
-      SELECT d."id" AS "solicitudId", d."currentStep", d."clienteNombre",
+      SELECT d."id" AS "solicitudId", d."currentStep", d."usuarioId",
+        d."vendedorId", d."sedeId", aliado."id" AS "aliadoId", d."clienteNombre",
         d."clienteDocumento", d."imei",
         NULLIF(d."payload"->>'equipoMarca', '') AS "equipoMarca",
         NULLIF(d."payload"->>'equipoModelo', '') AS "equipoModelo",
@@ -903,10 +1110,61 @@ export async function findIphoneEnrollmentCase(input: {
     input.imei,
     hmacDataCreditoValue("document", input.document)
   );
-  if (!rows.length) return { kind: "NOT_FOUND" };
-  if (rows.length !== 1) return { kind: "AMBIGUOUS" };
+  if (rows.length > 1) return { kind: "AMBIGUOUS" };
+  const eligibleRows: EnrollmentCaseRow[] = [];
+  for (const candidate of rows) {
+    const veriffApproved = await hasAuthorizedVeriffApprovalForEnrollment({
+      solicitudId: candidate.solicitudId,
+      usuarioId: candidate.usuarioId,
+      vendedorId: candidate.vendedorId,
+      sedeId: candidate.sedeId,
+      aliadoId: candidate.aliadoId,
+      document: input.document,
+    });
+    if (veriffApproved) eligibleRows.push(candidate);
+  }
+  if (rows.length > 0 && eligibleRows.length === 0) {
+    return { kind: "NOT_READY" };
+  }
+  if (!rows.length) {
+    const availability = await prisma.$queryRawUnsafe<
+      Array<{ finalized: boolean; waitingForStepFour: boolean }>
+    >(
+      `
+        SELECT
+          (
+            d."creditoId" IS NOT NULL
+            OR (d."estado" = 'CERRADO' AND d."closedReason" = 'FINALIZADA')
+          ) AS "finalized",
+          (
+            d."estado" = 'ABIERTO'
+            AND d."creditoId" IS NULL
+            AND COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
+          ) AS "waitingForStepFour"
+        FROM "CreditoBorrador" d
+        ${ACTIVE_IPHONE_CASE_JOINS}
+        WHERE ${APPROVED_IPHONE_CASE_WHERE}
+          AND regexp_replace(COALESCE(d."clienteDocumento", ''), '[^0-9]', '', 'g') = $1
+          AND regexp_replace(COALESCE(d."imei", ''), '[^0-9]', '', 'g') = $2
+          AND dc."documentHash" = $3
+        ORDER BY d."createdAt" DESC, d."id" DESC
+        LIMIT 1
+      `,
+      input.document,
+      input.imei,
+      hmacDataCreditoValue("document", input.document)
+    );
+    if (availability[0]?.waitingForStepFour) {
+      return { kind: "NOT_READY" };
+    }
+    if (availability[0]?.finalized) {
+      return { kind: "FINALIZED" };
+    }
+    return { kind: "NOT_FOUND" };
+  }
+  if (eligibleRows.length !== 1) return { kind: "AMBIGUOUS" };
 
-  const row = rows[0];
+  const row = eligibleRows[0];
   const documentHash = hashIphoneEnrollmentDocument(input.document);
   const imeiHash = hashIphoneEnrollmentImei(input.imei);
   const review = row.reviewId
@@ -939,25 +1197,35 @@ export async function getIphoneEnrollmentReviewForSolicitud(
   input: { solicitudId: number; document: string; imei: string },
   database: Database = prisma
 ) {
-  await ensureIphoneEnrollmentSchema();
-  const rows = await database.$queryRawUnsafe<ReviewRow[]>(
+  await Promise.all([
+    ensureIphoneEnrollmentSchema(),
+    ensureFirmaSeguroSchema(),
+    ensureVeriffSchema(),
+  ]);
+  const rows = await database.$queryRawUnsafe<ReviewWithDraftScopeRow[]>(
     `
       SELECT review."id"::text, review."solicitudId", review."decision",
         review."checklistVersion", review."checklist", review."documentHash",
         review."imeiHash", review."checklistHash", review."analystName",
         review."analystExternalId", review."identityKeyVersion",
         review."grantId"::text, review."grantIssuedByUserId",
-        review."grantIssuedByName",
-        review."correlationId"::text, review."approvedAt", review."createdAt"
+        review."grantIssuedByName", review."accessFingerprint",
+        review."correlationId"::text, review."approvedAt", review."createdAt",
+        draft."usuarioId" AS "draftUsuarioId",
+        draft."vendedorId" AS "draftVendedorId",
+        draft."sedeId" AS "draftSedeId",
+        aliado."id" AS "draftAliadoId"
       FROM "IphoneEnrollmentReview" review
       INNER JOIN "CreditoBorrador" draft ON draft."id" = review."solicitudId"
+      LEFT JOIN "Sede" sede ON sede."id" = draft."sedeId"
+      LEFT JOIN "Aliado" aliado ON aliado."id" = sede."aliadoId"
       WHERE review."solicitudId" = $1
         AND review."decision" = 'APROBADO'
-        AND review."grantId" IS NOT NULL
         AND review."identityKeyVersion" = $4
         AND regexp_replace(COALESCE(draft."clienteDocumento", ''), '[^0-9]', '', 'g') = $2
         AND regexp_replace(COALESCE(draft."imei", ''), '[^0-9]', '', 'g') = $3
         AND UPPER(COALESCE(draft."plataforma", '')) = 'IPHONE'
+        AND ${authoritativeFirmaSeguroWhere("draft")}
       LIMIT 1
     `,
     input.solicitudId,
@@ -966,8 +1234,21 @@ export async function getIphoneEnrollmentReviewForSolicitud(
     getIphoneEnrollmentIdentityKeyVersion()
   );
   const row = rows[0];
+  if (!row) return null;
+  const veriffApproved = await hasAuthorizedVeriffApprovalForEnrollment(
+    {
+      solicitudId: row.solicitudId,
+      usuarioId: row.draftUsuarioId,
+      vendedorId: row.draftVendedorId,
+      sedeId: row.draftSedeId,
+      aliadoId: row.draftAliadoId,
+      document: input.document,
+    },
+    database
+  );
   if (
-    !row ||
+    !veriffApproved ||
+    !hasValidReviewAccessProvenance(row) ||
     !hasValidReviewChecklistIntegrity(row) ||
     row.documentHash.trim() !== hashIphoneEnrollmentDocument(input.document) ||
     row.imeiHash.trim() !== hashIphoneEnrollmentImei(input.imei)
@@ -982,9 +1263,14 @@ export async function approveIphoneEnrollmentCase(input: {
   grant: IphoneEnrollmentGrantSession;
   checklist: IphoneEnrollmentChecklist;
 }) {
-  await Promise.all([ensureIphoneEnrollmentSchema(), expireStaleSolicitudes()]);
+  await Promise.all([
+    ensureIphoneEnrollmentSchema(),
+    ensureFirmaSeguroSchema(),
+    ensureVeriffSchema(),
+    expireStaleSolicitudes(),
+  ]);
   return prisma.$transaction(async (transaction) => {
-    const activeGrant = await readActiveGrantForSession(
+    const activeGrant = await readActivePortalAccessForSession(
       input.grant.session,
       transaction,
       true
@@ -1007,9 +1293,30 @@ export async function approveIphoneEnrollmentCase(input: {
       `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`,
       `iphone-enrollment:${input.caseToken.solicitudId}`
     );
+    const existingRows = await transaction.$queryRawUnsafe<ReviewRow[]>(
+      `
+        SELECT ${REVIEW_SELECT}
+        FROM "IphoneEnrollmentReview"
+        WHERE "solicitudId" = $1
+        LIMIT 1
+      `,
+      input.caseToken.solicitudId
+    );
+    const existingResult = existingReviewApprovalResult(
+      existingRows[0],
+      input.caseToken
+    );
+    if (existingResult) return existingResult;
+
+    await transaction.$executeRawUnsafe(
+      `SELECT pg_advisory_xact_lock($1::integer, $2::integer)`,
+      FIRMASEGURO_DRAFT_LOCK_NAMESPACE,
+      input.caseToken.solicitudId
+    );
     const rows = await transaction.$queryRawUnsafe<EnrollmentCaseRow[]>(
       `
-        SELECT d."id" AS "solicitudId", d."currentStep", d."clienteNombre",
+        SELECT d."id" AS "solicitudId", d."currentStep", d."usuarioId",
+          d."vendedorId", d."sedeId", aliado."id" AS "aliadoId", d."clienteNombre",
           d."clienteDocumento", d."imei",
           NULLIF(d."payload"->>'equipoMarca', '') AS "equipoMarca",
           NULLIF(d."payload"->>'equipoModelo', '') AS "equipoModelo",
@@ -1037,6 +1344,24 @@ export async function approveIphoneEnrollmentCase(input: {
     }
     const document = String(row.clienteDocumento || "").replace(/\D/g, "");
     const imei = String(row.imei || "").replace(/\D/g, "");
+    const veriffApproved = await hasAuthorizedVeriffApprovalForEnrollment(
+      {
+        solicitudId: row.solicitudId,
+        usuarioId: row.usuarioId,
+        vendedorId: row.vendedorId,
+        sedeId: row.sedeId,
+        aliadoId: row.aliadoId,
+        document,
+      },
+      transaction,
+      true
+    );
+    if (!veriffApproved) {
+      throw new IphoneEnrollmentApprovalError(
+        "CASE_NOT_AVAILABLE",
+        "La validacion facial ya no autoriza esta solicitud para enrolamiento."
+      );
+    }
     if (
       hashIphoneEnrollmentDocument(document) !== input.caseToken.documentHash ||
       hashIphoneEnrollmentImei(imei) !== input.caseToken.imeiHash ||
@@ -1047,44 +1372,6 @@ export async function approveIphoneEnrollmentCase(input: {
         "CASE_IDENTITY_CHANGED",
         "La cedula o el IMEI cambiaron. Consulta nuevamente la solicitud."
       );
-    }
-
-    const existingRows = await transaction.$queryRawUnsafe<ReviewRow[]>(
-      `
-        SELECT ${REVIEW_SELECT}
-        FROM "IphoneEnrollmentReview"
-        WHERE "solicitudId" = $1
-        LIMIT 1
-      `,
-      row.solicitudId
-    );
-    const existing = existingRows[0];
-    if (existing) {
-      if (
-        !existing.grantId ||
-        existing.identityKeyVersion !== getIphoneEnrollmentIdentityKeyVersion()
-      ) {
-        throw new IphoneEnrollmentApprovalError(
-          "CASE_ALREADY_APPROVED_DIFFERENTLY",
-          "La solicitud tiene una revision anterior sin trazabilidad de grant."
-        );
-      }
-      if (!hasValidReviewChecklistIntegrity(existing)) {
-        throw new IphoneEnrollmentApprovalError(
-          "CASE_REVIEW_INCONSISTENT",
-          "La revision existente no supera la validacion de integridad."
-        );
-      }
-      if (
-        existing.documentHash.trim() !== input.caseToken.documentHash ||
-        existing.imeiHash.trim() !== input.caseToken.imeiHash
-      ) {
-        throw new IphoneEnrollmentApprovalError(
-          "CASE_ALREADY_APPROVED_DIFFERENTLY",
-          "La solicitud tiene una aprobacion asociada a otra identidad de equipo."
-        );
-      }
-      return { review: serializeReview(existing), alreadyApproved: true };
     }
 
     const checklistHash = hashIphoneEnrollmentChecklist(input.checklist);
@@ -1114,10 +1401,12 @@ export async function approveIphoneEnrollmentCase(input: {
       activeGrant.analyst.name,
       activeGrant.analyst.externalId,
       getIphoneEnrollmentIdentityKeyVersion(),
-      activeGrant.grantId,
-      activeGrant.issuedBy.userId,
-      activeGrant.issuedBy.name,
-      hashIphoneEnrollmentGrantFingerprint(activeGrant.grantId),
+      activeGrant.accessMode === "GRANT" ? activeGrant.grantId : null,
+      activeGrant.issuedBy?.userId || null,
+      activeGrant.issuedBy?.name || null,
+      activeGrant.accessMode === "SHARED"
+        ? hashIphoneEnrollmentSharedReviewFingerprint()
+        : activeGrant.accessFingerprint,
       input.caseToken.correlationId
     );
     return { review: serializeReview(inserted[0]), alreadyApproved: false };
@@ -1132,7 +1421,7 @@ export async function consumeIphoneEnrollmentRateLimit(input: {
 }) {
   await ensureIphoneEnrollmentSchema();
   const windowMinutes = Math.max(1, Math.min(60, input.windowMinutes || 15));
-  const maximum = Math.max(1, Math.min(200, input.maximum));
+  const maximum = Math.max(1, Math.min(1_000, input.maximum));
   const cleanupExpiredAttempts = reserveIphoneEnrollmentAttemptCleanup();
   return prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe(

@@ -9,9 +9,9 @@ import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import IphoneEnrollmentAccessManager from "./iphone-enrollment-access-manager";
 
 export const metadata = {
-  title: "Accesos de enrolamiento iPhone | FINSER PAY",
+  title: "Acceso de enrolamiento iPhone | FINSER PAY",
   description:
-    "Emisión y revocación de accesos temporales para analistas de enrolamiento iPhone.",
+    "Acceso compartido para especialistas de enrolamiento iPhone.",
 };
 
 export default async function IphoneEnrollmentAccessPage() {
@@ -36,9 +36,9 @@ export default async function IphoneEnrollmentAccessPage() {
         userRole={session.rolNombre}
       />
       <PageHeader
-        eyebrow="Seguridad operativa"
-        title="Accesos de enrolamiento iPhone"
-        description="Genera enlaces temporales y de un solo uso. La identidad registrada aquí será la que quede en la auditoría de cada aprobación."
+        eyebrow="Operación iPhone"
+        title="Acceso de enrolamiento iPhone"
+        description="Comparta un único enlace reutilizable con los especialistas. No necesita emitir autorizaciones por cada analista."
       />
       <IphoneEnrollmentAccessManager />
     </AppShell>

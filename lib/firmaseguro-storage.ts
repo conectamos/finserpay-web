@@ -52,6 +52,7 @@ type UpdateInput = {
 };
 
 let firmaSeguroSchemaPromise: Promise<void> | null = null;
+export const FIRMASEGURO_DRAFT_LOCK_NAMESPACE = 1_179_865_177;
 
 function jsonValue(value: unknown) {
   return value === undefined ? null : JSON.stringify(value);
@@ -343,7 +344,7 @@ export async function tryAcquireFirmaSeguroDraftDispatchLock(draftId: number) {
     connected = true;
     const result = await client.query<{ acquired: boolean }>(
       `SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired`,
-      [1_179_865_177, draftId]
+      [FIRMASEGURO_DRAFT_LOCK_NAMESPACE, draftId]
     );
     acquired = result.rows[0]?.acquired === true;
     if (!acquired) {
@@ -364,7 +365,7 @@ export async function tryAcquireFirmaSeguroDraftDispatchLock(draftId: number) {
         if (acquired) {
           await client.query(
             `SELECT pg_advisory_unlock($1::integer, $2::integer)`,
-            [1_179_865_177, draftId]
+            [FIRMASEGURO_DRAFT_LOCK_NAMESPACE, draftId]
           );
         }
       } finally {

@@ -10,10 +10,10 @@ import {
   ShieldCheck,
   Smartphone,
   UserRoundCheck,
-  X,
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import FinserBrand from "@/app/_components/finser-brand";
+import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import {
   Badge,
   Button,
@@ -49,6 +49,10 @@ type EnrollmentCase = {
   equipo: string;
   sede: string;
   aliado: string;
+  creditDecision: "APROBADA";
+  enrollmentStatus:
+    | "LISTO_PARA_ENROLAR"
+    | "ENROLADO_CORRECTAMENTE";
   review: EnrollmentReview | null;
 };
 
@@ -167,7 +171,7 @@ export default function IphoneEnrollmentPortal() {
       const data = await readJson(response);
       if (response.status === 401) {
         setAccessState("locked");
-        setMessage("El acceso vencio. Solicita un nuevo enlace autorizado.");
+        setMessage("El acceso venció. Vuelva a abrir el enlace compartido.");
         return;
       }
       if (!response.ok || !data.item || !data.caseToken) {
@@ -204,7 +208,7 @@ export default function IphoneEnrollmentPortal() {
       const data = await readJson(response);
       if (response.status === 401) {
         setAccessState("locked");
-        setMessage("El acceso vencio. Solicita un nuevo enlace autorizado.");
+        setMessage("El acceso venció. Vuelva a abrir el enlace compartido.");
         return;
       }
       if (!response.ok || !data.review) {
@@ -219,8 +223,8 @@ export default function IphoneEnrollmentPortal() {
       setConfirmed(true);
       setMessage(
         data.alreadyApproved
-          ? "Esta solicitud ya tenia el enrolamiento aprobado."
-          : "Aprobacion enviada a la solicitud."
+          ? "Esta solicitud ya estaba marcada como ENROLADO CORRECTAMENTE."
+          : "ENROLADO CORRECTAMENTE. La fábrica del asesor fue actualizada."
       );
     } catch {
       setMessage("No se pudo conectar con FINSER PAY. Intenta nuevamente.");
@@ -263,11 +267,11 @@ export default function IphoneEnrollmentPortal() {
         <header className="mb-6 max-w-3xl">
           <Badge tone="positive">Operación iPhone</Badge>
           <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-5xl">
-            Aprobación de enrolamiento
+            Control de enrolamiento
           </h1>
           <p className="mt-3 text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
-            Consulta la solicitud con cédula e IMEI. Al aprobar, la fábrica de
-            créditos recibirá automáticamente el checklist del analista.
+            Consulta la venta con cédula e IMEI, realiza la prueba y confirma el
+            enrolamiento. La fábrica del asesor se actualizará automáticamente.
           </p>
         </header>
 
@@ -282,7 +286,7 @@ export default function IphoneEnrollmentPortal() {
               <h2 className="mt-4 text-2xl font-black">
                 {accessState === "unavailable"
                   ? "Módulo no disponible"
-                  : "Enlace autorizado requerido"}
+                  : "Acceso compartido requerido"}
               </h2>
             </div>
             <EmptyState
@@ -290,11 +294,11 @@ export default function IphoneEnrollmentPortal() {
               title={
                 accessState === "unavailable"
                   ? "No se pudo habilitar el módulo"
-                  : "Solicita un nuevo enlace a FINSER PAY"
+                  : "Abra el enlace compartido por FINSER PAY"
               }
               description={
                 message ||
-                "Este módulo no utiliza el inicio de sesión general, pero sí exige un enlace operativo autorizado."
+                "Este módulo no utiliza el inicio de sesión general. El equipo especializado entra siempre mediante el mismo acceso compartido."
               }
             />
           </Card>
@@ -315,16 +319,16 @@ export default function IphoneEnrollmentPortal() {
 
               {analyst ? (
                 <div className="mt-5 flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
-                  <UserRoundCheck
+                  <ShieldCheck
                     className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-lime-strong)]"
                     aria-hidden="true"
                   />
                   <div className="min-w-0 text-sm">
                     <p className="font-black text-[var(--fp-graphite)]">
-                      {analyst.name}
+                      Acceso de especialistas activo
                     </p>
                     <p className="mt-1 break-words text-[var(--fp-muted)]">
-                      Analista autorizado · {analyst.externalId}
+                      Puede consultar y enrolar múltiples solicitudes durante esta sesión.
                     </p>
                   </div>
                 </div>
@@ -401,7 +405,10 @@ export default function IphoneEnrollmentPortal() {
                 <div>
                   <div className="flex flex-col gap-3 border-b border-[var(--fp-border)] pb-5 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                      <StatusPill tone="warning">Pendiente de aprobación</StatusPill>
+                      <div className="flex flex-wrap gap-2">
+                        <StatusPill tone="positive">Aprobada</StatusPill>
+                        <StatusPill tone="warning">Solo falta enrolar</StatusPill>
+                      </div>
                       <h2 className="mt-3 text-2xl font-black">
                         {enrollmentCase.solicitudNumero}
                       </h2>
@@ -419,9 +426,14 @@ export default function IphoneEnrollmentPortal() {
                     <CaseDetail label="Sede" value={enrollmentCase.sede} />
                   </dl>
 
+                  <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-lime-strong)] bg-[var(--fp-lime-soft)] p-4 text-sm leading-6 text-[var(--fp-graphite)]">
+                    La venta llegó al paso 4. El crédito está aprobado y el
+                    iPhone está listo para realizar la prueba de enrolamiento.
+                  </div>
+
                   <div className="mt-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
                     <p className="text-xs font-black uppercase tracking-[0.16em] text-[var(--fp-lime-strong)]">
-                      Checklist de aprobación
+                      Resultado de la prueba
                     </p>
                     <ChecklistItem label="La cédula coincide con la solicitud" />
                     <ChecklistItem label="El IMEI coincide con el iPhone consultado" />
@@ -432,7 +444,8 @@ export default function IphoneEnrollmentPortal() {
                         onChange={(event) => setConfirmed(event.target.checked)}
                         className="mt-0.5 h-5 w-5 shrink-0 accent-[var(--fp-lime-strong)]"
                       />
-                      Confirmo como analista que el iPhone quedó correctamente enrolado.
+                      Confirmo que la prueba terminó al 100 % y el iPhone quedó
+                      enrolado correctamente.
                     </label>
                   </div>
 
@@ -442,7 +455,7 @@ export default function IphoneEnrollmentPortal() {
                     onClick={() => setConfirmOpen(true)}
                   >
                     <ShieldCheck className="h-5 w-5" aria-hidden="true" />
-                    Aprobar enrolamiento
+                    ENROLADO CORRECTAMENTE
                   </Button>
                 </div>
               )}
@@ -451,61 +464,19 @@ export default function IphoneEnrollmentPortal() {
         )}
       </div>
 
-      {confirmOpen && enrollmentCase ? (
-        <div
-          className="fixed inset-0 z-50 grid place-items-end bg-slate-950/55 p-0 sm:place-items-center sm:p-5"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.currentTarget === event.target && !approving) setConfirmOpen(false);
-          }}
-        >
-          <Card
-            className="w-full max-w-lg rounded-b-none p-6 shadow-2xl sm:rounded-[var(--fp-radius-lg)] sm:p-7"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="confirm-enrollment-title"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <Badge tone="warning">Confirmación final</Badge>
-                <h2 id="confirm-enrollment-title" className="mt-3 text-2xl font-black">
-                  ¿Aprobar este enrolamiento?
-                </h2>
-              </div>
-              <Button
-                variant="ghost"
-                className="h-11 w-11 p-0"
-                aria-label="Cerrar confirmación"
-                disabled={approving}
-                onClick={() => setConfirmOpen(false)}
-              >
-                <X className="h-5 w-5" aria-hidden="true" />
-              </Button>
-            </div>
-            <p className="mt-4 text-sm leading-6 text-[var(--fp-muted)]">
-              Se enviará el checklist aprobado a {enrollmentCase.solicitudNumero}.
-              La fábrica validará nuevamente la cédula y el IMEI antes de finalizar.
-            </p>
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              <Button
-                variant="secondary"
-                className="min-h-12 w-full"
-                disabled={approving}
-                onClick={() => setConfirmOpen(false)}
-              >
-                Volver
-              </Button>
-              <Button
-                className="min-h-12 w-full"
-                disabled={approving}
-                onClick={() => void approveCase()}
-              >
-                {approving ? "Enviando..." : "Sí, aprobar"}
-              </Button>
-            </div>
-          </Card>
-        </div>
-      ) : null}
+      <ConfirmDialog
+        open={confirmOpen && Boolean(enrollmentCase)}
+        title="¿Confirmar ENROLADO CORRECTAMENTE?"
+        description={
+          enrollmentCase
+            ? `Se enviará la confirmación a ${enrollmentCase.solicitudNumero}. La fábrica validará nuevamente la cédula y el IMEI y habilitará las fotografías al asesor.`
+            : ""
+        }
+        confirmLabel="Confirmar ENROLADO CORRECTAMENTE"
+        busy={approving}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => void approveCase()}
+      />
     </main>
   );
 }
@@ -547,24 +518,24 @@ function ApprovedCase({
         <CheckCircle2 className="h-10 w-10" aria-hidden="true" />
       </div>
       <StatusPill tone="positive" className="mt-5">
-        Enrolamiento aprobado
+        ENROLADO CORRECTAMENTE
       </StatusPill>
-      <h2 className="mt-4 text-2xl font-black">Checklist enviado</h2>
+      <h2 className="mt-4 text-2xl font-black">Asesor habilitado</h2>
       <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
-        {item.solicitudNumero} · {item.equipo}
+        {item.solicitudNumero} · {item.equipo}. En máximo 8 segundos se
+        habilitarán las fotografías en la fábrica de créditos.
       </p>
       <div className="mt-6 grid gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4 text-left text-sm">
         <div className="flex items-start gap-3">
           <UserRoundCheck className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-lime-strong)]" aria-hidden="true" />
           <p>
-            Analista: <strong>{review.analystName}</strong>
-            {review.analystExternalId ? ` · ${review.analystExternalId}` : ""}
+            Confirmado por: <strong>Equipo especializado de enrolamiento</strong>
           </p>
         </div>
         <div className="flex items-start gap-3">
           <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-lime-strong)]" aria-hidden="true" />
           <p>
-            Aprobado: <strong>{formatDateTime(review.approvedAt)}</strong>
+            Enrolado: <strong>{formatDateTime(review.approvedAt)}</strong>
           </p>
         </div>
       </div>

@@ -42,7 +42,7 @@ test("la navegacion central se resuelve antes de las guardas secuenciales", () =
 test("la precalificacion bloquea el flujo normal pero no la inspeccion central", () => {
   assert.match(
     source,
-    /const showDataCreditoGate\s*=\s*dataCreditoGatePending\s*&&\s*\(!canAdminMoveFreelyInFactory \|\| wizardStep === 1\)/
+    /const showDataCreditoGate\s*=\s*dataCreditoGatePending\s*&&\s*\(draftResumeHydrating \|\|\s*!canAdminMoveFreelyInFactory \|\|\s*wizardStep === 1\)/
   );
   assert.match(source, /\{showDataCreditoGate \? \(/);
 });

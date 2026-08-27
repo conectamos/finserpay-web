@@ -12,6 +12,12 @@ export const IPHONE_ENROLLMENT_SESSION_TTL_SECONDS = 8 * 60 * 60;
 export const IPHONE_ENROLLMENT_CASE_TTL_SECONDS = 10 * 60;
 export const IPHONE_ENROLLMENT_MAX_BODY_BYTES = 4 * 1024;
 const IPHONE_ENROLLMENT_GRANT_TOKEN_VERSION = "v1";
+export const IPHONE_ENROLLMENT_SHARED_GRANT_ID =
+  "00000000-0000-4000-8000-000000000001";
+export const IPHONE_ENROLLMENT_SHARED_ANALYST = {
+  name: "Especialista de enrolamiento",
+  externalId: "ACCESO-COMPARTIDO",
+} as const;
 
 export const IPHONE_ENROLLMENT_RESPONSE_HEADERS = {
   "Cache-Control": "private, no-store, max-age=0, must-revalidate",
@@ -34,6 +40,8 @@ export type IphoneEnrollmentAnalyst = {
 
 export type IphoneEnrollmentPortalSessionPayload = {
   type: "iphone-enrollment-session";
+  accessMode: "GRANT" | "SHARED";
+  accessFingerprint: string;
   grantId: string;
   sessionId: string;
   analystName: string;
@@ -60,6 +68,7 @@ type PortalConfiguration = {
   sessionSecret: string;
   identityPepper: string;
   identityKeyVersion: string;
+  sharedAccessSecret: string;
 };
 
 export class IphoneEnrollmentRequestBodyError extends Error {
@@ -101,6 +110,9 @@ export function getIphoneEnrollmentPortalConfiguration(): PortalConfiguration {
   const identityKeyVersion = /^[A-Za-z0-9._-]{1,32}$/.test(rawKeyVersion)
     ? rawKeyVersion
     : "";
+  const sharedAccessSecret = String(
+    process.env.IPHONE_ENROLLMENT_SHARED_ACCESS_SECRET || ""
+  ).trim();
   const enabled = isEnabled(process.env.IPHONE_ENROLLMENT_ENABLED);
 
   return {
@@ -109,10 +121,12 @@ export function getIphoneEnrollmentPortalConfiguration(): PortalConfiguration {
       enabled &&
       sessionSecret.length >= 32 &&
       identityPepper.length >= 32 &&
-      Boolean(identityKeyVersion),
+      Boolean(identityKeyVersion) &&
+      /^[A-Za-z0-9_-]{43,128}$/.test(sharedAccessSecret),
     sessionSecret,
     identityPepper,
     identityKeyVersion,
+    sharedAccessSecret,
   };
 }
 
@@ -205,6 +219,19 @@ export function hashIphoneEnrollmentGrantFingerprint(grantId: string) {
   return identityHmacHex("grant", grantId);
 }
 
+export function hashIphoneEnrollmentSharedAccessFingerprint() {
+  const { configured, sharedAccessSecret } =
+    getIphoneEnrollmentPortalConfiguration();
+  if (!configured) {
+    throw new Error("IPHONE_ENROLLMENT_NOT_CONFIGURED");
+  }
+  return identityHmacHex("shared-access", sharedAccessSecret);
+}
+
+export function hashIphoneEnrollmentSharedReviewFingerprint() {
+  return identityHmacHex("shared-review", IPHONE_ENROLLMENT_SHARED_GRANT_ID);
+}
+
 export function hashIphoneEnrollmentRateLimitKey(
   subject: "grant" | "session",
   value: string
@@ -230,6 +257,25 @@ export function normalizeIphoneEnrollmentGrantSecret(value: unknown) {
     timingSafeEqual(actualBuffer, expectedBuffer)
     ? token
     : null;
+}
+
+export function normalizeIphoneEnrollmentSharedAccessSecret(value: unknown) {
+  const token = String(value || "").trim();
+  return /^[A-Za-z0-9_-]{43,128}$/.test(token) ? token : null;
+}
+
+export function iphoneEnrollmentSharedAccessSecretMatches(value: unknown) {
+  const configuration = getIphoneEnrollmentPortalConfiguration();
+  const received = normalizeIphoneEnrollmentSharedAccessSecret(value);
+  const expected = normalizeIphoneEnrollmentSharedAccessSecret(
+    configuration.sharedAccessSecret
+  );
+  return Boolean(
+    configuration.configured &&
+      received &&
+      expected &&
+      constantTimeTextMatches(received, expected)
+  );
 }
 
 function signEncodedPayload(encodedPayload: string, purpose: string) {
@@ -266,6 +312,8 @@ export function issueIphoneEnrollmentPortalSession(input: {
   grantId: string;
   analyst: IphoneEnrollmentAnalyst;
   grantExpiresAt: Date;
+  accessMode?: "GRANT" | "SHARED";
+  accessFingerprint?: string;
   now?: Date;
 }): {
   value: string;
@@ -280,8 +328,16 @@ export function issueIphoneEnrollmentPortalSession(input: {
   if (expiresAt <= issuedAt) {
     throw new Error("IPHONE_ENROLLMENT_GRANT_EXPIRED");
   }
+  const accessMode = input.accessMode || "GRANT";
+  const accessFingerprint =
+    input.accessFingerprint ||
+    (accessMode === "SHARED"
+      ? hashIphoneEnrollmentSharedAccessFingerprint()
+      : hashIphoneEnrollmentGrantFingerprint(input.grantId));
   const payload: IphoneEnrollmentPortalSessionPayload = {
     type: "iphone-enrollment-session",
+    accessMode,
+    accessFingerprint,
     grantId: input.grantId,
     sessionId: randomBytes(32).toString("base64url"),
     analystName: input.analyst.name,
@@ -294,6 +350,21 @@ export function issueIphoneEnrollmentPortalSession(input: {
     expiresAt: new Date(expiresAt * 1000),
     payload,
   };
+}
+
+export function issueIphoneEnrollmentSharedPortalSession(
+  now = new Date()
+) {
+  return issueIphoneEnrollmentPortalSession({
+    grantId: IPHONE_ENROLLMENT_SHARED_GRANT_ID,
+    analyst: IPHONE_ENROLLMENT_SHARED_ANALYST,
+    grantExpiresAt: new Date(
+      now.getTime() + IPHONE_ENROLLMENT_SESSION_TTL_SECONDS * 1000
+    ),
+    accessMode: "SHARED",
+    accessFingerprint: hashIphoneEnrollmentSharedAccessFingerprint(),
+    now,
+  });
 }
 
 export function verifyIphoneEnrollmentPortalSession(
@@ -310,6 +381,8 @@ export function verifyIphoneEnrollmentPortalSession(
   if (
     !payload ||
     payload.type !== "iphone-enrollment-session" ||
+    !["GRANT", "SHARED"].includes(payload.accessMode) ||
+    !/^[a-f0-9]{64}$/.test(payload.accessFingerprint) ||
     !/^[0-9a-f-]{36}$/i.test(payload.grantId) ||
     !/^[A-Za-z0-9_-]{43}$/.test(payload.sessionId) ||
     normalizeIphoneEnrollmentAnalystName(payload.analystName) !==
@@ -325,15 +398,54 @@ export function verifyIphoneEnrollmentPortalSession(
   ) {
     return null;
   }
+  if (payload.accessMode === "SHARED") {
+    if (
+      payload.grantId !== IPHONE_ENROLLMENT_SHARED_GRANT_ID ||
+      payload.analystName !== IPHONE_ENROLLMENT_SHARED_ANALYST.name ||
+      payload.analystExternalId !==
+        IPHONE_ENROLLMENT_SHARED_ANALYST.externalId ||
+      !constantTimeTextMatches(
+        payload.accessFingerprint,
+        hashIphoneEnrollmentSharedAccessFingerprint()
+      )
+    ) {
+      return null;
+    }
+  } else if (
+    !constantTimeTextMatches(
+      payload.accessFingerprint,
+      hashIphoneEnrollmentGrantFingerprint(payload.grantId)
+    )
+  ) {
+    return null;
+  }
   return payload;
 }
 
+export function isSharedIphoneEnrollmentPortalSession(
+  session: IphoneEnrollmentPortalSessionPayload
+) {
+  return (
+    session.accessMode === "SHARED" &&
+    session.grantId === IPHONE_ENROLLMENT_SHARED_GRANT_ID &&
+    session.analystName === IPHONE_ENROLLMENT_SHARED_ANALYST.name &&
+    session.analystExternalId === IPHONE_ENROLLMENT_SHARED_ANALYST.externalId &&
+    constantTimeTextMatches(
+      session.accessFingerprint,
+      hashIphoneEnrollmentSharedAccessFingerprint()
+    )
+  );
+}
+
 export function getIphoneEnrollmentSessionBinding(
-  session: Pick<IphoneEnrollmentPortalSessionPayload, "grantId" | "sessionId">
+  session: Pick<
+    IphoneEnrollmentPortalSessionPayload,
+    "accessFingerprint" | "accessMode" | "grantId" | "sessionId"
+  >
 ) {
   return sessionHmacHex(
     "case-session",
-    `${session.grantId}:${session.sessionId}`
+    `${session.accessMode}:${session.accessFingerprint}:${session.grantId}:${session.sessionId}`
   );
 }
 
