@@ -47,6 +47,19 @@ test("storage hashes exact documents and never exposes the hash in public rows",
   assert.match(storage, /policyMaxFinancedAmount,/);
   assert.match(storage, /manualLimit,/);
   assert.match(storage, /pg_advisory_xact_lock/);
+  const lockHelpers = storage.slice(
+    storage.indexOf("async function lockMutation"),
+    storage.indexOf("async function findMutationReplay")
+  );
+  assert.equal(
+    (
+      lockHelpers.match(
+        /transaction\.\$executeRawUnsafe\(\s*`SELECT pg_advisory_xact_lock/g
+      ) || []
+    ).length,
+    2
+  );
+  assert.doesNotMatch(lockHelpers, /\$queryRawUnsafe/);
   assert.match(storage, /expectedVersion/);
   assert.match(storage, /findMutationReplay/);
   assert.match(storage, /DataCreditoManualCreditLimitAudit/);

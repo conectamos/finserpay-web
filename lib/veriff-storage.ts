@@ -263,10 +263,10 @@ export async function ensureVeriffSchema() {
 }
 
 export async function lockVeriffDraftAttempts(
-  database: Pick<Prisma.TransactionClient, "$queryRawUnsafe">,
+  database: Pick<Prisma.TransactionClient, "$executeRawUnsafe">,
   draftId: number
 ) {
-  await database.$queryRawUnsafe(
+  await database.$executeRawUnsafe(
     `SELECT pg_advisory_xact_lock($1, $2)`,
     VERIFF_DRAFT_ATTEMPT_LOCK_NAMESPACE,
     draftId

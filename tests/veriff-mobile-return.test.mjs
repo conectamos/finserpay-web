@@ -614,6 +614,14 @@ test("crear QR y cerrar crédito se serializan por solicitud sin duplicar intent
   assert.match(veriffStorage, /pg_advisory_xact_lock\(\$1, \$2\)/);
   assert.match(
     veriffStorage,
+    /database\.\$executeRawUnsafe\(\s*`SELECT pg_advisory_xact_lock/
+  );
+  assert.doesNotMatch(
+    veriffStorage,
+    /database\.\$queryRawUnsafe\(\s*`SELECT pg_advisory_xact_lock/
+  );
+  assert.match(
+    veriffStorage,
     /lockVeriffDraftAttempts\(transaction, input\.draftId\)/
   );
   assert.match(

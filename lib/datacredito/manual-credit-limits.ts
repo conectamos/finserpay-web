@@ -169,7 +169,7 @@ async function lockMutation(
   transaction: Prisma.TransactionClient,
   mutationId: string
 ) {
-  await transaction.$queryRawUnsafe<Array<{ locked: number }>>(
+  await transaction.$executeRawUnsafe(
     `SELECT pg_advisory_xact_lock(hashtext($1)) AS "locked"`,
     `datacredito-manual-limit-mutation:${mutationId}`
   );
@@ -179,7 +179,7 @@ async function lockDocument(
   transaction: Prisma.TransactionClient,
   documentHash: string
 ) {
-  await transaction.$queryRawUnsafe<Array<{ locked: number }>>(
+  await transaction.$executeRawUnsafe(
     `SELECT pg_advisory_xact_lock(hashtext($1)) AS "locked"`,
     `datacredito-manual-limit-document:${documentHash}`
   );
