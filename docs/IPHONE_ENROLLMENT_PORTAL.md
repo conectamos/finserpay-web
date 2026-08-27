@@ -23,6 +23,9 @@ El despliegue debe definir secretos distintos:
   una migración explícita de las revisiones existentes.
 - `IPHONE_ENROLLMENT_IDENTITY_KEY_VERSION`: identificador corto de la versión del
   pepper, por ejemplo `v1`.
+- `IPHONE_ENROLLMENT_PUBLIC_ORIGIN`: origen público canónico del portal, sin
+  ruta; en producción debe ser `https://finserpay.com`. Evita depender del
+  dominio interno de Railway para las validaciones CSRF y los enlaces emitidos.
 
 No existe un token maestro público permanente.
 

@@ -55,7 +55,11 @@ async function requireCentralAdmin() {
 }
 
 function accessOrigin(request: NextRequest) {
-  const configured = String(process.env.NEXT_PUBLIC_APP_URL || "").trim();
+  const configured = String(
+    process.env.IPHONE_ENROLLMENT_PUBLIC_ORIGIN ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      ""
+  ).trim();
   if (configured) {
     try {
       return new URL(configured).origin;

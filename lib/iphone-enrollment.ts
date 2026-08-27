@@ -487,6 +487,17 @@ export function isSameOriginIphoneEnrollmentRequest(request: Request) {
   const origin = request.headers.get("origin")?.trim();
   if (!origin) return false;
 
+  try {
+    const portalOrigin = String(
+      process.env.IPHONE_ENROLLMENT_PUBLIC_ORIGIN || ""
+    ).trim();
+    if (portalOrigin) {
+      return new URL(portalOrigin).origin === origin;
+    }
+  } catch {
+    return false;
+  }
+
   const allowedOrigins = new Set<string>();
   try {
     allowedOrigins.add(new URL(request.url).origin);

@@ -17,6 +17,7 @@ const environmentKeys = [
   "IPHONE_ENROLLMENT_SESSION_SECRET",
   "IPHONE_ENROLLMENT_IDENTITY_PEPPER",
   "IPHONE_ENROLLMENT_IDENTITY_KEY_VERSION",
+  "IPHONE_ENROLLMENT_PUBLIC_ORIGIN",
   "NEXT_PUBLIC_APP_URL",
   "NODE_ENV",
 ];
@@ -35,6 +36,7 @@ before(() => {
   process.env.IPHONE_ENROLLMENT_SESSION_SECRET = sessionSecret;
   process.env.IPHONE_ENROLLMENT_IDENTITY_PEPPER = identityPepper;
   process.env.IPHONE_ENROLLMENT_IDENTITY_KEY_VERSION = identityKeyVersion;
+  process.env.IPHONE_ENROLLMENT_PUBLIC_ORIGIN = "https://finserpay.com";
   process.env.NEXT_PUBLIC_APP_URL = "https://finserpay.com";
   process.env.NODE_ENV = "test";
 });
