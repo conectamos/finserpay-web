@@ -77,6 +77,7 @@ type GateView =
   | "submitting"
   | "rejected"
   | "active-request"
+  | "seller-session-required"
   | "unavailable"
   | "technical-error"
   | "approved"
@@ -894,6 +895,11 @@ export default function DatacreditoPrequalificationGate({
           setView("active-request");
           return;
         }
+        if (getResponseCode(payload) === "SELLER_SESSION_REQUIRED") {
+          setCorrelationId(null);
+          setView("seller-session-required");
+          return;
+        }
         setCorrelationId(getCorrelationId(payload, response));
         setView("technical-error");
         return;
@@ -1116,6 +1122,44 @@ export default function DatacreditoPrequalificationGate({
           </div>
         </Card>
       </ResultDialogShell>
+    );
+  }
+
+  if (view === "seller-session-required") {
+    return (
+      <Card
+        className="border-[var(--fp-amber)] p-6 sm:p-8"
+        role="alert"
+        aria-labelledby="datacredito-seller-session-title"
+      >
+        <div className="flex items-start gap-4">
+          <span
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-amber-soft)] text-[var(--fp-amber)]"
+            aria-hidden="true"
+          >
+            <UserRound className="h-5 w-5" />
+          </span>
+          <div>
+            <h2
+              id="datacredito-seller-session-title"
+              className="text-xl font-black text-[var(--fp-graphite)]"
+            >
+              Selecciona el perfil del asesor
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
+              La sesión del asesor no está activa. Ingresa nuevamente al perfil
+              correspondiente antes de validar al cliente.
+            </p>
+          </div>
+        </div>
+        <Link
+          href="/dashboard"
+          className="fp-ui-button is-primary mt-6 w-full justify-center focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)] sm:w-auto"
+        >
+          Ir a perfiles
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </Card>
     );
   }
 

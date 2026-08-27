@@ -987,6 +987,30 @@ test("DataCredito aprobado se reanuda por GET en la misma solicitud sin POST ni 
   );
 });
 
+test("un borrador obsoleto se libera antes de iniciar otra validacion", async () => {
+  const factory = await readProjectFile(
+    "app/dashboard/creditos/credit-factory-console.tsx"
+  );
+  const loadDraft = sourceBlock(
+    factory,
+    "const loadDraft = async",
+    "void loadDraft();"
+  );
+  const cancelledGuard = loadDraft.indexOf("if (cancelled)");
+  const notFoundBranch = loadDraft.indexOf("if (result.status === 404)");
+
+  assert.ok(cancelledGuard >= 0);
+  assert.ok(notFoundBranch > cancelledGuard);
+  assert.match(
+    loadDraft,
+    /if\s*\(result\.status\s*===\s*404\)\s*\{[\s\S]*cancelPendingDraftAutosave\(\);[\s\S]*setDraftId\(null\);[\s\S]*setDraftStatus\("idle"\);[\s\S]*setDraftErrorMessage\(""\);[\s\S]*replaceDraftInUrl\(null\);[\s\S]*updateDraftResumeHydration\(false\);[\s\S]*return;/
+  );
+  assert.match(
+    loadDraft,
+    /const message\s*=\s*error instanceof Error[\s\S]*setDraftErrorMessage\(message\)/
+  );
+});
+
 test("la interfaz conserva filtros en URL y confirma el desistimiento", async () => {
   const ui = await readProjectFile(
     "app/dashboard/solicitudes/solicitudes-wall-client.tsx"

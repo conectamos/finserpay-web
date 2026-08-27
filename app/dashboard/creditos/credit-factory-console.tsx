@@ -9685,12 +9685,26 @@ export default function CreditFactoryConsole({
           `/api/creditos/borradores?${params.toString()}`
         );
 
-        if (!result.ok || !result.data?.item) {
-          throw new Error(result.data?.error || "No se encontro el borrador");
-        }
-
         if (cancelled) {
           return;
+        }
+
+        if (result.status === 404) {
+          cancelPendingDraftAutosave();
+          setDraftId(null);
+          setDraftStatus("idle");
+          setDraftErrorMessage("");
+          replaceDraftInUrl(null);
+          updateDraftResumeHydration(false);
+          setNotice({
+            text: "La solicitud anterior ya no está disponible. Puedes iniciar una nueva validación.",
+            tone: "amber",
+          });
+          return;
+        }
+
+        if (!result.ok || !result.data?.item) {
+          throw new Error(result.data?.error || "No se encontro el borrador");
         }
 
         applyDraftPayload(result.data.item);
@@ -9737,10 +9751,13 @@ export default function CreditFactoryConsole({
           return;
         }
 
+        const message =
+          error instanceof Error ? error.message : "No se pudo abrir el borrador";
         setDraftStatus("error");
+        setDraftErrorMessage(message);
         updateDraftResumeHydration(false);
         setNotice({
-          text: error instanceof Error ? error.message : "No se pudo abrir el borrador",
+          text: message,
           tone: "red",
         });
       }

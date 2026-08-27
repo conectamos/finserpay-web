@@ -1006,6 +1006,27 @@ test("muestra una ventana específica cuando el cliente ya tiene una solicitud a
   assert.ok(prequalificationGate.includes("Buscar en mi muro"));
 });
 
+test("orienta al selector cuando falta la sesion del asesor", () => {
+  const sessionBranch = prequalificationGate.indexOf(
+    'getResponseCode(payload) === "SELLER_SESSION_REQUIRED"'
+  );
+  const sessionTransition = prequalificationGate.indexOf(
+    'setView("seller-session-required")',
+    sessionBranch
+  );
+  const genericTechnicalTransition = prequalificationGate.indexOf(
+    'setView("technical-error")',
+    sessionBranch
+  );
+
+  assert.ok(sessionBranch >= 0);
+  assert.ok(sessionTransition > sessionBranch);
+  assert.ok(genericTechnicalTransition > sessionTransition);
+  assert.ok(prequalificationGate.includes("Selecciona el perfil del asesor"));
+  assert.ok(prequalificationGate.includes('href="/dashboard"'));
+  assert.ok(prequalificationGate.includes("Ir a perfiles"));
+});
+
 test("reserva espacio para los iconos de identificacion en la precalificacion", () => {
   const inputsWithLeadingIcon =
     prequalificationGate.match(
