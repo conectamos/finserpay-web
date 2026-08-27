@@ -156,3 +156,24 @@ test("el portal cliente no expone el folio firmado", async () => {
 
   assert.match(adminDocumentRoute, /requireSupervisorOrAdmin:\s*true/);
 });
+
+test("el plan de pagos del cliente oculta el saldo total pendiente", async () => {
+  const source = await readFile(
+    path.join(projectRoot, "app/clientes/client-credit-panel.tsx"),
+    "utf8"
+  );
+  const pendingStart = source.indexOf('{panel === "pending" ? (');
+  const paymentsStart = source.indexOf(
+    '{panel === "payments" ? (',
+    pendingStart
+  );
+
+  assert.notEqual(pendingStart, -1);
+  assert.notEqual(paymentsStart, -1);
+
+  const pendingPanel = source.slice(pendingStart, paymentsStart);
+  assert.doesNotMatch(pendingPanel, />Saldo pendiente</);
+  assert.doesNotMatch(pendingPanel, /money\(credit\.saldoPendiente\)/);
+  assert.match(pendingPanel, /Próxima cuota/);
+  assert.match(pendingPanel, /Tu ruta de pagos/);
+});

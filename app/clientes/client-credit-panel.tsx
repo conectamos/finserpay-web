@@ -388,8 +388,6 @@ export default function ClientCreditPanel({
                 <span className={styles.statusDot} aria-hidden="true" />
                 {statusLabel(credit.estadoPago)}
               </div>
-              <p className={styles.summaryEyebrow}>Saldo pendiente</p>
-              <p className={styles.summaryAmount}>{money(credit.saldoPendiente)}</p>
               <div className={styles.summaryDivider} />
               <dl className={styles.threeMetrics}>
                 <div><dd>{overdue.length}</dd><dt>vencidas</dt></div>
