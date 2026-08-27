@@ -304,14 +304,10 @@ export default function ClientCreditPanel({
               <p className={styles.summaryEyebrow}>Total pagado</p>
               <p className={styles.summaryAmount}>{money(credit.totalPagado)}</p>
               <div className={styles.summaryDivider} />
-              <dl className={styles.twoMetrics}>
+              <dl className={styles.historyMetric}>
                 <div>
                   <dt>Último pago</dt>
                   <dd>{lastPayment ? `${dayLabel(lastPayment.fechaAbono)} ${monthLabel(lastPayment.fechaAbono)}` : "Sin pagos"}</dd>
-                </div>
-                <div>
-                  <dt>Saldo actual</dt>
-                  <dd>{money(credit.saldoPendiente)}</dd>
                 </div>
               </dl>
             </section>

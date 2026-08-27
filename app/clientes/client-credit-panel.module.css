@@ -243,19 +243,18 @@
   background: rgba(255, 255, 255, 0.24);
 }
 
-.twoMetrics,
+.historyMetric,
 .threeMetrics {
   display: grid;
   margin: 0;
 }
 
-.twoMetrics { grid-template-columns: 1fr 1fr; gap: 28px; }
+.historyMetric { grid-template-columns: 1fr; }
 .threeMetrics { grid-template-columns: repeat(3, 1fr); }
 
-.twoMetrics div:last-child { text-align: right; }
-.twoMetrics dt,
+.historyMetric dt,
 .threeMetrics dt { color: rgba(255, 255, 255, 0.58); font-size: 12px; font-weight: 650; }
-.twoMetrics dd { margin: 8px 0 0; font-size: 20px; font-weight: 800; }
+.historyMetric dd { margin: 8px 0 0; font-size: 20px; font-weight: 800; }
 .threeMetrics div { display: grid; gap: 5px; min-width: 0; text-align: center; }
 .threeMetrics div + div { border-left: 1px solid rgba(255, 255, 255, 0.24); }
 .threeMetrics dd { margin: 0; overflow: hidden; font-size: 15px; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }

@@ -177,3 +177,24 @@ test("el plan de pagos del cliente oculta el saldo total pendiente", async () =>
   assert.match(pendingPanel, /Próxima cuota/);
   assert.match(pendingPanel, /Tu ruta de pagos/);
 });
+
+test("el historial del cliente oculta el saldo actual", async () => {
+  const source = await readFile(
+    path.join(projectRoot, "app/clientes/client-credit-panel.tsx"),
+    "utf8"
+  );
+  const historyStart = source.indexOf('{panel === "history" ? (');
+  const pendingStart = source.indexOf(
+    '{panel === "pending" ? (',
+    historyStart
+  );
+
+  assert.notEqual(historyStart, -1);
+  assert.notEqual(pendingStart, -1);
+
+  const historyPanel = source.slice(historyStart, pendingStart);
+  assert.doesNotMatch(historyPanel, />Saldo actual</);
+  assert.doesNotMatch(historyPanel, /money\(credit\.saldoPendiente\)/);
+  assert.match(historyPanel, /Total pagado/);
+  assert.match(historyPanel, /Último pago/);
+});
