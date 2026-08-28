@@ -2305,25 +2305,30 @@ export async function POST(req: Request) {
       ? buildVeriffSnapshot(veriffValidation)
       : null;
     const veriffRiskBlocked = Boolean(veriffRiskSnapshot?.riskBlocked);
-    const veriffMustBeRejected =
-      veriffValidation
+    const veriffCannotFinalize =
+      veriffRiskBlocked ||
+      (veriffValidation
         ? !isVeriffApproved(veriffValidation)
-        : veriffRequired;
+        : veriffRequired);
 
-    if (veriffMustBeRejected) {
+    if (veriffCannotFinalize) {
       return NextResponse.json(
         {
+          code: veriffRiskBlocked
+            ? "VERIFF_COMPLIANCE_REVIEW_REQUIRED"
+            : "VERIFF_APPROVAL_REQUIRED",
           error:
             veriffRiskBlocked
-              ? "Veriff aprobo tecnicamente, pero tiene etiquetas de riesgo o PEP/sanciones. Debe revisarse antes de finalizar."
+              ? "La validación requiere revisión de cumplimiento por FINSER PAY antes de finalizar el crédito."
               : "Debes aprobar la validacion de identidad en Veriff antes de finalizar el credito.",
+          retryable: !veriffRiskBlocked,
+          reviewRequired: veriffRiskBlocked,
           identityValidation: veriffValidation
             ? {
                 id: veriffValidation.id,
                 status: veriffValidation.status,
                 decision: veriffValidation.decision,
                 lastError: veriffValidation.lastError,
-                riskSignals: veriffRiskSnapshot?.riskSignals || null,
               }
             : null,
         },
@@ -3115,11 +3120,15 @@ export async function POST(req: Request) {
           lockedVeriffValidation.decisionPayload,
           lockedVeriffValidation.webhookPayload
         );
-        if (
-          !isVeriffApproved(lockedVeriffValidation) ||
-          lockedVeriffSnapshot?.riskBlocked ||
-          lockedVeriffRisk.blocked
-        ) {
+        if (lockedVeriffSnapshot?.riskBlocked || lockedVeriffRisk.blocked) {
+          throw new VeriffValidationFinalizationError(
+            "VERIFF_COMPLIANCE_REVIEW_REQUIRED",
+            "La validación requiere revisión de cumplimiento por FINSER PAY antes de finalizar el crédito.",
+            false
+          );
+        }
+
+        if (!isVeriffApproved(lockedVeriffValidation)) {
           throw new VeriffValidationFinalizationError(
             "DATACREDITO_VERIFF_STATE_CHANGED",
             "La validación facial cambió antes del cierre. Revisa el estado vigente antes de intentar finalizar nuevamente.",

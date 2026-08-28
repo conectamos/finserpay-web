@@ -313,7 +313,15 @@ function resolveVeriffRowStatus(row: VeriffValidationRow | null | undefined) {
 }
 
 export function isVeriffApproved(row: VeriffValidationRow | null | undefined) {
-  return areVeriffDecisionsTrusted() && resolveVeriffRowStatus(row) === "APPROVED";
+  if (!row) {
+    return false;
+  }
+
+  return (
+    areVeriffDecisionsTrusted() &&
+    resolveVeriffRowStatus(row) === "APPROVED" &&
+    !summarizeVeriffRisk(row.decisionPayload, row.webhookPayload).blocked
+  );
 }
 
 export function serializeVeriffValidation(row: VeriffValidationRow | null) {
@@ -325,8 +333,8 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
   const technicalApproved = status === "APPROVED";
   const trusted = areVeriffDecisionsTrusted();
   const risk = summarizeVeriffRisk(row.decisionPayload, row.webhookPayload);
-  const approved = technicalApproved && trusted;
-  const riskBlocked = !technicalApproved && risk.blocked;
+  const riskBlocked = risk.blocked;
+  const approved = technicalApproved && trusted && !riskBlocked;
   const decisionIdentity = extractVeriffIdentityData(row.decisionPayload);
   const webhookIdentity = extractVeriffIdentityData(row.webhookPayload);
   const identityData = decisionIdentity || webhookIdentity;
@@ -363,7 +371,7 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
     technicalApproved,
     trusted,
     riskBlocked,
-    riskSignals: risk,
+    reviewRequired: riskBlocked,
     pending: status === "PENDING" || status === "REVIEW" || status === "RESUBMISSION",
     lastError: row.lastError,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
@@ -756,6 +764,7 @@ export function buildVeriffSnapshot(row: VeriffValidationRow | null) {
   }
 
   const serialized = serializeVeriffValidation(row);
+  const risk = summarizeVeriffRisk(row.decisionPayload, row.webhookPayload);
 
   return {
     proveedor: "Veriff",
@@ -771,8 +780,9 @@ export function buildVeriffSnapshot(row: VeriffValidationRow | null) {
     identityData: serialized?.identityData || null,
     identityDocumentNumber: serialized?.identityDocumentNumber || null,
     identityDocumentStatus: serialized?.identityDocumentStatus || "missing",
-    riskSignals: serialized?.riskSignals || null,
-    riskBlocked: Boolean(serialized?.riskBlocked),
+    riskSignals: risk,
+    riskBlocked: risk.blocked,
+    reviewRequired: risk.blocked,
     checkedAt: row.decidedAt?.toISOString() || row.updatedAt?.toISOString() || null,
   };
 }

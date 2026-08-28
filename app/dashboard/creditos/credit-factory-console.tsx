@@ -253,20 +253,6 @@ type VeriffIdentityDataState = {
   placeOfBirth: string | null;
 };
 
-type VeriffRiskSignalState = {
-  blocked?: boolean;
-  fraudRiskLevel?: string | null;
-  highRisk?: boolean;
-  pepSanctionMatch?: boolean;
-  reasons?: string[];
-  riskLabels?: Array<{
-    category?: string | null;
-    label?: string | null;
-    sessionIds?: string[];
-  }>;
-  riskScore?: number | null;
-};
-
 type VeriffValidationState = {
   id: number;
   draftId: number | null;
@@ -284,7 +270,7 @@ type VeriffValidationState = {
   technicalApproved?: boolean;
   trusted?: boolean;
   riskBlocked?: boolean;
-  riskSignals?: VeriffRiskSignalState | null;
+  reviewRequired?: boolean;
   pending: boolean;
   veriffSessionId: string | null;
   sessionUrl: string | null;
@@ -332,7 +318,12 @@ function veriffApprovalCanUnlockClient(
   expectedDraftId?: number | null,
   expectedDocumentNumber?: string | null
 ) {
-  if (!validation?.approved || !validation.decidedAt) {
+  if (
+    !validation?.approved ||
+    validation.riskBlocked ||
+    validation.reviewRequired ||
+    !validation.decidedAt
+  ) {
     return false;
   }
 
@@ -4377,6 +4368,8 @@ export default function CreditFactoryConsole({
   useEffect(() => {
     if (
       !veriffValidation?.sessionUrl ||
+      veriffValidation.riskBlocked ||
+      veriffValidation.reviewRequired ||
       veriffApprovalCanUnlockClient(
         veriffValidation,
         veriffExpectedDraftId,
@@ -4657,7 +4650,11 @@ export default function CreditFactoryConsole({
       veriffValidation?.status === "EXPIRED" ||
       veriffValidation?.status === "ABANDONED"
   );
-  const veriffRiskOnly = Boolean(veriffValidation?.riskBlocked && !veriffRejected);
+  const veriffComplianceReviewRequired = Boolean(
+    (veriffValidation?.reviewRequired || veriffValidation?.riskBlocked) &&
+      !veriffRejected
+  );
+  const veriffRiskOnly = veriffComplianceReviewRequired;
   const veriffHasFinalDecision = Boolean(
     veriffTechnicalRetryRequired ||
       (veriffValidation?.approved && !veriffIdentityEvidencePending) ||
@@ -4673,6 +4670,8 @@ export default function CreditFactoryConsole({
   );
   const veriffVisualState = veriffSubmitting
     ? "generating"
+    : veriffComplianceReviewRequired
+      ? "compliance-review"
     : veriffApproved
       ? "approved"
       : veriffIdentityEvidenceConflict
@@ -4683,8 +4682,7 @@ export default function CreditFactoryConsole({
           veriffValidation?.status === "ABANDONED"
         ? "expired"
         : dataCreditoVeriffDocumentRejected ||
-            veriffValidation?.status === "DECLINED" ||
-            veriffRiskOnly
+            veriffValidation?.status === "DECLINED"
           ? "rejected"
           : veriffConnectionError
             ? "error"
@@ -4700,6 +4698,8 @@ export default function CreditFactoryConsole({
   const veriffVisualLabel =
     veriffVisualState === "generating"
       ? "Generando codigo"
+      : veriffVisualState === "compliance-review"
+        ? "Revisión de cumplimiento"
       : veriffVisualState === "approved"
         ? "Aprobada"
         : veriffVisualState === "conflict"
@@ -4722,6 +4722,7 @@ export default function CreditFactoryConsole({
     veriffConfig.configured &&
     !veriffUnavailableForDataCredito &&
     !veriffApproved &&
+    !veriffComplianceReviewRequired &&
     !dataCreditoVeriffDocumentRejected &&
     !veriffRetryPolicy.applicationRejected &&
     (!veriffValidation?.sessionUrl || veriffHasFinalDecision || veriffConnectionError);
@@ -4934,7 +4935,14 @@ export default function CreditFactoryConsole({
     stepDocumentosReady &&
     deliveryRequirementReady;
   const creditClosureReady =
-    ventaLista && (!firmaSeguroProcessExists || firmaSeguroProcessSigned);
+    ventaLista &&
+    !veriffComplianceReviewRequired &&
+    (!firmaSeguroProcessExists || firmaSeguroProcessSigned);
+  const creditClosurePendingMessage = veriffComplianceReviewRequired
+    ? "La validación requiere revisión de cumplimiento por FINSER PAY. No repitas la validación ni intentes cerrar el crédito hasta que la revisión sea resuelta."
+    : veriffRequired && !veriffApproved
+      ? "Veriff debe aprobar la identidad antes de finalizar el crédito."
+      : deliveryPendingMessage;
   const paymentOverview = paymentSummary ||
     (selectedCredit
       ? {
@@ -6837,6 +6845,10 @@ export default function CreditFactoryConsole({
       return veriffConfig.configured ? "Pendiente" : "Sin configurar";
     }
 
+    if (validation.riskBlocked || validation.reviewRequired) {
+      return "Revisión de cumplimiento";
+    }
+
     if (
       dataCreditoRequiresVeriff &&
       getDataCreditoVeriffDocumentRejectionMessage(
@@ -6871,10 +6883,6 @@ export default function CreditFactoryConsole({
 
     if (validation.status === "ERROR") {
       return "Error";
-    }
-
-    if (validation.riskBlocked) {
-      return "Revisar";
     }
 
     if (validation.technicalApproved && !validation.trusted) {
@@ -6998,7 +7006,7 @@ export default function CreditFactoryConsole({
   const veriffMissingIdentityMessage =
     "Aprobada sin datos para autocompletar.";
   const veriffRiskMessage =
-    "Validacion aprobada tecnicamente, pero tiene etiquetas de riesgo.";
+    "FINSER PAY debe revisar esta validación antes de continuar. No repitas la validación ni intentes cerrar el crédito.";
   const veriffRejectedMessage = "Validacion rechazada por Veriff.";
 
   const veriffMediaLabel = (item: VeriffMediaState) => {
@@ -7181,7 +7189,7 @@ export default function CreditFactoryConsole({
           ? documentRejectionMessage
           : validation?.status === "DECLINED"
           ? veriffRejectedMessage
-          : validation?.riskBlocked
+          : validation?.riskBlocked || validation?.reviewRequired
             ? veriffRiskMessage
           : validation?.approved && (!usableApproval || !filledClientData)
             ? veriffMissingIdentityMessage
@@ -7195,7 +7203,7 @@ export default function CreditFactoryConsole({
         identityEvidenceConflict ||
         identityEvidenceMissing ||
         Boolean(validation?.approved && !usableApproval) ||
-        Boolean(validation?.riskBlocked) ||
+        Boolean(validation?.riskBlocked || validation?.reviewRequired) ||
         validation?.status === "DECLINED" ||
         validation?.status === "ERROR" ||
         validation?.status === "EXPIRED" ||
@@ -7209,8 +7217,8 @@ export default function CreditFactoryConsole({
             ? documentRejectionMessage
             : validation?.status === "DECLINED"
             ? "Validacion rechazada por Veriff."
-            : validation?.riskBlocked
-            ? "Validacion requiere revision por riesgo."
+            : validation?.riskBlocked || validation?.reviewRequired
+            ? "Revisión de cumplimiento requerida por FINSER PAY."
             : usableApproval
             ? filledClientData
               ? "Identidad aprobada. Datos copiados."
@@ -7222,14 +7230,15 @@ export default function CreditFactoryConsole({
               : validation
                 ? `${veriffStatusLabel(validation)}.`
                 : "Sin resultado.",
-          tone: documentRejectionMessage ||
-            validation?.status === "DECLINED" ||
-            validation?.status === "ERROR" ||
-            validation?.riskBlocked
-            ? "red"
-            : usableApproval
-            ? "emerald"
-            : "amber",
+          tone: validation?.riskBlocked || validation?.reviewRequired
+            ? "amber"
+            : documentRejectionMessage ||
+                validation?.status === "DECLINED" ||
+                validation?.status === "ERROR"
+              ? "red"
+              : usableApproval
+                ? "emerald"
+                : "amber",
         });
       }
 
@@ -7387,7 +7396,7 @@ export default function CreditFactoryConsole({
           ? documentRejectionMessage
           : validation?.status === "DECLINED"
           ? veriffRejectedMessage
-          : validation?.riskBlocked
+          : validation?.riskBlocked || validation?.reviewRequired
             ? veriffRiskMessage
           : validation?.approved && (!usableApproval || !filledClientData)
             ? veriffMissingIdentityMessage
@@ -7400,8 +7409,8 @@ export default function CreditFactoryConsole({
           ? documentRejectionMessage
           : validation?.status === "DECLINED"
           ? "Validacion rechazada por Veriff."
-          : validation?.riskBlocked
-          ? "Validacion requiere revision por riesgo."
+          : validation?.riskBlocked || validation?.reviewRequired
+          ? "Revisión de cumplimiento requerida por FINSER PAY."
           : usableApproval
           ? filledClientData
             ? "Identidad aprobada. Datos copiados."
@@ -7409,10 +7418,9 @@ export default function CreditFactoryConsole({
           : validation?.approved
             ? "Identidad aprobada sin datos para autocompletar. Reintenta la validacion."
           : "QR de validacion listo.",
-        tone:
-          documentRejectionMessage ||
-          validation?.status === "DECLINED" ||
-          validation?.riskBlocked
+        tone: validation?.riskBlocked || validation?.reviewRequired
+          ? "amber"
+          : documentRejectionMessage || validation?.status === "DECLINED"
             ? "red"
             : usableApproval
               ? "emerald"
@@ -8375,6 +8383,14 @@ export default function CreditFactoryConsole({
       return null;
     }
 
+    if (veriffComplianceReviewRequired) {
+      setNotice({
+        text: veriffRiskMessage,
+        tone: "amber",
+      });
+      return null;
+    }
+
     if (!dataCreditoFlowReady) {
       setNotice({
         text: "Debes obtener una precalificación aprobada antes de finalizar el crédito.",
@@ -8517,6 +8533,16 @@ export default function CreditFactoryConsole({
       });
 
       if (!result.ok) {
+        if (result.data?.code === "VERIFF_COMPLIANCE_REVIEW_REQUIRED") {
+          setNotice({
+            text:
+              result.data?.error ||
+              "La validación requiere revisión de cumplimiento por FINSER PAY antes de finalizar el crédito.",
+            tone: "amber",
+          });
+          return null;
+        }
+
         if (
           result.data?.code === "DATACREDITO_ASSESSMENT_INVALID" ||
           result.data?.code === "DATACREDITO_ASSESSMENT_REQUIRED"
@@ -9811,7 +9837,6 @@ export default function CreditFactoryConsole({
       simulatorMode ||
       deliveryMode ||
       draftResumeHydrating ||
-      draftStatus === "loading" ||
       !draftId ||
       !draftHasMeaningfulData
     ) {
@@ -9926,7 +9951,6 @@ export default function CreditFactoryConsole({
     draftHasMeaningfulData,
     draftId,
     draftResumeHydrating,
-    draftStatus,
     factoryDraftPayload,
     currentIphoneClosureFingerprint,
     nextFactoryStep.id,
@@ -11836,16 +11860,16 @@ export default function CreditFactoryConsole({
                           Reintentar validacion
                         </button>
                       </div>
-                    ) : veriffRiskOnly ? (
+                    ) : veriffComplianceReviewRequired ? (
                       <div className="fp-identity-modal-content is-result">
-                        <p className="fp-identity-modal-kicker is-rejected">
-                          Revision requerida
+                        <p className="fp-identity-modal-kicker is-conflict">
+                          Revisión requerida
                         </p>
                         <h2 id="fp-identity-modal-title">
-                          La validacion requiere revision
+                          Revisión de cumplimiento
                         </h2>
                         <div
-                          className="fp-identity-modal-illustration is-rejected"
+                          className="fp-identity-modal-illustration is-conflict"
                           aria-hidden="true"
                         >
                           <ShieldCheck className="h-20 w-20" strokeWidth={1.35} />
@@ -12162,6 +12186,12 @@ export default function CreditFactoryConsole({
                             <strong>Identidad aprobada</strong>
                             <p>Los datos verificados fueron vinculados a esta solicitud.</p>
                           </div>
+                        ) : veriffComplianceReviewRequired ? (
+                          <div className="fp-identity-result">
+                            <ShieldCheck className="h-11 w-11" strokeWidth={1.5} />
+                            <strong>Revisión de cumplimiento</strong>
+                            <p>FINSER PAY debe resolver la revisión antes de continuar.</p>
+                          </div>
                         ) : veriffQrDataUrl ? (
                           <img
                             src={veriffQrDataUrl}
@@ -12219,7 +12249,8 @@ export default function CreditFactoryConsole({
                         ) : null}
                       </div>
 
-                      {veriffValidation?.sessionUrl ? (
+                      {veriffValidation?.sessionUrl &&
+                      !veriffComplianceReviewRequired ? (
                         <a
                           href={veriffValidation?.sessionUrl || undefined}
                           target="_blank"
@@ -14095,17 +14126,9 @@ export default function CreditFactoryConsole({
                                   veriffValidation.lastError}
                               </p>
                             ) : null}
-                            {veriffValidation.riskBlocked ? (
-                              <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 font-semibold text-red-700">
-                                {veriffValidation.status === "DECLINED"
-                                  ? "Motivo: "
-                                  : "Riesgo: "}
-                                {veriffValidation.riskSignals?.riskLabels
-                                  ?.map((item) => item.label)
-                                  .filter(Boolean)
-                                  .join(", ") ||
-                                  veriffValidation.riskSignals?.reasons?.join(", ") ||
-                                  "senal de riesgo"}
+                            {veriffComplianceReviewRequired ? (
+                              <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 font-semibold text-amber-800">
+                                Revisión de cumplimiento requerida por FINSER PAY.
                               </p>
                             ) : null}
                           </div>
@@ -15740,7 +15763,7 @@ export default function CreditFactoryConsole({
 
                 {wizardStep === 5 && !ventaLista && !FLEXIBLE_WIZARD_FOR_TESTING && (
                   <span className="text-sm font-medium text-amber-700">
-                    {deliveryPendingMessage}
+                    {creditClosurePendingMessage}
                   </span>
                 )}
                   </>

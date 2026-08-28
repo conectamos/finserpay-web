@@ -46,3 +46,23 @@ test("el estado y el boton final comparten todas las condiciones de cierre", () 
     /disabled=\{[\s\S]{0,180}!creditClosureReady/
   );
 });
+
+test("el autosave de evidencias no se reactiva por su propio estado", () => {
+  const fingerprintIndex = factorySource.indexOf(
+    "const closureFingerprintAtSchedule = currentIphoneClosureFingerprint"
+  );
+  const effectStart = factorySource.lastIndexOf("useEffect(() => {", fingerprintIndex);
+  const effectEnd = factorySource.indexOf("  ]);", fingerprintIndex);
+  const autosaveEffect = factorySource.slice(effectStart, effectEnd + 5);
+  const dependencyStart = autosaveEffect.lastIndexOf("  }, [");
+  const dependencies = autosaveEffect.slice(dependencyStart);
+
+  assert.ok(fingerprintIndex >= 0, "debe existir el autosave con huella de evidencias");
+  assert.ok(effectStart >= 0 && effectEnd > effectStart, "debe encontrarse el efecto");
+  assert.doesNotMatch(dependencies, /\bdraftStatus\b/);
+  assert.doesNotMatch(autosaveEffect, /draftStatus === "loading"/);
+  assert.match(dependencies, /factoryDraftPayload/);
+  assert.match(dependencies, /currentIphoneClosureFingerprint/);
+  assert.match(autosaveEffect, /draftSaveGenerationRef/);
+  assert.match(autosaveEffect, /AbortController/);
+});
