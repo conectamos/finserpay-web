@@ -200,6 +200,7 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const requestedAliadoId = parsePositiveInt(searchParams.get("aliadoId"));
+    const exportScope = searchParams.get("scope") === "mora" ? "mora" : "activa";
     const adminCentral = isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const ownAliadoId = parsePositiveInt(user.aliadoAccesoId);
     const selectedAliadoId = adminCentral ? requestedAliadoId : ownAliadoId;
@@ -273,7 +274,19 @@ export async function GET(req: Request) {
           plan,
         };
       })
-      .filter(({ plan }) => plan.saldoPendiente > 0)
+      .filter(({ plan }) => {
+        if (plan.saldoPendiente <= 0) {
+          return false;
+        }
+
+        if (exportScope !== "mora") {
+          return true;
+        }
+
+        return plan.installments.some(
+          (installment) => installment.estaEnMora && installment.saldoPendiente > 0
+        );
+      })
       .map(({ credito, plan }) => {
         const pendingInstallments = plan.installments.filter(
           (installment) => installment.saldoPendiente > 0
@@ -341,7 +354,9 @@ export async function GET(req: Request) {
       .join("");
 
     const html = buildWorkbookHtml(rows);
-    const filename = `cartera-activa-finserpay-${new Date()
+    const filenamePrefix =
+      exportScope === "mora" ? "clientes-en-mora-finserpay" : "cartera-activa-finserpay";
+    const filename = `${filenamePrefix}-${new Date()
       .toISOString()
       .slice(0, 10)}.xls`;
 

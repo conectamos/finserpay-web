@@ -214,6 +214,9 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   const exportHref = selectedAliadoId
     ? `/api/dashboard/cartera/export?aliadoId=${selectedAliadoId}`
     : "/api/dashboard/cartera/export";
+  const overdueExportHref = selectedAliadoId
+    ? `/api/dashboard/cartera/export?aliadoId=${selectedAliadoId}&scope=mora`
+    : "/api/dashboard/cartera/export?scope=mora";
   const creditWhere: Prisma.CreditoWhereInput = selectedAliadoId
     ? {
         sede: {
@@ -629,9 +632,14 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
               <h2 className="mt-1 text-xl font-black text-[#101828]">Clientes que requieren gestion</h2>
               <p className="mt-1 text-xs text-[#667085]">Ordenados por dias de mora y saldo pendiente.</p>
             </div>
-            <span className="inline-flex w-fit rounded-full border border-[#d8dee6] bg-[#f7f9fb] px-3 py-1.5 text-xs font-bold text-[#475467]">
-              {riskRows.length ? `${riskRows.length} registros en mora` : "Sin mora registrada"}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex w-fit rounded-full border border-[#d8dee6] bg-[#f7f9fb] px-3 py-1.5 text-xs font-bold text-[#475467]">
+                {riskRows.length ? `${riskRows.length} registros en mora` : "Sin mora registrada"}
+              </span>
+              {riskRows.length ? (
+                <ActionLink href={overdueExportHref} icon={Download} label="Excel mora" />
+              ) : null}
+            </div>
           </div>
 
           <div className="overflow-x-auto [scrollbar-color:#98a2b3_transparent] [scrollbar-width:thin]">
