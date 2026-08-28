@@ -1,4 +1,5 @@
 import { Client } from "pg";
+import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 
 export type FirmaSeguroProcessRow = {
@@ -52,7 +53,40 @@ type UpdateInput = {
 };
 
 let firmaSeguroSchemaPromise: Promise<void> | null = null;
-export const FIRMASEGURO_DRAFT_LOCK_NAMESPACE = 1_179_865_177;
+export const SOLICITUD_OPERATION_LOCK_NAMESPACE = 1_179_865_177;
+export const FIRMASEGURO_DRAFT_LOCK_NAMESPACE =
+  SOLICITUD_OPERATION_LOCK_NAMESPACE;
+
+function assertSolicitudOperationLockId(draftId: number) {
+  if (!Number.isSafeInteger(draftId) || draftId <= 0 || draftId > 2_147_483_647) {
+    throw new Error("SOLICITUD_OPERATION_LOCK_INVALID");
+  }
+}
+
+export async function lockSolicitudOperationMutation(
+  database: Prisma.TransactionClient,
+  draftId: number
+) {
+  assertSolicitudOperationLockId(draftId);
+  const rows = await database.$queryRawUnsafe<Array<{ locked: number }>>(
+    `
+      SELECT 1::integer AS "locked"
+      FROM pg_advisory_xact_lock($1::integer, $2::integer)
+    `,
+    SOLICITUD_OPERATION_LOCK_NAMESPACE,
+    draftId
+  );
+  if (rows[0]?.locked !== 1) {
+    throw new Error("SOLICITUD_OPERATION_LOCK_FAILED");
+  }
+}
+
+export async function lockFirmaSeguroDraftMutation(
+  database: Prisma.TransactionClient,
+  draftId: number
+) {
+  return lockSolicitudOperationMutation(database, draftId);
+}
 
 function jsonValue(value: unknown) {
   return value === undefined ? null : JSON.stringify(value);
@@ -222,21 +256,26 @@ export async function upsertFirmaSeguroProcess(input: UpsertInput) {
 
 export async function linkFirmaSeguroProcessToCredit(
   processUuid: string,
-  creditoId: number
+  creditoId: number,
+  draftId: number,
+  database: Prisma.TransactionClient | typeof prisma = prisma
 ) {
   await ensureFirmaSeguroSchema();
 
-  const rows = await prisma.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
+  const rows = await database.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
     `
       UPDATE "FirmaSeguroProcess"
       SET
         "creditoId" = $2,
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "processUuid" = $1
+        AND "draftId" = $3
+        AND ("creditoId" IS NULL OR "creditoId" = $2)
       RETURNING *
     `,
     processUuid,
-    creditoId
+    creditoId,
+    draftId
   );
 
   return rows[0] || null;
@@ -326,10 +365,8 @@ export async function getLatestFirmaSeguroProcessByDraft(draftId: number) {
   return rows[0] || null;
 }
 
-export async function tryAcquireFirmaSeguroDraftDispatchLock(draftId: number) {
-  if (!Number.isSafeInteger(draftId) || draftId <= 0 || draftId > 2_147_483_647) {
-    throw new Error("FIRMASEGURO_DRAFT_LOCK_INVALID");
-  }
+export async function tryAcquireSolicitudOperationLock(draftId: number) {
+  assertSolicitudOperationLockId(draftId);
 
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
@@ -344,7 +381,7 @@ export async function tryAcquireFirmaSeguroDraftDispatchLock(draftId: number) {
     connected = true;
     const result = await client.query<{ acquired: boolean }>(
       `SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired`,
-      [FIRMASEGURO_DRAFT_LOCK_NAMESPACE, draftId]
+      [SOLICITUD_OPERATION_LOCK_NAMESPACE, draftId]
     );
     acquired = result.rows[0]?.acquired === true;
     if (!acquired) {
@@ -365,14 +402,23 @@ export async function tryAcquireFirmaSeguroDraftDispatchLock(draftId: number) {
         if (acquired) {
           await client.query(
             `SELECT pg_advisory_unlock($1::integer, $2::integer)`,
-            [FIRMASEGURO_DRAFT_LOCK_NAMESPACE, draftId]
+            [SOLICITUD_OPERATION_LOCK_NAMESPACE, draftId]
           );
         }
+      } catch (error) {
+        console.error("ERROR LIBERANDO LOCK DE OPERACION DE SOLICITUD:", {
+          draftId,
+          errorType: error instanceof Error ? error.name : "UnknownError",
+        });
       } finally {
         await client.end().catch(() => undefined);
       }
     },
   };
+}
+
+export async function tryAcquireFirmaSeguroDraftDispatchLock(draftId: number) {
+  return tryAcquireSolicitudOperationLock(draftId);
 }
 
 export async function getFirmaSeguroProcessByUuid(processUuid: string) {

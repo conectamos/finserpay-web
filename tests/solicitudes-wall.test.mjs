@@ -589,7 +589,7 @@ test("central retoma y finaliza sin reemplazar al asesor propietario", async () 
   );
   assert.match(
     draftRoute,
-    /canOperateExistingDraft[\s\S]{0,500}access\.central[\s\S]{0,500}existingDraft\.vendedorId === access\.seller\.id[\s\S]{0,220}existingDraft\.aliadoId === access\.user\.aliadoId/
+    /canOperateExistingDraft[\s\S]{0,300}canOperateSolicitud\(\{[\s\S]{0,220}central: access\.central[\s\S]{0,220}viewerAllyId: access\.user\.aliadoId[\s\S]{0,120}owner: existingDraft/
   );
   assert.match(
     draftRoute,
@@ -629,7 +629,7 @@ test("central retoma y finaliza sin reemplazar al asesor propietario", async () 
   assert.match(gate, /initialSolicitudId[\s\S]*assessmentParams\.set\("draftId"/);
   assert.match(
     assessmentRoute,
-    /isFinserPayCentralAlly[\s\S]*getActiveSolicitudCreditContext\(draftId\)[\s\S]*assessmentBelongsToCentralDraft/
+    /getActiveSolicitudCreditContext\(draftId\)[\s\S]*canOperateSolicitud\(\{[\s\S]*owner: requestedDraft[\s\S]*userId: requestedDraft\.usuarioId[\s\S]*sedeId: requestedDraft\.sedeId/
   );
   assert.doesNotMatch(assessmentRoute, /queryDataCreditoNaturalPerson/);
   assert.match(draftRoute, /canonicalAssessmentId[\s\S]*serializedPayload/);
@@ -640,7 +640,7 @@ test("central retoma y finaliza sin reemplazar al asesor propietario", async () 
 
   assert.match(
     creditRoute,
-    /canOperateSolicitud[\s\S]*adminCentral[\s\S]*solicitudContext\.vendedorId === sellerSession\.id/
+    /canOperateSolicitud[\s\S]*canOperateSolicitudContext\(\{[\s\S]*central: adminCentral[\s\S]*owner: solicitudContext/
   );
   assert.match(
     creditRoute,
@@ -776,7 +776,7 @@ test("retomar recupera la identidad canónica cifrada solo después de autorizar
 
   assert.match(
     assessmentAuthorization,
-    /dataCreditoAssessmentMatchesScope[\s\S]*assessmentBelongsToCentralDraft[\s\S]*requestedDraft\.dataCreditoAssessmentId\.toLowerCase\(\) !== id\.toLowerCase\(\)/
+    /canOperateSolicitud\(\{[\s\S]*owner: requestedDraft[\s\S]*requestedDraft\.dataCreditoAssessmentId[\s\S]*dataCreditoAssessmentMatchesScope\(row, scope\)[\s\S]*requestedDraft\.dataCreditoAssessmentId\.toLowerCase\(\) !== id\.toLowerCase\(\)/
   );
   assert.ok(
     assessmentRoute.indexOf("requestedDraft.dataCreditoAssessmentId.toLowerCase() !== id.toLowerCase()") <
@@ -1108,7 +1108,7 @@ test("el asesor retoma y desiste sus borradores propios por vendedor y aliado si
   assert.match(readScope, /d\."vendedorId"/);
   assert.match(
     saveOwner,
-    /existingDraft\.vendedorId === access\.seller\.id[\s\S]*existingDraft\.aliadoId === access\.user\.aliadoId/
+    /canOperateSolicitud\(\{[\s\S]*viewerAllyId: access\.user\.aliadoId[\s\S]*owner: existingDraft/
   );
   assert.match(saveOwner, /const owner = existingDraft \|\|/);
   assert.match(saveOwner, /sedeId: owner\.sedeId/);
@@ -1206,11 +1206,11 @@ test("la revalidacion DataCredito reutiliza la solicitud retomada sin bloquearse
   );
   assert.match(
     evaluationRoute,
-    /const centralSolicitud = central \? solicitudContext : null/
+    /requestedSolicitudId[\s\S]*canOperateSolicitud\(\{[\s\S]*central,[\s\S]*owner: solicitudContext[\s\S]*SOLICITUD_NOT_AUTHORIZED/
   );
   assert.match(
     evaluationRoute,
-    /const solicitudOwner = centralSolicitud \|\|[\s\S]*userId: solicitudOwner\.usuarioId[\s\S]*sellerId: solicitudOwner\.vendedorId[\s\S]*sedeId: solicitudOwner\.sedeId/
+    /const solicitudOwner = solicitudContext \|\|[\s\S]*userId: solicitudOwner\.usuarioId[\s\S]*sellerId: solicitudOwner\.vendedorId[\s\S]*sedeId: solicitudOwner\.sedeId[\s\S]*aliadoId: solicitudOwner\.aliadoId/
   );
   assert.match(
     evaluationRoute,

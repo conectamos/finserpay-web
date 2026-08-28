@@ -275,6 +275,7 @@ type VeriffValidationState = {
   veriffSessionId: string | null;
   sessionUrl: string | null;
   identityData: VeriffIdentityDataState | null;
+  identityDataAvailable?: boolean;
   identityDocumentNumber?: string | null;
   identityDocumentStatus?:
     | "match"
@@ -336,10 +337,11 @@ function veriffApprovalCanUnlockClient(
   if (typeof expectedDocumentNumber === "string") {
     if (
       validation.identityDocumentStatus !== "match" ||
-      !compareStrictIdentityDocuments(
-        validation.identityDocumentNumber,
-        expectedDocumentNumber
-      ).ok
+      (!validation.identityDataAvailable &&
+        !compareStrictIdentityDocuments(
+          validation.identityDocumentNumber,
+          expectedDocumentNumber
+        ).ok)
     ) {
       return false;
     }
@@ -352,7 +354,10 @@ function veriffApprovalCanUnlockClient(
     return false;
   }
 
-  return veriffIdentityHasAutofillData(validation);
+  return (
+    veriffIdentityHasAutofillData(validation) ||
+    validation.identityDataAvailable === true
+  );
 }
 
 function getDataCreditoVeriffDocumentRejectionMessage(
@@ -385,6 +390,13 @@ function getDataCreditoVeriffDocumentRejectionMessage(
 
   if (validation.identityDocumentStatus !== "match") {
     return "La validación facial no devolvió una cédula válida para comparar. El crédito fue rechazado.";
+  }
+
+  if (
+    validation.identityDataAvailable &&
+    !validation.identityDocumentNumber
+  ) {
+    return "";
   }
 
   const comparison = compareStrictIdentityDocuments(
@@ -1252,23 +1264,69 @@ function DetailRow({
   );
 }
 
-async function requestJson<T>(url: string, init?: RequestInit) {
-  const response = await fetch(url, {
-    cache: "no-store",
-    ...init,
-  });
+type RequestJsonInit = RequestInit & {
+  timeoutMs?: number;
+};
 
-  const data = (await response.json().catch(() => null)) as T & {
-    code?: string;
-    error?: string;
-    warning?: string;
-  };
+const REQUEST_JSON_DEFAULT_TIMEOUT_MS = 45_000;
+const REQUEST_JSON_UPLOAD_TIMEOUT_MS = 180_000;
+const VERIFF_REQUEST_TIMEOUT_MS = 15_000;
+const VERIFF_POLL_BACKOFF_MS = [4_000, 6_000, 10_000, 15_000, 30_000] as const;
+const VERIFF_POLL_MAX_ATTEMPTS = 12;
 
-  return {
-    ok: response.ok,
-    status: response.status,
-    data,
-  };
+async function requestJson<T>(url: string, init: RequestJsonInit = {}) {
+  const { timeoutMs, signal: callerSignal, ...requestInit } = init;
+  const requestController = new AbortController();
+  const isFileUpload =
+    typeof FormData !== "undefined" && requestInit.body instanceof FormData;
+  const effectiveTimeoutMs =
+    timeoutMs ??
+    (isFileUpload
+      ? REQUEST_JSON_UPLOAD_TIMEOUT_MS
+      : REQUEST_JSON_DEFAULT_TIMEOUT_MS);
+  let timedOut = false;
+  const relayCallerAbort = () => requestController.abort(callerSignal?.reason);
+
+  if (callerSignal?.aborted) {
+    relayCallerAbort();
+  } else {
+    callerSignal?.addEventListener("abort", relayCallerAbort, { once: true });
+  }
+
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    requestController.abort();
+  }, effectiveTimeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      ...requestInit,
+      signal: requestController.signal,
+    });
+
+    const data = (await response.json().catch(() => null)) as T & {
+      code?: string;
+      error?: string;
+      warning?: string;
+    };
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data,
+    };
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(
+        "La operación tardó demasiado. Revisa la conexión e intenta de nuevo."
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    callerSignal?.removeEventListener("abort", relayCallerAbort);
+  }
 }
 
 const CREDIT_CREATE_RECOVERY_DELAYS_MS = [600, 1_200, 2_400, 4_000];
@@ -2772,6 +2830,8 @@ export default function CreditFactoryConsole({
     setDraftResumeHydrating(active);
   }, []);
   const [draftErrorMessage, setDraftErrorMessage] = useState("");
+  const [draftResumeLoadFailed, setDraftResumeLoadFailed] = useState(false);
+  const [draftLoadRetryKey, setDraftLoadRetryKey] = useState(0);
   const [showPaymentResults, setShowPaymentResults] = useState(false);
   const [paymentsTab, setPaymentsTab] = useState<"pay" | "history">("pay");
   const [showPaymentConfirmation, setShowPaymentConfirmation] = useState(false);
@@ -2978,6 +3038,12 @@ export default function CreditFactoryConsole({
     useState(false);
   const [veriffQrDataUrl, setVeriffQrDataUrl] = useState("");
   const [veriffInlineMessage, setVeriffInlineMessage] = useState("");
+  const [veriffRestoreFailure, setVeriffRestoreFailure] = useState<{
+    validationId: number;
+    draftId: number;
+    documentNumber: string;
+    targetStep: number;
+  } | null>(null);
   const [veriffSubmitting, setVeriffSubmitting] = useState(false);
   const [veriffRefreshing, setVeriffRefreshing] = useState(false);
   const [veriffMediaItems, setVeriffMediaItems] = useState<VeriffMediaState[]>([]);
@@ -2990,6 +3056,12 @@ export default function CreditFactoryConsole({
   const veriffClientFormUnlockedRef = useRef(false);
   const veriffAutoSessionRef = useRef(false);
   const veriffRequestInFlightRef = useRef(false);
+  const veriffRefreshGenerationRef = useRef(0);
+  const veriffRefreshFlightRef = useRef<{
+    generation: number;
+    validationId: number;
+    promise: Promise<VeriffValidationState | null>;
+  } | null>(null);
   const [cedulaValidation, setCedulaValidation] = useState<CedulaValidationState>({
     status: "idle",
     summary:
@@ -3064,6 +3136,8 @@ export default function CreditFactoryConsole({
       wizardStep === 1);
   const dataCreditoDraftLoading =
     dataCreditoGatePending && Boolean(initialDraftId) && draftStatus === "loading";
+  const dataCreditoDraftLoadFailed =
+    dataCreditoGatePending && Boolean(initialDraftId) && draftResumeLoadFailed;
 
   const selectedCredit = useMemo(
     () => credits.find((item) => item.id === selectedId) || null,
@@ -4214,6 +4288,9 @@ export default function CreditFactoryConsole({
     if (veriffClientFormUnlockedRef.current) {
       return;
     }
+    veriffRefreshGenerationRef.current += 1;
+    veriffRefreshFlightRef.current = null;
+    setVeriffRefreshing(false);
     setVeriffValidation(null);
     setVeriffRetryPolicy(EMPTY_VERIFF_RETRY_POLICY);
     setIdentityValidationModalOpen(false);
@@ -4266,6 +4343,9 @@ export default function CreditFactoryConsole({
       )
     );
     veriffClientFormUnlockedRef.current = false;
+    veriffRefreshGenerationRef.current += 1;
+    veriffRefreshFlightRef.current = null;
+    setVeriffRefreshing(false);
     setVeriffValidation(null);
     setVeriffRetryPolicy(EMPTY_VERIFF_RETRY_POLICY);
     setIdentityValidationModalOpen(false);
@@ -4294,13 +4374,15 @@ export default function CreditFactoryConsole({
       if (!active) return;
 
       setDataCreditoApproval(null);
-      setDataCreditoAssessmentId(null);
       setFianzaPorcentaje(
         String(
           creditSettings.fianzaPorcentaje ?? DEFAULT_FIANCO_SURETY_PERCENTAGE
         )
       );
       veriffClientFormUnlockedRef.current = false;
+      veriffRefreshGenerationRef.current += 1;
+      veriffRefreshFlightRef.current = null;
+      setVeriffRefreshing(false);
       setVeriffValidation(null);
       setVeriffRetryPolicy(EMPTY_VERIFF_RETRY_POLICY);
       setIdentityValidationModalOpen(false);
@@ -6940,11 +7022,14 @@ export default function CreditFactoryConsole({
         validation,
         expectedDraftId,
         expectedDocumentNumber
-      ) ||
-      !identity
+      )
     ) {
       return false;
     }
+    if (!identity && validation?.identityDataAvailable) {
+      return true;
+    }
+    if (!identity) return false;
     const dataCreditoIdentityLocked =
       Boolean(options.lockDataCreditoIdentity) ||
       Boolean(dataCreditoApproval) ||
@@ -7027,10 +7112,14 @@ export default function CreditFactoryConsole({
     return item.kind === "video" ? "Video Veriff" : "Foto Veriff";
   };
 
-  const refreshVeriffMedia = async (
-    validation: VeriffValidationState | null = veriffValidation
+  const refreshVeriffMedia = useCallback(async (
+    validation: VeriffValidationState | null
   ) => {
-    if (!validation?.id || !validation.veriffSessionId) {
+    if (
+      !canAdminMoveFreelyInFactory ||
+      !validation?.id ||
+      !validation.veriffSessionId
+    ) {
       setVeriffMediaItems([]);
       setVeriffMediaError("");
       return;
@@ -7040,7 +7129,8 @@ export default function CreditFactoryConsole({
       setVeriffMediaLoading(true);
       setVeriffMediaError("");
       const result = await requestJson<VeriffMediaResponse>(
-        `/api/creditos/veriff/${validation.id}/media`
+        `/api/creditos/veriff/${validation.id}/media`,
+        { timeoutMs: VERIFF_REQUEST_TIMEOUT_MS }
       );
 
       if (!result.ok) {
@@ -7063,7 +7153,30 @@ export default function CreditFactoryConsole({
     } finally {
       setVeriffMediaLoading(false);
     }
-  };
+  }, [canAdminMoveFreelyInFactory]);
+
+  useEffect(() => {
+    if (!canAdminMoveFreelyInFactory) {
+      setVeriffMediaItems([]);
+      setVeriffMediaError("");
+      return;
+    }
+
+    if (
+      !veriffHasFinalDecision ||
+      !veriffValidation?.id ||
+      !veriffValidation.veriffSessionId
+    ) {
+      return;
+    }
+
+    void refreshVeriffMedia(veriffValidation);
+  }, [
+    canAdminMoveFreelyInFactory,
+    refreshVeriffMedia,
+    veriffHasFinalDecision,
+    veriffValidation,
+  ]);
 
   const saveDraftPayloadForVeriff = async (
     payload: CreditDraftPayload,
@@ -7099,7 +7212,7 @@ export default function CreditFactoryConsole({
     return result.data.item;
   };
 
-  const refreshVeriffValidation = async (
+  const refreshVeriffValidation = (
     validationId = veriffValidation?.id || null,
     options: {
       expectedDraftId?: number | null;
@@ -7115,14 +7228,27 @@ export default function CreditFactoryConsole({
           tone: "amber",
         });
       }
-      return null;
+      return Promise.resolve(null);
     }
 
-    try {
+    const activeFlight = veriffRefreshFlightRef.current;
+    if (activeFlight?.validationId === validationId) {
+      return activeFlight.promise;
+    }
+
+    const refreshGeneration = veriffRefreshGenerationRef.current + 1;
+    veriffRefreshGenerationRef.current = refreshGeneration;
+    const refreshPromise = (async () => {
+      try {
       setVeriffRefreshing(true);
       const result = await requestJson<VeriffResponse>(
-        `/api/creditos/veriff/${validationId}`
+        `/api/creditos/veriff/${validationId}`,
+        { timeoutMs: VERIFF_REQUEST_TIMEOUT_MS }
       );
+
+      if (veriffRefreshGenerationRef.current !== refreshGeneration) {
+        return null;
+      }
 
       if (!result.ok) {
         throw new Error(result.data?.error || "No se pudo consultar la validacion");
@@ -7137,7 +7263,27 @@ export default function CreditFactoryConsole({
       }
 
       const validation = result.data.validation || null;
-      setVeriffValidation(validation);
+      setVeriffValidation((currentValidation) =>
+        validation
+          ? {
+              ...validation,
+              veriffSessionId:
+                validation.veriffSessionId ||
+                (currentValidation?.id === validation.id
+                  ? currentValidation.veriffSessionId
+                  : null),
+              sessionUrl:
+                validation.sessionUrl ||
+                (currentValidation?.id === validation.id
+                  ? currentValidation.sessionUrl
+                  : null),
+              identityData: validation.identityData || null,
+            }
+          : null
+      );
+      if (validation) {
+        setVeriffRestoreFailure(null);
+      }
       const expectedDraftId =
         options.expectedDraftId !== undefined
           ? options.expectedDraftId
@@ -7242,15 +7388,16 @@ export default function CreditFactoryConsole({
         });
       }
 
-      if (validation?.veriffSessionId) {
-        void refreshVeriffMedia(validation);
-      } else {
+      if (!canAdminMoveFreelyInFactory) {
         setVeriffMediaItems([]);
         setVeriffMediaError("");
       }
 
       return validation;
-    } catch (error) {
+      } catch (error) {
+        if (veriffRefreshGenerationRef.current !== refreshGeneration) {
+          return null;
+        }
       setNotice({
         text:
           error instanceof Error
@@ -7259,9 +7406,24 @@ export default function CreditFactoryConsole({
         tone: "red",
       });
       return null;
-    } finally {
-      setVeriffRefreshing(false);
-    }
+      } finally {
+        if (veriffRefreshGenerationRef.current === refreshGeneration) {
+          setVeriffRefreshing(false);
+        }
+        if (
+          veriffRefreshFlightRef.current?.generation === refreshGeneration
+        ) {
+          veriffRefreshFlightRef.current = null;
+        }
+      }
+    })();
+
+    veriffRefreshFlightRef.current = {
+      generation: refreshGeneration,
+      validationId,
+      promise: refreshPromise,
+    };
+    return refreshPromise;
   };
 
   const validateIdentityWithVeriff = async () => {
@@ -7280,6 +7442,9 @@ export default function CreditFactoryConsole({
 
     try {
       veriffRequestInFlightRef.current = true;
+      veriffRefreshGenerationRef.current += 1;
+      veriffRefreshFlightRef.current = null;
+      setVeriffRefreshing(false);
       setVeriffSubmitting(true);
       setVeriffInlineMessage("");
       setVeriffMediaItems([]);
@@ -7427,10 +7592,6 @@ export default function CreditFactoryConsole({
               : "amber",
       });
 
-      if (validation?.veriffSessionId) {
-        void refreshVeriffMedia(validation);
-      }
-
       return validation;
     } catch (error) {
       setNotice({
@@ -7467,26 +7628,73 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    let polling = false;
-    const syncStatus = () => {
-      if (polling) {
-        return;
+    let cancelled = false;
+    let attempts = 0;
+    let pollTimer: number | null = null;
+
+    const clearPollTimer = () => {
+      if (pollTimer !== null) {
+        window.clearTimeout(pollTimer);
+        pollTimer = null;
       }
-      polling = true;
-      void refreshVeriffValidationRef
-        .current(veriffValidation.id, {
-          expectedDraftId: veriffExpectedDraftId,
-          silent: true,
-        })
-        .finally(() => {
-          polling = false;
-        });
     };
 
-    const pollId = window.setInterval(syncStatus, 4000);
+    const scheduleNextPoll = (delayMs?: number) => {
+      clearPollTimer();
+      if (
+        cancelled ||
+        document.hidden ||
+        attempts >= VERIFF_POLL_MAX_ATTEMPTS
+      ) {
+        return;
+      }
+
+      const backoffIndex = Math.min(
+        attempts,
+        VERIFF_POLL_BACKOFF_MS.length - 1
+      );
+      pollTimer = window.setTimeout(
+        syncStatus,
+        delayMs ?? VERIFF_POLL_BACKOFF_MS[backoffIndex]
+      );
+    };
+
+    const syncStatus = async () => {
+      pollTimer = null;
+      if (
+        cancelled ||
+        document.hidden ||
+        attempts >= VERIFF_POLL_MAX_ATTEMPTS
+      ) {
+        return;
+      }
+
+      attempts += 1;
+      await refreshVeriffValidationRef.current(veriffValidation.id, {
+          expectedDraftId: veriffExpectedDraftId,
+          silent: true,
+        });
+
+      if (!cancelled) {
+        scheduleNextPoll();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        clearPollTimer();
+        return;
+      }
+      scheduleNextPoll(250);
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    scheduleNextPoll();
 
     return () => {
-      window.clearInterval(pollId);
+      cancelled = true;
+      clearPollTimer();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [
     veriffHasFinalDecision,
@@ -7505,6 +7713,46 @@ export default function CreditFactoryConsole({
 
   const previousVisibleWizardStep = (currentStep: number) =>
     [...visibleFactorySteps].reverse().find((step) => step.id < currentStep)?.id || 1;
+
+  const retryRestoredVeriffValidation = async () => {
+    const failure = veriffRestoreFailure;
+    if (!failure) {
+      return;
+    }
+
+    const validation = await refreshVeriffValidation(failure.validationId, {
+      expectedDraftId: failure.draftId,
+      expectedDocumentNumber: failure.documentNumber,
+      lockDataCreditoIdentity: true,
+      silent: false,
+    });
+
+    if (!validation) {
+      setWizardStep(1);
+      setVeriffInlineMessage(
+        "No se pudo restaurar la validación facial guardada. Reintenta antes de continuar."
+      );
+      return;
+    }
+
+    setVeriffRestoreFailure(null);
+    const approvalRecovered = veriffApprovalCanUnlockClient(
+      validation,
+      failure.draftId,
+      failure.documentNumber
+    );
+    setWizardStep(
+      approvalRecovered ? clampWizardStep(failure.targetStep) : 1
+    );
+
+    if (!approvalRecovered) {
+      setNotice({
+        text:
+          "La validación facial fue restaurada, pero aún no está aprobada. Completa este paso antes de continuar.",
+        tone: "amber",
+      });
+    }
+  };
 
   const goToStep = (targetStep: number) => {
     if (targetStep > 1 && dataCreditoVeriffDocumentRejected) {
@@ -7901,6 +8149,9 @@ export default function CreditFactoryConsole({
   };
 
   const requestDeliveryAction = async (action: "enroll" | "query") => {
+    if (!draftId) {
+      throw new Error("Guarda la solicitud antes de operar el equipo en Zero Touch");
+    }
     const result = await requestJson<{
       ok?: boolean;
       error?: string;
@@ -7916,6 +8167,7 @@ export default function CreditFactoryConsole({
       },
       body: JSON.stringify({
         action,
+        draftId,
         deviceUid: imeiDigits,
       }),
     });
@@ -8190,6 +8442,9 @@ export default function CreditFactoryConsole({
     setPersistedIphoneClosureFingerprint("");
     setDraftDevicePlatform(devicePlatform);
     veriffClientFormUnlockedRef.current = false;
+    veriffRefreshGenerationRef.current += 1;
+    veriffRefreshFlightRef.current = null;
+    setVeriffRefreshing(false);
     setVeriffValidation(null);
     setVeriffRetryPolicy(EMPTY_VERIFF_RETRY_POLICY);
     setIdentityValidationModalOpen(false);
@@ -8450,6 +8705,7 @@ export default function CreditFactoryConsole({
 
       const result = await requestJson<CreateCreditResponse>("/api/creditos", {
         method: "POST",
+        timeoutMs: 120_000,
         headers: {
           "Content-Type": "application/json",
         },
@@ -9368,6 +9624,8 @@ export default function CreditFactoryConsole({
   const applyDraftPayload = (draft: CreditDraftItem) => {
     cancelPendingDraftAutosave();
     updateDraftResumeHydration(true);
+    setDraftResumeLoadFailed(false);
+    setVeriffRestoreFailure(null);
     const payload = draft.payload || {};
     const value = (key: string) => {
       const current = payload[key];
@@ -9587,6 +9845,9 @@ export default function CreditFactoryConsole({
     setAndroidEnrollment(EMPTY_ANDROID_ENROLLMENT_STATE);
     androidAutoEnrollmentKeyRef.current = "";
     veriffClientFormUnlockedRef.current = false;
+    veriffRefreshGenerationRef.current += 1;
+    veriffRefreshFlightRef.current = null;
+    setVeriffRefreshing(false);
     setVeriffValidation(null);
     setVeriffRetryPolicy(EMPTY_VERIFF_RETRY_POLICY);
     setIdentityValidationModalOpen(false);
@@ -9683,10 +9944,13 @@ export default function CreditFactoryConsole({
     const loadDraft = async () => {
       try {
         updateDraftResumeHydration(true);
+        setDraftResumeLoadFailed(false);
+        setDraftErrorMessage("");
         setDraftStatus("loading");
         const params = new URLSearchParams({ id: String(initialDraftId) });
         const result = await requestJson<CreditDraftSingleResponse>(
-          `/api/creditos/borradores?${params.toString()}`
+          `/api/creditos/borradores?${params.toString()}`,
+          { timeoutMs: 20_000 }
         );
 
         if (cancelled) {
@@ -9757,6 +10021,7 @@ export default function CreditFactoryConsole({
 
         const message =
           error instanceof Error ? error.message : "No se pudo abrir el borrador";
+        setDraftResumeLoadFailed(true);
         setDraftStatus("error");
         setDraftErrorMessage(message);
         updateDraftResumeHydration(false);
@@ -9772,7 +10037,7 @@ export default function CreditFactoryConsole({
     return () => {
       cancelled = true;
     };
-  }, [createClientMode, initialDraftId]);
+  }, [createClientMode, draftLoadRetryKey, initialDraftId]);
 
   useEffect(() => {
     if (!createClientMode || !draftId || !iphoneFactory) {
@@ -9837,6 +10102,7 @@ export default function CreditFactoryConsole({
       simulatorMode ||
       deliveryMode ||
       draftResumeHydrating ||
+      draftResumeLoadFailed ||
       !draftId ||
       !draftHasMeaningfulData
     ) {
@@ -9950,6 +10216,7 @@ export default function CreditFactoryConsole({
     deliveryMode,
     draftHasMeaningfulData,
     draftId,
+    draftResumeLoadFailed,
     draftResumeHydrating,
     factoryDraftPayload,
     currentIphoneClosureFingerprint,
@@ -9972,7 +10239,6 @@ export default function CreditFactoryConsole({
   };
 
   const handleDataCreditoAssessmentInvalidated = () => {
-    setDataCreditoAssessmentId(null);
     setDataCreditoApproval(null);
     setDataCreditoBypassed(false);
     setFianzaPorcentaje(String(creditSettings.fianzaPorcentaje));
@@ -10087,7 +10353,7 @@ export default function CreditFactoryConsole({
       setWizardStep(restoredDraftSnapshot.wizardStep);
       try {
         if (restoredDraftSnapshot.veriffValidationId) {
-          await refreshVeriffValidation(
+          const restoredValidation = await refreshVeriffValidation(
             restoredDraftSnapshot.veriffValidationId,
             {
               expectedDraftId: restoredDraftSnapshot.draftId,
@@ -10096,6 +10362,52 @@ export default function CreditFactoryConsole({
               silent: true,
             }
           );
+          if (!restoredValidation) {
+            setWizardStep(1);
+            setVeriffRestoreFailure({
+              validationId: restoredDraftSnapshot.veriffValidationId,
+              draftId: restoredDraftSnapshot.draftId,
+              documentNumber: result.documentNumber,
+              targetStep: restoredDraftSnapshot.wizardStep,
+            });
+            setVeriffInlineMessage(
+              "No se pudo restaurar la validación facial guardada. Reintenta antes de continuar."
+            );
+            setNotice({
+              text:
+                "La solicitud fue cargada, pero no se pudo recuperar la validación facial. Reintenta desde el paso de identidad.",
+              tone: "red",
+            });
+          } else if (
+            dataCreditoCreditCreationMode &&
+            !veriffApprovalCanUnlockClient(
+              restoredValidation,
+              restoredDraftSnapshot.draftId,
+              result.documentNumber
+            )
+          ) {
+            setWizardStep(1);
+            setNotice({
+              text:
+                "La validación facial guardada aún no está aprobada. Completa este paso antes de continuar.",
+              tone: "amber",
+            });
+          } else {
+            setVeriffRestoreFailure(null);
+          }
+        } else if (
+          dataCreditoCreditCreationMode &&
+          restoredDraftSnapshot.wizardStep > 1
+        ) {
+          setWizardStep(1);
+          setVeriffInlineMessage(
+            "La solicitud no tiene una validación facial guardada. Genera el código y completa la identidad antes de continuar."
+          );
+          setNotice({
+            text:
+              "Falta restaurar la validación facial. La solicitud volvió de forma segura al paso de identidad.",
+            tone: "amber",
+          });
         }
       } finally {
         restoredDraftSnapshotRef.current = null;
@@ -11376,7 +11688,43 @@ export default function CreditFactoryConsole({
             >
               {showDataCreditoGate ? (
                 <div className="mx-auto w-full max-w-6xl py-2">
-                  {dataCreditoDraftLoading ? (
+                  {dataCreditoDraftLoadFailed ? (
+                    <div
+                      className="rounded-[var(--fp-radius-lg)] border border-red-200 bg-red-50 p-6 text-slate-900 shadow-[var(--fp-shadow-sm)]"
+                      role="alert"
+                      aria-live="assertive"
+                    >
+                      <div className="flex items-start gap-3">
+                        <AlertCircle
+                          className="mt-0.5 h-5 w-5 shrink-0 text-red-700"
+                          strokeWidth={2}
+                        />
+                        <div>
+                          <h2 className="text-lg font-black">
+                            No se pudo cargar la solicitud
+                          </h2>
+                          <p className="mt-2 text-sm leading-6 text-slate-700">
+                            {draftErrorMessage ||
+                              "La información guardada no está disponible en este momento."}
+                          </p>
+                          <p className="mt-1 text-sm leading-6 text-slate-600">
+                            Reintenta la carga de la solicitud. Esta acción no realiza una
+                            nueva consulta a DataCrédito.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDraftLoadRetryKey((current) => current + 1)
+                            }
+                            className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black"
+                          >
+                            <RefreshCw className="h-4 w-4" strokeWidth={2} />
+                            Reintentar carga de solicitud
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : dataCreditoDraftLoading ? (
                     <div
                       className="rounded-[var(--fp-radius-lg)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-6"
                       role="status"
@@ -11403,6 +11751,45 @@ export default function CreditFactoryConsole({
                 <>
               {wizardStep === 1 && (
                 <div className="fp-identity-stage">
+                  {veriffRestoreFailure ? (
+                    <div
+                      className="mb-5 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-4 text-slate-900"
+                      role="alert"
+                      aria-live="assertive"
+                    >
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-start gap-3">
+                          <AlertCircle
+                            className="mt-0.5 h-5 w-5 shrink-0 text-amber-700"
+                            strokeWidth={2}
+                          />
+                          <div>
+                            <p className="text-sm font-black">
+                              Validación facial pendiente de recuperar
+                            </p>
+                            <p className="mt-1 text-sm leading-6 text-slate-700">
+                              No avanzaremos con información incompleta. Reintenta la
+                              restauración del resultado guardado de Veriff.
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void retryRestoredVeriffValidation()}
+                          disabled={veriffRefreshing}
+                          className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <RefreshCw
+                            className={`h-4 w-4 ${veriffRefreshing ? "animate-spin" : ""}`}
+                            strokeWidth={2}
+                          />
+                          {veriffRefreshing
+                            ? "Recuperando validación..."
+                            : "Reintentar validación facial"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   {dataCreditoApproval ? (
                     <div
                       className="mb-5 flex flex-col gap-3 rounded-[22px] border border-[#c9df91] bg-[#f4f9e8] px-4 py-4 text-slate-900 sm:flex-row sm:items-center sm:justify-between"
@@ -14135,7 +14522,7 @@ export default function CreditFactoryConsole({
                         ) : null}
                       </div>
 
-                      {veriffIdentityFlowEnabled ? (
+                      {veriffIdentityFlowEnabled && canAdminMoveFreelyInFactory ? (
                         <div className="rounded-[24px] border border-[#d9e7ea] bg-white px-5 py-5 shadow-[0_14px_34px_rgba(15,23,42,0.05)]">
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                             <div>

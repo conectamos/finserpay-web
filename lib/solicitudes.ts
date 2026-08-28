@@ -104,7 +104,9 @@ function compactText(value: unknown, maxLength: number) {
 export type SolicitudCanonicalMutationCode =
   | "SOLICITUD_DOCUMENTO_INMUTABLE"
   | "SOLICITUD_APELLIDO_INMUTABLE"
-  | "SOLICITUD_DATACREDITO_INMUTABLE";
+  | "SOLICITUD_DATACREDITO_INMUTABLE"
+  | "SOLICITUD_IMEI_INMUTABLE"
+  | "SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE";
 
 export class SolicitudCanonicalMutationError extends Error {
   readonly status = 409;
@@ -116,7 +118,11 @@ export class SolicitudCanonicalMutationError extends Error {
         ? "La cedula de una solicitud consultada no se puede cambiar."
         : code === "SOLICITUD_APELLIDO_INMUTABLE"
           ? "El primer apellido usado en la consulta de DataCredito no se puede cambiar."
-          : "La consulta de DataCredito asociada a la solicitud no se puede cambiar."
+          : code === "SOLICITUD_DATACREDITO_INMUTABLE"
+            ? "La consulta de DataCredito asociada a la solicitud no se puede cambiar."
+            : code === "SOLICITUD_IMEI_INMUTABLE"
+              ? "El IMEI no se puede cambiar después de iniciar la firma del contrato."
+              : "Los datos incluidos en el contrato no se pueden cambiar después de enviarlo a firma."
     );
     this.code = code;
     this.name = "SolicitudCanonicalMutationError";

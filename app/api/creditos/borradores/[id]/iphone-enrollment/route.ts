@@ -44,7 +44,7 @@ export async function GET(
     const admin = isAdminRole(user.rolNombre);
     const central = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const seller = admin ? null : await getSellerSessionUser(user);
-    if (!admin && !seller) {
+    if (!admin && seller?.tipoPerfil !== "VENDEDOR") {
       return response({ ok: false, error: "Acceso no autorizado" }, 403);
     }
     await ensureIphoneEnrollmentSchema();
@@ -61,8 +61,8 @@ export async function GET(
     } else if (!central) {
       values.push(seller?.id || -1);
       conditions.push(`draft."vendedorId" = $${values.length}`);
-      values.push(seller?.sedeId || -1);
-      conditions.push(`draft."sedeId" = $${values.length}`);
+      values.push(user.aliadoId || -1);
+      conditions.push(`sede."aliadoId" = $${values.length}`);
     }
 
     const rows = await prisma.$queryRawUnsafe<DraftIdentityRow[]>(

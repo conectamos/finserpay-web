@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { getSellerSessionUser } from "@/lib/seller-auth";
-import { canAccessVeriffValidation } from "@/lib/veriff-access";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
+import { isAdminRole } from "@/lib/roles";
 import { getVeriffValidationById } from "@/lib/veriff-storage";
 import { veriffGetSessionMedia } from "@/lib/veriff";
 
@@ -67,6 +67,15 @@ export async function GET(
     if (!user) {
       return NextResponse.json({ ok: false, error: "No autenticado" }, { status: 401 });
     }
+    if (
+      !isAdminRole(user.rolNombre) ||
+      !isFinserPayCentralAlly(user.aliadoAccesoCodigo)
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "Solo el administrador central puede consultar evidencia biometrica" },
+        { status: 403 }
+      );
+    }
 
     const params = await context.params;
     const id = parseId(params.id);
@@ -81,15 +90,6 @@ export async function GET(
       return NextResponse.json(
         { ok: false, error: "Validacion Veriff no encontrada" },
         { status: 404 }
-      );
-    }
-
-    const sellerSession = await getSellerSessionUser(user);
-
-    if (!canAccessVeriffValidation(user, validation, sellerSession)) {
-      return NextResponse.json(
-        { ok: false, error: "No tienes acceso a esta validacion" },
-        { status: 403 }
       );
     }
 

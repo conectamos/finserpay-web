@@ -10,6 +10,7 @@ import {
   updateVeriffValidationFromDecision,
 } from "@/lib/veriff-storage";
 import { enforceVeriffRetryPolicy } from "@/lib/veriff-retry-policy";
+import { tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,16 +71,44 @@ export async function POST(request: Request) {
     });
   }
 
-  const updated = await updateVeriffValidationFromDecision(
-    current.id,
-    payload,
-    "webhookPayload"
-  );
+  const operationLock = current.draftId
+    ? await tryAcquireSolicitudOperationLock(current.draftId)
+    : null;
+  if (current.draftId && !operationLock) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "SOLICITUD_OPERACION_EN_PROCESO",
+        error:
+          "La solicitud está finalizando. Reintenta la entrega del evento en unos segundos.",
+        retryable: true,
+      },
+      { status: 409, headers: { "Retry-After": "2" } }
+    );
+  }
 
-  const retryPolicy = await enforceVeriffRetryPolicy(updated);
-  return NextResponse.json({
-    ok: true,
-    retryPolicy,
-    validation: serializeVeriffValidation(updated),
-  });
+  try {
+    const lockedCurrent = await getVeriffValidationBySessionId(sessionId);
+    if (!lockedCurrent) {
+      return NextResponse.json({
+        ok: true,
+        ignored: true,
+        message: "Sesion Veriff no encontrada en FINSER PAY",
+      });
+    }
+    const updated = await updateVeriffValidationFromDecision(
+      lockedCurrent.id,
+      payload,
+      "webhookPayload"
+    );
+
+    const retryPolicy = await enforceVeriffRetryPolicy(updated);
+    return NextResponse.json({
+      ok: true,
+      retryPolicy,
+      validation: serializeVeriffValidation(updated),
+    });
+  } finally {
+    await operationLock?.release();
+  }
 }

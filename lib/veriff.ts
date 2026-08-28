@@ -430,12 +430,18 @@ export function shouldPreserveVeriffStatusTransition(
   const preservesAdverseFinal =
     VERIFF_NON_APPROVED_FINAL_STATUSES.has(currentStatus) &&
     incomingStatus !== currentStatus;
+  const preservesApprovedAgainstPending =
+    currentStatus === "APPROVED" && incomingStatus === "PENDING";
   const preservesActiveWebhookBlock = Boolean(
     source === "webhookPayload" &&
       (currentStatus === "REVIEW" || currentStatus === "RESUBMISSION") &&
       incomingStatus === "APPROVED"
   );
-  return preservesAdverseFinal || preservesActiveWebhookBlock;
+  return (
+    preservesAdverseFinal ||
+    preservesApprovedAgainstPending ||
+    preservesActiveWebhookBlock
+  );
 }
 
 export type VeriffStatusEvidenceResolution = {

@@ -11,7 +11,8 @@ import {
 } from "@/lib/veriff-storage";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { canOperateVeriffDraft } from "@/lib/veriff-access";
-import { ensureSolicitudSchema } from "@/lib/solicitudes-storage";
+import { expireStaleSolicitudes } from "@/lib/solicitudes-storage";
+import { tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
 import {
   extractVeriffSessionId,
   extractVeriffSessionUrl,
@@ -44,6 +45,7 @@ type VeriffDraftAccessRow = {
   sedeId: number;
   aliadoId: number | null;
   clienteDocumento: string | null;
+  plataforma: string | null;
 };
 
 function parsePositiveId(value: unknown) {
@@ -52,14 +54,21 @@ function parsePositiveId(value: unknown) {
 }
 
 async function readVeriffDraftAccess(draftId: number) {
-  await ensureSolicitudSchema();
+  await expireStaleSolicitudes();
   const rows = await prisma.$queryRawUnsafe<VeriffDraftAccessRow[]>(
     `
       SELECT d."id", d."estado", d."usuarioId", d."vendedorId", d."sedeId",
-        d."clienteDocumento", s."aliadoId"
+        d."clienteDocumento", s."aliadoId",
+        COALESCE(
+          NULLIF(d."plataforma", ''),
+          NULLIF(d."payload"->>'plataformaDispositivo', '')
+        ) AS "plataforma"
       FROM "CreditoBorrador" d
       LEFT JOIN "Sede" s ON s."id" = d."sedeId"
       WHERE d."id" = $1
+        AND d."estado" = 'ABIERTO'
+        AND d."creditoId" IS NULL
+        AND COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
       LIMIT 1
     `,
     draftId
@@ -111,6 +120,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  let operationLock:
+    | Awaited<ReturnType<typeof tryAcquireSolicitudOperationLock>>
+    | null = null;
+
   try {
     const user = await getSessionUser();
 
@@ -144,7 +157,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const draft = await readVeriffDraftAccess(draftId);
+    let draft = await readVeriffDraftAccess(draftId);
     if (!draft || !canOperateVeriffDraft(user, draft, sellerSession)) {
       return NextResponse.json(
         { ok: false, error: "Borrador no encontrado" },
@@ -153,12 +166,56 @@ export async function POST(request: Request) {
     }
 
     const requestedDocument = sanitizeText(body.clienteDocumento).replace(/\D/g, "");
-    const clienteDocumento = String(draft.clienteDocumento || "").replace(/\D/g, "");
+    let clienteDocumento = String(draft.clienteDocumento || "").replace(/\D/g, "");
     if (!clienteDocumento || requestedDocument !== clienteDocumento) {
       return NextResponse.json(
         {
           ok: false,
           error: "La cedula no corresponde al borrador autorizado",
+        },
+        { status: 409 }
+      );
+    }
+
+    operationLock = await tryAcquireSolicitudOperationLock(draftId);
+    if (!operationLock) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "SOLICITUD_OPERACION_EN_PROCESO",
+          error:
+            "La solicitud ya se está procesando. Intenta nuevamente en unos segundos.",
+          retryable: true,
+        },
+        { status: 409, headers: { "Retry-After": "2" } }
+      );
+    }
+
+    draft = await readVeriffDraftAccess(draftId);
+    if (!draft || !canOperateVeriffDraft(user, draft, sellerSession)) {
+      return NextResponse.json(
+        { ok: false, error: "Borrador no encontrado" },
+        { status: 404 }
+      );
+    }
+
+    clienteDocumento = String(draft.clienteDocumento || "").replace(/\D/g, "");
+    if (!clienteDocumento || requestedDocument !== clienteDocumento) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "La cedula no corresponde al borrador autorizado",
+        },
+        { status: 409 }
+      );
+    }
+    const lockedPlatform = String(draft.plataforma || "").trim().toUpperCase();
+    if (!["ANDROID", "IPHONE"].includes(lockedPlatform)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "SOLICITUD_PLATAFORMA_INVALIDA",
+          error: "La plataforma de la solicitud no está definida correctamente.",
         },
         { status: 409 }
       );
@@ -220,7 +277,7 @@ export async function POST(request: Request) {
         flow: "veriff-qr",
       },
       sedeId: draft.sedeId,
-      usuarioId: user.id,
+      usuarioId: draft.usuarioId,
       vendedorId: draft.vendedorId,
       vendorData,
     });
@@ -304,5 +361,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     return veriffErrorResponse(error);
+  } finally {
+    await operationLock?.release();
   }
 }

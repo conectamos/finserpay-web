@@ -5,6 +5,7 @@ import { sanitizeSearch, sanitizeText } from "@/lib/credit-factory";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
+import { canOperateSolicitud } from "@/lib/solicitud-operation-access";
 import { SolicitudCanonicalMutationError } from "@/lib/solicitudes";
 import { isFirmaSeguroSuccessfulStatus } from "@/lib/firmaseguro-status";
 import { ensureFirmaSeguroSchema } from "@/lib/firmaseguro-storage";
@@ -13,7 +14,7 @@ import {
   ActiveSolicitudConflictError,
   desistSolicitud,
   desistSolicitudAsCentralAdmin,
-  ensureSolicitudSchema,
+  expireStaleSolicitudes,
   getActiveSolicitudCreditContext,
   saveSolicitudDraft,
 } from "@/lib/solicitudes-storage";
@@ -288,14 +289,14 @@ export async function GET(req: Request) {
   try {
     const access = await getAccess();
     if (!access) return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    if (!access.admin && !access.seller) {
+    if (!access.admin && access.seller?.tipoPerfil !== "VENDEDOR") {
       return NextResponse.json(
-        { error: "Debes abrir primero el perfil del vendedor" },
+        { error: "Solo el asesor titular o un administrador autorizado puede consultar solicitudes" },
         { status: 403 }
       );
     }
     await Promise.all([
-      ensureSolicitudSchema(),
+      expireStaleSolicitudes(),
       ensureVeriffSchema(),
       ensureFirmaSeguroSchema(),
     ]);
@@ -352,14 +353,14 @@ export async function POST(req: Request) {
   try {
     const access = await getAccess();
     if (!access) return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    if (!access.admin && !access.seller) {
+    if (!access.central && access.seller?.tipoPerfil !== "VENDEDOR") {
       return NextResponse.json(
-        { error: "Debes abrir primero el perfil del vendedor" },
+        { error: "Solo el asesor titular o el administrador central puede guardar esta solicitud" },
         { status: 403 }
       );
     }
     await Promise.all([
-      ensureSolicitudSchema(),
+      expireStaleSolicitudes(),
       ensureVeriffSchema(),
       ensureFirmaSeguroSchema(),
     ]);
@@ -372,13 +373,12 @@ export async function POST(req: Request) {
       : null;
     const canOperateExistingDraft =
       !draftId ||
-      Boolean(
-        existingDraft &&
-          (access.central ||
-            (access.seller?.tipoPerfil === "VENDEDOR" &&
-              existingDraft.vendedorId === access.seller.id &&
-              existingDraft.aliadoId === access.user.aliadoId))
-      );
+      canOperateSolicitud({
+        central: access.central,
+        seller: access.seller,
+        viewerAllyId: access.user.aliadoId,
+        owner: existingDraft,
+      });
     if (!canOperateExistingDraft) {
       return NextResponse.json({ error: "Solicitud no autorizada" }, { status: 403 });
     }
@@ -433,7 +433,7 @@ export async function PATCH(req: Request) {
         { status: 403 }
       );
     }
-    await ensureSolicitudSchema();
+    await expireStaleSolicitudes();
     const body = (await req.json().catch(() => ({}))) as SaveDraftBody;
     const id = parsePositiveId(body.id);
     if (!id) return NextResponse.json({ error: "Borrador invalido" }, { status: 400 });
@@ -470,50 +470,12 @@ export async function PATCH(req: Request) {
       );
     }
 
-    if (sanitizeText(body.estado).toUpperCase() !== "CERRADO") {
-      return NextResponse.json({ error: "Estado invalido" }, { status: 400 });
-    }
-    const changed = await prisma.$executeRawUnsafe(
-      `
-        UPDATE "CreditoBorrador"
-        SET "estado" = 'CERRADO', "closedReason" = 'FINALIZADA',
-          "creditoId" = COALESCE($2, "creditoId"),
-          "closedAt" = COALESCE("closedAt", CURRENT_TIMESTAMP),
-          "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "id" = $1 AND "estado" = 'ABIERTO'
-          AND "usuarioId" = $3 AND "vendedorId" IS NOT DISTINCT FROM $4
-          AND "sedeId" = $5
-      `,
-      id,
-      parsePositiveId(body.creditoId),
-      access.user.id,
-      access.seller?.id || null,
-      access.user.sedeId
-    );
-    if (changed > 0) {
-      return NextResponse.json({ ok: true });
-    }
-
-    const alreadyFinalized = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
-      `
-        SELECT "id"
-        FROM "CreditoBorrador"
-        WHERE "id" = $1
-          AND "estado" = 'CERRADO'
-          AND "closedReason" = 'FINALIZADA'
-          AND "usuarioId" = $2
-          AND "vendedorId" IS NOT DISTINCT FROM $3
-          AND "sedeId" = $4
-        LIMIT 1
-      `,
-      id,
-      access.user.id,
-      access.seller?.id || null,
-      access.user.sedeId
-    );
     return NextResponse.json(
-      { ok: alreadyFinalized.length > 0 },
-      { status: alreadyFinalized.length > 0 ? 200 : 409 }
+      {
+        error: "La solicitud solo se finaliza al crear el credito de forma atomica.",
+        code: "SOLICITUD_FINALIZACION_ATOMICA_REQUERIDA",
+      },
+      { status: 405 }
     );
   } catch (error) {
     console.error("ERROR ACTUALIZANDO BORRADOR:", error);

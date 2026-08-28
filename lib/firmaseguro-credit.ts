@@ -909,9 +909,10 @@ export async function markCreditoFirmaSeguroCompleted(
     status: string;
     signedDocumentFileName?: string | null;
     completedAt?: Date | null;
-  }
+  },
+  database: Prisma.TransactionClient | typeof prisma = prisma
 ) {
-  const credito = await prisma.credito.findUnique({
+  const credito = await database.credito.findUnique({
     where: { id: creditoId },
     select: {
       id: true,
@@ -939,7 +940,7 @@ export async function markCreditoFirmaSeguroCompleted(
     proveedor: "FirmaSeguro",
   });
 
-  return prisma.credito.update({
+  return database.credito.update({
     where: { id: credito.id },
     data: {
       contratoAceptadoAt: credito.contratoAceptadoAt || completedAt,
@@ -1443,9 +1444,16 @@ export async function getLatestFirmaSeguroProcessForDraft(draftId: number) {
 
 export async function linkFirmaSeguroProcessForCredit(
   processUuid: string,
-  creditoId: number
+  creditoId: number,
+  draftId: number,
+  database: Prisma.TransactionClient | typeof prisma = prisma
 ) {
-  return linkFirmaSeguroProcessToCredit(processUuid, creditoId);
+  return linkFirmaSeguroProcessToCredit(
+    processUuid,
+    creditoId,
+    draftId,
+    database
+  );
 }
 
 export async function getFirmaSeguroProcessForCallback(processUuid: string) {

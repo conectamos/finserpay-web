@@ -1,7 +1,9 @@
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isAdminRole } from "@/lib/roles";
+import { canSellerOperateSolicitud } from "@/lib/solicitud-operation-access";
 
 type VeriffAccessUser = {
+  aliadoId?: number | null;
   aliadoAccesoCodigo?: string | null;
   aliadoAccesoId?: number | null;
   id: number;
@@ -12,6 +14,7 @@ type VeriffAccessUser = {
 type VeriffAccessSeller = {
   id: number;
   sedeId: number;
+  tipoPerfil?: string | null;
 } | null;
 
 type VeriffAccessRow = {
@@ -42,11 +45,7 @@ export function canAccessVeriffValidation(
     return true;
   }
 
-  return Boolean(
-    seller &&
-      row.vendedorId === seller.id &&
-      row.sedeId === seller.sedeId
-  );
+  return canSellerOperateSolicitud(seller, user.aliadoId, row);
 }
 
 export function canOperateVeriffDraft(
@@ -54,8 +53,17 @@ export function canOperateVeriffDraft(
   row: VeriffAccessRow,
   seller: VeriffAccessSeller
 ) {
+  if (
+    !user ||
+    !row ||
+    String(row.estado || "").trim().toUpperCase() !== "ABIERTO"
+  ) {
+    return false;
+  }
+  const adminCentral =
+    isAdminRole(user.rolNombre) &&
+    isFinserPayCentralAlly(user.aliadoAccesoCodigo);
   return (
-    String(row?.estado || "").trim().toUpperCase() === "ABIERTO" &&
-    canAccessVeriffValidation(user, row, seller)
+    adminCentral || canSellerOperateSolicitud(seller, user.aliadoId, row)
   );
 }

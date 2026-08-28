@@ -321,11 +321,12 @@ test("la API exige las cinco evidencias en iPhone y Android y conserva la audito
     creditRoute,
     /const creditListOmit = \{[\s\S]*?iphoneSelfieCedulaDataUrl: true,[\s\S]*?fotoEntregaDataUrl: true,[\s\S]*?fotoRemisionDataUrl: true,[\s\S]*?\} satisfies Prisma\.CreditoOmit;/
   );
-  assert.equal(
-    (creditRoute.match(/include: creditListInclude,\s*omit: creditListOmit,/g) || [])
-      .length,
-    5
-  );
+  const creditListFetches =
+    creditRoute.match(/include: creditListInclude,/g) || [];
+  const protectedCreditListFetches =
+    creditRoute.match(/include: creditListInclude,\s*omit: creditListOmit,/g) || [];
+  assert.ok(creditListFetches.length >= 5);
+  assert.equal(protectedCreditListFetches.length, creditListFetches.length);
   assert.doesNotMatch(creditRoute, /fotoEntregaLista|fotoRemisionLista/);
   assert.match(
     prismaSource,

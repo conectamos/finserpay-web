@@ -43,14 +43,17 @@ import {
   serializeDataCreditoAssessment,
   type DataCreditoAssessmentScope,
 } from "@/lib/datacredito/storage";
+import { tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
+import { canOperateSolicitud } from "@/lib/solicitud-operation-access";
 import {
   ActiveSolicitudConflictError,
   attachDataCreditoToSolicitud,
   getActiveSolicitudCreditContext,
   markSolicitudDataCreditoTechnicalError,
   reserveSolicitudForIdentity,
+  SolicitudDataCreditoLinkError,
 } from "@/lib/solicitudes-storage";
 
 export const runtime = "nodejs";
@@ -91,11 +94,23 @@ async function solicitudTechnicalResponse(input: {
   plataforma?: string | null;
 }) {
   const { solicitudId, plataforma, ...response } = input;
-  await markSolicitudDataCreditoTechnicalError({
-    solicitudId,
-    errorCode: response.code,
-    plataforma,
-  }).catch(() => undefined);
+  try {
+    await markSolicitudDataCreditoTechnicalError({
+      solicitudId,
+      errorCode: response.code,
+      plataforma,
+    });
+  } catch (error) {
+    if (error instanceof SolicitudDataCreditoLinkError) {
+      return technicalResponse({
+        correlationId: response.correlationId,
+        code: error.code,
+        error: error.message,
+        status: error.status,
+      });
+    }
+    throw error;
+  }
   return technicalResponse(response);
 }
 
@@ -131,6 +146,9 @@ export async function POST(request: Request) {
   let pendingAssessmentId: string | null = null;
   let providerStartedAt: number | null = null;
   let solicitudId: number | null = null;
+  let solicitudOperationLock: Awaited<
+    ReturnType<typeof tryAcquireSolicitudOperationLock>
+  > = null;
 
   try {
     const user = await getSessionUser();
@@ -144,8 +162,10 @@ export async function POST(request: Request) {
     }
 
     const admin = isAdminRole(user.rolNombre);
+    const central =
+      admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const seller = admin ? null : await getSellerSessionUser(user);
-    if (!admin && !seller) {
+    if (!central && seller?.tipoPerfil !== "VENDEDOR") {
       return technicalResponse({
         correlationId,
         code: "SELLER_SESSION_REQUIRED",
@@ -242,8 +262,6 @@ export async function POST(request: Request) {
       });
     }
 
-    const central =
-      admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const solicitudContext =
       requestedSolicitudId
         ? await getActiveSolicitudCreditContext(requestedSolicitudId)
@@ -254,6 +272,34 @@ export async function POST(request: Request) {
         code: "SOLICITUD_NOT_AUTHORIZED",
         error: "La solicitud que intentas retomar no esta disponible",
         status: 403,
+      });
+    }
+    if (
+      requestedSolicitudId &&
+      !canOperateSolicitud({
+        central,
+        seller,
+        viewerAllyId: user.aliadoId,
+        owner: solicitudContext,
+      })
+    ) {
+      return technicalResponse({
+        correlationId,
+        code: "SOLICITUD_NOT_AUTHORIZED",
+        error: "La solicitud que intentas retomar no esta autorizada",
+        status: 403,
+      });
+    }
+    const historicalPlatform = String(solicitudContext?.plataforma || "").trim();
+    if (
+      historicalPlatform &&
+      normalizeDataCreditoPlatform(historicalPlatform) !== platform
+    ) {
+      return technicalResponse({
+        correlationId,
+        code: "SOLICITUD_PLATAFORMA_DIFERENTE",
+        error: "La plataforma consultada no coincide con la solicitud retomada",
+        status: 409,
       });
     }
     if (
@@ -270,8 +316,7 @@ export async function POST(request: Request) {
         status: 409,
       });
     }
-    const centralSolicitud = central ? solicitudContext : null;
-    const solicitudOwner = centralSolicitud || {
+    const solicitudOwner = solicitudContext || {
       usuarioId: user.id,
       vendedorId: seller?.id || null,
       sedeId: user.sedeId,
@@ -340,6 +385,70 @@ export async function POST(request: Request) {
       plataforma: platform,
     });
     solicitudId = solicitudReservation.id;
+    solicitudOperationLock =
+      await tryAcquireSolicitudOperationLock(solicitudReservation.id);
+    if (!solicitudOperationLock) {
+      const response = technicalResponse({
+        correlationId,
+        code: "SOLICITUD_OPERATION_IN_PROGRESS",
+        error:
+          "La solicitud esta siendo actualizada por otra operacion. Intenta nuevamente.",
+        status: 409,
+      });
+      response.headers.set("Retry-After", "2");
+      return response;
+    }
+
+    const lockedSolicitudContext = await getActiveSolicitudCreditContext(
+      solicitudReservation.id
+    );
+    const lockedOwnerMatches =
+      lockedSolicitudContext?.usuarioId === solicitudOwner.usuarioId &&
+      lockedSolicitudContext?.vendedorId === solicitudOwner.vendedorId &&
+      lockedSolicitudContext?.sedeId === solicitudOwner.sedeId &&
+      lockedSolicitudContext?.aliadoId === solicitudOwner.aliadoId;
+    if (
+      !lockedSolicitudContext ||
+      !lockedOwnerMatches ||
+      !canOperateSolicitud({
+        central,
+        seller,
+        viewerAllyId: user.aliadoId,
+        owner: lockedSolicitudContext,
+      })
+    ) {
+      return technicalResponse({
+        correlationId,
+        code: "SOLICITUD_NOT_AUTHORIZED",
+        error: "La solicitud ya no esta disponible para esta consulta",
+        status: 403,
+      });
+    }
+    if (
+      normalizeDataCreditoDocument(lockedSolicitudContext.clienteDocumento) !==
+        documentNumber ||
+      normalizeDataCreditoSurname(
+        lockedSolicitudContext.clientePrimerApellido
+      ) !== firstSurname
+    ) {
+      return technicalResponse({
+        correlationId,
+        code: "SOLICITUD_IDENTITY_MISMATCH",
+        error: "La identidad validada ya no coincide con la solicitud",
+        status: 409,
+      });
+    }
+    if (
+      normalizeDataCreditoPlatform(lockedSolicitudContext.plataforma) !==
+      platform
+    ) {
+      return technicalResponse({
+        correlationId,
+        code: "SOLICITUD_PLATAFORMA_DIFERENTE",
+        error: "La plataforma ya no coincide con la solicitud",
+        status: 409,
+      });
+    }
 
     // A terminal inquiry for the same CC/provider environment is valid across
     // FINSER PAY. The destination policy is applied again for the current ally.
@@ -715,6 +824,14 @@ export async function POST(request: Request) {
         status: error.status,
       });
     }
+    if (error instanceof SolicitudDataCreditoLinkError) {
+      return technicalResponse({
+        correlationId,
+        code: error.code,
+        error: error.message,
+        status: error.status,
+      });
+    }
     const code =
       error instanceof DataCreditoError
         ? safeProviderValue(error.code, 64) || "PROVIDER_ERROR"
@@ -781,5 +898,7 @@ export async function POST(request: Request) {
                 ? 502
             : 500,
     });
+  } finally {
+    await solicitudOperationLock?.release();
   }
 }

@@ -37,6 +37,7 @@ import {
   DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT,
   DATACREDITO_MAX_INSTALLMENT_COUNT,
 } from "@/lib/datacredito/policy";
+import { resolveMissingAssessmentGateView } from "@/lib/datacredito/resume-gate";
 
 export type DataCreditoPlatform = "ANDROID" | "IPHONE";
 
@@ -489,6 +490,7 @@ export default function DatacreditoPrequalificationGate({
     useState<DataCreditoApprovedResult | null>(null);
   const bypassCalledRef = useRef(false);
   const approvedAssessmentIdsRef = useRef(new Set<string>());
+  const expiredRequerySolicitudIdRef = useRef<number | null>(null);
   const onBypassRef = useRef(onBypass);
   const onApprovedRef = useRef(onApproved);
   const onAssessmentInvalidatedRef = useRef(onAssessmentInvalidated);
@@ -631,6 +633,7 @@ export default function DatacreditoPrequalificationGate({
     }
 
     approvedAssessmentIdsRef.current.add(approvedResult.assessmentId);
+    expiredRequerySolicitudIdRef.current = null;
     setView("bypassing");
     onApprovedRef.current(approvedResult);
   }, [approvedResult]);
@@ -688,7 +691,16 @@ export default function DatacreditoPrequalificationGate({
         }
 
         if (!initialAssessmentId) {
-          setView("ready");
+          // Una solicitud ya materializada siempre debe conservar su evaluación
+          // canónica. Si falta, fallamos cerrado: mostrar el formulario permitiría
+          // consumir una consulta nueva al proveedor sobre el mismo borrador.
+          setView(
+            resolveMissingAssessmentGateView({
+              solicitudId: initialSolicitudId,
+              expiredRequerySolicitudId:
+                expiredRequerySolicitudIdRef.current,
+            })
+          );
           return;
         }
 
@@ -735,6 +747,7 @@ export default function DatacreditoPrequalificationGate({
               assessmentPayload
             )
           ) {
+            expiredRequerySolicitudIdRef.current = initialSolicitudId;
             onAssessmentInvalidatedRef.current?.();
             setConsentAccepted(false);
             setFormErrors({});
@@ -782,6 +795,7 @@ export default function DatacreditoPrequalificationGate({
                 !approvedAssessmentIdsRef.current.has(approved.assessmentId)
               ) {
                 approvedAssessmentIdsRef.current.add(approved.assessmentId);
+                expiredRequerySolicitudIdRef.current = null;
                 setView("bypassing");
                 onApprovedRef.current({
                   ...approved,
@@ -1375,7 +1389,10 @@ export default function DatacreditoPrequalificationGate({
                 maxLength={13}
                 pattern="[0-9]{3,13}"
                 required
-                disabled={isSubmitting}
+                disabled={
+                  isSubmitting ||
+                  Boolean(initialSolicitudId && normalizedInitialDocument)
+                }
                 className="min-h-14 border-[var(--fp-lime-strong)] !pl-12 text-base shadow-[var(--fp-shadow-sm)] disabled:bg-[var(--fp-bg)]"
                 aria-invalid={Boolean(formErrors.documentNumber)}
                 aria-describedby={
@@ -1428,7 +1445,10 @@ export default function DatacreditoPrequalificationGate({
                 autoComplete="family-name"
                 maxLength={80}
                 required
-                disabled={isSubmitting}
+                disabled={
+                  isSubmitting ||
+                  Boolean(initialSolicitudId && normalizedInitialSurname)
+                }
                 className="min-h-14 border-[var(--fp-lime-strong)] !pl-12 text-base shadow-[var(--fp-shadow-sm)] disabled:bg-[var(--fp-bg)]"
                 aria-invalid={Boolean(formErrors.firstSurname)}
                 aria-describedby={

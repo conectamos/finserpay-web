@@ -132,6 +132,44 @@ test("las salidas tecnicas posteriores a la reserva permanecen visibles y gestio
   assert.match(route, /errorCode: response\.code/);
 });
 
+test("DataCredito nunca confirma un resultado que no pudo vincular al borrador vigente", async () => {
+  const [storage, route] = await Promise.all([
+    readProjectFile("lib/solicitudes-storage.ts"),
+    readProjectFile("app/api/creditos/datacredito/evaluaciones/route.ts"),
+  ]);
+  const attachment = sourceBetween(
+    storage,
+    "export async function attachDataCreditoToSolicitud",
+    "export async function markSolicitudDataCreditoTechnicalError"
+  );
+  const technicalMark = sourceBetween(
+    storage,
+    "export async function markSolicitudDataCreditoTechnicalError",
+    "export async function desistSolicitud"
+  );
+  const successAttachment = route.indexOf("await attachDataCreditoToSolicitud({",  route.indexOf("if (!completed)"));
+  const successResponse = route.indexOf("ok: true", successAttachment);
+  const linkFailureGuard = route.indexOf(
+    "error instanceof SolicitudDataCreditoLinkError"
+  );
+
+  for (const mutation of [attachment, technicalMark]) {
+    assert.match(mutation, /"estado" = 'ABIERTO'/);
+    assert.match(mutation, /"creditoId" IS NULL/);
+    assert.match(
+      mutation,
+      /COALESCE\("expiresAt", "createdAt" \+ INTERVAL '15 days'\) >/
+    );
+    assert.match(mutation, /RETURNING "id"/);
+    assert.match(mutation, /rows\.length !== 1/);
+    assert.match(mutation, /SolicitudDataCreditoLinkError/);
+  }
+  assert.ok(successAttachment >= 0);
+  assert.ok(successResponse > successAttachment);
+  assert.ok(linkFailureGuard >= 0);
+  assert.match(route, /code: error\.code[\s\S]{0,100}status: error\.status/);
+});
+
 test("la aprobacion enlaza el id canonico antes del autosave", async () => {
   const gate = await readProjectFile(
     "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
@@ -343,10 +381,14 @@ test("solo las solicitudes abiertas vencen automaticamente a los 15 dias", async
 
   assert.match(
     expiration,
-    /"closedReason" = (?:COALESCE\("closedReason", )?'EXPIRADA_15_DIAS'\)?/
+    /"closedReason" = (?:COALESCE\((?:draft\.)?"closedReason", )?'EXPIRADA_15_DIAS'\)?/
   );
   assert.match(expiration, /WHERE "estado" = 'ABIERTO'/);
   assert.match(expiration, /COALESCE\("expiresAt", "createdAt" \+ INTERVAL '15 days'\)/);
+  assert.match(expiration, /WITH stale AS MATERIALIZED/);
+  assert.match(expiration, /pg_try_advisory_xact_lock\(\$1::integer, stale\."id"\)/);
+  assert.match(expiration, /SOLICITUD_OPERATION_LOCK_NAMESPACE/);
+  assert.match(expiration, /RETURNING draft\."id"/);
   assert.doesNotMatch(expiration, /"closedReason"[^\n]*RECHAZADA/);
   assert.doesNotMatch(expiration, /NOT \([\s\S]*'FINALIZADA'/);
 });
@@ -374,6 +416,18 @@ test("desistir libera de una vez los duplicados no finalizados de la misma cedul
       /SELECT (?:draft\.)?"id", (?:draft\.)?"clienteDocumento"[\s\S]*WHERE (?:draft\.)?"id" = \$1/
     );
     assert.match(desist, /const document = normalizeDigits\(target\[0\]\.clienteDocumento\)/);
+    const targetScan = desist.indexOf("const operationTargets =");
+    const orderedLock = desist.indexOf("await lockSolicitudOperationsInOrder(");
+    const identityLock = desist.indexOf(
+      'await lockIdentity(transaction, "document", document)'
+    );
+    const update = desist.indexOf('UPDATE "CreditoBorrador"');
+    assert.ok(targetScan >= 0);
+    assert.ok(orderedLock > targetScan);
+    assert.ok(identityLock > orderedLock);
+    assert.ok(update > identityLock);
+    assert.match(desist, /ORDER BY (?:draft\.)?"id" ASC/);
+    assert.match(desist, /operationTargets\.map\(\(row\) => row\.id\)/);
     assert.match(desist, /lockIdentity\(transaction, "document", document\)/);
     assert.match(desist, /UPDATE "CreditoBorrador"/);
     assert.match(

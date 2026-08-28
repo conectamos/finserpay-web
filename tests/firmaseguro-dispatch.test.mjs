@@ -47,18 +47,31 @@ test("el reenvio reutiliza un proceso activo antes de construir otro expediente"
   const idempotentReturn = post.indexOf(
     "current && canReuseFirmaSeguroProcess(current)"
   );
-  const buildCredit = post.indexOf("await buildDraftCredit(authorized.row)");
   const dispatchLock = post.indexOf("tryAcquireFirmaSeguroDraftDispatchLock");
+  const lockedAuthorization = post.indexOf(
+    "const lockedAuthorized = await readAuthorizedDraft"
+  );
   const lockedLookup = post.indexOf("const lockedCurrent = await");
+  const buildCredit = post.indexOf(
+    "await buildDraftCredit(lockedAuthorized.row)"
+  );
+  const draftCas = post.indexOf("const updatedDraftRows = await");
   const providerDispatch = post.indexOf("createFirmaSeguroProcessForDraft");
 
   assert.ok(currentLookup >= 0);
   assert.ok(idempotentReturn > currentLookup);
-  assert.ok(buildCredit > idempotentReturn);
-  assert.ok(dispatchLock > buildCredit);
-  assert.ok(lockedLookup > dispatchLock);
-  assert.ok(providerDispatch > lockedLookup);
+  assert.ok(dispatchLock > idempotentReturn);
+  assert.ok(lockedAuthorization > dispatchLock);
+  assert.ok(lockedLookup > lockedAuthorization);
+  assert.ok(buildCredit > lockedLookup);
+  assert.ok(draftCas > buildCredit);
+  assert.ok(providerDispatch > draftCas);
   assert.match(post, /idempotent: true/);
+  assert.match(
+    post,
+    /WHERE "id" = \$1[\s\S]{0,180}"estado" = 'ABIERTO'[\s\S]{0,180}RETURNING "id"/
+  );
+  assert.match(post, /updatedDraftRows\.length !== 1/);
   assert.match(route, /if \(sanitizeText\(process\.lastError\)\) \{/);
   assert.match(route, /isFirmaSeguroCompletedStatus\(normalized\)/);
   assert.match(route, /isFirmaSeguroFailedStatus\(normalized\)/);
@@ -73,7 +86,13 @@ test("el bloqueo de despacho usa una sesion dedicada y una llave por borrador", 
   assert.match(storage, /pg_try_advisory_lock/);
   assert.match(storage, /pg_advisory_unlock/);
   assert.match(storage, /new Client\(/);
-  assert.doesNotMatch(storage, /pg_advisory_xact_lock/);
+  assert.match(storage, /lockFirmaSeguroDraftMutation/);
+  assert.match(storage, /pg_advisory_xact_lock/);
+  assert.match(
+    storage,
+    /SELECT 1::integer AS "locked"[\s\S]{0,100}FROM pg_advisory_xact_lock/
+  );
+  assert.match(storage, /FIRMASEGURO_DRAFT_LOCK_NAMESPACE/);
 });
 
 test("los errores previos al proveedor incluyen codigo y etapa trazables", async () => {

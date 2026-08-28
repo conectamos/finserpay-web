@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSessionUser } from "@/lib/auth";
 import {
   getEqualityDeviceMeta,
   getPayloadSummary,
 } from "@/lib/equality-device-meta";
 import { isAdminRole } from "@/lib/roles";
+import { getSellerSessionUser } from "@/lib/seller-auth";
+import { canOperateSolicitud } from "@/lib/solicitud-operation-access";
+import { getActiveSolicitudCreditContext } from "@/lib/solicitudes-storage";
+import { tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
 import {
   activateEqualityFinancingService,
   getEqualityProbeDeviceUid,
@@ -35,6 +40,11 @@ function isBusinessStatus(status: number) {
   return [400, 404, 409, 422].includes(status);
 }
 
+function parsePositiveId(value: unknown) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 async function runBusinessSafe<T>(work: () => Promise<T>) {
   try {
     return await work();
@@ -55,6 +65,10 @@ export async function GET(req: Request) {
     if (!user) {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
+    const centralAdmin = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
+    if (!centralAdmin) {
+      return NextResponse.json({ error: "Acceso no autorizado" }, { status: 403 });
+    }
 
     const { searchParams } = new URL(req.url);
     const probe = searchParams.get("probe") === "1";
@@ -66,7 +80,7 @@ export async function GET(req: Request) {
     if (!isEqualityConfigured()) {
       return NextResponse.json({
         configured: false,
-        canManage: admin,
+        canManage: centralAdmin,
         deviceUid,
         probe,
         response: null,
@@ -83,7 +97,7 @@ export async function GET(req: Request) {
     if (!deviceUid) {
       return NextResponse.json({
         configured: true,
-        canManage: admin,
+        canManage: centralAdmin,
         deviceUid,
         probe,
         response: null,
@@ -158,6 +172,9 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   let action: EqualityAction = "query";
   let deviceUid = "";
+  let operationLock:
+    | Awaited<ReturnType<typeof tryAcquireSolicitudOperationLock>>
+    | null = null;
 
   try {
     const user = await getSessionUser();
@@ -167,6 +184,7 @@ export async function POST(req: Request) {
     }
 
     const admin = isAdminRole(user.rolNombre);
+    const centralAdmin = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
 
     if (!isEqualityConfigured()) {
       return NextResponse.json(
@@ -191,11 +209,71 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!admin && !["query", "enroll"].includes(action)) {
+    const seller = centralAdmin ? null : await getSellerSessionUser(user);
+    const draftId = parsePositiveId(body.draftId);
+    const validateDraftAccess = async () => {
+      const draft = draftId
+        ? await getActiveSolicitudCreditContext(draftId)
+        : null;
+      if (
+        !draft ||
+        (!centralAdmin &&
+          !canOperateSolicitud({
+            central: false,
+            seller,
+            viewerAllyId: user.aliadoId,
+            owner: draft,
+          }))
+      ) {
+        return NextResponse.json(
+          { error: "La solicitud no esta autorizada para operar este equipo" },
+          { status: 403 }
+        );
+      }
+      if (String(draft.plataforma || "").trim().toUpperCase() !== "ANDROID") {
+        return NextResponse.json(
+          { error: "Equality solo puede operar solicitudes Android" },
+          { status: 409 }
+        );
+      }
+      const draftDeviceUid = normalizeEqualityDeviceUid(draft.imei);
+      if (!/^\d{15}$/.test(draftDeviceUid) || draftDeviceUid !== deviceUid) {
+        return NextResponse.json(
+          { error: "El IMEI no corresponde a la solicitud autorizada" },
+          { status: 409 }
+        );
+      }
+      return null;
+    };
+
+    if (!centralAdmin) {
+      const accessError = await validateDraftAccess();
+      if (accessError) return accessError;
+    }
+
+    if (!centralAdmin && !["query", "enroll"].includes(action)) {
       return NextResponse.json(
         { error: "Tu rol solo puede consultar e inscribir equipos" },
         { status: 403 }
       );
+    }
+
+    if (action !== "query" && draftId) {
+      operationLock = await tryAcquireSolicitudOperationLock(draftId);
+      if (!operationLock) {
+        return NextResponse.json(
+          {
+            code: "SOLICITUD_OPERACION_EN_PROCESO",
+            error:
+              "La solicitud ya se está procesando. Intenta nuevamente en unos segundos.",
+            retryable: true,
+          },
+          { status: 409, headers: { "Retry-After": "2" } }
+        );
+      }
+
+      const accessError = await validateDraftAccess();
+      if (accessError) return accessError;
     }
 
     let response;
@@ -330,5 +408,7 @@ export async function POST(req: Request) {
       },
       { status: 500 }
     );
+  } finally {
+    await operationLock?.release();
   }
 }

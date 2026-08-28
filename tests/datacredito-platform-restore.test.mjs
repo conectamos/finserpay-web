@@ -36,11 +36,11 @@ test("la restauracion valida la plataforma esperada", () => {
 test("el gate solicita, valida y entrega la plataforma sin reetiquetarla", () => {
   assert.match(gate, /platform:\s*DataCreditoPlatform/);
   assert.match(gate, /readPlatform\(source\.platform\)/);
-  assert.match(gate, /\?platform=\$\{encodeURIComponent\(platform\)\}/);
+  assert.match(gate, /new URLSearchParams\(\{ platform \}\)/);
+  assert.match(gate, /\?\$\{assessmentParams\.toString\(\)\}/);
   assert.match(gate, /approved\.platform\s*!==\s*platform/);
-  assert.match(gate, /code === "ASSESSMENT_PLATFORM_MISMATCH"/);
 
-  assert.match(factory, /setDataCreditoApproval\(result\)/);
+  assert.match(factory, /setDataCreditoApproval\(approvedResult\)/);
   assert.doesNotMatch(
     factory,
     /setDataCreditoApproval\(\{\s*\.\.\.result,\s*platform:\s*dataCreditoPlatform\s*\}\)/

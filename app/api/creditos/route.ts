@@ -14,6 +14,7 @@ import {
   getCreditClosureReadiness,
   getDefaultFirstPaymentDateObject,
   hasDuplicateEvidenceValues,
+  normalizeCreditDevicePlatform,
   resolveCreditEquipmentPlatform,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
@@ -68,7 +69,10 @@ import {
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
-import { getFirmaSeguroProcessByUuid } from "@/lib/firmaseguro-storage";
+import {
+  getFirmaSeguroProcessByUuid,
+  tryAcquireSolicitudOperationLock,
+} from "@/lib/firmaseguro-storage";
 import {
   linkFirmaSeguroProcessForCredit,
   markCreditoFirmaSeguroCompleted,
@@ -82,6 +86,7 @@ import {
   lockVeriffDraftAttempts,
   type VeriffValidationRow,
 } from "@/lib/veriff-storage";
+import { canAccessVeriffValidation } from "@/lib/veriff-access";
 import {
   extractVeriffIdentityData,
   extractVeriffIdentityDocumentEvidence,
@@ -120,6 +125,7 @@ import {
   getActiveSolicitudCreditContext,
   reserveSolicitudForIdentity,
 } from "@/lib/solicitudes-storage";
+import { canOperateSolicitud as canOperateSolicitudContext } from "@/lib/solicitud-operation-access";
 import { getIphoneEnrollmentReviewForSolicitud } from "@/lib/iphone-enrollment-storage";
 
 export const runtime = "nodejs";
@@ -150,6 +156,57 @@ class VeriffValidationFinalizationError extends Error {
     super(message);
     this.name = "VeriffValidationFinalizationError";
   }
+}
+
+class FirmaSeguroFinalizationError extends Error {
+  readonly status = 409;
+
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "FirmaSeguroFinalizationError";
+  }
+}
+
+type FinalizedSolicitudCreditContext = {
+  id: number;
+  usuarioId: number;
+  vendedorId: number | null;
+  sedeId: number;
+  aliadoId: number | null;
+  clienteDocumento: string | null;
+  imei: string | null;
+  plataforma: string | null;
+  dataCreditoAssessmentId: string | null;
+  creditoId: number;
+};
+
+async function getFinalizedSolicitudCreditContext(solicitudId: number) {
+  await ensureSolicitudSchema();
+  const rows = await prisma.$queryRawUnsafe<FinalizedSolicitudCreditContext[]>(
+    `
+      SELECT draft."id", draft."usuarioId", draft."vendedorId", draft."sedeId",
+        sede."aliadoId", draft."clienteDocumento", draft."imei",
+        COALESCE(
+          NULLIF(draft."plataforma", ''),
+          NULLIF(draft."payload"->>'plataformaDispositivo', '')
+        ) AS "plataforma",
+        COALESCE(
+          draft."dataCreditoAssessmentId"::text,
+          NULLIF(draft."payload"->>'dataCreditoAssessmentId', '')
+        ) AS "dataCreditoAssessmentId",
+        draft."creditoId"
+      FROM "CreditoBorrador" draft
+      LEFT JOIN "Sede" sede ON sede."id" = draft."sedeId"
+      WHERE draft."id" = $1
+        AND draft."estado" = 'CERRADO'
+        AND draft."closedReason" = 'FINALIZADA'
+        AND draft."creditoId" IS NOT NULL
+      LIMIT 1
+    `,
+    solicitudId
+  );
+
+  return rows[0] || null;
 }
 
 function hashImageDataUrl(value: string) {
@@ -721,7 +778,7 @@ async function runBusinessSafe<T>(work: () => Promise<T>) {
   try {
     return await work();
   } catch (error) {
-    if (isEqualityApiError(error) && [400, 404, 409].includes(error.status)) {
+    if (isEqualityApiError(error) && [400, 404, 409, 422].includes(error.status)) {
       return error.payload as T;
     }
 
@@ -742,6 +799,7 @@ export async function GET(req: Request) {
     const admin = isAdminRole(user.rolNombre);
     const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
+
     const search = sanitizeSearch(searchParams.get("search"));
     const searchDigits = search.replace(/\D/g, "");
     const requestedId = parseId(searchParams.get("id"));
@@ -875,23 +933,52 @@ export async function GET(req: Request) {
 
 function dataCreditoRecoveredCreditResponse(
   item: CreditListItem,
+  canViewSensitive: boolean,
   warning =
     "El crédito ya había sido creado con esta precalificación. No realices una nueva consulta."
 ) {
+  const serialized = serializeCredit(item);
   return NextResponse.json({
     ok: true,
     recovered: true,
     warning,
-    item: serializeCredit(item),
+    item: canViewSensitive ? serialized : redactCreditForNonAdmin(serialized),
     deliveryStatus: null,
     identityValidation: null,
     equality: null,
   });
 }
 
-async function recoverDataCreditoCredit(
-  input: DataCreditoAssessmentMatchInput
+function finalizedSolicitudRecoveredCreditResponse(
+  item: CreditListItem,
+  solicitudId: number,
+  canViewSensitive: boolean
 ) {
+  const serialized = serializeCredit(item);
+  return NextResponse.json({
+    ok: true,
+    recovered: true,
+    warning:
+      "El crédito ya había sido finalizado correctamente. No se ejecutaron nuevamente validaciones ni integraciones externas.",
+    item: canViewSensitive ? serialized : redactCreditForNonAdmin(serialized),
+    deliveryStatus: null,
+    solicitud: {
+      id: solicitudId,
+      estado: "CERRADO",
+      creditoId: item.id,
+    },
+    identityValidation: null,
+    equality: null,
+  });
+}
+
+async function recoverDataCreditoCredit(
+  input: DataCreditoAssessmentMatchInput,
+  solicitudId: number | null,
+  canViewSensitive: boolean
+) {
+  if (!solicitudId) return null;
+
   const classification =
     await classifyDataCreditoAssessmentForCredit(input);
 
@@ -909,11 +996,14 @@ async function recoverDataCreditoCredit(
 
     if (created) {
       await ensureSolicitudSchema();
-      await prisma.$transaction((transaction) =>
+      const linkedSolicitudId = await prisma.$transaction((transaction) =>
         completeSolicitudForCredit(
           {
+            solicitudId,
             assessmentId: input.assessmentId,
             clienteDocumento: input.documentNumber,
+            imei: created.imei,
+            plataforma: input.platform,
             usuarioId: input.userId,
             vendedorId: input.sellerId,
             sedeId: input.sedeId,
@@ -922,7 +1012,13 @@ async function recoverDataCreditoCredit(
           transaction
         )
       );
-      return dataCreditoRecoveredCreditResponse(created);
+      if (linkedSolicitudId !== solicitudId) {
+        const finalized = await getFinalizedSolicitudCreditContext(solicitudId);
+        if (!finalized || finalized.creditoId !== created.id) {
+          return null;
+        }
+      }
+      return dataCreditoRecoveredCreditResponse(created, canViewSensitive);
     }
   }
 
@@ -961,6 +1057,10 @@ export async function POST(req: Request) {
   let dataCreditoAssessmentMatch: DataCreditoAssessmentMatchInput | null =
     null;
   let createdCreditId: number | null = null;
+  let canViewSensitiveCredit = false;
+  let solicitudOperationLock:
+    | Awaited<ReturnType<typeof tryAcquireSolicitudOperationLock>>
+    | null = null;
 
   try {
     const user = await getSessionUser();
@@ -971,7 +1071,19 @@ export async function POST(req: Request) {
 
     const admin = isAdminRole(user.rolNombre);
     const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
+    canViewSensitiveCredit = adminCentral;
     const sellerSession = admin ? null : await getSellerSessionUser(user);
+
+    if (!adminCentral && sellerSession?.tipoPerfil !== "VENDEDOR") {
+      return NextResponse.json(
+        {
+          code: "CREDIT_CLOSE_NOT_AUTHORIZED",
+          error:
+            "Solo el asesor titular o un administrador central de FINSER PAY puede finalizar el crédito.",
+        },
+        { status: 403 }
+      );
+    }
 
     let body: CreditCreateBody;
 
@@ -1017,10 +1129,70 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    if (!adminCentral && !requestedSolicitudId) {
+      return NextResponse.json(
+        {
+          code: "SOLICITUD_REQUERIDA",
+          error:
+            "Debes continuar una solicitud activa del muro para finalizar el crédito.",
+        },
+        { status: 409 }
+      );
+    }
+
     const solicitudContext = requestedSolicitudId
       ? await getActiveSolicitudCreditContext(requestedSolicitudId)
       : null;
     if (requestedSolicitudId && !solicitudContext) {
+      const finalizedSolicitud =
+        await getFinalizedSolicitudCreditContext(requestedSolicitudId);
+
+      if (finalizedSolicitud) {
+        const canRecoverFinalizedSolicitud = canOperateSolicitudContext({
+          central: adminCentral,
+          seller: sellerSession,
+          viewerAllyId: user.aliadoId,
+          owner: finalizedSolicitud,
+        });
+
+        if (!canRecoverFinalizedSolicitud) {
+          return NextResponse.json(
+            { code: "SOLICITUD_NO_AUTORIZADA", error: "Solicitud no autorizada" },
+            { status: 403 }
+          );
+        }
+
+        if (
+          !documentValuesMatch(
+            finalizedSolicitud.clienteDocumento,
+            clienteDocumento
+          )
+        ) {
+          return NextResponse.json(
+            {
+              code: "SOLICITUD_DOCUMENTO_DIFERENTE",
+              error: "La cedula no corresponde a la solicitud autorizada.",
+            },
+            { status: 409 }
+          );
+        }
+
+        const finalizedCredit = await prisma.credito.findUnique({
+          where: { id: finalizedSolicitud.creditoId },
+          include: creditListInclude,
+          omit: creditListOmit,
+        });
+
+        if (finalizedCredit) {
+          return finalizedSolicitudRecoveredCreditResponse(
+            finalizedCredit,
+            finalizedSolicitud.id,
+            adminCentral
+          );
+        }
+      }
+
       return NextResponse.json(
         {
           code: "SOLICITUD_NO_DISPONIBLE",
@@ -1031,13 +1203,12 @@ export async function POST(req: Request) {
     }
     const canOperateSolicitud =
       !solicitudContext ||
-      adminCentral ||
-      Boolean(
-        sellerSession &&
-          sellerSession.tipoPerfil === "VENDEDOR" &&
-          solicitudContext.vendedorId === sellerSession.id &&
-          solicitudContext.sedeId === sellerSession.sedeId
-      );
+      canOperateSolicitudContext({
+        central: adminCentral,
+        seller: sellerSession,
+        viewerAllyId: user.aliadoId,
+        owner: solicitudContext,
+      });
     if (!canOperateSolicitud) {
       return NextResponse.json(
         { code: "SOLICITUD_NO_AUTORIZADA", error: "Solicitud no autorizada" },
@@ -1139,10 +1310,33 @@ export async function POST(req: Request) {
     const referenciaEquipo = sanitizeText(
       body.referenciaEquipo || [equipoMarca, equipoModelo].filter(Boolean).join(" ")
     );
-    const imei = sanitizeDeviceValue(body.imei || body.deviceUid).replace(/\D/g, "").slice(0, 15);
+    const imei = sanitizeDeviceValue(body.imei || body.deviceUid).replace(/\D/g, "");
     const deviceUid = sanitizeDeviceValue(body.deviceUid || body.imei)
-      .replace(/\D/g, "")
-      .slice(0, 15);
+      .replace(/\D/g, "");
+    const solicitudImei = String(solicitudContext?.imei || "").replace(/\D/g, "");
+
+    if (imei && deviceUid && imei !== deviceUid) {
+      return NextResponse.json(
+        {
+          code: "IMEI_DEVICE_UID_DIFERENTES",
+          error: "El IMEI y el deviceUid deben identificar el mismo equipo.",
+        },
+        { status: 409 }
+      );
+    }
+
+    if (
+      solicitudImei &&
+      (solicitudImei !== imei || solicitudImei !== deviceUid)
+    ) {
+      return NextResponse.json(
+        {
+          code: "SOLICITUD_IMEI_DIFERENTE",
+          error: "El IMEI no corresponde a la solicitud autorizada.",
+        },
+        { status: 409 }
+      );
+    }
     const rawEquipmentCatalogId = body.equipoCatalogoId;
     const hasEquipmentCatalogId =
       rawEquipmentCatalogId !== null &&
@@ -1190,6 +1384,123 @@ export async function POST(req: Request) {
     }
 
     const plataformaDispositivo = platformResolution.platform;
+    const solicitudPlatform = normalizeCreditDevicePlatform(
+      solicitudContext?.plataforma
+    );
+
+    if (
+      solicitudContext?.plataforma &&
+      (!solicitudPlatform || solicitudPlatform !== plataformaDispositivo)
+    ) {
+      return NextResponse.json(
+        {
+          code: "SOLICITUD_PLATAFORMA_DIFERENTE",
+          error:
+            "La plataforma del equipo no corresponde a la solicitud autorizada.",
+        },
+        { status: 409 }
+      );
+    }
+
+    if (requestedSolicitudId) {
+      solicitudOperationLock =
+        await tryAcquireSolicitudOperationLock(requestedSolicitudId);
+      if (!solicitudOperationLock) {
+        return NextResponse.json(
+          {
+            code: "SOLICITUD_OPERACION_EN_PROCESO",
+            error:
+              "La solicitud ya se está procesando. Intenta nuevamente en unos segundos.",
+            retryable: true,
+          },
+          { status: 409, headers: { "Retry-After": "2" } }
+        );
+      }
+
+      const lockedSolicitud =
+        await getActiveSolicitudCreditContext(requestedSolicitudId);
+      if (
+        !lockedSolicitud ||
+        !canOperateSolicitudContext({
+          central: adminCentral,
+          seller: sellerSession,
+          viewerAllyId: user.aliadoId,
+          owner: lockedSolicitud,
+        })
+      ) {
+        return NextResponse.json(
+          {
+            code: "SOLICITUD_NO_DISPONIBLE",
+            error: "La solicitud ya no está disponible para finalizar.",
+          },
+          { status: 409 }
+        );
+      }
+      if (!documentValuesMatch(lockedSolicitud.clienteDocumento, clienteDocumento)) {
+        return NextResponse.json(
+          {
+            code: "SOLICITUD_DOCUMENTO_DIFERENTE",
+            error: "La cédula no corresponde a la solicitud autorizada.",
+          },
+          { status: 409 }
+        );
+      }
+      const lockedAssessmentId = String(
+        lockedSolicitud.dataCreditoAssessmentId || ""
+      ).toLowerCase();
+      if (
+        lockedAssessmentId &&
+        lockedAssessmentId !== requestedAssessmentId.toLowerCase()
+      ) {
+        return NextResponse.json(
+          {
+            code: "SOLICITUD_DATACREDITO_DIFERENTE",
+            error: "La consulta de DataCrédito no corresponde a esta solicitud.",
+          },
+          { status: 409 }
+        );
+      }
+      const lockedImei = String(lockedSolicitud.imei || "").replace(/\D/g, "");
+      if (lockedImei && (lockedImei !== imei || lockedImei !== deviceUid)) {
+        return NextResponse.json(
+          {
+            code: "SOLICITUD_IMEI_DIFERENTE",
+            error: "El IMEI no corresponde a la solicitud autorizada.",
+          },
+          { status: 409 }
+        );
+      }
+      const lockedPlatform = normalizeCreditDevicePlatform(
+        lockedSolicitud.plataforma
+      );
+      if (lockedSolicitud.plataforma && lockedPlatform !== plataformaDispositivo) {
+        return NextResponse.json(
+          {
+            code: "SOLICITUD_PLATAFORMA_DIFERENTE",
+            error:
+              "La plataforma del equipo no corresponde a la solicitud autorizada.",
+          },
+          { status: 409 }
+        );
+      }
+      if (
+        !solicitudContext ||
+        lockedSolicitud.usuarioId !== creditOwner.usuarioId ||
+        lockedSolicitud.vendedorId !== creditOwner.vendedorId ||
+        lockedSolicitud.sedeId !== creditOwner.sedeId ||
+        lockedSolicitud.aliadoId !== creditOwner.aliadoId
+      ) {
+        return NextResponse.json(
+          {
+            code: "SOLICITUD_TITULAR_CAMBIO",
+            error:
+              "La asignación de la solicitud cambió durante el cierre. Actualiza el expediente e intenta nuevamente.",
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const isIphoneCredit = plataformaDispositivo === "IPHONE";
     const requiresDeliveryEvidence =
       isIphoneCredit || plataformaDispositivo === "ANDROID";
@@ -1277,7 +1588,9 @@ export async function POST(req: Request) {
 
       if (!dataCreditoAssessment) {
         const recovery = await recoverDataCreditoCredit(
-          dataCreditoAssessmentMatch
+          dataCreditoAssessmentMatch,
+          requestedSolicitudId,
+          adminCentral
         );
         if (recovery) {
           return recovery;
@@ -1486,6 +1799,20 @@ export async function POST(req: Request) {
         return NextResponse.json(
           { error: "No se encontro el proceso de FirmaSeguro para este credito." },
           { status: 404 }
+        );
+      }
+
+      if (
+        !solicitudContext ||
+        storedFirmaSeguroProcess.draftId !== solicitudContext.id
+      ) {
+        return NextResponse.json(
+          {
+            code: "FIRMASEGURO_DRAFT_MISMATCH",
+            error:
+              "El proceso de FirmaSeguro no corresponde a la solicitud autorizada.",
+          },
+          { status: 409 }
         );
       }
 
@@ -1930,6 +2257,7 @@ export async function POST(req: Request) {
       sedeId: creditOwner.sedeId,
       clienteDocumento,
       clientePrimerApellido,
+      imei,
       plataforma: plataformaDispositivo,
     });
     if (
@@ -1944,6 +2272,62 @@ export async function POST(req: Request) {
         },
         { status: 409 }
       );
+    }
+    if (!solicitudOperationLock) {
+      solicitudOperationLock = await tryAcquireSolicitudOperationLock(
+        solicitudReservation.id
+      );
+      if (!solicitudOperationLock) {
+        return NextResponse.json(
+          {
+            code: "SOLICITUD_OPERACION_EN_PROCESO",
+            error:
+              "La solicitud ya se está procesando. Intenta nuevamente en unos segundos.",
+            retryable: true,
+          },
+          { status: 409, headers: { "Retry-After": "2" } }
+        );
+      }
+
+      const lockedReservation = await getActiveSolicitudCreditContext(
+        solicitudReservation.id
+      );
+      const lockedReservationImei = String(lockedReservation?.imei || "").replace(
+        /\D/g,
+        ""
+      );
+      const lockedReservationPlatform = normalizeCreditDevicePlatform(
+        lockedReservation?.plataforma
+      );
+      if (
+        !lockedReservation ||
+        !canOperateSolicitudContext({
+          central: adminCentral,
+          seller: sellerSession,
+          viewerAllyId: user.aliadoId,
+          owner: lockedReservation,
+        }) ||
+        !documentValuesMatch(
+          lockedReservation.clienteDocumento,
+          clienteDocumento
+        ) ||
+        lockedReservationImei !== imei ||
+        lockedReservationImei !== deviceUid ||
+        lockedReservationPlatform !== plataformaDispositivo ||
+        lockedReservation.usuarioId !== creditOwner.usuarioId ||
+        lockedReservation.vendedorId !== creditOwner.vendedorId ||
+        lockedReservation.sedeId !== creditOwner.sedeId ||
+        lockedReservation.aliadoId !== creditOwner.aliadoId
+      ) {
+        return NextResponse.json(
+          {
+            code: "SOLICITUD_RESERVA_CAMBIO",
+            error:
+              "La reserva de la solicitud cambió durante el cierre. Actualiza el expediente e intenta nuevamente.",
+          },
+          { status: 409 }
+        );
+      }
     }
     const iphoneAnalystEnrollmentReview = isIphoneCredit
       ? await getIphoneEnrollmentReviewForSolicitud({
@@ -2111,19 +2495,24 @@ export async function POST(req: Request) {
       const webhookIdentityEvidence = extractVeriffIdentityDocumentEvidence(
         veriffValidation.webhookPayload
       );
-      const sameSede = veriffValidation.sedeId === user.sedeId;
-      const sameAlly =
-        admin &&
-        user.aliadoAccesoId &&
-        veriffValidation.aliadoId === user.aliadoAccesoId;
-
-      if (!adminCentral && !sameSede && !sameAlly) {
+      if (!canAccessVeriffValidation(user, veriffValidation, sellerSession)) {
         return NextResponse.json(
           {
             error:
-              "La validacion Veriff no pertenece a la sede o aliado de este credito.",
+              "La validacion Veriff no pertenece a la solicitud autorizada.",
           },
           { status: 403 }
+        );
+      }
+
+      if (veriffValidation.draftId !== solicitudReservation.id) {
+        return NextResponse.json(
+          {
+            code: "DATACREDITO_VERIFF_SOLICITUD_MISMATCH",
+            error:
+              "La validacion facial no corresponde a la solicitud autorizada. El credito fue rechazado.",
+          },
+          { status: 409 }
         );
       }
 
@@ -2134,17 +2523,6 @@ export async function POST(req: Request) {
               code: "DATACREDITO_VERIFF_ALREADY_LINKED",
               error:
                 "La validacion facial ya esta asociada a otro credito. Este credito fue rechazado para evitar reutilizar la identidad.",
-            },
-            { status: 409 }
-          );
-        }
-
-        if (veriffValidation.draftId !== solicitudReservation.id) {
-          return NextResponse.json(
-            {
-              code: "DATACREDITO_VERIFF_SOLICITUD_MISMATCH",
-              error:
-                "La validacion facial no corresponde a la solicitud consultada en DataCredito. El credito fue rechazado.",
             },
             { status: 409 }
           );
@@ -2475,6 +2853,38 @@ export async function POST(req: Request) {
         { status: 503 }
       );
     }
+
+    if (dataCreditoAssessment && dataCreditoAssessmentMatch) {
+      const claimed = await claimDataCreditoAssessment(
+        dataCreditoAssessmentMatch
+      );
+
+      if (!claimed) {
+        const recovery = await recoverDataCreditoCredit(
+          dataCreditoAssessmentMatch,
+          requestedSolicitudId,
+          adminCentral
+        );
+        if (recovery) {
+          return recovery;
+        }
+
+        return NextResponse.json(
+          {
+            code: "DATACREDITO_ASSESSMENT_INVALID",
+            error:
+              "La precalificacion ya fue utilizada, vencio o esta siendo procesada en otra solicitud.",
+          },
+          { status: 409 }
+        );
+      }
+
+      dataCreditoClaim = {
+        assessmentId: claimed.assessment.id,
+        claimToken: claimed.claimToken,
+      };
+    }
+
 
     let equalityUpload: unknown = null;
     let equalityActivate: unknown = null;
@@ -2979,35 +3389,6 @@ export async function POST(req: Request) {
     await ensureCreditAmortizationSchema();
     await ensureSolicitudSchema();
 
-    if (dataCreditoAssessment && dataCreditoAssessmentMatch) {
-      const claimed = await claimDataCreditoAssessment(
-        dataCreditoAssessmentMatch
-      );
-
-      if (!claimed) {
-        const recovery = await recoverDataCreditoCredit(
-          dataCreditoAssessmentMatch
-        );
-        if (recovery) {
-          return recovery;
-        }
-
-        return NextResponse.json(
-          {
-            code: "DATACREDITO_ASSESSMENT_INVALID",
-            error:
-              "La precalificacion ya fue utilizada, vencio o esta siendo procesada en otra solicitud.",
-          },
-          { status: 409 }
-        );
-      }
-
-      dataCreditoClaim = {
-        assessmentId: claimed.assessment.id,
-        claimToken: claimed.claimToken,
-      };
-    }
-
     const creditCreateArgs = {
       data: {
         folio,
@@ -3187,6 +3568,60 @@ export async function POST(req: Request) {
       const credit = await transaction.credito.create(
         transactionCreditCreateArgs
       );
+      let persistedCredit = credit;
+
+      if (firmaSeguroProcess) {
+        const linkedFirmaSeguroProcess =
+          await linkFirmaSeguroProcessForCredit(
+            firmaSeguroProcess.processUuid,
+            credit.id,
+            solicitudReservation.id,
+            transaction
+          );
+
+        if (!linkedFirmaSeguroProcess) {
+          throw new FirmaSeguroFinalizationError(
+            "FIRMASEGURO_LINK_CONFLICT",
+            "El proceso de FirmaSeguro cambió durante el cierre. El crédito no fue creado; revisa la solicitud e intenta nuevamente."
+          );
+        }
+
+        const markedFirmaSeguroCredit =
+          await markCreditoFirmaSeguroCompleted(
+            credit.id,
+            {
+              processUuid: firmaSeguroProcess.processUuid,
+              status: firmaSeguroProcess.status,
+              signedDocumentFileName:
+                firmaSeguroProcess.signedDocumentFileName,
+              completedAt: firmaSeguroProcess.completedAt || new Date(),
+            },
+            transaction
+          );
+
+        if (!markedFirmaSeguroCredit) {
+          throw new FirmaSeguroFinalizationError(
+            "FIRMASEGURO_CREDIT_UPDATE_CONFLICT",
+            "No se pudo vincular la evidencia firmada al crédito. El crédito no fue creado; intenta nuevamente."
+          );
+        }
+
+        const refreshedCredit = await transaction.credito.findUnique({
+          where: { id: credit.id },
+          include: creditListInclude,
+          omit: creditListOmit,
+        });
+
+        if (!refreshedCredit) {
+          throw new FirmaSeguroFinalizationError(
+            "FIRMASEGURO_CREDIT_NOT_FOUND",
+            "No se pudo confirmar el crédito firmado. El cierre fue cancelado de forma segura."
+          );
+        }
+
+        persistedCredit = refreshedCredit;
+      }
+
       await persistCreditAmortization(
         transaction as unknown as CreditAmortizationDbClient,
         credit.id,
@@ -3214,6 +3649,8 @@ export async function POST(req: Request) {
           solicitudId: solicitudReservation.id,
           assessmentId: dataCreditoAssessment?.id || null,
           clienteDocumento,
+          imei,
+          plataforma: plataformaDispositivo,
           usuarioId: creditOwner.usuarioId,
           vendedorId: creditOwner.vendedorId,
           sedeId: creditOwner.sedeId,
@@ -3224,7 +3661,10 @@ export async function POST(req: Request) {
       if (!linkedSolicitudId) {
         throw new Error("SOLICITUD_COMPLETION_CONFLICT");
       }
-      return { credit, veriffValidation: linkedVeriffValidation };
+      return {
+        credit: persistedCredit,
+        veriffValidation: linkedVeriffValidation,
+      };
     };
 
     let creationResult;
@@ -3254,42 +3694,27 @@ export async function POST(req: Request) {
         createCreditWithAmortization(transaction)
       );
     }
-    let created = creationResult.credit;
+    const created = creationResult.credit;
     veriffValidation = creationResult.veriffValidation;
     createdCreditId = created.id;
-
-    if (firmaSeguroProcess) {
-      await linkFirmaSeguroProcessForCredit(firmaSeguroProcess.processUuid, created.id);
-      await markCreditoFirmaSeguroCompleted(created.id, {
-        processUuid: firmaSeguroProcess.processUuid,
-        status: firmaSeguroProcess.status,
-        signedDocumentFileName: firmaSeguroProcess.signedDocumentFileName,
-        completedAt: firmaSeguroProcess.completedAt || new Date(),
-      });
-
-      const linkedCredit = await prisma.credito.findUnique({
-        where: { id: created.id },
-        include: creditListInclude,
-        omit: creditListOmit,
-      });
-
-      if (linkedCredit) {
-        created = linkedCredit;
-      }
-    }
+    const serializedCreated = serializeCredit(created);
 
     return NextResponse.json({
       ok: true,
       warning: pendingDeliveryWarning,
-      item: serializeCredit(created),
+      item: canViewSensitiveCredit
+        ? serializedCreated
+        : redactCreditForNonAdmin(serializedCreated),
       deliveryStatus: effectiveDeliveryStatus,
       solicitud: {
         id: solicitudReservation.id,
         estado: "CERRADO",
         creditoId: created.id,
       },
-      identityValidation: buildVeriffSnapshot(veriffValidation),
-      equality: equalitySummary
+      identityValidation: canViewSensitiveCredit
+        ? buildVeriffSnapshot(veriffValidation)
+        : null,
+      equality: canViewSensitiveCredit && equalitySummary
         ? {
             upload: equalityUpload,
             activate: equalityActivate,
@@ -3300,10 +3725,6 @@ export async function POST(req: Request) {
         : null,
     });
   } catch (error) {
-    if (dataCreditoClaim && !createdCreditId) {
-      await releaseDataCreditoAssessment(dataCreditoClaim).catch(() => undefined);
-    }
-
     if (error instanceof ActiveSolicitudConflictError) {
       return NextResponse.json(
         {
@@ -3336,6 +3757,17 @@ export async function POST(req: Request) {
       );
     }
 
+    if (error instanceof FirmaSeguroFinalizationError) {
+      return NextResponse.json(
+        {
+          code: error.code,
+          error: error.message,
+          retryable: true,
+        },
+        { status: error.status }
+      );
+    }
+
     const rawErrorCode =
       error && typeof error === "object" && "code" in error
         ? String((error as { code?: unknown }).code || "")
@@ -3358,6 +3790,7 @@ export async function POST(req: Request) {
       if (recovered) {
         return dataCreditoRecoveredCreditResponse(
           recovered,
+          canViewSensitiveCredit,
           "El crédito se creó correctamente, pero una vinculación posterior quedó pendiente. No repitas la consulta; revisa el expediente."
         );
       }
@@ -3367,5 +3800,11 @@ export async function POST(req: Request) {
       { error: "No se pudo crear el credito" },
       { status: 500 }
     );
+  } finally {
+    if (dataCreditoClaim && !createdCreditId) {
+      await releaseDataCreditoAssessment(dataCreditoClaim).catch(() => undefined);
+      dataCreditoClaim = null;
+    }
+    await solicitudOperationLock?.release();
   }
 }

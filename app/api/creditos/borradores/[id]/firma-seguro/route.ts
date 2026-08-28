@@ -57,7 +57,7 @@ import {
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
 import { tryAcquireFirmaSeguroDraftDispatchLock } from "@/lib/firmaseguro-storage";
 import { isAdminRole } from "@/lib/roles";
-import { ensureSolicitudSchema } from "@/lib/solicitudes-storage";
+import { expireStaleSolicitudes } from "@/lib/solicitudes-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -188,10 +188,13 @@ function toValidDate(value: unknown, fallback: Date) {
 }
 
 async function ensureDraftTable() {
-  await ensureSolicitudSchema();
+  await expireStaleSolicitudes();
 }
 
-async function readAuthorizedDraft(draftId: number) {
+async function readAuthorizedDraft(
+  draftId: number,
+  options: { operate?: boolean } = {}
+) {
   const user = await getSessionUser();
 
   if (!user) {
@@ -202,7 +205,7 @@ async function readAuthorizedDraft(draftId: number) {
   const centralAdmin = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
   const sellerSession = admin ? null : await getSellerSessionUser(user);
 
-  if (!admin && !sellerSession) {
+  if (!admin && sellerSession?.tipoPerfil !== "VENDEDOR") {
     return {
       ok: false as const,
       status: 403,
@@ -212,18 +215,30 @@ async function readAuthorizedDraft(draftId: number) {
 
   await ensureDraftTable();
 
-  const where = [`d."id" = $1`, `d."estado" = 'ABIERTO'`];
+  const where = [
+    `d."id" = $1`,
+    `d."estado" = 'ABIERTO'`,
+    `d."creditoId" IS NULL`,
+    `COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP`,
+  ];
   const values: unknown[] = [draftId];
 
   if (admin && !centralAdmin) {
     values.push(user.aliadoAccesoId || -1);
     where.push(`s."aliadoId" = $${values.length}`);
   } else if (!admin) {
-    values.push(user.sedeId);
-    where.push(`d."sedeId" = $${values.length}`);
-
     values.push(sellerSession?.id || 0);
     where.push(`d."vendedorId" = $${values.length}`);
+
+    values.push(user.aliadoId || -1);
+    where.push(`s."aliadoId" = $${values.length}`);
+  }
+  if (options.operate && admin && !centralAdmin) {
+    return {
+      ok: false as const,
+      status: 403,
+      error: "Solo el administrador central puede operar esta solicitud",
+    };
   }
 
   const rows = await prisma.$queryRawUnsafe<DraftRow[]>(
@@ -402,8 +417,14 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
     sanitizeText(payload.referenciaEquipo) ||
     [equipoMarca, equipoModelo].filter(Boolean).join(" ");
   const imei = sanitizeDeviceValue(payload.imei || payload.deviceUid)
-    .replace(/\D/g, "")
-    .slice(0, 15);
+    .replace(/\D/g, "");
+  if (!/^\d{15}$/.test(imei)) {
+    throw new CreditValidationError(
+      "El IMEI debe tener exactamente 15 numeros antes de enviar a FirmaSeguro.",
+      400,
+      "FIRMASEGURO_IMEI_INVALID"
+    );
+  }
   const rawEquipmentCatalogId = payload.equipoCatalogoId;
   const hasEquipmentCatalogId =
     rawEquipmentCatalogId !== null &&
@@ -785,7 +806,7 @@ export async function POST(
       );
     }
 
-    const authorized = await readAuthorizedDraft(draftId);
+    const authorized = await readAuthorizedDraft(draftId, { operate: true });
     if (!authorized.ok) {
       return NextResponse.json(
         { ok: false, error: authorized.error },
@@ -802,7 +823,6 @@ export async function POST(
         message: "La solicitud ya tiene un proceso activo en FirmaSeguro",
       });
     }
-    const built = await buildDraftCredit(authorized.row);
     const dispatchLock = await tryAcquireFirmaSeguroDraftDispatchLock(draftId);
     if (!dispatchLock) {
       const concurrentProcess = await getLatestFirmaSeguroProcessForDraft(draftId);
@@ -827,6 +847,16 @@ export async function POST(
     }
 
     try {
+      const lockedAuthorized = await readAuthorizedDraft(draftId, {
+        operate: true,
+      });
+      if (!lockedAuthorized.ok) {
+        return NextResponse.json(
+          { ok: false, error: lockedAuthorized.error },
+          { status: lockedAuthorized.status }
+        );
+      }
+
       const lockedCurrent = await getLatestFirmaSeguroProcessForDraft(draftId);
       if (lockedCurrent && canReuseFirmaSeguroProcess(lockedCurrent)) {
         return NextResponse.json({
@@ -837,10 +867,11 @@ export async function POST(
         });
       }
 
+      const built = await buildDraftCredit(lockedAuthorized.row);
       const { credit, amortizationPlan, financingParameters } = built;
       const draftFolio = lockedCurrent?.draftFolio || credit.folio;
       const payload = {
-        ...payloadObject(authorized.row.payload),
+        ...payloadObject(lockedAuthorized.row.payload),
         firmaSeguroDraftFolio: draftFolio,
       };
       const firmaSeguroDraftPayload: Record<string, unknown> = {
@@ -873,16 +904,28 @@ export async function POST(
         parametros: financingParameters,
       });
 
-      await prisma.$executeRawUnsafe(
+      const updatedDraftRows = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
         `
           UPDATE "CreditoBorrador"
           SET "payload" = $2::jsonb,
               "updatedAt" = NOW()
           WHERE "id" = $1
+            AND "estado" = 'ABIERTO'
+            AND "creditoId" IS NULL
+            AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') >
+              CURRENT_TIMESTAMP
+          RETURNING "id"
         `,
         draftId,
         JSON.stringify(payload)
       );
+      if (updatedDraftRows.length !== 1) {
+        throw new CreditValidationError(
+          "La solicitud cambió antes de enviar el contrato. Recarga el caso e intenta nuevamente.",
+          409,
+          "FIRMASEGURO_DRAFT_CHANGED"
+        );
+      }
 
       const process = await createFirmaSeguroProcessForDraft(credit, {
         draftId,

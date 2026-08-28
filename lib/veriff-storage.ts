@@ -468,6 +468,10 @@ export async function createVeriffValidation(input: CreateInput) {
             WHERE draft."id" = $1
               AND draft."estado" = 'ABIERTO'
               AND draft."creditoId" IS NULL
+              AND COALESCE(
+                draft."expiresAt",
+                draft."createdAt" + INTERVAL '15 days'
+              ) > CURRENT_TIMESTAMP
           )
         RETURNING *
       `,
@@ -632,6 +636,9 @@ export async function updateVeriffValidationFromDecision(
       summary.status,
       source
     );
+    const preservesApprovedAgainstPending = Boolean(
+      currentStatus === "APPROVED" && summary.status === "PENDING"
+    );
     const resolvesActiveBlockWithCurrentDecision = Boolean(
       source === "decisionPayload" &&
         (currentStatus === "REVIEW" || currentStatus === "RESUBMISSION") &&
@@ -643,7 +650,7 @@ export async function updateVeriffValidationFromDecision(
     );
     const incomingRisk = summarizeVeriffRisk(payload);
     const reviewRequired = Boolean(
-      preserveCanonicalStatus ||
+      (preserveCanonicalStatus && !preservesApprovedAgainstPending) ||
         (current.creditoId &&
           (statusEvidence.conflict ||
           (!incomingIdentity.ok && incomingIdentity.status !== "missing") ||

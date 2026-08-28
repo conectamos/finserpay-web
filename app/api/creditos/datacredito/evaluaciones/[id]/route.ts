@@ -17,6 +17,7 @@ import {
 } from "@/lib/datacredito/storage";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
+import { canOperateSolicitud } from "@/lib/solicitud-operation-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,12 +34,13 @@ export async function GET(request: Request, context: RouteContext) {
 
   const admin = isAdminRole(user.rolNombre);
   const seller = admin ? null : await getSellerSessionUser(user);
-  if (!admin && !seller) {
+  if (!admin && seller?.tipoPerfil !== "VENDEDOR") {
     return NextResponse.json(
       { ok: false, error: "Selecciona e ingresa con el perfil del asesor" },
       { status: 403 }
     );
   }
+  const central = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
 
   const { id } = await context.params;
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
@@ -72,26 +74,38 @@ export async function GET(request: Request, context: RouteContext) {
 
   try {
     const row = await getDataCreditoAssessmentById(id);
-    const scope: DataCreditoAssessmentScope = {
-      userId: user.id,
-      sellerId: seller?.id || null,
-      sedeId: user.sedeId,
-      aliadoId: user.aliadoId || null,
-    };
-
     const requestedDraft =
       row && draftId ? await getActiveSolicitudCreditContext(draftId) : null;
-    const assessmentBelongsToCentralDraft = Boolean(
-      admin &&
-        isFinserPayCentralAlly(user.aliadoAccesoCodigo) &&
+    const authorizedDraft = Boolean(
+      canOperateSolicitud({
+        central,
+        seller,
+        viewerAllyId: user.aliadoId,
+        owner: requestedDraft,
+      }) &&
         requestedDraft?.dataCreditoAssessmentId &&
         requestedDraft.dataCreditoAssessmentId.toLowerCase() === id.toLowerCase()
     );
-    if (
-      !row ||
-      (!dataCreditoAssessmentMatchesScope(row, scope) &&
-        !assessmentBelongsToCentralDraft)
-    ) {
+    if (draftId && !authorizedDraft) {
+      return NextResponse.json(
+        { ok: false, error: "Evaluacion no encontrada" },
+        { status: 404 }
+      );
+    }
+    const scope: DataCreditoAssessmentScope = requestedDraft
+      ? {
+          userId: requestedDraft.usuarioId,
+          sellerId: requestedDraft.vendedorId,
+          sedeId: requestedDraft.sedeId,
+          aliadoId: requestedDraft.aliadoId,
+        }
+      : {
+          userId: user.id,
+          sellerId: seller?.id || null,
+          sedeId: user.sedeId,
+          aliadoId: user.aliadoId || null,
+        };
+    if (!row || !dataCreditoAssessmentMatchesScope(row, scope)) {
       return NextResponse.json(
         { ok: false, error: "Evaluacion no encontrada" },
         { status: 404 }

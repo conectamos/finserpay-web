@@ -2,7 +2,15 @@ import { createHash } from "node:crypto";
 import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { ensureDataCreditoSchema } from "@/lib/datacredito/storage";
-import { ensureFirmaSeguroSchema } from "@/lib/firmaseguro-storage";
+import {
+  isFirmaSeguroFailedStatus,
+  isFirmaSeguroSuccessfulStatus,
+} from "@/lib/firmaseguro-status";
+import {
+  ensureFirmaSeguroSchema,
+  lockSolicitudOperationMutation,
+  SOLICITUD_OPERATION_LOCK_NAMESPACE,
+} from "@/lib/firmaseguro-storage";
 import { ensureVeriffSchema } from "@/lib/veriff-storage";
 import {
   SOLICITUD_FILTER_STATES,
@@ -17,6 +25,7 @@ import {
   resolveSolicitudProcessStage,
   resolveSolicitudStage,
   selectCanonicalSolicitudesByDocument,
+  SolicitudCanonicalMutationError,
   type SolicitudFilterState,
   type SolicitudFilters,
   type SolicitudOwnership,
@@ -249,16 +258,36 @@ export async function ensureSolicitudSchema() {
 }
 
 async function expireStaleWith(database: Database) {
-  await database.$executeRawUnsafe(`
-    UPDATE "CreditoBorrador"
-    SET "estado" = 'CERRADO',
-        "closedReason" = COALESCE("closedReason", 'EXPIRADA_15_DIAS'),
-        "closedAt" = COALESCE("closedAt", CURRENT_TIMESTAMP),
-        "updatedAt" = CURRENT_TIMESTAMP
-    WHERE "estado" = 'ABIERTO'
-      AND "creditoId" IS NULL
-      AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') <= CURRENT_TIMESTAMP
-  `);
+  await database.$queryRawUnsafe<Array<{ id: number }>>(
+    `
+      WITH stale AS MATERIALIZED (
+        SELECT "id"
+        FROM "CreditoBorrador"
+        WHERE "estado" = 'ABIERTO'
+          AND "creditoId" IS NULL
+          AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') <=
+            CURRENT_TIMESTAMP
+      ),
+      lockable AS MATERIALIZED (
+        SELECT stale."id"
+        FROM stale
+        WHERE pg_try_advisory_xact_lock($1::integer, stale."id")
+      )
+      UPDATE "CreditoBorrador" draft
+      SET "estado" = 'CERRADO',
+          "closedReason" = COALESCE(draft."closedReason", 'EXPIRADA_15_DIAS'),
+          "closedAt" = COALESCE(draft."closedAt", CURRENT_TIMESTAMP),
+          "updatedAt" = CURRENT_TIMESTAMP
+      FROM lockable
+      WHERE draft."id" = lockable."id"
+        AND draft."estado" = 'ABIERTO'
+        AND draft."creditoId" IS NULL
+        AND COALESCE(draft."expiresAt", draft."createdAt" + INTERVAL '15 days') <=
+          CURRENT_TIMESTAMP
+      RETURNING draft."id"
+    `,
+    SOLICITUD_OPERATION_LOCK_NAMESPACE
+  );
 }
 
 export async function expireStaleSolicitudes() {
@@ -274,6 +303,8 @@ export type ActiveSolicitudCreditContext = {
   aliadoId: number | null;
   clienteDocumento: string | null;
   clientePrimerApellido: string | null;
+  imei: string | null;
+  plataforma: string | null;
   dataCreditoAssessmentId: string | null;
 };
 
@@ -285,7 +316,8 @@ export async function getActiveSolicitudCreditContext(
   const rows = await prisma.$queryRawUnsafe<ActiveSolicitudCreditContext[]>(
     `
       SELECT d."id", d."usuarioId", d."vendedorId", d."sedeId",
-        s."aliadoId", d."clienteDocumento",
+        s."aliadoId", d."clienteDocumento", d."imei",
+        COALESCE(NULLIF(d."plataforma", ''), NULLIF(d."payload"->>'plataformaDispositivo', '')) AS "plataforma",
         NULLIF(d."payload"->>'clientePrimerApellido', '') AS "clientePrimerApellido",
         COALESCE(
           d."dataCreditoAssessmentId"::text,
@@ -338,6 +370,71 @@ type ActiveDraftOwnerRow = {
   payload?: Record<string, unknown> | null;
   materialized?: boolean;
 };
+
+type FirmaSeguroDraftTermsRow = {
+  completedAt: Date | string | null;
+  draftPayload: Record<string, unknown> | null;
+  hasSignedDocument: boolean;
+  lastError: string | null;
+  status: string | null;
+};
+
+const FIRMASEGURO_SIGNED_DRAFT_FIELDS = [
+  "clienteTipoDocumento",
+  "clienteNombre",
+  "clientePrimerNombre",
+  "clientePrimerApellido",
+  "clienteDocumento",
+  "clienteTelefono",
+  "clienteCorreo",
+  "clienteDireccion",
+  "equipoCatalogoId",
+  "equipoMarca",
+  "equipoModelo",
+  "referenciaEquipo",
+  "imei",
+  "deviceUid",
+  "plataformaDispositivo",
+  "valorEquipoTotal",
+  "cuotaInicial",
+  "plazoMeses",
+  "frecuenciaPago",
+  "fechaPrimerPago",
+] as const;
+
+function comparableSignedDraftValue(value: unknown) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
+async function lockSolicitudOperationsInOrder(
+  database: Prisma.TransactionClient,
+  ids: readonly number[]
+) {
+  const orderedIds = [...new Set(ids)]
+    .filter((id) => Number.isSafeInteger(id) && id > 0)
+    .sort((left, right) => left - right);
+  for (const id of orderedIds) {
+    await lockSolicitudOperationMutation(database, id);
+  }
+}
+
+function firmaSeguroTermsAreLocked(row: FirmaSeguroDraftTermsRow | null) {
+  if (!row) return false;
+  if (
+    row.completedAt ||
+    row.hasSignedDocument ||
+    isFirmaSeguroSuccessfulStatus(row.status)
+  ) {
+    return true;
+  }
+  if (String(row.lastError || "").trim() || isFirmaSeguroFailedStatus(row.status)) {
+    return false;
+  }
+  return Boolean(String(row.status || "").trim());
+}
 
 type BlockingSolicitudIdentityRow = {
   source: "DRAFT" | "CREDIT";
@@ -455,21 +552,27 @@ export async function reserveSolicitudForIdentity(input: {
   sedeId: number;
   clienteDocumento: string;
   clientePrimerApellido: string;
+  imei?: string | null;
   plataforma?: string | null;
 }) {
   await ensureSolicitudSchema();
   const document = normalizeDigits(input.clienteDocumento);
+  const imei = normalizeDigits(input.imei);
+  const platform = normalizePlatform(input.plataforma);
   if (document.length < 5) throw new Error("DOCUMENTO_SOLICITUD_INVALIDO");
+  if (imei && !/^\d{15}$/.test(imei)) throw new Error("IMEI_SOLICITUD_INVALIDO");
+  if (!platform) throw new Error("PLATAFORMA_SOLICITUD_INVALIDA");
 
   return prisma.$transaction(async (transaction) => {
     await lockIdentity(transaction, "document", document);
+    if (imei) await lockIdentity(transaction, "imei", imei);
     await expireStaleWith(transaction);
 
     if (input.solicitudId) {
       const selected = await transaction.$queryRawUnsafe<ActiveDraftOwnerRow[]>(
         `
           SELECT "id", "usuarioId", "vendedorId", "sedeId",
-            "clienteDocumento", "imei"
+            "clienteDocumento", "imei", "plataforma", "payload"
           FROM "CreditoBorrador"
           WHERE "id" = $1
             AND "estado" = 'ABIERTO'
@@ -484,21 +587,57 @@ export async function reserveSolicitudForIdentity(input: {
       if (!selected[0] || !sameOwner(selected[0], input)) {
         throw new ActiveSolicitudConflictError();
       }
+      const storedImei = normalizeDigits(selected[0].imei);
+      const storedPlatform = normalizePlatform(selected[0].plataforma);
+      if (imei && storedImei && storedImei !== imei) {
+        throw new ActiveSolicitudConflictError(
+          "El IMEI no corresponde a la solicitud que estás retomando."
+        );
+      }
+      if (storedPlatform && storedPlatform !== platform) {
+        throw new ActiveSolicitudConflictError(
+          "La plataforma no corresponde a la solicitud que estás retomando."
+        );
+      }
       const blocker = await findBlockingSolicitudByDocument(
         transaction,
         document,
         selected[0].id
       );
       if (blocker) throw solicitudConflictFromBlocker(blocker);
+      if (imei) {
+        const imeiBlocker = await findActiveByIdentity(
+          transaction,
+          "",
+          imei,
+          selected[0].id
+        );
+        if (imeiBlocker) {
+          throw new ActiveSolicitudConflictError(
+            "Ya existe una solicitud en proceso para este IMEI."
+          );
+        }
+      }
       await transaction.$executeRawUnsafe(
         `
           UPDATE "CreditoBorrador"
-          SET "plataforma" = COALESCE($2, "plataforma"),
+          SET "plataforma" = $2,
+              "imei" = COALESCE(NULLIF($3::text, ''), "imei"),
+              "payload" = COALESCE("payload", '{}'::jsonb)
+                || jsonb_build_object('plataformaDispositivo', $2::text)
+                || CASE
+                  WHEN $3::text <> '' THEN jsonb_build_object(
+                    'imei', $3::text,
+                    'deviceUid', $3::text
+                  )
+                  ELSE '{}'::jsonb
+                END,
               "updatedAt" = CURRENT_TIMESTAMP
           WHERE "id" = $1 AND "estado" = 'ABIERTO'
         `,
         selected[0].id,
-        normalizePlatform(input.plataforma)
+        platform,
+        imei
       );
       return { id: selected[0].id, reused: true };
     }
@@ -507,21 +646,30 @@ export async function reserveSolicitudForIdentity(input: {
     if (blocker) {
       throw solicitudConflictFromBlocker(blocker);
     }
+    if (imei) {
+      const imeiBlocker = await findActiveByIdentity(transaction, "", imei);
+      if (imeiBlocker) {
+        throw new ActiveSolicitudConflictError(
+          "Ya existe una solicitud en proceso para este IMEI."
+        );
+      }
+    }
 
     const rows = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
       `
         INSERT INTO "CreditoBorrador" (
           "usuarioId", "vendedorId", "sedeId", "currentStep",
-          "clienteDocumento", "plataforma", "payload", "expiresAt", "updatedAt"
+          "clienteDocumento", "imei", "plataforma", "payload", "expiresAt", "updatedAt"
         )
-        VALUES ($1, $2, $3, 1, $4, $5, $6::jsonb, CURRENT_TIMESTAMP + INTERVAL '15 days', CURRENT_TIMESTAMP)
+        VALUES ($1, $2, $3, 1, $4, NULLIF($5::text, ''), $6, $7::jsonb, CURRENT_TIMESTAMP + INTERVAL '15 days', CURRENT_TIMESTAMP)
         RETURNING "id"
       `,
       input.usuarioId,
       input.vendedorId,
       input.sedeId,
       input.clienteDocumento.trim(),
-      normalizePlatform(input.plataforma),
+      imei,
+      platform,
       JSON.stringify({
         clienteDocumento: input.clienteDocumento.trim(),
         clientePrimerApellido: String(input.clientePrimerApellido || "")
@@ -529,7 +677,8 @@ export async function reserveSolicitudForIdentity(input: {
           .replace(/\s+/g, " ")
           .trim()
           .slice(0, 90),
-        plataformaDispositivo: normalizePlatform(input.plataforma),
+        plataformaDispositivo: platform,
+        ...(imei ? { imei, deviceUid: imei } : {}),
         solicitudOrigen: "DATACREDITO",
         dataCreditoStatus: "PENDING",
         dataCreditoErrorCode: null,
@@ -550,11 +699,12 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     : null;
 
   return prisma.$transaction(async (transaction) => {
+    let targetId = input.id || null;
+    if (targetId) await lockSolicitudOperationMutation(transaction, targetId);
     if (document) await lockIdentity(transaction, "document", document);
     if (imei) await lockIdentity(transaction, "imei", imei);
     await expireStaleWith(transaction);
 
-    let targetId = input.id || null;
     let targetRow: ActiveDraftOwnerRow | null = null;
     let mustCheckIdentity = Boolean(document || imei);
     if (targetId) {
@@ -623,6 +773,43 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           dataCreditoAssessmentId: assessmentId,
           payload: input.payload,
         };
+    const canonicalPayload: Record<string, unknown> = { ...canonical.payload };
+    const firmaSeguroRows = targetId
+      ? await transaction.$queryRawUnsafe<FirmaSeguroDraftTermsRow[]>(
+          `
+            SELECT "status", "completedAt",
+              ("signedDocumentBase64" IS NOT NULL) AS "hasSignedDocument",
+              "lastError", "draftPayload"
+            FROM "FirmaSeguroProcess"
+            WHERE "draftId" = $1
+            ORDER BY "id" DESC
+            LIMIT 1
+          `,
+          targetId
+        )
+      : [];
+    const firmaSeguroTerms = firmaSeguroRows[0] || null;
+    if (firmaSeguroTermsAreLocked(firmaSeguroTerms)) {
+      const signedPayload =
+        firmaSeguroTerms?.draftPayload &&
+        typeof firmaSeguroTerms.draftPayload === "object" &&
+        !Array.isArray(firmaSeguroTerms.draftPayload)
+          ? firmaSeguroTerms.draftPayload
+          : {};
+      for (const field of FIRMASEGURO_SIGNED_DRAFT_FIELDS) {
+        if (!Object.prototype.hasOwnProperty.call(signedPayload, field)) continue;
+        if (
+          Object.prototype.hasOwnProperty.call(canonicalPayload, field) &&
+          comparableSignedDraftValue(canonicalPayload[field]) !==
+            comparableSignedDraftValue(signedPayload[field])
+        ) {
+          throw new SolicitudCanonicalMutationError(
+            "SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE"
+          );
+        }
+        canonicalPayload[field] = signedPayload[field];
+      }
+    }
     const storedStep = normalizeDraftStep(targetRow?.currentStep);
     const storedPayloadStep = normalizeDraftStep(
       targetRow?.payload?.wizardStep,
@@ -630,6 +817,18 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     );
     const incomingStep = normalizeDraftStep(input.currentStep);
     const persistedStep = Math.max(storedStep, storedPayloadStep, incomingStep);
+    const storedImei = normalizeDigits(targetRow?.imei);
+    const payloadImei = normalizeDigits(canonicalPayload.imei);
+    const payloadDeviceUid = normalizeDigits(canonicalPayload.deviceUid);
+    const incomingImeis = [imei, payloadImei, payloadDeviceUid].filter(Boolean);
+    if (
+      new Set(incomingImeis).size > 1 ||
+      (storedStep >= 3 &&
+        storedImei &&
+        incomingImeis.some((candidate) => candidate !== storedImei))
+    ) {
+      throw new SolicitudCanonicalMutationError("SOLICITUD_IMEI_INMUTABLE");
+    }
     const canonicalVeriffRows = targetId
       ? await transaction.$queryRawUnsafe<Array<{ id: number }>>(
           `
@@ -651,10 +850,19 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     const canonicalPlatform =
       normalizePlatform(targetRow?.plataforma) ||
       normalizePlatform(input.plataforma);
-    const persistedPayload = {
-      ...canonical.payload,
+    const canonicalImei =
+      (storedStep >= 3 ? storedImei : "") ||
+      imei ||
+      payloadImei ||
+      payloadDeviceUid ||
+      storedImei;
+    const persistedPayload: Record<string, unknown> = {
+      ...canonicalPayload,
       wizardStep: persistedStep,
       veriffValidationId: canonicalVeriffValidationId,
+      ...(canonicalImei
+        ? { imei: canonicalImei, deviceUid: canonicalImei }
+        : {}),
       ...(canonicalPlatform
         ? { plataformaDispositivo: canonicalPlatform }
         : {}),
@@ -670,7 +878,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
                 NULLIF($4::text, ''), "clienteDocumento"
               ),
               "clienteTelefono" = $5,
-              "imei" = $6,
+              "imei" = COALESCE(NULLIF($6::text, ''), "imei"),
               "plataforma" = COALESCE("plataforma", $7),
               "dataCreditoAssessmentId" = COALESCE($8::uuid, "dataCreditoAssessmentId"),
               "payload" = $9::jsonb,
@@ -680,10 +888,12 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         `,
         targetId,
         persistedStep,
-        input.clienteNombre,
+        String(persistedPayload.clienteNombre || input.clienteNombre || "").trim() ||
+          null,
         canonical.clienteDocumento,
-        input.clienteTelefono,
-        input.imei,
+        String(persistedPayload.clienteTelefono || input.clienteTelefono || "").trim() ||
+          null,
+        canonicalImei,
         normalizePlatform(input.plataforma),
         canonical.dataCreditoAssessmentId,
         payloadJson
@@ -699,6 +909,18 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
   });
 }
 
+export class SolicitudDataCreditoLinkError extends Error {
+  readonly code = "SOLICITUD_DATACREDITO_NO_VINCULADA";
+  readonly status = 409;
+
+  constructor() {
+    super(
+      "La consulta terminó, pero la solicitud ya no estaba abierta o vigente para vincular el resultado. No se ejecutó una nueva consulta."
+    );
+    this.name = "SolicitudDataCreditoLinkError";
+  }
+}
+
 export async function attachDataCreditoToSolicitud(input: {
   solicitudId: number;
   assessmentId: string;
@@ -706,7 +928,7 @@ export async function attachDataCreditoToSolicitud(input: {
   errorCode?: string | null;
   plataforma?: string | null;
 }) {
-  if (!isUuid(input.assessmentId)) return;
+  if (!isUuid(input.assessmentId)) throw new SolicitudDataCreditoLinkError();
   await ensureSolicitudSchema();
   const status = String(input.status || "PENDING")
     .trim()
@@ -716,11 +938,11 @@ export async function attachDataCreditoToSolicitud(input: {
     ? String(input.errorCode).trim().toUpperCase().slice(0, 80)
     : null;
   const rejected = status === "RECHAZADO";
-  await prisma.$executeRawUnsafe(
+  const rows = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
     `
       UPDATE "CreditoBorrador"
       SET "dataCreditoAssessmentId" = $2::uuid,
-          "plataforma" = COALESCE($3, "plataforma"),
+          "plataforma" = COALESCE("plataforma", $3),
           "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
             'solicitudOrigen', 'DATACREDITO',
             'dataCreditoAssessmentId', $2::text,
@@ -733,6 +955,11 @@ export async function attachDataCreditoToSolicitud(input: {
           "closedAt" = CASE WHEN $4::boolean THEN CURRENT_TIMESTAMP ELSE "closedAt" END,
           "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = $1
+        AND "estado" = 'ABIERTO'
+        AND "creditoId" IS NULL
+        AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') >
+          CURRENT_TIMESTAMP
+      RETURNING "id"
     `,
     input.solicitudId,
     input.assessmentId,
@@ -741,6 +968,8 @@ export async function attachDataCreditoToSolicitud(input: {
     status,
     errorCode
   );
+  if (rows.length !== 1) throw new SolicitudDataCreditoLinkError();
+  return rows[0].id;
 }
 
 export async function markSolicitudDataCreditoTechnicalError(input: {
@@ -753,10 +982,10 @@ export async function markSolicitudDataCreditoTechnicalError(input: {
     .trim()
     .toUpperCase()
     .slice(0, 80);
-  await prisma.$executeRawUnsafe(
+  const rows = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
     `
       UPDATE "CreditoBorrador"
-      SET "plataforma" = COALESCE($2, "plataforma"),
+      SET "plataforma" = COALESCE("plataforma", $2),
           "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
             'solicitudOrigen', 'DATACREDITO',
             'dataCreditoStatus', 'NO_EVALUADO',
@@ -764,12 +993,19 @@ export async function markSolicitudDataCreditoTechnicalError(input: {
             'dataCreditoUpdatedAt', CURRENT_TIMESTAMP
           ),
           "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = $1 AND "estado" = 'ABIERTO'
+      WHERE "id" = $1
+        AND "estado" = 'ABIERTO'
+        AND "creditoId" IS NULL
+        AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') >
+          CURRENT_TIMESTAMP
+      RETURNING "id"
     `,
     input.solicitudId,
     normalizePlatform(input.plataforma),
     errorCode
   );
+  if (rows.length !== 1) throw new SolicitudDataCreditoLinkError();
+  return rows[0].id;
 }
 
 export async function desistSolicitud(input: {
@@ -813,6 +1049,43 @@ export async function desistSolicitud(input: {
     if (!target[0]) return { changed: false, identityReleased: false };
 
     const document = normalizeDigits(target[0].clienteDocumento);
+    const operationTargets = await transaction.$queryRawUnsafe<
+      Array<{ id: number }>
+    >(
+      `
+        SELECT draft."id"
+        FROM "CreditoBorrador" draft
+        INNER JOIN "Sede" sede ON sede."id" = draft."sedeId"
+        WHERE draft."creditoId" IS NULL
+          AND draft."vendedorId" = $2
+          AND sede."aliadoId" = $3
+          AND (
+            ($4 <> '' AND regexp_replace(COALESCE(draft."clienteDocumento", ''), '[^0-9]', '', 'g') = $4)
+            OR ($4 = '' AND draft."id" = $1)
+          )
+          AND (
+            draft."dataCreditoAssessmentId" IS NOT NULL
+            OR UPPER(COALESCE(draft."payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+            OR NULLIF(draft."payload"->>'dataCreditoStatus', '') IS NOT NULL
+            OR NULLIF(draft."payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+          )
+          AND NOT (
+            draft."estado" = 'CERRADO'
+            AND COALESCE(draft."closedReason", '') IN (
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+            )
+          )
+        ORDER BY draft."id" ASC
+      `,
+      input.solicitudId,
+      input.sellerId,
+      input.aliadoId,
+      document
+    );
+    await lockSolicitudOperationsInOrder(
+      transaction,
+      operationTargets.map((row) => row.id)
+    );
     if (document) await lockIdentity(transaction, "document", document);
     const rows = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
       `
@@ -906,6 +1179,38 @@ export async function desistSolicitudAsCentralAdmin(input: {
     if (!target[0]) return { changed: false, identityReleased: false };
 
     const document = normalizeDigits(target[0].clienteDocumento);
+    const operationTargets = await transaction.$queryRawUnsafe<
+      Array<{ id: number }>
+    >(
+      `
+        SELECT "id"
+        FROM "CreditoBorrador"
+        WHERE "creditoId" IS NULL
+          AND (
+            ($2 <> '' AND regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $2)
+            OR ($2 = '' AND "id" = $1)
+          )
+          AND (
+            "dataCreditoAssessmentId" IS NOT NULL
+            OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+            OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+            OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+          )
+          AND NOT (
+            "estado" = 'CERRADO'
+            AND COALESCE("closedReason", '') IN (
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+            )
+          )
+        ORDER BY "id" ASC
+      `,
+      input.solicitudId,
+      document
+    );
+    await lockSolicitudOperationsInOrder(
+      transaction,
+      operationTargets.map((row) => row.id)
+    );
     if (document) await lockIdentity(transaction, "document", document);
     const rows = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
       `
@@ -961,6 +1266,8 @@ export async function completeSolicitudForCredit(
     solicitudId?: number | null;
     assessmentId?: string | null;
     clienteDocumento?: string | null;
+    imei?: string | null;
+    plataforma?: string | null;
     usuarioId: number;
     vendedorId: number | null;
     sedeId: number;
@@ -969,6 +1276,8 @@ export async function completeSolicitudForCredit(
   database: Database
 ) {
   const document = normalizeDigits(input.clienteDocumento);
+  const imei = normalizeDigits(input.imei);
+  const platform = normalizePlatform(input.plataforma);
   const assessmentId = isUuid(input.assessmentId) ? String(input.assessmentId) : null;
 
   if (input.solicitudId) {
@@ -991,6 +1300,11 @@ export async function completeSolicitudForCredit(
           AND "usuarioId" = $4
           AND "vendedorId" IS NOT DISTINCT FROM $5
           AND "sedeId" = $6
+          AND (
+            $8 = ''
+            OR regexp_replace(COALESCE("imei", ''), '[^0-9]', '', 'g') = $8
+          )
+          AND ($9::text IS NULL OR UPPER(COALESCE("plataforma", '')) = $9)
         RETURNING "id"
       `,
       input.solicitudId,
@@ -999,7 +1313,9 @@ export async function completeSolicitudForCredit(
       input.usuarioId,
       input.vendedorId,
       input.sedeId,
-      input.creditoId
+      input.creditoId,
+      imei,
+      platform
     );
     return rows.length === 1 ? rows[0].id : null;
   }
@@ -1013,6 +1329,11 @@ export async function completeSolicitudForCredit(
           AND "usuarioId" = $3
           AND "vendedorId" IS NOT DISTINCT FROM $4
           AND "sedeId" = $5
+          AND (
+            $7 = ''
+            OR regexp_replace(COALESCE("imei", ''), '[^0-9]', '', 'g') = $7
+          )
+          AND ($8::text IS NULL OR UPPER(COALESCE("plataforma", '')) = $8)
           AND (
             (
               $1::uuid IS NOT NULL
@@ -1055,7 +1376,9 @@ export async function completeSolicitudForCredit(
     input.usuarioId,
     input.vendedorId,
     input.sedeId,
-    input.creditoId
+    input.creditoId,
+    imei,
+    platform
   );
   return rows.length === 1 ? rows[0].id : null;
 }

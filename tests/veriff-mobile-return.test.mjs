@@ -898,6 +898,23 @@ test("los estados finales contradictorios de Veriff fallan de forma conservadora
     false,
     "PENDING debe poder avanzar a APPROVED desde cualquier fuente"
   );
+  assert.equal(
+    shouldPreserveVeriffStatusTransition(
+      "APPROVED",
+      "PENDING",
+      "decisionPayload"
+    ),
+    true,
+    "una respuesta transitoria PENDING no puede degradar un APPROVED canónico"
+  );
+  assert.match(
+    veriffStorage,
+    /preservesApprovedAgainstPending[\s\S]*?currentStatus === "APPROVED"[\s\S]*?summary\.status === "PENDING"/
+  );
+  assert.match(
+    veriffStorage,
+    /preserveCanonicalStatus && !preservesApprovedAgainstPending/
+  );
   assert.match(veriffStorage, /resolveVeriffStatusEvidence/);
   assert.match(
     veriffStorage,
