@@ -406,12 +406,10 @@ export function calculateRequiredInitialPaymentForFinancingLimit(
     0,
     Math.min(100, Number(initialPaymentPercentage ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE))
   );
-  const financedBase =
-    financingLimit > 0 ? Math.min(total, financingLimit) : 0;
-  const excessToInitial =
+  const percentageInitial = (total * percentage) / 100;
+  const financingLimitInitial =
     financingLimit > 0 ? Math.max(0, total - financingLimit) : total;
-  const requiredInitial =
-    (financedBase * percentage) / 100 + excessToInitial;
+  const requiredInitial = Math.max(percentageInitial, financingLimitInitial);
 
   return Math.round(requiredInitial * 100) / 100;
 }
@@ -817,48 +815,83 @@ export function resolveEffectiveDataCreditoFinancingLimit(options: {
   return Math.min(policyMaxFinancedAmount, existingFinancingLimit);
 }
 
-export function calculateRequiredInitialPaymentByPlatform(options: {
+export type RequiredInitialPaymentByPlatformOptions = {
   valorTotalEquipo: number | null | undefined;
   precioBaseVenta?: number | null;
   initialPaymentPercentage?: number | null | undefined;
   platform?: unknown;
   iphoneMaxFinancedAmount?: number | null | undefined;
   maxFinancedAmount?: number | null | undefined;
-}) {
-  const effectiveFinancingLimit =
-    resolveEffectiveDataCreditoFinancingLimit(options);
+};
 
-  if (effectiveFinancingLimit > 0) {
-
-    return calculateRequiredInitialPayment(
-      options.valorTotalEquipo,
-      effectiveFinancingLimit,
-      options.initialPaymentPercentage ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE
-    );
-  }
-
-  if (!isIphoneCreditPlatform(options.platform)) {
-    return calculateRequiredInitialPayment(
-      options.valorTotalEquipo,
-      options.precioBaseVenta,
-      options.initialPaymentPercentage ?? DEFAULT_INITIAL_PAYMENT_PERCENTAGE
-    );
-  }
-
+export function resolveRequiredInitialPaymentByPlatform(
+  options: RequiredInitialPaymentByPlatformOptions
+) {
   const total = Math.max(0, Number(options.valorTotalEquipo || 0));
+  const iphonePlatform = isIphoneCreditPlatform(options.platform);
   const percentage = Math.max(
     0,
-    Math.min(100, Number(options.initialPaymentPercentage ?? IPHONE_INITIAL_PAYMENT_PERCENTAGE))
+    Math.min(
+      100,
+      Number(
+        options.initialPaymentPercentage ??
+          (iphonePlatform
+            ? IPHONE_INITIAL_PAYMENT_PERCENTAGE
+            : DEFAULT_INITIAL_PAYMENT_PERCENTAGE)
+      )
+    )
   );
-  const maxFinanced = normalizeMoneyLimit(
-    options.iphoneMaxFinancedAmount,
-    IPHONE_MAX_FINANCED_AMOUNT
+  const roundMoney = (value: number) => Math.round(value * 100) / 100;
+  const platformInitialPayment = iphonePlatform
+    ? Math.max(
+        calculateRequiredInitialPaymentForFinancingLimit(
+          total,
+          normalizeMoneyLimit(
+            options.iphoneMaxFinancedAmount,
+            IPHONE_MAX_FINANCED_AMOUNT
+          ),
+          percentage
+        ),
+        options.precioBaseVenta && options.precioBaseVenta > 0
+          ? calculateRequiredInitialPayment(
+              total,
+              options.precioBaseVenta,
+              percentage
+            )
+          : 0
+      )
+    : calculateRequiredInitialPayment(
+        total,
+        options.precioBaseVenta,
+        percentage
+      );
+  const dataCreditoMaxFinancedAmount = normalizeMoneyLimit(
+    options.maxFinancedAmount,
+    0
   );
-  const percentageInitial = (total * percentage) / 100;
-  const excessInitial = maxFinanced > 0 ? Math.max(0, total - maxFinanced) : 0;
-  const initial = Math.max(percentageInitial, excessInitial);
+  const dataCreditoInitialPayment =
+    dataCreditoMaxFinancedAmount > 0
+      ? Math.max(0, total - dataCreditoMaxFinancedAmount)
+      : 0;
+  const requiredInitialPayment = roundMoney(
+    Math.max(platformInitialPayment, dataCreditoInitialPayment)
+  );
+  const dataCreditoInitialPaymentAdjustment = roundMoney(
+    Math.max(0, requiredInitialPayment - platformInitialPayment)
+  );
 
-  return Math.round(initial * 100) / 100;
+  return {
+    dataCreditoInitialPayment: roundMoney(dataCreditoInitialPayment),
+    dataCreditoInitialPaymentAdjustment,
+    platformInitialPayment: roundMoney(platformInitialPayment),
+    requiredInitialPayment,
+  };
+}
+
+export function calculateRequiredInitialPaymentByPlatform(
+  options: RequiredInitialPaymentByPlatformOptions
+) {
+  return resolveRequiredInitialPaymentByPlatform(options).requiredInitialPayment;
 }
 
 function formatCopLimit(value: number) {

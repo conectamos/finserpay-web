@@ -564,15 +564,11 @@ test("la oferta activa conserva su plazo y nunca cae al tope global en pantalla"
     /preservedTerms\.policyControlled\s*\?\s*MAX_CREDIT_INSTALLMENTS/
   );
 
-  const policyFirstMessages =
+  const withinApprovedLimitMessages =
     factoryConsole.match(
-      /activeDataCreditoOffer\s*\?\s*dataCreditoFinancingExcess\s*>\s*0/g
+      /El saldo proyectado está dentro del cupo aprobado\./g
     ) || [];
-  assert.equal(policyFirstMessages.length, 2);
-  assert.doesNotMatch(
-    factoryConsole,
-    /activeDataCreditoOffer\s*&&\s*dataCreditoFinancingExcess\s*>\s*0/
-  );
+  assert.equal(withinApprovedLimitMessages.length, 2);
 });
 
 test("la vigencia contractual es exactamente 15 dias y no admite override historico", () => {
@@ -754,11 +750,11 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
   );
   assert.match(
     creditBuilder,
-    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoMaxFinancedAmount/
+    /resolveRequiredInitialPaymentByPlatform\([\s\S]*?maxFinancedAmount: dataCreditoOffer[\s\S]*?dataCreditoMaxFinancedAmount/
   );
   assert.match(
     creditBuilder,
-    /calculateRequiredInitialPaymentForFinancingLimit\([\s\S]*?dataCreditoEffectiveMaxFinancedAmount/
+    /initialPaymentBreakdown\.requiredInitialPayment/
   );
   assert.match(
     creditBuilder,
@@ -794,30 +790,35 @@ test("FirmaSeguro aplica la oferta DataCredito al PDF y conserva el legado apaga
   );
 });
 
-test("pantalla, cierre y FirmaSeguro respetan el menor tope financiable", () => {
+test("pantalla, cierre y FirmaSeguro separan cupo aprobado y tope del equipo", () => {
   assert.match(
     factoryConsole,
-    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoMaxFinancedAmount[\s\S]*?precioBaseVenta:/
+    /resolveRequiredInitialPaymentByPlatform\([\s\S]*?precioBaseVenta:[\s\S]*?maxFinancedAmount:[\s\S]*?dataCreditoMaxFinancedAmount/
   );
   assert.match(
     factoryConsole,
-    /calculateRequiredInitialPaymentForFinancingLimit\([\s\S]*?dataCreditoEffectiveMaxFinancedAmount/
+    /dataCreditoInitialPaymentAdjustment/
   );
   assert.match(
     creditRoute,
-    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoMaxFinancedAmount[\s\S]*?precioBaseVenta: precioBaseVentaCatalogo/
+    /resolveRequiredInitialPaymentByPlatform\([\s\S]*?precioBaseVenta: precioBaseVentaCatalogo[\s\S]*?maxFinancedAmount: dataCreditoAssessment[\s\S]*?dataCreditoMaxFinancedAmount/
   );
   assert.match(
     creditRoute,
-    /calculateRequiredInitialPaymentForFinancingLimit\([\s\S]*?dataCreditoEffectiveMaxFinancedAmount/
+    /initialPaymentCalculationVersion: "BALANCE_LIMIT_V2"/
   );
   assert.match(
     firmaSeguroDraftRoute,
-    /resolveEffectiveDataCreditoFinancingLimit\([\s\S]*?maxFinancedAmount: dataCreditoMaxFinancedAmount[\s\S]*?precioBaseVenta: precioBaseVentaCatalogo/
+    /resolveRequiredInitialPaymentByPlatform\([\s\S]*?precioBaseVenta: precioBaseVentaCatalogo[\s\S]*?maxFinancedAmount: dataCreditoOffer[\s\S]*?dataCreditoMaxFinancedAmount/
   );
   assert.match(
     firmaSeguroDraftRoute,
-    /calculateRequiredInitialPaymentForFinancingLimit\([\s\S]*?dataCreditoEffectiveMaxFinancedAmount/
+    /initialPaymentBreakdown\.requiredInitialPayment/
+  );
+  assert.match(creditRoute, /dataCreditoInitialPaymentAdjustment/);
+  assert.match(
+    factoryConsole,
+    /El saldo proyectado está dentro del cupo aprobado/
   );
 });
 

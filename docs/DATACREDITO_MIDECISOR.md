@@ -248,17 +248,20 @@ duplicados devuelve `POLICY_NAME_CONFLICT`. El catálogo y todas sus mutaciones
 son exclusivos del administrador central; cada reasignación conserva actor,
 perfil anterior, perfil nuevo y fecha en una auditoría inmutable.
 
-`maxFinancedAmount` es un entero en pesos colombianos. Cuando el valor del
-equipo supera el tope efectivo, el excedente se suma obligatoriamente a la
-cuota inicial. El tope efectivo es el menor entre la banda DataCredito y la
-salvaguarda vigente de catalogo, plataforma o iPhone. La formula aplicada tanto
-en pantalla como en el servidor es:
+`maxFinancedAmount` es un entero en pesos colombianos y representa el saldo
+máximo que DataCrédito permite financiar. No es una base sobre la cual se
+calcula el porcentaje de inicial. Primero se calcula la inicial exigida por la
+plataforma y el tope del equipo; después DataCrédito solo agrega la diferencia
+necesaria si el saldo resultante todavía supera el cupo aprobado:
 
-`inicial minima = porcentaje * min(valor equipo, tope efectivo) + max(0, valor equipo - tope efectivo)`.
+`inicial mínima = max(inicial de plataforma, valor equipo - cupo DataCrédito)`.
 
-Por ejemplo, para un equipo de `$1.300.000`, tope de `$1.200.000` e inicial
-del `20%`, la inicial minima es `$240.000 + $100.000 = $340.000`; el excedente
-nunca queda financiado ni se limita a una nota informativa.
+`ajuste adicional por cupo = max(0, inicial mínima - inicial de plataforma)`.
+
+Por ejemplo, para un equipo de `$2.915.000`, inicial de plataforma del `30%`
+y cupo aprobado de `$2.500.000`, la inicial mínima es `$874.500` y el saldo
+financiado es `$2.040.500`. Como ese saldo cabe dentro del cupo, el ajuste
+adicional de DataCrédito es `$0`.
 
 Si el cupo aprobado es `$1.200.000` pero el tope financiable del equipo es
 `$800.000`, prevalece el tope del equipo. Con inicial del `20%`, los valores de

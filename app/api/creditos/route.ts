@@ -6,8 +6,6 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import {
   calculateFinancedBalance,
-  calculateRequiredInitialPaymentForFinancingLimit,
-  calculateRequiredInitialPaymentByPlatform,
   DEFAULT_CREDIT_INSTALLMENTS,
   extendDays,
   generateCreditFolio,
@@ -21,9 +19,9 @@ import {
   normalizeCreditInstallments,
   normalizePaymentFrequency,
   parseCreditInstallmentSelection,
-  resolveEffectiveDataCreditoFinancingLimit,
   resolveCreditPaymentSummary,
   resolveCreditState,
+  resolveRequiredInitialPaymentByPlatform,
   sanitizeDeviceValue,
   sanitizeImageDataUrl,
   sanitizeSearch,
@@ -1375,26 +1373,20 @@ export async function POST(req: Request) {
         }
       : effectiveCreditSettings.globalSettings;
     const dataCreditoEffectiveMaxFinancedAmount = dataCreditoAssessment
-      ? resolveEffectiveDataCreditoFinancingLimit({
-          platform: plataformaDispositivo,
-          maxFinancedAmount: dataCreditoMaxFinancedAmount,
-          precioBaseVenta: precioBaseVentaCatalogo,
-          iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
-        })
+      ? dataCreditoMaxFinancedAmount
       : 0;
-    const cuotaInicialMinima = dataCreditoAssessment
-      ? calculateRequiredInitialPaymentForFinancingLimit(
-          valorEquipoTotalInput,
-          dataCreditoEffectiveMaxFinancedAmount,
-          dataCreditoInitialPaymentPercentage
-        )
-      : calculateRequiredInitialPaymentByPlatform({
-          valorTotalEquipo: valorEquipoTotalInput,
-          precioBaseVenta: precioBaseVentaCatalogo,
-          initialPaymentPercentage: creditSettings.cuotaInicialPorcentaje,
-          platform: plataformaDispositivo,
-          iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
-        });
+    const initialPaymentBreakdown = resolveRequiredInitialPaymentByPlatform({
+      valorTotalEquipo: valorEquipoTotalInput,
+      precioBaseVenta: precioBaseVentaCatalogo,
+      initialPaymentPercentage: creditSettings.cuotaInicialPorcentaje,
+      platform: plataformaDispositivo,
+      iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
+      maxFinancedAmount: dataCreditoAssessment
+        ? dataCreditoMaxFinancedAmount
+        : undefined,
+    });
+    const cuotaInicialMinima =
+      initialPaymentBreakdown.requiredInitialPayment;
     const cuotaInicialInput = toNumber(body.cuotaInicial);
     const cuotaInicial =
       cuotaInicialInput > 0
@@ -2705,6 +2697,13 @@ export async function POST(req: Request) {
                 dataCreditoCreditLimit?.manualLimit?.documentLast4 || null,
               effectiveMaxFinancedAmount:
                 dataCreditoEffectiveMaxFinancedAmount,
+              initialPaymentCalculationVersion: "BALANCE_LIMIT_V2",
+              platformInitialPayment:
+                initialPaymentBreakdown.platformInitialPayment,
+              dataCreditoInitialPayment:
+                initialPaymentBreakdown.dataCreditoInitialPayment,
+              dataCreditoInitialPaymentAdjustment:
+                initialPaymentBreakdown.dataCreditoInitialPaymentAdjustment,
               installmentCount: dataCreditoFinancingTerms?.installmentCount,
               maxInstallmentCount: dataCreditoFinancingTerms?.installmentCount,
               selectedInstallmentCount: plazoMeses,
@@ -2712,7 +2711,8 @@ export async function POST(req: Request) {
                 dataCreditoFinancingTerms?.maxInstallmentAmount,
               usedLegacyFinancingTermsFallback:
                 dataCreditoFinancingTerms?.usedLegacyFallback,
-              excessToInitial: Math.max(0, valorEquipoTotal - dataCreditoEffectiveMaxFinancedAmount),
+              excessToInitial:
+                initialPaymentBreakdown.dataCreditoInitialPaymentAdjustment,
             }
           : null,
         valorTotalEquipo: valorEquipoTotal,

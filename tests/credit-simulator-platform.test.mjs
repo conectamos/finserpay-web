@@ -80,11 +80,11 @@ test("el simulador iPhone usa inicial del 30 por ciento y plazo flexible", () =>
   );
   assert.match(
     consoleSource,
-    /const dataCreditoEffectiveMaxFinancedAmount\s*=\s*simulatorIphoneRulesActive\s*\? resolveEffectiveDataCreditoFinancingLimit\([\s\S]{0,260}maxFinancedAmount: iphoneMaxFinancedAmount[\s\S]{0,180}precioBaseVenta:/
+    /const dataCreditoEffectiveMaxFinancedAmount\s*=\s*simulatorIphoneRulesActive\s*\? iphoneMaxFinancedAmount\s*:\s*dataCreditoMaxFinancedAmount/
   );
   assert.match(
     consoleSource,
-    /const cuotaInicialMinimaNumero = simulatorAndroidRulesActive[\s\S]{0,220}: dataCreditoEffectiveMaxFinancedAmount > 0[\s\S]{0,220}dataCreditoEffectiveMaxFinancedAmount/
+    /resolveRequiredInitialPaymentByPlatform\([\s\S]{0,500}const cuotaInicialMinimaNumero = simulatorAndroidRulesActive[\s\S]{0,180}: initialPaymentBreakdown\.requiredInitialPayment/
   );
   assert.match(
     consoleSource,
@@ -183,7 +183,7 @@ test("el simulador oculta la política DataCrédito y sus términos internos", (
   assert.match(consoleSource, /Inicial mínima \{formatPercent\(initialPaymentPercentage\)\}/);
   assert.match(
     consoleSource,
-    /Crédito máximo \{currency\(dataCreditoEffectiveMaxFinancedAmount\)\}/
+    /Cupo aprobado \{currency\(dataCreditoEffectiveMaxFinancedAmount\)\}/
   );
   assert.match(consoleSource, /Hasta \{plazoMaximoCuotas\} cuotas/);
 });
@@ -199,7 +199,7 @@ test("el simulador iPhone conserva el tope global configurado", () => {
   );
   assert.match(
     consoleSource,
-    /Crédito máximo \{currency\(dataCreditoEffectiveMaxFinancedAmount\)\}/
+    /Cupo aprobado \{currency\(dataCreditoEffectiveMaxFinancedAmount\)\}/
   );
   assert.match(
     consoleSource,

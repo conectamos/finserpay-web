@@ -1045,8 +1045,9 @@ export default function DatacreditoPrequalificationGate({
           </div>
 
           <p className="mt-5 text-xs leading-5 text-[var(--fp-muted)]">
-            Si el equipo supera el crédito máximo, el excedente se suma a la
-            cuota inicial.
+            El cupo solo aumenta la cuota inicial cuando, después de aplicar la
+            inicial y el tope del equipo, el saldo a financiar supera el monto
+            aprobado.
           </p>
 
           <div className="mt-7 flex flex-col gap-3 sm:flex-row-reverse sm:justify-center">

@@ -73,8 +73,6 @@ import {
   calculateAndroidSimulatorInitialPayment,
   calculateAndroidSimulatorInstallmentSuretyPercentage,
   calculateFinancedBalance,
-  calculateRequiredInitialPaymentForFinancingLimit,
-  calculateRequiredInitialPaymentByPlatform,
   DEFAULT_CREDIT_INSTALLMENTS,
   DEFAULT_FIANCO_SURETY_PERCENTAGE,
   DEFAULT_INITIAL_PAYMENT_PERCENTAGE,
@@ -101,7 +99,7 @@ import {
   normalizePaymentFrequency,
   parseCreditInstallmentSelection,
   PAYMENT_FREQUENCY_OPTIONS,
-  resolveEffectiveDataCreditoFinancingLimit,
+  resolveRequiredInitialPaymentByPlatform,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import {
@@ -3353,35 +3351,8 @@ export default function CreditFactoryConsole({
   const simulatorAndroidRulesActive = simulatorMode && !iphoneFactory;
   const dataCreditoEffectiveMaxFinancedAmount =
     simulatorIphoneRulesActive
-      ? resolveEffectiveDataCreditoFinancingLimit({
-          platform: "IPHONE",
-          maxFinancedAmount: iphoneMaxFinancedAmount,
-          precioBaseVenta:
-            precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined,
-          iphoneMaxFinancedAmount,
-        })
-      : dataCreditoMaxFinancedAmount > 0
-      ? resolveEffectiveDataCreditoFinancingLimit({
-          platform: activeDataCreditoPlatform || currentDevicePlatform,
-          maxFinancedAmount: dataCreditoMaxFinancedAmount,
-          precioBaseVenta:
-            precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined,
-          iphoneMaxFinancedAmount,
-        })
-      : 0;
-  const dataCreditoFinancingExcess =
-    dataCreditoEffectiveMaxFinancedAmount > 0
-      ? Math.max(
-          0,
-          valorTotalEquipoNumero - dataCreditoEffectiveMaxFinancedAmount
-        )
-      : 0;
-  const dataCreditoEffectiveLimitSummary =
-    !simulatorIphoneRulesActive &&
-    dataCreditoEffectiveMaxFinancedAmount > 0 &&
-    dataCreditoEffectiveMaxFinancedAmount < dataCreditoMaxFinancedAmount
-      ? ` Tope efectivo por salvaguardas vigentes: ${currency(dataCreditoEffectiveMaxFinancedAmount)}.`
-      : "";
+      ? iphoneMaxFinancedAmount
+      : dataCreditoMaxFinancedAmount;
   const iphoneMaxInstallmentValue = normalizeMoneyLimit(
     !simulatorMode &&
       activeDataCreditoPlatform === "IPHONE" &&
@@ -3397,10 +3368,6 @@ export default function CreditFactoryConsole({
           activeDataCreditoOffer?.maxInstallmentAmount,
           0
         );
-  const iphoneFinancedExcess =
-    iphoneFactory && iphoneMaxFinancedAmount > 0
-      ? Math.max(0, valorTotalEquipoNumero - iphoneMaxFinancedAmount)
-      : 0;
   const configuredInitialPaymentPercentage = iphoneFactory
     ? creditSettings.iphoneCuotaInicialPorcentaje ??
       IPHONE_INITIAL_PAYMENT_PERCENTAGE
@@ -3414,22 +3381,33 @@ export default function CreditFactoryConsole({
       : activeDataCreditoOffer
       ? activeDataCreditoOffer.initialPaymentPercentage
       : configuredInitialPaymentPercentage;
+  const initialPaymentBreakdown = resolveRequiredInitialPaymentByPlatform({
+    valorTotalEquipo: valorTotalEquipoNumero,
+    precioBaseVenta:
+      precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined,
+    initialPaymentPercentage,
+    platform: activeDataCreditoPlatform || currentDevicePlatform,
+    iphoneMaxFinancedAmount,
+    maxFinancedAmount:
+      !simulatorMode && activeDataCreditoOffer
+        ? dataCreditoMaxFinancedAmount
+        : undefined,
+  });
   const cuotaInicialMinimaNumero = simulatorAndroidRulesActive
     ? calculateAndroidSimulatorInitialPayment(valorTotalEquipoNumero)
-    : dataCreditoEffectiveMaxFinancedAmount > 0
-    ? calculateRequiredInitialPaymentForFinancingLimit(
-        valorTotalEquipoNumero,
-        dataCreditoEffectiveMaxFinancedAmount,
-        initialPaymentPercentage
-      )
-    : calculateRequiredInitialPaymentByPlatform({
-        valorTotalEquipo: valorTotalEquipoNumero,
-        precioBaseVenta:
-          precioBaseVentaCatalogo > 0 ? precioBaseVentaCatalogo : undefined,
-        initialPaymentPercentage,
-        platform: currentDevicePlatform,
-        iphoneMaxFinancedAmount,
-      });
+    : initialPaymentBreakdown.requiredInitialPayment;
+  const dataCreditoFinancingExcess =
+    !simulatorMode && activeDataCreditoOffer
+      ? initialPaymentBreakdown.dataCreditoInitialPaymentAdjustment
+      : 0;
+  const percentageInitialPayment =
+    Math.round(
+      ((valorTotalEquipoNumero * initialPaymentPercentage) / 100) * 100
+    ) / 100;
+  const platformInitialPaymentAdjustment = Math.max(
+    0,
+    initialPaymentBreakdown.platformInitialPayment - percentageInitialPayment
+  );
   const cuotaInicialNumero = Math.max(0, Number(cuotaInicial || 0));
   const cuotaInicialValida =
     valorTotalEquipoNumero > 0 &&
@@ -13369,7 +13347,7 @@ export default function CreditFactoryConsole({
                           Inicial mínima {formatPercent(initialPaymentPercentage)}
                         </span>
                         <span className="rounded-md bg-[#f1f7df] px-3 py-2">
-                          Crédito máximo {currency(dataCreditoEffectiveMaxFinancedAmount)}
+                          Cupo aprobado {currency(dataCreditoEffectiveMaxFinancedAmount)}
                         </span>
                         {activeDataCreditoManualCreditLimit ? (
                           <span className="rounded-md bg-[#f1f7df] px-3 py-2">
@@ -13523,14 +13501,12 @@ export default function CreditFactoryConsole({
                             {simulatorMode
                               ? `Inicial base: ${initialPaymentPercentage}%.`
                               : activeDataCreditoOffer
-                              ? simulatorIphoneRulesActive
-                                ? `Crédito máximo iPhone: ${currency(dataCreditoEffectiveMaxFinancedAmount)}. Excedente a inicial: ${currency(dataCreditoFinancingExcess)}.`
-                                : `Crédito máximo DataCrédito: ${currency(dataCreditoMaxFinancedAmount)}.${dataCreditoEffectiveLimitSummary} Excedente a inicial: ${currency(dataCreditoFinancingExcess)}.`
+                              ? `Cupo aprobado DataCrédito: ${currency(dataCreditoMaxFinancedAmount)}. ${dataCreditoFinancingExcess > 0 ? `Ajuste adicional por cupo: ${currency(dataCreditoFinancingExcess)}.` : "El saldo proyectado está dentro del cupo aprobado."}`
                               : iphoneFactory
-                                ? `Tope financiado iPhone: ${currency(iphoneMaxFinancedAmount)}.`
+                                ? `Tope financiado iPhone: ${currency(iphoneMaxFinancedAmount)}. La inicial solo se ajusta si el saldo supera el tope.`
                                 : precioBaseVentaCatalogo > 0
-                                  ? `Base del modelo: ${currency(precioBaseVentaCatalogo)}. Excedente a inicial: ${currency(excedentePrecioBase)}.`
-                                  : `Base maxima sin catalogo: ${currency(MAX_DEVICE_FINANCING_BASE)}.`}
+                                  ? `Base del modelo: ${currency(precioBaseVentaCatalogo)}. El valor que supere esta base se cobra en la inicial: ${currency(excedentePrecioBase)}.`
+                                  : `Base máxima sin catálogo: ${currency(MAX_DEVICE_FINANCING_BASE)}.`}
                             {!simulatorMode
                               ? ` Inicial base: ${initialPaymentPercentage}%.`
                               : null}
@@ -13577,12 +13553,10 @@ export default function CreditFactoryConsole({
                           ].join(" ")}
                         >
                           Minimo: {currency(cuotaInicialMinimaNumero)}. Puedes subirla si el cliente da mas.
-                          {!simulatorMode && activeDataCreditoOffer
-                            ? dataCreditoFinancingExcess > 0
-                              ? ` Excedente sobre el crédito máximo pasado a inicial: ${currency(dataCreditoFinancingExcess)}.`
-                              : ""
-                            : iphoneFactory && iphoneFinancedExcess > 0
-                              ? ` Excedente iPhone pasado a inicial: ${currency(iphoneFinancedExcess)}.`
+                          {!simulatorMode && dataCreditoFinancingExcess > 0
+                            ? ` Ajuste adicional por cupo aprobado: ${currency(dataCreditoFinancingExcess)}.`
+                            : !simulatorMode && platformInitialPaymentAdjustment > 0
+                              ? ` Ajuste adicional por tope del equipo: ${currency(platformInitialPaymentAdjustment)}.`
                               : ""}
                         </p>
                       </div>
@@ -15891,10 +15865,10 @@ export default function CreditFactoryConsole({
                 {canSeeInternalPricing ? (
                   <p className="mt-2 text-xs font-medium text-slate-500">
                     {dataCreditoApproval
-                      ? `Crédito máximo DataCrédito: ${currency(dataCreditoMaxFinancedAmount)}.${dataCreditoEffectiveLimitSummary} El excedente se cobra en la inicial.`
+                      ? `Cupo aprobado DataCrédito: ${currency(dataCreditoMaxFinancedAmount)}. ${dataCreditoFinancingExcess > 0 ? `Ajuste adicional por cupo: ${currency(dataCreditoFinancingExcess)}.` : "El saldo proyectado está dentro del cupo aprobado."}`
                       : iphoneFactory
-                        ? `Tope financiado iPhone: ${currency(iphoneMaxFinancedAmount)}. El excedente se cobra en la inicial.`
-                        : `Base financiable maxima: ${currency(MAX_DEVICE_FINANCING_BASE)}. El excedente se cobra en la inicial.`}
+                        ? `Tope financiado iPhone: ${currency(iphoneMaxFinancedAmount)}. La inicial solo se ajusta si el saldo supera el tope.`
+                        : `Base financiable máxima: ${currency(MAX_DEVICE_FINANCING_BASE)}. El valor que supere esta base se cobra en la inicial.`}
                   </p>
                 ) : (
                   <p className="mt-2 text-xs font-medium text-slate-500">
@@ -15929,12 +15903,10 @@ export default function CreditFactoryConsole({
                   ].join(" ")}
                 >
                   Minimo: {currency(cuotaInicialMinimaNumero)}. Puedes subirla si el cliente da mas.
-                  {activeDataCreditoOffer
-                    ? dataCreditoFinancingExcess > 0
-                      ? ` Excedente sobre el crédito máximo pasado a inicial: ${currency(dataCreditoFinancingExcess)}.`
-                      : ""
-                    : iphoneFactory && iphoneFinancedExcess > 0
-                      ? ` Excedente iPhone pasado a inicial: ${currency(iphoneFinancedExcess)}.`
+                  {dataCreditoFinancingExcess > 0
+                    ? ` Ajuste adicional por cupo aprobado: ${currency(dataCreditoFinancingExcess)}.`
+                    : platformInitialPaymentAdjustment > 0
+                      ? ` Ajuste adicional por tope del equipo: ${currency(platformInitialPaymentAdjustment)}.`
                       : ""}
                 </p>
               </div>

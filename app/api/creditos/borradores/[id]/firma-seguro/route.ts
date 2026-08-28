@@ -18,8 +18,6 @@ import {
 } from "@/lib/datacredito/policy";
 import { resolveDataCreditoManualCreditLimit } from "@/lib/datacredito/manual-credit-limits";
 import {
-  calculateRequiredInitialPaymentForFinancingLimit,
-  calculateRequiredInitialPaymentByPlatform,
   DEFAULT_CREDIT_INSTALLMENTS,
   generateCreditFolio,
   generatePaymentReference,
@@ -29,7 +27,7 @@ import {
   normalizeCreditInstallments,
   normalizePaymentFrequency,
   parseCreditInstallmentSelection,
-  resolveEffectiveDataCreditoFinancingLimit,
+  resolveRequiredInitialPaymentByPlatform,
   sanitizeDeviceValue,
   sanitizeImageDataUrl,
   sanitizeText,
@@ -471,27 +469,18 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
         fianzaPorcentaje: dataCreditoOffer.suretyPercentage,
       }
     : effectiveCreditSettings.globalSettings;
-  const dataCreditoEffectiveMaxFinancedAmount = dataCreditoOffer
-      ? resolveEffectiveDataCreditoFinancingLimit({
-          platform: plataformaDispositivo,
-          maxFinancedAmount: dataCreditoMaxFinancedAmount,
-          precioBaseVenta: precioBaseVentaCatalogo,
-        iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
-      })
-    : 0;
-  const cuotaInicialMinima = dataCreditoOffer
-    ? calculateRequiredInitialPaymentForFinancingLimit(
-        valorEquipoTotalInput,
-        dataCreditoEffectiveMaxFinancedAmount,
-        dataCreditoOffer.initialPaymentPercentage
-      )
-    : calculateRequiredInitialPaymentByPlatform({
-        valorTotalEquipo: valorEquipoTotalInput,
-        precioBaseVenta: precioBaseVentaCatalogo,
-        initialPaymentPercentage: creditSettings.cuotaInicialPorcentaje,
-        platform: plataformaDispositivo,
-        iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
-      });
+  const initialPaymentBreakdown = resolveRequiredInitialPaymentByPlatform({
+    valorTotalEquipo: valorEquipoTotalInput,
+    precioBaseVenta: precioBaseVentaCatalogo,
+    initialPaymentPercentage: creditSettings.cuotaInicialPorcentaje,
+    platform: plataformaDispositivo,
+    iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
+    maxFinancedAmount: dataCreditoOffer
+      ? dataCreditoMaxFinancedAmount
+      : undefined,
+  });
+  const cuotaInicialMinima =
+    initialPaymentBreakdown.requiredInitialPayment;
   const cuotaInicialInput = toNumber(payload.cuotaInicial);
   const cuotaInicial =
     cuotaInicialInput > 0
@@ -618,7 +607,14 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
             manualCreditLimitDocumentLast4:
               dataCreditoCreditLimit?.manualLimit?.documentLast4 || null,
             effectiveMaxFinancedAmount:
-              dataCreditoEffectiveMaxFinancedAmount,
+              dataCreditoMaxFinancedAmount,
+            initialPaymentCalculationVersion: "BALANCE_LIMIT_V2",
+            platformInitialPayment:
+              initialPaymentBreakdown.platformInitialPayment,
+            dataCreditoInitialPayment:
+              initialPaymentBreakdown.dataCreditoInitialPayment,
+            dataCreditoInitialPaymentAdjustment:
+              initialPaymentBreakdown.dataCreditoInitialPaymentAdjustment,
             installmentCount: dataCreditoOffer.installmentCount,
             maxInstallmentCount: dataCreditoOffer.installmentCount,
             selectedInstallmentCount: plazoMeses,

@@ -20,6 +20,7 @@ const {
   normalizeCreditInstallments,
   parseCreditInstallmentSelection,
   resolveEffectiveDataCreditoFinancingLimit,
+  resolveRequiredInitialPaymentByPlatform,
   validateIphoneInstallmentLimit,
 } = await jiti.import(
   "../lib/credit-factory.ts"
@@ -36,11 +37,11 @@ test("el monto maximo de la oferta limita el saldo realmente financiado", () => 
   );
   assert.equal(
     calculateRequiredInitialPaymentForFinancingLimit(800_000, 600_000, 40),
-    440_000
+    320_000
   );
   assert.equal(
     calculateRequiredInitialPaymentForFinancingLimit(1_000_000, 600_000, 20),
-    520_000
+    400_000
   );
   assert.equal(
     calculateRequiredInitialPaymentForFinancingLimit(3_000_000, 2_500_000, 0),
@@ -48,7 +49,7 @@ test("el monto maximo de la oferta limita el saldo realmente financiado", () => 
   );
   assert.equal(
     calculateRequiredInitialPaymentForFinancingLimit(1_300_000, 1_200_000, 20),
-    340_000
+    260_000
   );
   assert.equal(
     calculateRequiredInitialPaymentForFinancingLimit(1_300_000, 0, 20),
@@ -73,7 +74,7 @@ const requiredInitial = ({
     iphoneMaxFinancedAmount: iphoneMaximum,
   });
 
-test("aplica el porcentaje sobre el tope y suma el excedente a la inicial", () => {
+test("el cupo solo aumenta la inicial cuando el saldo lo supera", () => {
   assert.equal(
     requiredInitial({
       total: 500_000,
@@ -90,7 +91,7 @@ test("aplica el porcentaje sobre el tope y suma el excedente a la inicial", () =
       maximum: 600_000,
       catalogBase: 800_000,
     }),
-    440_000
+    320_000
   );
   assert.equal(
     requiredInitial({
@@ -103,7 +104,7 @@ test("aplica el porcentaje sobre el tope y suma el excedente a la inicial", () =
   );
 });
 
-test("el tope DataCredito usa la misma regla para Android y iPhone", () => {
+test("el cupo DataCredito usa la misma regla de saldo para Android y iPhone", () => {
   for (const platform of ["ANDROID", "IPHONE"]) {
     assert.equal(
       requiredInitial({
@@ -114,7 +115,7 @@ test("el tope DataCredito usa la misma regla para Android y iPhone", () => {
         catalogBase: 3_000_000,
         iphoneMaximum: 3_000_000,
       }),
-      510_000
+      400_000
     );
   }
 });
@@ -145,8 +146,46 @@ test("el tope DataCredito nunca amplia las salvaguardas existentes", () => {
       platform: "IPHONE",
       iphoneMaximum: 3_500_000,
     }),
-    850_000
+    500_000
   );
+});
+
+test("no suma excedente cuando el saldo ya cabe en el cupo aprobado", () => {
+  const breakdown = resolveRequiredInitialPaymentByPlatform({
+    valorTotalEquipo: 2_915_000,
+    precioBaseVenta: 3_000_000,
+    initialPaymentPercentage: 30,
+    platform: "IPHONE",
+    iphoneMaxFinancedAmount: 3_500_000,
+    maxFinancedAmount: 2_500_000,
+  });
+
+  assert.deepEqual(breakdown, {
+    dataCreditoInitialPayment: 415_000,
+    dataCreditoInitialPaymentAdjustment: 0,
+    platformInitialPayment: 874_500,
+    requiredInitialPayment: 874_500,
+  });
+  assert.equal(2_915_000 - breakdown.requiredInitialPayment, 2_040_500);
+});
+
+test("agrega únicamente la diferencia necesaria cuando el saldo supera el cupo", () => {
+  const breakdown = resolveRequiredInitialPaymentByPlatform({
+    valorTotalEquipo: 3_000_000,
+    precioBaseVenta: 3_000_000,
+    initialPaymentPercentage: 20,
+    platform: "IPHONE",
+    iphoneMaxFinancedAmount: 3_500_000,
+    maxFinancedAmount: 2_200_000,
+  });
+
+  assert.deepEqual(breakdown, {
+    dataCreditoInitialPayment: 800_000,
+    dataCreditoInitialPaymentAdjustment: 200_000,
+    platformInitialPayment: 600_000,
+    requiredInitialPayment: 800_000,
+  });
+  assert.equal(3_000_000 - breakdown.requiredInitialPayment, 2_200_000);
 });
 
 test("resuelve directamente el menor tope por plataforma", () => {
@@ -203,14 +242,6 @@ test("resuelve directamente el menor tope por plataforma", () => {
 });
 
 test("cobra sobre el tope del equipo aunque el cupo DataCredito sea mayor", () => {
-  const effectiveLimit = resolveEffectiveDataCreditoFinancingLimit({
-    platform: "ANDROID",
-    maxFinancedAmount: 1_200_000,
-    precioBaseVenta: 800_000,
-  });
-
-  assert.equal(effectiveLimit, 800_000);
-
   for (const [equipmentPrice, expectedInitial] of [
     [700_000, 140_000],
     [900_000, 260_000],
@@ -218,11 +249,13 @@ test("cobra sobre el tope del equipo aunque el cupo DataCredito sea mayor", () =
     [1_300_000, 660_000],
   ]) {
     assert.equal(
-      calculateRequiredInitialPaymentForFinancingLimit(
-        equipmentPrice,
-        effectiveLimit,
-        20
-      ),
+      calculateRequiredInitialPaymentByPlatform({
+        valorTotalEquipo: equipmentPrice,
+        precioBaseVenta: 800_000,
+        initialPaymentPercentage: 20,
+        maxFinancedAmount: 1_200_000,
+        platform: "ANDROID",
+      }),
       expectedInitial,
       `Inicial incorrecta para un equipo de ${equipmentPrice}`
     );
@@ -234,23 +267,21 @@ test("cobra sobre el tope del equipo aunque el cupo DataCredito sea mayor", () =
 });
 
 test("iPhone suma a la inicial el sobrecosto sobre la base del modelo", () => {
-  const effectiveLimit = resolveEffectiveDataCreditoFinancingLimit({
+  const breakdown = resolveRequiredInitialPaymentByPlatform({
+    valorTotalEquipo: 3_000_000,
     platform: "IPHONE",
     maxFinancedAmount: 3_500_000,
     precioBaseVenta: 2_200_000,
     iphoneMaxFinancedAmount: 3_500_000,
+    initialPaymentPercentage: 20,
   });
-  const requiredInitial = calculateRequiredInitialPaymentForFinancingLimit(
-    3_000_000,
-    effectiveLimit,
-    20
-  );
 
-  assert.equal(effectiveLimit, 2_200_000);
-  assert.equal(requiredInitial, 1_240_000);
-  assert.equal(3_000_000 - requiredInitial, 1_760_000);
+  assert.equal(breakdown.platformInitialPayment, 1_240_000);
+  assert.equal(breakdown.dataCreditoInitialPaymentAdjustment, 0);
+  assert.equal(breakdown.requiredInitialPayment, 1_240_000);
+  assert.equal(3_000_000 - breakdown.requiredInitialPayment, 1_760_000);
   assert.equal(
-    requiredInitial,
+    breakdown.requiredInitialPayment,
     440_000 + 800_000,
     "La inicial debe sumar el 20% de la base y todo el sobrecosto"
   );
@@ -306,8 +337,8 @@ test("la regla comercial iPhone conserva 30%, 3.5M, 48 y 160k", () => {
     IPHONE_INITIAL_PAYMENT_PERCENTAGE
   );
 
-  assert.equal(initialPayment, 2_550_000);
-  assert.equal(5_000_000 - initialPayment, 2_450_000);
+  assert.equal(initialPayment, 1_500_000);
+  assert.equal(5_000_000 - initialPayment, 3_500_000);
 
   const plan = calculateFrenchAmortization({
     calculoVersion: ARES_FRENCH_AMORTIZATION_VERSION,
@@ -321,7 +352,7 @@ test("la regla comercial iPhone conserva 30%, 3.5M, 48 y 160k", () => {
     fechaPrimerPago: "2026-09-17",
   });
 
-  assert.equal(plan.valorFinanciado, 2_450_000);
+  assert.equal(plan.valorFinanciado, 3_500_000);
   assert.equal(
     validateIphoneInstallmentLimit({
       platform: "IPHONE",
