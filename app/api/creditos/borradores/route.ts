@@ -216,8 +216,13 @@ function addReadScope(
     where.push(`s."aliadoId" = $${values.length}`);
     return;
   }
-  values.push(access.seller?.sedeId || -1);
-  where.push(`d."sedeId" = $${values.length}`);
+  if (access.seller?.tipoPerfil === "SUPERVISOR") {
+    values.push(access.seller.sedeId || -1);
+    where.push(`d."sedeId" = $${values.length}`);
+  } else {
+    values.push(access.user.aliadoId || -1);
+    where.push(`s."aliadoId" = $${values.length}`);
+  }
   if (ownerOnly || access.seller?.tipoPerfil !== "SUPERVISOR") {
     values.push(access.seller?.id || -1);
     where.push(`d."vendedorId" = $${values.length}`);
@@ -362,14 +367,22 @@ export async function POST(req: Request) {
     const payload = normalizePayload(body.payload);
     const fields = extractDraftFields(payload);
     const draftId = parsePositiveId(body.id);
-    const centralDraft =
-      access.central && draftId
-        ? await getActiveSolicitudCreditContext(draftId)
-        : null;
-    if (access.central && draftId && !centralDraft) {
+    const existingDraft = draftId
+      ? await getActiveSolicitudCreditContext(draftId)
+      : null;
+    const canOperateExistingDraft =
+      !draftId ||
+      Boolean(
+        existingDraft &&
+          (access.central ||
+            (access.seller?.tipoPerfil === "VENDEDOR" &&
+              existingDraft.vendedorId === access.seller.id &&
+              existingDraft.aliadoId === access.user.aliadoId))
+      );
+    if (!canOperateExistingDraft) {
       return NextResponse.json({ error: "Solicitud no autorizada" }, { status: 403 });
     }
-    const owner = centralDraft || {
+    const owner = existingDraft || {
       usuarioId: access.user.id,
       vendedorId: access.seller?.id || null,
       sedeId: access.user.sedeId,
@@ -446,7 +459,7 @@ export async function PATCH(req: Request) {
         solicitudId: id,
         userId: access.user.id,
         sellerId: access.seller.id,
-        sedeId: access.seller.sedeId,
+        aliadoId: access.user.aliadoId || -1,
       });
       return NextResponse.json(
         {

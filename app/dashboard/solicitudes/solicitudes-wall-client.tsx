@@ -765,8 +765,12 @@ export default function SolicitudesWallClient({
                                 href={factoryHref(item, viewerRole, wallReturnHref)}
                                 className="fp-ui-button is-secondary whitespace-nowrap"
                               >
-                                <Eye className="h-4 w-4" aria-hidden="true" />
-                                Ver
+                                {item.source === "DRAFT" ? (
+                                  <PlayCircle className="h-4 w-4" aria-hidden="true" />
+                                ) : (
+                                  <Eye className="h-4 w-4" aria-hidden="true" />
+                                )}
+                                {item.source === "DRAFT" ? "Continuar" : "Ver"}
                               </Link>
                             ) : item.actions.includes("VER_DETALLE") ? (
                               <Button variant="secondary" onClick={() => openDetail(item)}>
@@ -824,8 +828,12 @@ export default function SolicitudesWallClient({
                         href={factoryHref(item, viewerRole, wallReturnHref)}
                         className="fp-ui-button is-secondary"
                       >
-                        <Eye className="h-4 w-4" aria-hidden="true" />
-                        Ver
+                        {item.source === "DRAFT" ? (
+                          <PlayCircle className="h-4 w-4" aria-hidden="true" />
+                        ) : (
+                          <Eye className="h-4 w-4" aria-hidden="true" />
+                        )}
+                        {item.source === "DRAFT" ? "Continuar" : "Ver"}
                       </Link>
                     ) : item.actions.includes("VER_DETALLE") ? (
                       <Button variant="secondary" onClick={() => openDetail(item)}>
@@ -980,7 +988,9 @@ export default function SolicitudesWallClient({
                       className="fp-ui-button is-primary"
                     >
                       <PlayCircle className="h-4 w-4" aria-hidden="true" />
-                      Abrir fábrica
+                      {detail.source === "DRAFT"
+                        ? "Continuar solicitud"
+                        : "Abrir fábrica"}
                     </Link>
                   ) : null}
                 </div>

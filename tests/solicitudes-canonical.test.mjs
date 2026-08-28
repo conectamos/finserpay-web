@@ -369,13 +369,16 @@ test("desistir libera de una vez los duplicados no finalizados de la misma cedul
 
   for (const desist of [sellerDesist, centralDesist]) {
     assert.match(desist, /prisma\.\$transaction/);
-    assert.match(desist, /SELECT "id", "clienteDocumento"[\s\S]*WHERE "id" = \$1/);
+    assert.match(
+      desist,
+      /SELECT (?:draft\.)?"id", (?:draft\.)?"clienteDocumento"[\s\S]*WHERE (?:draft\.)?"id" = \$1/
+    );
     assert.match(desist, /const document = normalizeDigits\(target\[0\]\.clienteDocumento\)/);
     assert.match(desist, /lockIdentity\(transaction, "document", document\)/);
     assert.match(desist, /UPDATE "CreditoBorrador"/);
     assert.match(
       desist,
-      /regexp_replace\(COALESCE\("clienteDocumento", ''\), '\[\^0-9\]', '', 'g'\) = \$\d/
+      /regexp_replace\(COALESCE\((?:draft\.)?"clienteDocumento", ''\), '\[\^0-9\]', '', 'g'\) = \$\d/
     );
     assert.match(desist, /"creditoId" IS NULL/);
     assert.match(desist, /"closedReason" = 'DESISTIDA'/);
@@ -384,7 +387,10 @@ test("desistir libera de una vez los duplicados no finalizados de la misma cedul
     assert.match(desist, /identityReleased: changed && !blocker/);
   }
 
-  assert.match(sellerDesist, /"vendedorId" = \$3 AND "sedeId" = \$4/);
+  assert.match(
+    sellerDesist,
+    /draft\."vendedorId" = \$3[\s\S]*SELECT sede\."id" FROM "Sede" sede WHERE sede\."aliadoId" = \$4/
+  );
   const centralUpdate = centralDesist.slice(centralDesist.indexOf('UPDATE "CreditoBorrador"'));
   assert.doesNotMatch(centralUpdate, /"vendedorId"\s*=|"sedeId"\s*=/);
   assert.match(draftRoute, /ok: result\.changed/);

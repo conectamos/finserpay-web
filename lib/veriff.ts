@@ -908,21 +908,24 @@ function findRiskScore(payload: unknown) {
 }
 
 function findPepSanctionMatch(payload: unknown) {
-  const { data, root, verification } = rootAndVerification(payload);
-  const person =
-    asRecord(verification.person) ||
-    asRecord(data.person) ||
-    findNestedRecord(root, (record) =>
-      Object.prototype.hasOwnProperty.call(record, "pepSanctionMatch")
-    );
-  const legacyValue = person?.pepSanctionMatch;
-  const uktfPep = firstNestedValue(
-    root,
-    (record) => Boolean(asRecord(record.UKTFResult)?.PEP || record.PEP),
-    (record) => asRecord(record.UKTFResult)?.PEP || record.PEP
+  const { verification } = rootAndVerification(payload);
+  const additionalVerifiedData = asRecord(
+    verification.additionalVerifiedData
   );
+  const supportedUktfResults = [
+    additionalVerifiedData?.UKTFResult,
+    additionalVerifiedData?.UKTFCheckResult,
+  ];
 
-  return riskSignalIsPositive(legacyValue) || riskSignalIsPositive(uktfPep);
+  // Veriff documents verification.person.pepSanctionMatch as a legacy field
+  // that may be incorrect and must be ignored. Its current UKDIATF docs use
+  // the exact UKTFResult/UKTFCheckResult containers, depending on the guide.
+  return supportedUktfResults.some((result) => {
+    const records = Array.isArray(result) ? result : [result];
+    return records.some((record) =>
+      riskSignalIsPositive(asRecord(record)?.PEP)
+    );
+  });
 }
 
 function uniqueRiskLabels(labels: VeriffRiskLabel[]) {

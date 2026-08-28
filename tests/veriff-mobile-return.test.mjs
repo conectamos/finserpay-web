@@ -674,6 +674,57 @@ test("un APPROVED con riesgo exige revisión de cumplimiento sin reintentos ni d
   assert.match(globalStyles, /\.fp-veriff-status\.is-compliance-review/);
 });
 
+test("los riesgos Veriff ignoran el PEP legado y conservan las señales soportadas", () => {
+  const legacyPersonPep = summarizeVeriffRisk({
+    verification: {
+      person: { pepSanctionMatch: "MATCH" },
+    },
+  });
+  const supportedUktfPep = summarizeVeriffRisk({
+    verification: {
+      additionalVerifiedData: {
+        UKTFResult: { PEP: "MATCH" },
+      },
+    },
+  });
+  const supportedUktfCheckPep = summarizeVeriffRisk({
+    verification: {
+      additionalVerifiedData: {
+        UKTFCheckResult: [
+          { PEP: "Registry validation was successful" },
+          { PEP: "Person detected to be potentially a PEP" },
+        ],
+      },
+    },
+  });
+  const currentRiskLabel = summarizeVeriffRisk({
+    verification: {
+      riskLabels: [
+        {
+          category: "document",
+          label: "suspected_document_manipulation",
+          status: "MATCH",
+        },
+      ],
+    },
+  });
+
+  assert.equal(legacyPersonPep.blocked, false);
+  assert.equal(legacyPersonPep.pepSanctionMatch, false);
+  assert.deepEqual(legacyPersonPep.reasons, []);
+
+  assert.equal(supportedUktfPep.blocked, true);
+  assert.equal(supportedUktfPep.pepSanctionMatch, true);
+  assert.deepEqual(supportedUktfPep.reasons, ["pep-sanctions"]);
+  assert.equal(supportedUktfCheckPep.blocked, true);
+  assert.equal(supportedUktfCheckPep.pepSanctionMatch, true);
+  assert.deepEqual(supportedUktfCheckPep.reasons, ["pep-sanctions"]);
+
+  assert.equal(currentRiskLabel.blocked, true);
+  assert.deepEqual(currentRiskLabel.reasons, ["risk-labels"]);
+  assert.equal(currentRiskLabel.riskLabels.length, 1);
+});
+
 test("crear QR y cerrar crédito se serializan por solicitud sin duplicar intentos", () => {
   const transactionalClose = sourceBlock(
     creditRoute,

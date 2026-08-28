@@ -776,7 +776,7 @@ export async function desistSolicitud(input: {
   solicitudId: number;
   userId: number;
   sellerId: number;
-  sedeId: number;
+  aliadoId: number;
 }) {
   await ensureSolicitudSchema();
   await expireStaleSolicitudes();
@@ -785,20 +785,22 @@ export async function desistSolicitud(input: {
       Array<{ id: number; clienteDocumento: string | null }>
     >(
       `
-        SELECT "id", "clienteDocumento"
-        FROM "CreditoBorrador"
-        WHERE "id" = $1
-          AND "creditoId" IS NULL
-          AND "vendedorId" = $2 AND "sedeId" = $3
+        SELECT draft."id", draft."clienteDocumento"
+        FROM "CreditoBorrador" draft
+        INNER JOIN "Sede" sede ON sede."id" = draft."sedeId"
+        WHERE draft."id" = $1
+          AND draft."creditoId" IS NULL
+          AND draft."vendedorId" = $2
+          AND sede."aliadoId" = $3
           AND (
-            "dataCreditoAssessmentId" IS NOT NULL
-            OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
-            OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
-            OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+            draft."dataCreditoAssessmentId" IS NOT NULL
+            OR UPPER(COALESCE(draft."payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+            OR NULLIF(draft."payload"->>'dataCreditoStatus', '') IS NOT NULL
+            OR NULLIF(draft."payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
           )
           AND NOT (
-            "estado" = 'CERRADO'
-            AND COALESCE("closedReason", '') IN (
+            draft."estado" = 'CERRADO'
+            AND COALESCE(draft."closedReason", '') IN (
               'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
             )
           )
@@ -806,7 +808,7 @@ export async function desistSolicitud(input: {
       `,
       input.solicitudId,
       input.sellerId,
-      input.sedeId
+      input.aliadoId
     );
     if (!target[0]) return { changed: false, identityReleased: false };
 
@@ -814,18 +816,23 @@ export async function desistSolicitud(input: {
     if (document) await lockIdentity(transaction, "document", document);
     const rows = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
       `
-        UPDATE "CreditoBorrador"
+        UPDATE "CreditoBorrador" draft
         SET "estado" = 'CERRADO', "closedReason" = 'DESISTIDA',
             "closedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP,
             "desistedByUserId" = $2, "desistedBySellerId" = $3
-        WHERE "creditoId" IS NULL
-          AND "vendedorId" = $3 AND "sedeId" = $4
+        WHERE draft."creditoId" IS NULL
+          AND draft."vendedorId" = $3
+          AND draft."sedeId" IN (
+            SELECT sede."id" FROM "Sede" sede WHERE sede."aliadoId" = $4
+          )
           AND EXISTS (
             SELECT 1
             FROM "CreditoBorrador" selected
+            INNER JOIN "Sede" selected_sede ON selected_sede."id" = selected."sedeId"
             WHERE selected."id" = $1
               AND selected."creditoId" IS NULL
-              AND selected."vendedorId" = $3 AND selected."sedeId" = $4
+              AND selected."vendedorId" = $3
+              AND selected_sede."aliadoId" = $4
               AND NOT (
                 selected."estado" = 'CERRADO'
                 AND COALESCE(selected."closedReason", '') IN (
@@ -834,18 +841,18 @@ export async function desistSolicitud(input: {
               )
           )
           AND (
-            ($5 <> '' AND regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $5)
-            OR ($5 = '' AND "id" = $1)
+            ($5 <> '' AND regexp_replace(COALESCE(draft."clienteDocumento", ''), '[^0-9]', '', 'g') = $5)
+            OR ($5 = '' AND draft."id" = $1)
           )
           AND (
-            "dataCreditoAssessmentId" IS NOT NULL
-            OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
-            OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
-            OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+            draft."dataCreditoAssessmentId" IS NOT NULL
+            OR UPPER(COALESCE(draft."payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+            OR NULLIF(draft."payload"->>'dataCreditoStatus', '') IS NOT NULL
+            OR NULLIF(draft."payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
           )
           AND NOT (
-            "estado" = 'CERRADO'
-            AND COALESCE("closedReason", '') IN (
+            draft."estado" = 'CERRADO'
+            AND COALESCE(draft."closedReason", '') IN (
               'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
             )
           )
@@ -854,7 +861,7 @@ export async function desistSolicitud(input: {
       input.solicitudId,
       input.userId,
       input.sellerId,
-      input.sedeId,
+      input.aliadoId,
       document
     );
     const changed = rows.length > 0;

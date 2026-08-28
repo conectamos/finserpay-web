@@ -109,7 +109,7 @@ export async function PATCH(req: Request) {
         solicitudId: Number(match[1]),
         userId: access.user.id,
         sellerId: access.seller.id,
-        sedeId: access.seller.sedeId,
+        aliadoId: access.user.aliadoId || -1,
       });
     } else {
       return response(

@@ -21,12 +21,13 @@ const readProjectFile = async (file) =>
   (await readFile(path.join(projectRoot, file), "utf8")).replace(/\r\n/g, "\n");
 
 function sourceBlock(source, start, end) {
-  const startIndex = source.indexOf(start);
-  const endIndex = source.indexOf(end, startIndex);
+  const normalizedSource = source.replace(/\r\n/g, "\n");
+  const startIndex = normalizedSource.indexOf(start);
+  const endIndex = normalizedSource.indexOf(end, startIndex);
 
   assert.notEqual(startIndex, -1, `No se encontro el inicio: ${start}`);
   assert.notEqual(endIndex, -1, `No se encontro el final: ${end}`);
-  return source.slice(startIndex, endIndex);
+  return normalizedSource.slice(startIndex, endIndex);
 }
 
 function escapeRegExp(value) {
@@ -395,7 +396,7 @@ test("una solicitud no liberada prevalece sobre una desistida mas reciente", () 
   );
 });
 
-test("la fabrica del borrador respeta central, aliado, sede y asesor titular", () => {
+test("la fabrica del borrador respeta central, aliado y asesor titular aunque cambie de sede", () => {
   const openDraft = {
     ownership: ownSolicitud,
     source: "DRAFT",
@@ -413,7 +414,7 @@ test("la fabrica del borrador respeta central, aliado, sede y asesor titular", (
       ...openDraft,
       ownership: { ...ownSolicitud, sedeId: 102 },
     }),
-    ["VER_DETALLE"]
+    ["VER_DETALLE", "ABRIR_FABRICA", "DESISTIR"]
   );
   assert.deepEqual(
     getSolicitudActions({
@@ -446,6 +447,10 @@ test("la fabrica del borrador respeta central, aliado, sede y asesor titular", (
   ]);
   assert.deepEqual(
     getSolicitudActions({ viewer: { ...seller, vendedorId: 402 }, ...openDraft }),
+    []
+  );
+  assert.deepEqual(
+    getSolicitudActions({ viewer: { ...seller, aliadoId: 20 }, ...openDraft }),
     []
   );
   assert.deepEqual(
@@ -580,11 +585,15 @@ test("central retoma y finaliza sin reemplazar al asesor propietario", async () 
 
   assert.match(
     draftRoute,
-    /access\.central && draftId[\s\S]*getActiveSolicitudCreditContext\(draftId\)/
+    /const existingDraft[\s\S]{0,180}draftId[\s\S]{0,180}getActiveSolicitudCreditContext\(draftId\)/
   );
   assert.match(
     draftRoute,
-    /usuarioId: owner\.usuarioId[\s\S]*vendedorId: owner\.vendedorId[\s\S]*sedeId: owner\.sedeId/
+    /canOperateExistingDraft[\s\S]{0,500}access\.central[\s\S]{0,500}existingDraft\.vendedorId === access\.seller\.id[\s\S]{0,220}existingDraft\.aliadoId === access\.user\.aliadoId/
+  );
+  assert.match(
+    draftRoute,
+    /const owner = existingDraft \|\|[\s\S]*usuarioId: owner\.usuarioId[\s\S]*vendedorId: owner\.vendedorId[\s\S]*sedeId: owner\.sedeId/
   );
   assert.doesNotMatch(storage, /allowCentralAdminAccess/);
   assert.match(factory, /solicitudId: draftId/);
@@ -1034,6 +1043,8 @@ test("la interfaz conserva filtros en URL y confirma el desistimiento", async ()
   assert.match(ui, /DESISTIR/);
   assert.match(ui, /ABRIR_FABRICA/);
   assert.match(ui, /factoryHref/);
+  assert.match(ui, /"Continuar"/);
+  assert.match(ui, /"Continuar solicitud"/);
   assert.match(ui, /mode=correction/);
   assert.match(ui, /ConfirmDialog/);
   assert.match(ui, /identityReleased/);
@@ -1041,11 +1052,35 @@ test("la interfaz conserva filtros en URL y confirma el desistimiento", async ()
   assert.match(ui, /style=\{\{ paddingLeft: "2\.5rem" \}\}/);
 });
 
-test("el asesor consulta sus solicitudes propias sin quedar atado a la sede activa", async () => {
-  const storage = await readProjectFile("lib/solicitudes-storage.ts");
+test("el asesor retoma y desiste sus borradores propios por vendedor y aliado sin quedar atado a la sede activa", async () => {
+  const [policy, storage, draftRoute] = await Promise.all([
+    readProjectFile("lib/solicitudes.ts"),
+    readProjectFile("lib/solicitudes-storage.ts"),
+    readProjectFile("app/api/creditos/borradores/route.ts"),
+  ]);
   const commonWhere = storage.slice(
     storage.indexOf("function buildCommonWhere"),
     storage.indexOf("async function readDraftRows")
+  );
+  const actionPolicy = sourceBlock(
+    policy,
+    "export function getSolicitudActions",
+    "export function maskDocument"
+  );
+  const readScope = sourceBlock(
+    draftRoute,
+    "function addReadScope",
+    "export async function GET"
+  );
+  const saveOwner = sourceBlock(
+    draftRoute,
+    "    const draftId = parsePositiveId(body.id);",
+    "    const rows = await readDrafts"
+  );
+  const desist = sourceBlock(
+    storage,
+    "export async function desistSolicitud",
+    "export async function desistSolicitudAsCentralAdmin"
   );
 
   assert.match(commonWhere, /viewer\.kind === "SUPERVISOR"/);
@@ -1058,6 +1093,34 @@ test("el asesor consulta sus solicitudes propias sin quedar atado a la sede acti
     /viewer\.kind === "SELLER"[\s\S]*vendedorId/
   );
   assert.match(commonWhere, /s\."aliadoId" =/);
+  assert.match(
+    actionPolicy,
+    /(?:input\.)?viewer\.vendedorId === (?:input\.)?ownership\.vendedorId|(?:input\.)?ownership\.vendedorId === (?:input\.)?viewer\.vendedorId/
+  );
+  assert.doesNotMatch(
+    actionPolicy,
+    /ownership\.sedeId === viewer\.sedeId|viewer\.sedeId === ownership\.sedeId/
+  );
+  assert.match(
+    readScope,
+    /SUPERVISOR[\s\S]*sedeId[\s\S]*else[\s\S]*access\.user\.aliadoId[\s\S]*s\."aliadoId"/
+  );
+  assert.match(readScope, /d\."vendedorId"/);
+  assert.match(
+    saveOwner,
+    /existingDraft\.vendedorId === access\.seller\.id[\s\S]*existingDraft\.aliadoId === access\.user\.aliadoId/
+  );
+  assert.match(saveOwner, /const owner = existingDraft \|\|/);
+  assert.match(saveOwner, /sedeId: owner\.sedeId/);
+  assert.match(desist, /sellerId: number;[\s\S]*aliadoId: number;/);
+  assert.match(
+    desist,
+    /INNER JOIN "Sede" sede[\s\S]*draft\."vendedorId" = \$2[\s\S]*sede\."aliadoId" = \$3/
+  );
+  assert.match(
+    desist,
+    /draft\."vendedorId" = \$3[\s\S]*SELECT sede\."id" FROM "Sede" sede WHERE sede\."aliadoId" = \$4/
+  );
 });
 
 test("el muro enlaza la correccion aprobada sin convertir el detalle en fabrica", async () => {
