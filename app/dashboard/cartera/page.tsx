@@ -22,6 +22,7 @@ import {
   resolveRedescuentoPercentageByPlatform,
 } from "@/lib/aliados";
 import { isIphoneEquipmentCatalogBrand } from "@/lib/credit-factory";
+import { splitOutstandingBalance } from "@/lib/credit-outstanding-balance";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import AdminSidebar from "../_components/admin-sidebar";
 import PushMassivePanel from "./push-massive-panel";
@@ -312,6 +313,15 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
       const creditoAutorizado =
         Number(credito.saldoBaseFinanciado || 0) ||
         Math.max(0, Number(credito.valorEquipoTotal || 0) - Number(credito.cuotaInicial || 0));
+      const balances = splitOutstandingBalance({
+        cuotaInicial: Number(credito.cuotaInicial || 0),
+        montoCredito: Number(credito.montoCredito || 0),
+        saldoBaseFinanciado: Number(credito.saldoBaseFinanciado || 0),
+        saldoPendiente: plan.saldoPendiente,
+        valorEquipoTotal: Number(credito.valorEquipoTotal || 0),
+        valorFianza: Number(credito.valorFianza || 0),
+        valorInteres: Number(credito.valorInteres || 0),
+      });
       const plataforma = creditPlatform(
         credito.contratoSnapshot,
         credito.equipoMarca
@@ -345,6 +355,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
           Number(credito.montoCredito || 0) - creditoAutorizado
         ),
         saldoPendiente: plan.saldoPendiente,
+        saldoCapital: balances.saldoCapital,
         totalPaid: plan.totalPaid,
         paidCount: plan.paidCount,
         pendingCount: plan.pendingCount,
@@ -358,12 +369,17 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
     });
 
   const activeCredits = cartera.filter((item) => item.saldoPendiente > 0);
+  const overdueCredits = activeCredits.filter((item) => item.bucket !== "alDia");
   const paidCredits = cartera.filter((item) => item.saldoPendiente <= 0);
   const totalPendiente = activeCredits.reduce((sum, item) => sum + item.saldoPendiente, 0);
   const totalMora = activeCredits.reduce((sum, item) => sum + item.saldoMora, 0);
   const totalPagado = cartera.reduce((sum, item) => sum + item.totalPaid, 0);
   const totalCredito = cartera.reduce((sum, item) => sum + item.montoCredito, 0);
   const totalInvertido = activeCredits.reduce((sum, item) => sum + item.creditoAutorizado, 0);
+  const totalCapitalComprometidoMora = overdueCredits.reduce(
+    (sum, item) => sum + item.saldoCapital,
+    0
+  );
   const bolsaRespaldoMora = activeCredits.reduce(
     (sum, item) =>
       sum + item.creditoAutorizado * Math.max(0, item.redescuentoPorcentaje) / 100,
@@ -448,8 +464,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
               detail: "La mora avanzada ya pesa en el saldo. Prioriza recaudo y bloqueo por mora.",
             };
 
-  const riskRows = activeCredits
-    .filter((item) => item.bucket !== "alDia")
+  const riskRows = [...overdueCredits]
     .sort((a, b) => b.diasMora - a.diasMora || b.saldoPendiente - a.saldoPendiente);
   const lastUpdatedLabel = new Intl.DateTimeFormat("es-CO", {
     day: "2-digit",
@@ -572,8 +587,13 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
           />
         </section>
 
-        <section className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <section className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
           <MiniMetric label="Inversion activa" value={money(totalInvertido)} detail="Credito autorizado activo" />
+          <MiniMetric
+            label="Capital comprometido"
+            value={money(totalCapitalComprometidoMora)}
+            detail={`${clientsMora} clientes en mora`}
+          />
           <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail={respaldoDetail} />
           <MiniMetric label="Creditos pagados" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
           <MiniMetric label="Clientes en mora" value={String(clientsMora)} detail={health.label} />
@@ -643,7 +663,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
           </div>
 
           <div className="overflow-x-auto [scrollbar-color:#98a2b3_transparent] [scrollbar-width:thin]">
-            <table className="w-full min-w-[1460px] text-left text-sm">
+            <table className="w-full min-w-[1590px] text-left text-sm">
               <thead className="sticky top-0 z-10 bg-[#17202b] text-white">
                 <tr>
                   <th className="sticky left-0 z-20 w-[190px] bg-[#17202b] px-4 py-3 text-[10px] font-bold uppercase">Cliente</th>
@@ -654,7 +674,8 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                   <th className="w-[215px] px-4 py-3 text-[10px] font-bold uppercase">Equipo</th>
                   <th className="w-[120px] px-4 py-3 text-[10px] font-bold uppercase">Sede</th>
                   <th className="w-[175px] px-4 py-3 text-[10px] font-bold uppercase">Mora</th>
-                  <th className="w-[135px] px-4 py-3 text-[10px] font-bold uppercase">Saldo</th>
+                  <th className="w-[135px] px-4 py-3 text-[10px] font-bold uppercase">Saldo total</th>
+                  <th className="w-[145px] px-4 py-3 text-[10px] font-bold uppercase">Capital pendiente</th>
                   <th className="w-[130px] px-4 py-3 text-[10px] font-bold uppercase">Vence</th>
                   <th className="w-[130px] px-4 py-3 text-[10px] font-bold uppercase">Cuota</th>
                 </tr>
@@ -703,6 +724,9 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                       <td className="px-4 py-3 align-top font-black text-[#101828]">
                         {money(item.saldoPendiente)}
                       </td>
+                      <td className="px-4 py-3 align-top font-black text-[#101828]">
+                        {money(item.saldoCapital)}
+                      </td>
                       <td className="px-4 py-3 align-top font-medium text-[#475467]">
                         {item.nextDueDate || "Sin cuota"}
                       </td>
@@ -713,7 +737,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={11} className="px-5 py-12 text-center text-sm font-semibold text-[#667085]">
+                    <td colSpan={12} className="px-5 py-12 text-center text-sm font-semibold text-[#667085]">
                       No hay creditos en mora para mostrar.
                     </td>
                   </tr>
