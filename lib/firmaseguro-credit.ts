@@ -35,7 +35,7 @@ import {
   buildFirmaSeguroFolioFileName,
 } from "@/lib/firmaseguro-folio-pdf";
 import {
-  getFirmaSeguroProcessByUuid,
+  getFirmaSeguroProcessByUuidIncludingSuperseded,
   getLatestFirmaSeguroProcessByCredit,
   getLatestFirmaSeguroProcessByDraft,
   linkFirmaSeguroProcessToCredit,
@@ -1156,6 +1156,14 @@ async function createFirmaSeguroProcess(
     createPayload,
   });
 
+  if (!row) {
+    throw new FirmaSeguroApiError(
+      "FirmaSeguro devolvio un UUID que ya pertenece a otro expediente o a una firma reemplazada. No se modifico el historico.",
+      409,
+      { processUuid, draftId: options.draftId || null, creditId: options.creditoId || null }
+    );
+  }
+
   if (options.creditoId) {
     const snapshot = mergeFirmaSeguroSnapshot(credito.contratoSnapshot, {
       uuid: processUuid,
@@ -1457,5 +1465,8 @@ export async function linkFirmaSeguroProcessForCredit(
 }
 
 export async function getFirmaSeguroProcessForCallback(processUuid: string) {
-  return getFirmaSeguroProcessByUuid(processUuid);
+  // El callback debe seguir archivando el estado/PDF del proveedor aunque el
+  // expediente haya sido reemplazado. Los flujos operativos usan el getter
+  // normal, que excluye expresamente procesos superseded.
+  return getFirmaSeguroProcessByUuidIncludingSuperseded(processUuid);
 }

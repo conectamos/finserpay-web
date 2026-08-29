@@ -655,9 +655,11 @@ function authoritativeFirmaSeguroWhere(draftAlias: "d" | "draft") {
           SELECT latest_firma."id"
           FROM "FirmaSeguroProcess" latest_firma
           WHERE latest_firma."draftId" = ${draftAlias}."id"
+            AND latest_firma."supersededAt" IS NULL
           ORDER BY latest_firma."createdAt" DESC, latest_firma."id" DESC
           LIMIT 1
         )
+        AND firma."supersededAt" IS NULL
         AND (
           firma."completedAt" IS NOT NULL
           OR NULLIF(BTRIM(firma."signedDocumentBase64"), '') IS NOT NULL

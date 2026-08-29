@@ -273,6 +273,7 @@ async function readDrafts(
         SELECT process."status", process."processUuid"
         FROM "FirmaSeguroProcess" process
         WHERE process."draftId" = d."id"
+          AND process."supersededAt" IS NULL
         ORDER BY process."createdAt" DESC, process."id" DESC
         LIMIT 1
       ) latest_firma ON TRUE

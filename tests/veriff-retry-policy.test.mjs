@@ -12,31 +12,31 @@ const { buildVeriffRetryPolicy, veriffDeclineWasCanonicalAtDecision } = await ji
 );
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
 
-test("la politica Veriff permite exactamente un reintento despues del primer rechazo", () => {
+test("la politica Veriff cierra la solicitud con el primer rechazo", () => {
   assert.deepEqual(buildVeriffRetryPolicy(0), {
     applicationRejected: false,
     declinedAttempts: 0,
-    maxAttempts: 2,
-    remainingAttempts: 2,
+    maxAttempts: 1,
+    remainingAttempts: 1,
     retryAllowed: false,
   });
   assert.deepEqual(buildVeriffRetryPolicy(1), {
-    applicationRejected: false,
+    applicationRejected: true,
     declinedAttempts: 1,
-    maxAttempts: 2,
-    remainingAttempts: 1,
-    retryAllowed: true,
+    maxAttempts: 1,
+    remainingAttempts: 0,
+    retryAllowed: false,
   });
   assert.deepEqual(buildVeriffRetryPolicy(2), {
     applicationRejected: true,
     declinedAttempts: 2,
-    maxAttempts: 2,
+    maxAttempts: 1,
     remainingAttempts: 0,
     retryAllowed: false,
   });
 });
 
-test("solo DECLINED consume intentos y el segundo rechazo cierra el borrador", async () => {
+test("solo DECLINED consume intentos y el primer rechazo cierra el borrador", async () => {
   const policy = await readProjectFile("lib/veriff-retry-policy.ts");
 
   assert.match(policy, /AND declined\."status" = 'DECLINED'/);

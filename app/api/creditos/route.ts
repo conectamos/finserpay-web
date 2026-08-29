@@ -92,7 +92,6 @@ import {
   extractVeriffIdentityDocumentEvidence,
   getVeriffPublicSummary,
   isVeriffRequired,
-  summarizeVeriffRisk,
 } from "@/lib/veriff";
 import {
   compareDataCreditoVeriffIdentityEvidence,
@@ -2679,28 +2678,17 @@ export async function POST(req: Request) {
       );
     }
 
-    const veriffRiskSnapshot = veriffValidation
-      ? buildVeriffSnapshot(veriffValidation)
-      : null;
-    const veriffRiskBlocked = Boolean(veriffRiskSnapshot?.riskBlocked);
-    const veriffCannotFinalize =
-      veriffRiskBlocked ||
-      (veriffValidation
-        ? !isVeriffApproved(veriffValidation)
-        : veriffRequired);
+    const veriffCannotFinalize = veriffValidation
+      ? !isVeriffApproved(veriffValidation)
+      : veriffRequired;
 
     if (veriffCannotFinalize) {
       return NextResponse.json(
         {
-          code: veriffRiskBlocked
-            ? "VERIFF_COMPLIANCE_REVIEW_REQUIRED"
-            : "VERIFF_APPROVAL_REQUIRED",
+          code: "VERIFF_APPROVAL_REQUIRED",
           error:
-            veriffRiskBlocked
-              ? "La validación requiere revisión de cumplimiento por FINSER PAY antes de finalizar el crédito."
-              : "Debes aprobar la validacion de identidad en Veriff antes de finalizar el credito.",
-          retryable: !veriffRiskBlocked,
-          reviewRequired: veriffRiskBlocked,
+            "Debes aprobar la validacion de identidad en Veriff antes de finalizar el credito.",
+          retryable: true,
           identityValidation: veriffValidation
             ? {
                 id: veriffValidation.id,
@@ -3490,21 +3478,6 @@ export async function POST(req: Request) {
           throw new VeriffValidationFinalizationError(
             "DATACREDITO_VERIFF_ALREADY_LINKED",
             "La validación facial ya está vinculada a otro crédito. No se creó un crédito nuevo.",
-            false
-          );
-        }
-
-        const lockedVeriffSnapshot = buildVeriffSnapshot(
-          lockedVeriffValidation
-        );
-        const lockedVeriffRisk = summarizeVeriffRisk(
-          lockedVeriffValidation.decisionPayload,
-          lockedVeriffValidation.webhookPayload
-        );
-        if (lockedVeriffSnapshot?.riskBlocked || lockedVeriffRisk.blocked) {
-          throw new VeriffValidationFinalizationError(
-            "VERIFF_COMPLIANCE_REVIEW_REQUIRED",
-            "La validación requiere revisión de cumplimiento por FINSER PAY antes de finalizar el crédito.",
             false
           );
         }

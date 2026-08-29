@@ -4195,16 +4195,10 @@ body {
 }
 
 .fp-veriff-status.is-conflict,
-.fp-veriff-status.is-incomplete,
-.fp-veriff-status.is-compliance-review {
+.fp-veriff-status.is-incomplete {
   border-color: var(--fp-amber);
   background: var(--fp-amber-soft);
   color: #744006;
-}
-
-.fp-identity-qr-area.is-compliance-review {
-  border-color: var(--fp-amber);
-  background: var(--fp-amber-soft);
 }
 
 .fp-identity-modal-kicker.is-conflict {

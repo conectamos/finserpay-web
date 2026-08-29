@@ -54,6 +54,11 @@ import {
   refreshFirmaSeguroProcess,
   serializeFirmaSeguroProcess,
 } from "@/lib/firmaseguro-credit";
+import {
+  correctFirmaSeguroDraftImei,
+  FirmaSeguroImeiCorrectionError,
+  recordFirmaSeguroImeiCorrectionReissue,
+} from "@/lib/firmaseguro-imei-correction";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
 import { tryAcquireFirmaSeguroDraftDispatchLock } from "@/lib/firmaseguro-storage";
 import { isAdminRole } from "@/lib/roles";
@@ -144,7 +149,7 @@ function canReuseFirmaSeguroProcess(process: {
 }
 
 function logFirmaSeguroDraftError(
-  operation: "GET" | "POST",
+  operation: "GET" | "POST" | "PATCH",
   draftId: number | null,
   error: unknown
 ) {
@@ -153,11 +158,14 @@ function logFirmaSeguroDraftError(
     draftId,
     errorType: error instanceof Error ? error.name : "UnknownError",
     status:
-      error instanceof CreditValidationError || error instanceof FirmaSeguroApiError
+      error instanceof CreditValidationError ||
+      error instanceof FirmaSeguroApiError ||
+      error instanceof FirmaSeguroImeiCorrectionError
         ? error.status
         : 500,
     code:
-      error instanceof CreditValidationError
+      error instanceof CreditValidationError ||
+      error instanceof FirmaSeguroImeiCorrectionError
         ? error.code
         : error instanceof FirmaSeguroApiError
           ? "FIRMASEGURO_PROVIDER_ERROR"
@@ -712,6 +720,18 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
 }
 
 function firmaSeguroErrorResponse(error: unknown) {
+  if (error instanceof FirmaSeguroImeiCorrectionError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: error.code,
+        stage: "imei_correction",
+        error: error.message,
+      },
+      { status: error.status }
+    );
+  }
+
   if (error instanceof CreditValidationError) {
     return NextResponse.json(
       {
@@ -789,6 +809,80 @@ export async function GET(
   }
 }
 
+export async function PATCH(
+  request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  let draftIdForLog: number | null = null;
+  try {
+    const params = await context.params;
+    const draftId = parseDraftId(params.id);
+    draftIdForLog = draftId;
+    if (!draftId) {
+      return NextResponse.json(
+        { ok: false, code: "SOLICITUD_INVALIDA", error: "Borrador invalido" },
+        { status: 400 }
+      );
+    }
+
+    const user = await getSessionUser();
+    if (!user) {
+      return NextResponse.json(
+        { ok: false, code: "NO_AUTENTICADO", error: "No autenticado" },
+        { status: 401 }
+      );
+    }
+    if (
+      !isAdminRole(user.rolNombre) ||
+      !isFinserPayCentralAlly(user.aliadoAccesoCodigo)
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "CORRECCION_IMEI_NO_AUTORIZADA",
+          error: "Solo el administrador central FINSER PAY puede corregir el IMEI.",
+        },
+        { status: 403 }
+      );
+    }
+
+    const body = (await request.json().catch(() => null)) as
+      | {
+          action?: unknown;
+          imei?: unknown;
+          reason?: unknown;
+          expectedCurrentImei?: unknown;
+          expectedProcessUuid?: unknown;
+        }
+      | null;
+    if (String(body?.action || "").trim().toUpperCase() !== "CORREGIR_IMEI") {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "ACCION_CORRECCION_INVALIDA",
+          error: "La accion solicitada no es valida.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const result = await correctFirmaSeguroDraftImei({
+      draftId,
+      imei: body?.imei,
+      reason: body?.reason,
+      expectedCurrentImei: body?.expectedCurrentImei,
+      expectedProcessUuid: body?.expectedProcessUuid,
+      actorUserId: user.id,
+      actorName: user.nombre,
+    });
+
+    return NextResponse.json({ ok: true, ...result });
+  } catch (error) {
+    logFirmaSeguroDraftError("PATCH", draftIdForLog, error);
+    return firmaSeguroErrorResponse(error);
+  }
+}
+
 export async function POST(
   _request: Request,
   context: { params: Promise<{ id: string }> }
@@ -816,6 +910,7 @@ export async function POST(
 
     const current = await getLatestFirmaSeguroProcessForDraft(draftId);
     if (current && canReuseFirmaSeguroProcess(current)) {
+      await recordFirmaSeguroImeiCorrectionReissue(draftId, current);
       return NextResponse.json({
         ok: true,
         idempotent: true,
@@ -827,6 +922,7 @@ export async function POST(
     if (!dispatchLock) {
       const concurrentProcess = await getLatestFirmaSeguroProcessForDraft(draftId);
       if (concurrentProcess && canReuseFirmaSeguroProcess(concurrentProcess)) {
+        await recordFirmaSeguroImeiCorrectionReissue(draftId, concurrentProcess);
         return NextResponse.json({
           ok: true,
           idempotent: true,
@@ -859,6 +955,7 @@ export async function POST(
 
       const lockedCurrent = await getLatestFirmaSeguroProcessForDraft(draftId);
       if (lockedCurrent && canReuseFirmaSeguroProcess(lockedCurrent)) {
+        await recordFirmaSeguroImeiCorrectionReissue(draftId, lockedCurrent);
         return NextResponse.json({
           ok: true,
           idempotent: true,
@@ -932,6 +1029,7 @@ export async function POST(
         draftFolio,
         draftPayload: firmaSeguroDraftPayload,
       });
+      await recordFirmaSeguroImeiCorrectionReissue(draftId, process);
 
       return NextResponse.json({
         ok: true,

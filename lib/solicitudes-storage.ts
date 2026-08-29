@@ -409,6 +409,14 @@ function comparableSignedDraftValue(value: unknown) {
   return JSON.stringify(value);
 }
 
+export async function lockSolicitudIdentityMutation(
+  database: Prisma.TransactionClient,
+  kind: "document" | "imei",
+  value: string
+) {
+  return lockIdentity(database, kind, value);
+}
+
 async function lockSolicitudOperationsInOrder(
   database: Prisma.TransactionClient,
   ids: readonly number[]
@@ -691,7 +699,7 @@ export async function reserveSolicitudForIdentity(input: {
 }
 
 export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
-  await ensureSolicitudSchema();
+  await Promise.all([ensureSolicitudSchema(), ensureFirmaSeguroSchema()]);
   const document = normalizeDigits(input.clienteDocumento);
   const imei = normalizeDigits(input.imei);
   const assessmentId = isUuid(input.dataCreditoAssessmentId)
@@ -774,6 +782,18 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           payload: input.payload,
         };
     const canonicalPayload: Record<string, unknown> = { ...canonical.payload };
+    const storedCorrectionId = String(
+      targetRow?.payload?.firmaSeguroCorrectionId || ""
+    ).trim();
+    if (
+      targetRow?.payload?.firmaSeguroCorrectionPending === true &&
+      isUuid(storedCorrectionId)
+    ) {
+      // Son marcadores internos creados por el PATCH central. El navegador no
+      // puede eliminarlos ni inventarlos durante el autosave previo a reemitir.
+      canonicalPayload.firmaSeguroCorrectionPending = true;
+      canonicalPayload.firmaSeguroCorrectionId = storedCorrectionId;
+    }
     const firmaSeguroRows = targetId
       ? await transaction.$queryRawUnsafe<FirmaSeguroDraftTermsRow[]>(
           `
@@ -782,6 +802,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
               "lastError", "draftPayload"
             FROM "FirmaSeguroProcess"
             WHERE "draftId" = $1
+              AND "supersededAt" IS NULL
             ORDER BY "id" DESC
             LIMIT 1
           `,
@@ -1532,6 +1553,7 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
         SELECT process."status", process."lastError", process."updatedAt"
         FROM "FirmaSeguroProcess" process
         WHERE process."draftId" = d."id"
+          AND process."supersededAt" IS NULL
         ORDER BY process."updatedAt" DESC LIMIT 1
       ) firma ON TRUE
       WHERE ${where.conditions.join(" AND ")}
@@ -1597,6 +1619,7 @@ async function readCreditRows(viewer: SolicitudViewer, filters: SolicitudFilters
         SELECT process."status", process."lastError", process."updatedAt"
         FROM "FirmaSeguroProcess" process
         WHERE process."creditoId" = c."id"
+          AND process."supersededAt" IS NULL
         ORDER BY process."updatedAt" DESC LIMIT 1
       ) firma ON TRUE
       WHERE ${where.conditions.join(" AND ")}

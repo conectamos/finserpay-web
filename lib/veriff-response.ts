@@ -25,8 +25,6 @@ export function redactVeriffValidationForOperator(
     approved: validation.approved === true,
     technicalApproved: validation.technicalApproved === true,
     trusted: validation.trusted === true,
-    riskBlocked: validation.riskBlocked === true,
-    reviewRequired: validation.reviewRequired === true,
     pending: validation.pending === true,
     identityDocumentStatus: validation.identityDocumentStatus,
     identityDataAvailable: Boolean(record(validation.identityData)),

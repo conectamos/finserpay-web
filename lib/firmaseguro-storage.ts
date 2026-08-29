@@ -21,6 +21,9 @@ export type FirmaSeguroProcessRow = {
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
+  supersededAt: Date | null;
+  supersededByUserId: number | null;
+  supersededReason: string | null;
 };
 
 type UpsertInput = {
@@ -112,7 +115,10 @@ async function runFirmaSeguroSchemaSetup() {
       "lastError" TEXT,
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "completedAt" TIMESTAMP(3)
+      "completedAt" TIMESTAMP(3),
+      "supersededAt" TIMESTAMPTZ,
+      "supersededByUserId" INTEGER,
+      "supersededReason" TEXT
     )
   `);
 
@@ -125,8 +131,11 @@ async function runFirmaSeguroSchemaSetup() {
     ALTER TABLE "FirmaSeguroProcess"
       ADD COLUMN IF NOT EXISTS "draftId" INTEGER,
       ADD COLUMN IF NOT EXISTS "draftFolio" TEXT,
-      ADD COLUMN IF NOT EXISTS "draftPayload" JSONB
-  `);
+      ADD COLUMN IF NOT EXISTS "draftPayload" JSONB,
+      ADD COLUMN IF NOT EXISTS "supersededAt" TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS "supersededByUserId" INTEGER,
+      ADD COLUMN IF NOT EXISTS "supersededReason" TEXT
+    `);
 
   await prisma.$executeRawUnsafe(`
     DO $$
@@ -163,6 +172,84 @@ async function runFirmaSeguroSchemaSetup() {
   await prisma.$executeRawUnsafe(`
     CREATE INDEX IF NOT EXISTS "FirmaSeguroProcess_status_idx"
       ON "FirmaSeguroProcess" ("status")
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "FirmaSeguroProcess_draft_active_idx"
+      ON "FirmaSeguroProcess" ("draftId", "createdAt" DESC, "id" DESC)
+      WHERE "supersededAt" IS NULL
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "SolicitudImeiCorrectionAudit" (
+      "id" UUID PRIMARY KEY,
+      "correlationId" UUID NOT NULL,
+      "draftId" INTEGER NOT NULL,
+      "eventType" TEXT NOT NULL,
+      "previousImei" TEXT NOT NULL,
+      "newImei" TEXT NOT NULL,
+      "reason" TEXT NOT NULL,
+      "actorUserId" INTEGER NOT NULL,
+      "actorName" TEXT NOT NULL,
+      "previousProcessUuid" TEXT,
+      "newProcessUuid" TEXT,
+      "archivedEvidence" JSONB,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "SolicitudImeiCorrectionAudit_event_check"
+        CHECK ("eventType" IN ('CORRECTED', 'REISSUED')),
+      CONSTRAINT "SolicitudImeiCorrectionAudit_previous_imei_check"
+        CHECK ("previousImei" ~ '^[0-9]{15}$'),
+      CONSTRAINT "SolicitudImeiCorrectionAudit_new_imei_check"
+        CHECK ("newImei" ~ '^[0-9]{15}$'),
+      CONSTRAINT "SolicitudImeiCorrectionAudit_reason_check"
+        CHECK (LENGTH(BTRIM("reason")) BETWEEN 5 AND 500)
+    )
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "SolicitudImeiCorrectionAudit"
+      ADD COLUMN IF NOT EXISTS "archivedEvidence" JSONB
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    CREATE UNIQUE INDEX IF NOT EXISTS "SolicitudImeiCorrectionAudit_event_key"
+      ON "SolicitudImeiCorrectionAudit" ("correlationId", "eventType")
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "SolicitudImeiCorrectionAudit_draft_created_idx"
+      ON "SolicitudImeiCorrectionAudit" ("draftId", "createdAt" DESC)
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    CREATE OR REPLACE FUNCTION "FinserRejectImeiCorrectionAuditMutation"()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      RAISE EXCEPTION 'Solicitud IMEI correction audit records are immutable';
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    DO $$
+    BEGIN
+      PERFORM pg_advisory_xact_lock(
+        ${SOLICITUD_OPERATION_LOCK_NAMESPACE}::integer,
+        2::integer
+      );
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'SolicitudImeiCorrectionAudit_immutable'
+          AND tgrelid = '"SolicitudImeiCorrectionAudit"'::regclass
+          AND NOT tgisinternal
+      ) THEN
+        CREATE TRIGGER "SolicitudImeiCorrectionAudit_immutable"
+          BEFORE UPDATE OR DELETE ON "SolicitudImeiCorrectionAudit"
+          FOR EACH ROW EXECUTE FUNCTION "FinserRejectImeiCorrectionAuditMutation"();
+      END IF;
+    END
+    $$
   `);
 }
 
@@ -232,6 +319,9 @@ export async function upsertFirmaSeguroProcess(input: UpsertInput) {
         "lastError" = EXCLUDED."lastError",
         "completedAt" = COALESCE(EXCLUDED."completedAt", "FirmaSeguroProcess"."completedAt"),
         "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "FirmaSeguroProcess"."supersededAt" IS NULL
+        AND "FirmaSeguroProcess"."draftId" IS NOT DISTINCT FROM EXCLUDED."draftId"
+        AND "FirmaSeguroProcess"."creditoId" IS NOT DISTINCT FROM EXCLUDED."creditoId"
       RETURNING *
     `,
     input.creditoId || null,
@@ -270,6 +360,7 @@ export async function linkFirmaSeguroProcessToCredit(
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "processUuid" = $1
         AND "draftId" = $3
+        AND "supersededAt" IS NULL
         AND ("creditoId" IS NULL OR "creditoId" = $2)
       RETURNING *
     `,
@@ -289,6 +380,7 @@ export async function getLatestFirmaSeguroProcessByCredit(creditoId: number) {
       SELECT *
       FROM "FirmaSeguroProcess"
       WHERE "creditoId" = $1
+        AND "supersededAt" IS NULL
       ORDER BY "createdAt" DESC, "id" DESC
       LIMIT 1
     `,
@@ -308,6 +400,7 @@ export async function getLatestSignedFirmaSeguroProcessByCredit(
       SELECT *
       FROM "FirmaSeguroProcess"
       WHERE "creditoId" = $1
+        AND "supersededAt" IS NULL
         AND COALESCE("signedDocumentBase64", '') <> ''
       ORDER BY "createdAt" DESC, "id" DESC
       LIMIT 1
@@ -340,6 +433,7 @@ export async function getCreditIdsWithSignedFirmaSeguroDocument(
       SELECT DISTINCT "creditoId"
       FROM "FirmaSeguroProcess"
       WHERE "creditoId" IN (${placeholders})
+        AND "supersededAt" IS NULL
         AND COALESCE("signedDocumentBase64", '') <> ''
     `,
     ...normalizedIds
@@ -356,6 +450,7 @@ export async function getLatestFirmaSeguroProcessByDraft(draftId: number) {
       SELECT *
       FROM "FirmaSeguroProcess"
       WHERE "draftId" = $1
+        AND "supersededAt" IS NULL
       ORDER BY "createdAt" DESC, "id" DESC
       LIMIT 1
     `,
@@ -429,12 +524,58 @@ export async function getFirmaSeguroProcessByUuid(processUuid: string) {
       SELECT *
       FROM "FirmaSeguroProcess"
       WHERE "processUuid" = $1
+        AND "supersededAt" IS NULL
       LIMIT 1
     `,
     processUuid
   );
 
   return rows[0] || null;
+}
+
+export async function getFirmaSeguroProcessByUuidIncludingSuperseded(
+  processUuid: string
+) {
+  await ensureFirmaSeguroSchema();
+
+  const rows = await prisma.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
+    `
+      SELECT *
+      FROM "FirmaSeguroProcess"
+      WHERE "processUuid" = $1
+      LIMIT 1
+    `,
+    processUuid
+  );
+
+  return rows[0] || null;
+}
+
+export async function markFirmaSeguroDraftProcessesSuperseded(
+  database: Prisma.TransactionClient,
+  input: {
+    draftId: number;
+    actorUserId: number;
+    reason: string;
+  }
+) {
+  await ensureFirmaSeguroSchema();
+
+  return database.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
+    `
+      UPDATE "FirmaSeguroProcess"
+      SET "supersededAt" = CURRENT_TIMESTAMP,
+          "supersededByUserId" = $2,
+          "supersededReason" = $3
+      WHERE "draftId" = $1
+        AND "supersededAt" IS NULL
+        AND "creditoId" IS NULL
+      RETURNING *
+    `,
+    input.draftId,
+    input.actorUserId,
+    input.reason
+  );
 }
 
 export async function updateFirmaSeguroProcess(
@@ -451,10 +592,16 @@ export async function updateFirmaSeguroProcess(
         "statusPayload" = COALESCE($3::jsonb, "statusPayload"),
         "signaturesPayload" = COALESCE($4::jsonb, "signaturesPayload"),
         "documentsPayload" = COALESCE($5::jsonb, "documentsPayload"),
-        "signedDocumentBase64" = COALESCE($6, "signedDocumentBase64"),
-        "signedDocumentFileName" = COALESCE($7, "signedDocumentFileName"),
+        "signedDocumentBase64" = COALESCE(
+          NULLIF("signedDocumentBase64", ''),
+          $6
+        ),
+        "signedDocumentFileName" = COALESCE(
+          NULLIF("signedDocumentFileName", ''),
+          $7
+        ),
         "lastError" = $8,
-        "completedAt" = COALESCE($9, "completedAt"),
+        "completedAt" = COALESCE("completedAt", $9),
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "processUuid" = $1
       RETURNING *

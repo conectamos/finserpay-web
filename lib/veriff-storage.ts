@@ -319,8 +319,7 @@ export function isVeriffApproved(row: VeriffValidationRow | null | undefined) {
 
   return (
     areVeriffDecisionsTrusted() &&
-    resolveVeriffRowStatus(row) === "APPROVED" &&
-    !summarizeVeriffRisk(row.decisionPayload, row.webhookPayload).blocked
+    resolveVeriffRowStatus(row) === "APPROVED"
   );
 }
 
@@ -332,9 +331,7 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
   const status = resolveVeriffRowStatus(row);
   const technicalApproved = status === "APPROVED";
   const trusted = areVeriffDecisionsTrusted();
-  const risk = summarizeVeriffRisk(row.decisionPayload, row.webhookPayload);
-  const riskBlocked = risk.blocked;
-  const approved = technicalApproved && trusted && !riskBlocked;
+  const approved = technicalApproved && trusted;
   const decisionIdentity = extractVeriffIdentityData(row.decisionPayload);
   const webhookIdentity = extractVeriffIdentityData(row.webhookPayload);
   const identityData = decisionIdentity || webhookIdentity;
@@ -370,8 +367,6 @@ export function serializeVeriffValidation(row: VeriffValidationRow | null) {
     approved,
     technicalApproved,
     trusted,
-    riskBlocked,
-    reviewRequired: riskBlocked,
     pending: status === "PENDING" || status === "REVIEW" || status === "RESUBMISSION",
     lastError: row.lastError,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
@@ -648,13 +643,11 @@ export async function updateVeriffValidationFromDecision(
       extractVeriffIdentityDocumentEvidence(payload),
       current.clienteDocumento
     );
-    const incomingRisk = summarizeVeriffRisk(payload);
     const reviewRequired = Boolean(
       (preserveCanonicalStatus && !preservesApprovedAgainstPending) ||
         (current.creditoId &&
           (statusEvidence.conflict ||
-          (!incomingIdentity.ok && incomingIdentity.status !== "missing") ||
-          incomingRisk.blocked))
+          (!incomingIdentity.ok && incomingIdentity.status !== "missing")))
     );
     const eventKey = buildVeriffEventKey(id, source, payload);
     const eventRows = await transaction.$queryRawUnsafe<Array<{ id: bigint }>>(
@@ -788,8 +781,6 @@ export function buildVeriffSnapshot(row: VeriffValidationRow | null) {
     identityDocumentNumber: serialized?.identityDocumentNumber || null,
     identityDocumentStatus: serialized?.identityDocumentStatus || "missing",
     riskSignals: risk,
-    riskBlocked: risk.blocked,
-    reviewRequired: risk.blocked,
     checkedAt: row.decidedAt?.toISOString() || row.updatedAt?.toISOString() || null,
   };
 }

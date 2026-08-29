@@ -1,4 +1,4 @@
-export const MAX_VERIFF_DECLINED_ATTEMPTS = 2;
+export const MAX_VERIFF_DECLINED_ATTEMPTS = 1;
 
 export type VeriffRetryPolicy = {
   applicationRejected: boolean;

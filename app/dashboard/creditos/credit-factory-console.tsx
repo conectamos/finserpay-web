@@ -269,8 +269,6 @@ type VeriffValidationState = {
   approved: boolean;
   technicalApproved?: boolean;
   trusted?: boolean;
-  riskBlocked?: boolean;
-  reviewRequired?: boolean;
   pending: boolean;
   veriffSessionId: string | null;
   sessionUrl: string | null;
@@ -321,8 +319,6 @@ function veriffApprovalCanUnlockClient(
 ) {
   if (
     !validation?.approved ||
-    validation.riskBlocked ||
-    validation.reviewRequired ||
     !validation.decidedAt
   ) {
     return false;
@@ -440,8 +436,8 @@ type VeriffRetryPolicyState = {
 const EMPTY_VERIFF_RETRY_POLICY: VeriffRetryPolicyState = {
   applicationRejected: false,
   declinedAttempts: 0,
-  maxAttempts: 2,
-  remainingAttempts: 2,
+  maxAttempts: 1,
+  remainingAttempts: 1,
   retryAllowed: false,
 };
 
@@ -811,8 +807,13 @@ type FirmaSeguroResponse = {
   ok?: boolean;
   message?: string;
   error?: string;
+  code?: string;
   detail?: unknown;
   documentUrl?: string | null;
+  previousImei?: string | null;
+  imei?: string | null;
+  reissueRequired?: boolean;
+  currentStep?: number;
   process?: {
     id?: number;
     creditoId?: number | null;
@@ -2999,6 +3000,12 @@ export default function CreditFactoryConsole({
   const [sendingManualPush, setSendingManualPush] = useState(false);
   const [firmaSeguroSubmitting, setFirmaSeguroSubmitting] = useState(false);
   const [firmaSeguroRefreshing, setFirmaSeguroRefreshing] = useState(false);
+  const [firmaSeguroImeiCorrecting, setFirmaSeguroImeiCorrecting] =
+    useState(false);
+  const [firmaSeguroImeiCorrectionValue, setFirmaSeguroImeiCorrectionValue] =
+    useState("");
+  const [firmaSeguroImeiCorrectionReason, setFirmaSeguroImeiCorrectionReason] =
+    useState("");
   const [firmaSeguroDraftProcess, setFirmaSeguroDraftProcess] =
     useState<FirmaSeguroProcess | null>(null);
   const [paymentValue, setPaymentValue] = useState("");
@@ -3057,6 +3064,7 @@ export default function CreditFactoryConsole({
   const veriffAutoSessionRef = useRef(false);
   const veriffRequestInFlightRef = useRef(false);
   const veriffRefreshGenerationRef = useRef(0);
+  const firmaSeguroRefreshGenerationRef = useRef(0);
   const veriffRefreshFlightRef = useRef<{
     generation: number;
     validationId: number;
@@ -4450,8 +4458,6 @@ export default function CreditFactoryConsole({
   useEffect(() => {
     if (
       !veriffValidation?.sessionUrl ||
-      veriffValidation.riskBlocked ||
-      veriffValidation.reviewRequired ||
       veriffApprovalCanUnlockClient(
         veriffValidation,
         veriffExpectedDraftId,
@@ -4732,15 +4738,9 @@ export default function CreditFactoryConsole({
       veriffValidation?.status === "EXPIRED" ||
       veriffValidation?.status === "ABANDONED"
   );
-  const veriffComplianceReviewRequired = Boolean(
-    (veriffValidation?.reviewRequired || veriffValidation?.riskBlocked) &&
-      !veriffRejected
-  );
-  const veriffRiskOnly = veriffComplianceReviewRequired;
   const veriffHasFinalDecision = Boolean(
     veriffTechnicalRetryRequired ||
       (veriffValidation?.approved && !veriffIdentityEvidencePending) ||
-      veriffRiskOnly ||
       veriffValidation?.status === "DECLINED" ||
       veriffValidation?.status === "ERROR" ||
       veriffValidation?.status === "EXPIRED" ||
@@ -4752,8 +4752,6 @@ export default function CreditFactoryConsole({
   );
   const veriffVisualState = veriffSubmitting
     ? "generating"
-    : veriffComplianceReviewRequired
-      ? "compliance-review"
     : veriffApproved
       ? "approved"
       : veriffIdentityEvidenceConflict
@@ -4780,8 +4778,6 @@ export default function CreditFactoryConsole({
   const veriffVisualLabel =
     veriffVisualState === "generating"
       ? "Generando codigo"
-      : veriffVisualState === "compliance-review"
-        ? "Revisión de cumplimiento"
       : veriffVisualState === "approved"
         ? "Aprobada"
         : veriffVisualState === "conflict"
@@ -4804,7 +4800,6 @@ export default function CreditFactoryConsole({
     veriffConfig.configured &&
     !veriffUnavailableForDataCredito &&
     !veriffApproved &&
-    !veriffComplianceReviewRequired &&
     !dataCreditoVeriffDocumentRejected &&
     !veriffRetryPolicy.applicationRejected &&
     (!veriffValidation?.sessionUrl || veriffHasFinalDecision || veriffConnectionError);
@@ -5018,11 +5013,8 @@ export default function CreditFactoryConsole({
     deliveryRequirementReady;
   const creditClosureReady =
     ventaLista &&
-    !veriffComplianceReviewRequired &&
     (!firmaSeguroProcessExists || firmaSeguroProcessSigned);
-  const creditClosurePendingMessage = veriffComplianceReviewRequired
-    ? "La validación requiere revisión de cumplimiento por FINSER PAY. No repitas la validación ni intentes cerrar el crédito hasta que la revisión sea resuelta."
-    : veriffRequired && !veriffApproved
+  const creditClosurePendingMessage = veriffRequired && !veriffApproved
       ? "Veriff debe aprobar la identidad antes de finalizar el crédito."
       : deliveryPendingMessage;
   const paymentOverview = paymentSummary ||
@@ -6927,10 +6919,6 @@ export default function CreditFactoryConsole({
       return veriffConfig.configured ? "Pendiente" : "Sin configurar";
     }
 
-    if (validation.riskBlocked || validation.reviewRequired) {
-      return "Revisión de cumplimiento";
-    }
-
     if (
       dataCreditoRequiresVeriff &&
       getDataCreditoVeriffDocumentRejectionMessage(
@@ -7090,8 +7078,6 @@ export default function CreditFactoryConsole({
 
   const veriffMissingIdentityMessage =
     "Aprobada sin datos para autocompletar.";
-  const veriffRiskMessage =
-    "FINSER PAY debe revisar esta validación antes de continuar. No repitas la validación ni intentes cerrar el crédito.";
   const veriffRejectedMessage = "Validacion rechazada por Veriff.";
 
   const veriffMediaLabel = (item: VeriffMediaState) => {
@@ -7335,8 +7321,6 @@ export default function CreditFactoryConsole({
           ? documentRejectionMessage
           : validation?.status === "DECLINED"
           ? veriffRejectedMessage
-          : validation?.riskBlocked || validation?.reviewRequired
-            ? veriffRiskMessage
           : validation?.approved && (!usableApproval || !filledClientData)
             ? veriffMissingIdentityMessage
             : ""
@@ -7349,7 +7333,6 @@ export default function CreditFactoryConsole({
         identityEvidenceConflict ||
         identityEvidenceMissing ||
         Boolean(validation?.approved && !usableApproval) ||
-        Boolean(validation?.riskBlocked || validation?.reviewRequired) ||
         validation?.status === "DECLINED" ||
         validation?.status === "ERROR" ||
         validation?.status === "EXPIRED" ||
@@ -7363,8 +7346,6 @@ export default function CreditFactoryConsole({
             ? documentRejectionMessage
             : validation?.status === "DECLINED"
             ? "Validacion rechazada por Veriff."
-            : validation?.riskBlocked || validation?.reviewRequired
-            ? "Revisión de cumplimiento requerida por FINSER PAY."
             : usableApproval
             ? filledClientData
               ? "Identidad aprobada. Datos copiados."
@@ -7376,9 +7357,7 @@ export default function CreditFactoryConsole({
               : validation
                 ? `${veriffStatusLabel(validation)}.`
                 : "Sin resultado.",
-          tone: validation?.riskBlocked || validation?.reviewRequired
-            ? "amber"
-            : documentRejectionMessage ||
+          tone: documentRejectionMessage ||
                 validation?.status === "DECLINED" ||
                 validation?.status === "ERROR"
               ? "red"
@@ -7561,8 +7540,6 @@ export default function CreditFactoryConsole({
           ? documentRejectionMessage
           : validation?.status === "DECLINED"
           ? veriffRejectedMessage
-          : validation?.riskBlocked || validation?.reviewRequired
-            ? veriffRiskMessage
           : validation?.approved && (!usableApproval || !filledClientData)
             ? veriffMissingIdentityMessage
             : ""
@@ -7574,8 +7551,6 @@ export default function CreditFactoryConsole({
           ? documentRejectionMessage
           : validation?.status === "DECLINED"
           ? "Validacion rechazada por Veriff."
-          : validation?.riskBlocked || validation?.reviewRequired
-          ? "Revisión de cumplimiento requerida por FINSER PAY."
           : usableApproval
           ? filledClientData
             ? "Identidad aprobada. Datos copiados."
@@ -7583,9 +7558,7 @@ export default function CreditFactoryConsole({
           : validation?.approved
             ? "Identidad aprobada sin datos para autocompletar. Reintenta la validacion."
           : "QR de validacion listo.",
-        tone: validation?.riskBlocked || validation?.reviewRequired
-          ? "amber"
-          : documentRejectionMessage || validation?.status === "DECLINED"
+        tone: documentRejectionMessage || validation?.status === "DECLINED"
             ? "red"
             : usableApproval
               ? "emerald"
@@ -8389,6 +8362,8 @@ export default function CreditFactoryConsole({
     setEquipoMarca("");
     setEquipoModelo("");
     setImei("");
+    setFirmaSeguroImeiCorrectionValue("");
+    setFirmaSeguroImeiCorrectionReason("");
     setValorEquipoTotal("");
     setCuotaInicial("");
     setPlazoMeses(
@@ -8541,6 +8516,9 @@ export default function CreditFactoryConsole({
       return null;
     }
 
+    const refreshGeneration = firmaSeguroRefreshGenerationRef.current + 1;
+    firmaSeguroRefreshGenerationRef.current = refreshGeneration;
+
     try {
       setFirmaSeguroRefreshing(true);
       setNotice(null);
@@ -8548,6 +8526,10 @@ export default function CreditFactoryConsole({
       const result = await requestJson<FirmaSeguroResponse>(
         `/api/creditos/borradores/${draftId}/firma-seguro?refresh=1`
       );
+
+      if (firmaSeguroRefreshGenerationRef.current !== refreshGeneration) {
+        return null;
+      }
 
       if (!result.ok || !result.data?.ok) {
         throw new Error(
@@ -8586,6 +8568,9 @@ export default function CreditFactoryConsole({
 
       return process;
     } catch (error) {
+      if (firmaSeguroRefreshGenerationRef.current !== refreshGeneration) {
+        return null;
+      }
       setNotice({
         text:
           error instanceof Error
@@ -8595,7 +8580,174 @@ export default function CreditFactoryConsole({
       });
       return null;
     } finally {
+      if (firmaSeguroRefreshGenerationRef.current === refreshGeneration) {
+        setFirmaSeguroRefreshing(false);
+      }
+    }
+  };
+
+  const correctFirmaSeguroImei = async () => {
+    const correctedImei = firmaSeguroImeiCorrectionValue.trim();
+    const expectedCurrentImei = imeiDigits;
+    const expectedProcessUuid = String(
+      firmaSeguroDraftProcess?.processUuid || ""
+    ).trim();
+    const reason = firmaSeguroImeiCorrectionReason.trim();
+
+    if (!canSeeInternalPricing || !draftId) {
+      setNotice({
+        text: "Solo el administrador central puede corregir el IMEI de un expediente firmado.",
+        tone: "red",
+      });
+      return;
+    }
+    if (!/^\d{15}$/.test(correctedImei)) {
+      setNotice({
+        text: "El IMEI corregido debe tener exactamente 15 numeros.",
+        tone: "amber",
+      });
+      return;
+    }
+    if (correctedImei === imeiDigits) {
+      setNotice({
+        text: "Ingresa un IMEI diferente al que ya tiene la solicitud.",
+        tone: "amber",
+      });
+      return;
+    }
+    if (reason.length < 8) {
+      setNotice({
+        text: "Escribe el motivo de la correccion para dejar la trazabilidad administrativa.",
+        tone: "amber",
+      });
+      return;
+    }
+    if (!firmaSeguroProcessSigned || !expectedProcessUuid) {
+      setNotice({
+        text: "Actualiza FirmaSeguro: solo se puede corregir un expediente firmado y vigente.",
+        tone: "amber",
+      });
+      return;
+    }
+
+    const correctionConfirmed = window.confirm(
+      [
+        "Confirma la correccion del IMEI:",
+        `IMEI firmado actual: ${expectedCurrentImei}`,
+        `IMEI nuevo: ${correctedImei}`,
+        "El contrato anterior quedara como historico y el cliente debera firmar uno nuevo.",
+      ].join("\n")
+    );
+    if (!correctionConfirmed) {
+      return;
+    }
+
+    try {
+      cancelPendingDraftAutosave();
+      firmaSeguroRefreshGenerationRef.current += 1;
       setFirmaSeguroRefreshing(false);
+      setFirmaSeguroImeiCorrecting(true);
+      setNotice(null);
+      const result = await requestJson<FirmaSeguroResponse>(
+        `/api/creditos/borradores/${draftId}/firma-seguro`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "CORREGIR_IMEI",
+            imei: correctedImei,
+            reason,
+            expectedCurrentImei,
+            expectedProcessUuid,
+          }),
+        }
+      );
+
+      if (!result.ok || !result.data?.ok) {
+        throw new Error(
+          result.data?.error || "No se pudo corregir el IMEI de la solicitud"
+        );
+      }
+
+      setImei(correctedImei);
+      setFirmaSeguroImeiCorrectionValue(correctedImei);
+      setFirmaSeguroImeiCorrectionReason("");
+      setFirmaSeguroDraftProcess(null);
+      setDeliveryValidation(null);
+      setAndroidEnrollment(EMPTY_ANDROID_ENROLLMENT_STATE);
+      androidAutoEnrollmentKeyRef.current = "";
+      setIphoneEnrollmentVerified(false);
+      setIphoneEnrollmentConfirmedAt("");
+      setIphoneEnrollmentReview(null);
+      iphoneEnrollmentReviewIdRef.current = "";
+      setPersistedIphoneClosureFingerprint("");
+      setFotoEntregaDataUrl("");
+      setFotoEntregaAudit(null);
+      setFotoRemisionDataUrl("");
+      setFotoRemisionAudit(null);
+      setWizardStep(4);
+      setDraftStatus("saved");
+      setNotice({
+        text:
+          "IMEI corregido. El expediente anterior quedo como historico; envia uno nuevo a FirmaSeguro y espera la nueva firma antes de enrolar.",
+        tone: "amber",
+      });
+    } catch (error) {
+      let correctionWasCommitted = false;
+
+      try {
+        const params = new URLSearchParams({ id: String(draftId) });
+        const draftResult = await requestJson<CreditDraftSingleResponse>(
+          `/api/creditos/borradores?${params.toString()}`,
+          { timeoutMs: 20_000 }
+        );
+        const authoritativeDraft = draftResult.data?.item || null;
+        const authoritativeImei = String(
+          authoritativeDraft?.imei ||
+            authoritativeDraft?.payload?.imei ||
+            authoritativeDraft?.payload?.deviceUid ||
+            ""
+        ).replace(/\D/g, "");
+
+        if (
+          draftResult.ok &&
+          authoritativeDraft &&
+          authoritativeImei === correctedImei
+        ) {
+          applyDraftPayload(authoritativeDraft);
+          const processResult = await requestJson<FirmaSeguroResponse>(
+            `/api/creditos/borradores/${draftId}/firma-seguro`
+          );
+          setFirmaSeguroDraftProcess(
+            processResult.ok && processResult.data?.ok
+              ? processResult.data.process || null
+              : null
+          );
+          setFirmaSeguroImeiCorrectionValue(correctedImei);
+          setFirmaSeguroImeiCorrectionReason("");
+          correctionWasCommitted = true;
+        }
+      } catch {
+        // Conserva el error original si tampoco fue posible reconciliar.
+      }
+
+      if (correctionWasCommitted) {
+        setNotice({
+          text:
+            "La conexion se interrumpio, pero confirmamos que el IMEI si fue corregido. Envia el expediente nuevo a FirmaSeguro.",
+          tone: "amber",
+        });
+        return;
+      }
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudo corregir el IMEI de la solicitud",
+        tone: "red",
+      });
+    } finally {
+      setFirmaSeguroImeiCorrecting(false);
     }
   };
 
@@ -8634,14 +8786,6 @@ export default function CreditFactoryConsole({
       setNotice({
         text: dataCreditoVeriffDocumentRejectionMessage,
         tone: "red",
-      });
-      return null;
-    }
-
-    if (veriffComplianceReviewRequired) {
-      setNotice({
-        text: veriffRiskMessage,
-        tone: "amber",
       });
       return null;
     }
@@ -8789,16 +8933,6 @@ export default function CreditFactoryConsole({
       });
 
       if (!result.ok) {
-        if (result.data?.code === "VERIFF_COMPLIANCE_REVIEW_REQUIRED") {
-          setNotice({
-            text:
-              result.data?.error ||
-              "La validación requiere revisión de cumplimiento por FINSER PAY antes de finalizar el crédito.",
-            tone: "amber",
-          });
-          return null;
-        }
-
         if (
           result.data?.code === "DATACREDITO_ASSESSMENT_INVALID" ||
           result.data?.code === "DATACREDITO_ASSESSMENT_REQUIRED"
@@ -9723,6 +9857,8 @@ export default function CreditFactoryConsole({
     setEquipoMarca(restoredEquipoMarca);
     setEquipoModelo(restoredEquipoModelo);
     setImei(restoredImei);
+    setFirmaSeguroImeiCorrectionValue(restoredImei);
+    setFirmaSeguroImeiCorrectionReason("");
     setDraftDevicePlatform(restoredDevicePlatform);
     // La aprobación iPhone ya no se restaura desde el payload editable del
     // asesor. El polling autoritativo la carga desde IphoneEnrollmentReview.
@@ -12247,28 +12383,6 @@ export default function CreditFactoryConsole({
                           Reintentar validacion
                         </button>
                       </div>
-                    ) : veriffComplianceReviewRequired ? (
-                      <div className="fp-identity-modal-content is-result">
-                        <p className="fp-identity-modal-kicker is-conflict">
-                          Revisión requerida
-                        </p>
-                        <h2 id="fp-identity-modal-title">
-                          Revisión de cumplimiento
-                        </h2>
-                        <div
-                          className="fp-identity-modal-illustration is-conflict"
-                          aria-hidden="true"
-                        >
-                          <ShieldCheck className="h-20 w-20" strokeWidth={1.35} />
-                        </div>
-                        <p className="fp-identity-modal-result-copy">
-                          {veriffInlineMessage || veriffRiskMessage}
-                        </p>
-                        <FinserSupportLink>
-                          <CircleHelp className="h-4 w-4" strokeWidth={1.9} />
-                          Contactar soporte
-                        </FinserSupportLink>
-                      </div>
                     ) : veriffVisualState === "expired" ||
                       veriffVisualState === "error" ? (
                       <div className="fp-identity-modal-content is-result">
@@ -12573,12 +12687,6 @@ export default function CreditFactoryConsole({
                             <strong>Identidad aprobada</strong>
                             <p>Los datos verificados fueron vinculados a esta solicitud.</p>
                           </div>
-                        ) : veriffComplianceReviewRequired ? (
-                          <div className="fp-identity-result">
-                            <ShieldCheck className="h-11 w-11" strokeWidth={1.5} />
-                            <strong>Revisión de cumplimiento</strong>
-                            <p>FINSER PAY debe resolver la revisión antes de continuar.</p>
-                          </div>
                         ) : veriffQrDataUrl ? (
                           <img
                             src={veriffQrDataUrl}
@@ -12636,8 +12744,7 @@ export default function CreditFactoryConsole({
                         ) : null}
                       </div>
 
-                      {veriffValidation?.sessionUrl &&
-                      !veriffComplianceReviewRequired ? (
+                      {veriffValidation?.sessionUrl ? (
                         <a
                           href={veriffValidation?.sessionUrl || undefined}
                           target="_blank"
@@ -14403,8 +14510,6 @@ export default function CreditFactoryConsole({
                             <p className="mt-2 text-sm leading-6 text-slate-600">
                               {veriffValidation?.status === "DECLINED"
                                 ? "Validacion rechazada por Veriff."
-                                : veriffRiskOnly
-                                  ? "Requiere revision por riesgo."
                                 : veriffConfig.configured
                                 ? veriffConfig.decisionsTrusted === false
                                   ? "Modo prueba: genera un QR para validar el flujo; no confirma identidad real."
@@ -14425,7 +14530,7 @@ export default function CreditFactoryConsole({
                               "rounded-2xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em]",
                               veriffApproved
                                 ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                : veriffRejected || veriffRiskOnly
+                                : veriffRejected
                                   ? "border-red-200 bg-red-50 text-red-700"
                                   : veriffConfig.configured
                                     ? "border-amber-200 bg-amber-50 text-amber-700"
@@ -14511,11 +14616,6 @@ export default function CreditFactoryConsole({
                                 Detalle:{" "}
                                 {veriffValidation.reason ||
                                   veriffValidation.lastError}
-                              </p>
-                            ) : null}
-                            {veriffComplianceReviewRequired ? (
-                              <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 font-semibold text-amber-800">
-                                Revisión de cumplimiento requerida por FINSER PAY.
                               </p>
                             ) : null}
                           </div>
@@ -14803,17 +14903,21 @@ export default function CreditFactoryConsole({
                         disabled={
                           !contratoListo ||
                           creating ||
-                          firmaSeguroSubmitting
+                          firmaSeguroSubmitting ||
+                          firmaSeguroProcessSent ||
+                          firmaSeguroImeiCorrecting
                         }
                         className="fp-firma-primary mt-5 w-full rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold uppercase text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         <Send className="h-4 w-4" strokeWidth={2} />
                         {creating || firmaSeguroSubmitting
                           ? "Enviando a FirmaSeguro..."
-                          : firmaSeguroProcessFailed
+                          : firmaSeguroProcessSigned
+                            ? "Firma ya completada"
+                            : firmaSeguroProcessFailed
                             ? "Reintentar FirmaSeguro"
                           : firmaSeguroProcessSent
-                            ? "Reenviar FirmaSeguro"
+                            ? "Expediente enviado"
                             : "Enviar a FirmaSeguro"}
                       </button>
 
@@ -14821,7 +14925,11 @@ export default function CreditFactoryConsole({
                         <button
                           type="button"
                           onClick={() => void refreshFirmaSeguroDraftProcess()}
-                          disabled={firmaSeguroRefreshing || firmaSeguroSubmitting}
+                          disabled={
+                            firmaSeguroRefreshing ||
+                            firmaSeguroSubmitting ||
+                            firmaSeguroImeiCorrecting
+                          }
                           className="fp-firma-secondary mt-3 w-full rounded-md border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f7f7f4] disabled:cursor-not-allowed disabled:opacity-70"
                         >
                           <RefreshCw className="h-4 w-4" strokeWidth={2} />
@@ -15113,6 +15221,85 @@ export default function CreditFactoryConsole({
                       </details>
                     </div>
                   </section>
+
+                  {canSeeInternalPricing &&
+                  iphoneFactory &&
+                  draftId &&
+                  firmaSeguroProcessSigned ? (
+                    <section className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-5 py-5">
+                      <div className="flex items-start gap-3">
+                        <span
+                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-amber-200 bg-white text-amber-700"
+                          aria-hidden="true"
+                        >
+                          <History className="h-5 w-5" strokeWidth={1.8} />
+                        </span>
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-800">
+                            Control exclusivo FINSER PAY
+                          </p>
+                          <h4 className="mt-1 text-lg font-black text-slate-950">
+                            Corregir IMEI y volver a firmar
+                          </h4>
+                          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">
+                            Úsalo únicamente si el IMEI fue digitado mal. El PDF ya firmado no se modifica:
+                            queda como histórico, la venta regresa a Contratos y el cliente debe firmar un
+                            expediente nuevo antes del enrolamiento.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(220px,0.65fr)_minmax(320px,1.35fr)_auto] lg:items-end">
+                        <div>
+                          <label className="mb-2 block text-sm font-semibold text-slate-800">
+                            IMEI correcto
+                          </label>
+                          <input
+                            value={firmaSeguroImeiCorrectionValue}
+                            onChange={(event) =>
+                              setFirmaSeguroImeiCorrectionValue(event.target.value)
+                            }
+                            inputMode="numeric"
+                            placeholder="15 números"
+                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-sm font-semibold text-slate-800">
+                            Motivo de la corrección
+                          </label>
+                          <input
+                            value={firmaSeguroImeiCorrectionReason}
+                            onChange={(event) =>
+                              setFirmaSeguroImeiCorrectionReason(event.target.value.slice(0, 240))
+                            }
+                            maxLength={240}
+                            placeholder="Ej. IMEI digitado incorrectamente antes de la firma"
+                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void correctFirmaSeguroImei()}
+                          disabled={
+                            firmaSeguroImeiCorrecting ||
+                            firmaSeguroSubmitting ||
+                            firmaSeguroRefreshing
+                          }
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {firmaSeguroImeiCorrecting ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" strokeWidth={2} />
+                          ) : (
+                            <RotateCcw className="h-4 w-4" strokeWidth={2} />
+                          )}
+                          {firmaSeguroImeiCorrecting
+                            ? "Corrigiendo..."
+                            : "Corregir y exigir nueva firma"}
+                        </button>
+                      </div>
+                    </section>
+                  ) : null}
 
                   <div className={[
                     "fp-delivery-layout mt-4 grid gap-4",

@@ -592,7 +592,8 @@ test("una decisión vinculada queda congelada y los eventos tardíos son auditab
     summarizeVeriffRisk({ verification: { highRisk: true } }).blocked,
     true
   );
-  assert.match(veriffStorage, /incomingRisk\.blocked/);
+  assert.doesNotMatch(veriffStorage, /incomingRisk\.blocked/);
+  assert.match(veriffStorage, /riskSignals: risk/);
   assert.match(
     veriffStorage,
     /if \(current\.creditoId \|\| preserveCanonicalStatus\) \{[\s\S]*?VERIFF_POST_LINK_REVIEW_ERROR[\s\S]*?return reviewRows\[0\] \|\| current;/
@@ -607,7 +608,7 @@ test("una decisión vinculada queda congelada y los eventos tardíos son auditab
   );
 });
 
-test("un APPROVED con riesgo exige revisión de cumplimiento sin reintentos ni datos sensibles", () => {
+test("un APPROVED válido sigue aprobado aunque Veriff reporte señales de riesgo", () => {
   const approvalHelper = sourceBlock(
     veriffStorage,
     "export function isVeriffApproved",
@@ -620,7 +621,7 @@ test("un APPROVED con riesgo exige revisión de cumplimiento sin reintentos ni d
   );
   const precheck = sourceBlock(
     creditRoute,
-    "const veriffRiskSnapshot",
+    "const veriffCannotFinalize",
     "const veriffApprovedForEvidence"
   );
   const transactionalClose = sourceBlock(
@@ -629,49 +630,69 @@ test("un APPROVED con riesgo exige revisión de cumplimiento sin reintentos ni d
     "    let creationResult;"
   );
 
-  assert.match(approvalHelper, /!summarizeVeriffRisk\([\s\S]*?\)\.blocked/);
-  assert.match(serialization, /const riskBlocked = risk\.blocked/);
+  assert.equal(
+    summarizeVeriffRisk({
+      verification: {
+        highRisk: true,
+        riskLabels: [{ label: "provider_signal", status: "MATCH" }],
+      },
+    }).blocked,
+    true
+  );
+  assert.match(
+    approvalHelper,
+    /areVeriffDecisionsTrusted\(\)[\s\S]*?resolveVeriffRowStatus\(row\) === "APPROVED"/
+  );
+  assert.doesNotMatch(approvalHelper, /summarizeVeriffRisk|\.blocked/);
   assert.match(
     serialization,
-    /const approved = technicalApproved && trusted && !riskBlocked/
+    /const approved = technicalApproved && trusted/
   );
-  assert.match(serialization, /reviewRequired: riskBlocked/);
-  assert.doesNotMatch(serialization, /riskSignals:/);
+  assert.doesNotMatch(serialization, /riskBlocked|reviewRequired|riskSignals:/);
 
-  assert.match(precheck, /VERIFF_COMPLIANCE_REVIEW_REQUIRED/);
-  assert.match(precheck, /retryable: !veriffRiskBlocked/);
-  assert.match(precheck, /reviewRequired: veriffRiskBlocked/);
+  assert.match(precheck, /code: "VERIFF_APPROVAL_REQUIRED"/);
+  assert.match(precheck, /!isVeriffApproved\(veriffValidation\)/);
+  assert.doesNotMatch(
+    precheck,
+    /VERIFF_COMPLIANCE_REVIEW_REQUIRED|veriffRiskBlocked|reviewRequired/
+  );
   assert.doesNotMatch(precheck, /riskSignals|PEP|sanciones/i);
 
-  const reviewIndex = transactionalClose.indexOf(
-    "VERIFF_COMPLIANCE_REVIEW_REQUIRED"
+  assert.match(
+    transactionalClose,
+    /if \(!isVeriffApproved\(lockedVeriffValidation\)\)/
   );
-  const changedIndex = transactionalClose.indexOf(
-    "DATACREDITO_VERIFF_STATE_CHANGED"
+  assert.doesNotMatch(
+    transactionalClose,
+    /VERIFF_COMPLIANCE_REVIEW_REQUIRED|summarizeVeriffRisk|riskBlocked/
   );
-  assert.ok(reviewIndex >= 0 && changedIndex > reviewIndex);
-  assert.match(transactionalClose.slice(reviewIndex, changedIndex), /false/);
 
+  assert.doesNotMatch(
+    factoryConsole,
+    /riskBlocked|reviewRequired|veriffComplianceReviewRequired|Revisión de cumplimiento/
+  );
+  assert.doesNotMatch(globalStyles, /is-compliance-review/);
+});
+
+test("un DECLINED de Veriff se conserva como rechazado y no habilita el crédito", () => {
+  const approvalHelper = sourceBlock(
+    veriffStorage,
+    "export function isVeriffApproved",
+    "export function serializeVeriffValidation"
+  );
+  const precheck = sourceBlock(
+    creditRoute,
+    "const veriffCannotFinalize",
+    "const veriffApprovedForEvidence"
+  );
+
+  assert.match(approvalHelper, /resolveVeriffRowStatus\(row\) === "APPROVED"/);
+  assert.match(precheck, /!isVeriffApproved\(veriffValidation\)/);
   assert.match(
     factoryConsole,
-    /validation\.riskBlocked[\s\S]{0,100}validation\.reviewRequired[\s\S]{0,100}return false/
+    /validation\.status === "DECLINED"[\s\S]{0,120}return "Rechazada"/
   );
-  assert.match(factoryConsole, /veriffComplianceReviewRequired/);
-  assert.match(factoryConsole, /Revisión de cumplimiento/);
-  const sessionLinkGuardIndex = factoryConsole.lastIndexOf(
-    "veriffValidation?.sessionUrl &&"
-  );
-  assert.ok(sessionLinkGuardIndex >= 0);
-  assert.match(
-    factoryConsole.slice(sessionLinkGuardIndex, sessionLinkGuardIndex + 200),
-    /!veriffComplianceReviewRequired/
-  );
-  assert.match(
-    factoryConsole,
-    /!veriffApproved &&[\s\S]{0,100}!veriffComplianceReviewRequired/
-  );
-  assert.doesNotMatch(factoryConsole, /riskLabels|riskSignals\?\.reasons/);
-  assert.match(globalStyles, /\.fp-veriff-status\.is-compliance-review/);
+  assert.match(factoryConsole, /validation\?\.status === "DECLINED"/);
 });
 
 test("los riesgos Veriff ignoran el PEP legado y conservan las señales soportadas", () => {
@@ -771,7 +792,7 @@ test("crear QR y cerrar crédito se serializan por solicitud sin duplicar intent
     /SELECT validation\.\*[\s\S]*?FOR UPDATE/
   );
   assert.match(transactionalClose, /isVeriffApproved\(lockedVeriffValidation\)/);
-  assert.match(transactionalClose, /summarizeVeriffRisk\(/);
+  assert.doesNotMatch(transactionalClose, /summarizeVeriffRisk\(/);
   assert.match(
     creditRoute,
     /lockedIdentityComparison[\s\S]*?getDataCreditoVeriffIdentityRejectionCode/
@@ -922,8 +943,9 @@ test("los estados finales contradictorios de Veriff fallan de forma conservadora
   );
   assert.match(
     veriffStorage,
-    /statusEvidence\.conflict[\s\S]*?incomingRisk\.blocked/
+    /statusEvidence\.conflict[\s\S]*?!incomingIdentity\.ok/
   );
+  assert.doesNotMatch(veriffStorage, /incomingRisk\.blocked/);
   assert.match(
     veriffRetryPolicy,
     /serialized\?\.status === "DECLINED"[\s\S]*?UPDATE "VeriffIdentityValidation"[\s\S]*?AND "creditoId" IS NULL/
