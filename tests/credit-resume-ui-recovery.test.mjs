@@ -81,7 +81,7 @@ test("un error al cargar la solicitud reintenta el borrador y no DataCrédito", 
   assert.match(autosave, /draftResumeLoadFailed/);
 });
 
-test("si Veriff no se restaura, el asesor vuelve al paso de identidad y puede reintentar", async () => {
+test("si Veriff no se restaura, conserva los pasos previos y vuelve al paso interno 4", async () => {
   const factory = await readProjectFile(
     "app/dashboard/creditos/credit-factory-console.tsx"
   );
@@ -96,16 +96,27 @@ test("si Veriff no se restaura, el asesor vuelve al paso de identidad y puede re
     "const goToStep ="
   );
 
-  assert.match(restore, /if \(!restoredValidation\) \{[\s\S]*setWizardStep\(1\)/);
+  assert.match(
+    restore,
+    /if \(!restoredValidation\) \{[\s\S]*restoredDraftSnapshot\.wizardStep >= 4[\s\S]*\? 4[\s\S]*: restoredDraftSnapshot\.wizardStep/
+  );
   assert.match(restore, /setVeriffRestoreFailure\(\{/);
   assert.match(
     restore,
-    /!veriffApprovalCanUnlockClient\([\s\S]*setWizardStep\(1\)/
+    /!veriffApprovalCanUnlockClient\([\s\S]*restoredDraftSnapshot\.wizardStep >= 4[\s\S]*\? 4[\s\S]*: restoredDraftSnapshot\.wizardStep/
   );
-  assert.match(restore, /dataCreditoCreditCreationMode/);
+  assert.match(
+    restore,
+    /dataCreditoCreditCreationMode &&[\s\S]*restoredDraftSnapshot\.wizardStep >= 4[\s\S]*setWizardStep\(4\)/
+  );
+  assert.doesNotMatch(restore, /setWizardStep\(1\)/);
   assert.doesNotMatch(restore, /dataCreditoRequiresVeriff/);
   assert.match(retry, /refreshVeriffValidation\(failure\.validationId/);
-  assert.match(retry, /approvalRecovered \? clampWizardStep\(failure\.targetStep\) : 1/);
+  assert.match(
+    retry,
+    /approvalRecovered[\s\S]*\? clampWizardStep\(failure\.targetStep\)[\s\S]*: clampWizardStep\(failure\.targetStep >= 4 \? 4 : failure\.targetStep\)/
+  );
+  assert.match(factory, /paso 3: identidad y firma/);
   assert.match(factory, /Reintentar validación facial/);
 });
 

@@ -30,13 +30,43 @@ test("solo el administrador central FINSERPAY puede inspeccionar libremente la f
 test("la navegacion central se resuelve antes de las guardas secuenciales", () => {
   const advance = sourceBlock("const advanceToStep", "const createWhatsAppOtp");
   const centralGuard = advance.indexOf("if (canAdminMoveFreelyInFactory)");
-  const identityGuard = advance.indexOf("dataCreditoRequiresVeriff");
+  const clientGuard = advance.indexOf("wizardStep === 1 && !stepClienteReady");
+  const equipmentGuard = advance.indexOf("wizardStep === 2 && !stepEquipoReady");
+  const identityAndSignatureGuard = advance.indexOf(
+    "wizardStep === 4 && !stepIdentityContractReady"
+  );
 
   assert.notEqual(centralGuard, -1);
-  assert.notEqual(identityGuard, -1);
-  assert.ok(centralGuard < identityGuard);
+  assert.notEqual(clientGuard, -1);
+  assert.notEqual(equipmentGuard, -1);
+  assert.notEqual(identityAndSignatureGuard, -1);
+  assert.ok(centralGuard < clientGuard);
+  assert.ok(centralGuard < equipmentGuard);
+  assert.ok(centralGuard < identityAndSignatureGuard);
   assert.match(advance, /wizardStep === 1 && !stepClienteReady/);
   assert.match(advance, /wizardStep === 2 && !stepEquipoReady/);
+  assert.match(advance, /wizardStep === 4 && !stepIdentityContractReady/);
+  assert.match(advance, /targetStep > nextVisibleWizardStep\(wizardStep\)/);
+  assert.doesNotMatch(
+    advance,
+    /targetStep > 1 && dataCreditoRequiresVeriff|wizardStep === 2 && !veriffApproved/
+  );
+});
+
+test("el flujo Veriff visible conserva los pasos internos 1, 2, 4 y 5", () => {
+  const factorySteps = sourceBlock("const factorySteps = [", "const draftStatusLabel");
+
+  assert.match(factorySteps, /id: 1,[\s\S]*label: "Cliente"[\s\S]*DataCrédito y datos/);
+  assert.match(factorySteps, /id: 2,[\s\S]*label: "Equipo"/);
+  assert.match(
+    factorySteps,
+    /id: 4,[\s\S]*label: "Identidad y firma"[\s\S]*ready: stepIdentityContractReady/
+  );
+  assert.match(factorySteps, /id: 5,[\s\S]*label: "Enrolamiento y entrega"/);
+  assert.match(
+    factorySteps,
+    /const visibleFactorySteps = hideIdentityWizardStep[\s\S]*factorySteps\.filter\(\(step\) => step\.id !== 3\)/
+  );
 });
 
 test("la precalificacion bloquea el flujo normal pero no la inspeccion central", () => {

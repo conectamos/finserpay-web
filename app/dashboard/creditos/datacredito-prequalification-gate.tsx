@@ -964,7 +964,7 @@ export default function DatacreditoPrequalificationGate({
     const label =
       view === "bypassing"
         ? approvedResult
-          ? "Abriendo validación de identidad..."
+          ? "Abriendo información del cliente..."
           : "Continuando con el flujo disponible..."
         : "Verificando disponibilidad de la evaluación...";
 
@@ -1010,13 +1010,13 @@ export default function DatacreditoPrequalificationGate({
             tabIndex={-1}
             className="mt-4 text-3xl font-black tracking-tight text-[var(--fp-graphite)] outline-none sm:text-4xl"
           >
-            ¡Solicitud aprobada!
+            Consulta aprobada
           </h2>
           <p
             id="datacredito-approved-description"
             className="mx-auto mt-3 max-w-xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base"
           >
-            El cliente puede continuar con la validación de identidad.
+            La solicitud quedó creada. Continúa para completar la información del cliente.
           </p>
 
           <div className="mt-7 grid gap-3 text-left sm:grid-cols-2">
@@ -1066,7 +1066,7 @@ export default function DatacreditoPrequalificationGate({
 
           <div className="mt-7 flex flex-col gap-3 sm:flex-row-reverse sm:justify-center">
             <Button onClick={continueApproved}>
-              Continuar a validación
+              Continuar con los datos
               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
             </Button>
             <Link
@@ -1279,7 +1279,7 @@ export default function DatacreditoPrequalificationGate({
             id="datacredito-rejected-description"
             className="mx-auto mt-3 max-w-xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base"
           >
-            En este momento la solicitud no puede continuar a validación de identidad.
+            En este momento la solicitud no puede continuar con la venta.
           </p>
 
           <div className="mt-7 flex flex-col gap-3 sm:flex-row-reverse sm:justify-center">

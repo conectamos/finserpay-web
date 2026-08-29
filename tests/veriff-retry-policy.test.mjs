@@ -80,7 +80,7 @@ test("la API bloquea nuevas sesiones cuando se agotaron los intentos", async () 
   assert.match(route, /status: 409/);
 });
 
-test("la fabrica usa modal real y revela los datos solo despues de aprobar", async () => {
+test("la fabrica usa modal real en el paso 3 y muestra los datos tras DataCrédito", async () => {
   const source = await readProjectFile(
     "app/dashboard/creditos/credit-factory-console.tsx"
   );
@@ -88,11 +88,13 @@ test("la fabrica usa modal real y revela los datos solo despues de aprobar", asy
   assert.match(source, /function IdentityValidationDialog/);
   assert.match(source, /aria-modal="true"/);
   assert.match(source, /alt="QR para validar la identidad del cliente"/);
-  assert.match(source, /Continuar con la venta/);
+  assert.match(source, /Continuar con la firma/);
   assert.match(
     source,
-    /const showIdentityClientForm\s*=\s*clienteFormUnlocked\s*&&\s*\(!veriffIdentityFlowEnabled \|\| identityClientDetailsOpen\)/
+    /const clienteFormUnlocked\s*=\s*dataCreditoFlowReady/
   );
+  assert.match(source, /const showIdentityClientForm\s*=\s*clienteFormUnlocked/);
+  assert.match(source, />\s*Información del cliente\s*</);
   assert.match(source, /id="fp-identity-client-details"/);
   assert.match(source, /Telefono aprobado/);
 });

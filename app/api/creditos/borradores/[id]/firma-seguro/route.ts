@@ -63,6 +63,11 @@ import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
 import { tryAcquireFirmaSeguroDraftDispatchLock } from "@/lib/firmaseguro-storage";
 import { isAdminRole } from "@/lib/roles";
 import { expireStaleSolicitudes } from "@/lib/solicitudes-storage";
+import {
+  getVeriffValidationById,
+  isVeriffApproved,
+} from "@/lib/veriff-storage";
+import { isVeriffRequired } from "@/lib/veriff";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -809,6 +814,64 @@ export async function GET(
   }
 }
 
+async function requireApprovedVeriffBeforeFirmaSeguro(row: DraftRow) {
+  const payload = payloadObject(row.payload);
+  const mustRequireVeriff =
+    getDataCreditoPublicConfig().enabled || isVeriffRequired();
+  if (!mustRequireVeriff) {
+    return;
+  }
+
+  const validationId = Math.trunc(toNumber(payload.veriffValidationId));
+  if (!Number.isInteger(validationId) || validationId <= 0) {
+    throw new CreditValidationError(
+      "Aprueba primero la identidad con Veriff antes de enviar el contrato.",
+      409,
+      "FIRMASEGURO_VERIFF_REQUIRED"
+    );
+  }
+
+  const validation = await getVeriffValidationById(validationId);
+  const draftDocument = sanitizeText(payload.clienteDocumento).replace(/\D/g, "");
+  const validationDocument = String(
+    validation?.clienteDocumento || ""
+  ).replace(/\D/g, "");
+
+  if (
+    !validation ||
+    validation.draftId !== row.id ||
+    validation.creditoId ||
+    !isVeriffApproved(validation) ||
+    !draftDocument ||
+    validationDocument !== draftDocument
+  ) {
+    throw new CreditValidationError(
+      "La aprobación Veriff no corresponde a esta solicitud o ya no está vigente.",
+      409,
+      "FIRMASEGURO_VERIFF_INVALID"
+    );
+  }
+
+  const latestRows = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
+    `
+      SELECT validation."id"
+      FROM "VeriffIdentityValidation" validation
+      WHERE validation."draftId" = $1
+        AND validation."creditoId" IS NULL
+      ORDER BY validation."id" DESC
+      LIMIT 1
+    `,
+    row.id
+  );
+  if (Number(latestRows[0]?.id || 0) !== validation.id) {
+    throw new CreditValidationError(
+      "Existe una validación Veriff más reciente. Actualiza el estado antes de enviar el contrato.",
+      409,
+      "FIRMASEGURO_VERIFF_SUPERSEDED"
+    );
+  }
+}
+
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> }
@@ -964,6 +1027,7 @@ export async function POST(
         });
       }
 
+      await requireApprovedVeriffBeforeFirmaSeguro(lockedAuthorized.row);
       const built = await buildDraftCredit(lockedAuthorized.row);
       const { credit, amortizationPlan, financingParameters } = built;
       const draftFolio = lockedCurrent?.draftFolio || credit.folio;

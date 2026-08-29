@@ -363,35 +363,25 @@ function getDataCreditoVeriffDocumentRejectionMessage(
   if (!validation?.approved || !validation.decidedAt) {
     return "";
   }
-
   if (validation.identityDocumentStatus === "conflict") {
     return "";
   }
-
   if (validation.identityDocumentStatus === "mismatch") {
     return "La cédula de la validación facial no coincide con la cédula consultada en DataCrédito. El crédito fue rechazado.";
   }
-
   if (validation.identityDocumentStatus === "invalid-document-type") {
     return "La validación facial no corresponde a una cédula de ciudadanía. El crédito fue rechazado.";
   }
-
   if (validation.identityDocumentStatus === "invalid-document-country") {
     return "La validación facial no corresponde a un documento colombiano. El crédito fue rechazado.";
   }
-
   if (validation.identityDocumentStatus === "missing") {
     return "";
   }
-
   if (validation.identityDocumentStatus !== "match") {
     return "La validación facial no devolvió una cédula válida para comparar. El crédito fue rechazado.";
   }
-
-  if (
-    validation.identityDataAvailable &&
-    !validation.identityDocumentNumber
-  ) {
+  if (validation.identityDataAvailable && !validation.identityDocumentNumber) {
     return "";
   }
 
@@ -399,19 +389,15 @@ function getDataCreditoVeriffDocumentRejectionMessage(
     validation.identityDocumentNumber,
     expectedDocumentNumber
   );
-
   if (comparison.ok) {
     return "";
   }
-
   if (comparison.status === "mismatch") {
     return "La cédula de la validación facial no coincide con la cédula consultada en DataCrédito. El crédito fue rechazado.";
   }
-
   if (comparison.field === "expected" || comparison.field === "both") {
     return "No se pudo verificar la cédula consultada en DataCrédito. El crédito fue rechazado.";
   }
-
   return "La validación facial no devolvió una cédula válida para comparar. El crédito fue rechazado.";
 }
 
@@ -4726,9 +4712,7 @@ export default function CreditFactoryConsole({
       veriffValidation?.decidedAt &&
       veriffValidation.identityDocumentStatus === "missing"
   );
-  const veriffIdentityEvidencePending = Boolean(
-    veriffIdentityEvidenceMissing
-  );
+  const veriffIdentityEvidencePending = Boolean(veriffIdentityEvidenceMissing);
   const veriffTechnicalRetryRequired =
     veriffIdentityEvidenceConflict || veriffIdentityEvidenceMissing;
   const veriffRejected = Boolean(
@@ -4810,10 +4794,8 @@ export default function CreditFactoryConsole({
     dataCreditoRequiresVeriff ||
     (veriffConfig.configured && veriffConfig.mode !== "off");
   const hideIdentityWizardStep = veriffIdentityFlowEnabled;
-  const clienteFormUnlocked = !veriffIdentityFlowEnabled || veriffApproved;
-  const showIdentityClientForm =
-    clienteFormUnlocked &&
-    (!veriffIdentityFlowEnabled || identityClientDetailsOpen);
+  const clienteFormUnlocked = dataCreditoFlowReady;
+  const showIdentityClientForm = clienteFormUnlocked;
   const identityStepReady = identityEvidenceReady || veriffApproved;
   const contractEvidenceReady = identityStepReady;
   const stepContratoReady =
@@ -4861,6 +4843,10 @@ export default function CreditFactoryConsole({
       pagareAceptado &&
       cartaAceptada &&
       autorizacionDatosAceptada);
+  const stepSignatureReady = createClientMode
+    ? firmaSeguroProcessSigned
+    : stepDocumentosReady;
+  const stepIdentityContractReady = stepContratoReady && stepSignatureReady;
   const entregaSinVerificacionAutorizada = false;
   const iphoneSelfieWithDocumentReady = Boolean(iphoneSelfieCedulaDataUrl);
   const androidEnrollmentReady =
@@ -5008,8 +4994,7 @@ export default function CreditFactoryConsole({
   const ventaLista =
     stepClienteReady &&
     stepEquipoReady &&
-    stepContratoReady &&
-    stepDocumentosReady &&
+    stepIdentityContractReady &&
     deliveryRequirementReady;
   const creditClosureReady =
     ventaLista &&
@@ -5266,10 +5251,12 @@ export default function CreditFactoryConsole({
   const factorySteps = [
     {
       id: 1,
-      label: veriffIdentityFlowEnabled ? "Identidad" : "Cliente",
-      detail: veriffIdentityFlowEnabled ? "Validar cliente" : "Datos personales",
+      label: "Cliente",
+      detail: dataCreditoCreditCreationMode
+        ? "DataCrédito y datos"
+        : "Datos personales",
       ready: stepClienteReady,
-      action: veriffIdentityFlowEnabled ? "Validacion y datos" : "Datos personales",
+      action: "Consulta y datos",
     },
     {
       id: 2,
@@ -5287,19 +5274,19 @@ export default function CreditFactoryConsole({
     },
     {
       id: 4,
-      label: "Contratos",
-      detail: "Firma",
-      ready: stepDocumentosReady,
-      action: "Firma y documentos",
+      label: "Identidad y firma",
+      detail: "Veriff y contrato",
+      ready: stepIdentityContractReady,
+      action: "Validar y firmar",
     },
     {
       id: 5,
-      label: iphoneFactory ? "Enrolamiento" : "Entrega",
+      label: "Enrolamiento y entrega",
       detail: iphoneFactory
-        ? "Analista"
+        ? "Analista y 5 fotos"
         : entregaSinVerificacionAutorizada
           ? "Excepcion"
-          : "Zero Touch",
+          : "Zero Touch y 5 fotos",
       ready: entregaValidada,
       action: iphoneFactory
         ? "Esperar enrolamiento"
@@ -5379,10 +5366,8 @@ export default function CreditFactoryConsole({
       { label: "Cedula respaldo", ready: Boolean(contratoCedulaRespaldoDataUrl) },
     ],
     4: [
-      { label: "Contrato", ready: contratoAceptado },
-      { label: "Pagare", ready: pagareAceptado },
-      { label: "Carta", ready: cartaAceptada },
-      { label: "Datos", ready: autorizacionDatosAceptada },
+      { label: "Identidad Veriff", ready: veriffApproved },
+      { label: "FirmaSeguro", ready: firmaSeguroProcessSigned },
     ],
     5: [
       { label: "Cliente", ready: stepClienteReady },
@@ -5390,7 +5375,7 @@ export default function CreditFactoryConsole({
       ...(!hideIdentityWizardStep
         ? [{ label: "Identidad", ready: stepContratoReady }]
         : []),
-      { label: "Contratos", ready: stepDocumentosReady },
+      { label: "Identidad y firma", ready: stepIdentityContractReady },
       ...(iphoneFactory
         ? [
             { label: "Enrolamiento", ready: iphoneEnrollmentReady },
@@ -7701,7 +7686,9 @@ export default function CreditFactoryConsole({
     });
 
     if (!validation) {
-      setWizardStep(1);
+      setWizardStep(
+        clampWizardStep(failure.targetStep >= 4 ? 4 : failure.targetStep)
+      );
       setVeriffInlineMessage(
         "No se pudo restaurar la validación facial guardada. Reintenta antes de continuar."
       );
@@ -7715,7 +7702,9 @@ export default function CreditFactoryConsole({
       failure.documentNumber
     );
     setWizardStep(
-      approvalRecovered ? clampWizardStep(failure.targetStep) : 1
+      approvalRecovered
+        ? clampWizardStep(failure.targetStep)
+        : clampWizardStep(failure.targetStep >= 4 ? 4 : failure.targetStep)
     );
 
     if (!approvalRecovered) {
@@ -7741,16 +7730,6 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    if (targetStep > 1 && dataCreditoRequiresVeriff && !veriffApproved) {
-      setNotice({
-        text: veriffUnavailableForDataCredito
-          ? "La validación de identidad está temporalmente no disponible. Esto no corresponde a un rechazo crediticio."
-          : "Veriff debe aprobar la identidad antes de continuar con la solicitud.",
-        tone: "amber",
-      });
-      return;
-    }
-
     if (
       targetStep > wizardStep &&
       wizardStep === 2 &&
@@ -7770,6 +7749,14 @@ export default function CreditFactoryConsole({
 
     if (targetStep <= wizardStep) {
       setWizardStep(clampWizardStep(targetStep));
+      return;
+    }
+
+    if (targetStep > nextVisibleWizardStep(wizardStep)) {
+      setNotice({
+        text: "Completa el paso actual antes de avanzar al siguiente.",
+        tone: "amber",
+      });
       return;
     }
 
@@ -7794,16 +7781,8 @@ export default function CreditFactoryConsole({
       setNotice({
         text:
           hideIdentityWizardStep
-            ? "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a contratos."
+            ? "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a identidad y firma."
             : "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a identidad.",
-        tone: "amber",
-      });
-      return;
-    }
-
-    if (hideIdentityWizardStep && wizardStep === 2 && targetStep >= 3 && !stepContratoReady) {
-      setNotice({
-        text: "Veriff debe aprobar la identidad antes de avanzar a contratos.",
         tone: "amber",
       });
       return;
@@ -7838,10 +7817,12 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    if (wizardStep === 4 && !stepDocumentosReady) {
+    if (wizardStep === 4 && !stepIdentityContractReady) {
       setNotice({
         text:
-          "Envia primero el expediente por FirmaSeguro antes de pasar a la validacion del equipo.",
+          !veriffApproved
+            ? "Completa y aprueba la identidad con Veriff antes de continuar."
+            : "Espera la firma exitosa de FirmaSeguro antes de pasar a enrolamiento y entrega.",
         tone: "amber",
       });
       return;
@@ -7861,16 +7842,6 @@ export default function CreditFactoryConsole({
 
     if (canAdminMoveFreelyInFactory) {
       setWizardStep(clampWizardStep(targetStep));
-      return;
-    }
-
-    if (targetStep > 1 && dataCreditoRequiresVeriff && !veriffApproved) {
-      setNotice({
-        text: veriffUnavailableForDataCredito
-          ? "La validación de identidad está temporalmente no disponible. Esto no corresponde a un rechazo crediticio."
-          : "Veriff debe aprobar la identidad antes de continuar con la solicitud.",
-        tone: "amber",
-      });
       return;
     }
 
@@ -7896,6 +7867,14 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    if (targetStep > nextVisibleWizardStep(wizardStep)) {
+      setNotice({
+        text: "Completa el paso actual antes de avanzar al siguiente.",
+        tone: "amber",
+      });
+      return;
+    }
+
     if (wizardStep === 1 && !contactPhoneValidation.ok) {
       setNotice({
         text: contactPhoneValidation.message,
@@ -7917,16 +7896,8 @@ export default function CreditFactoryConsole({
       setNotice({
         text:
           hideIdentityWizardStep
-            ? "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a contratos."
+            ? "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a identidad y firma."
             : "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de avanzar a identidad.",
-        tone: "amber",
-      });
-      return;
-    }
-
-    if (hideIdentityWizardStep && wizardStep === 2 && targetStep >= 3 && !stepContratoReady) {
-      setNotice({
-        text: "Veriff debe aprobar la identidad antes de pasar a contratos.",
         tone: "amber",
       });
       return;
@@ -7974,10 +7945,12 @@ export default function CreditFactoryConsole({
 
     }
 
-    if (wizardStep === 4 && !stepDocumentosReady) {
+    if (wizardStep === 4 && !stepIdentityContractReady) {
       setNotice({
         text:
-          "Envia primero el expediente por FirmaSeguro antes de pasar a la validacion del equipo.",
+          !veriffApproved
+            ? "Completa y aprueba la identidad con Veriff antes de continuar."
+            : "Espera la firma exitosa de FirmaSeguro antes de pasar a enrolamiento y entrega.",
         tone: "amber",
       });
       return;
@@ -9040,6 +9013,15 @@ export default function CreditFactoryConsole({
       setNotice({
         text: visibleIphoneInstallmentLimitMessage,
         tone: "red",
+      });
+      return;
+    }
+
+    if (veriffRequired && !veriffApproved) {
+      setNotice({
+        text:
+          "Aprueba primero la identidad con Veriff antes de enviar el contrato a FirmaSeguro.",
+        tone: "amber",
       });
       return;
     }
@@ -10499,7 +10481,13 @@ export default function CreditFactoryConsole({
             }
           );
           if (!restoredValidation) {
-            setWizardStep(1);
+            setWizardStep(
+              clampWizardStep(
+                restoredDraftSnapshot.wizardStep >= 4
+                  ? 4
+                  : restoredDraftSnapshot.wizardStep
+              )
+            );
             setVeriffRestoreFailure({
               validationId: restoredDraftSnapshot.veriffValidationId,
               draftId: restoredDraftSnapshot.draftId,
@@ -10511,7 +10499,7 @@ export default function CreditFactoryConsole({
             );
             setNotice({
               text:
-                "La solicitud fue cargada, pero no se pudo recuperar la validación facial. Reintenta desde el paso de identidad.",
+                "La solicitud fue cargada, pero no se pudo recuperar la validación facial. Reintenta desde el paso 3: identidad y firma.",
               tone: "red",
             });
           } else if (
@@ -10522,10 +10510,16 @@ export default function CreditFactoryConsole({
               result.documentNumber
             )
           ) {
-            setWizardStep(1);
+            setWizardStep(
+              clampWizardStep(
+                restoredDraftSnapshot.wizardStep >= 4
+                  ? 4
+                  : restoredDraftSnapshot.wizardStep
+              )
+            );
             setNotice({
               text:
-                "La validación facial guardada aún no está aprobada. Completa este paso antes de continuar.",
+                "La validación facial guardada aún no está aprobada. Complétala en el paso 3 antes de firmar.",
               tone: "amber",
             });
           } else {
@@ -10533,15 +10527,15 @@ export default function CreditFactoryConsole({
           }
         } else if (
           dataCreditoCreditCreationMode &&
-          restoredDraftSnapshot.wizardStep > 1
+          restoredDraftSnapshot.wizardStep >= 4
         ) {
-          setWizardStep(1);
+          setWizardStep(4);
           setVeriffInlineMessage(
             "La solicitud no tiene una validación facial guardada. Genera el código y completa la identidad antes de continuar."
           );
           setNotice({
             text:
-              "Falta restaurar la validación facial. La solicitud volvió de forma segura al paso de identidad.",
+              "Falta la validación facial. La solicitud quedó en el paso 3 para completarla antes de firmar.",
             tone: "amber",
           });
         }
@@ -11695,6 +11689,9 @@ export default function CreditFactoryConsole({
               >
                 {visibleFactorySteps.map((step, stepIndex) => {
                   const active = step.id === activeFactoryStep.id;
+                  const futureStepLocked =
+                    !canAdminMoveFreelyInFactory &&
+                    step.id > nextVisibleWizardStep(wizardStep);
 
                   return (
                     <button
@@ -11703,9 +11700,11 @@ export default function CreditFactoryConsole({
                       onClick={() => {
                         void advanceToStep(step.id);
                       }}
+                      disabled={futureStepLocked}
                       aria-current={active ? "step" : undefined}
+                      aria-disabled={futureStepLocked || undefined}
                       className={[
-                        "fp-seller-step-button group mb-2 flex w-full items-center gap-3 rounded-[22px] border px-3 py-3 text-left transition last:mb-0",
+                        "fp-seller-step-button group mb-2 flex w-full items-center gap-3 rounded-[22px] border px-3 py-3 text-left transition last:mb-0 disabled:cursor-not-allowed disabled:opacity-55",
                         active
                           ? "fp-step-active border-[#145a5a] bg-[#123f3e] text-white"
                           : step.ready
@@ -11885,9 +11884,9 @@ export default function CreditFactoryConsole({
                 </div>
               ) : (
                 <>
-              {wizardStep === 1 && (
-                <div className="fp-identity-stage">
-                  {veriffRestoreFailure ? (
+              {(wizardStep === 1 || identityValidationModalOpen) && (
+                <div className={wizardStep === 1 ? "fp-identity-stage" : "hidden"}>
+                  {wizardStep !== 1 && veriffRestoreFailure ? (
                     <div
                       className="mb-5 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-4 text-slate-900"
                       role="alert"
@@ -11939,9 +11938,11 @@ export default function CreditFactoryConsole({
                           <BadgeCheck className="h-5 w-5" strokeWidth={2} />
                         </span>
                         <div>
-                          <p className="text-sm font-black">Oferta aprobada</p>
+                          <p className="text-sm font-black">
+                            Consulta DataCrédito aprobada
+                          </p>
                           <p className="mt-1 text-sm leading-6 text-slate-600">
-                            Continúa con la validación de identidad.
+                            Completa y confirma la información del cliente.
                           </p>
                         </div>
                       </div>
@@ -11982,7 +11983,7 @@ export default function CreditFactoryConsole({
                       </div>
                     </div>
                   ) : null}
-                  {veriffApproved ? (
+                  {wizardStep !== 1 && (veriffApproved ? (
                     <button
                       type="button"
                       className="fp-identity-approved-phone"
@@ -12118,7 +12119,7 @@ export default function CreditFactoryConsole({
                         </button>
                       )}
                     </section>
-                  )}
+                  ))}
 
                   <IdentityValidationDialog
                     open={identityValidationModalOpen}
@@ -12165,11 +12166,10 @@ export default function CreditFactoryConsole({
                           type="button"
                           className="fp-identity-modal-primary is-lime"
                           onClick={() => {
-                            setIdentityClientDetailsOpen(true);
                             setIdentityValidationModalOpen(false);
                           }}
                         >
-                          Continuar con la venta
+                          Continuar con la firma
                           <ArrowRight
                             className="h-5 w-5"
                             strokeWidth={1.9}
@@ -12276,8 +12276,8 @@ export default function CreditFactoryConsole({
                           Solicitud rechazada
                         </h2>
                         <p className="fp-identity-modal-lead">
-                          No fue posible confirmar la identidad despues de dos
-                          intentos.
+                          Veriff devolvió el resultado RECHAZADA para esta
+                          validación.
                         </p>
                         <div
                           className="fp-identity-modal-illustration is-rejected"
@@ -12331,13 +12331,13 @@ export default function CreditFactoryConsole({
                     ) : veriffValidation?.status === "DECLINED" ? (
                       <div className="fp-identity-modal-content is-result">
                         <p className="fp-identity-modal-kicker is-rejected">
-                          Validacion no completada
+                          Decisión de Veriff
                         </p>
                         <h2 id="fp-identity-modal-title">
-                          No pudimos validar la identidad
+                          Solicitud rechazada
                         </h2>
                         <p className="fp-identity-modal-lead">
-                          La informacion del cliente no pudo ser confirmada.
+                          Veriff devolvió el resultado RECHAZADA para esta validación.
                         </p>
                         <div
                           className="fp-identity-modal-illustration is-rejected"
@@ -12363,24 +12363,15 @@ export default function CreditFactoryConsole({
                           </div>
                         </div>
                         <p className="fp-identity-modal-result-copy">
-                          Verifica los datos antes de intentarlo nuevamente.
-                          Queda {veriffRetryPolicy.remainingAttempts} intento.
+                          La solicitud se cerró y no permite un nuevo intento de
+                          validación.
                         </p>
                         <button
                           type="button"
                           className="fp-identity-modal-primary"
-                          disabled={!veriffRetryPolicy.retryAllowed}
-                          onClick={() => {
-                            veriffAutoSessionRef.current = true;
-                            void validateIdentityWithVeriff();
-                          }}
+                          onClick={() => setIdentityValidationModalOpen(false)}
                         >
-                          <RefreshCw
-                            className="h-5 w-5"
-                            strokeWidth={1.9}
-                            aria-hidden="true"
-                          />
-                          Reintentar validacion
+                          Cerrar
                         </button>
                       </div>
                     ) : veriffVisualState === "expired" ||
@@ -12779,10 +12770,12 @@ export default function CreditFactoryConsole({
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="px-1">
                         <p className="text-base font-black tracking-tight text-slate-950">
-                          Ingresa los datos del cliente
+                          Información del cliente
                         </p>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
-                          Todos los campos son obligatorios para preparar contrato, pagare e identidad comercial.
+                          La cédula y el primer apellido corresponden a la consulta
+                          DataCrédito. Completa los demás campos para preparar el
+                          contrato y el pagaré.
                         </p>
                       </div>
                       <div className="flex items-center gap-3">
@@ -12813,7 +12806,7 @@ export default function CreditFactoryConsole({
                           </span>
                           <div>
                             <h4 className="text-sm font-black text-[#171b1c]">1. Datos personales</h4>
-                            <p className="mt-1 text-xs text-slate-500">Informacion basica del cliente verificado.</p>
+                            <p className="mt-1 text-xs text-slate-500">Información básica del cliente consultado.</p>
                           </div>
                         </div>
                         {clientFormValidation.personalComplete ? (
@@ -14749,16 +14742,21 @@ export default function CreditFactoryConsole({
                         {hideIdentityWizardStep ? "Paso 3" : "Paso 4"}
                       </div>
                       <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        Firma de documentos
+                        Validación de identidad y firma
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Prepara el expediente y envíalo al cliente para firmar.
+                        Verifica la identidad con Veriff y, cuando sea aprobada, envía el contrato por FirmaSeguro.
                       </p>
                     </div>
                     <div
                       className={[
                         "fp-stage-status inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
-                        firmaSeguroProcessSigned
+                        !veriffApproved
+                          ? veriffValidation?.status === "DECLINED" ||
+                            veriffRetryPolicy.applicationRejected
+                            ? "is-error border-red-200 bg-red-50 text-red-700"
+                            : "is-pending border-amber-200 bg-amber-50 text-amber-700"
+                          : firmaSeguroProcessSigned
                           ? "is-success border-emerald-200 bg-emerald-50 text-emerald-700"
                           : firmaSeguroProcessFailed
                             ? "is-error border-red-200 bg-red-50 text-red-700"
@@ -14767,7 +14765,14 @@ export default function CreditFactoryConsole({
                             : "is-pending border-amber-200 bg-amber-50 text-amber-700",
                       ].join(" ")}
                     >
-                      {firmaSeguroSubmitting || firmaSeguroRefreshing
+                      {!veriffApproved
+                        ? veriffValidation?.status === "DECLINED" ||
+                          veriffRetryPolicy.applicationRejected
+                          ? "Identidad rechazada"
+                          : veriffRefreshing || veriffSubmitting
+                          ? "Validando identidad"
+                          : "Identidad pendiente"
+                        : firmaSeguroSubmitting || firmaSeguroRefreshing
                         ? "Enviando"
                         : firmaSeguroProcessSigned
                           ? "Firma exitosa"
@@ -14779,22 +14784,204 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
 
-                  <div className="mt-6 grid gap-3 border-y border-slate-200 py-5 md:grid-cols-3">
+                  <section
+                    className="mt-6 rounded-lg border border-slate-200 bg-white px-5 py-5"
+                    aria-labelledby="fp-step3-veriff-title"
+                  >
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex items-start gap-3">
+                        <span
+                          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-[#161a1b] text-[#b7e63d]"
+                          aria-hidden="true"
+                        >
+                          <ShieldCheck className="h-6 w-6" strokeWidth={1.8} />
+                        </span>
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#638510]">
+                            1. Validación de identidad
+                          </p>
+                          <h4
+                            id="fp-step3-veriff-title"
+                            className="mt-2 text-xl font-black tracking-tight text-slate-950"
+                          >
+                            Identidad con Veriff
+                          </h4>
+                          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                            La cédula consultada en DataCrédito se valida con el
+                            cliente. Una aprobación habilita el envío del contrato.
+                          </p>
+                        </div>
+                      </div>
+                      <span
+                        className={[
+                          "inline-flex min-h-10 items-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em]",
+                          veriffApproved
+                            ? "border-[#c9df91] bg-[#f4f9e8] text-[#557812]"
+                            : dataCreditoVeriffDocumentRejected ||
+                                veriffValidation?.status === "DECLINED"
+                              ? "border-red-200 bg-red-50 text-red-700"
+                              : "border-amber-200 bg-amber-50 text-amber-700",
+                        ].join(" ")}
+                        role="status"
+                      >
+                        {veriffApproved ? (
+                          <BadgeCheck className="h-4 w-4" strokeWidth={2.2} />
+                        ) : dataCreditoVeriffDocumentRejected ||
+                          veriffValidation?.status === "DECLINED" ? (
+                          <XCircle className="h-4 w-4" strokeWidth={2.2} />
+                        ) : veriffSubmitting || veriffRefreshing ? (
+                          <LoaderCircle
+                            className="h-4 w-4 animate-spin"
+                            strokeWidth={2}
+                          />
+                        ) : (
+                          <Clock3 className="h-4 w-4" strokeWidth={2} />
+                        )}
+                        {veriffVisualLabel}
+                      </span>
+                    </div>
+
+                    {veriffRestoreFailure ? (
+                      <div
+                        className="mt-4 flex flex-col gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+                        role="alert"
+                      >
+                        <p className="text-sm font-semibold leading-6 text-amber-900">
+                          No se pudo recuperar el resultado guardado de Veriff.
+                          Reintenta la restauración antes de firmar.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void retryRestoredVeriffValidation()}
+                          disabled={veriffRefreshing}
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-900 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <RefreshCw
+                            className={[
+                              "h-4 w-4",
+                              veriffRefreshing ? "animate-spin" : "",
+                            ].join(" ")}
+                            strokeWidth={2}
+                          />
+                          Reintentar
+                        </button>
+                      </div>
+                    ) : null}
+
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-md border border-slate-200 bg-[#fafaf8] px-4 py-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                          Cliente
+                        </p>
+                        <p className="mt-1 text-sm font-black text-slate-950">
+                          {clienteNombre || "-"}
+                        </p>
+                      </div>
+                      <div className="rounded-md border border-slate-200 bg-[#fafaf8] px-4 py-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                          Cédula consultada
+                        </p>
+                        <p className="mt-1 text-sm font-black text-slate-950">
+                          {clienteDocumento || "-"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {dataCreditoRequiresVeriff && !veriffConfigLoaded ? (
+                      <p
+                        className="mt-4 flex items-center gap-2 text-sm font-semibold text-slate-600"
+                        role="status"
+                      >
+                        <LoaderCircle
+                          className="h-4 w-4 animate-spin"
+                          strokeWidth={2}
+                        />
+                        Verificando disponibilidad de Veriff...
+                      </p>
+                    ) : veriffUnavailableForDataCredito ? (
+                      <p
+                        className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-900"
+                        role="alert"
+                      >
+                        Veriff no está disponible temporalmente. Esto no equivale
+                        a un rechazo de la solicitud.
+                      </p>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIdentityValidationModalOpen(true);
+                        if (!veriffValidation && !veriffSubmitting) {
+                          veriffAutoSessionRef.current = true;
+                          void validateIdentityWithVeriff();
+                        }
+                      }}
+                      disabled={
+                        veriffSubmitting ||
+                        (!veriffValidation &&
+                          (!veriffConfigLoaded || !veriffConfig.configured))
+                      }
+                      className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold uppercase text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto"
+                      aria-haspopup="dialog"
+                      aria-busy={veriffSubmitting}
+                    >
+                      {veriffSubmitting ? (
+                        <LoaderCircle
+                          className="h-4 w-4 animate-spin"
+                          strokeWidth={2}
+                        />
+                      ) : veriffApproved ? (
+                        <BadgeCheck className="h-4 w-4" strokeWidth={2.2} />
+                      ) : (
+                        <QrCode className="h-4 w-4" strokeWidth={2} />
+                      )}
+                      {veriffSubmitting
+                        ? "Generando código"
+                        : veriffApproved
+                          ? "Ver aprobación"
+                          : dataCreditoVeriffDocumentRejected ||
+                              veriffValidation?.status === "DECLINED"
+                            ? "Ver resultado"
+                            : veriffTechnicalRetryRequired ||
+                                veriffHasFinalDecision ||
+                                veriffConnectionError
+                              ? "Resolver validación"
+                              : veriffValidation?.sessionUrl
+                                ? "Ver código QR"
+                                : "Generar código QR"}
+                    </button>
+
+                    {!veriffApproved ? (
+                      <p className="mt-3 text-xs font-medium leading-5 text-amber-700">
+                        FirmaSeguro permanecerá bloqueado hasta recibir la
+                        aprobación de Veriff.
+                      </p>
+                    ) : null}
+                  </section>
+
+                  <div className="mt-6 grid gap-3 border-y border-slate-200 py-5 md:grid-cols-4">
                     {[
                       {
                         number: 1,
-                        label: "Preparar expediente",
-                        active: !firmaSeguroProcessSent,
-                        complete: firmaSeguroProcessSent,
+                        label: "Validar identidad",
+                        active: !veriffApproved,
+                        complete: veriffApproved,
                       },
                       {
                         number: 2,
+                        label: "Preparar expediente",
+                        active: veriffApproved && !firmaSeguroProcessSent,
+                        complete: firmaSeguroProcessSent,
+                      },
+                      {
+                        number: 3,
                         label: "Cliente firma",
                         active: firmaSeguroProcessSent && !firmaSeguroProcessSigned,
                         complete: firmaSeguroProcessSigned,
                       },
                       {
-                        number: 3,
+                        number: 4,
                         label: "Firma confirmada",
                         active: firmaSeguroProcessSigned,
                         complete: firmaSeguroProcessSigned,
@@ -14945,7 +15132,7 @@ export default function CreditFactoryConsole({
                         </p>
                       ) : firmaSeguroProcessSigned ? (
                         <p className="mt-3 text-xs font-medium leading-5 text-emerald-700">
-                          Firma exitosa. Continua al paso 5 para validar la entrega y crear el credito.
+                          Firma exitosa. Continúa al paso 4 para completar el enrolamiento y la entrega.
                         </p>
                       ) : firmaSeguroProcessFailed ? (
                         <p
@@ -14956,7 +15143,7 @@ export default function CreditFactoryConsole({
                         </p>
                       ) : firmaSeguroProcessSent ? (
                         <p className="mt-3 text-xs font-medium leading-5 text-amber-700">
-                          Cuando FirmaSeguro reporte firma exitosa se habilita el paso 5.
+                          Cuando FirmaSeguro reporte firma exitosa se habilita el paso 4.
                         </p>
                       ) : null}
                     </section>
@@ -14979,7 +15166,7 @@ export default function CreditFactoryConsole({
                           "Contrato de financiacion integrado",
                           "Pagare integrado",
                           "Carta de instrucciones integrada",
-                          "Evidencias del paso 3 integradas",
+                            "Validación Veriff integrada",
                         ].map((item) => (
                           <div
                             key={item}
@@ -14991,7 +15178,7 @@ export default function CreditFactoryConsole({
                         ))}
                       </div>
                       <div className="fp-firma-doc-note mt-5 border-t border-slate-200 pt-4 text-sm leading-6 text-slate-600">
-                        El cliente firma desde FirmaSeguro. Luego validas la entrega del equipo en el paso 5.
+                        El cliente firma desde FirmaSeguro. Luego completas el enrolamiento y las cinco fotos en el paso 4.
                       </div>
                     </section>
                   </div>
@@ -16236,8 +16423,7 @@ export default function CreditFactoryConsole({
                         disabled={
                           creating ||
                           veriffSubmitting ||
-                          !stepClienteReady ||
-                          (veriffIdentityFlowEnabled && !veriffApproved)
+                          !stepClienteReady
                         }
                         onClick={() => {
                           void advanceToStep(nextVisibleWizardStep(wizardStep));
@@ -16269,8 +16455,7 @@ export default function CreditFactoryConsole({
                     disabled={
                       creating ||
                       firmaSeguroSubmitting ||
-                      (dataCreditoRequiresVeriff && !veriffApproved) ||
-                      (wizardStep === 4 && !stepDocumentosReady)
+                      (wizardStep === 4 && !stepIdentityContractReady)
                     }
                     onClick={() => {
                       void advanceToStep(nextVisibleWizardStep(wizardStep));
