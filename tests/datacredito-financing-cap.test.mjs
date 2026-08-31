@@ -20,11 +20,60 @@ const {
   normalizeCreditInstallments,
   parseCreditInstallmentSelection,
   resolveEffectiveDataCreditoFinancingLimit,
+  resolveInitialPaymentAfterMinimumRefresh,
   resolveRequiredInitialPaymentByPlatform,
   validateIphoneInstallmentLimit,
 } = await jiti.import(
   "../lib/credit-factory.ts"
 );
+
+test("la reanudacion conserva una inicial firmada superior al minimo", () => {
+  assert.equal(
+    resolveInitialPaymentAfterMinimumRefresh({
+      currentValue: "1165000",
+      totalValue: "2915000",
+      minimumValue: 415000,
+    }),
+    "1165000"
+  );
+});
+
+test("la inicial automatica solo corrige valores vacios, bajos o invalidos", () => {
+  const base = { totalValue: 2915000, minimumValue: 415000 };
+
+  assert.equal(
+    resolveInitialPaymentAfterMinimumRefresh({ ...base, currentValue: "" }),
+    "415000"
+  );
+  assert.equal(
+    resolveInitialPaymentAfterMinimumRefresh({ ...base, currentValue: "300000" }),
+    "415000"
+  );
+  assert.equal(
+    resolveInitialPaymentAfterMinimumRefresh({ ...base, currentValue: "4000000" }),
+    "415000"
+  );
+  assert.equal(
+    resolveInitialPaymentAfterMinimumRefresh({
+      currentValue: "500000",
+      totalValue: "",
+      minimumValue: 0,
+    }),
+    ""
+  );
+});
+
+test("un proceso enviado a firma conserva la inicial sellada aunque cambie el minimo", () => {
+  assert.equal(
+    resolveInitialPaymentAfterMinimumRefresh({
+      currentValue: "300000",
+      totalValue: "2915000",
+      minimumValue: 415000,
+      preserveCurrent: true,
+    }),
+    "300000"
+  );
+});
 const {
   ARES_FRENCH_AMORTIZATION_VERSION,
   calculateFrenchAmortization,

@@ -100,6 +100,7 @@ import {
   parseCreditInstallmentSelection,
   PAYMENT_FREQUENCY_OPTIONS,
   resolveRequiredInitialPaymentByPlatform,
+  resolveInitialPaymentAfterMinimumRefresh,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import {
@@ -3345,6 +3346,17 @@ export default function CreditFactoryConsole({
     });
   }, [platformEquipmentCatalog, equipoMarca]);
   const selectedEquipmentCatalogItem = useMemo(() => {
+    const restoredItem = restoredEquipmentCatalogId
+      ? equipmentCatalog.find((item) => item.id === restoredEquipmentCatalogId) || null
+      : null;
+
+    if (
+      restoredItem &&
+      isEquipmentCatalogItemAllowedForPlatform(restoredItem, currentDevicePlatform)
+    ) {
+      return restoredItem;
+    }
+
     const selectedBrandKey = equipmentCatalogKey(equipoMarca);
     const selectedModelKey = equipmentCatalogKey(equipoModelo);
 
@@ -3359,9 +3371,16 @@ export default function CreditFactoryConsole({
           equipmentCatalogKey(item.modelo) === selectedModelKey
       ) || null
     );
-  }, [platformEquipmentCatalog, equipoMarca, equipoModelo]);
+  }, [
+    currentDevicePlatform,
+    equipmentCatalog,
+    equipoMarca,
+    equipoModelo,
+    platformEquipmentCatalog,
+    restoredEquipmentCatalogId,
+  ]);
   const effectiveEquipmentCatalogId =
-    selectedEquipmentCatalogItem?.id || restoredEquipmentCatalogId;
+    restoredEquipmentCatalogId || selectedEquipmentCatalogItem?.id || null;
   const precioBaseVentaCatalogo = selectedEquipmentCatalogItem?.precioBaseVenta || 0;
   const simulationPolicyOffer =
     simulatorMode &&
@@ -6305,23 +6324,18 @@ export default function CreditFactoryConsole({
   }, [clientePrimerNombre, clientePrimerApellido]);
 
   useEffect(() => {
-    const normalizedValue = String(valorEquipoTotal || "").replace(/\D/g, "");
-
-    if (!normalizedValue) {
-      setCuotaInicial("");
-      return;
-    }
-
-    const totalValue = Number(normalizedValue);
-
-    if (!Number.isFinite(totalValue) || totalValue <= 0) {
-      setCuotaInicial("");
-      return;
-    }
-
-    setCuotaInicial(String(cuotaInicialMinimaNumero));
+    setCuotaInicial((currentValue) =>
+      resolveInitialPaymentAfterMinimumRefresh({
+        currentValue,
+        totalValue: valorEquipoTotal,
+        minimumValue: cuotaInicialMinimaNumero,
+        preserveCurrent: draftResumeHydrating || firmaSeguroProcessExists,
+      })
+    );
   }, [
     cuotaInicialMinimaNumero,
+    draftResumeHydrating,
+    firmaSeguroProcessExists,
     valorEquipoTotal,
   ]);
 

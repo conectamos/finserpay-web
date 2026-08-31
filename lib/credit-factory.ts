@@ -63,6 +63,31 @@ export function toNumber(value: unknown) {
   return Number.isFinite(normalized) ? normalized : 0;
 }
 
+export function resolveInitialPaymentAfterMinimumRefresh(input: {
+  currentValue: unknown;
+  totalValue: unknown;
+  minimumValue: unknown;
+  preserveCurrent?: boolean;
+}) {
+  const total = Math.max(0, Math.round(toNumber(input.totalValue)));
+  if (total <= 0) return "";
+
+  const minimum = Math.max(0, Math.round(toNumber(input.minimumValue)));
+  const normalizedCurrent = String(input.currentValue ?? "").replace(/\D/g, "");
+  const current = Number(normalizedCurrent);
+
+  if (
+    normalizedCurrent &&
+    Number.isSafeInteger(current) &&
+    current <= total &&
+    (input.preserveCurrent || current >= minimum)
+  ) {
+    return String(current);
+  }
+
+  return String(minimum);
+}
+
 export function calculateAndroidSimulatorInitialPayment(
   valorTotalEquipo: number | null | undefined
 ) {
