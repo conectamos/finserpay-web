@@ -937,6 +937,18 @@ test("la aprobación toma la identidad del acceso y es transaccional e idempoten
     storageSource,
     /return \{ review: serializeReview\(existing\), alreadyApproved: true \}/
   );
+  assert.match(
+    storageSource,
+    /FROM "IphoneEnrollmentReview"[\s\S]*WHERE "solicitudId" = \$1[\s\S]*AND "supersededAt" IS NULL[\s\S]*LIMIT 1/
+  );
+  assert.match(
+    storageSource,
+    /LEFT JOIN "IphoneEnrollmentReview" review[\s\S]*ON review\."solicitudId" = d\."id"[\s\S]*AND review\."supersededAt" IS NULL/
+  );
+  assert.match(
+    storageSource,
+    /WHERE review\."solicitudId" = \$1[\s\S]*AND review\."decision" = 'APROBADO'[\s\S]*AND review\."supersededAt" IS NULL/
+  );
   const existingReviewCheck = storageSource.indexOf(
     "const existingResult = existingReviewApprovalResult"
   );
@@ -985,9 +997,40 @@ test("la aprobación toma la identidad del acceso y es transaccional e idempoten
     storageSource,
     /!hasValidReviewChecklistIntegrity\(row\)/
   );
-  assert.match(
+  assert.doesNotMatch(
     schemaSource,
     /CONSTRAINT "IphoneEnrollmentReview_solicitudId_key" UNIQUE \("solicitudId"\)/
+  );
+  assert.match(
+    schemaSource,
+    /DROP CONSTRAINT IF EXISTS "IphoneEnrollmentReview_solicitudId_key"/
+  );
+  assert.match(
+    schemaSource,
+    /CREATE UNIQUE INDEX IF NOT EXISTS "IphoneEnrollmentReview_active_solicitudId_key"[\s\S]*\("solicitudId"\)[\s\S]*WHERE "supersededAt" IS NULL/
+  );
+  assert.match(
+    schemaSource,
+    /CREATE UNIQUE INDEX IF NOT EXISTS "IphoneEnrollmentReview_supersededCorrelationId_key"[\s\S]*\("supersededCorrelationId"\)[\s\S]*WHERE "supersededCorrelationId" IS NOT NULL/
+  );
+  assert.match(schemaSource, /pg_get_indexdef\(index_state\.indexrelid, 1, true\)/);
+  assert.match(schemaSource, /activeReviewIndex\?\.firstColumn\.trim\(\) !== '"solicitudId"'/);
+  assert.match(schemaSource, /normalizePredicate\(activeReviewIndex\?\.predicate\) !==[\s\S]*'"supersededAt" IS NULL'/);
+  assert.match(schemaSource, /hasGlobalSolicitudUnique/);
+  assert.match(storageSource, /pg_get_indexdef\(index_state\.indexrelid, 1, true\)/);
+  for (const lifecycleField of [
+    "supersededAt",
+    "supersededByUserId",
+    "supersededByName",
+    "supersededReason",
+    "supersededCorrelationId",
+  ]) {
+    assert.match(schemaSource, new RegExp(`"${lifecycleField}"`));
+    assert.match(storageSource, new RegExp(`"${lifecycleField}"`));
+  }
+  assert.match(
+    schemaSource,
+    /CONSTRAINT "IphoneEnrollmentReview_supersededBy_fkey"[\s\S]*FOREIGN KEY \("supersededByUserId"\)[\s\S]*ON DELETE SET NULL/
   );
   assert.match(
     schemaSource,

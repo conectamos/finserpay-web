@@ -80,6 +80,11 @@ type ReviewRow = {
   correlationId: string;
   approvedAt: Date | string;
   createdAt: Date | string;
+  supersededAt: Date | string | null;
+  supersededByUserId: number | null;
+  supersededByName: string | null;
+  supersededReason: string | null;
+  supersededCorrelationId: string | null;
 };
 
 type ReviewWithDraftScopeRow = ReviewRow & {
@@ -203,6 +208,11 @@ const reviewColumns = [
   "correlationId",
   "approvedAt",
   "createdAt",
+  "supersededAt",
+  "supersededByUserId",
+  "supersededByName",
+  "supersededReason",
+  "supersededCorrelationId",
 ] as const;
 
 const grantColumns = [
@@ -253,6 +263,68 @@ async function assertIphoneEnrollmentSchema() {
     ["id", "clientHash", "action", "createdAt"].some(
       (column) => !attempts.has(column)
     )
+  ) {
+    throw new Error("IPHONE_ENROLLMENT_SCHEMA_NOT_READY");
+  }
+
+  const indexes = await prisma.$queryRawUnsafe<
+    Array<{
+      indexName: string;
+      unique: boolean;
+      valid: boolean;
+      predicate: string | null;
+      firstColumn: string | null;
+      keyColumns: number;
+    }>
+  >(`
+    SELECT index_class.relname AS "indexName",
+      index_state.indisunique AS "unique",
+      index_state.indisvalid AS "valid",
+      pg_get_expr(index_state.indpred, index_state.indrelid) AS "predicate",
+      pg_get_indexdef(index_state.indexrelid, 1, true) AS "firstColumn",
+      index_state.indnkeyatts::integer AS "keyColumns"
+    FROM pg_index index_state
+    INNER JOIN pg_class index_class
+      ON index_class.oid = index_state.indexrelid
+    WHERE index_state.indrelid = '"IphoneEnrollmentReview"'::regclass
+  `);
+  const normalizePredicate = (value: string | null) =>
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^\((.*)\)$/, "$1");
+  const activeReviewIndex = indexes.find(
+    (index) =>
+      index.indexName === "IphoneEnrollmentReview_active_solicitudId_key"
+  );
+  const supersededCorrelationIndex = indexes.find(
+    (index) =>
+      index.indexName ===
+      "IphoneEnrollmentReview_supersededCorrelationId_key"
+  );
+  const hasGlobalSolicitudUnique = indexes.some(
+    (index) =>
+      index.unique &&
+      index.valid &&
+      index.keyColumns === 1 &&
+      String(index.firstColumn || "").trim() === '"solicitudId"' &&
+      !normalizePredicate(index.predicate)
+  );
+  if (
+    !activeReviewIndex?.unique ||
+    !activeReviewIndex.valid ||
+    activeReviewIndex.keyColumns !== 1 ||
+    String(activeReviewIndex.firstColumn || "").trim() !== '"solicitudId"' ||
+    normalizePredicate(activeReviewIndex.predicate) !==
+      '"supersededAt" IS NULL' ||
+    !supersededCorrelationIndex?.unique ||
+    !supersededCorrelationIndex.valid ||
+    supersededCorrelationIndex.keyColumns !== 1 ||
+    String(supersededCorrelationIndex.firstColumn || "").trim() !==
+      '"supersededCorrelationId"' ||
+    normalizePredicate(supersededCorrelationIndex.predicate) !==
+      '"supersededCorrelationId" IS NOT NULL' ||
+    hasGlobalSolicitudUnique
   ) {
     throw new Error("IPHONE_ENROLLMENT_SCHEMA_NOT_READY");
   }
@@ -324,9 +396,12 @@ export async function ensureIphoneEnrollmentSchema() {
           "correlationId" UUID NOT NULL,
           "approvedAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
           "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "supersededAt" TIMESTAMPTZ,
+          "supersededByUserId" INTEGER,
+          "supersededByName" TEXT,
+          "supersededReason" TEXT,
+          "supersededCorrelationId" UUID,
           CONSTRAINT "IphoneEnrollmentReview_pkey" PRIMARY KEY ("id"),
-          CONSTRAINT "IphoneEnrollmentReview_solicitudId_key"
-            UNIQUE ("solicitudId"),
           CONSTRAINT "IphoneEnrollmentReview_correlationId_key"
             UNIQUE ("correlationId"),
           CONSTRAINT "IphoneEnrollmentReview_decision_check"
@@ -336,7 +411,10 @@ export async function ensureIphoneEnrollmentSchema() {
             REFERENCES "CreditoBorrador"("id") ON DELETE RESTRICT,
           CONSTRAINT "IphoneEnrollmentReview_grant_fkey"
             FOREIGN KEY ("grantId")
-            REFERENCES "IphoneEnrollmentAccessGrant"("id") ON DELETE RESTRICT
+            REFERENCES "IphoneEnrollmentAccessGrant"("id") ON DELETE RESTRICT,
+          CONSTRAINT "IphoneEnrollmentReview_supersededBy_fkey"
+            FOREIGN KEY ("supersededByUserId")
+            REFERENCES "Usuario"("id") ON DELETE SET NULL
         )
       `);
       await prisma.$executeRawUnsafe(`
@@ -345,7 +423,19 @@ export async function ensureIphoneEnrollmentSchema() {
           ADD COLUMN IF NOT EXISTS "identityKeyVersion" TEXT,
           ADD COLUMN IF NOT EXISTS "grantId" UUID,
           ADD COLUMN IF NOT EXISTS "grantIssuedByUserId" INTEGER,
-          ADD COLUMN IF NOT EXISTS "grantIssuedByName" TEXT
+          ADD COLUMN IF NOT EXISTS "grantIssuedByName" TEXT,
+          ADD COLUMN IF NOT EXISTS "supersededAt" TIMESTAMPTZ,
+          ADD COLUMN IF NOT EXISTS "supersededByUserId" INTEGER,
+          ADD COLUMN IF NOT EXISTS "supersededByName" TEXT,
+          ADD COLUMN IF NOT EXISTS "supersededReason" TEXT,
+          ADD COLUMN IF NOT EXISTS "supersededCorrelationId" UUID
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE "IphoneEnrollmentReview"
+          DROP CONSTRAINT IF EXISTS "IphoneEnrollmentReview_solicitudId_key"
+      `);
+      await prisma.$executeRawUnsafe(`
+        DROP INDEX IF EXISTS "IphoneEnrollmentReview_solicitudId_key"
       `);
       await prisma.$executeRawUnsafe(`
         UPDATE "IphoneEnrollmentReview"
@@ -392,8 +482,29 @@ export async function ensureIphoneEnrollmentSchema() {
               REFERENCES "IphoneEnrollmentAccessGrant"("id")
               ON DELETE RESTRICT;
           END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'IphoneEnrollmentReview_supersededBy_fkey'
+              AND conrelid = '"IphoneEnrollmentReview"'::regclass
+          ) THEN
+            ALTER TABLE "IphoneEnrollmentReview"
+              ADD CONSTRAINT "IphoneEnrollmentReview_supersededBy_fkey"
+              FOREIGN KEY ("supersededByUserId")
+              REFERENCES "Usuario"("id")
+              ON DELETE SET NULL;
+          END IF;
         END
         $$
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS "IphoneEnrollmentReview_active_solicitudId_key"
+        ON "IphoneEnrollmentReview" ("solicitudId")
+        WHERE "supersededAt" IS NULL
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS "IphoneEnrollmentReview_supersededCorrelationId_key"
+        ON "IphoneEnrollmentReview" ("supersededCorrelationId")
+        WHERE "supersededCorrelationId" IS NOT NULL
       `);
       await prisma.$executeRawUnsafe(`
         CREATE UNIQUE INDEX IF NOT EXISTS "IphoneEnrollmentAccessGrant_sessionIdHash_key"
@@ -513,7 +624,9 @@ const REVIEW_SELECT = `
   "checklist", "documentHash", "imeiHash", "checklistHash",
   "analystName", "analystExternalId", "identityKeyVersion",
   "grantId"::text, "grantIssuedByUserId", "grantIssuedByName",
-  "accessFingerprint", "correlationId"::text, "approvedAt", "createdAt"
+  "accessFingerprint", "correlationId"::text, "approvedAt", "createdAt",
+  "supersededAt", "supersededByUserId", "supersededByName",
+  "supersededReason", "supersededCorrelationId"::text
 `;
 
 function hasValidReviewChecklistIntegrity(row: ReviewRow) {
@@ -1101,6 +1214,7 @@ export async function findIphoneEnrollmentCase(input: {
       ${ACTIVE_IPHONE_CASE_JOINS}
       LEFT JOIN "IphoneEnrollmentReview" review
         ON review."solicitudId" = d."id"
+        AND review."supersededAt" IS NULL
       WHERE ${ACTIVE_IPHONE_CASE_WHERE}
         AND regexp_replace(COALESCE(d."clienteDocumento", ''), '[^0-9]', '', 'g') = $1
         AND regexp_replace(COALESCE(d."imei", ''), '[^0-9]', '', 'g') = $2
@@ -1223,6 +1337,7 @@ export async function getIphoneEnrollmentReviewForSolicitud(
       LEFT JOIN "Aliado" aliado ON aliado."id" = sede."aliadoId"
       WHERE review."solicitudId" = $1
         AND review."decision" = 'APROBADO'
+        AND review."supersededAt" IS NULL
         AND review."identityKeyVersion" = $4
         AND regexp_replace(COALESCE(draft."clienteDocumento", ''), '[^0-9]', '', 'g') = $2
         AND regexp_replace(COALESCE(draft."imei", ''), '[^0-9]', '', 'g') = $3
@@ -1300,6 +1415,7 @@ export async function approveIphoneEnrollmentCase(input: {
         SELECT ${REVIEW_SELECT}
         FROM "IphoneEnrollmentReview"
         WHERE "solicitudId" = $1
+          AND "supersededAt" IS NULL
         LIMIT 1
       `,
       input.caseToken.solicitudId
@@ -1330,6 +1446,7 @@ export async function approveIphoneEnrollmentCase(input: {
         ${ACTIVE_IPHONE_CASE_JOINS}
         LEFT JOIN "IphoneEnrollmentReview" review
           ON review."solicitudId" = d."id"
+          AND review."supersededAt" IS NULL
         WHERE ${ACTIVE_IPHONE_CASE_WHERE}
           AND d."id" = $1
         LIMIT 1

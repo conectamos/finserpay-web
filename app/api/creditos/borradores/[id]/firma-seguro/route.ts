@@ -916,6 +916,7 @@ export async function PATCH(
           reason?: unknown;
           expectedCurrentImei?: unknown;
           expectedProcessUuid?: unknown;
+          expectedEnrollmentReviewId?: unknown;
         }
       | null;
     if (String(body?.action || "").trim().toUpperCase() !== "CORREGIR_IMEI") {
@@ -935,6 +936,7 @@ export async function PATCH(
       reason: body?.reason,
       expectedCurrentImei: body?.expectedCurrentImei,
       expectedProcessUuid: body?.expectedProcessUuid,
+      expectedEnrollmentReviewId: body?.expectedEnrollmentReviewId,
       actorUserId: user.id,
       actorName: user.nombre,
     });

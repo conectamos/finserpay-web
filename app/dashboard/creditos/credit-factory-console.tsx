@@ -799,6 +799,8 @@ type FirmaSeguroResponse = {
   previousImei?: string | null;
   imei?: string | null;
   reissueRequired?: boolean;
+  enrollmentReapprovalRequired?: boolean;
+  supersededEnrollmentReviewId?: string | null;
   currentStep?: number;
   process?: {
     id?: number;
@@ -8562,6 +8564,7 @@ export default function CreditFactoryConsole({
   const correctFirmaSeguroImei = async () => {
     const correctedImei = firmaSeguroImeiCorrectionValue.trim();
     const expectedCurrentImei = imeiDigits;
+    const hadApprovedEnrollment = Boolean(iphoneEnrollmentReview);
     const expectedProcessUuid = String(
       firmaSeguroDraftProcess?.processUuid || ""
     ).trim();
@@ -8588,7 +8591,7 @@ export default function CreditFactoryConsole({
       });
       return;
     }
-    if (reason.length < 8) {
+    if (reason.length < 5) {
       setNotice({
         text: "Escribe el motivo de la correccion para dejar la trazabilidad administrativa.",
         tone: "amber",
@@ -8609,6 +8612,13 @@ export default function CreditFactoryConsole({
         `IMEI firmado actual: ${expectedCurrentImei}`,
         `IMEI nuevo: ${correctedImei}`,
         "El contrato anterior quedara como historico y el cliente debera firmar uno nuevo.",
+        ...(hadApprovedEnrollment
+          ? [
+              "El enrolamiento aprobado quedara reemplazado y se conservara como historico.",
+              "El especialista debera aprobar nuevamente el enrolamiento para el IMEI corregido.",
+              "Las fotos activas de entrega y remision se archivaran y deberan cargarse de nuevo.",
+            ]
+          : []),
       ].join("\n")
     );
     if (!correctionConfirmed) {
@@ -8632,6 +8642,7 @@ export default function CreditFactoryConsole({
             reason,
             expectedCurrentImei,
             expectedProcessUuid,
+            expectedEnrollmentReviewId: iphoneEnrollmentReview?.id || null,
           }),
         }
       );
@@ -8641,6 +8652,9 @@ export default function CreditFactoryConsole({
           result.data?.error || "No se pudo corregir el IMEI de la solicitud"
         );
       }
+      const enrollmentWasSuperseded =
+        hadApprovedEnrollment ||
+        Boolean(result.data.enrollmentReapprovalRequired);
 
       setImei(correctedImei);
       setFirmaSeguroImeiCorrectionValue(correctedImei);
@@ -8661,8 +8675,9 @@ export default function CreditFactoryConsole({
       setWizardStep(4);
       setDraftStatus("saved");
       setNotice({
-        text:
-          "IMEI corregido. El expediente anterior quedo como historico; envia uno nuevo a FirmaSeguro y espera la nueva firma antes de enrolar.",
+        text: enrollmentWasSuperseded
+          ? "IMEI corregido. La firma, el enrolamiento y las fotos de entrega y remision del equipo anterior quedaron como historicos. Envia el expediente nuevo a FirmaSeguro y solicita un nuevo enrolamiento cuando quede firmado."
+          : "IMEI corregido. El expediente anterior quedo como historico; envia uno nuevo a FirmaSeguro y espera la nueva firma antes de enrolar.",
         tone: "amber",
       });
     } catch (error) {
@@ -15426,12 +15441,26 @@ export default function CreditFactoryConsole({
                             Control exclusivo FINSER PAY
                           </p>
                           <h4 className="mt-1 text-lg font-black text-slate-950">
-                            Corregir IMEI y volver a firmar
+                            {iphoneEnrollmentReview
+                              ? "Corregir IMEI y reiniciar firma y enrolamiento"
+                              : "Corregir IMEI y volver a firmar"}
                           </h4>
                           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">
-                            Úsalo únicamente si el IMEI fue digitado mal. El PDF ya firmado no se modifica:
-                            queda como histórico, la venta regresa a Contratos y el cliente debe firmar un
-                            expediente nuevo antes del enrolamiento.
+                            {iphoneEnrollmentReview ? (
+                              <>
+                                Esta solicitud ya tiene un enrolamiento aprobado. Al corregir el IMEI, la
+                                firma y el enrolamiento actuales quedarán reemplazados y se conservarán como
+                                históricos. La venta regresará a Identidad y firma; el cliente deberá firmar
+                                un expediente nuevo, el especialista deberá aprobar nuevamente el
+                                enrolamiento y las fotos activas de entrega y remisión se archivarán y limpiarán.
+                              </>
+                            ) : (
+                              <>
+                                Úsalo únicamente si el IMEI fue digitado mal. El PDF ya firmado no se modifica:
+                                queda como histórico, la venta regresa a Identidad y firma y el cliente debe
+                                firmar un expediente nuevo antes del enrolamiento.
+                              </>
+                            )}
                           </p>
                         </div>
                       </div>
@@ -15460,6 +15489,7 @@ export default function CreditFactoryConsole({
                             onChange={(event) =>
                               setFirmaSeguroImeiCorrectionReason(event.target.value.slice(0, 240))
                             }
+                            minLength={5}
                             maxLength={240}
                             placeholder="Ej. IMEI digitado incorrectamente antes de la firma"
                             className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"

@@ -89,8 +89,12 @@ const statements = [
       "correlationId" UUID NOT NULL,
       "approvedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "supersededAt" TIMESTAMPTZ,
+      "supersededByUserId" INTEGER,
+      "supersededByName" TEXT,
+      "supersededReason" TEXT,
+      "supersededCorrelationId" UUID,
       CONSTRAINT "IphoneEnrollmentReview_pkey" PRIMARY KEY ("id"),
-      CONSTRAINT "IphoneEnrollmentReview_solicitudId_key" UNIQUE ("solicitudId"),
       CONSTRAINT "IphoneEnrollmentReview_correlationId_key" UNIQUE ("correlationId"),
       CONSTRAINT "IphoneEnrollmentReview_decision_check"
         CHECK ("decision" = 'APROBADO'),
@@ -101,7 +105,11 @@ const statements = [
       CONSTRAINT "IphoneEnrollmentReview_grant_fkey"
         FOREIGN KEY ("grantId")
         REFERENCES public."IphoneEnrollmentAccessGrant" ("id")
-        ON DELETE RESTRICT
+        ON DELETE RESTRICT,
+      CONSTRAINT "IphoneEnrollmentReview_supersededBy_fkey"
+        FOREIGN KEY ("supersededByUserId")
+        REFERENCES public."Usuario" ("id")
+        ON DELETE SET NULL
     )
   `,
   `
@@ -110,7 +118,19 @@ const statements = [
       ADD COLUMN IF NOT EXISTS "identityKeyVersion" TEXT,
       ADD COLUMN IF NOT EXISTS "grantId" UUID,
       ADD COLUMN IF NOT EXISTS "grantIssuedByUserId" INTEGER,
-      ADD COLUMN IF NOT EXISTS "grantIssuedByName" TEXT
+      ADD COLUMN IF NOT EXISTS "grantIssuedByName" TEXT,
+      ADD COLUMN IF NOT EXISTS "supersededAt" TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS "supersededByUserId" INTEGER,
+      ADD COLUMN IF NOT EXISTS "supersededByName" TEXT,
+      ADD COLUMN IF NOT EXISTS "supersededReason" TEXT,
+      ADD COLUMN IF NOT EXISTS "supersededCorrelationId" UUID
+  `,
+  `
+    ALTER TABLE public."IphoneEnrollmentReview"
+      DROP CONSTRAINT IF EXISTS "IphoneEnrollmentReview_solicitudId_key"
+  `,
+  `
+    DROP INDEX IF EXISTS public."IphoneEnrollmentReview_solicitudId_key"
   `,
   `
     UPDATE public."IphoneEnrollmentReview"
@@ -157,8 +177,29 @@ const statements = [
           REFERENCES public."IphoneEnrollmentAccessGrant" ("id")
           ON DELETE RESTRICT;
       END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'IphoneEnrollmentReview_supersededBy_fkey'
+          AND conrelid = 'public."IphoneEnrollmentReview"'::regclass
+      ) THEN
+        ALTER TABLE public."IphoneEnrollmentReview"
+          ADD CONSTRAINT "IphoneEnrollmentReview_supersededBy_fkey"
+          FOREIGN KEY ("supersededByUserId")
+          REFERENCES public."Usuario" ("id")
+          ON DELETE SET NULL;
+      END IF;
     END
     $$
+  `,
+  `
+    CREATE UNIQUE INDEX IF NOT EXISTS "IphoneEnrollmentReview_active_solicitudId_key"
+    ON public."IphoneEnrollmentReview" ("solicitudId")
+    WHERE "supersededAt" IS NULL
+  `,
+  `
+    CREATE UNIQUE INDEX IF NOT EXISTS "IphoneEnrollmentReview_supersededCorrelationId_key"
+    ON public."IphoneEnrollmentReview" ("supersededCorrelationId")
+    WHERE "supersededCorrelationId" IS NOT NULL
   `,
   `
     CREATE TABLE IF NOT EXISTS public."IphoneEnrollmentPortalAttempt" (
@@ -210,6 +251,11 @@ const expectedColumns = new Map([
       ["correlationId", { dataType: "uuid" }],
       ["approvedAt", { dataType: "timestamp with time zone" }],
       ["createdAt", { dataType: "timestamp with time zone" }],
+      ["supersededAt", { dataType: "timestamp with time zone", nullable: true }],
+      ["supersededByUserId", { dataType: "integer", nullable: true }],
+      ["supersededByName", { dataType: "text", nullable: true }],
+      ["supersededReason", { dataType: "text", nullable: true }],
+      ["supersededCorrelationId", { dataType: "uuid", nullable: true }],
     ]),
   ],
   [
@@ -248,7 +294,8 @@ const expectedIndexes = new Map([
   ["IphoneEnrollmentAccessGrant_sessionIdHash_key", true],
   ["IphoneEnrollmentAccessGrant_active_idx", false],
   ["IphoneEnrollmentReview_pkey", true],
-  ["IphoneEnrollmentReview_solicitudId_key", true],
+  ["IphoneEnrollmentReview_active_solicitudId_key", true],
+  ["IphoneEnrollmentReview_supersededCorrelationId_key", true],
   ["IphoneEnrollmentReview_correlationId_key", true],
   ["IphoneEnrollmentPortalAttempt_pkey", true],
   ["IphoneEnrollmentPortalAttempt_client_action_created_idx", false],
@@ -302,7 +349,10 @@ async function assertCompatibleIndexes() {
     `
       SELECT index_class.relname AS index_name,
         index_state.indisunique AS is_unique,
-        index_state.indisvalid AS is_valid
+        index_state.indisvalid AS is_valid,
+        pg_get_expr(index_state.indpred, index_state.indrelid) AS predicate,
+        pg_get_indexdef(index_state.indexrelid, 1, true) AS first_column,
+        index_state.indnkeyatts::integer AS key_columns
       FROM pg_index index_state
       INNER JOIN pg_class index_class
         ON index_class.oid = index_state.indexrelid
@@ -316,7 +366,13 @@ async function assertCompatibleIndexes() {
   const actualIndexes = new Map(
     indexes.rows.map((row) => [
       row.index_name,
-      { unique: row.is_unique, valid: row.is_valid },
+      {
+        unique: row.is_unique,
+        valid: row.is_valid,
+        predicate: String(row.predicate || ""),
+        firstColumn: String(row.first_column || ""),
+        keyColumns: Number(row.key_columns || 0),
+      },
     ])
   );
 
@@ -325,6 +381,51 @@ async function assertCompatibleIndexes() {
     if (!actual?.valid || actual.unique !== unique) {
       throw new Error(`Indice incompatible para enrolamiento: ${indexName}.`);
     }
+  }
+  const activeReviewIndex = actualIndexes.get(
+    "IphoneEnrollmentReview_active_solicitudId_key"
+  );
+  const normalizePredicate = (value) =>
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^\((.*)\)$/, "$1");
+  if (
+    activeReviewIndex?.firstColumn.trim() !== '"solicitudId"' ||
+    activeReviewIndex?.keyColumns !== 1 ||
+    normalizePredicate(activeReviewIndex?.predicate) !==
+      '"supersededAt" IS NULL'
+  ) {
+    throw new Error(
+      "Indice activo de enrolamiento no filtra revisiones reemplazadas."
+    );
+  }
+  const supersededCorrelationIndex = actualIndexes.get(
+    "IphoneEnrollmentReview_supersededCorrelationId_key"
+  );
+  if (
+    supersededCorrelationIndex?.firstColumn.trim() !==
+      '"supersededCorrelationId"' ||
+    supersededCorrelationIndex?.keyColumns !== 1 ||
+    normalizePredicate(supersededCorrelationIndex?.predicate) !==
+      '"supersededCorrelationId" IS NOT NULL'
+  ) {
+    throw new Error(
+      "Indice de correlacion de reemplazo de enrolamiento no es parcial."
+    );
+  }
+  const hasGlobalSolicitudUnique = [...actualIndexes.values()].some(
+    (index) =>
+      index.unique &&
+      index.valid &&
+      index.keyColumns === 1 &&
+      index.firstColumn.trim() === '"solicitudId"' &&
+      !normalizePredicate(index.predicate)
+  );
+  if (hasGlobalSolicitudUnique) {
+    throw new Error(
+      "Persiste una unicidad global incompatible en IphoneEnrollmentReview.solicitudId."
+    );
   }
 }
 
@@ -363,6 +464,7 @@ async function assertCompatibleConstraints() {
           'IphoneEnrollmentReview_decision_check',
           'IphoneEnrollmentReview_solicitud_fkey',
           'IphoneEnrollmentReview_grant_fkey',
+          'IphoneEnrollmentReview_supersededBy_fkey',
           'IphoneEnrollmentAccessGrant_issuedBy_fkey',
           'IphoneEnrollmentAccessGrant_revokedBy_fkey',
           'IphoneEnrollmentAccessGrant_expiry_check',
@@ -378,6 +480,9 @@ async function assertCompatibleConstraints() {
     "IphoneEnrollmentReview_solicitud_fkey"
   );
   const grantForeignKey = byName.get("IphoneEnrollmentReview_grant_fkey");
+  const reviewSupersededByForeignKey = byName.get(
+    "IphoneEnrollmentReview_supersededBy_fkey"
+  );
   const issuedByForeignKey = byName.get(
     "IphoneEnrollmentAccessGrant_issuedBy_fkey"
   );
@@ -422,6 +527,14 @@ async function assertCompatibleConstraints() {
       column: "id",
       deleteAction: "r",
       label: "IphoneEnrollmentReview.grantId",
+    },
+    {
+      row: reviewSupersededByForeignKey,
+      source: "supersededByUserId",
+      table: "Usuario",
+      column: "id",
+      deleteAction: "n",
+      label: "IphoneEnrollmentReview.supersededByUserId",
     },
     {
       row: issuedByForeignKey,
@@ -479,8 +592,10 @@ async function assertNoLegacyReviews() {
     `
       SELECT COUNT(*)::integer AS count
       FROM public."IphoneEnrollmentReview"
-      WHERE LOWER(COALESCE("identityKeyVersion", '')) = 'legacy'
-        OR (
+      WHERE "supersededAt" IS NULL
+        AND (
+          LOWER(COALESCE("identityKeyVersion", '')) = 'legacy'
+          OR (
           "grantId" IS NULL
           AND NOT (
             "analystName" = $1
@@ -490,6 +605,7 @@ async function assertNoLegacyReviews() {
             AND BTRIM("accessFingerprint") = $3
             AND "identityKeyVersion" = $4
           )
+        )
         )
     `,
     [

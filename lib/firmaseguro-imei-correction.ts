@@ -31,6 +31,14 @@ type ActiveFirmaSeguroCorrectionRow = {
   completedAt: Date | null;
 };
 
+type ActiveEnrollmentReviewRow = {
+  id: string;
+  analystName: string;
+  correlationId: string;
+  checklistHash: string;
+  approvedAt: Date | string;
+};
+
 type CorrectionAuditRow = {
   correlationId: string;
   draftId: number;
@@ -111,7 +119,8 @@ function payloadObject(value: unknown): Record<string, unknown> {
 
 function archiveEquipmentDependentPayload(
   payload: Record<string, unknown>,
-  previousImei: string
+  previousImei: string,
+  enrollmentReview: ActiveEnrollmentReviewRow | null
 ) {
   const fields: Record<string, unknown> = {};
   for (const field of EQUIPMENT_DEPENDENT_PAYLOAD_FIELDS) {
@@ -119,9 +128,44 @@ function archiveEquipmentDependentPayload(
       fields[field] = payload[field];
     }
   }
-  return Object.keys(fields).length > 0
-    ? { previousImei, fields }
-    : null;
+  if (Object.keys(fields).length === 0 && !enrollmentReview) return null;
+  return {
+    previousImei,
+    fields,
+    enrollmentReview: enrollmentReview
+      ? {
+          id: enrollmentReview.id,
+          analystName: enrollmentReview.analystName,
+          correlationId: enrollmentReview.correlationId,
+          checklistHash: enrollmentReview.checklistHash,
+          approvedAt: enrollmentReview.approvedAt,
+        }
+      : null,
+  };
+}
+
+function normalizeExpectedEnrollmentReviewId(value: unknown) {
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new FirmaSeguroImeiCorrectionError(
+      "ENROLAMIENTO_ESPERADO_INVALIDO",
+      "Actualiza el estado del enrolamiento antes de corregir el IMEI.",
+      400
+    );
+  }
+  const normalized = value.trim().toLowerCase();
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      normalized
+    )
+  ) {
+    throw new FirmaSeguroImeiCorrectionError(
+      "ENROLAMIENTO_ESPERADO_INVALIDO",
+      "Actualiza el estado del enrolamiento antes de corregir el IMEI.",
+      400
+    );
+  }
+  return normalized;
 }
 
 function assertActiveDraft(row: DraftCorrectionRow | undefined) {
@@ -164,6 +208,7 @@ export async function correctFirmaSeguroDraftImei(input: {
   reason: unknown;
   expectedCurrentImei: unknown;
   expectedProcessUuid: unknown;
+  expectedEnrollmentReviewId: unknown;
   actorUserId: number;
   actorName: string;
 }) {
@@ -171,6 +216,9 @@ export async function correctFirmaSeguroDraftImei(input: {
   const expectedCurrentImei = normalizeImei(input.expectedCurrentImei);
   const expectedProcessUuid = normalizeExpectedProcessUuid(
     input.expectedProcessUuid
+  );
+  const expectedEnrollmentReviewId = normalizeExpectedEnrollmentReviewId(
+    input.expectedEnrollmentReviewId
   );
   const reason = normalizeReason(input.reason);
   const actorName = String(input.actorName || "Administrador central")
@@ -222,6 +270,10 @@ export async function correctFirmaSeguroDraftImei(input: {
   ]);
 
   return prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`,
+      `iphone-enrollment:${input.draftId}`
+    );
     await lockSolicitudOperationMutation(transaction, input.draftId);
     const initialDraft = await readDraft(transaction, input.draftId);
     assertActiveDraft(initialDraft);
@@ -312,7 +364,7 @@ export async function correctFirmaSeguroDraftImei(input: {
       );
     }
 
-    const [draftConflicts, creditConflicts, enrollmentReviews] = await Promise.all([
+    const [draftConflicts, creditConflicts] = await Promise.all([
       transaction.$queryRawUnsafe<Array<{ id: number }>>(
         `
           SELECT "id"
@@ -340,15 +392,6 @@ export async function correctFirmaSeguroDraftImei(input: {
         `,
         imei
       ),
-      transaction.$queryRawUnsafe<Array<{ id: string }>>(
-        `
-          SELECT "id"::text
-          FROM "IphoneEnrollmentReview"
-          WHERE "solicitudId" = $1
-          LIMIT 1
-        `,
-        input.draftId
-      ),
     ]);
 
     if (draftConflicts[0]) {
@@ -363,18 +406,37 @@ export async function correctFirmaSeguroDraftImei(input: {
         `El IMEI corregido ya fue usado en el crédito ${creditConflicts[0].folio}.`
       );
     }
-    if (enrollmentReviews[0]) {
+    const enrollmentReviews = await transaction.$queryRawUnsafe<
+      ActiveEnrollmentReviewRow[]
+    >(
+      `
+        SELECT "id"::text, "analystName", "correlationId"::text,
+          "checklistHash", "approvedAt"
+        FROM "IphoneEnrollmentReview"
+        WHERE "solicitudId" = $1
+          AND "supersededAt" IS NULL
+        ORDER BY "createdAt" DESC, "id" DESC
+        LIMIT 1
+        FOR UPDATE
+      `,
+      input.draftId
+    );
+    const activeEnrollmentReview = enrollmentReviews[0] || null;
+    if (
+      (activeEnrollmentReview?.id || null) !== expectedEnrollmentReviewId
+    ) {
       throw new FirmaSeguroImeiCorrectionError(
-        "ENROLAMIENTO_YA_APROBADO",
-        "La solicitud ya tiene un enrolamiento aprobado. No se puede cambiar el IMEI silenciosamente."
+        "ENROLAMIENTO_CORRECCION_CONFLICTO",
+        "El estado del enrolamiento cambió desde que abriste la solicitud. Recarga el caso antes de corregir el IMEI.",
+        409
       );
     }
-
     const correlationId = randomUUID();
     const originalPayload = payloadObject(draft?.payload);
     const archivedEvidence = archiveEquipmentDependentPayload(
       originalPayload,
-      previousImei
+      previousImei,
+      activeEnrollmentReview
     );
     const nextPayload: Record<string, unknown> = {
       ...originalPayload,
@@ -388,6 +450,37 @@ export async function correctFirmaSeguroDraftImei(input: {
     delete nextPayload.financialTermsSeal;
     for (const field of EQUIPMENT_DEPENDENT_PAYLOAD_FIELDS) {
       delete nextPayload[field];
+    }
+
+    if (activeEnrollmentReview) {
+      const supersededReviews = await transaction.$queryRawUnsafe<
+        Array<{ id: string }>
+      >(
+        `
+          UPDATE "IphoneEnrollmentReview"
+          SET "supersededAt" = CURRENT_TIMESTAMP,
+              "supersededByUserId" = $2,
+              "supersededByName" = $3,
+              "supersededReason" = $4,
+              "supersededCorrelationId" = $5::uuid
+          WHERE "id" = $1::uuid
+            AND "solicitudId" = $6
+            AND "supersededAt" IS NULL
+          RETURNING "id"::text
+        `,
+        activeEnrollmentReview.id,
+        input.actorUserId,
+        actorName || "Administrador central",
+        reason,
+        correlationId,
+        input.draftId
+      );
+      if (supersededReviews.length !== 1) {
+        throw new FirmaSeguroImeiCorrectionError(
+          "ENROLAMIENTO_CORRECCION_CONCURRENTE",
+          "El enrolamiento cambió durante la corrección. Recarga el caso."
+        );
+      }
     }
 
     const updated = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
@@ -449,6 +542,8 @@ export async function correctFirmaSeguroDraftImei(input: {
       previousImei,
       imei,
       reissueRequired: true as const,
+      enrollmentReapprovalRequired: Boolean(activeEnrollmentReview),
+      supersededEnrollmentReviewId: activeEnrollmentReview?.id || null,
       currentStep: 4 as const,
     };
   });

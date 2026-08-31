@@ -48,7 +48,7 @@ test("PATCH de correccion respeta el contrato y es exclusivo del admin central",
   assert.match(patch, /CORRECCION_IMEI_NO_AUTORIZADA/);
   assert.match(
     patch,
-    /correctFirmaSeguroDraftImei\(\{[\s\S]*draftId,[\s\S]*imei: body\?\.imei,[\s\S]*reason: body\?\.reason,[\s\S]*expectedCurrentImei: body\?\.expectedCurrentImei,[\s\S]*expectedProcessUuid: body\?\.expectedProcessUuid,[\s\S]*actorUserId: user\.id,[\s\S]*actorName: user\.nombre/
+    /correctFirmaSeguroDraftImei\(\{[\s\S]*draftId,[\s\S]*imei: body\?\.imei,[\s\S]*reason: body\?\.reason,[\s\S]*expectedCurrentImei: body\?\.expectedCurrentImei,[\s\S]*expectedProcessUuid: body\?\.expectedProcessUuid,[\s\S]*expectedEnrollmentReviewId: body\?\.expectedEnrollmentReviewId,[\s\S]*actorUserId: user\.id,[\s\S]*actorName: user\.nombre/
   );
   assert.match(patch, /NextResponse\.json\(\{ ok: true, \.\.\.result \}\)/);
   assert.match(routeSource, /stage: "imei_correction"/);
@@ -61,10 +61,14 @@ test("la correccion valida solicitud, IMEI, motivo y serializa con locks", () =>
   assert.match(correctionSource, /MOTIVO_CORRECCION_REQUERIDO/);
   assert.match(correctionSource, /IMEI_ACTUAL_ESPERADO_INVALIDO/);
   assert.match(correctionSource, /FIRMASEGURO_PROCESO_ESPERADO_REQUERIDO/);
+  assert.match(correctionSource, /ENROLAMIENTO_ESPERADO_INVALIDO/);
   assert.match(correctionSource, /row\.estado !== "ABIERTO"/);
   assert.match(correctionSource, /row\.creditoId !== null/);
   assert.match(correctionSource, /COALESCE\("expiresAt", "createdAt" \+ INTERVAL '15 days'\)/);
 
+  const enrollmentLock = correctionSource.indexOf(
+    "iphone-enrollment:${input.draftId}"
+  );
   const operationLock = correctionSource.indexOf(
     "await lockSolicitudOperationMutation(transaction, input.draftId)"
   );
@@ -75,7 +79,8 @@ test("la correccion valida solicitud, IMEI, motivo y serializa con locks", () =>
     "readDraft(transaction, input.draftId, true)"
   );
   const update = correctionSource.indexOf('UPDATE "CreditoBorrador"');
-  assert.ok(operationLock >= 0);
+  assert.ok(enrollmentLock >= 0);
+  assert.ok(operationLock > enrollmentLock);
   assert.ok(identityLocks > operationLock);
   assert.ok(rowLock > identityLocks);
   assert.ok(update > rowLock);
@@ -110,9 +115,13 @@ test("el control optimista liga la correccion al IMEI y firma observados", () =>
   );
   assert.match(correctionSource, /FIRMASEGURO_FIRMADO_REQUERIDO/);
   assert.match(correctionSource, /CORRECCION_IMEI_CONFLICTO/);
+  assert.match(
+    correctionSource,
+    /activeEnrollmentReview\?\.id \|\| null\) !== expectedEnrollmentReviewId[\s\S]*ENROLAMIENTO_CORRECCION_CONFLICTO/
+  );
 });
 
-test("rechaza IMEI ocupado, vendido o con enrolamiento ya aprobado", () => {
+test("rechaza IMEI ocupado o vendido y reemplaza el enrolamiento aprobado con auditoria", () => {
   assert.match(
     correctionSource,
     /plataformaDispositivo[\s\S]*platform !== "IPHONE"[\s\S]*CORRECCION_IMEI_SOLO_IPHONE/
@@ -127,8 +136,15 @@ test("rechaza IMEI ocupado, vendido o con enrolamiento ya aprobado", () => {
   );
   assert.match(
     correctionSource,
-    /FROM "IphoneEnrollmentReview"[\s\S]*WHERE "solicitudId" = \$1[\s\S]*ENROLAMIENTO_YA_APROBADO/
+    /FROM "IphoneEnrollmentReview"[\s\S]*WHERE "solicitudId" = \$1[\s\S]*"supersededAt" IS NULL[\s\S]*FOR UPDATE/
   );
+  assert.match(
+    correctionSource,
+    /UPDATE "IphoneEnrollmentReview"[\s\S]*"supersededAt" = CURRENT_TIMESTAMP[\s\S]*"supersededByUserId" = \$2[\s\S]*"supersededReason" = \$4[\s\S]*"supersededCorrelationId" = \$5::uuid/
+  );
+  assert.match(correctionSource, /enrollmentReapprovalRequired: Boolean\(activeEnrollmentReview\)/);
+  assert.doesNotMatch(correctionSource, /ENROLAMIENTO_YA_APROBADO/);
+  assert.doesNotMatch(correctionSource, /DELETE FROM "IphoneEnrollmentReview"/);
 });
 
 test("actualiza el IMEI canonico, rebobina al paso interno 4 y fuerza folio nuevo", () => {
@@ -174,6 +190,10 @@ test("archiva las evidencias del equipo anterior antes de limpiar el payload act
   assert.ok(update > cleanup);
   assert.ok(auditInsert > update);
   assert.match(correctionSource, /"archivedEvidence"[\s\S]*\$10::jsonb/);
+  assert.match(
+    correctionSource,
+    /enrollmentReview:[\s\S]*id: enrollmentReview\.id[\s\S]*analystName: enrollmentReview\.analystName[\s\S]*correlationId: enrollmentReview\.correlationId/
+  );
   assert.match(storageSource, /"archivedEvidence" JSONB/);
   assert.match(
     storageSource,
