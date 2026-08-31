@@ -34,6 +34,7 @@ type SaveDraftBody = {
   id?: unknown;
   currentStep?: unknown;
   payload?: unknown;
+  payloadScope?: unknown;
   estado?: unknown;
   action?: unknown;
   creditoId?: unknown;
@@ -367,6 +368,10 @@ export async function POST(req: Request) {
     ]);
     const body = (await req.json().catch(() => ({}))) as SaveDraftBody;
     const payload = normalizePayload(body.payload);
+    const payloadScope =
+      sanitizeText(body.payloadScope).toUpperCase() === "DELIVERY_EVIDENCE"
+        ? "DELIVERY_EVIDENCE"
+        : "FULL";
     const fields = extractDraftFields(payload);
     const draftId = parsePositiveId(body.id);
     const existingDraft = draftId
@@ -401,6 +406,7 @@ export async function POST(req: Request) {
       plataforma: sanitizeText(payload.plataformaDispositivo),
       dataCreditoAssessmentId: sanitizeText(payload.dataCreditoAssessmentId),
       payload,
+      payloadScope,
     });
     const rows = await readDrafts(`d."id" = $1`, [saved.id], 1, true);
     if (!rows[0]) throw new Error("No se pudo leer el borrador guardado");

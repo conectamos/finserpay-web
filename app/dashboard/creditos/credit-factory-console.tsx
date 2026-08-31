@@ -2887,6 +2887,9 @@ export default function CreditFactoryConsole({
   const previousContactCompleteRef = useRef(false);
   const [equipoMarca, setEquipoMarca] = useState("");
   const [equipoModelo, setEquipoModelo] = useState("");
+  const [restoredEquipmentCatalogId, setRestoredEquipmentCatalogId] = useState<
+    number | null
+  >(null);
   const [equipmentCatalog, setEquipmentCatalog] = useState<EquipmentCatalogItem[]>([]);
   const [creditSettings, setCreditSettings] = useState<CreditSettings>({
     tasaInteresEa: DEFAULT_LEGAL_CONSUMER_RATE_EA,
@@ -3357,6 +3360,8 @@ export default function CreditFactoryConsole({
       ) || null
     );
   }, [platformEquipmentCatalog, equipoMarca, equipoModelo]);
+  const effectiveEquipmentCatalogId =
+    selectedEquipmentCatalogItem?.id || restoredEquipmentCatalogId;
   const precioBaseVentaCatalogo = selectedEquipmentCatalogItem?.precioBaseVenta || 0;
   const simulationPolicyOffer =
     simulatorMode &&
@@ -3679,7 +3684,7 @@ export default function CreditFactoryConsole({
       referenciaFamiliar2Telefono,
       equipoMarca,
       equipoModelo,
-      equipoCatalogoId: selectedEquipmentCatalogItem?.id || null,
+      equipoCatalogoId: effectiveEquipmentCatalogId,
       imei: imeiDigits,
       plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
       iphoneSelfieCedulaDataUrl,
@@ -3791,7 +3796,7 @@ export default function CreditFactoryConsole({
       referenciaFamiliar2Nombre,
       referenciaFamiliar2Parentesco,
       referenciaFamiliar2Telefono,
-      selectedEquipmentCatalogItem?.id,
+      effectiveEquipmentCatalogId,
       valorEquipoTotal,
       veriffValidation?.id,
       wizardStep,
@@ -5886,6 +5891,7 @@ export default function CreditFactoryConsole({
 
     setEquipoMarca(item.marca);
     setEquipoModelo(item.modelo);
+    setRestoredEquipmentCatalogId(item.id);
 
     if (
       previousCatalogBase > 0 &&
@@ -6215,6 +6221,7 @@ export default function CreditFactoryConsole({
 
     setEquipoMarca("");
     setEquipoModelo("");
+    setRestoredEquipmentCatalogId(null);
   }, [activeEquipmentCatalog.length, currentDevicePlatform, equipoMarca]);
 
   useEffect(() => {
@@ -8336,6 +8343,7 @@ export default function CreditFactoryConsole({
     setReferenciaFamiliar2Telefono("");
     setEquipoMarca("");
     setEquipoModelo("");
+    setRestoredEquipmentCatalogId(null);
     setImei("");
     setFirmaSeguroImeiCorrectionValue("");
     setFirmaSeguroImeiCorrectionReason("");
@@ -8870,7 +8878,7 @@ export default function CreditFactoryConsole({
           referenciaEquipo,
           equipoMarca,
           equipoModelo,
-          equipoCatalogoId: selectedEquipmentCatalogItem?.id || null,
+          equipoCatalogoId: effectiveEquipmentCatalogId,
           imei: imeiDigits,
           plataformaDispositivo: iphoneFactory ? "IPHONE" : "ANDROID",
           iphoneSelfieCedulaDataUrl,
@@ -9837,6 +9845,7 @@ export default function CreditFactoryConsole({
     setReferenciaFamiliar2Telefono(value("referenciaFamiliar2Telefono"));
     const restoredEquipoMarca = value("equipoMarca");
     const restoredEquipoModelo = value("equipoModelo");
+    const restoredCatalogId = Number(value("equipoCatalogoId") || 0);
     const restoredImei = value("imei");
     const payloadPlatform = value("plataformaDispositivo").trim().toUpperCase();
     const restoredDevicePlatform: DevicePlatform =
@@ -9853,6 +9862,11 @@ export default function CreditFactoryConsole({
     });
     setEquipoMarca(restoredEquipoMarca);
     setEquipoModelo(restoredEquipoModelo);
+    setRestoredEquipmentCatalogId(
+      Number.isInteger(restoredCatalogId) && restoredCatalogId > 0
+        ? restoredCatalogId
+        : null
+    );
     setImei(restoredImei);
     setFirmaSeguroImeiCorrectionValue(restoredImei);
     setFirmaSeguroImeiCorrectionReason("");
@@ -10274,6 +10288,10 @@ export default function CreditFactoryConsole({
               body: JSON.stringify({
                 id: draftId,
                 currentStep: persistedWizardStep,
+                payloadScope:
+                  firmaSeguroProcessSigned && persistedWizardStep >= 5
+                    ? "DELIVERY_EVIDENCE"
+                    : "FULL",
                 payload: {
                   ...factoryDraftPayload,
                   wizardStep: persistedWizardStep,
@@ -10352,6 +10370,7 @@ export default function CreditFactoryConsole({
     draftResumeLoadFailed,
     draftResumeHydrating,
     factoryDraftPayload,
+    firmaSeguroProcessSigned,
     currentIphoneClosureFingerprint,
     nextFactoryStep.id,
     simulatorMode,
@@ -13913,6 +13932,7 @@ export default function CreditFactoryConsole({
                           <select
                             value={equipoMarca}
                             onChange={(event) => {
+                              setRestoredEquipmentCatalogId(null);
                               setEquipoMarca(event.target.value);
                               setEquipoModelo("");
                             }}
@@ -13935,7 +13955,10 @@ export default function CreditFactoryConsole({
                         ) : (
                           <input
                             value={equipoMarca}
-                            onChange={(event) => setEquipoMarca(event.target.value)}
+                            onChange={(event) => {
+                              setRestoredEquipmentCatalogId(null);
+                              setEquipoMarca(event.target.value);
+                            }}
                             placeholder="Primero carga el catalogo"
                             className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                           />
@@ -13957,6 +13980,7 @@ export default function CreditFactoryConsole({
                               if (selected) {
                                 applyEquipmentCatalogItem(selected);
                               } else {
+                                setRestoredEquipmentCatalogId(null);
                                 setEquipoModelo("");
                               }
                             }}
@@ -13981,7 +14005,10 @@ export default function CreditFactoryConsole({
                         ) : (
                           <input
                             value={equipoModelo}
-                            onChange={(event) => setEquipoModelo(event.target.value)}
+                            onChange={(event) => {
+                              setRestoredEquipmentCatalogId(null);
+                              setEquipoModelo(event.target.value);
+                            }}
                             placeholder="Modelo comercial"
                             className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                           />
@@ -16619,7 +16646,10 @@ export default function CreditFactoryConsole({
                 </label>
                 <input
                   value={equipoMarca}
-                  onChange={(event) => setEquipoMarca(event.target.value)}
+                  onChange={(event) => {
+                    setRestoredEquipmentCatalogId(null);
+                    setEquipoMarca(event.target.value);
+                  }}
                   placeholder="Infinix, Samsung, Xiaomi..."
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 />
@@ -16631,7 +16661,10 @@ export default function CreditFactoryConsole({
                 </label>
                 <input
                   value={equipoModelo}
-                  onChange={(event) => setEquipoModelo(event.target.value)}
+                  onChange={(event) => {
+                    setRestoredEquipmentCatalogId(null);
+                    setEquipoModelo(event.target.value);
+                  }}
                   placeholder="Modelo comercial"
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 />

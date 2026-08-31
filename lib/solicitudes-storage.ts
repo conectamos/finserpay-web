@@ -11,6 +11,10 @@ import {
   lockSolicitudOperationMutation,
   SOLICITUD_OPERATION_LOCK_NAMESPACE,
 } from "@/lib/firmaseguro-storage";
+import {
+  isOmittedSignedDraftAutosaveValue,
+  mergeDeliveryEvidenceDraftPayload,
+} from "@/lib/delivery-evidence-draft";
 import { ensureVeriffSchema } from "@/lib/veriff-storage";
 import {
   SOLICITUD_FILTER_STATES,
@@ -83,6 +87,7 @@ export type SaveSolicitudDraftInput = {
   plataforma: string | null;
   dataCreditoAssessmentId?: string | null;
   payload: Record<string, unknown>;
+  payloadScope?: "FULL" | "DELIVERY_EVIDENCE";
 };
 
 export type SolicitudListItem = ReturnType<typeof serializeSolicitudRow>;
@@ -781,7 +786,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           dataCreditoAssessmentId: assessmentId,
           payload: input.payload,
         };
-    const canonicalPayload: Record<string, unknown> = { ...canonical.payload };
+    let canonicalPayload: Record<string, unknown> = { ...canonical.payload };
     const storedCorrectionId = String(
       targetRow?.payload?.firmaSeguroCorrectionId || ""
     ).trim();
@@ -810,7 +815,23 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         )
       : [];
     const firmaSeguroTerms = firmaSeguroRows[0] || null;
-    if (firmaSeguroTermsAreLocked(firmaSeguroTerms)) {
+    const firmaSeguroTermsLocked = firmaSeguroTermsAreLocked(firmaSeguroTerms);
+    const deliveryEvidenceScope = Boolean(
+      targetRow &&
+        firmaSeguroTermsLocked &&
+        (input.payloadScope === "DELIVERY_EVIDENCE" ||
+          normalizeDraftStep(input.currentStep) >= 5)
+    );
+    if (deliveryEvidenceScope && targetRow) {
+      // Una vez firmado el contrato, el último paso solo puede anexar las cinco
+      // evidencias y su auditoría. El merge parte del payload autoritativo para
+      // que valores derivados o catálogos cargados tarde no reescriban términos.
+      canonicalPayload = mergeDeliveryEvidenceDraftPayload(
+        targetRow.payload || {},
+        input.payload
+      );
+    }
+    if (firmaSeguroTermsLocked) {
       const signedPayload =
         firmaSeguroTerms?.draftPayload &&
         typeof firmaSeguroTerms.draftPayload === "object" &&
@@ -820,7 +841,9 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       for (const field of FIRMASEGURO_SIGNED_DRAFT_FIELDS) {
         if (!Object.prototype.hasOwnProperty.call(signedPayload, field)) continue;
         if (
+          !deliveryEvidenceScope &&
           Object.prototype.hasOwnProperty.call(canonicalPayload, field) &&
+          !isOmittedSignedDraftAutosaveValue(canonicalPayload[field]) &&
           comparableSignedDraftValue(canonicalPayload[field]) !==
             comparableSignedDraftValue(signedPayload[field])
         ) {
