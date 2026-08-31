@@ -9,6 +9,7 @@ import {
 import prisma from "@/lib/prisma";
 import {
   createVeriffValidation,
+  getVeriffValidationById,
   getReusableVeriffValidationForDraft,
   serializeVeriffValidation,
   updateVeriffValidation,
@@ -40,7 +41,9 @@ type VeriffCreateBody = {
   clientePrimerApellido?: string | null;
   clientePrimerNombre?: string | null;
   clienteTipoDocumento?: string | null;
+  currentValidationId?: number | string | null;
   draftId?: number | string | null;
+  regenerate?: boolean | null;
 };
 
 type VeriffDraftAccessRow = {
@@ -339,6 +342,19 @@ export async function POST(request: Request) {
       );
     }
 
+    const regenerate = body.regenerate === true;
+    const currentValidationId = parsePositiveId(body.currentValidationId);
+    if (regenerate && !currentValidationId) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "VERIFF_REGENERATION_TARGET_REQUIRED",
+          error:
+            "Actualiza la validación antes de regenerar el código QR.",
+        },
+        { status: 409 }
+      );
+    }
 
     const reusableValidation = await getReusableVeriffValidationForDraft({
       aliadoId: draft.aliadoId,
@@ -347,7 +363,72 @@ export async function POST(request: Request) {
       sedeId: draft.sedeId,
     });
 
-    if (reusableValidation) {
+    if (regenerate && currentValidationId) {
+      const expectedValidation = await getVeriffValidationById(
+        currentValidationId
+      );
+      const expectedDocument = String(
+        expectedValidation?.clienteDocumento || ""
+      ).replace(/\D/g, "");
+      const latestRows = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
+        `
+          SELECT validation."id"
+          FROM "VeriffIdentityValidation" validation
+          WHERE validation."draftId" = $1
+            AND validation."creditoId" IS NULL
+          ORDER BY validation."id" DESC
+          LIMIT 1
+        `,
+        draftId
+      );
+      const expectedSerialized = serializeVeriffValidation(expectedValidation);
+
+      if (
+        !expectedValidation ||
+        expectedValidation.draftId !== draftId ||
+        expectedValidation.creditoId ||
+        expectedDocument !== clienteDocumento ||
+        Number(latestRows[0]?.id || 0) !== currentValidationId ||
+        (reusableValidation && reusableValidation.id !== currentValidationId)
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: "VERIFF_REGENERATION_STALE",
+            error:
+              "La validación cambió. Actualiza el estado antes de regenerar el código QR.",
+          },
+          { status: 409 }
+        );
+      }
+
+      const technicalRetryStatus = expectedSerialized?.identityDocumentStatus;
+      if (
+        expectedSerialized?.approved &&
+        technicalRetryStatus !== "conflict" &&
+        technicalRetryStatus !== "missing"
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: "VERIFF_ALREADY_APPROVED",
+            error: "La identidad ya fue aprobada y no requiere otro código QR.",
+          },
+          { status: 409 }
+        );
+      }
+
+      if (reusableValidation) {
+        await updateVeriffValidation(reusableValidation.id, {
+          decidedAt: new Date(),
+          decision: "ABANDONED",
+          lastError: null,
+          reason: "Código QR regenerado por el asesor",
+          reasonCode: "QR_REGENERATED",
+          status: "ABANDONED",
+        });
+      }
+    } else if (reusableValidation) {
       return NextResponse.json({
         ok: true,
         retryPolicy,

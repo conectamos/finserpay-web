@@ -154,6 +154,34 @@ test("POST autoriza el borrador y la cedula antes de reusar o llamar al proveedo
   assert.match(route, /vendedorId: draft\.vendedorId/);
 });
 
+test("la regeneracion QR exige la sesion vigente y abandona la anterior una sola vez", async () => {
+  const route = await readProjectFile("app/api/creditos/veriff/route.ts");
+  const regenerationFlag = route.indexOf("const regenerate = body.regenerate === true");
+  const targetRequired = route.indexOf("VERIFF_REGENERATION_TARGET_REQUIRED");
+  const expectedLookup = route.indexOf("getVeriffValidationById(");
+  const latestLookup = route.indexOf('FROM "VeriffIdentityValidation" validation');
+  const staleGuard = route.indexOf("VERIFF_REGENERATION_STALE");
+  const approvedGuard = route.indexOf("VERIFF_ALREADY_APPROVED");
+  const abandon = route.indexOf('reasonCode: "QR_REGENERATED"');
+  const provider = route.indexOf("await veriffCreateSession({");
+
+  assert.ok(regenerationFlag >= 0);
+  assert.ok(targetRequired > regenerationFlag);
+  assert.ok(expectedLookup > targetRequired);
+  assert.ok(latestLookup > expectedLookup);
+  assert.ok(staleGuard > latestLookup);
+  assert.ok(approvedGuard > staleGuard);
+  assert.ok(abandon > approvedGuard);
+  assert.ok(provider > abandon);
+  assert.match(route, /currentValidationId\?: number \| string \| null/);
+  assert.match(route, /expectedValidation\.draftId !== draftId/);
+  assert.match(route, /expectedDocument !== clienteDocumento/);
+  assert.match(route, /Number\(latestRows\[0\]\?\.id \|\| 0\) !== currentValidationId/);
+  assert.match(route, /status: "ABANDONED"/);
+  assert.match(route, /technicalRetryStatus !== "conflict"/);
+  assert.match(route, /technicalRetryStatus !== "missing"/);
+});
+
 test("el estado Veriff exige solicitud activa al titular y la biometria queda solo para central", async () => {
   const [statusRoute, webhookRoute, mediaRoute, mediaDownloadRoute] = await Promise.all([
     readProjectFile("app/api/creditos/veriff/[id]/route.ts"),

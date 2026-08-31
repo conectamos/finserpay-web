@@ -4586,3 +4586,836 @@ body {
     transition: none;
   }
 }
+
+/* Credit factory: Veriff and FirmaSeguro step */
+.fp-credit-factory .fp-firma-stage .fp-stage-heading * {
+  letter-spacing: 0 !important;
+}
+
+.fp-credit-factory .fp-step3-header-status::before {
+  display: none;
+}
+
+.fp-credit-factory .fp-step3-header-status {
+  align-self: flex-start;
+}
+
+.fp-credit-factory .fp-step3-identity-pending {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px 24px;
+  align-items: center;
+  margin-top: 24px;
+  border: 1px solid var(--fp-border);
+  border-radius: 8px;
+  background: var(--fp-surface);
+  padding: 22px;
+}
+
+.fp-credit-factory .fp-step3-identity-copy {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.fp-credit-factory .fp-step3-identity-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--fp-graphite);
+  color: var(--fp-lime);
+}
+
+.fp-credit-factory .fp-step3-identity-copy p {
+  margin: 0 0 4px;
+  color: var(--fp-lime-strong);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.fp-credit-factory .fp-step3-identity-copy h4 {
+  margin: 0;
+  color: var(--fp-ink);
+  font-size: 1.1rem;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.fp-credit-factory .fp-step3-identity-copy div > span {
+  display: block;
+  margin-top: 5px;
+  max-width: 720px;
+  color: var(--fp-muted);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.fp-credit-factory .fp-step3-veriff-status,
+.fp-credit-factory .fp-step3-firma-status {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--fp-border);
+  border-radius: 999px;
+  padding: 6px 11px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.fp-credit-factory .fp-step3-veriff-status.is-pending,
+.fp-credit-factory .fp-step3-firma-status.is-pending {
+  border-color: #e6bd78;
+  background: var(--fp-amber-soft);
+  color: #8d4d07;
+}
+
+.fp-credit-factory .fp-step3-veriff-status.is-error,
+.fp-credit-factory .fp-step3-firma-status.is-error {
+  border-color: #f0b8b2;
+  background: var(--fp-danger-soft);
+  color: var(--fp-danger);
+}
+
+.fp-credit-factory .fp-step3-firma-status.is-success {
+  border-color: #bfd88c;
+  background: var(--fp-lime-soft);
+  color: #557812;
+}
+
+.fp-credit-factory .fp-step3-veriff-alert,
+.fp-credit-factory .fp-step3-veriff-message {
+  grid-column: 1 / -1;
+}
+
+.fp-credit-factory .fp-step3-veriff-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #f0b8b2;
+  border-radius: 6px;
+  background: var(--fp-danger-soft);
+  padding: 11px 13px;
+  color: var(--fp-danger);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.fp-credit-factory .fp-step3-veriff-alert button,
+.fp-credit-factory .fp-step3-veriff-message {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.fp-credit-factory .fp-step3-veriff-alert button {
+  flex: 0 0 auto;
+  font-weight: 850;
+}
+
+.fp-credit-factory .fp-step3-veriff-message {
+  margin: 0;
+  color: var(--fp-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.fp-credit-factory .fp-step3-veriff-message.is-error {
+  color: var(--fp-danger);
+}
+
+.fp-credit-factory .fp-step3-identity-action {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding-top: 2px;
+}
+
+.fp-credit-factory .fp-step3-identity-action button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--fp-graphite);
+  border-radius: 6px;
+  background: var(--fp-graphite);
+  padding: 0 18px;
+  color: #ffffff;
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.fp-credit-factory .fp-step3-identity-action button svg {
+  color: var(--fp-lime);
+}
+
+.fp-credit-factory .fp-step3-identity-action button:disabled {
+  cursor: not-allowed;
+  border-color: #d6dbe0;
+  background: #e7e9ec;
+  color: #7d8791;
+}
+
+.fp-credit-factory .fp-step3-identity-action button:disabled svg {
+  color: currentColor;
+}
+
+.fp-credit-factory .fp-step3-identity-action p {
+  margin: 0;
+  color: var(--fp-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.fp-credit-factory .fp-step3-identity-approved {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin-top: 24px;
+  border: 1px solid #bfd88c;
+  border-radius: 8px;
+  background: #fbfdf7;
+  padding: 19px 22px;
+}
+
+.fp-credit-factory .fp-step3-identity-approved > span {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid #91ba3a;
+  border-radius: 50%;
+  color: #638510;
+}
+
+.fp-credit-factory .fp-step3-identity-approved h4,
+.fp-credit-factory .fp-step3-identity-approved p {
+  margin: 0;
+}
+
+.fp-credit-factory .fp-step3-identity-approved h4 {
+  color: var(--fp-ink);
+  font-size: 1rem;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.fp-credit-factory .fp-step3-identity-approved p {
+  margin-top: 4px;
+  color: var(--fp-muted);
+  font-size: 0.84rem;
+}
+
+.fp-credit-factory .fp-step3-approved-meta {
+  min-width: 150px;
+  text-align: right;
+}
+
+.fp-credit-factory .fp-step3-approved-meta strong,
+.fp-credit-factory .fp-step3-approved-meta span {
+  display: block;
+}
+
+.fp-credit-factory .fp-step3-approved-meta strong {
+  color: var(--fp-ink);
+  font-size: 0.88rem;
+}
+
+.fp-credit-factory .fp-step3-approved-meta span {
+  margin-top: 3px;
+  color: var(--fp-muted);
+  font-size: 0.76rem;
+}
+
+.fp-credit-factory .fp-step3-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 24px;
+  margin-top: 26px;
+  padding: 0 4px;
+}
+
+.fp-credit-factory .fp-step3-progress-item {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: #8a939d;
+}
+
+.fp-credit-factory .fp-step3-progress-item:not(:last-child)::after {
+  position: absolute;
+  top: 19px;
+  right: -18px;
+  width: 12px;
+  height: 1px;
+  background: var(--fp-border);
+  content: "";
+}
+
+.fp-credit-factory .fp-step3-progress-item > span {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--fp-border);
+  border-radius: 50%;
+  background: var(--fp-surface);
+  color: inherit;
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.fp-credit-factory .fp-step3-progress-item strong {
+  min-width: 0;
+  color: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.fp-credit-factory .fp-step3-progress-item.is-active {
+  color: var(--fp-ink);
+}
+
+.fp-credit-factory .fp-step3-progress-item.is-active > span {
+  border-color: var(--fp-graphite);
+  background: var(--fp-graphite);
+  color: #ffffff;
+}
+
+.fp-credit-factory .fp-step3-progress-item.is-complete {
+  color: #557812;
+}
+
+.fp-credit-factory .fp-step3-progress-item.is-complete > span {
+  border-color: #91ba3a;
+  color: #638510;
+}
+
+.fp-credit-factory .fp-step3-firma {
+  margin-top: 28px;
+  border-top: 1px solid var(--fp-border);
+  padding-top: 26px;
+}
+
+.fp-credit-factory .fp-step3-firma-heading,
+.fp-credit-factory .fp-step3-firma-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fp-credit-factory .fp-step3-firma-heading {
+  justify-content: space-between;
+}
+
+.fp-credit-factory .fp-step3-firma-heading h4,
+.fp-credit-factory .fp-step3-firma-heading p {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.fp-credit-factory .fp-step3-firma-heading h4 {
+  color: var(--fp-ink);
+  font-size: 1.25rem;
+  font-weight: 850;
+}
+
+.fp-credit-factory .fp-step3-firma-heading p {
+  margin-top: 5px;
+  color: var(--fp-muted);
+  font-size: 0.86rem;
+}
+
+.fp-credit-factory .fp-step3-firma-refresh {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--fp-border);
+  border-radius: 6px;
+  background: var(--fp-surface);
+  color: var(--fp-graphite);
+}
+
+.fp-credit-factory .fp-step3-firma-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(310px, 0.92fr);
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.fp-credit-factory .fp-step3-expediente,
+.fp-credit-factory .fp-step3-documents {
+  min-width: 0;
+  border: 1px solid var(--fp-border);
+  border-radius: 8px;
+  background: var(--fp-surface);
+  padding: 20px;
+}
+
+.fp-credit-factory .fp-step3-expediente-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--fp-lime-strong);
+}
+
+.fp-credit-factory .fp-step3-expediente-heading h5,
+.fp-credit-factory .fp-step3-expediente-heading p {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.fp-credit-factory .fp-step3-expediente-heading h5 {
+  color: var(--fp-ink);
+  font-size: 1rem;
+  font-weight: 850;
+}
+
+.fp-credit-factory .fp-step3-expediente-heading p {
+  margin-top: 2px;
+  color: var(--fp-muted);
+  font-size: 0.72rem;
+}
+
+.fp-credit-factory .fp-step3-expediente-list {
+  margin: 15px 0 0;
+}
+
+.fp-credit-factory .fp-step3-expediente-list > div {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(0, 1.2fr);
+  gap: 16px;
+  align-items: center;
+  border-top: 1px solid #e4e8eb;
+  padding: 12px 0;
+}
+
+.fp-credit-factory .fp-step3-expediente-list dt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--fp-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.fp-credit-factory .fp-step3-expediente-list dt > span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--fp-lime-soft);
+  color: #638510;
+}
+
+.fp-credit-factory .fp-step3-expediente-list dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--fp-ink);
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-align: right;
+}
+
+.fp-credit-factory .fp-step3-documents {
+  align-self: start;
+  background: #faf9f6;
+}
+
+.fp-credit-factory .fp-step3-documents-toggle {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--fp-border);
+  border-radius: 6px;
+  background: var(--fp-surface);
+  padding: 0 14px;
+  color: var(--fp-ink);
+}
+
+.fp-credit-factory .fp-step3-documents-toggle > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.fp-credit-factory .fp-step3-documents-toggle strong {
+  font-size: 0.84rem;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.fp-credit-factory .fp-step3-documents-toggle > svg {
+  flex: 0 0 auto;
+  transition: transform 160ms ease;
+}
+
+.fp-credit-factory .fp-step3-documents-toggle > svg.is-open {
+  transform: rotate(90deg);
+}
+
+.fp-credit-factory .fp-step3-documents-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fp-credit-factory .fp-step3-documents-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #e1e6e8;
+  padding: 11px 4px;
+  color: var(--fp-muted);
+  font-size: 0.83rem;
+  font-weight: 700;
+}
+
+.fp-credit-factory .fp-step3-documents-list li:last-child {
+  border-bottom: 0;
+}
+
+.fp-credit-factory .fp-step3-documents-list svg {
+  flex: 0 0 auto;
+  color: #638510;
+}
+
+.fp-credit-factory .fp-step3-firma-actions {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.46fr) minmax(260px, 1fr);
+  gap: 14px;
+  margin-top: 20px;
+  border-top: 1px solid var(--fp-border);
+  padding-top: 20px;
+}
+
+.fp-credit-factory .fp-step3-firma-review,
+.fp-credit-factory .fp-step3-firma-primary {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-radius: 6px;
+  padding: 0 18px;
+  font-size: 0.86rem;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.fp-credit-factory .fp-step3-firma-review {
+  border: 1px solid #9ea8b1;
+  background: var(--fp-surface);
+  color: var(--fp-graphite);
+}
+
+.fp-credit-factory .fp-step3-firma-primary {
+  border: 1px solid var(--fp-graphite);
+  background: var(--fp-graphite);
+  color: #ffffff;
+}
+
+.fp-credit-factory .fp-step3-firma-primary svg {
+  color: var(--fp-lime);
+}
+
+.fp-credit-factory .fp-step3-firma-primary:disabled,
+.fp-credit-factory .fp-step3-firma-review:disabled,
+.fp-credit-factory .fp-step3-firma-refresh:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.fp-credit-factory .fp-step3-firma-help {
+  margin: 10px 0 0;
+  color: var(--fp-muted);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.fp-credit-factory .fp-step3-firma-message {
+  margin: 13px 0 0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.fp-credit-factory .fp-step3-firma-message.is-pending {
+  border: 1px solid #e6bd78;
+  background: var(--fp-amber-soft);
+  color: #8d4d07;
+}
+
+.fp-credit-factory .fp-step3-firma-message.is-success {
+  border: 1px solid #bfd88c;
+  background: var(--fp-lime-soft);
+  color: #557812;
+}
+
+.fp-credit-factory .fp-step3-firma-message.is-error {
+  border: 1px solid #f0b8b2;
+  background: var(--fp-danger-soft);
+  color: var(--fp-danger);
+}
+
+.fp-credit-factory .fp-step3-identity-action button:focus-visible,
+.fp-credit-factory .fp-step3-veriff-alert button:focus-visible,
+.fp-credit-factory .fp-step3-firma-refresh:focus-visible,
+.fp-credit-factory .fp-step3-documents-toggle:focus-visible,
+.fp-credit-factory .fp-step3-firma-review:focus-visible,
+.fp-credit-factory .fp-step3-firma-primary:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--fp-lime) 70%, transparent);
+  outline-offset: 3px;
+}
+
+.fp-identity-modal-backdrop {
+  background: rgba(7, 10, 13, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.fp-identity-modal {
+  width: min(488px, 100%);
+  max-height: min(760px, calc(100dvh - 40px));
+  border: 1px solid #d4d9dd;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(4, 8, 12, 0.3);
+}
+
+.fp-identity-modal-content,
+.fp-identity-modal-content.is-result {
+  padding: 36px 30px 26px;
+}
+
+.fp-identity-modal-content h2 {
+  margin-top: 10px;
+  font-size: 1.55rem;
+  letter-spacing: 0;
+}
+
+.fp-identity-modal-kicker {
+  letter-spacing: 0;
+}
+
+.fp-identity-modal-lead {
+  margin-top: 7px;
+  max-width: 390px;
+  font-size: 0.9rem;
+}
+
+.fp-identity-modal-shield {
+  width: 54px;
+  height: 54px;
+}
+
+.fp-identity-modal-qr {
+  width: 224px;
+  margin-top: 20px;
+  border-color: var(--fp-border);
+  border-radius: 8px;
+}
+
+.fp-identity-modal-waiting {
+  width: max-content;
+  max-width: 100%;
+  margin: 18px auto 0;
+  border: 1px solid #e6bd78;
+  border-radius: 999px;
+  background: var(--fp-amber-soft);
+  padding: 7px 13px;
+  color: #8d4d07;
+  font-size: 0.82rem;
+}
+
+.fp-identity-modal-waiting svg {
+  color: var(--fp-amber);
+}
+
+.fp-identity-modal-caption,
+.fp-identity-modal-result-copy {
+  max-width: 390px;
+}
+
+.fp-identity-modal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 18px;
+}
+
+.fp-identity-modal-actions button {
+  width: 100%;
+  min-width: 0;
+  border-radius: 6px;
+}
+
+.fp-identity-modal-actions button:first-child {
+  border-color: transparent;
+  background: transparent;
+}
+
+.fp-identity-modal-actions button:last-child {
+  border-color: #9ea8b1;
+  background: var(--fp-surface);
+}
+
+.fp-identity-modal-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.fp-identity-modal-status-icon {
+  display: grid;
+  width: 88px;
+  height: 88px;
+  margin: 24px auto 12px;
+  place-items: center;
+  border: 1px solid #f0b8b2;
+  border-radius: 50%;
+  background: var(--fp-danger-soft);
+  color: var(--fp-danger);
+}
+
+.fp-identity-modal-content.is-result .fp-identity-modal-illustration {
+  width: 110px;
+  min-height: 110px;
+  grid-template-columns: 1fr;
+  gap: 0;
+  margin-top: 18px;
+}
+
+.fp-identity-modal-content.is-loading {
+  min-height: 320px;
+}
+
+@media (max-width: 960px) {
+  .fp-credit-factory .fp-step3-progress {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fp-credit-factory .fp-step3-progress-item::after {
+    display: none;
+  }
+
+  .fp-credit-factory .fp-step3-firma-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 640px) {
+  .fp-credit-factory .fp-step3-header-status {
+    align-self: center;
+  }
+}
+
+@media (max-width: 680px) {
+  .fp-credit-factory .fp-step3-identity-pending {
+    grid-template-columns: 1fr;
+    padding: 18px;
+  }
+
+  .fp-credit-factory .fp-step3-veriff-status {
+    justify-self: start;
+  }
+
+  .fp-credit-factory .fp-step3-identity-action {
+    grid-template-columns: 1fr;
+  }
+
+  .fp-credit-factory .fp-step3-identity-action button {
+    width: 100%;
+  }
+
+  .fp-credit-factory .fp-step3-identity-approved {
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 17px;
+  }
+
+  .fp-credit-factory .fp-step3-approved-meta {
+    grid-column: 2;
+    min-width: 0;
+    text-align: left;
+  }
+
+  .fp-credit-factory .fp-step3-progress {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .fp-credit-factory .fp-step3-firma-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .fp-credit-factory .fp-step3-firma-heading-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .fp-credit-factory .fp-step3-expediente,
+  .fp-credit-factory .fp-step3-documents {
+    padding: 16px;
+  }
+
+  .fp-credit-factory .fp-step3-expediente-list > div {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+
+  .fp-credit-factory .fp-step3-expediente-list dd {
+    padding-left: 41px;
+    text-align: left;
+  }
+
+  .fp-credit-factory .fp-step3-firma-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .fp-identity-modal-backdrop {
+    align-items: center;
+  }
+
+  .fp-identity-modal-content,
+  .fp-identity-modal-content.is-result {
+    padding: 34px 20px 22px;
+  }
+
+  .fp-identity-modal-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fp-credit-factory .fp-step3-documents-toggle > svg {
+    transition: none;
+  }
+}
