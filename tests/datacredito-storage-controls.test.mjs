@@ -653,7 +653,7 @@ test("la oferta persiste y serializa monto, plazo y tope de cuota", () => {
   );
   assert.match(
     creditRoute,
-    /const plazoMeses = dataCreditoFinancingTerms\s*\? selectedDataCreditoInstallmentCount!/
+    /const plazoMeses = signedTermsSnapshot[\s\S]{0,120}\? signedTermsSnapshot\.numeroCuotas[\s\S]{0,120}: dataCreditoFinancingTerms[\s\S]{0,120}\? selectedDataCreditoInstallmentCount!/
   );
   assert.doesNotMatch(
     creditRoute,

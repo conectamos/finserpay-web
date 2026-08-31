@@ -35,11 +35,19 @@ import {
 import { validateCreditContactPhones } from "@/lib/credit-contact-phones";
 import { calculateFrenchAmortization } from "@/lib/credit-amortization";
 import { validateCreditClientForm } from "@/lib/credit-client-validation";
-import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
+import {
+  resolveCreditPolicyFinancialSettings,
+  type ResolvedCreditPolicyFinancialSettings,
+} from "@/lib/credit-policy-financial-settings";
 import {
   createFinancingTermsSeal,
   readFinancingTermsSeal,
+  type FinancingTermsSeal,
 } from "@/lib/credit-amortization-contract";
+import {
+  buildSignedCreditClosePayload,
+  resolveSignedCreditPolicyFinancialSettings,
+} from "@/lib/signed-credit-close";
 import {
   ensureCreditAmortizationSchema,
   persistCreditAmortization,
@@ -1100,6 +1108,50 @@ export async function POST(req: Request) {
       );
     }
 
+    let authoritativeSignedTerms: FinancingTermsSeal | null = null;
+    const preloadedSolicitudId = parseId(sanitizeText(body.solicitudId));
+    const preloadedFirmaSeguroProcessUuid = sanitizeText(
+      body.firmaSeguroProcessUuid
+    );
+    if (
+      Boolean(body.firmaSeguroPasoContratos) &&
+      preloadedSolicitudId &&
+      preloadedFirmaSeguroProcessUuid
+    ) {
+      const preloadedFirmaSeguroProcess = await getFirmaSeguroProcessByUuid(
+        preloadedFirmaSeguroProcessUuid
+      );
+      const signedPayload =
+        preloadedFirmaSeguroProcess?.draftPayload &&
+        typeof preloadedFirmaSeguroProcess.draftPayload === "object" &&
+        !Array.isArray(preloadedFirmaSeguroProcess.draftPayload)
+          ? (preloadedFirmaSeguroProcess.draftPayload as Record<string, unknown>)
+          : null;
+      const signedSeal = readFinancingTermsSeal(
+        signedPayload?.financialTermsSeal
+      );
+      const signedProcessCompleted = Boolean(
+        preloadedFirmaSeguroProcess?.completedAt ||
+          preloadedFirmaSeguroProcess?.signedDocumentBase64
+      );
+
+      if (
+        preloadedFirmaSeguroProcess &&
+        preloadedFirmaSeguroProcess.draftId === preloadedSolicitudId &&
+        !preloadedFirmaSeguroProcess.creditoId &&
+        signedProcessCompleted &&
+        signedPayload &&
+        signedSeal
+      ) {
+        authoritativeSignedTerms = signedSeal;
+        body = buildSignedCreditClosePayload(
+          signedPayload,
+          body as unknown as Record<string, unknown>,
+          signedSeal.snapshot as unknown as Record<string, unknown>
+        ) as CreditCreateBody;
+      }
+    }
+
     const clientePrimerNombre = sanitizeText(body.clientePrimerNombre);
     const clientePrimerApellido = sanitizeText(body.clientePrimerApellido);
     const clienteTipoDocumento = sanitizeText(body.clienteTipoDocumento);
@@ -1301,9 +1353,12 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    const clienteNombreFinal =
-      sanitizeText([clientePrimerNombre, clientePrimerApellido].filter(Boolean).join(" ")) ||
-      clienteNombre;
+    const clienteNombreDesdePartes = sanitizeText(
+      [clientePrimerNombre, clientePrimerApellido].filter(Boolean).join(" ")
+    );
+    const clienteNombreFinal = authoritativeSignedTerms
+      ? clienteNombre || clienteNombreDesdePartes
+      : clienteNombreDesdePartes || clienteNombre;
     const equipoMarca = sanitizeText(body.equipoMarca);
     const equipoModelo = sanitizeText(body.equipoModelo);
     const referenciaEquipo = sanitizeText(
@@ -1620,7 +1675,10 @@ export async function POST(req: Request) {
       }
     }
 
-    const valorEquipoTotalInput = toNumber(body.valorEquipoTotal);
+    const signedTermsSnapshot = authoritativeSignedTerms?.snapshot || null;
+    const valorEquipoTotalInput = signedTermsSnapshot
+      ? Number(signedTermsSnapshot.valorVenta)
+      : toNumber(body.valorEquipoTotal);
 
     const precioBaseVentaCatalogo = catalogItem?.activo
       ? catalogItem.precioBaseVenta
@@ -1699,19 +1757,25 @@ export async function POST(req: Request) {
     });
     const cuotaInicialMinima =
       initialPaymentBreakdown.requiredInitialPayment;
-    const cuotaInicialInput = toNumber(body.cuotaInicial);
-    const cuotaInicial =
-      cuotaInicialInput > 0
+    const cuotaInicialInput = signedTermsSnapshot
+      ? Number(signedTermsSnapshot.cuotaInicial)
+      : toNumber(body.cuotaInicial);
+    const cuotaInicial = signedTermsSnapshot
+      ? cuotaInicialInput
+      : cuotaInicialInput > 0
         ? Math.max(cuotaInicialMinima, cuotaInicialInput)
         : cuotaInicialMinima;
-    const selectedDataCreditoInstallmentCount = dataCreditoFinancingTerms
-      ? parseCreditInstallmentSelection(
-          body.plazoMeses,
-          dataCreditoFinancingTerms.installmentCount
-        )
-      : null;
+    const selectedDataCreditoInstallmentCount = signedTermsSnapshot
+      ? signedTermsSnapshot.numeroCuotas
+      : dataCreditoFinancingTerms
+        ? parseCreditInstallmentSelection(
+            body.plazoMeses,
+            dataCreditoFinancingTerms.installmentCount
+          )
+        : null;
 
     if (
+      !signedTermsSnapshot &&
       dataCreditoFinancingTerms &&
       selectedDataCreditoInstallmentCount === null
     ) {
@@ -1723,42 +1787,55 @@ export async function POST(req: Request) {
       );
     }
 
-    const plazoMeses = dataCreditoFinancingTerms
-      ? selectedDataCreditoInstallmentCount!
-      : normalizeCreditInstallments(
-          Math.trunc(toNumber(body.plazoMeses)),
-          creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
-          normalizeCreditInstallmentLimit(creditSettings.plazoMaximoCuotas)
-        );
-    const resolvedPolicyFinancialSettings =
-      resolveCreditPolicyFinancialSettings({
-        globalSettings: effectiveCreditSettings.globalSettings,
-        policyFinancialSettings:
-          dataCreditoAssessment?.offer?.financialSettings,
-        legacyOfferSuretyPercentage: dataCreditoAssessment
-          ? dataCreditoSuretyPercentage
-          : null,
-        numeroCuotas: plazoMeses,
-      });
+    const plazoMeses = signedTermsSnapshot
+      ? signedTermsSnapshot.numeroCuotas
+      : dataCreditoFinancingTerms
+        ? selectedDataCreditoInstallmentCount!
+        : normalizeCreditInstallments(
+            Math.trunc(toNumber(body.plazoMeses)),
+            creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
+            normalizeCreditInstallmentLimit(creditSettings.plazoMaximoCuotas)
+          );
+    const resolvedPolicyFinancialSettings: ResolvedCreditPolicyFinancialSettings =
+      signedTermsSnapshot
+        ? resolveSignedCreditPolicyFinancialSettings(signedTermsSnapshot)
+        : resolveCreditPolicyFinancialSettings({
+            globalSettings: effectiveCreditSettings.globalSettings,
+            policyFinancialSettings:
+              dataCreditoAssessment?.offer?.financialSettings,
+            legacyOfferSuretyPercentage: dataCreditoAssessment
+              ? dataCreditoSuretyPercentage
+              : null,
+            numeroCuotas: plazoMeses,
+          });
     const frecuenciaPago = normalizePaymentFrequency(
       resolvedPolicyFinancialSettings.frecuenciaPago
     );
     const policyFinancialSettings =
       dataCreditoAssessment?.offer?.financialSettings || null;
-    const financialParameterOrigins = {
-      calculo: resolvedPolicyFinancialSettings.calculoVersion,
-      tasaInteresEa: policyFinancialSettings
-        ? "POLITICA_DATACREDITO"
-        : "CONFIGURACION_GLOBAL",
-      fianzaModalidad: resolvedPolicyFinancialSettings.fianzaModalidad,
-      fianzaFuente: resolvedPolicyFinancialSettings.fianzaSource,
-      seguro: policyFinancialSettings
-        ? "POLITICA_DATACREDITO"
-        : "CONFIGURACION_GLOBAL",
-      frecuenciaPago: policyFinancialSettings
-        ? "POLITICA_DATACREDITO"
-        : "CONFIGURACION_GLOBAL",
-    } as const;
+    const financialParameterOrigins = signedTermsSnapshot
+      ? {
+          calculo: signedTermsSnapshot.calculoVersion,
+          tasaInteresEa: "EXPEDIENTE_FIRMADO",
+          fianzaModalidad: signedTermsSnapshot.fianzaModalidad,
+          fianzaFuente: signedTermsSnapshot.fianzaFuente,
+          seguro: "EXPEDIENTE_FIRMADO",
+          frecuenciaPago: "EXPEDIENTE_FIRMADO",
+        }
+      : {
+          calculo: resolvedPolicyFinancialSettings.calculoVersion,
+          tasaInteresEa: policyFinancialSettings
+            ? "POLITICA_DATACREDITO"
+            : "CONFIGURACION_GLOBAL",
+          fianzaModalidad: resolvedPolicyFinancialSettings.fianzaModalidad,
+          fianzaFuente: resolvedPolicyFinancialSettings.fianzaSource,
+          seguro: policyFinancialSettings
+            ? "POLITICA_DATACREDITO"
+            : "CONFIGURACION_GLOBAL",
+          frecuenciaPago: policyFinancialSettings
+            ? "POLITICA_DATACREDITO"
+            : "CONFIGURACION_GLOBAL",
+        };
     const fechaCredito = new Date();
     const fechaPrimerPagoPredeterminada = getDefaultFirstPaymentDateObject(
       frecuenciaPago,
@@ -1770,8 +1847,12 @@ export async function POST(req: Request) {
     )
       ? new Date(`${fechaPrimerPagoTexto}T12:00:00.000Z`)
       : toNullableDate(fechaPrimerPagoTexto);
-    const fechaPrimerPago =
-      fechaPrimerPagoSolicitada && fechaPrimerPagoSolicitada > fechaCredito
+    const signedFirstPaymentDate = signedTermsSnapshot?.fechaPrimerPago
+      ? new Date(`${signedTermsSnapshot.fechaPrimerPago}T12:00:00.000Z`)
+      : null;
+    const fechaPrimerPago = signedFirstPaymentDate
+      ? signedFirstPaymentDate
+      : fechaPrimerPagoSolicitada && fechaPrimerPagoSolicitada > fechaCredito
         ? fechaPrimerPagoSolicitada
         : fechaPrimerPagoPredeterminada;
     const firmaSeguroPasoContratos = Boolean(body.firmaSeguroPasoContratos);
@@ -1950,7 +2031,10 @@ export async function POST(req: Request) {
     const firmaSeguroDraftFolio = firmaSeguroProcess?.draftFolio
       ? sanitizeText(firmaSeguroProcess.draftFolio)
       : "";
-    const folio = firmaSeguroDraftFolio || generateCreditFolio();
+    const folio =
+      signedTermsSnapshot?.folio ||
+      firmaSeguroDraftFolio ||
+      generateCreditFolio();
     const financingTermsSeal = createFinancingTermsSeal({
       folio,
       documento: clienteDocumento,
@@ -1976,9 +2060,12 @@ export async function POST(req: Request) {
           resolvedPolicyFinancialSettings.tasaPeriodoDecimales,
         redondeoComercial:
           resolvedPolicyFinancialSettings.redondeoComercial,
-        policyVersion: dataCreditoAssessment?.policyVersion || null,
-        policyRevisionId:
-          dataCreditoAssessment?.policyRevisionId || null,
+        policyVersion: signedTermsSnapshot
+          ? signedTermsSnapshot.policyVersion
+          : dataCreditoAssessment?.policyVersion || null,
+        policyRevisionId: signedTermsSnapshot
+          ? signedTermsSnapshot.policyRevisionId
+          : dataCreditoAssessment?.policyRevisionId || null,
       },
     });
 
@@ -2429,6 +2516,7 @@ export async function POST(req: Request) {
     }
 
     if (
+      !signedTermsSnapshot &&
       !isIphoneCredit &&
       cuotaInicialInput > 0 &&
       cuotaInicialInput < cuotaInicialMinima
@@ -2441,7 +2529,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (iphoneInstallmentLimit.exceeded) {
+    if (!signedTermsSnapshot && iphoneInstallmentLimit.exceeded) {
       return NextResponse.json(
         { error: iphoneInstallmentLimit.message },
         { status: 400 }
