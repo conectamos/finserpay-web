@@ -722,7 +722,7 @@ export async function POST(request: Request) {
       riskSummary?.telcos.available ?? null;
     const telcoDelinquentBalanceCop =
       riskSummary?.telcos.delinquentBalance ?? null;
-    const priorityRuleEnabled =
+    const telcoPriorityRuleEnabled =
       policy.priorityRules?.telcoDelinquency.enabled === true;
     const telcoRiskMetricValid =
       typeof telcoDelinquentBalanceCop === "number" &&
@@ -732,7 +732,7 @@ export async function POST(request: Request) {
       telcoDelinquencyInformationAvailable === null ||
       (telcoDelinquencyInformationAvailable &&
         !telcoRiskMetricValid);
-    if (priorityRuleEnabled && telcoRiskMetricUnavailable) {
+    if (telcoPriorityRuleEnabled && telcoRiskMetricUnavailable) {
       await failDataCreditoAssessmentWithSecureRecord({
         id: pending.id,
         errorCode: "TELCO_RISK_METRIC_UNAVAILABLE",
@@ -756,6 +756,64 @@ export async function POST(request: Request) {
         status: 422,
       });
     }
+    const telcoRejectionThresholdCop =
+      policy.priorityRules?.telcoDelinquency.rejectAboveCopByPlatform?.[
+        platform
+      ];
+    const telcoPriorityRejection =
+      telcoPriorityRuleEnabled &&
+      telcoDelinquencyInformationAvailable === true &&
+      telcoRiskMetricValid &&
+      Number.isSafeInteger(telcoRejectionThresholdCop) &&
+      telcoRejectionThresholdCop! > 0 &&
+      telcoDelinquentBalanceCop! > telcoRejectionThresholdCop!;
+    const totalDelinquencyInformationAvailable =
+      riskSummary === null
+        ? null
+        : riskSummary.indicatorValuesHaveInformation === false
+          ? false
+          : riskSummary.totals !== null
+            ? true
+            : null;
+    const totalDelinquentBalanceCop =
+      riskSummary?.totals?.delinquentBalance ?? null;
+    const totalPriorityRuleEnabled =
+      policy.priorityRules?.totalDelinquency?.enabled === true;
+    const totalRiskMetricValid =
+      typeof totalDelinquentBalanceCop === "number" &&
+      Number.isSafeInteger(totalDelinquentBalanceCop) &&
+      totalDelinquentBalanceCop >= 0;
+    const totalRiskMetricUnavailable =
+      totalDelinquencyInformationAvailable === null ||
+      (totalDelinquencyInformationAvailable && !totalRiskMetricValid);
+    if (
+      totalPriorityRuleEnabled &&
+      !telcoPriorityRejection &&
+      totalRiskMetricUnavailable
+    ) {
+      await failDataCreditoAssessmentWithSecureRecord({
+        id: pending.id,
+        errorCode: "TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE",
+        transactionCode,
+        providerStatus,
+        durationMs,
+        secure: completedSecure,
+      });
+      await attachDataCreditoToSolicitud({
+        solicitudId,
+        assessmentId: pending.id,
+        status: "NO_EVALUADO",
+        errorCode: "TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE",
+        plataforma: platform,
+      });
+      return technicalResponse({
+        correlationId,
+        code: "TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE",
+        error:
+          "DataCredito no retorno una mora vigente total valida para aplicar la politica.",
+        status: 422,
+      });
+    }
     const resolution = resolveDataCreditoDecision(
       policy,
       platform,
@@ -763,6 +821,8 @@ export async function POST(request: Request) {
       {
         telcoDelinquentBalanceCop,
         telcoDelinquencyInformationAvailable,
+        totalDelinquentBalanceCop,
+        totalDelinquencyInformationAvailable,
       }
     );
     if (!resolution) {

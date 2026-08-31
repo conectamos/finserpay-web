@@ -38,8 +38,12 @@ type Offer = {
   initialPaymentPercentage: number;
   suretyPercentage: number;
   maxFinancedAmount: number;
-  decisionRule?: "SCORE_BAND" | "TELCO_DELINQUENCY_THRESHOLD";
+  decisionRule?:
+    | "SCORE_BAND"
+    | "TELCO_DELINQUENCY_THRESHOLD"
+    | "TOTAL_DELINQUENCY_THRESHOLD";
   telcoRejectionThresholdCop?: number | null;
+  totalDelinquencyRejectionThresholdCop?: number | null;
   riskMetricVersion?: "MIDECISOR_PN_MILES_COP_V1" | null;
 } | null;
 
@@ -391,6 +395,11 @@ export default function DataCreditoAdminConsole() {
     detail.assessment.offer?.decisionRule === "TELCO_DELINQUENCY_THRESHOLD"
       ? detail.assessment.offer
       : null;
+  const totalPriorityRejectionOffer =
+    detail?.assessment?.status === "RECHAZADO" &&
+    detail.assessment.offer?.decisionRule === "TOTAL_DELINQUENCY_THRESHOLD"
+      ? detail.assessment.offer
+      : null;
   const nonProductionVisibleCount = items.filter(
     (item) => !isProductionProviderEnvironment(item.providerEnvironment)
   ).length;
@@ -664,6 +673,16 @@ export default function DataCreditoAdminConsole() {
                                 item.offer.telcoRejectionThresholdCop
                               )}
                             </>
+                          ) : item.offer?.decisionRule ===
+                            "TOTAL_DELINQUENCY_THRESHOLD" ? (
+                            <>
+                              <strong>Rechazo prioritario · mora total</strong>
+                              <br />
+                              Umbral {currency(
+                                item.offer
+                                  .totalDelinquencyRejectionThresholdCop
+                              )}
+                            </>
                           ) : item.offer ? (
                             <>
                               <strong>
@@ -796,8 +815,9 @@ export default function DataCreditoAdminConsole() {
                 >
                   MiDecisor informa saldos, cuotas, moras, cupos y valores
                   iniciales en miles de COP. Por ejemplo, 359 equivale a
-                  $359.000. La regla prioritaria usa únicamente la mora vigente
-                  agregada del sector TELCOS, convertida a COP.
+                  $359.000. Las reglas prioritarias usan la mora vigente agregada
+                  del sector TELCOS y la mora vigente total, ambas convertidas a
+                  COP. El total informado no se vuelve a sumar por sectores.
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -823,11 +843,21 @@ export default function DataCreditoAdminConsole() {
                   <MetricCard
                     label="Mora vigente total"
                     value={currency(totals?.delinquentBalance)}
-                    detail={
-                      totals?.debtPercentage !== null &&
-                      totals?.debtPercentage !== undefined
-                        ? percentage(totals.debtPercentage) + " de deuda"
+                    className={
+                      totalPriorityRejectionOffer
+                        ? "border-[var(--fp-danger)] bg-[var(--fp-danger-soft)]"
                         : undefined
+                    }
+                    detail={
+                      totalPriorityRejectionOffer
+                        ? `Superó el umbral de ${currency(
+                            totalPriorityRejectionOffer
+                              .totalDelinquencyRejectionThresholdCop
+                          )}`
+                        : totals?.debtPercentage !== null &&
+                            totals?.debtPercentage !== undefined
+                          ? percentage(totals.debtPercentage) + " de deuda"
+                          : undefined
                     }
                   />
                   <MetricCard
@@ -860,6 +890,25 @@ export default function DataCreditoAdminConsole() {
                         telcoPriorityRejectionOffer.telcoRejectionThresholdCop
                       )}. Esta regla es independiente del puntaje y se evaluó
                       primero con el umbral configurado para{" "}
+                      {detail?.assessment?.platform}.
+                    </p>
+                  </div>
+                ) : null}
+
+                {totalPriorityRejectionOffer ? (
+                  <div
+                    role="alert"
+                    className="flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-4 text-sm leading-6 text-[var(--fp-graphite)]"
+                  >
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-danger)]" />
+                    <p>
+                      <strong>Rechazo prioritario por mora vigente total:</strong>{" "}
+                      la mora total de {currency(totals?.delinquentBalance)} superó
+                      el umbral de {currency(
+                        totalPriorityRejectionOffer
+                          .totalDelinquencyRejectionThresholdCop
+                      )}. Se evaluó después de la regla TELCOS y antes del puntaje,
+                      usando el tope configurado para{" "}
                       {detail?.assessment?.platform}.
                     </p>
                   </div>
@@ -969,7 +1018,9 @@ export default function DataCreditoAdminConsole() {
 
                 {detail.assessment?.offer &&
                 detail.assessment.offer.decisionRule !==
-                  "TELCO_DELINQUENCY_THRESHOLD" ? (
+                  "TELCO_DELINQUENCY_THRESHOLD" &&
+                detail.assessment.offer.decisionRule !==
+                  "TOTAL_DELINQUENCY_THRESHOLD" ? (
                   <div className="grid gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-lime)] bg-[var(--fp-lime-soft)] p-4 sm:grid-cols-3">
                     <div>
                       <span className="text-xs font-bold text-[var(--fp-muted)]">

@@ -90,6 +90,11 @@ test("catalogo y asignaciones solo exponen mutaciones al administrador central",
     2,
     "POST y PATCH deben exigir la regla prioritaria versionada"
   );
+  assert.equal(
+    catalogRoute.match(/requireTotalDelinquency:\s*true/g)?.length,
+    2,
+    "POST y PATCH deben exigir también la regla versionada de mora total"
+  );
 });
 
 test("el endpoint legado exige la regla al publicar una revision historica que no la tiene", () => {
@@ -104,7 +109,10 @@ test("el endpoint legado exige la regla al publicar una revision historica que n
     patchHandler,
     /priorityRulesInput === null[\s\S]*?priorityRulesInput === undefined[\s\S]*?status: 400/
   );
-  assert.match(patchHandler, /parseDataCreditoPolicyPriorityRules\(priorityRulesInput\)/);
+  assert.match(
+    patchHandler,
+    /parseDataCreditoPolicyPriorityRules\([\s\S]*?priorityRulesInput,[\s\S]*?requireTotalDelinquency:\s*true[\s\S]*?\)/
+  );
   assert.doesNotMatch(patchHandler, /rejectAboveCop:\s*2_000_000/);
 });
 
@@ -162,7 +170,8 @@ test("evaluacion resuelve la politica por aliado y falla antes del proveedor", (
   );
   assert.match(evaluationRoute, /riskSummary\?\.telcos\.delinquentBalance/);
   assert.match(evaluationRoute, /telcoDelinquencyInformationAvailable/);
-  assert.doesNotMatch(evaluationRoute, /riskSummary\?\.totals\.delinquentBalance/);
+  assert.match(evaluationRoute, /riskSummary\?\.totals\?\.delinquentBalance/);
+  assert.match(evaluationRoute, /totalDelinquencyInformationAvailable/);
 });
 
 test("la llave anticonsulta es cedula y ambiente para todo FINSER PAY", () => {
@@ -400,14 +409,21 @@ test("repetir conserva la consulta raiz y aplica la revision vigente de destino"
   assert.match(clone, /readReusableDataCreditoRiskContext/);
   assert.match(clone, /telcoDelinquentBalanceCop/);
   assert.match(clone, /telcoDelinquencyInformationAvailable/);
-  assert.match(clone, /priorityRuleEnabled/);
+  assert.match(clone, /totalDelinquentBalanceCop/);
+  assert.match(clone, /totalDelinquencyInformationAvailable/);
+  assert.match(clone, /telcoPriorityRuleEnabled/);
+  assert.match(clone, /totalPriorityRuleEnabled/);
   assert.match(clone, /reusableTelcoRiskMetricUnavailable/);
+  assert.match(clone, /reusableTotalRiskMetricUnavailable/);
   assert.doesNotMatch(clone, /queryDataCreditoNaturalPerson/);
   assert.match(storage, /DataCreditoAssessmentSecurePayload/);
   assert.match(storage, /decryptDataCreditoSecureRecord/);
   assert.match(storage, /riskSummary\?\.telcos\.delinquentBalance/);
+  assert.match(storage, /riskSummary\?\.totals\?\.delinquentBalance/);
   assert.match(storage, /No se realizo una nueva consulta/);
   assert.match(storage, /TELCO_RISK_METRIC_UNAVAILABLE/);
+  assert.match(storage, /TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE/);
+  assert.match(setupSql, /TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE/);
   assert.match(storage, /JSON\.stringify\(\{ bands, financialSettings, priorityRules \}\)/);
   assert.match(adminStorage, /priorityRules:\s*payload\.priorityRules/);
   assert.match(adminStorage, /parseDataCreditoPolicyPriorityRules/);

@@ -181,7 +181,7 @@ test("bloquea duplicar un borrador y usa la fecha de la revisión publicada", ()
   assert.match(consoleSource, /Publica los cambios o recarga para descartarlos/);
 });
 
-test("configura dos umbrales TELCOS versionados antes de las bandas", () => {
+test("configura cuatro umbrales de mora versionados antes de las bandas", () => {
   assert.match(
     consoleSource,
     /priorityRules: DataCreditoPolicyPriorityRules \| null/
@@ -195,26 +195,39 @@ test("configura dos umbrales TELCOS versionados antes de las bandas", () => {
     /parsePriorityRules\(value\.priorityRules, `Política \$\{index \+ 1\}`\)/
   );
   assert.match(consoleSource, /telcoDelinquency\.enabled !== true/);
-  assert.doesNotMatch(consoleSource, /totalDelinquency/);
+  assert.match(consoleSource, /totalDelinquency\.enabled !== true/);
   assert.match(
     consoleSource,
     /MAX_PRIORITY_REJECTION_AMOUNT_COP =\s*DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT/
   );
-  assert.match(consoleSource, /rejectAboveCopByPlatform:\s*\{/);
-  assert.match(
-    consoleSource,
-    /ANDROID: DEFAULT_PRIORITY_REJECTION_AMOUNT_COP[\s\S]*IPHONE: DEFAULT_PRIORITY_REJECTION_AMOUNT_COP/
-  );
+  assert.match(consoleSource, /key: "telcoDelinquency" as const/);
+  assert.match(consoleSource, /title: "Mora vigente TELCOS"/);
+  assert.match(consoleSource, /key: "totalDelinquency" as const/);
+  assert.match(consoleSource, /title: "Mora vigente total"/);
   assert.match(consoleSource, /PLATFORMS\.map\(\(platform\)/);
   assert.match(
     consoleSource,
     /platform === "ANDROID" \? "Android" : "iPhone"/
   );
-  assert.match(consoleSource, /Mora TELCOS \{platformLabel\} superior a \(COP\)/);
-  assert.match(consoleSource, /\$\{idPrefix\}-\$\{platformKey\}-threshold/);
-  assert.match(consoleSource, /onThresholdChange\(platform, event\.target\.value\)/);
+  assert.match(
+    consoleSource,
+    /\{definition\.title\} \{platformLabel\} superior a \(COP\)/
+  );
+  assert.match(
+    consoleSource,
+    /\$\{idPrefix\}-\$\{ruleKey\}-\$\{platformKey\}-threshold/
+  );
+  assert.match(
+    consoleSource,
+    /onThresholdChange\([\s\S]*?definition\.key,[\s\S]*?platform,[\s\S]*?event\.target\.value/
+  );
   assert.match(consoleSource, /max=\{MAX_PRIORITY_REJECTION_AMOUNT_COP\}/);
-  assert.match(consoleSource, /Prioridad 1 · activa/);
+  const telcoOrder = consoleSource.indexOf("1 · Mora TELCOS");
+  const totalOrder = consoleSource.indexOf("2 · Mora total");
+  const scoreOrder = consoleSource.indexOf("3 · Bandas de puntaje");
+  assert.ok(telcoOrder >= 0);
+  assert.ok(telcoOrder < totalOrder);
+  assert.ok(totalOrder < scoreOrder);
   assert.match(consoleSource, /<StatusPill tone="danger">RECHAZADO<\/StatusPill>/);
   assert.match(
     consoleSource,
@@ -222,20 +235,12 @@ test("configura dos umbrales TELCOS versionados antes de las bandas", () => {
   );
   assert.match(
     consoleSource,
-    /Solo[\s\S]*rechaza esta plataforma cuando la mora es mayor; el valor[\s\S]*exacto no activa la regla/
-  );
-  assert.match(
-    consoleSource,
-    /Android superior a \$\{formatCop\([\s\S]*rejectAboveCopByPlatform\.ANDROID[\s\S]*iPhone superior a \$\{formatCop\([\s\S]*rejectAboveCopByPlatform\.IPHONE/
-  );
-  assert.doesNotMatch(
-    consoleSource,
-    /Es independiente del puntaje y se aplica a ambas plataformas/
+    /Solo[\s\S]*rechaza cuando la mora es mayor; el valor exacto continúa[\s\S]*a la siguiente regla/
   );
   assert.doesNotMatch(consoleSource, /onEnabledChange|PriorityRuleEnabled/);
 
   const priorityCard = consoleSource.indexOf(
-    "Regla prioritaria de rechazo por mora TELCOS"
+    "Reglas prioritarias de rechazo por mora"
   );
   const financialCard = consoleSource.indexOf(
     "Parámetros financieros de la política"
@@ -246,13 +251,20 @@ test("configura dos umbrales TELCOS versionados antes de las bandas", () => {
   assert.ok(financialCard < androidBands);
 });
 
-test("hace explícita la migración histórica y versiona la regla en ambos payloads", () => {
-  assert.match(consoleSource, /Sin regla publicada/);
+test("no activa la mora total en revisiones históricas y la versiona en ambos payloads", () => {
+  assert.match(consoleSource, /Mora total pendiente/);
   assert.match(
     consoleSource,
-    /No se activará de forma silenciosa[\s\S]*publica una nueva revisión/
+    /No se activarán de forma silenciosa[\s\S]*completa expresamente los dos topes de mora total[\s\S]*publica una nueva revisión/
   );
-  assert.match(consoleSource, /Preparar regla por/);
+  assert.match(
+    consoleSource,
+    /ANDROID: totalDelinquency[\s\S]*\? String\(totalDelinquency\.rejectAboveCopByPlatform\.ANDROID\)[\s\S]*: ""/
+  );
+  assert.match(
+    consoleSource,
+    /IPHONE: totalDelinquency[\s\S]*\? String\(totalDelinquency\.rejectAboveCopByPlatform\.IPHONE\)[\s\S]*: ""/
+  );
   assert.match(consoleSource, /!priorityRulesValidation\.valid/);
   assert.match(
     consoleSource,
@@ -265,5 +277,13 @@ test("hace explícita la migración histórica y versiona la regla en ambos payl
   assert.match(
     consoleSource,
     /selectedProfile\.priorityRules \|\| DEFAULT_PRIORITY_RULES/
+  );
+  assert.match(
+    consoleSource,
+    /Completa los umbrales TELCOS y de mora vigente total[\s\S]*Publicar permanecerá deshabilitado mientras falte un tope/
+  );
+  assert.match(
+    consoleSource,
+    /Mora TELCOS: Android superior a[\s\S]*Mora vigente total: Android superior a[\s\S]*únicamente en consultas futuras/
   );
 });

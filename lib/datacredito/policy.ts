@@ -27,6 +27,7 @@ export const DATACREDITO_RISK_METRIC_VERSION =
 export const DATACREDITO_DECISION_RULES = [
   "SCORE_BAND",
   "TELCO_DELINQUENCY_THRESHOLD",
+  "TOTAL_DELINQUENCY_THRESHOLD",
 ] as const;
 
 export type DataCreditoPlatform = (typeof DATACREDITO_PLATFORMS)[number];
@@ -46,16 +47,23 @@ export type DataCreditoPolicyPriorityRules = {
     enabled: boolean;
     rejectAboveCopByPlatform: Record<DataCreditoPlatform, number>;
   };
+  totalDelinquency?: {
+    enabled: boolean;
+    rejectAboveCopByPlatform: Record<DataCreditoPlatform, number>;
+  };
 };
 
 export type DataCreditoDecisionRiskContext = {
   telcoDelinquentBalanceCop?: number | null;
   telcoDelinquencyInformationAvailable?: boolean | null;
+  totalDelinquentBalanceCop?: number | null;
+  totalDelinquencyInformationAvailable?: boolean | null;
 };
 
 export type DataCreditoDecisionAudit = {
   decisionRule: DataCreditoDecisionRule;
   telcoRejectionThresholdCop: number | null;
+  totalDelinquencyRejectionThresholdCop: number | null;
   riskMetricVersion: typeof DATACREDITO_RISK_METRIC_VERSION;
 };
 
@@ -205,7 +213,10 @@ function finiteNumber(value: unknown) {
 
 export function parseDataCreditoPolicyPriorityRules(
   value: unknown,
-  options: { optional?: boolean } = {}
+  options: {
+    optional?: boolean;
+    requireTotalDelinquency?: boolean;
+  } = {}
 ): DataCreditoPolicyPriorityRules | null {
   if ((value === null || value === undefined) && options.optional) {
     return null;
@@ -241,6 +252,20 @@ export function parseDataCreditoPolicyPriorityRules(
   const iphoneRejectAboveCop = finiteNumber(
     rejectAboveCopByPlatform?.IPHONE ?? legacyRejectAboveCop
   );
+  const hasTotalDelinquency = Boolean(
+    rules &&
+      Object.prototype.hasOwnProperty.call(rules, "totalDelinquency")
+  );
+  const totalDelinquency = recordValue(rules?.totalDelinquency);
+  const totalRejectAboveCopByPlatform = recordValue(
+    totalDelinquency?.rejectAboveCopByPlatform
+  );
+  const totalAndroidRejectAboveCop = finiteNumber(
+    totalRejectAboveCopByPlatform?.ANDROID
+  );
+  const totalIphoneRejectAboveCop = finiteNumber(
+    totalRejectAboveCopByPlatform?.IPHONE
+  );
   const issues: string[] = [];
   if (enabled !== true) {
     issues.push(
@@ -271,6 +296,42 @@ export function parseDataCreditoPolicyPriorityRules(
       );
     }
   }
+  if (options.requireTotalDelinquency && !hasTotalDelinquency) {
+    issues.push(
+      "Debes configurar la regla prioritaria de mora vigente total"
+    );
+  }
+  if (hasTotalDelinquency && !totalDelinquency) {
+    issues.push(
+      "La regla prioritaria de mora vigente total no tiene un formato valido"
+    );
+  }
+  if (totalDelinquency) {
+    if (totalDelinquency.enabled !== true) {
+      issues.push(
+        "La regla prioritaria de mora vigente total debe estar habilitada"
+      );
+    }
+    if (!totalRejectAboveCopByPlatform) {
+      issues.push(
+        "Los umbrales de mora vigente total por plataforma no son validos"
+      );
+    }
+    for (const [platform, rejectAboveCop] of [
+      ["Android", totalAndroidRejectAboveCop],
+      ["iPhone", totalIphoneRejectAboveCop],
+    ] as const) {
+      if (
+        !Number.isSafeInteger(rejectAboveCop) ||
+        rejectAboveCop! <= 0 ||
+        rejectAboveCop! > DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT
+      ) {
+        issues.push(
+          `El umbral de mora vigente total para ${platform} debe ser un entero en pesos colombianos entre 1 y ${DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT}`
+        );
+      }
+    }
+  }
   if (issues.length) {
     throw new DataCreditoPolicyValidationError(issues);
   }
@@ -283,6 +344,17 @@ export function parseDataCreditoPolicyPriorityRules(
         IPHONE: iphoneRejectAboveCop!,
       },
     },
+    ...(totalDelinquency
+      ? {
+          totalDelinquency: {
+            enabled: true,
+            rejectAboveCopByPlatform: {
+              ANDROID: totalAndroidRejectAboveCop!,
+              IPHONE: totalIphoneRejectAboveCop!,
+            },
+          },
+        }
+      : {}),
   };
 }
 
@@ -764,12 +836,49 @@ export function resolveDataCreditoDecision(
     telcoInformationAvailable === true &&
     validObservedTelcoDelinquency &&
     observedTelcoDelinquency! > telcoRejectionThresholdCop;
+  const totalDelinquencyRule = policy.priorityRules?.totalDelinquency;
+  const totalPriorityRuleEnabled = totalDelinquencyRule?.enabled === true;
+  const configuredTotalPlatformThreshold =
+    totalDelinquencyRule?.rejectAboveCopByPlatform?.[normalizedPlatform];
+  const totalDelinquencyRejectionThresholdCop =
+    totalPriorityRuleEnabled &&
+    Number.isSafeInteger(configuredTotalPlatformThreshold) &&
+    configuredTotalPlatformThreshold! > 0
+      ? configuredTotalPlatformThreshold!
+      : null;
+  const totalInformationAvailable =
+    riskContext?.totalDelinquencyInformationAvailable;
+  const observedTotalDelinquency =
+    riskContext?.totalDelinquentBalanceCop;
+  const validObservedTotalDelinquency =
+    typeof observedTotalDelinquency === "number" &&
+    Number.isSafeInteger(observedTotalDelinquency) &&
+    observedTotalDelinquency >= 0;
+  if (
+    !priorityRejection &&
+    totalPriorityRuleEnabled &&
+    (totalDelinquencyRejectionThresholdCop === null ||
+      totalInformationAvailable === null ||
+      totalInformationAvailable === undefined ||
+      (totalInformationAvailable && !validObservedTotalDelinquency))
+  ) {
+    return null;
+  }
+  const totalPriorityRejection =
+    !priorityRejection &&
+    totalDelinquencyRejectionThresholdCop !== null &&
+    totalInformationAvailable === true &&
+    validObservedTotalDelinquency &&
+    observedTotalDelinquency! > totalDelinquencyRejectionThresholdCop;
   const includeDecisionAudit = riskContext !== undefined;
   const decisionAudit: DataCreditoDecisionAudit = {
     decisionRule: priorityRejection
       ? "TELCO_DELINQUENCY_THRESHOLD"
+      : totalPriorityRejection
+        ? "TOTAL_DELINQUENCY_THRESHOLD"
       : "SCORE_BAND",
     telcoRejectionThresholdCop,
+    totalDelinquencyRejectionThresholdCop,
     riskMetricVersion: DATACREDITO_RISK_METRIC_VERSION,
   };
   const band = resolveDataCreditoPolicyBand(policy, normalizedPlatform, score);
@@ -794,7 +903,10 @@ export function resolveDataCreditoDecision(
   };
 
   return {
-    decision: priorityRejection ? "RECHAZADO" : band.decision,
+    decision:
+      priorityRejection || totalPriorityRejection
+        ? "RECHAZADO"
+        : band.decision,
     offer,
     ...(includeDecisionAudit ? decisionAudit : {}),
   };

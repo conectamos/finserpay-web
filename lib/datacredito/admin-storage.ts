@@ -179,13 +179,20 @@ function serializeOffer(
       { optional: true }
     ),
     ...(value.decisionRule === "SCORE_BAND" ||
-    value.decisionRule === "TELCO_DELINQUENCY_THRESHOLD"
+    value.decisionRule === "TELCO_DELINQUENCY_THRESHOLD" ||
+    value.decisionRule === "TOTAL_DELINQUENCY_THRESHOLD"
       ? {
           decisionRule: value.decisionRule,
           telcoRejectionThresholdCop:
             value.telcoRejectionThresholdCop === null
               ? null
               : finiteInteger(value.telcoRejectionThresholdCop),
+          totalDelinquencyRejectionThresholdCop:
+            value.totalDelinquencyRejectionThresholdCop === null
+              ? null
+              : finiteInteger(
+                  value.totalDelinquencyRejectionThresholdCop
+                ),
           riskMetricVersion:
             value.riskMetricVersion === "MIDECISOR_PN_MILES_COP_V1"
               ? value.riskMetricVersion
@@ -727,7 +734,8 @@ export async function createDataCreditoPolicyProfile(input: {
     input.financialSettings
   )!;
   const priorityRules = parseDataCreditoPolicyPriorityRules(
-    input.priorityRules
+    input.priorityRules,
+    { requireTotalDelinquency: true }
   )!;
   const profileId = randomUUID();
   try {

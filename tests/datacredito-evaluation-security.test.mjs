@@ -109,23 +109,41 @@ test("el payload crudo del proveedor nunca se serializa al asesor", () => {
     /const riskSummary = buildDataCreditoAdminRiskSummary\([\s\S]*?result\.providerPayload[\s\S]*?\)/
   );
   assert.match(post, /riskSummary\?\.telcos\.delinquentBalance/);
-  assert.doesNotMatch(post, /riskSummary\?\.totals\.delinquentBalance/);
-  assert.match(post, /priorityRuleEnabled/);
+  assert.match(post, /riskSummary\?\.totals\?\.delinquentBalance/);
+  assert.match(post, /telcoPriorityRuleEnabled/);
+  assert.match(post, /totalPriorityRuleEnabled/);
   assert.match(post, /telcoRiskMetricValid/);
   assert.match(post, /telcoRiskMetricUnavailable/);
+  assert.match(post, /totalDelinquencyInformationAvailable/);
+  assert.match(post, /totalRiskMetricValid/);
+  assert.match(post, /totalRiskMetricUnavailable/);
   assert.match(
     post,
     /failDataCreditoAssessmentWithSecureRecord[\s\S]*?TELCO_RISK_METRIC_UNAVAILABLE/
   );
   assert.match(
     post,
-    /resolveDataCreditoDecision\([\s\S]*?telcoDelinquentBalanceCop,[\s\S]*?telcoDelinquencyInformationAvailable/
+    /failDataCreditoAssessmentWithSecureRecord[\s\S]*?TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE/
   );
+  const decisionCall = sectionBetween(
+    post,
+    "const resolution = resolveDataCreditoDecision(",
+    "if (!resolution)"
+  );
+  for (const riskField of [
+    "telcoDelinquentBalanceCop",
+    "telcoDelinquencyInformationAvailable",
+    "totalDelinquentBalanceCop",
+    "totalDelinquencyInformationAvailable",
+  ]) {
+    assert.ok(decisionCall.includes(riskField), `Falta ${riskField}`);
+  }
   assert.match(post, /\.\.\.serializeDataCreditoAssessment\(completed\)/);
   assert.doesNotMatch(
     post,
     /NextResponse\.json\([\s\S]{0,300}providerPayload:\s*result\.providerPayload/
   );
+  assert.doesNotMatch(serializer, /totalDelinquentBalanceCop/);
 
   assert.match(
     adminAssessmentRoute,

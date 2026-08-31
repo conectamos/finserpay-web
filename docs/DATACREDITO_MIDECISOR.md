@@ -20,18 +20,23 @@ No forman parte de este alcance:
 2. Registra cedula y primer apellido.
 3. Confirma que el titular autorizo la consulta antes de ejecutarla.
 4. El servidor consulta MiDecisor, valida el puntaje y construye el resumen
-   normalizado del sector TELCOS.
+   normalizado del sector TELCOS y de los totales generales informados por el
+   proveedor.
 5. Si TELCOS está informado y su mora vigente agregada en COP supera el umbral
    configurado para la plataforma consultada, se aplica
    `TELCO_DELINQUENCY_THRESHOLD` y el flujo termina con `NO APROBADO` antes
    de evaluar el puntaje. La prioridad es igual para Android e iPhone, pero cada
    plataforma conserva su propio umbral.
-6. Si TELCOS no está informado, o su mora válida no supera el umbral de la
-   plataforma, el servidor resuelve la banda de puntaje vigente.
-7. Si la banda rechaza, el flujo termina con `NO APROBADO`.
-8. Si la banda aprueba, se fijan la cuota inicial, la fianza y el credito
+6. Si TELCOS no produce rechazo, se compara la mora vigente total con el umbral
+   independiente de la plataforma. Solo cuando la mora total válida es superior
+   se aplica `TOTAL_DELINQUENCY_THRESHOLD` y el flujo termina con
+   `NO APROBADO`.
+7. Si ninguna regla prioritaria rechaza, el servidor resuelve la banda de
+   puntaje vigente.
+8. Si la banda rechaza, el flujo termina con `NO APROBADO`.
+9. Si la banda aprueba, se fijan la cuota inicial, la fianza y el credito
    maximo de esa banda; luego se abre la validacion de identidad existente.
-9. Al crear el credito, el servidor vuelve a validar y consume la evaluacion;
+10. Al crear el credito, el servidor vuelve a validar y consume la evaluacion;
    el navegador nunca decide ni puede modificar la banda aplicada.
 
 Una falla tecnica, una respuesta parcial o un puntaje ausente, malformado o
@@ -41,7 +46,9 @@ aprobacion ni rechazo. Solo una respuesta `ACCEPTED` con codigo `TX=17`, o con
 `Sin informacion`. Si el sector TELCOS está marcado como disponible pero su
 `saldoMora` es nulo, negativo, fraccionario, excede el rango seguro o no puede
 normalizarse a COP, también se devuelve un error técnico; no se interpreta como
-mora cero ni como rechazo.
+mora cero ni como rechazo. La misma protección aplica a la mora total cuando su
+regla está publicada. Los códigos internos son `TELCO_RISK_METRIC_UNAVAILABLE`
+y `TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE`, respectivamente.
 
 ## Contrato MiDecisor usado
 
@@ -84,13 +91,14 @@ original permanece intacto dentro del expediente cifrado; la normalización se
 realiza al construir el resumen derivado, por lo que también corrige la lectura
 de expedientes históricos sin reescribirlos ni generar una nueva consulta.
 
-La regla prioritaria usa exclusivamente
+La primera regla prioritaria usa exclusivamente
 `summary.telcos.delinquentBalance`: la mora vigente agregada de la fila sectorial
-identificada como TELCOS. No usa `summary.totals.delinquentBalance`, no suma mora
-de otros sectores y no infiere una mora TELCOS cuando ese sector no está
-reportado. El contrato de unidades sigue siendo
-`MIDECISOR_PN_MILES_COP_V1` porque versiona la conversión monetaria, no el
-agregado de riesgo elegido por la política.
+identificada como TELCOS. No suma mora de otros sectores ni infiere una mora
+TELCOS cuando ese sector no está reportado. La segunda usa exclusivamente
+`summary.totals.delinquentBalance`, el `saldoMora` global que MiDecisor informa
+en `indicadoresValores`. Ese total tampoco se reconstruye sumando sectores.
+Ambos valores se convierten con `MIDECISOR_PN_MILES_COP_V1`; el orden de
+evaluación es TELCOS, mora total y, por último, banda de puntaje.
 
 Por cautela, `montoSugerido` e `ingreso` no se convierten con esta regla hasta
 confirmar de forma específica su unidad contractual con Experian.
@@ -192,8 +200,11 @@ Cada revisión contiene bandas separadas para `ANDROID` e `IPHONE`:
 }
 ```
 
-Además, cada revisión nueva contiene una regla prioritaria única, anterior a
-las bandas, con un umbral independiente para cada plataforma:
+Además, cada revisión nueva contiene dos reglas prioritarias anteriores a las
+bandas, cada una con un umbral independiente para cada plataforma. Los montos
+del siguiente ejemplo son ilustrativos: el sistema no asigna topes comerciales
+predeterminados para la mora total y el administrador debe definirlos antes de
+publicar la revisión:
 
 ```json
 {
@@ -204,23 +215,34 @@ las bandas, con un umbral independiente para cada plataforma:
         "ANDROID": 2000000,
         "IPHONE": 1000000
       }
+    },
+    "totalDelinquency": {
+      "enabled": true,
+      "rejectAboveCopByPlatform": {
+        "ANDROID": 5000000,
+        "IPHONE": 7000000
+      }
     }
   }
 }
 ```
 
-Cada umbral es un entero en COP. La comparación es estricta: una mora TELCOS
-exactamente igual al umbral de la plataforma continúa a la banda; solo un valor
-superior produce `TELCO_DELINQUENCY_THRESHOLD`. La oferta auditada conserva el
-umbral que se aplicó a esa evaluación. Esta decisión es independiente del
-puntaje.
+Cada umbral es un entero en COP y la comparación siempre es estricta (`>`). Un
+valor exactamente igual al umbral continúa a la siguiente regla; solo un valor
+superior rechaza. El orden es `TELCO_DELINQUENCY_THRESHOLD`, luego
+`TOTAL_DELINQUENCY_THRESHOLD` y después la banda. Por eso, si ambos topes se
+superan, la causa auditada es TELCOS; si solo se supera el total, la causa es
+mora total aunque el puntaje aprobara. La auditoría conserva la regla que tomó
+la decisión y los umbrales configurados en la revisión exacta evaluada.
 
-Una revisión histórica con el campo escalar `rejectAboveCop` se normaliza
-únicamente en memoria usando ese mismo valor para Android e iPhone; el JSON
-histórico no se reescribe. Una revisión sin
-`priorityRules.telcoDelinquency` continúa con sus bandas. La administración no
-activa la regla silenciosamente y exige publicar una nueva revisión para
-incorporarla.
+Una revisión histórica con el campo escalar TELCOS `rejectAboveCop` se
+normaliza únicamente en memoria usando ese mismo valor para Android e iPhone;
+el JSON histórico no se reescribe. Una revisión sin
+`priorityRules.telcoDelinquency` continúa con sus bandas. Una revisión que sí
+tiene TELCOS pero no `priorityRules.totalDelinquency` conserva exactamente esa
+conducta: la mora total no se activa ni recibe umbrales por defecto. La consola
+la marca como pendiente y exige completar ambos topes y publicar una nueva
+revisión; esa publicación solo afecta consultas futuras.
 
 La administracion exige cobertura completa de 0 a 950 para cada plataforma,
 sin huecos ni solapes, y exactamente una regla `Sin informacion` adicional por
@@ -286,11 +308,12 @@ cambia el contexto autorizado, se crea una fila operativa actual enlazada al
 inquiry raíz, sin duplicar el expediente cifrado ni llamar otra vez a Experian.
 
 Si cambia Android/iPhone o el aliado, el servidor toma del inquiry raíz el
-puntaje y el resumen TELCOS ya cifrado, y recalcula la decisión/oferta con la
+puntaje y los resúmenes TELCOS y total ya cifrados, y recalcula la decisión/oferta con la
 plataforma solicitada y la revisión vigente asignada al aliado actual. No genera
 una consulta nueva y conserva el vencimiento original, de modo que reutilizar no
-extiende la ventana. Una revisión histórica sin la regla TELCOS continúa por
-banda. Solo un cambio de ambiente de proveedor separa la reutilización.
+extiende la ventana. Una revisión histórica sin una de las reglas conserva su
+conducta publicada y no la activa durante la reutilización. Solo un cambio de
+ambiente de proveedor separa la reutilización.
 
 La reserva y el lock documental usan únicamente el HMAC de la cédula y el
 ambiente del proveedor. Así, dos aliados que consulten simultáneamente la misma
@@ -328,13 +351,13 @@ migración falla cerrada y debe reintentarse cuando hayan vencido.
 - El expediente solo se descifra bajo demanda para el administrador central de
   FINSER PAY. El módulo `/dashboard/datacredito` lista consultas con documento
   enmascarado y permite abrir el detalle completo según la retención vigente.
-  Cuando aplica el rechazo TELCOS, el listado y el detalle muestran la causa,
-  la mora sectorial normalizada y el umbral de la revisión.
+  Cuando aplica un rechazo prioritario, el listado y el detalle muestran la
+  causa, la mora normalizada correspondiente y el umbral de la revisión.
 - Cada apertura del expediente central genera una auditoría con actor,
   correlación, resultado del acceso e IP/agente de usuario seudonimizados.
 - IP y agente de usuario se conservan como HMAC, no en claro.
-- El asesor no recibe el puntaje, la respuesta completa, la mora TELCOS ni los
-  umbrales.
+- El asesor no recibe el puntaje, la respuesta completa, la mora TELCOS, la
+  mora total ni los umbrales.
 - Los errores públicos incluyen un identificador de correlación, no detalles de
   credenciales, claves de cifrado ni del proveedor.
 - Cada evaluación operativa se vincula a usuario, asesor, aliado, sede,
@@ -381,10 +404,12 @@ pagada sin verificar si el credito ya fue creado.
 5. Configurar y revisar las bandas desde Parámetros de crédito. Si existe una
    versión anterior sin regla `-1..-1` por plataforma o sin
    `maxFinancedAmount`, o una revisión sin
-   `priorityRules.telcoDelinquency`, publicar primero una versión compatible
+   `priorityRules.telcoDelinquency` o
+   `priorityRules.totalDelinquency`, publicar primero una versión compatible
    mediante una operación controlada. Toda revisión nueva debe guardar
    `rejectAboveCopByPlatform.ANDROID` y
-   `rejectAboveCopByPlatform.IPHONE`.
+   `rejectAboveCopByPlatform.IPHONE` dentro de ambas reglas. No deben rellenarse
+   revisiones históricas automáticamente.
 6. Cargar las credenciales y hosts de certificación, nunca en el repositorio, y
    fijar `DATACREDITO_ENVIRONMENT=uat` (o la etiqueta no productiva acordada).
    Confirmar que el guard impide ventas reales. Usar

@@ -116,8 +116,14 @@ type EditableFinancialSettings = {
 };
 
 type EditablePriorityRules = {
-  enabled: boolean;
-  rejectAboveCopByPlatform: Record<DataCreditoPolicyPlatform, string>;
+  telcoDelinquency: {
+    enabled: boolean;
+    rejectAboveCopByPlatform: Record<DataCreditoPolicyPlatform, string>;
+  };
+  totalDelinquency: {
+    enabled: boolean;
+    rejectAboveCopByPlatform: Record<DataCreditoPolicyPlatform, string>;
+  };
 };
 
 type FinancialValidationResult = {
@@ -507,6 +513,22 @@ function parsePriorityRules(
   const iphoneRejectAboveCop = readFiniteNumber(
     configuredThresholds?.IPHONE ?? legacyRejectAboveCop
   );
+  const hasTotalDelinquency =
+    priorityRules !== null &&
+    Object.prototype.hasOwnProperty.call(priorityRules, "totalDelinquency");
+  const totalDelinquency =
+    priorityRules && isRecord(priorityRules.totalDelinquency)
+      ? priorityRules.totalDelinquency
+      : null;
+  const totalThresholds =
+    totalDelinquency &&
+    isRecord(totalDelinquency.rejectAboveCopByPlatform)
+      ? totalDelinquency.rejectAboveCopByPlatform
+      : null;
+  const totalAndroidRejectAboveCop = readFiniteNumber(
+    totalThresholds?.ANDROID
+  );
+  const totalIphoneRejectAboveCop = readFiniteNumber(totalThresholds?.IPHONE);
 
   if (
     !telcoDelinquency ||
@@ -524,6 +546,22 @@ function parsePriorityRules(
       `${label} tiene una regla prioritaria de mora vigente TELCOS inválida.`
     );
   }
+  if (
+    hasTotalDelinquency &&
+    (!totalDelinquency ||
+      totalDelinquency.enabled !== true ||
+      !totalThresholds ||
+      !Number.isSafeInteger(totalAndroidRejectAboveCop) ||
+      totalAndroidRejectAboveCop! <= 0 ||
+      totalAndroidRejectAboveCop! > MAX_PRIORITY_REJECTION_AMOUNT_COP ||
+      !Number.isSafeInteger(totalIphoneRejectAboveCop) ||
+      totalIphoneRejectAboveCop! <= 0 ||
+      totalIphoneRejectAboveCop! > MAX_PRIORITY_REJECTION_AMOUNT_COP)
+  ) {
+    throw new PolicyRequestError(
+      `${label} tiene una regla prioritaria de mora vigente total inválida.`
+    );
+  }
 
   return {
     telcoDelinquency: {
@@ -533,21 +571,46 @@ function parsePriorityRules(
         IPHONE: iphoneRejectAboveCop!,
       },
     },
+    ...(hasTotalDelinquency
+      ? {
+          totalDelinquency: {
+            enabled: true,
+            rejectAboveCopByPlatform: {
+              ANDROID: totalAndroidRejectAboveCop!,
+              IPHONE: totalIphoneRejectAboveCop!,
+            },
+          },
+        }
+      : {}),
   };
 }
 
 function toEditablePriorityRules(
   rules: DataCreditoPolicyPriorityRules
 ): EditablePriorityRules {
+  const totalDelinquency = rules.totalDelinquency;
   return {
-    enabled: true,
-    rejectAboveCopByPlatform: {
-      ANDROID: String(
-        rules.telcoDelinquency.rejectAboveCopByPlatform.ANDROID
-      ),
-      IPHONE: String(
-        rules.telcoDelinquency.rejectAboveCopByPlatform.IPHONE
-      ),
+    telcoDelinquency: {
+      enabled: true,
+      rejectAboveCopByPlatform: {
+        ANDROID: String(
+          rules.telcoDelinquency.rejectAboveCopByPlatform.ANDROID
+        ),
+        IPHONE: String(
+          rules.telcoDelinquency.rejectAboveCopByPlatform.IPHONE
+        ),
+      },
+    },
+    totalDelinquency: {
+      enabled: true,
+      rejectAboveCopByPlatform: {
+        ANDROID: totalDelinquency
+          ? String(totalDelinquency.rejectAboveCopByPlatform.ANDROID)
+          : "",
+        IPHONE: totalDelinquency
+          ? String(totalDelinquency.rejectAboveCopByPlatform.IPHONE)
+          : "",
+      },
     },
   };
 }
@@ -565,27 +628,47 @@ function validatePriorityRules(
     };
   }
 
-  const rejectAboveCopByPlatform = {
-    ANDROID: parseInteger(rules.rejectAboveCopByPlatform.ANDROID),
-    IPHONE: parseInteger(rules.rejectAboveCopByPlatform.IPHONE),
+  const telcoRejectAboveCopByPlatform = {
+    ANDROID: parseInteger(
+      rules.telcoDelinquency.rejectAboveCopByPlatform.ANDROID
+    ),
+    IPHONE: parseInteger(
+      rules.telcoDelinquency.rejectAboveCopByPlatform.IPHONE
+    ),
+  };
+  const totalRejectAboveCopByPlatform = {
+    ANDROID: parseInteger(
+      rules.totalDelinquency.rejectAboveCopByPlatform.ANDROID
+    ),
+    IPHONE: parseInteger(
+      rules.totalDelinquency.rejectAboveCopByPlatform.IPHONE
+    ),
   };
   const issues: string[] = [];
-  if (!rules.enabled) {
+  if (!rules.telcoDelinquency.enabled) {
     issues.push("La regla prioritaria de mora vigente TELCOS debe permanecer activa.");
   }
-  for (const platform of PLATFORMS) {
-    const rejectAboveCop = rejectAboveCopByPlatform[platform];
-    const platformLabel = platform === "ANDROID" ? "Android" : "iPhone";
-    if (
-      rejectAboveCop === null ||
-      rejectAboveCop <= 0 ||
-      rejectAboveCop > MAX_PRIORITY_REJECTION_AMOUNT_COP
-    ) {
-      issues.push(
-        `El umbral de mora vigente TELCOS para ${platformLabel} debe ser un entero en COP entre $1 y $${new Intl.NumberFormat(
-          "es-CO"
-        ).format(MAX_PRIORITY_REJECTION_AMOUNT_COP)}.`
-      );
+  if (!rules.totalDelinquency.enabled) {
+    issues.push("La regla prioritaria de mora vigente total debe permanecer activa.");
+  }
+  for (const [ruleLabel, thresholds] of [
+    ["TELCOS", telcoRejectAboveCopByPlatform],
+    ["total", totalRejectAboveCopByPlatform],
+  ] as const) {
+    for (const platform of PLATFORMS) {
+      const rejectAboveCop = thresholds[platform];
+      const platformLabel = platform === "ANDROID" ? "Android" : "iPhone";
+      if (
+        rejectAboveCop === null ||
+        rejectAboveCop <= 0 ||
+        rejectAboveCop > MAX_PRIORITY_REJECTION_AMOUNT_COP
+      ) {
+        issues.push(
+          `El umbral de mora vigente ${ruleLabel} para ${platformLabel} debe ser un entero en COP entre $1 y $${new Intl.NumberFormat(
+            "es-CO"
+          ).format(MAX_PRIORITY_REJECTION_AMOUNT_COP)}.`
+        );
+      }
     }
   }
 
@@ -598,8 +681,15 @@ function validatePriorityRules(
             telcoDelinquency: {
               enabled: true,
               rejectAboveCopByPlatform: {
-                ANDROID: rejectAboveCopByPlatform.ANDROID!,
-                IPHONE: rejectAboveCopByPlatform.IPHONE!,
+                ANDROID: telcoRejectAboveCopByPlatform.ANDROID!,
+                IPHONE: telcoRejectAboveCopByPlatform.IPHONE!,
+              },
+            },
+            totalDelinquency: {
+              enabled: true,
+              rejectAboveCopByPlatform: {
+                ANDROID: totalRejectAboveCopByPlatform.ANDROID!,
+                IPHONE: totalRejectAboveCopByPlatform.IPHONE!,
               },
             },
           }
@@ -1550,93 +1640,165 @@ function PriorityRuleEditor({
   disabled: boolean;
   idPrefix: string;
   onThresholdChange: (
+    rule: keyof EditablePriorityRules,
     platform: DataCreditoPolicyPlatform,
     rejectAboveCop: string
   ) => void;
 }) {
   const errorId = `${idPrefix}-error`;
+  const ruleDefinitions = [
+    {
+      key: "telcoDelinquency" as const,
+      title: "Mora vigente TELCOS",
+      description:
+        "Usa exclusivamente el agregado del sector TELCOS informado por MiDecisor.",
+      priority: 1,
+    },
+    {
+      key: "totalDelinquency" as const,
+      title: "Mora vigente total",
+      description:
+        "Usa el total general de mora vigente informado por MiDecisor, sin volver a sumar los sectores.",
+      priority: 2,
+    },
+  ];
 
   return (
-    <div className="mt-5">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3">
-          <p className="text-xs font-bold uppercase tracking-wide text-[var(--fp-muted)]">
-            Orden de evaluación
-          </p>
-          <div className="mt-2">
-            <StatusPill tone="danger">Prioridad 1 · activa</StatusPill>
-          </div>
-          <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
-            La mora vigente TELCOS se evalúa antes de cualquier banda de puntaje.
-          </p>
+    <div className="mt-5 space-y-4">
+      <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] px-4 py-4">
+        <p className="text-xs font-bold uppercase tracking-wide text-[var(--fp-muted)]">
+          Orden de evaluación
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <StatusPill tone="danger">1 · Mora TELCOS</StatusPill>
+          <span className="text-xs font-black text-[var(--fp-muted)]" aria-hidden="true">
+            →
+          </span>
+          <StatusPill tone="danger">2 · Mora total</StatusPill>
+          <span className="text-xs font-black text-[var(--fp-muted)]" aria-hidden="true">
+            →
+          </span>
+          <StatusPill tone="neutral">3 · Bandas de puntaje</StatusPill>
         </div>
+        <p className="mt-3 text-xs leading-5 text-[var(--fp-muted)]">
+          Las dos reglas de mora se evalúan antes del puntaje y aplican el umbral
+          correspondiente a la plataforma consultada.
+        </p>
+      </div>
 
-        {PLATFORMS.map((platform) => {
-          const platformLabel = platform === "ANDROID" ? "Android" : "iPhone";
-          const platformKey = platform.toLocaleLowerCase("es-CO");
-          const previewId = `${idPrefix}-${platformKey}-preview`;
-          const rejectAboveCop =
-            rules.rejectAboveCopByPlatform[platform];
-          const parsedThreshold = parseInteger(rejectAboveCop);
-          const thresholdValid =
-            parsedThreshold !== null &&
-            parsedThreshold > 0 &&
-            parsedThreshold <= MAX_PRIORITY_REJECTION_AMOUNT_COP;
-          const describedBy = validation.issues.length
-            ? `${previewId} ${errorId}`
-            : previewId;
-
-          return (
-            <label
-              key={platform}
-              className="grid gap-2 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] px-4 py-3 text-sm font-bold text-[var(--fp-graphite)]"
-            >
-              Mora TELCOS {platformLabel} superior a (COP)
-              <Input
-                id={`${idPrefix}-${platformKey}-threshold`}
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={MAX_PRIORITY_REJECTION_AMOUNT_COP}
-                step={1}
-                value={rejectAboveCop}
-                onChange={(event) =>
-                  onThresholdChange(platform, event.target.value)
-                }
-                disabled={disabled}
-                aria-invalid={!thresholdValid}
-                aria-describedby={describedBy}
-              />
-              <span
-                id={previewId}
-                className="text-xs font-normal leading-5 text-[var(--fp-muted)]"
-              >
-                Umbral {platformLabel}: {formatCop(parsedThreshold)}. Solo
-                rechaza esta plataforma cuando la mora es mayor; el valor
-                exacto no activa la regla.
-              </span>
-            </label>
+      {ruleDefinitions.map((definition) => {
+        const rule = rules[definition.key];
+        const ruleComplete = PLATFORMS.every((platform) => {
+          const threshold = parseInteger(
+            rule.rejectAboveCopByPlatform[platform]
           );
-        })}
+          return (
+            threshold !== null &&
+            threshold > 0 &&
+            threshold <= MAX_PRIORITY_REJECTION_AMOUNT_COP
+          );
+        });
 
-        <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3">
+        return (
+          <fieldset
+            key={definition.key}
+            className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] p-4 sm:p-5"
+          >
+            <legend className="sr-only">{definition.title}</legend>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="font-black text-[var(--fp-graphite)]">
+                  {definition.priority}. {definition.title}
+                </p>
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-[var(--fp-muted)]">
+                  {definition.description}
+                </p>
+              </div>
+              <StatusPill tone={ruleComplete ? "danger" : "warning"}>
+                {ruleComplete
+                  ? `Prioridad ${definition.priority} · activa`
+                  : "Configuración pendiente"}
+              </StatusPill>
+            </div>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              {PLATFORMS.map((platform) => {
+                const platformLabel =
+                  platform === "ANDROID" ? "Android" : "iPhone";
+                const platformKey = platform.toLocaleLowerCase("es-CO");
+                const ruleKey =
+                  definition.key === "telcoDelinquency" ? "telcos" : "total";
+                const previewId = `${idPrefix}-${ruleKey}-${platformKey}-preview`;
+                const rejectAboveCop =
+                  rule.rejectAboveCopByPlatform[platform];
+                const parsedThreshold = parseInteger(rejectAboveCop);
+                const thresholdValid =
+                  parsedThreshold !== null &&
+                  parsedThreshold > 0 &&
+                  parsedThreshold <= MAX_PRIORITY_REJECTION_AMOUNT_COP;
+                const describedBy =
+                  !thresholdValid && validation.issues.length
+                    ? `${previewId} ${errorId}`
+                    : previewId;
+
+                return (
+                  <label
+                    key={platform}
+                    className="grid gap-2 text-sm font-bold text-[var(--fp-graphite)]"
+                  >
+                    {definition.title} {platformLabel} superior a (COP)
+                    <Input
+                      id={`${idPrefix}-${ruleKey}-${platformKey}-threshold`}
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={MAX_PRIORITY_REJECTION_AMOUNT_COP}
+                      step={1}
+                      value={rejectAboveCop}
+                      onChange={(event) =>
+                        onThresholdChange(
+                          definition.key,
+                          platform,
+                          event.target.value
+                        )
+                      }
+                      disabled={disabled}
+                      aria-invalid={!thresholdValid}
+                      aria-describedby={describedBy}
+                    />
+                    <span
+                      id={previewId}
+                      className="text-xs font-normal leading-5 text-[var(--fp-muted)]"
+                    >
+                      Umbral {platformLabel}: {formatCop(parsedThreshold)}. Solo
+                      rechaza cuando la mora es mayor; el valor exacto continúa
+                      a la siguiente regla.
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+        );
+      })}
+
+      <div className="flex flex-col gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
           <p className="text-xs font-bold uppercase tracking-wide text-[var(--fp-muted)]">
-            Decisión
+            Decisión al superar cualquiera de los topes
           </p>
-          <div className="mt-2">
-            <StatusPill tone="danger">RECHAZADO</StatusPill>
-          </div>
-          <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
+          <p className="mt-1 text-xs leading-5 text-[var(--fp-muted)]">
             Rechaza únicamente la solicitud de la plataforma cuyo umbral fue
             superado.
           </p>
         </div>
+        <StatusPill tone="danger">RECHAZADO</StatusPill>
       </div>
 
       {validation.issues.length ? (
         <ul
           id={errorId}
-          className="mt-4 list-disc space-y-1 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-5 py-4 text-sm font-semibold text-[var(--fp-danger)]"
+          className="list-disc space-y-1 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-5 py-4 text-sm font-semibold text-[var(--fp-danger)]"
           role="alert"
         >
           {validation.issues.map((issue) => (
@@ -1976,6 +2138,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const updatePriorityRuleThreshold = (
+    rule: keyof EditablePriorityRules,
     platform: DataCreditoPolicyPlatform,
     rejectAboveCop: string
   ) => {
@@ -1986,23 +2149,30 @@ export default function DatacreditoPolicyConsole() {
         current || toEditablePriorityRules(DEFAULT_PRIORITY_RULES);
       return {
         ...editable,
-        rejectAboveCopByPlatform: {
-          ...editable.rejectAboveCopByPlatform,
-          [platform]: rejectAboveCop,
+        [rule]: {
+          ...editable[rule],
+          rejectAboveCopByPlatform: {
+            ...editable[rule].rejectAboveCopByPlatform,
+            [platform]: rejectAboveCop,
+          },
         },
       };
     });
   };
 
   const updateNewPolicyPriorityRuleThreshold = (
+    rule: keyof EditablePriorityRules,
     platform: DataCreditoPolicyPlatform,
     rejectAboveCop: string
   ) => {
     setNewPolicyPriorityRules((current) => ({
       ...current,
-      rejectAboveCopByPlatform: {
-        ...current.rejectAboveCopByPlatform,
-        [platform]: rejectAboveCop,
+      [rule]: {
+        ...current[rule],
+        rejectAboveCopByPlatform: {
+          ...current[rule].rejectAboveCopByPlatform,
+          [platform]: rejectAboveCop,
+        },
       },
     }));
   };
@@ -2791,17 +2961,26 @@ export default function DatacreditoPolicyConsole() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h4 className="font-black">
-                      Regla prioritaria de la nueva política
+                      Reglas prioritarias de la nueva política
                     </h4>
                     <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-                      Los umbrales de mora vigente TELCOS se heredan de la
-                      política origen. Si aún no existían, Android e iPhone
-                      comienzan en{" "}
-                      {formatCop(DEFAULT_PRIORITY_REJECTION_AMOUNT_COP)} y
-                      pueden ajustarse por separado.
+                      Los umbrales TELCOS se heredan de la política origen. Los
+                      topes de mora vigente total también se copian si ya fueron
+                      publicados; en una revisión histórica aparecen vacíos para
+                      que el administrador los defina expresamente.
                     </p>
                   </div>
-                  <StatusPill tone="danger">Prioridad 1 · activa</StatusPill>
+                  <StatusPill
+                    tone={
+                      newPolicyPriorityRulesValidation.valid
+                        ? "danger"
+                        : "warning"
+                    }
+                  >
+                    {newPolicyPriorityRulesValidation.valid
+                      ? "2 reglas configuradas"
+                      : "Mora total pendiente"}
+                  </StatusPill>
                 </div>
                 <PriorityRuleEditor
                   rules={newPolicyPriorityRules}
@@ -2933,7 +3112,7 @@ export default function DatacreditoPolicyConsole() {
           {selectedProfile ? (
             <>
               <Card
-                className="border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] p-5 sm:p-6"
+                className="p-5 sm:p-6"
                 aria-labelledby="policy-priority-title"
               >
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -2946,19 +3125,27 @@ export default function DatacreditoPolicyConsole() {
                     </span>
                     <div>
                       <h3 id="policy-priority-title" className="text-xl font-black">
-                        Regla prioritaria de rechazo por mora TELCOS
+                        Reglas prioritarias de rechazo por mora
                       </h3>
                       <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-                        Usa únicamente la mora vigente agregada del sector TELCOS.
-                        Se evalúa antes del puntaje con el umbral correspondiente
-                        a la plataforma consultada.
+                        Primero se evalúa la mora vigente agregada del sector
+                        TELCOS y después la mora vigente total. Ambas se comparan
+                        con el umbral de la plataforma antes de revisar el puntaje.
                       </p>
                     </div>
                   </div>
-                  <StatusPill tone={priorityRules ? "danger" : "warning"}>
-                    {priorityRules
-                      ? "Prioridad 1 · activa"
-                      : "Sin regla publicada"}
+                  <StatusPill
+                    tone={
+                      priorityRules && priorityRulesValidation.valid
+                        ? "danger"
+                        : "warning"
+                    }
+                  >
+                    {priorityRules && priorityRulesValidation.valid
+                      ? "2 reglas configuradas"
+                      : priorityRules
+                        ? "Mora total pendiente"
+                        : "Sin reglas publicadas"}
                   </StatusPill>
                 </div>
 
@@ -2973,12 +3160,12 @@ export default function DatacreditoPolicyConsole() {
                 ) : (
                   <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] p-4 sm:p-5">
                     <p className="font-black text-[var(--fp-graphite)]">
-                      Esta revisión no contiene la regla prioritaria TELCOS.
+                      Esta revisión no contiene reglas prioritarias de mora.
                     </p>
                     <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-                      No se activará de forma silenciosa. Prepara el umbral y
-                      publica una nueva revisión para que el rechazo por mora
-                      vigente TELCOS se aplique únicamente a consultas futuras.
+                      No se activarán de forma silenciosa. Prepara los umbrales
+                      TELCOS, completa expresamente los dos topes de mora total y
+                      publica una nueva revisión. Solo aplicará a consultas futuras.
                     </p>
                     <Button
                       className="mt-4"
@@ -2987,7 +3174,7 @@ export default function DatacreditoPolicyConsole() {
                       disabled={saving}
                     >
                       <Plus className="h-4 w-4" aria-hidden="true" />
-                      Preparar regla por
+                      Preparar regla TELCOS por
                       {" "}{formatCop(DEFAULT_PRIORITY_REJECTION_AMOUNT_COP)}
                     </Button>
                   </div>
@@ -3166,8 +3353,8 @@ export default function DatacreditoPolicyConsole() {
                         {bands.length} {bands.length === 1 ? "banda" : "bandas"}
                         {" · "}
                         {priorityRulesValidation.valid
-                          ? "1 regla prioritaria TELCOS"
-                          : "regla prioritaria TELCOS pendiente"}
+                          ? "2 reglas prioritarias: TELCOS y mora total"
+                          : "reglas prioritarias de mora pendientes"}
                       </span>
                     </div>
                     <p
@@ -3177,7 +3364,7 @@ export default function DatacreditoPolicyConsole() {
                       {!validation.valid ||
                       !financialValidation.valid ||
                       !priorityRulesValidation.valid
-                        ? "Completa la regla prioritaria TELCOS, los parámetros financieros y ambas plataformas. Publicar permanecerá deshabilitado mientras existan valores inválidos, huecos, solapamientos o reglas Sin información ausentes o duplicadas."
+                        ? "Completa los umbrales TELCOS y de mora vigente total, los parámetros financieros y ambas plataformas. Publicar permanecerá deshabilitado mientras falte un tope o existan valores inválidos, huecos, solapamientos o reglas Sin información ausentes o duplicadas."
                         : hasUnsavedChanges
                           ? `La próxima publicación creará la versión ${(version || 0) + 1}; no reemplazará ni modificará revisiones históricas.`
                           : "No hay cambios pendientes por publicar."}
@@ -3376,12 +3563,18 @@ export default function DatacreditoPolicyConsole() {
         title="Publicar nueva revisión"
         description={`Se publicará la versión ${(version || 0) + 1} de “${
           selectedProfile?.name || "la política"
-        }” con ${validation.canonicalBands.length} bandas y dos umbrales de mora TELCOS: Android superior a ${formatCop(
+        }” con ${validation.canonicalBands.length} bandas. Mora TELCOS: Android superior a ${formatCop(
           priorityRulesValidation.canonical?.telcoDelinquency
             .rejectAboveCopByPlatform.ANDROID ?? null
         )} e iPhone superior a ${formatCop(
           priorityRulesValidation.canonical?.telcoDelinquency
             .rejectAboveCopByPlatform.IPHONE ?? null
+        )}. Mora vigente total: Android superior a ${formatCop(
+          priorityRulesValidation.canonical?.totalDelinquency
+            ?.rejectAboveCopByPlatform.ANDROID ?? null
+        )} e iPhone superior a ${formatCop(
+          priorityRulesValidation.canonical?.totalDelinquency
+            ?.rejectAboveCopByPlatform.IPHONE ?? null
         )}. La usarán ${
           selectedProfile?.assignedAlliesCount || 0
         } aliado(s) únicamente en consultas futuras.`}
@@ -3417,7 +3610,7 @@ export default function DatacreditoPolicyConsole() {
       <ConfirmDialog
         open={switchConfirmOpen}
         title="Descartar borrador y cambiar de política"
-        description="La política seleccionada reemplazará la regla prioritaria, los parámetros financieros y las bandas editadas en este borrador. Las revisiones ya publicadas no se modifican."
+        description="La política seleccionada reemplazará las reglas prioritarias, los parámetros financieros y las bandas editadas en este borrador. Las revisiones ya publicadas no se modifican."
         confirmLabel="Descartar y cambiar"
         onCancel={() => {
           setSwitchConfirmOpen(false);
@@ -3433,7 +3626,7 @@ export default function DatacreditoPolicyConsole() {
       <ConfirmDialog
         open={reloadConfirmOpen}
         title="Descartar cambios y recargar"
-        description="El catálogo vigente reemplazará la regla prioritaria, los parámetros financieros, las bandas y las reasignaciones pendientes. Esta acción no afecta cambios que ya se hayan publicado."
+        description="El catálogo vigente reemplazará las reglas prioritarias, los parámetros financieros, las bandas y las reasignaciones pendientes. Esta acción no afecta cambios que ya se hayan publicado."
         confirmLabel="Descartar y recargar"
         onCancel={() => setReloadConfirmOpen(false)}
         onConfirm={() => {

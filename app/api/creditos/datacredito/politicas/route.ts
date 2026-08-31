@@ -266,7 +266,8 @@ export async function POST(request: Request) {
         body.financialSettings
       )!,
       priorityRules: parseDataCreditoPolicyPriorityRules(
-        body.priorityRules
+        body.priorityRules,
+        { requireTotalDelinquency: true }
       )!,
       actorUserId: access.user.id,
     });
@@ -329,7 +330,8 @@ export async function PATCH(request: Request) {
           body.financialSettings
         )!,
         priorityRules: parseDataCreditoPolicyPriorityRules(
-          body.priorityRules
+          body.priorityRules,
+          { requireTotalDelinquency: true }
         )!,
         createdByUserId: access.user.id,
         expectedVersion,

@@ -167,14 +167,16 @@ export class DataCreditoStorageConfigurationError extends Error {
   readonly code:
     | "AUDIT_NOT_CONFIGURED"
     | "SCHEMA_NOT_READY"
-    | "TELCO_RISK_METRIC_UNAVAILABLE";
+    | "TELCO_RISK_METRIC_UNAVAILABLE"
+    | "TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE";
 
   constructor(
     message: string,
     code:
       | "AUDIT_NOT_CONFIGURED"
       | "SCHEMA_NOT_READY"
-      | "TELCO_RISK_METRIC_UNAVAILABLE" = "AUDIT_NOT_CONFIGURED"
+      | "TELCO_RISK_METRIC_UNAVAILABLE"
+      | "TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE" = "AUDIT_NOT_CONFIGURED"
   ) {
     super(message);
     this.name = "DataCreditoStorageConfigurationError";
@@ -1271,7 +1273,8 @@ export async function createDataCreditoPolicyRevision(input: {
     input.financialSettings
   )!;
   const priorityRules = parseDataCreditoPolicyPriorityRules(
-    input.priorityRules
+    input.priorityRules,
+    { requireTotalDelinquency: true }
   )!;
 
   return prisma.$transaction(async (tx) => {
@@ -1491,7 +1494,8 @@ async function hasRecentDataCreditoReviewBlock(
             assessment."durationMs" IS NOT NULL
             OR assessment."errorCode" IN (
               'PROVIDER_OUTCOME_AMBIGUOUS', 'NO_EVALUABLE_INFORMATION',
-              'TELCO_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
+              'TELCO_RISK_METRIC_UNAVAILABLE',
+              'TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
             )
           )
       ) AS "active"
@@ -1590,6 +1594,8 @@ async function readReusableDataCreditoRiskContext(
       securePayloadAvailable: false as const,
       telcoDelinquentBalanceCop: null,
       telcoDelinquencyInformationAvailable: null,
+      totalDelinquentBalanceCop: null,
+      totalDelinquencyInformationAvailable: null,
     };
   }
 
@@ -1618,11 +1624,23 @@ async function readReusableDataCreditoRiskContext(
     riskSummary?.telcos.delinquentBalance ?? null;
   const telcoDelinquencyInformationAvailable =
     riskSummary?.telcos.available ?? null;
+  const totalDelinquentBalanceCop =
+    riskSummary?.totals?.delinquentBalance ?? null;
+  const totalDelinquencyInformationAvailable =
+    riskSummary === null
+      ? null
+      : riskSummary.indicatorValuesHaveInformation === false
+        ? false
+        : riskSummary.totals !== null
+          ? true
+          : null;
 
   return {
     securePayloadAvailable: true as const,
     telcoDelinquentBalanceCop,
     telcoDelinquencyInformationAvailable,
+    totalDelinquentBalanceCop,
+    totalDelinquencyInformationAvailable,
   };
 }
 
@@ -1650,12 +1668,17 @@ async function cloneReusableDataCreditoAssessment(
     input.policyVersion
   );
   const currentPolicy = policyFromRevisionRow(revisionRows[0] || null);
-  const priorityRuleEnabled =
+  const telcoPriorityRuleEnabled =
     currentPolicy?.priorityRules?.telcoDelinquency.enabled === true;
-  const riskContext = priorityRuleEnabled
+  const totalPriorityRuleEnabled =
+    currentPolicy?.priorityRules?.totalDelinquency?.enabled === true;
+  const riskContext = telcoPriorityRuleEnabled || totalPriorityRuleEnabled
     ? await readReusableDataCreditoRiskContext(sourceRow, database)
     : null;
-  if (priorityRuleEnabled && !riskContext?.securePayloadAvailable) {
+  if (
+    (telcoPriorityRuleEnabled || totalPriorityRuleEnabled) &&
+    !riskContext?.securePayloadAvailable
+  ) {
     throw new DataCreditoStorageConfigurationError(
       "La consulta vigente no tiene un expediente cifrado disponible para aplicar la regla prioritaria de mora. No se realizo una nueva consulta.",
       "SCHEMA_NOT_READY"
@@ -1671,10 +1694,42 @@ async function cloneReusableDataCreditoAssessment(
     riskContext?.telcoDelinquencyInformationAvailable === null ||
     (riskContext?.telcoDelinquencyInformationAvailable === true &&
       !reusableTelcoRiskMetricValid);
-  if (priorityRuleEnabled && reusableTelcoRiskMetricUnavailable) {
+  if (telcoPriorityRuleEnabled && reusableTelcoRiskMetricUnavailable) {
     throw new DataCreditoStorageConfigurationError(
       "La consulta vigente no contiene una mora vigente Telcos valida para aplicar la regla prioritaria. No se realizo una nueva consulta.",
       "TELCO_RISK_METRIC_UNAVAILABLE"
+    );
+  }
+  const telcoRejectionThresholdCop =
+    currentPolicy?.priorityRules?.telcoDelinquency.rejectAboveCopByPlatform?.[
+      input.platform
+    ];
+  const telcoPriorityRejection =
+    telcoPriorityRuleEnabled &&
+    riskContext?.telcoDelinquencyInformationAvailable === true &&
+    reusableTelcoRiskMetricValid &&
+    Number.isSafeInteger(telcoRejectionThresholdCop) &&
+    telcoRejectionThresholdCop! > 0 &&
+    reusableTelcoDelinquencyCop! > telcoRejectionThresholdCop!;
+  const reusableTotalDelinquencyCop =
+    riskContext?.totalDelinquentBalanceCop;
+  const reusableTotalRiskMetricValid =
+    typeof reusableTotalDelinquencyCop === "number" &&
+    Number.isSafeInteger(reusableTotalDelinquencyCop) &&
+    reusableTotalDelinquencyCop >= 0;
+  const reusableTotalRiskMetricUnavailable =
+    riskContext?.totalDelinquencyInformationAvailable === null ||
+    riskContext?.totalDelinquencyInformationAvailable === undefined ||
+    (riskContext.totalDelinquencyInformationAvailable === true &&
+      !reusableTotalRiskMetricValid);
+  if (
+    totalPriorityRuleEnabled &&
+    !telcoPriorityRejection &&
+    reusableTotalRiskMetricUnavailable
+  ) {
+    throw new DataCreditoStorageConfigurationError(
+      "La consulta vigente no contiene una mora vigente total valida para aplicar la regla prioritaria. No se realizo una nueva consulta.",
+      "TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE"
     );
   }
   const resolution =
@@ -1683,12 +1738,16 @@ async function cloneReusableDataCreditoAssessment(
           currentPolicy,
           input.platform,
           sourceRow.score,
-          priorityRuleEnabled
+          telcoPriorityRuleEnabled || totalPriorityRuleEnabled
             ? {
                 telcoDelinquentBalanceCop:
                   riskContext?.telcoDelinquentBalanceCop ?? null,
                 telcoDelinquencyInformationAvailable:
                   riskContext?.telcoDelinquencyInformationAvailable ?? null,
+                totalDelinquentBalanceCop:
+                  riskContext?.totalDelinquentBalanceCop ?? null,
+                totalDelinquencyInformationAvailable:
+                  riskContext?.totalDelinquencyInformationAvailable ?? null,
               }
             : undefined
         )

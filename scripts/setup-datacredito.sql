@@ -301,7 +301,8 @@ WHERE root."reusedFromAssessmentId" IS NULL
         root."durationMs" IS NOT NULL
         OR root."errorCode" IN (
           'PROVIDER_OUTCOME_AMBIGUOUS', 'NO_EVALUABLE_INFORMATION',
-          'TELCO_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
+          'TELCO_RISK_METRIC_UNAVAILABLE',
+          'TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
         )
       )
     )
@@ -418,7 +419,8 @@ BEGIN
           NEW."durationMs" IS NOT NULL
           OR NEW."errorCode" IN (
             'PROVIDER_OUTCOME_AMBIGUOUS', 'NO_EVALUABLE_INFORMATION',
-            'TELCO_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
+            'TELCO_RISK_METRIC_UNAVAILABLE',
+            'TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
           )
         )
       )
@@ -470,7 +472,8 @@ BEGIN
             assessment."durationMs" IS NOT NULL
             OR assessment."errorCode" IN (
               'PROVIDER_OUTCOME_AMBIGUOUS', 'NO_EVALUABLE_INFORMATION',
-              'TELCO_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
+              'TELCO_RISK_METRIC_UNAVAILABLE',
+              'TOTAL_DELINQUENCY_RISK_METRIC_UNAVAILABLE', 'POLICY_NO_MATCH'
             )
           )
         )

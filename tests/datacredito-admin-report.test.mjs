@@ -409,6 +409,37 @@ test("clasifica la mora Telcos sin inferir pagos históricos", () => {
   assert.equal(unavailableSummary.telcos.delinquencyStatus, "Mora no informada");
 });
 
+test("normaliza la mora vigente total informada sin volver a sumar sectores", () => {
+  const payload = providerPayload();
+  const indicators =
+    payload.content.respuesta.comportamientoCrediticio.indicadoresValores;
+  indicators.saldoMora = "11629";
+  indicators.sectores[0].saldoMora = "90000";
+  indicators.sectores[1].saldoMora = "1";
+
+  const summary = buildDataCreditoAdminRiskSummary(payload);
+  assert.ok(summary);
+  assert.equal(summary.indicatorValuesHaveInformation, true);
+  assert.equal(summary.totals.delinquentBalance, 11629000);
+  assert.notEqual(
+    summary.totals.delinquentBalance,
+    summary.sectors.reduce(
+      (total, sector) => total + (sector.delinquentBalance || 0),
+      0
+    )
+  );
+
+  for (const invalid of [null, "-1", "0.0005", "9007199254741"]) {
+    const invalidPayload = providerPayload();
+    invalidPayload.content.respuesta.comportamientoCrediticio.indicadoresValores.saldoMora =
+      invalid;
+    const invalidSummary = buildDataCreditoAdminRiskSummary(invalidPayload);
+    assert.ok(invalidSummary);
+    assert.equal(invalidSummary.indicatorValuesHaveInformation, true);
+    assert.equal(invalidSummary.totals.delinquentBalance, null);
+  }
+});
+
 test("conserva Telcos aunque el proveedor lo envíe después del límite sectorial", () => {
   const payload = providerPayload();
   const indicators =
@@ -524,7 +555,7 @@ test("la consola central presenta el expediente completo en secciones accesibles
   );
   assert.match(
     adminConsoleSource,
-    /359 equivale a[\s\S]*\$359\.000[\s\S]*La regla prioritaria usa únicamente la mora vigente[\s\S]*agregada del sector TELCOS, convertida a COP/
+    /359 equivale a[\s\S]*\$359\.000[\s\S]*Las reglas prioritarias usan la mora vigente agregada[\s\S]*del sector TELCOS y la mora vigente total, ambas convertidas a[\s\S]*COP[\s\S]*El total informado no se vuelve a sumar por sectores/
   );
   assert.match(
     adminConsoleSource,
@@ -536,11 +567,24 @@ test("la consola central presenta el expediente completo en secciones accesibles
   );
   assert.match(adminConsoleSource, /"TELCO_DELINQUENCY_THRESHOLD"/);
   assert.match(adminConsoleSource, /telcoRejectionThresholdCop/);
-  assert.doesNotMatch(adminConsoleSource, /TOTAL_DELINQUENCY_THRESHOLD/);
+  assert.match(adminConsoleSource, /"TOTAL_DELINQUENCY_THRESHOLD"/);
+  assert.match(adminConsoleSource, /totalDelinquencyRejectionThresholdCop/);
+  assert.match(
+    adminConsoleSource,
+    /Rechazo prioritario por mora vigente total:[\s\S]*totals\?\.delinquentBalance[\s\S]*superó[\s\S]*totalDelinquencyRejectionThresholdCop[\s\S]*después de la regla TELCOS y antes del puntaje/
+  );
+  assert.match(
+    adminConsoleSource,
+    /<strong>Rechazo prioritario · mora total<\/strong>/
+  );
   assert.doesNotMatch(adminConsoleSource, /\brejectionThresholdCop\b/);
   assert.match(
     adminConsoleSource,
-    /offer\.decisionRule !==[\s\S]*"TELCO_DELINQUENCY_THRESHOLD"/
+    /detail\.assessment\.offer\.decisionRule !==[\s\S]*"TELCO_DELINQUENCY_THRESHOLD"/
+  );
+  assert.match(
+    adminConsoleSource,
+    /detail\.assessment\.offer\.decisionRule !==[\s\S]*"TOTAL_DELINQUENCY_THRESHOLD"/
   );
   assert.match(
     adminConsoleSource,

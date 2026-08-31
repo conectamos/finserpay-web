@@ -278,7 +278,9 @@ export async function PATCH(request: Request) {
       );
     }
     const priorityRules =
-      parseDataCreditoPolicyPriorityRules(priorityRulesInput)!;
+      parseDataCreditoPolicyPriorityRules(priorityRulesInput, {
+        requireTotalDelinquency: true,
+      })!;
     const policy = await createDataCreditoPolicyVersion({
       profileId: assigned.policy.profileId,
       bands,
