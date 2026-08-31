@@ -294,6 +294,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
         plazoMeses: credito.plazoMeses,
         frecuenciaPago: credito.frecuenciaPago,
         fechaPrimerPago: credito.fechaPrimerPago,
+        fechaProximoPago: credito.fechaProximoPago,
         abonos: credito.abonos,
         today,
         settled: Boolean(credito.pazYSalvoEmitidoAt),

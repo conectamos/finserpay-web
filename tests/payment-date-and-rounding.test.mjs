@@ -115,6 +115,67 @@ test("la secuencia quincenal es estable e independiente de la zona del proceso",
   );
 });
 
+test("la fecha administrativa reemplaza solo el vencimiento de la proxima cuota", () => {
+  const plan = buildCreditPaymentPlan({
+    montoCredito: 400_000,
+    valorCuota: 100_000,
+    plazoMeses: 4,
+    frecuenciaPago: "QUINCENAL",
+    fechaPrimerPago: "2026-09-17",
+    fechaProximoPago: "2026-09-05",
+    today: "2026-09-06",
+  });
+
+  assert.deepEqual(
+    plan.installments.map((item) => item.fechaVencimiento),
+    ["2026-09-05", "2026-10-02", "2026-10-17", "2026-11-02"]
+  );
+  assert.equal(plan.nextInstallment?.numero, 1);
+  assert.equal(plan.nextInstallment?.fechaVencimiento, "2026-09-05");
+  assert.equal(plan.nextInstallment?.estaEnMora, true);
+  assert.equal(plan.estadoPago, "MORA");
+});
+
+test("la fecha administrativa sigue a la primera cuota pendiente sin reescribir las pagadas", () => {
+  const plan = buildCreditPaymentPlan({
+    montoCredito: 400_000,
+    valorCuota: 100_000,
+    plazoMeses: 4,
+    frecuenciaPago: "QUINCENAL",
+    fechaPrimerPago: "2026-09-17",
+    fechaProximoPago: "2026-10-05",
+    today: "2026-10-01",
+    abonos: [{ valor: 100_000 }],
+  });
+
+  assert.deepEqual(
+    plan.installments.map((item) => item.fechaVencimiento),
+    ["2026-09-17", "2026-10-05", "2026-10-17", "2026-11-02"]
+  );
+  assert.equal(plan.installments[0].estado, "PAGO");
+  assert.equal(plan.nextInstallment?.numero, 2);
+  assert.equal(plan.nextInstallment?.fechaVencimiento, "2026-10-05");
+  assert.equal(plan.estadoPago, "AL_DIA");
+});
+
+test("un credito liquidado ignora la excepcion de proximo vencimiento", () => {
+  const plan = buildCreditPaymentPlan({
+    montoCredito: 200_000,
+    valorCuota: 100_000,
+    plazoMeses: 2,
+    frecuenciaPago: "QUINCENAL",
+    fechaPrimerPago: "2026-09-17",
+    fechaProximoPago: "2026-09-05",
+    settled: true,
+  });
+
+  assert.equal(plan.nextInstallment, null);
+  assert.deepEqual(
+    plan.installments.map((item) => item.fechaVencimiento),
+    ["2026-09-17", "2026-10-02"]
+  );
+});
+
 test("el corte de la primera cuota usa la hora de Colombia", () => {
   assert.equal(
     getDefaultFirstPaymentDate("2026-08-05", "QUINCENAL"),

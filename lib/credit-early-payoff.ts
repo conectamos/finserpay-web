@@ -79,6 +79,7 @@ export function calculateCreditEarlyPayoff(
     plazoMeses: input.plazoMeses,
     frecuenciaPago: input.frecuenciaPago,
     fechaPrimerPago: input.fechaPrimerPago || input.fechaProximoPago,
+    fechaProximoPago: input.fechaProximoPago,
     abonos: input.abonos,
     today: input.today,
   });

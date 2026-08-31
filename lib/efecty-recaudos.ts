@@ -3,6 +3,7 @@ import path from "node:path";
 import SftpClient from "ssh2-sftp-client";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { resolveNextPaymentDateAfterPayment } from "@/lib/credit-next-payment-date";
 import {
   creditCajaDescription,
   resolveCreditState,
@@ -521,6 +522,7 @@ function pickCreditForPayment(
         plazoMeses: Number(credit.plazoMeses || 1),
         frecuenciaPago: credit.frecuenciaPago,
         fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+        fechaProximoPago: credit.fechaProximoPago,
         abonos: credit.abonos.map((abono) => ({
           valor: Number(abono.valor || 0),
           fechaAbono: abono.fechaAbono,
@@ -769,6 +771,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
           frecuenciaPago: lockedCredit.frecuenciaPago,
           fechaPrimerPago:
             lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+          fechaProximoPago: lockedCredit.fechaProximoPago,
           abonos: previousAbonos.map((abonoItem) => ({
             valor: Number(abonoItem.valor || 0),
             fechaAbono: abonoItem.fechaAbono,
@@ -851,6 +854,13 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
     });
     const finalized = Math.round(plan.saldoPendiente * 100) <= 0;
     const issuedAt = finalized ? new Date() : null;
+    const nextPaymentDate = finalized
+      ? null
+      : resolveNextPaymentDateAfterPayment({
+          afterPayment: plan.nextInstallment,
+          beforePayment: currentPlan?.nextInstallment || null,
+          currentNextPaymentDate: lockedCredit.fechaProximoPago,
+        });
 
     await tx.credito.update({
       where: { id: lockedCredit.id },
@@ -863,11 +873,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
             pazYSalvoEmitidoAt: issuedAt,
           }
         : {
-            fechaProximoPago: plan.nextInstallment?.fechaVencimiento
-              ? new Date(
-                  `${plan.nextInstallment.fechaVencimiento}T12:00:00.000Z`
-                )
-              : lockedCredit.fechaProximoPago,
+            fechaProximoPago: nextPaymentDate,
           },
     });
 

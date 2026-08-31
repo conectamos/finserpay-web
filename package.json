@@ -11,7 +11,7 @@
     "build": "npm run prisma:generate && next build",
     "start": "next start",
     "start:standalone": "node .next/standalone/server.js",
-    "test:wompi": "node --experimental-strip-types --test tests/wompi-early-payoff-intent.test.mjs tests/credit-payment-plan-settled.test.mjs tests/payment-date-and-rounding.test.mjs",
+    "test:wompi": "node --experimental-strip-types --test tests/wompi-early-payoff-intent.test.mjs tests/credit-payment-plan-settled.test.mjs tests/payment-date-and-rounding.test.mjs tests/payment-next-date-after-payment.test.mjs",
     "test:pwa": "node --test tests/pwa-update-policy.test.mjs",
     "test:client-documents": "node --test tests/client-document-download.test.mjs",
     "test:credit-close": "node --experimental-strip-types --test tests/credit-create-recovery.test.mjs tests/credit-contact-phones.test.mjs tests/credit-wizard-navigation.test.mjs tests/credit-simulator-platform.test.mjs tests/veriff-mobile-return.test.mjs tests/credit-close-confirmation.test.mjs tests/credit-close-request-binding.test.mjs tests/signed-credit-close-payload.test.mjs",

@@ -298,6 +298,7 @@ function buildPlan(
     plazoMeses: Number(credito.plazoMeses || 1),
     frecuenciaPago: credito.frecuenciaPago,
     fechaPrimerPago: credito.fechaPrimerPago || credito.fechaProximoPago,
+    fechaProximoPago: credito.fechaProximoPago,
     abonos: abonos.map((item) => ({
       valor: Number(item.valor || 0),
       fechaAbono: item.fechaAbono,

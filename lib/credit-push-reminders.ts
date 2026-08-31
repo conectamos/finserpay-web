@@ -456,6 +456,7 @@ export async function dispatchCreditPushReminders(
         valor: Number(item.valor || 0),
       })),
       fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+      fechaProximoPago: credit.fechaProximoPago,
       frecuenciaPago: credit.frecuenciaPago,
       montoCredito: Number(credit.montoCredito || 0),
       plazoMeses: Number(credit.plazoMeses || 1),

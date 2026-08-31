@@ -14,6 +14,11 @@ export type CreditPaymentPlanInput = {
   plazoMeses?: number | null;
   frecuenciaPago?: string | null;
   fechaPrimerPago?: Date | string | null;
+  /**
+   * Administrative override for the next unpaid installment only.
+   * The remaining contractual calendar keeps its original frequency.
+   */
+  fechaProximoPago?: Date | string | null;
   abonos?: Array<{
     valor?: number | null;
     fechaAbono?: Date | string | null;
@@ -171,6 +176,25 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
       };
     }
   );
+
+  if (input.fechaProximoPago && !input.settled) {
+    const nextInstallmentIndex = installments.findIndex(
+      (item) => item.saldoPendiente > 0
+    );
+
+    if (nextInstallmentIndex >= 0) {
+      const overriddenDueDate = calendarDateKey(
+        normalizeStoredCalendarDate(input.fechaProximoPago)
+      );
+      const nextInstallment = installments[nextInstallmentIndex];
+
+      installments[nextInstallmentIndex] = {
+        ...nextInstallment,
+        fechaVencimiento: overriddenDueDate,
+        estaEnMora: overriddenDueDate < todayKey,
+      };
+    }
+  }
 
   const effectiveInstallments = input.settled
     ? installments.map((item) => ({

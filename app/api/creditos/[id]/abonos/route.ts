@@ -13,6 +13,7 @@ import {
   toNumber,
 } from "@/lib/credit-factory";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { resolveNextPaymentDateAfterPayment } from "@/lib/credit-next-payment-date";
 import {
   EARLY_PAYOFF_PAYMENT_TYPE,
   buildEarlyPayoffObservation,
@@ -351,6 +352,7 @@ async function loadPaymentPlan(credit: Awaited<ReturnType<typeof loadCredit>>) {
     plazoMeses: Number(credit.plazoMeses || 1),
     frecuenciaPago: credit.frecuenciaPago,
     fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+    fechaProximoPago: credit.fechaProximoPago,
     abonos: abonos.map((item) => ({
       valor: Number(item.valor || 0),
       fechaAbono: item.fechaAbono,
@@ -639,6 +641,7 @@ export async function GET(
       plazoMeses: Number(credit.plazoMeses || 1),
       frecuenciaPago: credit.frecuenciaPago,
       fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+      fechaProximoPago: credit.fechaProximoPago,
       abonos: activePaymentItems.map((item) => ({
         valor: Number(item.valor || 0),
         fechaAbono: item.fechaAbono,
@@ -791,6 +794,7 @@ export async function POST(
         plazoMeses: Number(credit.plazoMeses || 1),
         frecuenciaPago: credit.frecuenciaPago,
         fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+        fechaProximoPago: credit.fechaProximoPago,
         abonos: currentAbonos.map((item) => ({
           valor: Number(item.valor || 0),
           fechaAbono: item.fechaAbono,
@@ -943,6 +947,7 @@ export async function POST(
         frecuenciaPago: lockedCredit.frecuenciaPago,
         fechaPrimerPago:
           lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+        fechaProximoPago: lockedCredit.fechaProximoPago,
         abonos: lockedAbonos.map((item) => ({
           valor: Number(item.valor || 0),
           fechaAbono: item.fechaAbono,
@@ -972,6 +977,7 @@ export async function POST(
             frecuenciaPago: lockedCredit.frecuenciaPago,
             fechaPrimerPago:
               lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+            fechaProximoPago: lockedCredit.fechaProximoPago,
             abonos: lockedAbonos.map((item) => ({
               valor: Number(item.valor || 0),
               fechaAbono: item.fechaAbono,
@@ -1118,6 +1124,13 @@ export async function POST(
         earlyPayoffInTx || (txPlan && txPlan.saldoPendiente <= 0)
       );
       const settlementIssuedAt = paymentCompletesCredit ? new Date() : null;
+      const nextPaymentDate = paymentCompletesCredit
+        ? null
+        : resolveNextPaymentDateAfterPayment({
+            afterPayment: txPlan?.nextInstallment || null,
+            beforePayment: lockedPlan.nextInstallment,
+            currentNextPaymentDate: lockedCredit.fechaProximoPago,
+          });
 
       await tx.credito.update({
         where: { id: credit.id },
@@ -1151,9 +1164,7 @@ export async function POST(
                 pazYSalvoEmitidoAt: settlementIssuedAt,
               }
           : {
-              fechaProximoPago: txPlan?.nextInstallment?.fechaVencimiento
-                ? new Date(`${txPlan.nextInstallment.fechaVencimiento}T12:00:00.000Z`)
-                : lockedCredit.fechaProximoPago,
+              fechaProximoPago: nextPaymentDate,
             },
       });
 

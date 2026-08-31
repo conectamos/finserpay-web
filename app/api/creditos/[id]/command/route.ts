@@ -161,6 +161,7 @@ function serializeCredit(item: SerializedCreditSource, payment?: PaymentSummary)
     plazoMeses: Number(item.plazoMeses || 1),
     frecuenciaPago: item.frecuenciaPago,
     fechaPrimerPago: item.fechaPrimerPago || item.fechaProximoPago,
+    fechaProximoPago: item.fechaProximoPago,
     abonos: summary.totalAbonado > 0 ? [{ valor: summary.totalAbonado }] : [],
     settled: Boolean(item.pazYSalvoEmitidoAt),
   });

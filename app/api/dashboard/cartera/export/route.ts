@@ -210,6 +210,7 @@ export async function GET(req: Request) {
           plazoMeses: Number(credito.plazoMeses || 1),
           frecuenciaPago: credito.frecuenciaPago,
           fechaPrimerPago: credito.fechaPrimerPago || credito.fechaProximoPago,
+          fechaProximoPago: credito.fechaProximoPago,
           abonos: credito.abonos.map((abono) => ({
             fechaAbono: abono.fechaAbono,
             valor: Number(abono.valor || 0),

@@ -1,5 +1,6 @@
 import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { resolveNextPaymentDateAfterPayment } from "@/lib/credit-next-payment-date";
 import {
   buildEarlyPayoffIntentMeta,
   buildEarlyPayoffObservation,
@@ -413,6 +414,7 @@ export async function repairProcessedWompiEarlyPayoffIntent(
       frecuenciaPago: lockedCredit.frecuenciaPago,
       fechaPrimerPago:
         lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+      fechaProximoPago: lockedCredit.fechaProximoPago,
       today: processedAbono.fechaAbono,
       abonos: previousAbonos.map((item) => ({
         valor: Number(item.valor || 0),
@@ -921,6 +923,7 @@ export async function processApprovedWompiPayment(
       frecuenciaPago: lockedCredit.frecuenciaPago,
       fechaPrimerPago:
         lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+      fechaProximoPago: lockedCredit.fechaProximoPago,
       abonos: previousAbonos.map((item) => ({
         valor: Number(item.valor || 0),
         fechaAbono: item.fechaAbono,
@@ -944,6 +947,7 @@ export async function processApprovedWompiPayment(
           frecuenciaPago: lockedCredit.frecuenciaPago,
           fechaPrimerPago:
             lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+          fechaProximoPago: lockedCredit.fechaProximoPago,
           abonos: previousAbonos.map((item) => ({
             valor: Number(item.valor || 0),
             fechaAbono: item.fechaAbono,
@@ -1058,6 +1062,13 @@ export async function processApprovedWompiPayment(
     const payoffIssuedAt = paymentCompletesCredit
       ? lockedCredit.pazYSalvoEmitidoAt || new Date()
       : null;
+    const nextPaymentDate = paymentCompletesCredit
+      ? null
+      : resolveNextPaymentDateAfterPayment({
+          afterPayment: plan?.nextInstallment || null,
+          beforePayment: currentPlan.nextInstallment,
+          currentNextPaymentDate: lockedCredit.fechaProximoPago,
+        });
 
     await tx.credito.update({
       where: { id: intent.creditoId },
@@ -1095,11 +1106,7 @@ export async function processApprovedWompiPayment(
               pazYSalvoEmitidoAt: payoffIssuedAt,
             }
           : {
-              fechaProximoPago: plan?.nextInstallment?.fechaVencimiento
-                ? new Date(
-                    `${plan.nextInstallment.fechaVencimiento}T12:00:00.000Z`
-                  )
-                : lockedCredit.fechaProximoPago,
+              fechaProximoPago: nextPaymentDate,
             },
     });
 

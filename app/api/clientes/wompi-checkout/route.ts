@@ -202,6 +202,7 @@ export async function POST(req: Request) {
       plazoMeses: Number(credit.plazoMeses || 1),
       frecuenciaPago: credit.frecuenciaPago,
       fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+      fechaProximoPago: credit.fechaProximoPago,
       abonos: credit.abonos.map((item) => ({
         valor: Number(item.valor || 0),
         fechaAbono: item.fechaAbono,
@@ -222,6 +223,7 @@ export async function POST(req: Request) {
         plazoMeses: Number(credit.plazoMeses || 1),
         frecuenciaPago: credit.frecuenciaPago,
         fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+        fechaProximoPago: credit.fechaProximoPago,
         abonos: credit.abonos.map((item) => ({
           valor: Number(item.valor || 0),
           fechaAbono: item.fechaAbono,
@@ -335,6 +337,7 @@ export async function POST(req: Request) {
         frecuenciaPago: lockedCredit.frecuenciaPago,
         fechaPrimerPago:
           lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+        fechaProximoPago: lockedCredit.fechaProximoPago,
         abonos: lockedAbonos.map((item) => ({
           valor: Number(item.valor || 0),
           fechaAbono: item.fechaAbono,
@@ -354,6 +357,7 @@ export async function POST(req: Request) {
           frecuenciaPago: lockedCredit.frecuenciaPago,
           fechaPrimerPago:
             lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+          fechaProximoPago: lockedCredit.fechaProximoPago,
           abonos: lockedAbonos.map((item) => ({
             valor: Number(item.valor || 0),
             fechaAbono: item.fechaAbono,

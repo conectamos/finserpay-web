@@ -324,6 +324,7 @@ export async function syncCreditMora(
     plazoMeses: Number(credit.plazoMeses || 1),
     frecuenciaPago: credit.frecuenciaPago,
     fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+    fechaProximoPago: credit.fechaProximoPago,
     abonos: credit.abonos.map((item) => ({
       valor: Number(item.valor || 0),
       fechaAbono: item.fechaAbono,

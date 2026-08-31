@@ -543,6 +543,7 @@ function serializeCredit(
     plazoMeses: Number(item.plazoMeses || 1),
     frecuenciaPago: item.frecuenciaPago,
     fechaPrimerPago: item.fechaPrimerPago || item.fechaProximoPago,
+    fechaProximoPago: item.fechaProximoPago,
     abonos: payment.totalAbonado > 0 ? [{ valor: payment.totalAbonado }] : [],
     settled: Boolean(item.pazYSalvoEmitidoAt),
   });
@@ -555,6 +556,7 @@ function serializeCredit(
     plazoMeses: Number(item.plazoMeses || 1),
     frecuenciaPago: item.frecuenciaPago,
     fechaPrimerPago: item.fechaPrimerPago || item.fechaProximoPago,
+    fechaProximoPago: item.fechaProximoPago,
     abonos: payment.totalAbonado > 0 ? [{ valor: payment.totalAbonado }] : [],
   });
   const valorCuotaComercial = resolveCommercialInstallment(item);

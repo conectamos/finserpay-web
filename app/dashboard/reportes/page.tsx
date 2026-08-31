@@ -366,6 +366,7 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
         },
         estado: true,
         fechaPrimerPago: true,
+        fechaProximoPago: true,
         frecuenciaPago: true,
         id: true,
         montoCredito: true,
@@ -406,6 +407,7 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
     const plan = buildCreditPaymentPlan({
       abonos: credit.abonos,
       fechaPrimerPago: credit.fechaPrimerPago,
+      fechaProximoPago: credit.fechaProximoPago,
       frecuenciaPago: credit.frecuenciaPago,
       montoCredito: credit.montoCredito,
       plazoMeses: credit.plazoMeses,
