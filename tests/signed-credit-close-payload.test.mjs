@@ -277,7 +277,7 @@ test("la politica reconstruida reproduce exactamente el checksum financiero firm
   assert.deepEqual(reconstructed.snapshot, original.snapshot);
 });
 
-test("la ruta canonicaliza solo un proceso firmado, válido y ligado al mismo borrador", async () => {
+test("la ruta canonicaliza el expediente válido antes de refrescar y exige firma al finalizar", async () => {
   const source = await readFile(
     path.join(projectRoot, "app/api/creditos/route.ts"),
     "utf8"
@@ -285,9 +285,13 @@ test("la ruta canonicaliza solo un proceso firmado, válido y ligado al mismo bo
 
   assert.match(source, /preloadedFirmaSeguroProcess\.draftId === preloadedSolicitudId/);
   assert.match(source, /!preloadedFirmaSeguroProcess\.creditoId/);
-  assert.match(source, /signedProcessCompleted/);
   assert.match(source, /signedSeal/);
   assert.match(source, /buildSignedCreditClosePayload\(/);
+  assert.match(source, /await refreshFirmaSeguroProcess\(storedFirmaSeguroProcess\)/);
+  assert.match(
+    source,
+    /!firmaSeguroProcess\?\.completedAt\s*&&\s*!firmaSeguroProcess\?\.signedDocumentBase64/
+  );
   assert.match(
     source,
     /const clienteNombreFinal =\s*authoritativeSignedTerms/

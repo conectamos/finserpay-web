@@ -1130,16 +1130,10 @@ export async function POST(req: Request) {
       const signedSeal = readFinancingTermsSeal(
         signedPayload?.financialTermsSeal
       );
-      const signedProcessCompleted = Boolean(
-        preloadedFirmaSeguroProcess?.completedAt ||
-          preloadedFirmaSeguroProcess?.signedDocumentBase64
-      );
-
       if (
         preloadedFirmaSeguroProcess &&
         preloadedFirmaSeguroProcess.draftId === preloadedSolicitudId &&
         !preloadedFirmaSeguroProcess.creditoId &&
-        signedProcessCompleted &&
         signedPayload &&
         signedSeal
       ) {
