@@ -156,6 +156,7 @@ test("convierte todos los parametros financieros firmados en la politica de cier
     tasaInteresEa: "0.420000000000",
     fianzaTotalPorcentaje: "0.180000000000",
     fianzaCuotaPorcentaje: "0.007500000000",
+    numeroCuotas: 24,
     fianzaModalidad: "TOTAL_CREDITO",
     fianzaFuente: "POLITICA",
     seguroCuotaPorcentaje: "0.002500000000",
@@ -276,6 +277,88 @@ test("la politica reconstruida reproduce exactamente el checksum financiero firm
   assert.equal(reconstructed.checksum, original.checksum);
   assert.deepEqual(reconstructed.snapshot, original.snapshot);
 });
+
+for (const calculoVersion of ["FRANCES_V1", "ARES_FRANCES_V1"]) {
+  test(`la fianza total repetitiva conserva exactamente el sello ${calculoVersion}`, () => {
+    const contrato = {
+      tipoDocumento: "CC",
+      clienteNombre: "CLIENTE IPHONE",
+      clienteTelefono: "3001234567",
+      clienteCorreo: "cliente@example.com",
+      clienteDireccion: "CALLE 1",
+      equipoMarca: "IPHONE",
+      equipoModelo: "IPHONE 17 PRO MAX 256GB",
+      referenciaEquipo: "IPHONE IPHONE 17 PRO MAX 256GB",
+      imei: "123456789012345",
+    };
+    const ares = calculoVersion === "ARES_FRANCES_V1";
+    const redondeoComercial = ares
+      ? { modo: "PISO", multiplo: 50 }
+      : { modo: "REDONDEO", multiplo: 100 };
+    const tasaPeriodoDecimales = ares ? 6 : 12;
+    const original = createFinancingTermsSeal({
+      folio: `FP-IP-${calculoVersion}`,
+      documento: "1234567890",
+      contrato,
+      amortizacion: calculateFrenchAmortization({
+        calculoVersion,
+        tasaPeriodoDecimales,
+        redondeoComercial,
+        valorVenta: 8_299_000,
+        cuotaInicial: 1_799_000,
+        numeroCuotas: 36,
+        tasaInteresEa: 29.66,
+        fianzaCuotaPorcentaje: 75 / 36,
+        seguroCuotaPorcentaje: 0.03,
+        frecuenciaPago: "QUINCENAL",
+        fechaPrimerPago: "2026-09-17",
+      }),
+      parametros: {
+        fianzaTotalPorcentaje: 75,
+        fianzaModalidad: "TOTAL_CREDITO",
+        fianzaFuente: "OFERTA_LEGACY_TOTAL",
+        tasaPeriodoDecimales,
+        redondeoComercial,
+        policyVersion: 3,
+        policyRevisionId: "policy-revision-iphone",
+      },
+    });
+    const resolved = resolveSignedCreditPolicyFinancialSettings(
+      original.snapshot
+    );
+    const reconstructed = createFinancingTermsSeal({
+      folio: original.snapshot.folio,
+      documento: original.snapshot.documento,
+      contrato: original.snapshot,
+      amortizacion: calculateFrenchAmortization({
+        calculoVersion: resolved.calculoVersion,
+        tasaPeriodoDecimales: resolved.tasaPeriodoDecimales,
+        redondeoComercial: resolved.redondeoComercial,
+        valorVenta: Number(original.snapshot.valorVenta),
+        cuotaInicial: Number(original.snapshot.cuotaInicial),
+        numeroCuotas: original.snapshot.numeroCuotas,
+        tasaInteresEa: resolved.tasaInteresEa,
+        fianzaCuotaPorcentaje: resolved.fianzaCuotaPorcentaje,
+        seguroCuotaPorcentaje: resolved.seguroCuotaPorcentaje,
+        frecuenciaPago: resolved.frecuenciaPago,
+        fechaPrimerPago: original.snapshot.fechaPrimerPago,
+      }),
+      parametros: {
+        fianzaTotalPorcentaje: resolved.fianzaTotalPorcentaje,
+        fianzaModalidad: resolved.fianzaModalidad,
+        fianzaFuente: resolved.fianzaSource,
+        tasaPeriodoDecimales: resolved.tasaPeriodoDecimales,
+        redondeoComercial: resolved.redondeoComercial,
+        policyVersion: original.snapshot.policyVersion,
+        policyRevisionId: original.snapshot.policyRevisionId,
+      },
+    });
+
+    assert.equal(resolved.fianzaCuotaPorcentaje, 75 / 36);
+    assert.equal(reconstructed.checksum, original.checksum);
+    assert.deepEqual(reconstructed.snapshot, original.snapshot);
+  });
+}
 
 test("la ruta canonicaliza el expediente válido antes de refrescar y exige firma al finalizar", async () => {
   const source = await readFile(

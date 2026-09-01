@@ -63,6 +63,31 @@ export function resolveSignedCreditPolicyFinancialSettings(
     throw new Error("La fuente de fianza firmada no es valida.");
   }
 
+  const numeroCuotas = signedFiniteNumber(
+    snapshot.numeroCuotas,
+    "numeroCuotas"
+  );
+  if (!Number.isSafeInteger(numeroCuotas) || numeroCuotas <= 0) {
+    throw new Error("El numero de cuotas firmado no es valido.");
+  }
+
+  const fianzaTotalPorcentaje = signedFiniteNumber(
+    snapshot.fianzaTotalPorcentaje,
+    "fianzaTotalPorcentaje"
+  );
+  const fianzaCuotaPorcentajeFirmada = signedFiniteNumber(
+    snapshot.fianzaCuotaPorcentaje,
+    "fianzaCuotaPorcentaje"
+  );
+  // En modalidad TOTAL_CREDITO la tasa original por cuota se obtiene de
+  // total / numeroCuotas. El snapshot la presenta con 12 decimales; reutilizar
+  // esa representacion puede introducir una millonésima de peso y generar un
+  // falso cambio de condiciones aunque el expediente firmado sea el mismo.
+  const fianzaCuotaPorcentaje =
+    fianzaModalidad === "TOTAL_CREDITO"
+      ? fianzaTotalPorcentaje / numeroCuotas
+      : fianzaCuotaPorcentajeFirmada;
+
   const tasaPeriodoDecimales = signedFiniteNumber(
     snapshot.tasaPeriodoDecimales,
     "tasaPeriodoDecimales"
@@ -102,14 +127,8 @@ export function resolveSignedCreditPolicyFinancialSettings(
       snapshot.tasaInteresEa,
       "tasaInteresEa"
     ),
-    fianzaTotalPorcentaje: signedFiniteNumber(
-      snapshot.fianzaTotalPorcentaje,
-      "fianzaTotalPorcentaje"
-    ),
-    fianzaCuotaPorcentaje: signedFiniteNumber(
-      snapshot.fianzaCuotaPorcentaje,
-      "fianzaCuotaPorcentaje"
-    ),
+    fianzaTotalPorcentaje,
+    fianzaCuotaPorcentaje,
     fianzaModalidad,
     seguroCuotaPorcentaje: signedFiniteNumber(
       snapshot.seguroCuotaPorcentaje,
