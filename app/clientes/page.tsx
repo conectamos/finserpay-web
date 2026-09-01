@@ -361,7 +361,8 @@ export default function ClienteConsultaPage() {
 
   const openWompiConfirm = (
     credit: ClientCredit,
-    mode: ClientPaymentMode = "INSTALLMENTS"
+    mode: ClientPaymentMode = "INSTALLMENTS",
+    installmentLimit?: number
   ) => {
     if (mode === "PAYOFF" && !credit.liquidacionAnticipada?.disponible) {
       setNotice({
@@ -373,9 +374,23 @@ export default function ClienteConsultaPage() {
       return;
     }
 
-    if (mode === "INSTALLMENTS" && !cuotasSeleccionadas(credit).length) {
+    const selectedInstallments =
+      mode === "INSTALLMENTS" && installmentLimit !== undefined
+        ? getPayableInstallments(credit).filter(
+            (installment) => installment.numero <= installmentLimit
+          )
+        : cuotasSeleccionadas(credit);
+
+    if (mode === "INSTALLMENTS" && !selectedInstallments.length) {
       setNotice({ text: "Selecciona una cuota para pagar.", tone: "red" });
       return;
+    }
+
+    if (mode === "INSTALLMENTS" && installmentLimit !== undefined) {
+      setSelectedLimit((current) => ({
+        ...current,
+        [credit.id]: installmentLimit,
+      }));
     }
 
     const suggestedPhone = formatNequiPhone(credit.clienteTelefono || nequiPhone);
@@ -388,6 +403,11 @@ export default function ClienteConsultaPage() {
     setNotice(null);
     setConfirmPaymentMode(mode);
     setConfirmPaymentCreditId(credit.id);
+  };
+
+  const openNextInstallmentWompiConfirm = (credit: ClientCredit) => {
+    const nextInstallment = getPayableInstallments(credit)[0];
+    openWompiConfirm(credit, "INSTALLMENTS", nextInstallment?.numero);
   };
 
   const payWithWompi = async (credit: ClientCredit) => {
@@ -746,7 +766,7 @@ export default function ClienteConsultaPage() {
           onOpenDevice={() => openPanel("pending")}
           onOpenHistory={() => openPanel("history")}
           onOpenNotifications={() => openPanel("history")}
-          onOpenPaymentMethods={() => openPanel("payments")}
+          onPayInstallment={() => openNextInstallmentWompiConfirm(activeCredit)}
           onOpenPlan={() => openPanel("pending")}
           onOpenProfile={forgetDocument}
           onPayoff={() => openWompiConfirm(activeCredit, "PAYOFF")}

@@ -54,7 +54,7 @@ export type ClientActiveCreditDashboardProps = {
   onOpenDevice?: () => void;
   onOpenHistory: () => void;
   onOpenNotifications: () => void;
-  onOpenPaymentMethods: () => void;
+  onPayInstallment: () => void;
   onOpenPlan: () => void;
   onOpenProfile?: () => void;
   onPayoff: () => void;
@@ -133,7 +133,7 @@ export default function ClientActiveCreditDashboard({
   onOpenDevice,
   onOpenHistory,
   onOpenNotifications,
-  onOpenPaymentMethods,
+  onPayInstallment,
   onOpenPlan,
   onOpenProfile,
   onPayoff,
@@ -255,7 +255,7 @@ export default function ClientActiveCreditDashboard({
             <button
               type="button"
               className={styles.payButton}
-              onClick={onOpenPaymentMethods}
+              onClick={onPayInstallment}
               disabled={!canPayInstallment}
             >
               <CreditCard aria-hidden="true" />
