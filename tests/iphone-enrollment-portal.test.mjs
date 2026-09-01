@@ -1152,6 +1152,52 @@ test("la fábrica sincroniza el resultado y el portal usa un acceso compartido s
   assert.doesNotMatch(approvalRequest, /analystName|analystExternalId/);
 });
 
+test("la aprobación confirmada abre un resumen modal accesible y responsive", () => {
+  const approvalResponseStart = portalSource.indexOf(
+    "const data = await readJson(response)",
+    portalSource.indexOf("/api/public/iphone-enrollment/cases/approve")
+  );
+  const approvalResponseEnd = portalSource.indexOf("} catch", approvalResponseStart);
+  const approvalResponse = portalSource.slice(
+    approvalResponseStart,
+    approvalResponseEnd
+  );
+
+  assert.ok(approvalResponseStart >= 0 && approvalResponseEnd > approvalResponseStart);
+  assert.ok(
+    approvalResponse.indexOf("if (!response.ok || !data.review)") <
+      approvalResponse.indexOf("setSuccessOpen(true)")
+  );
+  assert.match(portalSource, /role="dialog"/);
+  assert.match(portalSource, /aria-modal="true"/);
+  assert.match(portalSource, /createPortal\(/);
+  assert.match(portalSource, /fp-ui-dialog-backdrop/);
+  assert.match(portalSource, /iphone-enrollment-success-title/);
+  assert.match(portalSource, /iphone-enrollment-success-description/);
+  assert.match(portalSource, /document\.body\.style\.overflow = "hidden"/);
+  assert.match(portalSource, /event\.key === "Escape"/);
+  assert.match(portalSource, /event\.key !== "Tab"/);
+  assert.match(portalSource, /backdrop-blur-sm/);
+  assert.match(portalSource, /max-w-\[560px\]/);
+  assert.match(portalSource, /max-h-\[calc\(100dvh-2\.5rem\)\]/);
+  assert.match(portalSource, /overscroll-contain/);
+  assert.match(portalSource, /sm:grid-cols-2/);
+  assert.match(portalSource, /ENROLADO CORRECTAMENTE/);
+  assert.match(portalSource, /¡Dispositivo protegido!/);
+  for (const label of ["Cliente", "Cédula", "IMEI", "Referencia", "Fecha y hora"]) {
+    assert.match(portalSource, new RegExp(`label="${label}"`));
+  }
+  assert.match(portalSource, /value=\{item\.clienteNombre\}/);
+  assert.match(portalSource, /value=\{formatDocument\(documentValue\)\}/);
+  assert.match(portalSource, /value=\{imeiValue\}/);
+  assert.match(portalSource, /value=\{item\.equipo\}/);
+  assert.match(portalSource, /formatDateTime\(review\.approvedAt\)/);
+  assert.match(portalSource, />\s*Finalizar\s*</);
+  assert.match(portalSource, />\s*Consultar otra solicitud\s*</);
+  assert.match(portalSource, /setDocument\(""\)/);
+  assert.match(portalSource, /setImei\(""\)/);
+});
+
 test("el módulo no dispara una nueva consulta externa a DataCrédito", () => {
   const serverSources = [
     storageSource,

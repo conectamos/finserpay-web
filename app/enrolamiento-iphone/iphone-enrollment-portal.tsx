@@ -1,17 +1,23 @@
 "use client";
 
+import Image from "next/image";
 import {
+  CalendarDays,
   Check,
   CheckCircle2,
   Clock3,
+  IdCard,
   LockKeyhole,
   LogOut,
   Search,
   ShieldCheck,
   Smartphone,
+  Tag,
+  UserRound,
   UserRoundCheck,
 } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import FinserBrand from "@/app/_components/finser-brand";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import {
@@ -94,6 +100,7 @@ export default function IphoneEnrollmentPortal() {
   const [searching, setSearching] = useState(false);
   const [approving, setApproving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [successOpen, setSuccessOpen] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -150,7 +157,14 @@ export default function IphoneEnrollmentPortal() {
     setCaseToken("");
     setConfirmed(false);
     setConfirmOpen(false);
+    setSuccessOpen(false);
     setMessage("");
+  };
+
+  const startNewCase = () => {
+    setDocument("");
+    setImei("");
+    resetCase();
   };
 
   const searchCase = async (event: FormEvent) => {
@@ -172,6 +186,7 @@ export default function IphoneEnrollmentPortal() {
       if (response.status === 401) {
         setAccessState("locked");
         setMessage("El acceso venció. Vuelva a abrir el enlace compartido.");
+        setConfirmOpen(false);
         return;
       }
       if (!response.ok || !data.item || !data.caseToken) {
@@ -209,6 +224,7 @@ export default function IphoneEnrollmentPortal() {
       if (response.status === 401) {
         setAccessState("locked");
         setMessage("El acceso venció. Vuelva a abrir el enlace compartido.");
+        setConfirmOpen(false);
         return;
       }
       if (!response.ok || !data.review) {
@@ -221,11 +237,8 @@ export default function IphoneEnrollmentPortal() {
       );
       setConfirmOpen(false);
       setConfirmed(true);
-      setMessage(
-        data.alreadyApproved
-          ? "Esta solicitud ya estaba marcada como ENROLADO CORRECTAMENTE."
-          : "ENROLADO CORRECTAMENTE. La fábrica del asesor fue actualizada."
-      );
+      setMessage("");
+      setSuccessOpen(true);
     } catch {
       setMessage("No se pudo conectar con FINSER PAY. Intenta nuevamente.");
       setConfirmOpen(false);
@@ -396,11 +409,7 @@ export default function IphoneEnrollmentPortal() {
                   description="Ingresa la cédula y el IMEI para cargar únicamente el caso que vas a validar."
                 />
               ) : enrollmentCase.review ? (
-                <ApprovedCase item={enrollmentCase} onNewCase={() => {
-                  setDocument("");
-                  setImei("");
-                  resetCase();
-                }} />
+                <ApprovedCase item={enrollmentCase} onNewCase={startNewCase} />
               ) : (
                 <div>
                   <div className="flex flex-col gap-3 border-b border-[var(--fp-border)] pb-5 sm:flex-row sm:items-start sm:justify-between">
@@ -477,7 +486,220 @@ export default function IphoneEnrollmentPortal() {
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => void approveCase()}
       />
+
+      {enrollmentCase?.review ? (
+        <EnrollmentSuccessDialog
+          open={successOpen}
+          item={enrollmentCase}
+          documentValue={document}
+          imeiValue={imei}
+          onFinish={() => setSuccessOpen(false)}
+          onNewCase={startNewCase}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function formatDocument(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits ? digits.replace(/\B(?=(\d{3})+(?!\d))/g, ".") : value;
+}
+
+function EnrollmentSuccessDialog({
+  open,
+  item,
+  documentValue,
+  imeiValue,
+  onFinish,
+  onNewCase,
+}: {
+  open: boolean;
+  item: EnrollmentCase;
+  documentValue: string;
+  imeiValue: string;
+  onFinish: () => void;
+  onNewCase: () => void;
+}) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const finishRef = useRef(onFinish);
+  const review = item.review;
+
+  useEffect(() => {
+    finishRef.current = onFinish;
+  }, [onFinish]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      dialogRef.current
+        ?.querySelector<HTMLElement>("[data-enrollment-success-focus]")
+        ?.focus();
+    });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finishRef.current();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
+    };
+  }, [open]);
+
+  if (!open || !review || typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="fp-ui-dialog-backdrop overflow-y-auto overscroll-contain backdrop-blur-sm"
+      role="presentation"
+    >
+      <section
+        ref={dialogRef}
+        className="w-full max-w-[560px] max-h-[calc(100dvh-2.5rem)] overflow-y-auto overscroll-contain rounded-[var(--fp-radius-lg)] border border-white/60 bg-[var(--fp-surface)] shadow-[var(--fp-shadow-md)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="iphone-enrollment-success-title"
+        aria-describedby="iphone-enrollment-success-description"
+      >
+        <div className="px-5 pb-6 pt-7 text-center sm:px-7 sm:pt-8">
+            <div className="relative mx-auto h-32 w-32 sm:h-36 sm:w-36">
+              <Image
+                src="/assets/creditos/iphone-choice-light.png"
+                alt=""
+                fill
+                sizes="144px"
+                className="object-contain"
+                aria-hidden="true"
+                priority
+              />
+              <span className="absolute bottom-1 right-0 grid h-12 w-12 place-items-center rounded-[var(--fp-radius-md)] border border-[var(--fp-lime-strong)] bg-[var(--fp-graphite)] text-[var(--fp-lime)] shadow-[var(--fp-shadow-sm)]">
+                <ShieldCheck className="h-7 w-7" aria-hidden="true" />
+              </span>
+            </div>
+
+            <StatusPill tone="positive" className="mt-3">
+              ENROLADO CORRECTAMENTE
+            </StatusPill>
+            <h2
+              id="iphone-enrollment-success-title"
+              className="mt-4 text-2xl font-black tracking-tight sm:text-3xl"
+            >
+              ¡Dispositivo protegido!
+            </h2>
+            <p
+              id="iphone-enrollment-success-description"
+              className="mt-2 text-sm leading-6 text-[var(--fp-muted)]"
+            >
+              El iPhone quedó registrado correctamente en FINSER PAY y la fábrica
+              del asesor fue actualizada.
+            </p>
+
+            <dl className="mt-6 overflow-hidden rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] text-left">
+              <EnrollmentSuccessDetail
+                icon={<UserRound className="h-4 w-4" aria-hidden="true" />}
+                label="Cliente"
+                value={item.clienteNombre}
+              />
+              <EnrollmentSuccessDetail
+                icon={<IdCard className="h-4 w-4" aria-hidden="true" />}
+                label="Cédula"
+                value={formatDocument(documentValue)}
+              />
+              <EnrollmentSuccessDetail
+                icon={<Smartphone className="h-4 w-4" aria-hidden="true" />}
+                label="IMEI"
+                value={imeiValue}
+                mono
+              />
+              <EnrollmentSuccessDetail
+                icon={<Tag className="h-4 w-4" aria-hidden="true" />}
+                label="Referencia"
+                value={item.equipo}
+              />
+              <EnrollmentSuccessDetail
+                icon={<CalendarDays className="h-4 w-4" aria-hidden="true" />}
+                label="Fecha y hora"
+                value={formatDateTime(review.approvedAt)}
+              />
+            </dl>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <Button
+                className="min-h-12 w-full"
+                onClick={onFinish}
+                data-enrollment-success-focus
+              >
+                Finalizar
+              </Button>
+              <Button
+                variant="secondary"
+                className="min-h-12 w-full"
+                onClick={onNewCase}
+              >
+                Consultar otra solicitud
+              </Button>
+            </div>
+        </div>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
+function EnrollmentSuccessDetail({
+  icon,
+  label,
+  value,
+  mono = false,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="grid min-h-12 grid-cols-[20px_86px_minmax(0,1fr)] items-center gap-3 border-b border-[var(--fp-border)] px-3 py-2.5 last:border-b-0 sm:grid-cols-[20px_110px_minmax(0,1fr)] sm:px-4">
+      <span className="text-[var(--fp-muted)]">{icon}</span>
+      <dt className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
+        {label}
+      </dt>
+      <dd
+        className={`min-w-0 break-words text-sm font-bold text-[var(--fp-graphite)] ${
+          mono ? "font-mono" : ""
+        }`}
+      >
+        {value}
+      </dd>
+    </div>
   );
 }
 
