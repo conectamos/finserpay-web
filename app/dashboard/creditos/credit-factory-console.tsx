@@ -9428,6 +9428,14 @@ export default function CreditFactoryConsole({
   };
 
   const runCommand = async (command: CreditAdminCommand) => {
+    if (!canAdmin && command === "update-due-date") {
+      setNotice({
+        text: "Solo el administrador puede actualizar la fecha de pago.",
+        tone: "red",
+      });
+      return;
+    }
+
     if (!selectedCredit) {
       setNotice({
         text: "Selecciona un credito antes de ejecutar comandos.",
@@ -9475,6 +9483,14 @@ export default function CreditFactoryConsole({
   };
 
   const updateCreditPlan = async () => {
+    if (!canAdmin) {
+      setNotice({
+        text: "Solo el administrador puede ajustar el plan de pagos.",
+        tone: "red",
+      });
+      return;
+    }
+
     if (!selectedCredit) {
       setNotice({
         text: "Selecciona un credito antes de ajustar el plan.",
@@ -17545,7 +17561,7 @@ export default function CreditFactoryConsole({
                               </button>
                             ) : null}
                           </div>
-                          {(canAdmin || canSupervisor) ? (
+                          {canAdmin ? (
                             <div className="mt-4 space-y-4 rounded-lg border border-[#d8dee5] bg-[#f8fafb] p-4">
                               <div>
                                 <p className="text-xs font-black uppercase tracking-[0.14em] text-[#5c7a13]">

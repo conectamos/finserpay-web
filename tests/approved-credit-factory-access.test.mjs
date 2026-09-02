@@ -11,13 +11,14 @@ const projectRoot = path.resolve(
 const readProjectFile = (file) =>
   readFile(path.join(projectRoot, file), "utf8");
 
-const [page, factory, wall, dashboard, creditRoute, gallery] = await Promise.all([
+const [page, factory, wall, dashboard, creditRoute, gallery, commandRoute] = await Promise.all([
   readProjectFile("app/dashboard/creditos/page.tsx"),
   readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
   readProjectFile("app/dashboard/solicitudes/solicitudes-wall-client.tsx"),
   readProjectFile("app/dashboard/_components/seller-commercial-dashboard.tsx"),
   readProjectFile("app/api/creditos/route.ts"),
   readProjectFile("app/dashboard/creditos/credit-evidence-gallery.tsx"),
+  readProjectFile("app/api/creditos/[id]/command/route.ts"),
 ]);
 
 test("solo central puede abrir un credito finalizado dentro de la fabrica", () => {
@@ -85,4 +86,56 @@ test("la correccion nueva usa tokens visuales de FINSER PAY", () => {
   ]) {
     assert.ok(correction.includes(token), `falta token ${token}`);
   }
+});
+
+test("el menu de supervision permanece visible en escritorio", () => {
+  assert.doesNotMatch(
+    dashboard,
+    /<details className="group mt-5 border-t border-white\/10 pt-4">/
+  );
+  assert.match(
+    dashboard,
+    /<div className="mt-5 border-t border-white\/10 pt-4">[\s\S]{0,260}Supervisi&oacute;n[\s\S]{0,260}SUPERVISOR_NAV_ITEMS/
+  );
+});
+
+test("el supervisor no puede modificar fechas ni condiciones del plan", () => {
+  const paymentControlsStart = factory.lastIndexOf(
+    "{canAdmin ? (",
+    factory.indexOf("Fechas de pago")
+  );
+  const paymentControlsEnd = factory.indexOf(
+    "Ajustar plan de pagos",
+    paymentControlsStart
+  );
+  const paymentControls = factory.slice(
+    paymentControlsStart,
+    paymentControlsEnd + "Ajustar plan de pagos".length
+  );
+
+  assert.ok(paymentControlsStart >= 0, "falta el permiso del panel de pagos");
+  assert.ok(paymentControlsEnd > paymentControlsStart, "falta el panel de pagos");
+  assert.doesNotMatch(paymentControls, /canSupervisor/);
+  assert.match(
+    factory,
+    /!canAdmin && command === "update-due-date"[\s\S]{0,220}Solo el administrador puede actualizar la fecha de pago/
+  );
+  assert.match(
+    factory,
+    /const updateCreditPlan = async \(\) => \{[\s\S]{0,180}if \(!canAdmin\)/
+  );
+
+  const supervisorCommands = commandRoute.slice(
+    commandRoute.indexOf("const SUPERVISOR_COMMANDS"),
+    commandRoute.indexOf("];", commandRoute.indexOf("const SUPERVISOR_COMMANDS")) + 2
+  );
+  assert.doesNotMatch(supervisorCommands, /update-due-date|update-plan/);
+  assert.match(
+    commandRoute,
+    /case "update-due-date":[\s\S]{0,180}if \(!admin\)[\s\S]{0,220}Solo el administrador puede actualizar la fecha de pago/
+  );
+  assert.match(
+    commandRoute,
+    /case "update-plan":[\s\S]{0,180}if \(!admin\)[\s\S]{0,220}Solo el administrador puede ajustar el plan del credito/
+  );
 });

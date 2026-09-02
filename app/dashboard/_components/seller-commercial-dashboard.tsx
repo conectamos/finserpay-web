@@ -209,13 +209,12 @@ export function CommercialSidebar({
         <Navigation activeHref={activeHref} items={primaryItems} />
 
         {isSupervisor ? (
-          <details className="group mt-5 border-t border-white/10 pt-4">
-            <summary className="flex min-h-11 cursor-pointer list-none items-center px-3 text-[10px] font-semibold uppercase text-white/45 [&::-webkit-details-marker]:hidden">
+          <div className="mt-5 border-t border-white/10 pt-4">
+            <p className="mb-2 px-3 text-[10px] font-semibold uppercase text-white/45">
               Supervisi&oacute;n
-              <ChevronDown className="ml-auto h-4 w-4 transition group-open:rotate-180" strokeWidth={1.8} />
-            </summary>
+            </p>
             <Navigation activeHref={activeHref} items={SUPERVISOR_NAV_ITEMS} />
-          </details>
+          </div>
         ) : null}
       </div>
 

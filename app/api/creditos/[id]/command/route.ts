@@ -453,6 +453,13 @@ export async function POST(
         }
         break;
       case "update-due-date":
+        if (!admin) {
+          return NextResponse.json(
+            { error: "Solo el administrador puede actualizar la fecha de pago" },
+            { status: 403 }
+          );
+        }
+
         if (!fechaProximoPago) {
           return NextResponse.json(
             { error: "Debes indicar la nueva fecha de pago" },
