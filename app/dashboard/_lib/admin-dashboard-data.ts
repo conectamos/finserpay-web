@@ -12,8 +12,9 @@ export type AdminDashboardDailyPoint = {
   recaudo: number;
 };
 
-export type AdminDashboardSedePoint = {
+export type AdminDashboardCreditPerformancePoint = {
   name: string;
+  units: number;
   value: number;
 };
 
@@ -21,6 +22,7 @@ export type AdminDashboardOverview = {
   activeCredits: number;
   activePlacedCapital: number;
   alertsCount: number;
+  creditPerformance: AdminDashboardCreditPerformancePoint[];
   criticalCredits: number;
   daily: AdminDashboardDailyPoint[];
   dueToday: number;
@@ -37,7 +39,6 @@ export type AdminDashboardOverview = {
   monthlyCreditCount: number;
   monthlyPaymentCount: number;
   monthlyPlacedCapital: number;
-  sedes: AdminDashboardSedePoint[];
 };
 
 type AdminDashboardDataOptions = {
@@ -113,6 +114,7 @@ export async function getAdminDashboardOverview({
     String(current.month).padStart(2, "0"),
     String(current.day).padStart(2, "0"),
   ].join("-");
+  const performanceGroup = aliadoId ? "sede" : "aliado";
   const scope = aliadoId
     ? {
         sede: {
@@ -169,6 +171,11 @@ export async function getAdminDashboardOverview({
         saldoBaseFinanciado: true,
         sede: {
           select: {
+            aliado: {
+              select: {
+                nombre: true,
+              },
+            },
             nombre: true,
           },
         },
@@ -182,11 +189,6 @@ export async function getAdminDashboardOverview({
       where: paymentWhere,
       select: {
         fechaAbono: true,
-        sede: {
-          select: {
-            nombre: true,
-          },
-        },
         valor: true,
       },
     }),
@@ -214,6 +216,7 @@ export async function getAdminDashboardOverview({
     );
 
     return {
+      aliadoNombre: credit.sede.aliado?.nombre || "Sin aliado",
       bucket: riskBucket(lateDays),
       capitalColocado: resolveCapitalOriginal({
         cuotaInicial: credit.cuotaInicial,
@@ -230,6 +233,7 @@ export async function getAdminDashboardOverview({
       ).length,
       fechaCredito: credit.fechaCredito,
       saldoPendiente: plan.saldoPendiente,
+      sedeNombre: credit.sede.nombre || "Sin sede",
     };
   });
   const activePortfolio = portfolio.filter((credit) => credit.saldoPendiente > 0);
@@ -264,6 +268,7 @@ export async function getAdminDashboardOverview({
     placedCapital: 0,
     recaudo: 0,
   }));
+  const performanceByScope = new Map<string, { units: number; value: number }>();
 
   for (const payment of monthPayments) {
     const day = colombiaDay(payment.fechaAbono);
@@ -283,22 +288,28 @@ export async function getAdminDashboardOverview({
         point.creditCount += 1;
         point.placedCapital += credit.capitalColocado;
       }
+
+      const performanceName =
+        performanceGroup === "aliado" ? credit.aliadoNombre : credit.sedeNombre;
+      const currentPerformance = performanceByScope.get(performanceName) || {
+        units: 0,
+        value: 0,
+      };
+      performanceByScope.set(performanceName, {
+        units: currentPerformance.units + 1,
+        value: currentPerformance.value + credit.capitalColocado,
+      });
     }
   }
 
-  const collectionBySede = new Map<string, number>();
-  for (const payment of monthPayments) {
-    const name = payment.sede.nombre || "Sin sede";
-    collectionBySede.set(
-      name,
-      (collectionBySede.get(name) || 0) + Number(payment.valor || 0)
+  const creditPerformance = [...performanceByScope.entries()]
+    .map(([name, metrics]) => ({ name, ...metrics }))
+    .sort(
+      (a, b) =>
+        b.value - a.value ||
+        b.units - a.units ||
+        a.name.localeCompare(b.name, "es")
     );
-  }
-
-  const sedes = [...collectionBySede.entries()]
-    .map(([name, value]) => ({ name, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 5);
   const monthlyCollection = monthPayments.reduce(
     (sum, payment) => sum + Number(payment.valor || 0),
     0
@@ -319,6 +330,7 @@ export async function getAdminDashboardOverview({
     activeCredits: activePortfolio.length,
     activePlacedCapital,
     alertsCount: dueToday + earlyClientKeys.size + criticalCredits,
+    creditPerformance,
     criticalBalance,
     criticalCredits,
     criticalPercent,
@@ -339,6 +351,5 @@ export async function getAdminDashboardOverview({
     monthlyCreditCount,
     monthlyPaymentCount: monthPayments.length,
     monthlyPlacedCapital,
-    sedes,
   };
 }

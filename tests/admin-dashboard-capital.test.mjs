@@ -65,3 +65,29 @@ test("la interfaz identifica las cifras como capital colocado", async () => {
   assert.match(source, /money\(data\.activePlacedCapital\)/);
   assert.match(source, /Capital colocado en \$\{data\.activeCredits\} creditos activos/);
 });
+
+test("el rendimiento agrupa por perfil y muestra monto y unidades de credito", async () => {
+  const dataSource = await readFile(
+    path.join(projectRoot, "app/dashboard/_lib/admin-dashboard-data.ts"),
+    "utf8"
+  );
+  const uiSource = await readFile(
+    path.join(projectRoot, "app/dashboard/_components/admin-central-dashboard.tsx"),
+    "utf8"
+  );
+
+  assert.match(dataSource, /const performanceGroup = aliadoId \? "sede" : "aliado"/);
+  assert.match(
+    dataSource,
+    /performanceGroup === "aliado" \? credit\.aliadoNombre : credit\.sedeNombre/
+  );
+  assert.match(dataSource, /units: currentPerformance\.units \+ 1/);
+  assert.match(dataSource, /value: currentPerformance\.value \+ credit\.capitalColocado/);
+  assert.doesNotMatch(dataSource, /collectionBySede/);
+  assert.doesNotMatch(dataSource, /creditPerformance[\s\S]{0,240}\.slice\(0, 5\)/);
+
+  assert.match(uiSource, /adminCentral \? "aliado" : "sede"/);
+  assert.match(uiSource, /data\.creditPerformance\.map/);
+  assert.match(uiSource, /performance\.units === 1 \? "credito" : "creditos"/);
+  assert.match(uiSource, /compactMoney\(performance\.value\)/);
+});

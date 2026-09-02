@@ -418,7 +418,11 @@ export default function AdminCentralDashboard({
 }: AdminCentralDashboardProps) {
   const scopeLabel = adminCentral ? "Todas las sedes" : aliadoNombre;
   const carteraHref = adminCentral ? "/dashboard/cartera" : "/dashboard/abonos";
-  const maxSedeValue = Math.max(1, ...data.sedes.map((sede) => sede.value));
+  const performanceScopeLabel = adminCentral ? "aliado" : "sede";
+  const maxPerformanceValue = Math.max(
+    1,
+    ...data.creditPerformance.map((item) => item.value)
+  );
   const metricCards: MetricCardProps[] = [
     {
       detail: `Capital colocado en ${data.activeCredits} creditos activos`,
@@ -575,25 +579,58 @@ export default function AdminCentralDashboard({
           </section>
 
           <section className="rounded-lg border border-[#d8dee6] bg-white p-4 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
-            <h2 className="text-lg font-black text-[#101828]">Rendimiento por sede</h2>
-            <p className="mt-1 text-xs text-[#667085]">Recaudo del mes</p>
-            <div className="mt-4 space-y-3">
-              {data.sedes.length ? (
-                data.sedes.map((sede) => (
-                  <div key={sede.name} className="grid grid-cols-[72px_1fr_auto] items-center gap-3">
-                    <span className="truncate text-xs font-semibold text-[#475467]">{sede.name}</span>
-                    <span className="h-3 overflow-hidden rounded-sm bg-[#edf1f4]">
+            <h2 className="text-lg font-black text-[#101828]">
+              Rendimiento por {performanceScopeLabel}
+            </h2>
+            <p className="mt-1 text-xs text-[#667085]">
+              Capital colocado y unidades de credito en {titleCase(data.monthLabel)}
+            </p>
+            <div className="mt-4 max-h-48 space-y-3 overflow-y-auto pr-1">
+              {data.creditPerformance.length ? (
+                data.creditPerformance.map((performance) => (
+                  <div
+                    key={performance.name}
+                    className="space-y-1.5"
+                    aria-label={`${performance.name}: ${performance.units} ${
+                      performance.units === 1 ? "credito" : "creditos"
+                    }, ${money(performance.value)} de capital colocado`}
+                  >
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
                       <span
-                        className="block h-full rounded-sm bg-[#0d9488]"
-                        style={{ width: `${Math.max(3, (sede.value / maxSedeValue) * 100)}%` }}
+                        className="truncate text-xs font-semibold text-[#475467]"
+                        title={performance.name}
+                      >
+                        {performance.name}
+                      </span>
+                      <span className="text-right">
+                        <strong className="block text-xs font-black tabular-nums text-[#101828]">
+                          {compactMoney(performance.value)}
+                        </strong>
+                        <span className="block text-[11px] font-semibold text-[#667085]">
+                          {performance.units}{" "}
+                          {performance.units === 1 ? "credito" : "creditos"}
+                        </span>
+                      </span>
+                    </div>
+                    <span className="block h-2 overflow-hidden rounded-sm bg-[#edf1f4]">
+                      <span
+                        className="block h-full rounded-sm bg-[#101828]"
+                        style={{
+                          width:
+                            performance.value > 0
+                              ? `${Math.max(
+                                  3,
+                                  (performance.value / maxPerformanceValue) * 100
+                                )}%`
+                              : "0%",
+                        }}
                       />
                     </span>
-                    <strong className="text-xs font-black text-[#344054]">{compactMoney(sede.value)}</strong>
                   </div>
                 ))
               ) : (
                 <p className="rounded-lg bg-[#f7f9fb] px-3 py-7 text-center text-sm font-medium text-[#667085]">
-                  Aun no hay recaudos registrados este mes.
+                  Aun no hay creditos colocados este mes.
                 </p>
               )}
             </div>
