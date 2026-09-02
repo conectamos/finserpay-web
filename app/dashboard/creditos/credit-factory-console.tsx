@@ -2888,6 +2888,8 @@ export default function CreditFactoryConsole({
   const [dataCreditoAssessmentId, setDataCreditoAssessmentId] = useState<
     string | null
   >(null);
+  const [dataCreditoResumeErrorCode, setDataCreditoResumeErrorCode] =
+    useState<string | null>(null);
   const [dataCreditoApproval, setDataCreditoApproval] = useState<
     DataCreditoApprovedResult | null
   >(null);
@@ -4394,6 +4396,7 @@ export default function CreditFactoryConsole({
 
     setDataCreditoApproval(null);
     setDataCreditoAssessmentId(null);
+    setDataCreditoResumeErrorCode(null);
     setFianzaPorcentaje(
       String(
         creditSettings.fianzaPorcentaje ?? DEFAULT_FIANCO_SURETY_PERCENTAGE
@@ -8462,6 +8465,7 @@ export default function CreditFactoryConsole({
     setClienteEstadoCivil("");
     setClienteEstrato("");
     setDataCreditoAssessmentId(null);
+    setDataCreditoResumeErrorCode(null);
     setDataCreditoApproval(null);
     setDataCreditoBypassed(false);
     setReferenciaFamiliar1Nombre("");
@@ -9922,6 +9926,8 @@ export default function CreditFactoryConsole({
     };
     const checked = (key: string) => payload[key] === true;
     const restoredAssessmentId = value("dataCreditoAssessmentId") || null;
+    const restoredDataCreditoErrorCode =
+      value("dataCreditoErrorCode").trim().toUpperCase() || null;
     const savedVeriffValidationId = Number(value("veriffValidationId") || 0);
     const restoredVeriffValidationId =
       Number.isInteger(savedVeriffValidationId) &&
@@ -9980,6 +9986,7 @@ export default function CreditFactoryConsole({
     setClienteEstadoCivil(value("clienteEstadoCivil"));
     setClienteEstrato(value("clienteEstrato"));
     setDataCreditoAssessmentId(restoredAssessmentId);
+    setDataCreditoResumeErrorCode(restoredDataCreditoErrorCode);
     setDataCreditoApproval(null);
     setDataCreditoBypassed(false);
     setReferenciaFamiliar1Nombre(value("referenciaFamiliar1Nombre"));
@@ -10530,6 +10537,7 @@ export default function CreditFactoryConsole({
 
   const handleDataCreditoBypass = () => {
     setDataCreditoAssessmentId(null);
+    setDataCreditoResumeErrorCode(null);
     setDataCreditoApproval(null);
     setDataCreditoBypassed(true);
     updateDraftResumeHydration(false);
@@ -10637,6 +10645,7 @@ export default function CreditFactoryConsole({
       restoringDraft: restoringDraftAssessment,
     };
     setDataCreditoAssessmentId(result.assessmentId);
+    setDataCreditoResumeErrorCode(null);
     setDataCreditoApproval(approvedResult);
     setDataCreditoBypassed(false);
     setClienteTipoDocumento("CEDULA_DE_CIUDADANIA");
@@ -12053,6 +12062,7 @@ export default function CreditFactoryConsole({
                       initialSolicitudId={draftId}
                       initialDocumentNumber={clienteDocumento}
                       initialFirstSurname={clientePrimerApellido}
+                      initialErrorCode={dataCreditoResumeErrorCode}
                       onBypass={handleDataCreditoBypass}
                       onApproved={handleDataCreditoApproved}
                       onAssessmentInvalidated={

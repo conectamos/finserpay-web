@@ -67,6 +67,7 @@ export type DatacreditoPrequalificationGateProps = {
   initialSolicitudId?: number | null;
   initialDocumentNumber?: string | null;
   initialFirstSurname?: string | null;
+  initialErrorCode?: string | null;
   onBypass: () => void;
   onApproved: (result: DataCreditoApprovedResult) => void;
   onAssessmentInvalidated?: () => void;
@@ -456,6 +457,7 @@ export default function DatacreditoPrequalificationGate({
   initialSolicitudId = null,
   initialDocumentNumber = null,
   initialFirstSurname = null,
+  initialErrorCode = null,
   onBypass,
   onApproved,
   onAssessmentInvalidated,
@@ -467,6 +469,15 @@ export default function DatacreditoPrequalificationGate({
     .trim()
     .replace(/\s+/g, " ")
     .slice(0, 80);
+  const normalizedInitialErrorCode = String(initialErrorCode || "")
+    .trim()
+    .toUpperCase();
+  const identityMismatchRecovery = Boolean(
+    initialSolicitudId &&
+      !initialAssessmentId &&
+      normalizedInitialDocument &&
+      normalizedInitialErrorCode === "ASSESSMENT_IDENTITY_MISMATCH"
+  );
   const [view, setView] = useState<GateView>("loading");
   const [documentNumber, setDocumentNumber] = useState(
     normalizedInitialDocument
@@ -478,6 +489,7 @@ export default function DatacreditoPrequalificationGate({
     solicitudId: initialSolicitudId,
     documentNumber: normalizedInitialDocument,
     firstSurname: normalizedInitialSurname,
+    errorCode: normalizedInitialErrorCode,
   }));
   const [consentText, setConsentText] = useState(CONSENT_ATTESTATION);
   const [consentAccepted, setConsentAccepted] = useState(false);
@@ -509,7 +521,8 @@ export default function DatacreditoPrequalificationGate({
     lastInitialIdentity.assessmentId !== initialAssessmentId ||
     lastInitialIdentity.solicitudId !== initialSolicitudId ||
     lastInitialIdentity.documentNumber !== normalizedInitialDocument ||
-    lastInitialIdentity.firstSurname !== normalizedInitialSurname
+    lastInitialIdentity.firstSurname !== normalizedInitialSurname ||
+    lastInitialIdentity.errorCode !== normalizedInitialErrorCode
   ) {
     setLastInitialIdentity({
       platform,
@@ -517,6 +530,7 @@ export default function DatacreditoPrequalificationGate({
       solicitudId: initialSolicitudId,
       documentNumber: normalizedInitialDocument,
       firstSurname: normalizedInitialSurname,
+      errorCode: normalizedInitialErrorCode,
     });
     setDocumentNumber(normalizedInitialDocument);
     setFirstSurname(normalizedInitialSurname);
@@ -691,6 +705,13 @@ export default function DatacreditoPrequalificationGate({
         }
 
         if (!initialAssessmentId) {
+          if (identityMismatchRecovery) {
+            setConsentAccepted(false);
+            setFormErrors({});
+            setRetryMode("form");
+            setView("ready");
+            return;
+          }
           // Una solicitud ya materializada siempre debe conservar su evaluación
           // canónica. Si falta, fallamos cerrado: mostrar el formulario permitiría
           // consumir una consulta nueva al proveedor sobre el mismo borrador.
@@ -822,6 +843,7 @@ export default function DatacreditoPrequalificationGate({
       finishBypass,
       initialAssessmentId,
       initialSolicitudId,
+      identityMismatchRecovery,
       normalizedInitialDocument,
       normalizedInitialSurname,
       platform,
@@ -894,12 +916,26 @@ export default function DatacreditoPrequalificationGate({
             firstSurname: validation.firstSurname,
             platform,
             consentAccepted: true,
+            reuseOnly: identityMismatchRecovery,
           }),
         }
       );
       const payload = await readJson(response);
 
       if (!response.ok || payload.ok === false) {
+        if (
+          identityMismatchRecovery &&
+          getResponseCode(payload) === "ASSESSMENT_IDENTITY_MISMATCH"
+        ) {
+          setCorrelationId(null);
+          setFormErrors((current) => ({
+            ...current,
+            firstSurname:
+              "El apellido aún no coincide con la consulta vigente. Corrígelo y vuelve a intentar.",
+          }));
+          setView("ready");
+          return;
+        }
         if (getResponseCode(payload) === "SOLICITUD_ACTIVA_EXISTENTE") {
           setConflictMessage(
             readString(payload.error) ||
@@ -1357,6 +1393,16 @@ export default function DatacreditoPrequalificationGate({
       </div>
 
       <form className="p-5 sm:p-8" noValidate onSubmit={submitAssessment}>
+        {identityMismatchRecovery ? (
+          <div
+            className="mb-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm leading-6 text-[var(--fp-graphite)]"
+            role="status"
+          >
+            Esta cédula ya tiene una consulta vigente. Corrige únicamente el
+            primer apellido para recuperarla; esta acción no realiza una nueva
+            consulta a DataCrédito.
+          </div>
+        ) : null}
         <div className="grid gap-6 md:grid-cols-2">
           <div>
             <label
@@ -1447,7 +1493,8 @@ export default function DatacreditoPrequalificationGate({
                 required
                 disabled={
                   isSubmitting ||
-                  Boolean(initialSolicitudId && normalizedInitialSurname)
+                  (Boolean(initialSolicitudId && normalizedInitialSurname) &&
+                    !identityMismatchRecovery)
                 }
                 className="min-h-14 border-[var(--fp-lime-strong)] !pl-12 text-base shadow-[var(--fp-shadow-sm)] disabled:bg-[var(--fp-bg)]"
                 aria-invalid={Boolean(formErrors.firstSurname)}
@@ -1558,7 +1605,9 @@ export default function DatacreditoPrequalificationGate({
             ) : (
               <>
                 <ShieldCheck className="h-5 w-5" aria-hidden="true" />
-                Evaluar solicitud
+                {identityMismatchRecovery
+                  ? "Recuperar consulta vigente"
+                  : "Evaluar solicitud"}
               </>
             )}
           </Button>

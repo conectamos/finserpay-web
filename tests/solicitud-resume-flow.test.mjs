@@ -11,7 +11,10 @@ const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const { canOperateSolicitud, canSellerOperateSolicitud } = await jiti.import(
   "../lib/solicitud-operation-access.ts"
 );
-const { resolveMissingAssessmentGateView } = await jiti.import(
+const {
+  canRecoverAssessmentIdentityMismatch,
+  resolveMissingAssessmentGateView,
+} = await jiti.import(
   "../lib/datacredito/resume-gate.ts"
 );
 
@@ -120,6 +123,81 @@ test("solo el vencimiento confirmado mantiene habilitada la nueva consulta en la
       expiredRequerySolicitudId: 417,
     }),
     "technical-error"
+  );
+});
+
+test("solo el borrador propio de paso 1 con mismatch puede recuperar por apellido", () => {
+  const recoverable = {
+    reuseOnly: true,
+    solicitudId: 530,
+    currentStep: 1,
+    storedDocument: "1.193.536.562",
+    submittedDocument: "1193536562",
+    storedPlatform: "iphone",
+    submittedPlatform: "IPHONE",
+    assessmentId: null,
+    imei: null,
+    errorCode: "ASSESSMENT_IDENTITY_MISMATCH",
+  };
+
+  assert.equal(canRecoverAssessmentIdentityMismatch(recoverable), true);
+  for (const denied of [
+    { reuseOnly: false },
+    { solicitudId: null },
+    { currentStep: 2 },
+    { submittedDocument: "1193536563" },
+    { submittedPlatform: "ANDROID" },
+    { assessmentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+    { imei: "355909998071255" },
+    { errorCode: "PROVIDER_TIMEOUT" },
+  ]) {
+    assert.equal(
+      canRecoverAssessmentIdentityMismatch({ ...recoverable, ...denied }),
+      false
+    );
+  }
+});
+
+test("la recuperación de apellido es reuse-only y nunca alcanza al proveedor", async () => {
+  const [route, gate, storage] = await Promise.all([
+    readProjectFile("app/api/creditos/datacredito/evaluaciones/route.ts"),
+    readProjectFile(
+      "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
+    ),
+    readProjectFile("lib/solicitudes-storage.ts"),
+  ]);
+  const reuseOnlyStop = route.indexOf("if (reuseOnly) {");
+  const providerCall = route.indexOf("await queryDataCreditoNaturalPerson({");
+
+  assert.match(route, /reuseOnly\?: unknown/);
+  assert.match(route, /canRecoverAssessmentIdentityMismatch\(\{/);
+  assert.match(route, /ASSESSMENT_RECOVERY_NOT_ALLOWED/);
+  assert.match(route, /ASSESSMENT_REUSE_NOT_FOUND/);
+  assert.ok(reuseOnlyStop >= 0);
+  assert.ok(providerCall > reuseOnlyStop);
+  assert.match(
+    route.slice(reuseOnlyStop, providerCall),
+    /return solicitudTechnicalResponse\(\{/
+  );
+  assert.match(
+    route,
+    /clientePrimerApellido: identityMismatchRecovery \? firstSurname : null/
+  );
+
+  assert.match(gate, /initialErrorCode\?: string \| null/);
+  assert.match(gate, /reuseOnly: identityMismatchRecovery/);
+  assert.match(gate, /Recuperar consulta vigente/);
+  assert.match(gate, /!identityMismatchRecovery/);
+  assert.match(
+    gate,
+    /ASSESSMENT_IDENTITY_MISMATCH[\s\S]{0,520}setView\("ready"\)/
+  );
+
+  assert.match(storage, /d\."currentStep"/);
+  assert.match(storage, /dataCreditoErrorCode/);
+  assert.match(
+    storage,
+    /jsonb_build_object\('clientePrimerApellido', \$7::text\)/
   );
 });
 

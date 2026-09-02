@@ -302,6 +302,7 @@ export async function expireStaleSolicitudes() {
 
 export type ActiveSolicitudCreditContext = {
   id: number;
+  currentStep: number;
   usuarioId: number;
   vendedorId: number | null;
   sedeId: number;
@@ -311,6 +312,7 @@ export type ActiveSolicitudCreditContext = {
   imei: string | null;
   plataforma: string | null;
   dataCreditoAssessmentId: string | null;
+  dataCreditoErrorCode: string | null;
 };
 
 export async function getActiveSolicitudCreditContext(
@@ -320,14 +322,15 @@ export async function getActiveSolicitudCreditContext(
   await expireStaleSolicitudes();
   const rows = await prisma.$queryRawUnsafe<ActiveSolicitudCreditContext[]>(
     `
-      SELECT d."id", d."usuarioId", d."vendedorId", d."sedeId",
+      SELECT d."id", d."currentStep", d."usuarioId", d."vendedorId", d."sedeId",
         s."aliadoId", d."clienteDocumento", d."imei",
         COALESCE(NULLIF(d."plataforma", ''), NULLIF(d."payload"->>'plataformaDispositivo', '')) AS "plataforma",
         NULLIF(d."payload"->>'clientePrimerApellido', '') AS "clientePrimerApellido",
         COALESCE(
           d."dataCreditoAssessmentId"::text,
           NULLIF(d."payload"->>'dataCreditoAssessmentId', '')
-        ) AS "dataCreditoAssessmentId"
+        ) AS "dataCreditoAssessmentId",
+        NULLIF(d."payload"->>'dataCreditoErrorCode', '') AS "dataCreditoErrorCode"
       FROM "CreditoBorrador" d
       LEFT JOIN "Sede" s ON s."id" = d."sedeId"
       WHERE d."id" = $1
@@ -1010,6 +1013,7 @@ export async function attachDataCreditoToSolicitud(input: {
   status: string;
   errorCode?: string | null;
   plataforma?: string | null;
+  clientePrimerApellido?: string | null;
 }) {
   if (!isUuid(input.assessmentId)) throw new SolicitudDataCreditoLinkError();
   await ensureSolicitudSchema();
@@ -1032,7 +1036,11 @@ export async function attachDataCreditoToSolicitud(input: {
             'dataCreditoStatus', $5::text,
             'dataCreditoErrorCode', $6::text,
             'dataCreditoUpdatedAt', CURRENT_TIMESTAMP
-          ),
+          ) || CASE
+            WHEN NULLIF($7::text, '') IS NOT NULL THEN
+              jsonb_build_object('clientePrimerApellido', $7::text)
+            ELSE '{}'::jsonb
+          END,
           "estado" = CASE WHEN $4::boolean THEN 'CERRADO' ELSE "estado" END,
           "closedReason" = CASE WHEN $4::boolean THEN 'RECHAZADA' ELSE "closedReason" END,
           "closedAt" = CASE WHEN $4::boolean THEN CURRENT_TIMESTAMP ELSE "closedAt" END,
@@ -1049,7 +1057,12 @@ export async function attachDataCreditoToSolicitud(input: {
     normalizePlatform(input.plataforma),
     rejected,
     status,
-    errorCode
+    errorCode,
+    String(input.clientePrimerApellido || "")
+      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 90)
   );
   if (rows.length !== 1) throw new SolicitudDataCreditoLinkError();
   return rows[0].id;

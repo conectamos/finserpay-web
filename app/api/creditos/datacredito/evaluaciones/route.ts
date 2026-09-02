@@ -43,6 +43,7 @@ import {
   serializeDataCreditoAssessment,
   type DataCreditoAssessmentScope,
 } from "@/lib/datacredito/storage";
+import { canRecoverAssessmentIdentityMismatch } from "@/lib/datacredito/resume-gate";
 import { tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
@@ -65,6 +66,7 @@ type EvaluationBody = {
   firstSurname?: unknown;
   platform?: unknown;
   consentAccepted?: unknown;
+  reuseOnly?: unknown;
 };
 
 function technicalResponse(input: {
@@ -193,6 +195,7 @@ export async function POST(request: Request) {
     const rawDocumentNumber = String(body.documentNumber || "").trim();
     const documentNumber = normalizeDataCreditoDocument(rawDocumentNumber);
     const firstSurname = normalizeDataCreditoSurname(body.firstSurname);
+    const reuseOnly = body.reuseOnly === true;
 
     if (!platform) {
       return technicalResponse({
@@ -302,12 +305,35 @@ export async function POST(request: Request) {
         status: 409,
       });
     }
+    const identityMismatchRecovery = solicitudContext
+      ? canRecoverAssessmentIdentityMismatch({
+          reuseOnly,
+          solicitudId: requestedSolicitudId,
+          currentStep: solicitudContext.currentStep,
+          storedDocument: solicitudContext.clienteDocumento,
+          submittedDocument: documentNumber,
+          storedPlatform: solicitudContext.plataforma,
+          submittedPlatform: platform,
+          assessmentId: solicitudContext.dataCreditoAssessmentId,
+          imei: solicitudContext.imei,
+          errorCode: solicitudContext.dataCreditoErrorCode,
+        })
+      : false;
+    if (reuseOnly && !identityMismatchRecovery) {
+      return technicalResponse({
+        correlationId,
+        code: "ASSESSMENT_RECOVERY_NOT_ALLOWED",
+        error: "Esta solicitud no admite recuperación de una consulta vigente",
+        status: 409,
+      });
+    }
     if (
       solicitudContext &&
       (normalizeDataCreditoDocument(solicitudContext.clienteDocumento) !==
         documentNumber ||
-        normalizeDataCreditoSurname(solicitudContext.clientePrimerApellido) !==
-          firstSurname)
+        (!identityMismatchRecovery &&
+          normalizeDataCreditoSurname(solicitudContext.clientePrimerApellido) !==
+            firstSurname))
     ) {
       return technicalResponse({
         correlationId,
@@ -424,12 +450,34 @@ export async function POST(request: Request) {
         status: 403,
       });
     }
+    const lockedIdentityMismatchRecovery =
+      canRecoverAssessmentIdentityMismatch({
+        reuseOnly,
+        solicitudId: requestedSolicitudId,
+        currentStep: lockedSolicitudContext.currentStep,
+        storedDocument: lockedSolicitudContext.clienteDocumento,
+        submittedDocument: documentNumber,
+        storedPlatform: lockedSolicitudContext.plataforma,
+        submittedPlatform: platform,
+        assessmentId: lockedSolicitudContext.dataCreditoAssessmentId,
+        imei: lockedSolicitudContext.imei,
+        errorCode: lockedSolicitudContext.dataCreditoErrorCode,
+      });
+    if (reuseOnly && !lockedIdentityMismatchRecovery) {
+      return technicalResponse({
+        correlationId,
+        code: "ASSESSMENT_RECOVERY_NOT_ALLOWED",
+        error: "La solicitud ya no admite recuperación de la consulta vigente",
+        status: 409,
+      });
+    }
     if (
       normalizeDataCreditoDocument(lockedSolicitudContext.clienteDocumento) !==
         documentNumber ||
-      normalizeDataCreditoSurname(
-        lockedSolicitudContext.clientePrimerApellido
-      ) !== firstSurname
+      (!lockedIdentityMismatchRecovery &&
+        normalizeDataCreditoSurname(
+          lockedSolicitudContext.clientePrimerApellido
+        ) !== firstSurname)
     ) {
       return technicalResponse({
         correlationId,
@@ -471,6 +519,7 @@ export async function POST(request: Request) {
         assessmentId: cached.assessment.id,
         status: cached.assessment.status,
         plataforma: platform,
+        clientePrimerApellido: identityMismatchRecovery ? firstSurname : null,
       });
       return NextResponse.json({
         ok: true,
@@ -519,6 +568,18 @@ export async function POST(request: Request) {
         plataforma: platform,
         code: "EVALUATION_IN_PROGRESS",
         error: "Ya existe una evaluacion en proceso para esta cedula",
+        status: 409,
+      });
+    }
+
+    if (reuseOnly) {
+      return solicitudTechnicalResponse({
+        correlationId,
+        solicitudId,
+        plataforma: platform,
+        code: "ASSESSMENT_REUSE_NOT_FOUND",
+        error:
+          "No se encontró una consulta vigente que coincida con la cédula y el primer apellido. No se realizó una nueva consulta a DataCrédito.",
         status: 409,
       });
     }
