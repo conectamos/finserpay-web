@@ -516,6 +516,10 @@ test("el preflight es idempotente, transaccional y valida el contrato instalado"
   );
   assert.match(
     compactSql,
+    /ARRAY_AGG\(attribute\.attname::text ORDER BY key_column\.ordinality\) AS columns/
+  );
+  assert.match(
+    compactSql,
     /"valorPagar" = "creditoAutorizado" - "valorIntermediacion"/
   );
   assert.match(compactSql, /"estado" = 'PAGADA'/);

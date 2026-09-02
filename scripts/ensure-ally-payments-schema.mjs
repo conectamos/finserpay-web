@@ -542,7 +542,7 @@ async function assertCompatibleIndexes() {
       SELECT table_class.relname AS table_name,
         index_class.relname AS index_name,
         index_definition.indisunique AS is_unique,
-        ARRAY_AGG(attribute.attname ORDER BY key_column.ordinality) AS columns
+        ARRAY_AGG(attribute.attname::text ORDER BY key_column.ordinality) AS columns
       FROM pg_class table_class
       JOIN pg_namespace namespace
         ON namespace.oid = table_class.relnamespace
@@ -578,7 +578,17 @@ async function assertCompatibleIndexes() {
       actual.is_unique !== unique ||
       JSON.stringify(actual.columns) !== JSON.stringify(columns)
     ) {
-      throw new Error("Indice incompatible: " + indexName + ".");
+      const actualDefinition = actual
+        ? `unique=${String(actual.is_unique)}, columns=${JSON.stringify(actual.columns)}`
+        : "ausente";
+      throw new Error(
+        "Indice incompatible: " +
+          indexName +
+          `. Esperado unique=${String(unique)}, columns=${JSON.stringify(columns)}; ` +
+          "actual " +
+          actualDefinition +
+          "."
+      );
     }
   }
 }
@@ -643,10 +653,18 @@ try {
     error && typeof error === "object" && "code" in error
       ? String(error.code || "").replace(/[^A-Z0-9_]/gi, "").slice(0, 24)
       : "";
+  const safeReason =
+    error instanceof Error &&
+    /^(Definicion incompatible en|Indice incompatible:|Restriccion incompatible:)/.test(
+      error.message
+    )
+      ? error.message
+      : "";
   throw new Error(
     "No se pudo preparar el esquema de pagos a aliados" +
       (code ? " (" + code + ")" : "") +
-      "."
+      "." +
+      (safeReason ? " " + safeReason : "")
   );
 } finally {
   await client.end().catch(() => undefined);
