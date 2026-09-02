@@ -26,6 +26,10 @@ import {
   StatusPill,
   Tabs,
 } from "@/app/_components/finser-ui";
+import {
+  ALLY_PAYMENTS_AVAILABLE_FROM,
+  ALLY_PAYMENTS_AVAILABLE_FROM_LABEL,
+} from "@/lib/ally-payments-core";
 
 type PaymentsTab = "liquidar" | "recibidos" | "pendientes";
 
@@ -817,6 +821,12 @@ export default function AllyPaymentsConsole({
   const validatePeriod = () => {
     if (!selectedAllyId) return "Selecciona el aliado que recibira el pago.";
     if (!fechaInicio || !fechaFin) return "Selecciona la fecha inicial y final del periodo.";
+    if (
+      fechaInicio < ALLY_PAYMENTS_AVAILABLE_FROM ||
+      fechaFin < ALLY_PAYMENTS_AVAILABLE_FROM
+    ) {
+      return `La informacion de pagos esta disponible desde el ${ALLY_PAYMENTS_AVAILABLE_FROM_LABEL}.`;
+    }
     if (fechaInicio > fechaFin) return "La fecha inicial no puede ser posterior a la fecha final.";
     return "";
   };
@@ -995,7 +1005,7 @@ export default function AllyPaymentsConsole({
     <main className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
       <PageHeader
         eyebrow={adminCentral ? "Operacion financiera" : "Consulta del aliado"}
-        title={adminCentral ? "Pago aliados" : "Pagos recibidos y pendientes"}
+        title="PAGOS ALIADO"
         description={
           adminCentral
             ? "Previsualiza creditos elegibles, confirma la liquidacion y consulta el historial pagado."
@@ -1097,6 +1107,7 @@ export default function AllyPaymentsConsole({
                 <Input
                   type="date"
                   value={fechaInicio}
+                  min={ALLY_PAYMENTS_AVAILABLE_FROM}
                   onChange={(event) => {
                     setFechaInicio(event.target.value);
                     invalidatePreview();
@@ -1109,7 +1120,7 @@ export default function AllyPaymentsConsole({
                 <Input
                   type="date"
                   value={fechaFin}
-                  min={fechaInicio || undefined}
+                  min={fechaInicio || ALLY_PAYMENTS_AVAILABLE_FROM}
                   onChange={(event) => {
                     setFechaFin(event.target.value);
                     invalidatePreview();
@@ -1127,7 +1138,7 @@ export default function AllyPaymentsConsole({
               </Button>
             </div>
             <p className="mt-3 text-xs leading-5 text-[var(--fp-muted)]">
-              El periodo usa fechas de Colombia. Solo se mostraran creditos finalizados, elegibles y no incluidos en pagos anteriores.
+              La informacion esta disponible desde el {ALLY_PAYMENTS_AVAILABLE_FROM_LABEL}. El periodo usa fechas de Colombia y solo muestra creditos finalizados, elegibles y no incluidos en pagos anteriores.
             </p>
             <p className="mt-1 text-xs leading-5 text-[var(--fp-muted)]">
               Credito autorizado = valor venta - inicial. La intermediacion se calcula sobre ese credito; valor a pagar = credito autorizado - intermediacion.

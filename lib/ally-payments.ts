@@ -4,9 +4,11 @@ import { createHash } from "node:crypto";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { ALIADO_FINSER_PAY, resolveRedescuentoPercentageByPlatform } from "@/lib/aliados";
 import {
+  ALLY_PAYMENTS_AVAILABLE_FROM,
   calculateAllyPaymentAmounts,
   normalizeBankApprovalNumber,
   resolveAllyPaymentPlatform,
+  resolveAvailableAllyPaymentPeriod,
   resolveColombiaPaymentPeriod,
   summarizeAllyPayments,
   type AllyPaymentPlatform,
@@ -18,6 +20,10 @@ import prisma from "@/lib/prisma";
 
 const PAYMENT_CALCULATION_VERSION = "ALLY_INTERMEDIATION_V1";
 const CANCELLED_STATES = ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"] as const;
+const PAYMENT_AVAILABILITY_START = resolveColombiaPaymentPeriod(
+  ALLY_PAYMENTS_AVAILABLE_FROM,
+  ALLY_PAYMENTS_AVAILABLE_FROM
+).start;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH_PATTERN = /^[0-9a-f]{64}$/i;
@@ -156,7 +162,7 @@ function dateForDatabase(value: string) {
 
 function parsePaymentPeriod(startDate: unknown, endDate: unknown) {
   try {
-    return resolveColombiaPaymentPeriod(startDate, endDate);
+    return resolveAvailableAllyPaymentPeriod(startDate, endDate);
   } catch (error) {
     if (error instanceof RangeError) {
       throw new AllyPaymentValidationError([error.message]);
@@ -273,6 +279,7 @@ async function loadEligibleCreditRows(
         AND UPPER(BTRIM(COALESCE(credit."estado", ''))) <> ALL($4::text[])
         AND UPPER(BTRIM(COALESCE(ally."codigo", ''))) <> $5
         AND ($1::integer IS NULL OR ally."id" = $1)
+        AND credit."fechaCredito" >= $6
         AND ($2::timestamp IS NULL OR credit."fechaCredito" >= $2)
         AND ($3::timestamp IS NULL OR credit."fechaCredito" < $3)
       ORDER BY credit."fechaCredito" ASC, credit."id" ASC` + lockClause;
@@ -283,7 +290,8 @@ async function loadEligibleCreditRows(
     input.start || null,
     input.endExclusive || null,
     [...CANCELLED_STATES],
-    ALIADO_FINSER_PAY.codigo
+    ALIADO_FINSER_PAY.codigo,
+    PAYMENT_AVAILABILITY_START
   );
 }
 
@@ -516,7 +524,10 @@ export async function listAllyPaymentHistory(input: {
     ? Math.max(1, Math.min(requestedLimit, 200))
     : 100;
   const settlements = await prisma.liquidacionAliado.findMany({
-    where: allyId === null ? undefined : { aliadoId: allyId },
+    where: {
+      periodoInicio: { gte: dateForDatabase(ALLY_PAYMENTS_AVAILABLE_FROM) },
+      ...(allyId === null ? {} : { aliadoId: allyId }),
+    },
     include: SETTLEMENT_INCLUDE,
     orderBy: [{ pagadoAt: "desc" }, { id: "desc" }],
     take: limit,
@@ -534,6 +545,7 @@ export async function getAllyPaymentDetail(input: {
   const settlement = await prisma.liquidacionAliado.findFirst({
     where: {
       id,
+      periodoInicio: { gte: dateForDatabase(ALLY_PAYMENTS_AVAILABLE_FROM) },
       ...(allyId === null ? {} : { aliadoId: allyId }),
     },
     include: SETTLEMENT_INCLUDE,

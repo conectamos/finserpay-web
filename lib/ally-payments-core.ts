@@ -1,5 +1,8 @@
 export type AllyPaymentPlatform = "ANDROID" | "IPHONE";
 
+export const ALLY_PAYMENTS_AVAILABLE_FROM = "2026-09-01";
+export const ALLY_PAYMENTS_AVAILABLE_FROM_LABEL = "1 de septiembre de 2026";
+
 export type AllyPaymentViewerScope =
   | { kind: "UNAUTHENTICATED" }
   | { kind: "FORBIDDEN" }
@@ -227,6 +230,21 @@ export function resolveColombiaPaymentPeriod(
     start,
     endExclusive: new Date(inclusiveEnd.getTime() + 86_400_000),
   };
+}
+
+export function resolveAvailableAllyPaymentPeriod(
+  startDate: unknown,
+  endDate: unknown
+) {
+  const period = resolveColombiaPaymentPeriod(startDate, endDate);
+
+  if (period.startDate < ALLY_PAYMENTS_AVAILABLE_FROM) {
+    throw new RangeError(
+      `La informacion de pagos esta disponible desde el ${ALLY_PAYMENTS_AVAILABLE_FROM_LABEL}.`
+    );
+  }
+
+  return period;
 }
 
 export function isAnnulledCreditState(value: unknown) {

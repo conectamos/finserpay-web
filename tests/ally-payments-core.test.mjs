@@ -1,14 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ALLY_PAYMENTS_AVAILABLE_FROM,
+  ALLY_PAYMENTS_AVAILABLE_FROM_LABEL,
   calculateAllyPaymentAmounts,
   isAnnulledCreditState,
   normalizeBankApprovalNumber,
   resolveAllyPaymentPlatform,
+  resolveAvailableAllyPaymentPeriod,
   resolveColombiaPaymentPeriod,
   roundAllyPaymentMoney,
   summarizeAllyPayments,
 } from "../lib/ally-payments-core.ts";
+
+test("fija la disponibilidad de pagos desde el 1 de septiembre de 2026", () => {
+  assert.equal(ALLY_PAYMENTS_AVAILABLE_FROM, "2026-09-01");
+  assert.equal(ALLY_PAYMENTS_AVAILABLE_FROM_LABEL, "1 de septiembre de 2026");
+  assert.throws(
+    () => resolveAvailableAllyPaymentPeriod("2026-08-31", "2026-09-01"),
+    /disponible desde el 1 de septiembre de 2026/
+  );
+  assert.equal(
+    resolveAvailableAllyPaymentPeriod("2026-09-01", "2026-09-01").startDate,
+    "2026-09-01"
+  );
+});
 
 test("calcula el pago al aliado con la formula financiera confirmada", () => {
   assert.deepEqual(

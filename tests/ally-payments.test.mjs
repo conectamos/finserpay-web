@@ -22,6 +22,9 @@ const [
   railwayPredeploy,
   dockerfile,
   packageJson,
+  sidebarSource,
+  consoleSource,
+  pageSource,
 ] = await Promise.all([
   readProjectFile("lib/ally-payment-access.ts"),
   readProjectFile("app/api/pagos-aliados/route.ts"),
@@ -32,6 +35,9 @@ const [
   readProjectFile("scripts/railway-predeploy.mjs"),
   readProjectFile("Dockerfile"),
   readProjectFile("package.json"),
+  readProjectFile("app/dashboard/_components/admin-sidebar.tsx"),
+  readProjectFile("app/dashboard/pagos-aliados/ally-payments-console.tsx"),
+  readProjectFile("app/dashboard/pagos-aliados/page.tsx"),
 ]);
 
 function sectionBetween(contents, startMarker, endMarker) {
@@ -248,6 +254,7 @@ test("las consultas excluyen pagados y acotan aliado y periodo en base de datos"
   );
   assert.match(eligibleQuery, /credit\."fechaCredito"\s*>=\s*\$2/);
   assert.match(eligibleQuery, /credit\."fechaCredito"\s*<\s*\$3/);
+  assert.match(eligibleQuery, /credit\."fechaCredito"\s*>=\s*\$6/);
   assert.match(
     eligibleQuery,
     /UPPER\(BTRIM\(COALESCE\(ally\."codigo",\s*''\)\)\)\s*<>\s*\$5/
@@ -256,11 +263,32 @@ test("las consultas excluyen pagados y acotan aliado y periodo en base de datos"
 
   assert.match(
     history,
-    /where:\s*allyId\s*===\s*null\s*\?\s*undefined\s*:\s*{\s*aliadoId:\s*allyId\s*}/
+    /periodoInicio:\s*{\s*gte:\s*dateForDatabase\(ALLY_PAYMENTS_AVAILABLE_FROM\)\s*}/
   );
+  assert.match(history, /\.\.\.\(allyId\s*===\s*null\s*\?\s*{}\s*:\s*{\s*aliadoId:\s*allyId\s*}\)/);
   assert.match(
     detail,
     /\.\.\.\(allyId\s*===\s*null\s*\?\s*{}\s*:\s*{\s*aliadoId:\s*allyId\s*}\)/
+  );
+  assert.match(
+    detail,
+    /periodoInicio:\s*{\s*gte:\s*dateForDatabase\(ALLY_PAYMENTS_AVAILABLE_FROM\)\s*}/
+  );
+});
+
+test("el modulo usa el rotulo solicitado y limita las fechas desde septiembre", () => {
+  assert.match(sidebarSource, /label:\s*"PAGOS ALIADO"/);
+  assert.doesNotMatch(sidebarSource, /Pagos recibidos \/ Pagos pendientes/);
+  assert.match(pageSource, /current="PAGOS ALIADO"/);
+  assert.match(consoleSource, /title="PAGOS ALIADO"/);
+  assert.match(consoleSource, /min={ALLY_PAYMENTS_AVAILABLE_FROM}/);
+  assert.match(
+    consoleSource,
+    /fechaInicio\s*<\s*ALLY_PAYMENTS_AVAILABLE_FROM[\s\S]*?fechaFin\s*<\s*ALLY_PAYMENTS_AVAILABLE_FROM/
+  );
+  assert.match(
+    storage,
+    /return\s+resolveAvailableAllyPaymentPeriod\(startDate,\s*endDate\)/
   );
 });
 

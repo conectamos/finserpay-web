@@ -144,9 +144,7 @@ export default function AdminSidebar({
         {
           href: "/dashboard/pagos-aliados",
           icon: WalletCards,
-          label: adminCentral
-            ? "Pago aliados"
-            : "Pagos recibidos / Pagos pendientes",
+          label: "PAGOS ALIADO",
         },
         { href: "/dashboard/clientes", icon: Users, label: "Clientes" },
         ...(adminCentral

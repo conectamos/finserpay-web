@@ -6,7 +6,7 @@ import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
 import AllyPaymentsConsole from "./ally-payments-console";
 
 export const metadata = {
-  title: "Pagos a aliados | FINSER PAY",
+  title: "PAGOS ALIADO | FINSER PAY",
   description: "Liquidaciones, pagos recibidos y pagos pendientes de aliados",
 };
 
@@ -28,7 +28,7 @@ export default async function PagosAliadosPage() {
     >
       <AdminWorkspaceTopbar
         parent="Operacion financiera"
-        current={adminCentral ? "Pago aliados" : "Pagos del aliado"}
+        current="PAGOS ALIADO"
         userName={session.nombre}
         userRole={session.rolNombre}
       />
