@@ -27,6 +27,7 @@ model Aliado {
   dataCreditoPolicyId             String                             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   dataCreditoPolicy               DataCreditoPolicyProfile           @relation(fields: [dataCreditoPolicyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   dataCreditoPolicyAssignmentLogs DataCreditoPolicyAssignmentAudit[]
+  liquidacionesAliado             LiquidacionAliado[]
   sedes                           Sede[]
   createdAt                       DateTime                           @default(now())
   updatedAt                       DateTime                           @updatedAt
@@ -124,6 +125,7 @@ model Usuario {
   capturasCredito CapturaCreditoSession[]
   ventas          Venta[]
   arqueosDiarios  ArqueoDiario[]
+  liquidacionesAliadoRegistradas LiquidacionAliado[]
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
 }
@@ -276,6 +278,7 @@ model Credito {
   abonos                        CreditoAbono[]
   amortizacion                  CreditoAmortizacion?
   wompiPaymentIntents           WompiPaymentIntent[]
+  liquidacionAliadoCredito      LiquidacionAliadoCredito?
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
 
@@ -284,6 +287,62 @@ model Credito {
   @@index([sedeId, createdAt])
   @@index([deviceUid])
   @@index([imei])
+}
+
+model LiquidacionAliado {
+  id                          Int                         @id @default(autoincrement())
+  mutationId                  String                      @unique @db.Uuid
+  requestHash                 String                      @db.Char(64)
+  aliadoId                    Int
+  periodoInicio               DateTime                    @db.Date
+  periodoFin                  DateTime                    @db.Date
+  numeroAprobacionBancaria    String                      @db.VarChar(120)
+  numeroAprobacionNormalizado String                      @unique @db.VarChar(120)
+  estado                      String                      @default("PAGADA") @db.VarChar(16)
+  numeroCreditos              Int
+  totalValorVenta             Decimal                     @db.Decimal(20, 2)
+  totalCreditoAutorizado      Decimal                     @db.Decimal(20, 2)
+  totalCuotaInicial           Decimal                     @db.Decimal(20, 2)
+  totalIntermediacion         Decimal                     @db.Decimal(20, 2)
+  totalPagar                  Decimal                     @db.Decimal(20, 2)
+  registradoPorUsuarioId      Int
+  registradoPorNombre         String                      @db.VarChar(160)
+  pagadoAt                    DateTime                    @default(now())
+  createdAt                   DateTime                    @default(now())
+  updatedAt                   DateTime                    @updatedAt
+  aliado                      Aliado                      @relation(fields: [aliadoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  registradoPor               Usuario                     @relation(fields: [registradoPorUsuarioId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  creditos                    LiquidacionAliadoCredito[]
+
+  @@index([aliadoId, pagadoAt])
+  @@index([periodoInicio, periodoFin])
+  @@index([estado, pagadoAt])
+  @@index([registradoPorUsuarioId, pagadoAt])
+}
+
+model LiquidacionAliadoCredito {
+  id                       Int                @id @default(autoincrement())
+  liquidacionId            Int
+  creditoId                Int                @unique
+  fechaCredito             DateTime
+  folio                    String             @db.VarChar(80)
+  clienteNombre            String             @db.VarChar(180)
+  equipo                   String             @db.VarChar(240)
+  plataforma               String             @db.VarChar(16)
+  valorVenta               Decimal            @db.Decimal(20, 2)
+  creditoAutorizado        Decimal            @db.Decimal(20, 2)
+  cuotaInicial             Decimal            @db.Decimal(20, 2)
+  porcentajeIntermediacion Decimal            @db.Decimal(7, 4)
+  valorIntermediacion      Decimal            @db.Decimal(20, 2)
+  valorPagar               Decimal            @db.Decimal(20, 2)
+  estado                   String             @default("PAGADO") @db.VarChar(16)
+  createdAt                DateTime           @default(now())
+  liquidacion              LiquidacionAliado @relation(fields: [liquidacionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  credito                  Credito            @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([liquidacionId, plataforma])
+  @@index([plataforma, fechaCredito])
+  @@index([estado, createdAt])
 }
 
 model CreditoAbono {

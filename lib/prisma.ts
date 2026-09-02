@@ -23,6 +23,8 @@ const REQUIRED_DELEGATES = [
   "vendedor",
   "sedeVendedor",
   "credito",
+  "liquidacionAliado",
+  "liquidacionAliadoCredito",
   "creditoAbono",
   "wompiPaymentIntent",
   "capturaCreditoSession",

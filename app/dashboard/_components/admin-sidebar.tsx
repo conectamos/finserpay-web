@@ -22,6 +22,7 @@ import {
   TriangleAlert,
   UserRound,
   Users,
+  WalletCards,
 } from "lucide-react";
 import FinserBrand from "@/app/_components/finser-brand";
 import LogoutButton from "./logout-button";
@@ -69,7 +70,7 @@ function SidebarLink({
       ].join(" ")}
     >
       <Icon className="h-5 w-5 shrink-0" strokeWidth={1.8} />
-      <span className="whitespace-nowrap">{label}</span>
+      <span className="min-w-0 whitespace-normal leading-5">{label}</span>
     </Link>
   );
 }
@@ -140,6 +141,13 @@ export default function AdminSidebar({
             ]
           : []),
         { href: "/dashboard/abonos", icon: CircleDollarSign, label: "Recaudos" },
+        {
+          href: "/dashboard/pagos-aliados",
+          icon: WalletCards,
+          label: adminCentral
+            ? "Pago aliados"
+            : "Pagos recibidos / Pagos pendientes",
+        },
         { href: "/dashboard/clientes", icon: Users, label: "Clientes" },
         ...(adminCentral
           ? [
