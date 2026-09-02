@@ -156,7 +156,7 @@ function CollectionChart({
   const plotHeight = bottom - top;
   const plotWidth = right - left;
   const maxValue = chartMaximum(
-    Math.max(1, ...data.flatMap((point) => [point.colocacion, point.recaudo]))
+    Math.max(1, ...data.flatMap((point) => [point.placedCapital, point.recaudo]))
   );
   const step = data.length > 1 ? plotWidth / (data.length - 1) : plotWidth;
   const barWidth = Math.max(6, Math.min(13, step * 0.54));
@@ -182,8 +182,8 @@ function CollectionChart({
             value: String(overview.monthlyCreditCount),
           },
           {
-            label: "Monto colocado",
-            value: money(overview.monthlyPlacement),
+            label: "Capital colocado",
+            value: money(overview.monthlyPlacedCapital),
           },
           {
             label: "Recaudo del mes",
@@ -218,7 +218,7 @@ function CollectionChart({
       <div className="mb-2 mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs font-semibold text-[#475467]">
         <span className="inline-flex items-center gap-2">
           <span className="h-3 w-5 rounded-sm bg-[#0b213f]" />
-          Monto colocado
+          Capital colocado
         </span>
         <span className="inline-flex items-center gap-2">
           <span className="h-0.5 w-6 bg-[#78a016]" />
@@ -238,8 +238,8 @@ function CollectionChart({
           className="block h-auto min-h-[250px] w-full"
           role="img"
           aria-label={`${overview.monthlyCreditCount} ventas, ${money(
-            overview.monthlyPlacement
-          )} colocados y ${money(overview.monthlyCollection)} recaudados en ${
+            overview.monthlyPlacedCapital
+          )} de capital colocado y ${money(overview.monthlyCollection)} recaudados en ${
             overview.monthLabel
           }`}
         >
@@ -270,7 +270,7 @@ function CollectionChart({
           })}
 
           {data.map((point, index) => {
-            const barHeight = (point.colocacion / maxValue) * plotHeight;
+            const barHeight = (point.placedCapital / maxValue) * plotHeight;
             const x = left + index * step - barWidth / 2;
 
             return (
@@ -286,7 +286,7 @@ function CollectionChart({
                   <title>
                     {`${point.day} ${monthShort}: ${point.creditCount} ${
                       point.creditCount === 1 ? "venta" : "ventas"
-                    }, ${money(point.colocacion)} colocados`}
+                    }, ${money(point.placedCapital)} de capital colocado`}
                   </title>
                 </rect>
                 {point.creditCount > 0 ? (
@@ -421,11 +421,11 @@ export default function AdminCentralDashboard({
   const maxSedeValue = Math.max(1, ...data.sedes.map((sede) => sede.value));
   const metricCards: MetricCardProps[] = [
     {
-      detail: `${data.activeCredits} creditos con saldo pendiente`,
+      detail: `Capital colocado en ${data.activeCredits} creditos activos`,
       icon: WalletCards,
       label: "Cartera activa",
       tone: "teal",
-      value: money(data.activePortfolio),
+      value: money(data.activePlacedCapital),
     },
     {
       detail: "Creditos vigentes con saldo",
@@ -515,9 +515,9 @@ export default function AdminCentralDashboard({
 
         <section className="mt-4 grid gap-4 xl:grid-cols-[1.3fr_1fr]">
           <section className="min-w-0 rounded-lg border border-[#d8dee6] bg-white p-5 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
-            <h2 className="text-xl font-black text-[#101828]">Recaudo y colocacion</h2>
+            <h2 className="text-xl font-black text-[#101828]">Recaudo y capital colocado</h2>
             <p className="mt-1 text-sm text-[#667085]">
-              Ventas financiadas y recaudo diario de {titleCase(data.monthLabel)}.
+              Capital financiado y recaudo diario de {titleCase(data.monthLabel)}.
             </p>
             <div className="mt-5">
               <CollectionChart overview={data} />

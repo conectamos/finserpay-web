@@ -1,4 +1,5 @@
 import type { Prisma } from "@/app/generated/prisma/client";
+import { resolveCapitalOriginal } from "@/lib/credit-capital";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import prisma from "@/lib/prisma";
 
@@ -7,7 +8,7 @@ type RiskBucket = "alDia" | "temprana" | "critica";
 export type AdminDashboardDailyPoint = {
   day: number;
   creditCount: number;
-  colocacion: number;
+  placedCapital: number;
   recaudo: number;
 };
 
@@ -18,7 +19,7 @@ export type AdminDashboardSedePoint = {
 
 export type AdminDashboardOverview = {
   activeCredits: number;
-  activePortfolio: number;
+  activePlacedCapital: number;
   alertsCount: number;
   criticalCredits: number;
   daily: AdminDashboardDailyPoint[];
@@ -35,7 +36,7 @@ export type AdminDashboardOverview = {
   monthlyCollection: number;
   monthlyCreditCount: number;
   monthlyPaymentCount: number;
-  monthlyPlacement: number;
+  monthlyPlacedCapital: number;
   sedes: AdminDashboardSedePoint[];
 };
 
@@ -156,6 +157,7 @@ export async function getAdminDashboardOverview({
         },
         clienteDocumento: true,
         clienteNombre: true,
+        cuotaInicial: true,
         fechaCredito: true,
         fechaPrimerPago: true,
         fechaProximoPago: true,
@@ -164,12 +166,16 @@ export async function getAdminDashboardOverview({
         montoCredito: true,
         pazYSalvoEmitidoAt: true,
         plazoMeses: true,
+        saldoBaseFinanciado: true,
         sede: {
           select: {
             nombre: true,
           },
         },
         valorCuota: true,
+        valorEquipoTotal: true,
+        valorFianza: true,
+        valorInteres: true,
       },
     }),
     prisma.creditoAbono.findMany({
@@ -209,6 +215,14 @@ export async function getAdminDashboardOverview({
 
     return {
       bucket: riskBucket(lateDays),
+      capitalColocado: resolveCapitalOriginal({
+        cuotaInicial: credit.cuotaInicial,
+        montoCredito: credit.montoCredito,
+        saldoBaseFinanciado: credit.saldoBaseFinanciado,
+        valorEquipoTotal: credit.valorEquipoTotal,
+        valorFianza: credit.valorFianza,
+        valorInteres: credit.valorInteres,
+      }),
       clientKey: credit.clienteDocumento || credit.clienteNombre || String(credit.id),
       dueToday: plan.installments.filter(
         (installment) =>
@@ -221,6 +235,10 @@ export async function getAdminDashboardOverview({
   const activePortfolio = portfolio.filter((credit) => credit.saldoPendiente > 0);
   const totalPortfolio = activePortfolio.reduce(
     (sum, credit) => sum + credit.saldoPendiente,
+    0
+  );
+  const activePlacedCapital = activePortfolio.reduce(
+    (sum, credit) => sum + credit.capitalColocado,
     0
   );
   const healthyBalance = activePortfolio
@@ -243,7 +261,7 @@ export async function getAdminDashboardOverview({
   const daily = Array.from({ length: daysInMonth }, (_, index) => ({
     day: index + 1,
     creditCount: 0,
-    colocacion: 0,
+    placedCapital: 0,
     recaudo: 0,
   }));
 
@@ -256,14 +274,14 @@ export async function getAdminDashboardOverview({
     }
   }
 
-  for (const credit of credits) {
+  for (const credit of portfolio) {
     if (credit.fechaCredito >= monthStart && credit.fechaCredito < nextMonthStart) {
       const day = colombiaDay(credit.fechaCredito);
       const point = daily[day - 1];
 
       if (point) {
         point.creditCount += 1;
-        point.colocacion += Number(credit.montoCredito || 0);
+        point.placedCapital += credit.capitalColocado;
       }
     }
   }
@@ -289,8 +307,8 @@ export async function getAdminDashboardOverview({
     (sum, point) => sum + point.creditCount,
     0
   );
-  const monthlyPlacement = daily.reduce(
-    (sum, point) => sum + point.colocacion,
+  const monthlyPlacedCapital = daily.reduce(
+    (sum, point) => sum + point.placedCapital,
     0
   );
   const earlyPercent = ratio(earlyBalance, totalPortfolio);
@@ -299,7 +317,7 @@ export async function getAdminDashboardOverview({
 
   return {
     activeCredits: activePortfolio.length,
-    activePortfolio: totalPortfolio,
+    activePlacedCapital,
     alertsCount: dueToday + earlyClientKeys.size + criticalCredits,
     criticalBalance,
     criticalCredits,
@@ -320,7 +338,7 @@ export async function getAdminDashboardOverview({
     monthlyCollection,
     monthlyCreditCount,
     monthlyPaymentCount: monthPayments.length,
-    monthlyPlacement,
+    monthlyPlacedCapital,
     sedes,
   };
 }
