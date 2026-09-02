@@ -3,9 +3,11 @@ import PDFDocument from "pdfkit";
 export type AllyPaymentSettlementPdfLine = {
   creditId: number;
   creditDate: string;
-  folio: string;
+  allyName: string;
   clientName: string;
+  clientDocument: string;
   equipment: string;
+  imei: string;
   platform: "ANDROID" | "IPHONE";
   saleValue: number;
   initialPayment: number;
@@ -13,6 +15,7 @@ export type AllyPaymentSettlementPdfLine = {
   intermediationPercentage: number;
   intermediationValue: number;
   payableValue: number;
+  status: string;
 };
 
 export type AllyPaymentSettlementPdfBucket = {
@@ -48,7 +51,8 @@ const PAGE_HEIGHT = 595;
 const PAGE_MARGIN = 34;
 const CONTENT_WIDTH = PAGE_WIDTH - PAGE_MARGIN * 2;
 const FOOTER_Y = PAGE_HEIGHT - 24;
-const ROW_HEIGHT = 30;
+const TABLE_HEADER_HEIGHT = 32;
+const ROW_HEIGHT = 32;
 
 const COLORS = {
   graphite: "#101214",
@@ -75,17 +79,19 @@ const numberFormatter = new Intl.NumberFormat("es-CO", {
 });
 
 const TABLE_COLUMNS = [
-  { key: "date", label: "Fecha", width: 52, align: "left" },
-  { key: "folio", label: "Folio", width: 72, align: "left" },
-  { key: "client", label: "Cliente", width: 88, align: "left" },
-  { key: "equipment", label: "Equipo", width: 105, align: "left" },
-  { key: "platform", label: "Plat.", width: 44, align: "left" },
-  { key: "sale", label: "Venta", width: 69, align: "right" },
-  { key: "initial", label: "Inicial", width: 65, align: "right" },
-  { key: "credit", label: "Credito", width: 72, align: "right" },
-  { key: "percentage", label: "%", width: 38, align: "right" },
-  { key: "intermediation", label: "Interm.", width: 75, align: "right" },
-  { key: "payable", label: "A pagar", width: 94, align: "right" },
+  { key: "date", label: "Fecha", width: 46, align: "left" },
+  { key: "ally", label: "Aliado", width: 58, align: "left" },
+  { key: "client", label: "Cliente", width: 68, align: "left" },
+  { key: "document", label: "Cedula", width: 54, align: "left" },
+  { key: "equipment", label: "Equipo / IMEI", width: 100, align: "left" },
+  { key: "platform", label: "Plataforma", width: 44, align: "left" },
+  { key: "sale", label: "Valor venta", width: 58, align: "right" },
+  { key: "initial", label: "Inicial", width: 55, align: "right" },
+  { key: "credit", label: "Credito autorizado", width: 66, align: "right" },
+  { key: "percentage", label: "Intermediacion", width: 46, align: "right" },
+  { key: "intermediation", label: "Valor intermediacion", width: 66, align: "right" },
+  { key: "payable", label: "Valor a pagar", width: 70, align: "right" },
+  { key: "status", label: "Estado", width: 43, align: "left" },
 ] as const;
 
 function toBuffer(doc: PDFKit.PDFDocument) {
@@ -313,29 +319,34 @@ function drawFirstPageOverview(
 }
 
 function drawTableHeader(doc: PDFKit.PDFDocument, y: number) {
-  doc.rect(PAGE_MARGIN, y, CONTENT_WIDTH, 25).fill(COLORS.graphiteSoft);
+  doc.rect(PAGE_MARGIN, y, CONTENT_WIDTH, TABLE_HEADER_HEIGHT).fill(COLORS.graphiteSoft);
   let x = PAGE_MARGIN;
   TABLE_COLUMNS.forEach((column) => {
     doc
       .font("Helvetica-Bold")
-      .fontSize(6.4)
+      .fontSize(5.8)
       .fillColor(COLORS.white)
-      .text(column.label, x + 4, y + 8, {
+      .text(column.label, x + 3, y + 6, {
         width: column.width - 8,
+        height: 21,
         align: column.align,
-        lineBreak: false,
       });
     x += column.width;
   });
-  return y + 25;
+  return y + TABLE_HEADER_HEIGHT;
 }
 
 function lineValues(line: AllyPaymentSettlementPdfLine) {
   return {
     date: dateLabel(line.creditDate),
-    folio: safeText(line.folio, `Credito ${line.creditId}`, 28),
+    ally: safeText(line.allyName, "Aliado", 28),
     client: safeText(line.clientName, "Cliente", 34),
-    equipment: safeText(line.equipment, "Equipo", 40),
+    document: safeText(line.clientDocument, "Sin documento", 24),
+    equipment: `${safeText(line.equipment, "Equipo", 36)}\nIMEI ${safeText(
+      line.imei,
+      "Sin IMEI",
+      24
+    )}`,
     platform: line.platform === "IPHONE" ? "iPhone" : "Android",
     sale: money(line.saleValue),
     initial: money(line.initialPayment),
@@ -343,6 +354,7 @@ function lineValues(line: AllyPaymentSettlementPdfLine) {
     percentage: percentage(line.intermediationPercentage),
     intermediation: money(line.intermediationValue),
     payable: money(line.payableValue),
+    status: safeText(line.status, "PAGADO", 16),
   };
 }
 
@@ -361,11 +373,11 @@ function drawTableRow(
     const emphasized = column.key === "payable";
     doc
       .font(emphasized ? "Helvetica-Bold" : "Helvetica")
-      .fontSize(emphasized ? 6.8 : 6.4)
+      .fontSize(emphasized ? 6.2 : 5.8)
       .fillColor(COLORS.ink)
-      .text(values[column.key], x + 4, y + 6, {
+      .text(values[column.key], x + 3, y + 5, {
         width: column.width - 8,
-        height: 18,
+        height: 23,
         align: column.align,
         ellipsis: true,
       });

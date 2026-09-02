@@ -101,9 +101,11 @@ export async function GET(
       lines: settlement.items.map((item) => ({
         creditId: item.creditoId,
         creditDate: item.fechaCredito,
-        folio: item.folio,
+        allyName: settlement.aliado.nombre,
         clientName: item.clienteNombre,
+        clientDocument: item.clienteDocumento,
         equipment: item.equipo,
+        imei: item.imei,
         platform: item.plataforma,
         saleValue: item.valorVenta,
         initialPayment: item.cuotaInicial,
@@ -111,6 +113,7 @@ export async function GET(
         intermediationPercentage: item.porcentajeIntermediacion,
         intermediationValue: item.valorIntermediacion,
         payableValue: item.valorPagar,
+        status: item.estado,
       })),
     });
     const download = new URL(request.url).searchParams.get("download") === "1";

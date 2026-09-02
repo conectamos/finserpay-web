@@ -9,9 +9,11 @@ function sampleLine(index) {
   return {
     creditId: 1000 + index,
     creditDate: "2026-09-01",
-    folio: `FC-20260901-${String(index + 1).padStart(4, "0")}`,
+    allyName: "JG COMPANY",
     clientName: `Cliente de prueba con nombre largo ${index + 1}`,
+    clientDocument: `10203040${String(index).padStart(2, "0")}`,
     equipment: `IPHONE MODELO DE PRUEBA ${index + 1} 256GB`,
+    imei: `35519087449${String(index).padStart(4, "0")}`,
     platform: index % 2 === 0 ? "IPHONE" : "ANDROID",
     saleValue: authorizedCredit + 800_000,
     initialPayment: 800_000,
@@ -19,6 +21,7 @@ function sampleLine(index) {
     intermediationPercentage: percentage,
     intermediationValue,
     payableValue: authorizedCredit - intermediationValue,
+    status: "PAGADO",
   };
 }
 

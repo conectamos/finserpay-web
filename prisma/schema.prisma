@@ -327,6 +327,8 @@ model LiquidacionAliadoCredito {
   fechaCredito             DateTime
   folio                    String             @db.VarChar(80)
   clienteNombre            String             @db.VarChar(180)
+  clienteDocumento         String             @db.VarChar(80)
+  imei                     String             @db.VarChar(80)
   equipo                   String             @db.VarChar(240)
   plataforma               String             @db.VarChar(16)
   valorVenta               Decimal            @db.Decimal(20, 2)

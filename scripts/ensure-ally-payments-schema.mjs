@@ -48,6 +48,8 @@ const statements = [
       "fechaCredito" TIMESTAMP(3) NOT NULL,
       "folio" VARCHAR(80) NOT NULL,
       "clienteNombre" VARCHAR(180) NOT NULL,
+      "clienteDocumento" VARCHAR(80) NOT NULL,
+      "imei" VARCHAR(80) NOT NULL,
       "equipo" VARCHAR(240) NOT NULL,
       "plataforma" VARCHAR(16) NOT NULL,
       "valorVenta" NUMERIC(20,2) NOT NULL,
@@ -59,6 +61,56 @@ const statements = [
       "estado" VARCHAR(16) NOT NULL DEFAULT 'PAGADO',
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `,
+  `
+    ALTER TABLE public."LiquidacionAliadoCredito"
+      ADD COLUMN IF NOT EXISTS "clienteDocumento" VARCHAR(80),
+      ADD COLUMN IF NOT EXISTS "imei" VARCHAR(80)
+  `,
+  `
+    UPDATE public."LiquidacionAliadoCredito" detail
+    SET
+      "clienteDocumento" = LEFT(
+        COALESCE(
+          NULLIF(BTRIM(detail."clienteDocumento"), ''),
+          NULLIF(BTRIM(credit."clienteDocumento"), ''),
+          'Sin documento'
+        ),
+        80
+      ),
+      "imei" = LEFT(
+        COALESCE(
+          NULLIF(BTRIM(detail."imei"), ''),
+          NULLIF(BTRIM(credit."imei"), ''),
+          NULLIF(BTRIM(credit."deviceUid"), ''),
+          'Sin IMEI'
+        ),
+        80
+      )
+    FROM public."Credito" credit
+    WHERE credit."id" = detail."creditoId"
+      AND (
+        NULLIF(BTRIM(detail."clienteDocumento"), '') IS NULL
+        OR NULLIF(BTRIM(detail."imei"), '') IS NULL
+      )
+  `,
+  `
+    UPDATE public."LiquidacionAliadoCredito"
+    SET
+      "clienteDocumento" = COALESCE(
+        NULLIF(BTRIM("clienteDocumento"), ''),
+        'Sin documento'
+      ),
+      "imei" = COALESCE(NULLIF(BTRIM("imei"), ''), 'Sin IMEI')
+    WHERE "clienteDocumento" IS NULL
+      OR NULLIF(BTRIM("clienteDocumento"), '') IS NULL
+      OR "imei" IS NULL
+      OR NULLIF(BTRIM("imei"), '') IS NULL
+  `,
+  `
+    ALTER TABLE public."LiquidacionAliadoCredito"
+      ALTER COLUMN "clienteDocumento" SET NOT NULL,
+      ALTER COLUMN "imei" SET NOT NULL
   `,
   `
     DO $$
@@ -371,6 +423,8 @@ const expectedColumns = [
   ["LiquidacionAliadoCredito", "fechaCredito", "timestamp without time zone", "NO"],
   ["LiquidacionAliadoCredito", "folio", "character varying", "NO", 80],
   ["LiquidacionAliadoCredito", "clienteNombre", "character varying", "NO", 180],
+  ["LiquidacionAliadoCredito", "clienteDocumento", "character varying", "NO", 80],
+  ["LiquidacionAliadoCredito", "imei", "character varying", "NO", 80],
   ["LiquidacionAliadoCredito", "equipo", "character varying", "NO", 240],
   ["LiquidacionAliadoCredito", "plataforma", "character varying", "NO", 16],
   ["LiquidacionAliadoCredito", "valorVenta", "numeric", "NO", null, 20, 2],

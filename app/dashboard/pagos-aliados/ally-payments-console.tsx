@@ -54,6 +54,8 @@ type PaymentCreditItem = {
   folio?: string | null;
   cliente?: string | null;
   clienteNombre?: string | null;
+  clienteDocumento?: string | null;
+  imei?: string | null;
   equipo?: string | null;
   plataforma?: string | null;
   valorVenta?: number | null;
@@ -221,7 +223,7 @@ function itemStatus(item: PaymentCreditItem) {
 }
 
 function itemKey(item: PaymentCreditItem, index: number) {
-  return String(item.creditoId ?? item.id ?? item.folio ?? index);
+  return String(item.creditoId ?? item.id ?? item.imei ?? index);
 }
 
 function itemCreditId(item: PaymentCreditItem) {
@@ -543,7 +545,7 @@ function IntermediationField({
           inputMode="decimal"
           value={value}
           onChange={(event) => editor.onChange(creditId, event.target.value)}
-          aria-label={`Porcentaje de intermediacion del credito ${item.folio || creditId}`}
+          aria-label={`Porcentaje de intermediacion del credito ${item.imei || creditId}`}
           aria-invalid={Boolean(error)}
         />
         <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-[var(--fp-muted)]">
@@ -595,10 +597,10 @@ function CreditItems({
           <article key={itemKey(item, index)} className="p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="break-all text-sm font-black text-[var(--fp-graphite)]">
-                  {item.folio || "Sin folio"}
+                <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
+                  Fecha
                 </p>
-                <p className="mt-1 flex items-center gap-1.5 text-xs text-[var(--fp-muted)]">
+                <p className="mt-1 flex items-center gap-1.5 text-sm font-bold text-[var(--fp-graphite)]">
                   <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
                   {formatDate(itemDate(item))}
                 </p>
@@ -609,9 +611,25 @@ function CreditItems({
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
+                  Aliado
+                </p>
+                <p className="mt-1 font-bold text-[var(--fp-graphite)]">
+                  {item.aliado?.nombre || "-"}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
                   Cliente
                 </p>
                 <p className="mt-1 font-bold text-[var(--fp-graphite)]">{itemClient(item)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
+                  Cédula
+                </p>
+                <p className="mt-1 font-mono text-sm font-semibold text-[#344054]">
+                  {item.clienteDocumento || "Sin documento"}
+                </p>
               </div>
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
@@ -620,15 +638,10 @@ function CreditItems({
                 <p className="mt-1 text-sm font-semibold text-[#344054]">
                   {item.equipo || "Sin referencia"}
                 </p>
+                <p className="mt-1 break-all font-mono text-xs text-[var(--fp-muted)]">
+                  IMEI: {item.imei || "Sin IMEI"}
+                </p>
               </div>
-              {item.aliado?.nombre ? (
-                <div className="sm:col-span-2">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
-                    Aliado
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-[#344054]">{item.aliado.nombre}</p>
-                </div>
-              ) : null}
             </div>
 
             <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 rounded-md bg-[#f7f8f8] p-3 text-sm">
@@ -641,21 +654,22 @@ function CreditItems({
                 <p className="mt-1 font-bold tabular-nums">{formatMoney(item.valorVenta)}</p>
               </div>
               <div>
-                <p className="text-xs text-[var(--fp-muted)]">Credito autorizado</p>
-                <p className="mt-1 font-bold tabular-nums">{formatMoney(item.creditoAutorizado)}</p>
-              </div>
-              <div>
                 <p className="text-xs text-[var(--fp-muted)]">Inicial</p>
                 <p className="mt-1 font-bold tabular-nums">{formatMoney(item.cuotaInicial)}</p>
               </div>
               <div>
-                <p className="text-xs text-[var(--fp-muted)]">Intermediacion</p>
+                <p className="text-xs text-[var(--fp-muted)]">Crédito autorizado</p>
+                <p className="mt-1 font-bold tabular-nums">{formatMoney(item.creditoAutorizado)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[var(--fp-muted)]">Intermediación</p>
                 <div className="mt-1 font-bold tabular-nums">
                   <IntermediationField editor={intermediationEditor} item={item} />
-                  <p className="mt-1 text-xs text-[var(--fp-muted)]">
-                    {formatMoney(item.valorIntermediacion)}
-                  </p>
                 </div>
+              </div>
+              <div>
+                <p className="text-xs text-[var(--fp-muted)]">Valor intermediación</p>
+                <p className="mt-1 font-bold tabular-nums">{formatMoney(item.valorIntermediacion)}</p>
               </div>
             </div>
             <div className="mt-3 flex items-center justify-between gap-3">
@@ -667,21 +681,21 @@ function CreditItems({
       </div>
 
       <DataTable className="mt-3 hidden lg:block">
-        <table className="w-full min-w-[1540px] text-[13px]">
+        <table className="w-full min-w-[1640px] text-[13px]">
           <caption className="sr-only">Detalle de creditos incluidos en el pago a aliados</caption>
           <thead className="bg-[var(--fp-graphite)] text-white">
             <tr>
               <th className="px-3 py-3 text-left">Fecha</th>
-              <th className="px-3 py-3 text-left">Folio</th>
-              <th className="px-3 py-3 text-left">Cliente</th>
-              <th className="px-3 py-3 text-left">Equipo</th>
               <th className="px-3 py-3 text-left">Aliado</th>
+              <th className="px-3 py-3 text-left">Cliente</th>
+              <th className="px-3 py-3 text-left">Cédula</th>
+              <th className="px-3 py-3 text-left">Equipo</th>
               <th className="px-3 py-3 text-left">Plataforma</th>
               <th className="px-3 py-3 text-right">Valor venta</th>
-              <th className="px-3 py-3 text-right">Credito autorizado</th>
               <th className="px-3 py-3 text-right">Inicial</th>
-              <th className="px-3 py-3 text-right">% intermediacion</th>
-              <th className="px-3 py-3 text-right">Intermediacion</th>
+              <th className="px-3 py-3 text-right">Crédito autorizado</th>
+              <th className="px-3 py-3 text-right">Intermediación</th>
+              <th className="px-3 py-3 text-right">Valor intermediación</th>
               <th className="px-3 py-3 text-right">Valor a pagar</th>
               <th className="px-3 py-3 text-left">Estado</th>
             </tr>
@@ -690,10 +704,15 @@ function CreditItems({
             {items.map((item, index) => (
               <tr key={itemKey(item, index)} className="bg-white even:bg-[#fbfcfa]">
                 <td className="whitespace-nowrap px-3 py-3">{formatDate(itemDate(item))}</td>
-                <td className="max-w-40 break-all px-3 py-3 font-bold">{item.folio || "-"}</td>
-                <td className="px-3 py-3 font-semibold">{itemClient(item)}</td>
-                <td className="max-w-56 break-words px-3 py-3">{item.equipo || "-"}</td>
                 <td className="max-w-44 break-words px-3 py-3">{item.aliado?.nombre || "-"}</td>
+                <td className="px-3 py-3 font-semibold">{itemClient(item)}</td>
+                <td className="whitespace-nowrap px-3 py-3 font-mono">{item.clienteDocumento || "-"}</td>
+                <td className="max-w-60 break-words px-3 py-3">
+                  <p>{item.equipo || "-"}</p>
+                  <p className="mt-1 break-all font-mono text-xs text-[var(--fp-muted)]">
+                    IMEI: {item.imei || "-"}
+                  </p>
+                </td>
                 <td className="px-3 py-3">
                   <Badge tone="neutral">{platformLabel(item.plataforma)}</Badge>
                 </td>
@@ -701,10 +720,10 @@ function CreditItems({
                   {formatMoney(item.valorVenta)}
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
-                  {formatMoney(item.creditoAutorizado)}
+                  {formatMoney(item.cuotaInicial)}
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
-                  {formatMoney(item.cuotaInicial)}
+                  {formatMoney(item.creditoAutorizado)}
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 text-right">
                   <div className="flex justify-end">
@@ -1409,7 +1428,7 @@ export default function AllyPaymentsConsole({
               Credito autorizado = valor venta - inicial. La intermediacion se calcula sobre ese credito; valor a pagar = credito autorizado - intermediacion.
             </p>
             <p className="mt-1 text-xs font-semibold leading-5 text-[#5c7a13]">
-              En la previsualizacion puedes ajustar el porcentaje de cada venta; la fila y el total se recalculan antes de confirmar.
+              En la previsualización puedes ajustar el porcentaje de cada venta; la fila y el total se recalculan antes de confirmar. Al registrar el pago, Finser y el aliado consultarán exactamente los mismos valores guardados.
             </p>
           </Card>
 

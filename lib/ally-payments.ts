@@ -21,7 +21,7 @@ import { colombiaDateKey } from "@/lib/colombia-date";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import prisma from "@/lib/prisma";
 
-const PAYMENT_CALCULATION_VERSION = "ALLY_INTERMEDIATION_V2";
+const PAYMENT_CALCULATION_VERSION = "ALLY_INTERMEDIATION_V3";
 const CANCELLED_STATES = ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"] as const;
 const PAYMENT_AVAILABILITY_START = resolveColombiaPaymentPeriod(
   ALLY_PAYMENTS_AVAILABLE_FROM,
@@ -38,6 +38,9 @@ type EligibleCreditRow = {
   fechaCredito: Date;
   folio: string;
   clienteNombre: string;
+  clienteDocumento: string | null;
+  imei: string;
+  deviceUid: string;
   referenciaEquipo: string | null;
   equipoMarca: string | null;
   equipoModelo: string | null;
@@ -57,6 +60,8 @@ export type AllyPaymentLine = {
   fechaCredito: string;
   folio: string;
   clienteNombre: string;
+  clienteDocumento: string;
+  imei: string;
   equipo: string;
   plataforma: AllyPaymentPlatform;
   valorVenta: number;
@@ -267,6 +272,8 @@ function buildLine(row: EligibleCreditRow): AllyPaymentLine | null {
     fechaCredito: colombiaDateKey(row.fechaCredito),
     folio: compactText(row.folio, "Credito " + row.id, 80),
     clienteNombre: compactText(row.clienteNombre, "Cliente", 180),
+    clienteDocumento: compactText(row.clienteDocumento, "Sin documento", 80),
+    imei: compactText(row.imei || row.deviceUid, "Sin IMEI", 80),
     equipo: equipmentLabel(row),
     plataforma,
     ...amounts,
@@ -291,7 +298,8 @@ async function loadEligibleCreditRows(
   const query =
     `
       SELECT credit."id", credit."fechaCredito", credit."folio",
-        credit."clienteNombre", credit."referenciaEquipo", credit."equipoMarca",
+        credit."clienteNombre", credit."clienteDocumento", credit."imei",
+        credit."deviceUid", credit."referenciaEquipo", credit."equipoMarca",
         credit."equipoModelo", credit."valorEquipoTotal", credit."cuotaInicial",
         credit."contratoSnapshot", ally."id" AS "aliadoId",
         ally."nombre" AS "aliadoNombre",
@@ -369,6 +377,8 @@ function previewFingerprint(
     creditos: lines.map((line) => ({
       creditoId: line.creditoId,
       fechaCredito: line.fechaCredito,
+      clienteDocumento: line.clienteDocumento,
+      imei: line.imei,
       plataforma: line.plataforma,
       valorVenta: line.valorVenta,
       cuotaInicial: line.cuotaInicial,
@@ -409,6 +419,8 @@ function serializeStoredLine(
     fechaCredito: dateOnly(detail.fechaCredito),
     folio: detail.folio,
     clienteNombre: detail.clienteNombre,
+    clienteDocumento: detail.clienteDocumento,
+    imei: detail.imei,
     equipo: detail.equipo,
     plataforma: detail.plataforma === "IPHONE" ? "IPHONE" : "ANDROID",
     valorVenta: Number(detail.valorVenta),
@@ -751,6 +763,8 @@ export async function createAllyPayment(input: {
                 fechaCredito: creditDateForDatabase(item.fechaCredito),
                 folio: item.folio,
                 clienteNombre: item.clienteNombre,
+                clienteDocumento: item.clienteDocumento,
+                imei: item.imei,
                 equipo: item.equipo,
                 plataforma: item.plataforma,
                 valorVenta: moneyForDatabase(item.valorVenta),

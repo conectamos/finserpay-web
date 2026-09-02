@@ -311,6 +311,46 @@ test("la interfaz recalcula y envia ajustes manuales por credito", () => {
   assert.match(consoleSource, /ajustesIntermediacion:\s*adjustmentState\.adjustments/);
   assert.match(consoleSource, /Restablecer porcentajes/);
   assert.match(consoleSource, /Object\.keys\(adjustmentState\.errors\)\.length\s*>\s*0/);
+  assert.match(
+    consoleSource,
+    /Al registrar el pago, Finser y el aliado consultarán exactamente los mismos valores guardados/
+  );
+});
+
+test("el detalle elimina folio y respeta el orden solicitado con cedula e IMEI", () => {
+  const creditItems = sectionBetween(
+    consoleSource,
+    "function CreditItems(",
+    "function settlementAllyName"
+  );
+  const desktopTable = sectionBetween(
+    creditItems,
+    '<DataTable className="mt-3 hidden lg:block">',
+    "</DataTable>"
+  );
+
+  assertInOrder(
+    desktopTable,
+    [
+      ">Fecha</th>",
+      ">Aliado</th>",
+      ">Cliente</th>",
+      ">Cédula</th>",
+      ">Equipo</th>",
+      ">Plataforma</th>",
+      ">Valor venta</th>",
+      ">Inicial</th>",
+      ">Crédito autorizado</th>",
+      ">Intermediación</th>",
+      ">Valor intermediación</th>",
+      ">Valor a pagar</th>",
+      ">Estado</th>",
+    ],
+    "El orden de columnas del detalle"
+  );
+  assert.doesNotMatch(creditItems, />Folio<\/th>|Sin folio|item\.folio/);
+  assert.match(creditItems, /item\.clienteDocumento/);
+  assert.match(creditItems, /IMEI:\s*{item\.imei/);
 });
 
 test("la creacion es serializable e idempotente bajo locks de mutacion y aliado", () => {
@@ -376,7 +416,7 @@ test("la creacion es serializable e idempotente bajo locks de mutacion y aliado"
     assert.match(requestHash, new RegExp("\\b" + field + ":"));
   }
   assert.match(create, /requestHash,/);
-  assert.match(storage, /ALLY_INTERMEDIATION_V2/);
+  assert.match(storage, /ALLY_INTERMEDIATION_V3/);
 });
 
 test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado", () => {
@@ -388,11 +428,42 @@ test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado"
   assert.match(pdfRouteSource, /const paidAt = new Date\(settlement\.pagadoAt\)/);
   assert.match(pdfRouteSource, /buildAllyPaymentSettlementPdf\(\s*{/);
   assert.match(pdfRouteSource, /lines:\s*settlement\.items\.map/);
+  assert.match(pdfRouteSource, /allyName:\s*settlement\.aliado\.nombre/);
+  assert.match(pdfRouteSource, /clientDocument:\s*item\.clienteDocumento/);
+  assert.match(pdfRouteSource, /imei:\s*item\.imei/);
+  assert.match(pdfRouteSource, /status:\s*item\.estado/);
+  assert.doesNotMatch(pdfRouteSource, /folio:\s*item\.folio/);
   assert.match(pdfRouteSource, /searchParams\.get\("download"\)\s*===\s*"1"/);
   assert.match(pdfRouteSource, /"Content-Type":\s*"application\/pdf"/);
   assert.match(pdfRouteSource, /download\s*\?\s*"attachment"\s*:\s*"inline"/);
   assert.match(pdfBuilderSource, /dateTimeLabel\(input\.paidAt\)/);
   assert.match(pdfBuilderSource, /line\.intermediationPercentage/);
+  const pdfColumns = sectionBetween(
+    pdfBuilderSource,
+    "const TABLE_COLUMNS = [",
+    "] as const;"
+  );
+  assertInOrder(
+    pdfColumns,
+    [
+      'key: "date"',
+      'key: "ally"',
+      'key: "client"',
+      'key: "document"',
+      'key: "equipment"',
+      'key: "platform"',
+      'key: "sale"',
+      'key: "initial"',
+      'key: "credit"',
+      'key: "percentage"',
+      'key: "intermediation"',
+      'key: "payable"',
+      'key: "status"',
+    ],
+    "El orden de columnas del PDF"
+  );
+  assert.doesNotMatch(pdfColumns, /key:\s*"folio"|label:\s*"Folio"/);
+  assert.match(pdfBuilderSource, /IMEI \$\{safeText\(\s*line\.imei/);
   assert.doesNotMatch(pdfBuilderSource, /resolveRedescuentoPercentageByPlatform/);
   assert.match(consoleSource, /Ver \/ imprimir PDF/);
   assert.match(consoleSource, /Descargar PDF/);
@@ -453,6 +524,8 @@ test("persiste y devuelve snapshots historicos sin recalcular el detalle", () =>
   for (const field of [
     "folio",
     "clienteNombre",
+    "clienteDocumento",
+    "imei",
     "equipo",
     "plataforma",
     "valorVenta",
@@ -539,6 +612,8 @@ test("Prisma conserva relaciones restrictivas, fechas, estados y precision decim
     "fechaCredito",
     "folio",
     "clienteNombre",
+    "clienteDocumento",
+    "imei",
     "equipo",
     "plataforma",
     "estado",
@@ -578,6 +653,18 @@ test("el preflight es idempotente, transaccional y valida el contrato instalado"
   assert.match(
     compactSql,
     /CREATE TABLE IF NOT EXISTS public\."LiquidacionAliadoCredito" \(/
+  );
+  assert.match(
+    compactSql,
+    /ALTER TABLE public\."LiquidacionAliadoCredito" ADD COLUMN IF NOT EXISTS "clienteDocumento" VARCHAR\(80\), ADD COLUMN IF NOT EXISTS "imei" VARCHAR\(80\)/
+  );
+  assert.match(
+    compactSql,
+    /UPDATE public\."LiquidacionAliadoCredito" detail[\s\S]*FROM public\."Credito" credit/
+  );
+  assert.match(
+    compactSql,
+    /ALTER COLUMN "clienteDocumento" SET NOT NULL, ALTER COLUMN "imei" SET NOT NULL/
   );
   assert.ok(
     (preflight.match(/ON DELETE RESTRICT/g) || []).length >= 4,
