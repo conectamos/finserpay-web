@@ -6,7 +6,6 @@ import {
   BarChart3,
   Bell,
   CalendarClock,
-  CalendarDays,
   Calculator,
   ChevronRight,
   CircleCheck,
@@ -25,6 +24,7 @@ import {
 } from "lucide-react";
 import type { AdminDashboardOverview } from "../_lib/admin-dashboard-data";
 import AdminSidebar from "./admin-sidebar";
+import DashboardMonthSelector from "./dashboard-month-selector";
 
 type IconType = ComponentType<{
   className?: string;
@@ -484,10 +484,12 @@ export default function AdminCentralDashboard({
               <MapPin className="h-5 w-5" strokeWidth={1.8} />
               <span className="max-w-40 truncate">{scopeLabel || sedeLabel}</span>
             </div>
-            <div className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[#d0d7e0] bg-white px-3 text-sm font-semibold text-[#344054]">
-              <CalendarDays className="h-5 w-5" strokeWidth={1.8} />
-              <span>{titleCase(data.monthLabel)}</span>
-            </div>
+            <DashboardMonthSelector
+              key={data.monthKey}
+              currentMonth={data.currentMonthKey}
+              label={titleCase(data.monthLabel)}
+              selectedMonth={data.monthKey}
+            />
             <Link
               href={carteraHref}
               aria-label={`${data.alertsCount} alertas de cartera`}

@@ -1,6 +1,7 @@
 import type { Prisma } from "@/app/generated/prisma/client";
 import { resolveCapitalOriginal } from "@/lib/credit-capital";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { resolveDashboardMonth } from "@/lib/dashboard-month";
 import prisma from "@/lib/prisma";
 
 type RiskBucket = "alDia" | "temprana" | "critica";
@@ -31,10 +32,12 @@ export type AdminDashboardOverview = {
   healthyPercent: number;
   criticalBalance: number;
   criticalPercent: number;
+  currentMonthKey: string;
   delinquencyPercent: number;
   earlyBalance: number;
   earlyPercent: number;
   monthLabel: string;
+  monthKey: string;
   monthlyCollection: number;
   monthlyCreditCount: number;
   monthlyPaymentCount: number;
@@ -43,6 +46,7 @@ export type AdminDashboardOverview = {
 
 type AdminDashboardDataOptions = {
   aliadoId?: number | null;
+  month?: string | null;
 };
 
 function dateFromIso(value: string) {
@@ -103,12 +107,14 @@ function colombiaDay(date: Date) {
 
 export async function getAdminDashboardOverview({
   aliadoId = null,
+  month = null,
 }: AdminDashboardDataOptions = {}): Promise<AdminDashboardOverview> {
   const today = new Date();
   const current = colombiaDateParts(today);
-  const monthStart = new Date(Date.UTC(current.year, current.month - 1, 1, 5));
-  const nextMonthStart = new Date(Date.UTC(current.year, current.month, 1, 5));
-  const daysInMonth = new Date(current.year, current.month, 0).getDate();
+  const selectedMonth = resolveDashboardMonth(month, today);
+  const monthStart = selectedMonth.start;
+  const nextMonthStart = selectedMonth.end;
+  const daysInMonth = selectedMonth.daysInMonth;
   const todayIso = [
     current.year,
     String(current.month).padStart(2, "0"),
@@ -334,6 +340,7 @@ export async function getAdminDashboardOverview({
     criticalBalance,
     criticalCredits,
     criticalPercent,
+    currentMonthKey: selectedMonth.currentKey,
     daily,
     delinquencyPercent: earlyPercent + criticalPercent,
     dueToday,
@@ -342,11 +349,8 @@ export async function getAdminDashboardOverview({
     earlyPercent,
     healthyBalance,
     healthyPercent: ratio(healthyBalance, totalPortfolio),
-    monthLabel: new Intl.DateTimeFormat("es-CO", {
-      month: "long",
-      timeZone: "America/Bogota",
-      year: "numeric",
-    }).format(today),
+    monthKey: selectedMonth.key,
+    monthLabel: selectedMonth.label,
     monthlyCollection,
     monthlyCreditCount,
     monthlyPaymentCount: monthPayments.length,

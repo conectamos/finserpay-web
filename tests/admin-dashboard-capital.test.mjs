@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { resolveCapitalOriginal } from "../lib/credit-capital.ts";
+import { resolveDashboardMonth } from "../lib/dashboard-month.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -90,4 +91,46 @@ test("el rendimiento agrupa por perfil y muestra monto y unidades de credito", a
   assert.match(uiSource, /data\.creditPerformance\.map/);
   assert.match(uiSource, /performance\.units === 1 \? "credito" : "creditos"/);
   assert.match(uiSource, /compactMoney\(performance\.value\)/);
+});
+
+test("resuelve meses anteriores en Bogota y rechaza fechas futuras o invalidas", () => {
+  const now = new Date("2026-09-02T03:00:00.000Z");
+  const previous = resolveDashboardMonth("2026-02", now);
+
+  assert.equal(previous.key, "2026-02");
+  assert.equal(previous.currentKey, "2026-09");
+  assert.equal(previous.daysInMonth, 28);
+  assert.equal(previous.start.toISOString(), "2026-02-01T05:00:00.000Z");
+  assert.equal(previous.end.toISOString(), "2026-03-01T05:00:00.000Z");
+  assert.match(previous.label, /febrero/i);
+
+  assert.equal(resolveDashboardMonth("2024-02", now).daysInMonth, 29);
+  assert.equal(resolveDashboardMonth("2026-10", now).key, "2026-09");
+  assert.equal(resolveDashboardMonth("no-es-un-mes", now).key, "2026-09");
+});
+
+test("el dashboard conecta el selector mensual con las consultas del servidor", async () => {
+  const pageSource = await readFile(path.join(projectRoot, "app/dashboard/page.tsx"), "utf8");
+  const dataSource = await readFile(
+    path.join(projectRoot, "app/dashboard/_lib/admin-dashboard-data.ts"),
+    "utf8"
+  );
+  const uiSource = await readFile(
+    path.join(projectRoot, "app/dashboard/_components/admin-central-dashboard.tsx"),
+    "utf8"
+  );
+  const selectorSource = await readFile(
+    path.join(projectRoot, "app/dashboard/_components/dashboard-month-selector.tsx"),
+    "utf8"
+  );
+
+  assert.match(pageSource, /month: requestedMonth/);
+  assert.match(dataSource, /resolveDashboardMonth\(month, today\)/);
+  assert.match(dataSource, /fechaAbono:\s*\{[\s\S]*gte: monthStart,[\s\S]*lt: nextMonthStart/);
+  assert.match(dataSource, /credit\.fechaCredito >= monthStart/);
+  assert.match(uiSource, /<DashboardMonthSelector/);
+  assert.match(selectorSource, /type="month"/);
+  assert.match(selectorSource, /max=\{currentMonth\}/);
+  assert.match(selectorSource, /min="2000-01"/);
+  assert.match(selectorSource, /router\.push\(`\/dashboard\?month=/);
 });

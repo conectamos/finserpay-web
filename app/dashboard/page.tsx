@@ -15,7 +15,17 @@ import AdminCentralDashboard from "./_components/admin-central-dashboard";
 import SellerCommercialDashboard from "./_components/seller-commercial-dashboard";
 import { getAdminDashboardOverview } from "./_lib/admin-dashboard-data";
 
-export default async function DashboardPage() {
+type DashboardSearchParams = Promise<{
+  month?: string | string[];
+}>;
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams?: DashboardSearchParams;
+}) {
+  const params = searchParams ? await searchParams : {};
+  const requestedMonth = Array.isArray(params.month) ? params.month[0] : params.month;
   const session = await getSessionUser();
 
   if (!session) {
@@ -200,6 +210,7 @@ export default async function DashboardPage() {
 
   const dashboardOverview = await getAdminDashboardOverview({
     aliadoId: adminAliado ? aliadoStatsScopeId : null,
+    month: requestedMonth,
   });
 
   return (
