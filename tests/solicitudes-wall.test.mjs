@@ -471,8 +471,9 @@ test("solo central abre en fabrica un credito aprobado", () => {
       ownership: ownSolicitud,
       source: "CREDIT",
       state: "APROBADA",
+      platform: "IPHONE",
     }),
-    ["VER_DETALLE", "ABRIR_FABRICA"]
+    ["VER_DETALLE", "ABRIR_FABRICA", "CAMBIO_GARANTIA"]
   );
   for (const viewer of [allyAdmin, supervisor, seller]) {
     assert.deepEqual(
@@ -481,6 +482,7 @@ test("solo central abre en fabrica un credito aprobado", () => {
         ownership: ownSolicitud,
         source: "CREDIT",
         state: "APROBADA",
+        platform: "IPHONE",
       }),
       ["VER_DETALLE"]
     );
@@ -491,6 +493,7 @@ test("solo central abre en fabrica un credito aprobado", () => {
       ownership: ownSolicitud,
       source: "CREDIT",
       state: "CANCELADA",
+      platform: "IPHONE",
     }),
     ["VER_DETALLE"]
   );

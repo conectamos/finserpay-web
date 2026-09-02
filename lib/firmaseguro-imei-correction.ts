@@ -9,6 +9,7 @@ import {
   type FirmaSeguroProcessRow,
 } from "@/lib/firmaseguro-storage";
 import {
+  assertImeiNotReservedByActiveDeviceReplacement,
   ensureSolicitudSchema,
   lockSolicitudIdentityMutation,
 } from "@/lib/solicitudes-storage";
@@ -312,6 +313,16 @@ export async function correctFirmaSeguroDraftImei(input: {
     for (const identityImei of [previousImei, imei].sort()) {
       await lockSolicitudIdentityMutation(transaction, "imei", identityImei);
     }
+    await assertImeiNotReservedByActiveDeviceReplacement(
+      transaction,
+      imei,
+      () =>
+        new FirmaSeguroImeiCorrectionError(
+          "IMEI_RESERVADO_CAMBIO_GARANTIA",
+          "El IMEI corregido está reservado por un cambio de equipo en garantía.",
+          409
+        )
+    );
 
     const draft = await readDraft(transaction, input.draftId, true);
     assertActiveDraft(draft);

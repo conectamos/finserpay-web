@@ -33,6 +33,11 @@ import {
 } from "@/lib/solicitudes-storage";
 import { compareStrictIdentityDocuments } from "@/lib/veriff-identity";
 import {
+  approveCreditDeviceReplacementEnrollment,
+  ensureCreditDeviceReplacementSchema,
+  findCreditDeviceReplacementEnrollmentCase,
+} from "@/lib/credit-device-replacement-storage";
+import {
   ensureVeriffSchema,
   serializeVeriffValidation,
   type VeriffValidationRow,
@@ -144,7 +149,14 @@ export class IphoneEnrollmentGrantError extends Error {
 
 export type IphoneEnrollmentReview = ReturnType<typeof serializeReview>;
 
+type IphoneEnrollmentCaseReview = Pick<
+  IphoneEnrollmentReview,
+  "id" | "decision" | "analystName" | "analystExternalId" | "approvedAt"
+>;
+
 export type IphoneEnrollmentCase = {
+  targetType: "APPLICATION" | "DEVICE_REPLACEMENT";
+  targetId: string | null;
   solicitudId: number;
   solicitudNumero: string;
   currentStep: number;
@@ -156,7 +168,8 @@ export type IphoneEnrollmentCase = {
   aliado: string;
   documentHash: string;
   imeiHash: string;
-  review: IphoneEnrollmentReview | null;
+  review: IphoneEnrollmentCaseReview | null;
+  operationLabel: "Venta nueva" | "Cambio por garantía";
 };
 
 export type IphoneEnrollmentLookupResult =
@@ -1193,12 +1206,25 @@ export async function findIphoneEnrollmentCase(input: {
   document: string;
   imei: string;
 }): Promise<IphoneEnrollmentLookupResult> {
+  await ensureIphoneEnrollmentSchema();
+  await ensureCreditDeviceReplacementSchema();
   await Promise.all([
-    ensureIphoneEnrollmentSchema(),
     ensureFirmaSeguroSchema(),
     ensureVeriffSchema(),
     expireStaleSolicitudes(),
   ]);
+  const documentHash = hashIphoneEnrollmentDocument(input.document);
+  const imeiHash = hashIphoneEnrollmentImei(input.imei);
+  const replacementCase =
+    await findCreditDeviceReplacementEnrollmentCase({
+      document: input.document,
+      imei: input.imei,
+      documentHash,
+      imeiHash,
+    });
+  if (replacementCase) {
+    return { kind: "FOUND", item: replacementCase };
+  }
   const rows = await prisma.$queryRawUnsafe<EnrollmentCaseRow[]>(
     `
       SELECT d."id" AS "solicitudId", d."currentStep", d."usuarioId",
@@ -1281,8 +1307,6 @@ export async function findIphoneEnrollmentCase(input: {
   if (eligibleRows.length !== 1) return { kind: "AMBIGUOUS" };
 
   const row = eligibleRows[0];
-  const documentHash = hashIphoneEnrollmentDocument(input.document);
-  const imeiHash = hashIphoneEnrollmentImei(input.imei);
   const review = row.reviewId
     ? await getIphoneEnrollmentReviewForSolicitud({
         solicitudId: row.solicitudId,
@@ -1293,6 +1317,8 @@ export async function findIphoneEnrollmentCase(input: {
   return {
     kind: "FOUND",
     item: {
+      targetType: "APPLICATION",
+      targetId: null,
       solicitudId: row.solicitudId,
       solicitudNumero: `SOL-${String(row.solicitudId).padStart(6, "0")}`,
       currentStep: row.currentStep,
@@ -1305,6 +1331,7 @@ export async function findIphoneEnrollmentCase(input: {
       documentHash,
       imeiHash,
       review,
+      operationLabel: "Venta nueva",
     },
   };
 }
@@ -1380,8 +1407,9 @@ export async function approveIphoneEnrollmentCase(input: {
   grant: IphoneEnrollmentGrantSession;
   checklist: IphoneEnrollmentChecklist;
 }) {
+  await ensureIphoneEnrollmentSchema();
+  await ensureCreditDeviceReplacementSchema();
   await Promise.all([
-    ensureIphoneEnrollmentSchema(),
     ensureFirmaSeguroSchema(),
     ensureVeriffSchema(),
     expireStaleSolicitudes(),
@@ -1404,6 +1432,38 @@ export async function approveIphoneEnrollmentCase(input: {
       throw new IphoneEnrollmentGrantError(
         "GRANT_NOT_ACTIVE",
         "La sesion del analista ya no esta activa."
+      );
+    }
+    if (
+      input.caseToken.targetType === "DEVICE_REPLACEMENT" &&
+      input.caseToken.targetId
+    ) {
+      return approveCreditDeviceReplacementEnrollment(
+        {
+          replacementId: input.caseToken.targetId,
+          solicitudId: input.caseToken.solicitudId,
+          documentHash: input.caseToken.documentHash,
+          imeiHash: input.caseToken.imeiHash,
+          checklistVersion: IPHONE_ENROLLMENT_CHECKLIST_VERSION,
+          checklist: input.checklist,
+          checklistHash: hashIphoneEnrollmentChecklist(input.checklist),
+          identityKeyVersion: getIphoneEnrollmentIdentityKeyVersion(),
+          correlationId: input.caseToken.correlationId,
+          analyst: activeGrant.analyst,
+          access: {
+            grantId:
+              activeGrant.accessMode === "GRANT"
+                ? activeGrant.grantId
+                : null,
+            issuedByUserId: activeGrant.issuedBy?.userId || null,
+            issuedByName: activeGrant.issuedBy?.name || null,
+            fingerprint:
+              activeGrant.accessMode === "SHARED"
+                ? hashIphoneEnrollmentSharedReviewFingerprint()
+                : activeGrant.accessFingerprint,
+          },
+        },
+        transaction
       );
     }
     await transaction.$executeRawUnsafe(

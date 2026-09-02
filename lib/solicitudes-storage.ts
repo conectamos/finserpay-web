@@ -422,6 +422,33 @@ export async function lockSolicitudIdentityMutation(
   return lockIdentity(database, kind, value);
 }
 
+export async function assertImeiNotReservedByActiveDeviceReplacement(
+  database: Prisma.TransactionClient,
+  value: string,
+  conflictError: () => Error = () =>
+    new ActiveSolicitudConflictError(
+      "Este IMEI está reservado por un cambio de equipo en garantía."
+    )
+) {
+  const imei = normalizeDigits(value);
+  if (!imei) return;
+
+  const rows = await database.$queryRawUnsafe<Array<{ id: string }>>(
+    `
+      SELECT replacement."id"::text AS "id"
+      FROM "CreditDeviceReplacement" replacement
+      WHERE replacement."newImei" = $1
+        AND replacement."status" IN (
+          'PENDING_ENROLLMENT',
+          'ENROLLMENT_APPROVED'
+        )
+      LIMIT 1
+    `,
+    imei
+  );
+  if (rows[0]) throw conflictError();
+}
+
 async function lockSolicitudOperationsInOrder(
   database: Prisma.TransactionClient,
   ids: readonly number[]
@@ -578,7 +605,10 @@ export async function reserveSolicitudForIdentity(input: {
 
   return prisma.$transaction(async (transaction) => {
     await lockIdentity(transaction, "document", document);
-    if (imei) await lockIdentity(transaction, "imei", imei);
+    if (imei) {
+      await lockIdentity(transaction, "imei", imei);
+      await assertImeiNotReservedByActiveDeviceReplacement(transaction, imei);
+    }
     await expireStaleWith(transaction);
 
     if (input.solicitudId) {
@@ -900,6 +930,15 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       payloadImei ||
       payloadDeviceUid ||
       storedImei;
+    if (canonicalImei) {
+      if (canonicalImei !== imei) {
+        await lockIdentity(transaction, "imei", canonicalImei);
+      }
+      await assertImeiNotReservedByActiveDeviceReplacement(
+        transaction,
+        canonicalImei
+      );
+    }
     const persistedPayload: Record<string, unknown> = {
       ...canonicalPayload,
       wizardStep: persistedStep,
@@ -1688,6 +1727,7 @@ function serializeSolicitudRow(row: SolicitudRow, viewer: SolicitudViewer) {
     source: row.source,
     state: estado,
     draftState: row.rawState,
+    platform: row.plataforma,
   });
 
   const timeline = [
@@ -1771,6 +1811,10 @@ function serializeSolicitudRow(row: SolicitudRow, viewer: SolicitudViewer) {
     creditHref:
       row.source === "CREDIT"
         ? `/dashboard/creditos?mode=correction&selected=${row.entityId}`
+        : null,
+    replacementHref:
+      row.source === "CREDIT"
+        ? `/dashboard/creditos?mode=replacement&selected=${row.entityId}`
         : null,
     timeline,
   };

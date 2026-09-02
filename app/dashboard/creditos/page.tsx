@@ -9,6 +9,7 @@ import { PageHeader } from "@/app/_components/finser-ui";
 import CreditFactoryConsole from "./credit-factory-console";
 import CreditPlatformSelector from "./credit-platform-selector";
 import { ApprovedCreditEvidenceCorrection } from "./credit-evidence-gallery";
+import { ApprovedCreditEquipmentReplacement } from "./approved-credit-equipment-replacement";
 
 export const metadata = {
   title: "Fabrica de creditos | FINSER PAY",
@@ -62,6 +63,47 @@ export default async function CreditosPage(props: {
       : null;
   const rawEntryMode = String(searchParams?.mode || "").trim().toLowerCase();
   const returnTo = solicitudesReturnHref(searchParams?.returnTo);
+
+  if (rawEntryMode === "replacement") {
+    if (
+      !adminCentral ||
+      !Number.isInteger(initialSelectedId) ||
+      initialSelectedId <= 0
+    ) {
+      redirect("/dashboard/solicitudes");
+    }
+
+    return (
+      <div className="mx-auto w-full max-w-[1600px]">
+        <PageHeader
+          eyebrow="Fábrica de créditos"
+          title="Cambio de equipo por garantía"
+          description="Registra el nuevo IMEI, espera la aprobación del enrolamiento y aplica el reemplazo sobre el mismo crédito."
+          actions={
+            <Link
+              href={returnTo}
+              className="fp-ui-button is-secondary min-h-11"
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              Volver al muro
+            </Link>
+          }
+        />
+        <div className="mb-4 flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-white p-4 text-sm text-[var(--fp-muted)]">
+          <ShieldCheck
+            className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-lime-strong)]"
+            aria-hidden="true"
+          />
+          <p>
+            Acceso exclusivo del administrador central FINSER PAY. El reemplazo
+            conserva el IMEI anterior, el contrato firmado y todas las validaciones
+            como historial inalterable.
+          </p>
+        </div>
+        <ApprovedCreditEquipmentReplacement creditId={initialSelectedId} />
+      </div>
+    );
+  }
 
   if (rawEntryMode === "correction") {
     if (

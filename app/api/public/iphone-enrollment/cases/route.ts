@@ -20,6 +20,7 @@ import {
   findIphoneEnrollmentCase,
   validateIphoneEnrollmentPortalSession,
 } from "@/lib/iphone-enrollment-storage";
+import { CreditDeviceReplacementError } from "@/lib/credit-device-replacement-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -150,6 +151,8 @@ export async function POST(request: NextRequest) {
     const item = result.item;
     const caseToken = createIphoneEnrollmentCaseToken({
       solicitudId: item.solicitudId,
+      targetType: item.targetType,
+      targetId: item.targetId,
       documentHash: hashIphoneEnrollmentDocument(document),
       imeiHash: hashIphoneEnrollmentImei(imei),
       session: signedSession,
@@ -161,6 +164,11 @@ export async function POST(request: NextRequest) {
         item: {
           solicitudId: item.solicitudId,
           solicitudNumero: item.solicitudNumero,
+          operationType:
+            item.targetType === "DEVICE_REPLACEMENT"
+              ? "WARRANTY_REPLACEMENT"
+              : "SALE",
+          operationLabel: item.operationLabel,
           clienteNombre: item.clienteNombre,
           documento: item.documentoMasked,
           imei: item.imeiMasked,
@@ -188,6 +196,12 @@ export async function POST(request: NextRequest) {
     if (error instanceof IphoneEnrollmentRequestBodyError) {
       const failure = iphoneEnrollmentBodyErrorResponse(error);
       return response({ ok: false, error: failure.error }, failure.status);
+    }
+    if (error instanceof CreditDeviceReplacementError) {
+      return response(
+        { ok: false, code: error.code, error: error.message },
+        error.status
+      );
     }
     console.error("ERROR CONSULTANDO CASO DE ENROLAMIENTO IPHONE:", error);
     return response({ ok: false, error: "No se pudo consultar la solicitud" }, 500);

@@ -20,6 +20,7 @@ import {
   IphoneEnrollmentGrantError,
   validateIphoneEnrollmentPortalSession,
 } from "@/lib/iphone-enrollment-storage";
+import { CreditDeviceReplacementError } from "@/lib/credit-device-replacement-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -137,6 +138,12 @@ export async function POST(request: NextRequest) {
     }
     if (error instanceof IphoneEnrollmentApprovalError) {
       return response({ ok: false, code: error.code, error: error.message }, 409);
+    }
+    if (error instanceof CreditDeviceReplacementError) {
+      return response(
+        { ok: false, code: error.code, error: error.message },
+        error.status
+      );
     }
     console.error("ERROR APROBANDO ENROLAMIENTO IPHONE:", error);
     return response({ ok: false, error: "No se pudo aprobar el enrolamiento" }, 500);

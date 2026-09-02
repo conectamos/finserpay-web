@@ -345,6 +345,8 @@ test("el token de caso queda ligado al grant y a la sesión exacta", () => {
   );
 
   assert.equal(verified?.solicitudId, 387);
+  assert.equal(verified?.targetType, "APPLICATION");
+  assert.equal(verified?.targetId, null);
   assert.equal(verified?.documentHash, documentHash);
   assert.equal(verified?.imeiHash, imeiHash);
   assert.equal(verified?.grantId, testGrantId);
@@ -390,6 +392,28 @@ test("el token de caso queda ligado al grant y a la sesión exacta", () => {
     ),
     null
   );
+});
+
+test("el token de caso vincula un reemplazo posventa exacto", () => {
+  const issuedAt = new Date("2026-08-26T15:00:00.000Z");
+  const session = issueTestSession({ now: issuedAt });
+  const replacementId = "15e689c1-a976-4ce3-b288-301ef2ac34e9";
+  const token = enrollment.createIphoneEnrollmentCaseToken({
+    solicitudId: 486,
+    targetType: "DEVICE_REPLACEMENT",
+    targetId: replacementId,
+    documentHash: enrollment.hashIphoneEnrollmentDocument("1103740978"),
+    imeiHash: enrollment.hashIphoneEnrollmentImei("355063664500617"),
+    session: session.payload,
+    now: issuedAt,
+  });
+  const verified = enrollment.verifyIphoneEnrollmentCaseToken(
+    token,
+    new Date("2026-08-26T15:05:00.000Z")
+  );
+  assert.equal(verified?.targetType, "DEVICE_REPLACEMENT");
+  assert.equal(verified?.targetId, replacementId);
+  assert.equal(verified?.solicitudId, 486);
 });
 
 test("limita el cuerpo antes de usarlo y distingue media type, tamaño y JSON", async () => {

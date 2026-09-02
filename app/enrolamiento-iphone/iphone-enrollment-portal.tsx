@@ -49,6 +49,8 @@ type AuthorizedAnalyst = {
 type EnrollmentCase = {
   solicitudId: number;
   solicitudNumero: string;
+  operationType?: "SALE" | "WARRANTY_REPLACEMENT";
+  operationLabel?: "Venta nueva" | "Cambio por garantía";
   clienteNombre: string;
   documento: string;
   imei: string;
@@ -417,6 +419,10 @@ export default function IphoneEnrollmentPortal() {
                       <div className="flex flex-wrap gap-2">
                         <StatusPill tone="positive">Aprobada</StatusPill>
                         <StatusPill tone="warning">Solo falta enrolar</StatusPill>
+                        {enrollmentCase.operationType ===
+                        "WARRANTY_REPLACEMENT" ? (
+                          <StatusPill tone="neutral">Cambio por garantía</StatusPill>
+                        ) : null}
                       </div>
                       <h2 className="mt-3 text-2xl font-black">
                         {enrollmentCase.solicitudNumero}
@@ -436,8 +442,9 @@ export default function IphoneEnrollmentPortal() {
                   </dl>
 
                   <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-lime-strong)] bg-[var(--fp-lime-soft)] p-4 text-sm leading-6 text-[var(--fp-graphite)]">
-                    La venta llegó al paso 4. El crédito está aprobado y el
-                    iPhone está listo para realizar la prueba de enrolamiento.
+                    {enrollmentCase.operationType === "WARRANTY_REPLACEMENT"
+                      ? "El crédito ya fue finalizado y este IMEI corresponde al equipo de reemplazo autorizado. Realiza la prueba antes de dejar el cambio listo para activación."
+                      : "La venta llegó al paso 4. El crédito está aprobado y el iPhone está listo para realizar la prueba de enrolamiento."}
                   </div>
 
                   <div className="mt-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
@@ -478,7 +485,9 @@ export default function IphoneEnrollmentPortal() {
         title="¿Confirmar ENROLADO CORRECTAMENTE?"
         description={
           enrollmentCase
-            ? `Se enviará la confirmación a ${enrollmentCase.solicitudNumero}. La fábrica validará nuevamente la cédula y el IMEI y habilitará las fotografías al asesor.`
+            ? enrollmentCase.operationType === "WARRANTY_REPLACEMENT"
+              ? `Se confirmará el enrolamiento del equipo de reemplazo para ${enrollmentCase.solicitudNumero}. El administrador central deberá aplicar el cambio antes de que el nuevo IMEI quede activo.`
+              : `Se enviará la confirmación a ${enrollmentCase.solicitudNumero}. La fábrica validará nuevamente la cédula y el IMEI y habilitará las fotografías al asesor.`
             : ""
         }
         confirmLabel="Confirmar ENROLADO CORRECTAMENTE"
@@ -619,8 +628,9 @@ function EnrollmentSuccessDialog({
               id="iphone-enrollment-success-description"
               className="mt-2 text-sm leading-6 text-[var(--fp-muted)]"
             >
-              El iPhone quedó registrado correctamente en FINSER PAY y la fábrica
-              del asesor fue actualizada.
+              {item.operationType === "WARRANTY_REPLACEMENT"
+                ? "El iPhone de reemplazo quedó enrolado correctamente. El administrador central ya puede aplicar el nuevo IMEI al crédito."
+                : "El iPhone quedó registrado correctamente en FINSER PAY y la fábrica del asesor fue actualizada."}
             </p>
 
             <dl className="mt-6 overflow-hidden rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] text-left">
@@ -742,10 +752,16 @@ function ApprovedCase({
       <StatusPill tone="positive" className="mt-5">
         ENROLADO CORRECTAMENTE
       </StatusPill>
-      <h2 className="mt-4 text-2xl font-black">Asesor habilitado</h2>
+      <h2 className="mt-4 text-2xl font-black">
+        {item.operationType === "WARRANTY_REPLACEMENT"
+          ? "Cambio listo para activar"
+          : "Asesor habilitado"}
+      </h2>
       <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
-        {item.solicitudNumero} · {item.equipo}. En máximo 8 segundos se
-        habilitarán las fotografías en la fábrica de créditos.
+        {item.solicitudNumero} · {item.equipo}.{" "}
+        {item.operationType === "WARRANTY_REPLACEMENT"
+          ? "El administrador central debe aplicar el reemplazo para activar el nuevo IMEI."
+          : "En máximo 8 segundos se habilitarán las fotografías en la fábrica de créditos."}
       </p>
       <div className="mt-6 grid gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4 text-left text-sm">
         <div className="flex items-start gap-3">

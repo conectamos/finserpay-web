@@ -132,6 +132,11 @@ import {
   getActiveSolicitudCreditContext,
   reserveSolicitudForIdentity,
 } from "@/lib/solicitudes-storage";
+import {
+  CreditDeviceReplacementError,
+  ensureCreditDeviceReplacementSchema,
+  lockCreditDeviceReplacementImeiForCreditCreation,
+} from "@/lib/credit-device-replacement-storage";
 import { canOperateSolicitud as canOperateSolicitudContext } from "@/lib/solicitud-operation-access";
 import { getIphoneEnrollmentReviewForSolicitud } from "@/lib/iphone-enrollment-storage";
 
@@ -3460,6 +3465,7 @@ export async function POST(req: Request) {
 
     await ensureCreditAmortizationSchema();
     await ensureSolicitudSchema();
+    await ensureCreditDeviceReplacementSchema();
 
     const creditCreateArgs = {
       data: {
@@ -3533,6 +3539,11 @@ export async function POST(req: Request) {
       transaction: Prisma.TransactionClient
     ) => {
       let transactionVeriffValidation = veriffValidation;
+
+      await lockCreditDeviceReplacementImeiForCreditCreation(transaction, {
+        imei,
+        solicitudId: solicitudReservation.id,
+      });
 
       if (veriffValidation) {
         await lockVeriffDraftAttempts(transaction, solicitudReservation.id);
@@ -3783,6 +3794,16 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     if (error instanceof ActiveSolicitudConflictError) {
+      return NextResponse.json(
+        {
+          code: error.code,
+          error: error.message,
+        },
+        { status: error.status }
+      );
+    }
+
+    if (error instanceof CreditDeviceReplacementError) {
       return NextResponse.json(
         {
           code: error.code,

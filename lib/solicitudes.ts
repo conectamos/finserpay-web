@@ -70,7 +70,11 @@ export type SolicitudSignals = {
   creditState?: string | null;
 };
 
-export type SolicitudAction = "VER_DETALLE" | "ABRIR_FABRICA" | "DESISTIR";
+export type SolicitudAction =
+  | "VER_DETALLE"
+  | "ABRIR_FABRICA"
+  | "CAMBIO_GARANTIA"
+  | "DESISTIR";
 
 export type SolicitudFilters = {
   q: string;
@@ -472,6 +476,7 @@ export function getSolicitudActions(input: {
   source: "DRAFT" | "CREDIT";
   state: SolicitudState;
   draftState?: string | null;
+  platform?: string | null;
 }): SolicitudAction[] {
   if (!canViewSolicitud(input.viewer, input.ownership)) return [];
 
@@ -479,6 +484,9 @@ export function getSolicitudActions(input: {
   if (input.source === "CREDIT") {
     if (input.viewer.kind === "CENTRAL_ADMIN" && input.state === "APROBADA") {
       actions.push("ABRIR_FABRICA");
+      if (normalized(input.platform) === "IPHONE") {
+        actions.push("CAMBIO_GARANTIA");
+      }
     }
     return actions;
   }

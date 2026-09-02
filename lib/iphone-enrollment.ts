@@ -53,6 +53,8 @@ export type IphoneEnrollmentPortalSessionPayload = {
 export type IphoneEnrollmentCaseTokenPayload = {
   type: "iphone-enrollment-case";
   solicitudId: number;
+  targetType: "APPLICATION" | "DEVICE_REPLACEMENT";
+  targetId: string | null;
   documentHash: string;
   imeiHash: string;
   grantId: string;
@@ -451,6 +453,8 @@ export function getIphoneEnrollmentSessionBinding(
 
 export function createIphoneEnrollmentCaseToken(input: {
   solicitudId: number;
+  targetType?: "APPLICATION" | "DEVICE_REPLACEMENT";
+  targetId?: string | null;
   documentHash: string;
   imeiHash: string;
   session: IphoneEnrollmentPortalSessionPayload;
@@ -464,6 +468,11 @@ export function createIphoneEnrollmentCaseToken(input: {
   const payload: IphoneEnrollmentCaseTokenPayload = {
     type: "iphone-enrollment-case",
     solicitudId: input.solicitudId,
+    targetType: input.targetType || "APPLICATION",
+    targetId:
+      input.targetType === "DEVICE_REPLACEMENT"
+        ? String(input.targetId || "").trim()
+        : null,
     documentHash: input.documentHash,
     imeiHash: input.imeiHash,
     grantId: input.session.grantId,
@@ -484,11 +493,17 @@ export function verifyIphoneEnrollmentCaseToken(
     "case-token"
   );
   const nowSeconds = Math.floor(now.getTime() / 1000);
+  const targetType = payload?.targetType || "APPLICATION";
+  const targetId = payload?.targetId ?? null;
   if (
     !payload ||
     payload.type !== "iphone-enrollment-case" ||
     !Number.isInteger(payload.solicitudId) ||
     payload.solicitudId <= 0 ||
+    !["APPLICATION", "DEVICE_REPLACEMENT"].includes(targetType) ||
+    (targetType === "DEVICE_REPLACEMENT" &&
+      !/^[0-9a-f-]{36}$/i.test(String(targetId || ""))) ||
+    (targetType === "APPLICATION" && targetId !== null) ||
     !/^[a-f0-9]{64}$/.test(payload.documentHash) ||
     !/^[a-f0-9]{64}$/.test(payload.imeiHash) ||
     !/^[0-9a-f-]{36}$/i.test(payload.grantId) ||
@@ -502,7 +517,7 @@ export function verifyIphoneEnrollmentCaseToken(
   ) {
     return null;
   }
-  return payload;
+  return { ...payload, targetType, targetId };
 }
 
 export function isIphoneEnrollmentCaseTokenForSession(

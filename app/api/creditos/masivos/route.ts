@@ -15,6 +15,11 @@ import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
+import {
+  CreditDeviceReplacementError,
+  ensureCreditDeviceReplacementSchema,
+  lockCreditDeviceReplacementImeiForCreditCreation,
+} from "@/lib/credit-device-replacement-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -789,8 +794,19 @@ export async function POST(req: Request) {
       foliosByRowNumber.set(row.rowNumber, await generateUniqueFolio(usedFolios));
     }
 
+    await ensureCreditDeviceReplacementSchema();
     const createdRows = await prisma.$transaction(async (tx) => {
       const created: Array<{ id: number; folio: string; rowNumber: number }> = [];
+
+      const rowsByImei = [...validation.prepared].sort((left, right) =>
+        left.imei.localeCompare(right.imei)
+      );
+      for (const row of rowsByImei) {
+        await lockCreditDeviceReplacementImeiForCreditCreation(tx, {
+          imei: row.imei,
+          solicitudId: null,
+        });
+      }
 
       for (const row of validation.prepared) {
         const folio = foliosByRowNumber.get(row.rowNumber) || generateCreditFolio();
@@ -888,6 +904,12 @@ export async function POST(req: Request) {
       },
     });
   } catch (error) {
+    if (error instanceof CreditDeviceReplacementError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.status }
+      );
+    }
     console.error("ERROR CREANDO CREDITOS MASIVOS:", error);
     return NextResponse.json(
       { error: "No se pudo procesar la carga de creditos masivos" },

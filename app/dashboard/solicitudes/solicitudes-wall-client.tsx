@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  ArrowRightLeft,
   Ban,
   CalendarDays,
   ChevronLeft,
@@ -71,6 +72,7 @@ type SolicitudItem = {
   technicalErrorCode?: string | null;
   retomarHref?: string | null;
   creditHref?: string | null;
+  replacementHref?: string | null;
   actions: SolicitudAction[];
 };
 
@@ -213,6 +215,15 @@ function creditHref(item: SolicitudItem, viewerRole: ViewerRole) {
   return viewerRole === "ADMIN"
     ? `/dashboard/creditos?mode=correction&selected=${encodeURIComponent(id)}`
     : `/dashboard/clientes?selected=${encodeURIComponent(id)}`;
+}
+
+function replacementHref(item: SolicitudItem, returnTo: string) {
+  const configuredHref = item.replacementHref;
+  const href = configuredHref || `/dashboard/creditos?mode=replacement&selected=${encodeURIComponent(rawId(item.id))}`;
+  const [pathname, query = ""] = href.split("?");
+  const params = new URLSearchParams(query);
+  params.set("returnTo", returnTo);
+  return `${pathname}?${params.toString()}`;
 }
 
 function factoryHref(
@@ -760,6 +771,15 @@ export default function SolicitudesWallClient({
                                 Desistir
                               </Button>
                             ) : null}
+                            {item.actions.includes("CAMBIO_GARANTIA") ? (
+                              <Link
+                                href={replacementHref(item, wallReturnHref)}
+                                className="fp-ui-button is-secondary whitespace-nowrap"
+                              >
+                                <ArrowRightLeft className="h-4 w-4" aria-hidden="true" />
+                                Cambio garantía
+                              </Link>
+                            ) : null}
                             {item.actions.includes("ABRIR_FABRICA") ? (
                               <Link
                                 href={factoryHref(item, viewerRole, wallReturnHref)}
@@ -822,6 +842,15 @@ export default function SolicitudesWallClient({
                         <Ban className="h-4 w-4" aria-hidden="true" />
                         Desistir
                       </Button>
+                    ) : null}
+                    {item.actions.includes("CAMBIO_GARANTIA") ? (
+                      <Link
+                        href={replacementHref(item, wallReturnHref)}
+                        className="fp-ui-button is-secondary"
+                      >
+                        <ArrowRightLeft className="h-4 w-4" aria-hidden="true" />
+                        Cambio garantía
+                      </Link>
                     ) : null}
                     {item.actions.includes("ABRIR_FABRICA") ? (
                       <Link
@@ -982,6 +1011,15 @@ export default function SolicitudesWallClient({
             {detail ? (
               <footer className="border-t border-[var(--fp-border)] bg-[var(--fp-bg)] px-4 py-4 sm:px-6">
                 <div className="flex flex-wrap justify-end gap-2">
+                  {detail.actions.includes("CAMBIO_GARANTIA") ? (
+                    <Link
+                      href={replacementHref(detail, wallReturnHref)}
+                      className="fp-ui-button is-secondary"
+                    >
+                      <ArrowRightLeft className="h-4 w-4" aria-hidden="true" />
+                      Cambio por garantía
+                    </Link>
+                  ) : null}
                   {detail.actions.includes("ABRIR_FABRICA") ? (
                     <Link
                       href={factoryHref(detail, viewerRole, wallReturnHref)}
