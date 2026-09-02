@@ -254,6 +254,7 @@ export async function POST(request: Request) {
       endDate: body.fechaFin,
       numeroAprobacionBancaria: body.numeroAprobacionBancaria,
       previewToken: body.previewToken,
+      intermediationAdjustments: body.ajustesIntermediacion,
       registradoPorUsuarioId: access.user.id,
       registradoPorNombre: access.user.nombre,
     });

@@ -5,20 +5,23 @@ import type { Prisma } from "@/app/generated/prisma/client";
 import { ALIADO_FINSER_PAY, resolveRedescuentoPercentageByPlatform } from "@/lib/aliados";
 import {
   ALLY_PAYMENTS_AVAILABLE_FROM,
+  applyAllyPaymentIntermediationAdjustments,
   calculateAllyPaymentAmounts,
+  normalizeAllyPaymentIntermediationAdjustments,
   normalizeBankApprovalNumber,
   resolveAllyPaymentPlatform,
   resolveAvailableAllyPaymentPeriod,
   resolveColombiaPaymentPeriod,
   summarizeAllyPayments,
   type AllyPaymentPlatform,
+  type AllyPaymentIntermediationAdjustment,
   type AllyPaymentSummary,
 } from "@/lib/ally-payments-core";
 import { colombiaDateKey } from "@/lib/colombia-date";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import prisma from "@/lib/prisma";
 
-const PAYMENT_CALCULATION_VERSION = "ALLY_INTERMEDIATION_V1";
+const PAYMENT_CALCULATION_VERSION = "ALLY_INTERMEDIATION_V2";
 const CANCELLED_STATES = ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"] as const;
 const PAYMENT_AVAILABILITY_START = resolveColombiaPaymentPeriod(
   ALLY_PAYMENTS_AVAILABLE_FROM,
@@ -163,6 +166,31 @@ function dateForDatabase(value: string) {
 function parsePaymentPeriod(startDate: unknown, endDate: unknown) {
   try {
     return resolveAvailableAllyPaymentPeriod(startDate, endDate);
+  } catch (error) {
+    if (error instanceof RangeError) {
+      throw new AllyPaymentValidationError([error.message]);
+    }
+    throw error;
+  }
+}
+
+function parseIntermediationAdjustments(value: unknown) {
+  try {
+    return normalizeAllyPaymentIntermediationAdjustments(value);
+  } catch (error) {
+    if (error instanceof RangeError) {
+      throw new AllyPaymentValidationError([error.message]);
+    }
+    throw error;
+  }
+}
+
+function applyIntermediationAdjustments(
+  items: readonly AllyPaymentLine[],
+  adjustments: readonly AllyPaymentIntermediationAdjustment[]
+) {
+  try {
+    return applyAllyPaymentIntermediationAdjustments(items, adjustments);
   } catch (error) {
     if (error instanceof RangeError) {
       throw new AllyPaymentValidationError([error.message]);
@@ -358,6 +386,7 @@ function requestFingerprint(input: {
   endDate: string;
   approval: string;
   previewToken: string;
+  adjustments: readonly AllyPaymentIntermediationAdjustment[];
 }) {
   return sha256({
     version: PAYMENT_CALCULATION_VERSION,
@@ -366,6 +395,7 @@ function requestFingerprint(input: {
     periodoFin: input.endDate,
     numeroAprobacionNormalizado: input.approval,
     previewToken: input.previewToken,
+    ajustesIntermediacion: input.adjustments,
   });
 }
 
@@ -594,6 +624,7 @@ export async function createAllyPayment(input: {
   endDate: unknown;
   numeroAprobacionBancaria: unknown;
   previewToken: unknown;
+  intermediationAdjustments?: unknown;
   registradoPorUsuarioId: unknown;
   registradoPorNombre: unknown;
 }) {
@@ -611,12 +642,16 @@ export async function createAllyPayment(input: {
   const period = parsePaymentPeriod(input.startDate, input.endDate);
   const approval = parseApproval(input.numeroAprobacionBancaria);
   const previewToken = parseAllyPaymentPreviewToken(input.previewToken);
+  const adjustments = parseIntermediationAdjustments(
+    input.intermediationAdjustments
+  );
   const requestHash = requestFingerprint({
     allyId,
     startDate: period.startDate,
     endDate: period.endDate,
     approval: approval.normalized,
     previewToken,
+    adjustments,
   });
 
   try {
@@ -687,7 +722,8 @@ export async function createAllyPayment(input: {
           );
         }
 
-        const summary = summarizeAllyPayments(items);
+        const payableItems = applyIntermediationAdjustments(items, adjustments);
+        const summary = summarizeAllyPayments(payableItems);
         const created = await tx.liquidacionAliado.create({
           data: {
             mutationId,
@@ -711,7 +747,7 @@ export async function createAllyPayment(input: {
             aliado: { connect: { id: ally.id } },
             registradoPor: { connect: { id: actorUserId } },
             creditos: {
-              create: items.map((item) => ({
+              create: payableItems.map((item) => ({
                 fechaCredito: creditDateForDatabase(item.fechaCredito),
                 folio: item.folio,
                 clienteNombre: item.clienteNombre,

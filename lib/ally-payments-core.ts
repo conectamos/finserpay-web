@@ -52,6 +52,11 @@ export type AllyPaymentSummary = {
   total: AllyPaymentSummaryBucket;
 };
 
+export type AllyPaymentIntermediationAdjustment = {
+  creditoId: number;
+  porcentajeIntermediacion: number;
+};
+
 const COLOMBIA_UTC_OFFSET_HOURS = -5;
 const DATE_KEY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const CANCELLED_CREDIT_STATES = new Set([
@@ -109,6 +114,62 @@ export function normalizeAllyIntermediationPercentage(value: unknown) {
   );
 
   return Math.max(0, Math.min(100, Math.round(numeric * 100) / 100));
+}
+
+export function normalizeAllyPaymentIntermediationAdjustments(
+  value: unknown
+): AllyPaymentIntermediationAdjustment[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new RangeError("Los ajustes de intermediacion deben ser una lista.");
+  }
+  if (value.length > 2_000) {
+    throw new RangeError("No puedes ajustar mas de 2.000 creditos por liquidacion.");
+  }
+
+  const seenCreditIds = new Set<number>();
+  const adjustments = value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new RangeError(`El ajuste ${index + 1} no es valido.`);
+    }
+
+    const record = item as Record<string, unknown>;
+    const creditoId = record.creditoId;
+    const rawPercentage = record.porcentajeIntermediacion;
+    if (!Number.isSafeInteger(creditoId) || Number(creditoId) <= 0) {
+      throw new RangeError(`El credito del ajuste ${index + 1} no es valido.`);
+    }
+    if (
+      typeof rawPercentage !== "number" ||
+      !Number.isFinite(rawPercentage) ||
+      rawPercentage < 0 ||
+      rawPercentage > 100
+    ) {
+      throw new RangeError(
+        `La intermediacion del ajuste ${index + 1} debe estar entre 0 y 100.`
+      );
+    }
+
+    const percentage = Math.round((rawPercentage + Number.EPSILON) * 100) / 100;
+    if (Math.abs(percentage - rawPercentage) > 1e-9) {
+      throw new RangeError(
+        `La intermediacion del ajuste ${index + 1} admite maximo dos decimales.`
+      );
+    }
+
+    const normalizedCreditId = Number(creditoId);
+    if (seenCreditIds.has(normalizedCreditId)) {
+      throw new RangeError(`El credito ${normalizedCreditId} tiene ajustes duplicados.`);
+    }
+    seenCreditIds.add(normalizedCreditId);
+
+    return {
+      creditoId: normalizedCreditId,
+      porcentajeIntermediacion: Object.is(percentage, -0) ? 0 : percentage,
+    };
+  });
+
+  return adjustments.sort((left, right) => left.creditoId - right.creditoId);
 }
 
 function normalizePlatform(value: unknown): AllyPaymentPlatform | null {
@@ -287,6 +348,41 @@ export function calculateAllyPaymentAmounts(
     valorIntermediacion,
     valorPagar,
   };
+}
+
+export function applyAllyPaymentIntermediationAdjustments<
+  T extends AllyPaymentSummaryItem & { creditoId: number },
+>(
+  items: readonly T[],
+  adjustments: readonly AllyPaymentIntermediationAdjustment[]
+): T[] {
+  if (!adjustments.length) return [...items];
+
+  const eligibleCreditIds = new Set(items.map((item) => item.creditoId));
+  for (const adjustment of adjustments) {
+    if (!eligibleCreditIds.has(adjustment.creditoId)) {
+      throw new RangeError(
+        `El credito ${adjustment.creditoId} no pertenece a la previsualizacion vigente.`
+      );
+    }
+  }
+
+  const percentageByCredit = new Map(
+    adjustments.map((adjustment) => [
+      adjustment.creditoId,
+      adjustment.porcentajeIntermediacion,
+    ])
+  );
+
+  return items.map((item) => {
+    if (!percentageByCredit.has(item.creditoId)) return item;
+    const amounts = calculateAllyPaymentAmounts({
+      valorVenta: item.valorVenta,
+      cuotaInicial: item.cuotaInicial,
+      porcentajeIntermediacion: percentageByCredit.get(item.creditoId),
+    });
+    return { ...item, ...amounts };
+  });
 }
 
 function emptySummaryBucket(

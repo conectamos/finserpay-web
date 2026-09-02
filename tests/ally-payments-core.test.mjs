@@ -3,9 +3,11 @@ import test from "node:test";
 import {
   ALLY_PAYMENTS_AVAILABLE_FROM,
   ALLY_PAYMENTS_AVAILABLE_FROM_LABEL,
+  applyAllyPaymentIntermediationAdjustments,
   calculateAllyPaymentAmounts,
   isAnnulledCreditState,
   normalizeBankApprovalNumber,
+  normalizeAllyPaymentIntermediationAdjustments,
   resolveAllyPaymentPlatform,
   resolveAvailableAllyPaymentPeriod,
   resolveColombiaPaymentPeriod,
@@ -41,6 +43,75 @@ test("calcula el pago al aliado con la formula financiera confirmada", () => {
       valorIntermediacion: 250_000,
       valorPagar: 2_250_000,
     }
+  );
+});
+
+test("normaliza ajustes manuales por credito y conserva el cero explicito", () => {
+  assert.deepEqual(
+    normalizeAllyPaymentIntermediationAdjustments([
+      { creditoId: 22, porcentajeIntermediacion: 5 },
+      { creditoId: 11, porcentajeIntermediacion: 0 },
+      { creditoId: 33, porcentajeIntermediacion: 10.25 },
+      { creditoId: 44, porcentajeIntermediacion: 100 },
+    ]),
+    [
+      { creditoId: 11, porcentajeIntermediacion: 0 },
+      { creditoId: 22, porcentajeIntermediacion: 5 },
+      { creditoId: 33, porcentajeIntermediacion: 10.25 },
+      { creditoId: 44, porcentajeIntermediacion: 100 },
+    ]
+  );
+  assert.throws(
+    () => normalizeAllyPaymentIntermediationAdjustments([
+      { creditoId: 11, porcentajeIntermediacion: "5" },
+    ]),
+    /entre 0 y 100/
+  );
+  assert.throws(
+    () => normalizeAllyPaymentIntermediationAdjustments([
+      { creditoId: 11, porcentajeIntermediacion: 5.123 },
+    ]),
+    /maximo dos decimales/
+  );
+  assert.throws(
+    () => normalizeAllyPaymentIntermediationAdjustments([
+      { creditoId: 11, porcentajeIntermediacion: 5 },
+      { creditoId: 11, porcentajeIntermediacion: 0 },
+    ]),
+    /ajustes duplicados/
+  );
+});
+
+test("recalcula 0 y 5 por ciento sin aceptar creditos ajenos", () => {
+  const base = {
+    creditId: 101,
+    plataforma: "IPHONE",
+    ...calculateAllyPaymentAmounts({
+      valorVenta: 2_915_000,
+      cuotaInicial: 874_500,
+      porcentajeIntermediacion: 10,
+    }),
+  };
+  const zero = applyAllyPaymentIntermediationAdjustments(
+    [{ ...base, creditoId: 101 }],
+    [{ creditoId: 101, porcentajeIntermediacion: 0 }]
+  )[0];
+  assert.equal(zero.creditoAutorizado, 2_040_500);
+  assert.equal(zero.valorIntermediacion, 0);
+  assert.equal(zero.valorPagar, 2_040_500);
+
+  const five = applyAllyPaymentIntermediationAdjustments(
+    [{ ...base, creditoId: 101 }],
+    [{ creditoId: 101, porcentajeIntermediacion: 5 }]
+  )[0];
+  assert.equal(five.valorIntermediacion, 102_025);
+  assert.equal(five.valorPagar, 1_938_475);
+  assert.throws(
+    () => applyAllyPaymentIntermediationAdjustments(
+      [{ ...base, creditoId: 101 }],
+      [{ creditoId: 999, porcentajeIntermediacion: 5 }]
+    ),
+    /no pertenece a la previsualizacion vigente/
   );
 });
 

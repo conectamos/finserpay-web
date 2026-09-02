@@ -25,6 +25,8 @@ const [
   sidebarSource,
   consoleSource,
   pageSource,
+  pdfRouteSource,
+  pdfBuilderSource,
 ] = await Promise.all([
   readProjectFile("lib/ally-payment-access.ts"),
   readProjectFile("app/api/pagos-aliados/route.ts"),
@@ -38,6 +40,8 @@ const [
   readProjectFile("app/dashboard/_components/admin-sidebar.tsx"),
   readProjectFile("app/dashboard/pagos-aliados/ally-payments-console.tsx"),
   readProjectFile("app/dashboard/pagos-aliados/page.tsx"),
+  readProjectFile("app/api/pagos-aliados/[id]/comprobante/route.ts"),
+  readProjectFile("lib/ally-payment-settlement-pdf.ts"),
 ]);
 
 function sectionBetween(contents, startMarker, endMarker) {
@@ -215,6 +219,10 @@ test("las rutas aplican alcance por aliado y reservan escritura al central", () 
   );
   assert.match(postHandler, /registradoPorUsuarioId:\s*access\.user\.id/);
   assert.match(postHandler, /registradoPorNombre:\s*access\.user\.nombre/);
+  assert.match(
+    postHandler,
+    /intermediationAdjustments:\s*body\.ajustesIntermediacion/
+  );
 
   assert.match(detailGet, /await\s+getAllyPaymentAccess\(\)/);
   assert.match(
@@ -292,6 +300,19 @@ test("el modulo usa el rotulo solicitado y limita las fechas desde septiembre", 
   );
 });
 
+test("la interfaz recalcula y envia ajustes manuales por credito", () => {
+  assert.match(consoleSource, /calculateAllyPaymentAmounts\(\s*{/);
+  assert.match(consoleSource, /summarizeAllyPayments\(recognizedItems\)/);
+  assert.match(
+    consoleSource,
+    /type="number"[\s\S]*?min=\{0\}[\s\S]*?max=\{100\}/
+  );
+  assert.match(consoleSource, /step="0\.01"/);
+  assert.match(consoleSource, /ajustesIntermediacion:\s*adjustmentState\.adjustments/);
+  assert.match(consoleSource, /Restablecer porcentajes/);
+  assert.match(consoleSource, /Object\.keys\(adjustmentState\.errors\)\.length\s*>\s*0/);
+});
+
 test("la creacion es serializable e idempotente bajo locks de mutacion y aliado", () => {
   const create = sectionFrom(storage, "export async function createAllyPayment");
   const requestHash = sectionBetween(
@@ -332,6 +353,17 @@ test("la creacion es serializable e idempotente bajo locks de mutacion y aliado"
     create,
     /currentPreviewToken\s*!==\s*previewToken[\s\S]*?"ALLY_PAYMENT_PREVIEW_CHANGED"/
   );
+  assertInOrder(
+    create,
+    [
+      "const currentPreviewToken =",
+      "if (currentPreviewToken !== previewToken)",
+      "const payableItems = applyIntermediationAdjustments(items, adjustments)",
+      "const summary = summarizeAllyPayments(payableItems)",
+      "create: payableItems.map",
+    ],
+    "La validacion del snapshot debe preceder al ajuste y la persistencia"
+  );
 
   for (const field of [
     "aliadoId",
@@ -339,10 +371,31 @@ test("la creacion es serializable e idempotente bajo locks de mutacion y aliado"
     "periodoFin",
     "numeroAprobacionNormalizado",
     "previewToken",
+    "ajustesIntermediacion",
   ]) {
     assert.match(requestHash, new RegExp("\\b" + field + ":"));
   }
   assert.match(create, /requestHash,/);
+  assert.match(storage, /ALLY_INTERMEDIATION_V2/);
+});
+
+test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado", () => {
+  assert.match(pdfRouteSource, /await\s+getAllyPaymentAccess\(\)/);
+  assert.match(
+    pdfRouteSource,
+    /allyId:\s*access\.kind\s*===\s*"CENTRAL_ADMIN"\s*\?\s*null\s*:\s*access\.allyId/
+  );
+  assert.match(pdfRouteSource, /const paidAt = new Date\(settlement\.pagadoAt\)/);
+  assert.match(pdfRouteSource, /buildAllyPaymentSettlementPdf\(\s*{/);
+  assert.match(pdfRouteSource, /lines:\s*settlement\.items\.map/);
+  assert.match(pdfRouteSource, /searchParams\.get\("download"\)\s*===\s*"1"/);
+  assert.match(pdfRouteSource, /"Content-Type":\s*"application\/pdf"/);
+  assert.match(pdfRouteSource, /download\s*\?\s*"attachment"\s*:\s*"inline"/);
+  assert.match(pdfBuilderSource, /dateTimeLabel\(input\.paidAt\)/);
+  assert.match(pdfBuilderSource, /line\.intermediationPercentage/);
+  assert.doesNotMatch(pdfBuilderSource, /resolveRedescuentoPercentageByPlatform/);
+  assert.match(consoleSource, /Ver \/ imprimir PDF/);
+  assert.match(consoleSource, /Descargar PDF/);
 });
 
 test("aprobacion, mutationId y credito tienen defensa duplicada en app y base", () => {
@@ -595,4 +648,5 @@ test("el script npm ejecuta las pruebas de nucleo y contrato juntas", () => {
   assert.match(command, /(?:^|\s)--test(?:\s|$)/);
   assert.match(command, /tests\/ally-payments-core\.test\.mjs/);
   assert.match(command, /tests\/ally-payments\.test\.mjs/);
+  assert.match(command, /tests\/ally-payment-settlement-pdf\.test\.mjs/);
 });

@@ -5,9 +5,12 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock3,
+  Download,
   Eye,
   Filter,
+  Printer,
   RefreshCw,
+  RotateCcw,
   Smartphone,
   WalletCards,
   X,
@@ -29,6 +32,9 @@ import {
 import {
   ALLY_PAYMENTS_AVAILABLE_FROM,
   ALLY_PAYMENTS_AVAILABLE_FROM_LABEL,
+  calculateAllyPaymentAmounts,
+  summarizeAllyPayments,
+  type AllyPaymentIntermediationAdjustment,
 } from "@/lib/ally-payments-core";
 
 type PaymentsTab = "liquidar" | "recibidos" | "pendientes";
@@ -218,6 +224,109 @@ function itemKey(item: PaymentCreditItem, index: number) {
   return String(item.creditoId ?? item.id ?? item.folio ?? index);
 }
 
+function itemCreditId(item: PaymentCreditItem) {
+  const creditId = Number(item.creditoId);
+  return Number.isSafeInteger(creditId) && creditId > 0 ? creditId : null;
+}
+
+function parseIntermediationInput(value: string) {
+  const normalized = value.trim().replace(",", ".");
+  if (!normalized) {
+    return { value: null, error: "Ingresa un porcentaje." } as const;
+  }
+  if (!/^\d{1,3}(?:\.\d{1,2})?$/.test(normalized)) {
+    return { value: null, error: "Usa maximo dos decimales." } as const;
+  }
+
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    return { value: null, error: "Debe estar entre 0 y 100." } as const;
+  }
+  return { value: parsed, error: null } as const;
+}
+
+function buildIntermediationAdjustmentState(
+  items: PaymentCreditItem[],
+  values: Record<string, string>
+) {
+  const adjustments: AllyPaymentIntermediationAdjustment[] = [];
+  const errors: Record<string, string> = {};
+  const changedKeys = new Set<string>();
+
+  for (const item of items) {
+    const creditId = itemCreditId(item);
+    if (!creditId) continue;
+    const key = String(creditId);
+    if (!Object.prototype.hasOwnProperty.call(values, key)) continue;
+
+    const parsed = parseIntermediationInput(values[key]);
+    if (parsed.error || parsed.value === null) {
+      errors[key] = parsed.error || "Porcentaje no valido.";
+      continue;
+    }
+
+    if (parsed.value !== numberValue(item.porcentajeIntermediacion)) {
+      adjustments.push({
+        creditoId: creditId,
+        porcentajeIntermediacion: parsed.value,
+      });
+      changedKeys.add(key);
+    }
+  }
+
+  adjustments.sort((left, right) => left.creditoId - right.creditoId);
+  return { adjustments, changedKeys, errors };
+}
+
+function recalculatePreviewItems(
+  items: PaymentCreditItem[],
+  adjustments: readonly AllyPaymentIntermediationAdjustment[]
+) {
+  const percentageByCredit = new Map(
+    adjustments.map((adjustment) => [
+      adjustment.creditoId,
+      adjustment.porcentajeIntermediacion,
+    ])
+  );
+
+  return items.map((item) => {
+    const creditId = itemCreditId(item);
+    if (!creditId || !percentageByCredit.has(creditId)) return item;
+    return {
+      ...item,
+      ...calculateAllyPaymentAmounts({
+        valorVenta: item.valorVenta,
+        cuotaInicial: item.cuotaInicial,
+        porcentajeIntermediacion: percentageByCredit.get(creditId),
+      }),
+    };
+  });
+}
+
+function summarizePreviewItems(items: PaymentCreditItem[]): PaymentSummary {
+  const recognizedItems = items.flatMap((item) => {
+    const normalizedPlatform = String(item.plataforma || "").toUpperCase();
+    const platform =
+      normalizedPlatform === "ANDROID"
+        ? ("ANDROID" as const)
+        : normalizedPlatform === "IPHONE"
+          ? ("IPHONE" as const)
+          : null;
+    if (!platform) return [];
+    return [{
+      plataforma: platform,
+      valorVenta: numberValue(item.valorVenta),
+      cuotaInicial: numberValue(item.cuotaInicial),
+      creditoAutorizado: numberValue(item.creditoAutorizado),
+      porcentajeIntermediacion: numberValue(item.porcentajeIntermediacion),
+      valorIntermediacion: numberValue(item.valorIntermediacion),
+      valorPagar: numberValue(item.valorPagar),
+    }];
+  });
+
+  return summarizeAllyPayments(recognizedItems);
+}
+
 function statusTone(status: string | null | undefined) {
   const normalized = String(status || "").toUpperCase();
   if (normalized.includes("ANUL") || normalized.includes("ERROR")) return "danger" as const;
@@ -242,10 +351,6 @@ function summaryValue(
     | "valorPagar"
 ) {
   return numberValue(bucket?.[totalKey] ?? bucket?.[fallbackKey]);
-}
-
-function previewSummary(preview: PaymentPreview | null) {
-  return preview?.summary || preview?.resumen || null;
 }
 
 function previewItems(preview: PaymentPreview | null) {
@@ -395,11 +500,77 @@ function SummaryGrid({
   );
 }
 
+type IntermediationEditor = {
+  basePercentages: Record<string, number>;
+  changedKeys: ReadonlySet<string>;
+  errors: Record<string, string>;
+  onChange: (creditId: number, value: string) => void;
+  values: Record<string, string>;
+};
+
+function IntermediationField({
+  editor,
+  item,
+}: {
+  editor: IntermediationEditor | null;
+  item: PaymentCreditItem;
+}) {
+  const creditId = itemCreditId(item);
+  if (!editor || !creditId) {
+    return <>{formatPercent(item.porcentajeIntermediacion)}</>;
+  }
+
+  const key = String(creditId);
+  const basePercentage = editor.basePercentages[key] ?? numberValue(item.porcentajeIntermediacion);
+  const value = Object.prototype.hasOwnProperty.call(editor.values, key)
+    ? editor.values[key]
+    : String(basePercentage);
+  const error = editor.errors[key];
+  const changed = editor.changedKeys.has(key);
+
+  return (
+    <div className="flex min-w-28 flex-col items-end gap-1">
+      <div className="relative w-28">
+        <Input
+          className={[
+            "!h-10 !pr-8 text-right tabular-nums",
+            changed ? "!border-[#9cc84b] !bg-[var(--fp-lime-soft)]" : "",
+          ].join(" ")}
+          type="number"
+          min={0}
+          max={100}
+          step="0.01"
+          inputMode="decimal"
+          value={value}
+          onChange={(event) => editor.onChange(creditId, event.target.value)}
+          aria-label={`Porcentaje de intermediacion del credito ${item.folio || creditId}`}
+          aria-invalid={Boolean(error)}
+        />
+        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-[var(--fp-muted)]">
+          %
+        </span>
+      </div>
+      {changed ? (
+        <span className="text-[10px] font-bold text-[#5c7a13]">
+          Base {formatPercent(basePercentage)}
+        </span>
+      ) : null}
+      {error ? (
+        <span className="max-w-36 text-right text-[10px] font-semibold text-[var(--fp-danger)]" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function CreditItems({
   emptyDescription,
+  intermediationEditor = null,
   items,
 }: {
   emptyDescription: string;
+  intermediationEditor?: IntermediationEditor | null;
   items: PaymentCreditItem[];
 }) {
   if (!items.length) {
@@ -479,9 +650,12 @@ function CreditItems({
               </div>
               <div>
                 <p className="text-xs text-[var(--fp-muted)]">Intermediacion</p>
-                <p className="mt-1 font-bold tabular-nums">
-                  {formatPercent(item.porcentajeIntermediacion)} · {formatMoney(item.valorIntermediacion)}
-                </p>
+                <div className="mt-1 font-bold tabular-nums">
+                  <IntermediationField editor={intermediationEditor} item={item} />
+                  <p className="mt-1 text-xs text-[var(--fp-muted)]">
+                    {formatMoney(item.valorIntermediacion)}
+                  </p>
+                </div>
               </div>
             </div>
             <div className="mt-3 flex items-center justify-between gap-3">
@@ -533,7 +707,9 @@ function CreditItems({
                   {formatMoney(item.cuotaInicial)}
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 text-right">
-                  {formatPercent(item.porcentajeIntermediacion)}
+                  <div className="flex justify-end">
+                    <IntermediationField editor={intermediationEditor} item={item} />
+                  </div>
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
                   {formatMoney(item.valorIntermediacion)}
@@ -564,6 +740,24 @@ function settlementTotal(settlement: Settlement) {
     settlementSummary(settlement)?.total?.valorPagar ??
     0
   );
+}
+
+function settlementPdfUrl(settlementId: Settlement["id"], download = false) {
+  const base = `/api/pagos-aliados/${encodeURIComponent(String(settlementId))}/comprobante`;
+  return download ? `${base}?download=1` : base;
+}
+
+function openSettlementPdf(settlementId: Settlement["id"]) {
+  window.open(settlementPdfUrl(settlementId), "_blank", "noopener,noreferrer");
+}
+
+function downloadSettlementPdf(settlementId: Settlement["id"]) {
+  const anchor = document.createElement("a");
+  anchor.href = settlementPdfUrl(settlementId, true);
+  anchor.download = "";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 function SettlementsList({
@@ -618,6 +812,12 @@ function SettlementsList({
                 <div className="col-span-2">
                   <dt className="text-xs text-[var(--fp-muted)]">Aprobacion bancaria</dt>
                   <dd className="mt-1 break-all font-bold">{settlement.numeroAprobacionBancaria || "-"}</dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-xs text-[var(--fp-muted)]">Fecha de pago</dt>
+                  <dd className="mt-1 font-bold">
+                    {formatDateTime(settlement.pagadoAt || settlement.createdAt)}
+                  </dd>
                 </div>
               </dl>
               <Button
@@ -746,6 +946,7 @@ export default function AllyPaymentsConsole({
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
   const [approvalNumber, setApprovalNumber] = useState("");
+  const [intermediationValues, setIntermediationValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -758,6 +959,53 @@ export default function AllyPaymentsConsole({
   const selectedAlly = useMemo(
     () => allies.find((ally) => String(ally.id) === selectedAllyId) || null,
     [allies, selectedAllyId]
+  );
+
+  const basePreviewItems = useMemo(() => previewItems(preview), [preview]);
+  const adjustmentState = useMemo(
+    () => buildIntermediationAdjustmentState(basePreviewItems, intermediationValues),
+    [basePreviewItems, intermediationValues]
+  );
+  const basePercentages = useMemo(
+    () =>
+      Object.fromEntries(
+        basePreviewItems.flatMap((item) => {
+          const creditId = itemCreditId(item);
+          return creditId
+            ? [[String(creditId), numberValue(item.porcentajeIntermediacion)] as const]
+            : [];
+        })
+      ),
+    [basePreviewItems]
+  );
+  const adjustedPreviewItems = useMemo(
+    () => recalculatePreviewItems(basePreviewItems, adjustmentState.adjustments),
+    [adjustmentState.adjustments, basePreviewItems]
+  );
+  const adjustedPreviewSummary = useMemo(
+    () => (preview ? summarizePreviewItems(adjustedPreviewItems) : null),
+    [adjustedPreviewItems, preview]
+  );
+  const updateIntermediation = useCallback((creditId: number, value: string) => {
+    setIntermediationValues((current) => ({ ...current, [String(creditId)]: value }));
+    setPendingMutationId(null);
+    setNotice(null);
+  }, []);
+  const intermediationEditor = useMemo<IntermediationEditor>(
+    () => ({
+      basePercentages,
+      changedKeys: adjustmentState.changedKeys,
+      errors: adjustmentState.errors,
+      onChange: updateIntermediation,
+      values: intermediationValues,
+    }),
+    [
+      adjustmentState.changedKeys,
+      adjustmentState.errors,
+      basePercentages,
+      intermediationValues,
+      updateIntermediation,
+    ]
   );
 
   const loadOverview = useCallback(async () => {
@@ -813,6 +1061,7 @@ export default function AllyPaymentsConsole({
   const invalidatePreview = () => {
     setPreview(null);
     setPreviewRequested(false);
+    setIntermediationValues({});
     setPendingMutationId(null);
     setApprovalNumber("");
     setNotice(null);
@@ -842,6 +1091,7 @@ export default function AllyPaymentsConsole({
       setPreviewLoading(true);
       setPreviewRequested(true);
       setPreview(null);
+      setIntermediationValues({});
       setApprovalNumber("");
       setPendingMutationId(null);
       setNotice(null);
@@ -887,6 +1137,14 @@ export default function AllyPaymentsConsole({
       setNotice({ tone: "error", text: "Genera una previsualizacion vigente antes de registrar." });
       return;
     }
+    const adjustmentError = Object.values(adjustmentState.errors)[0];
+    if (adjustmentError) {
+      setNotice({
+        tone: "error",
+        text: `Corrige la intermediacion antes de registrar: ${adjustmentError}`,
+      });
+      return;
+    }
     if (!approvalNumber.trim()) {
       setNotice({ tone: "error", text: "El numero de aprobacion bancaria es obligatorio." });
       return;
@@ -907,6 +1165,11 @@ export default function AllyPaymentsConsole({
       });
       return;
     }
+    if (Object.keys(adjustmentState.errors).length > 0) {
+      setConfirmOpen(false);
+      setNotice({ tone: "error", text: "Corrige los porcentajes de intermediacion." });
+      return;
+    }
 
     try {
       setSubmitting(true);
@@ -920,6 +1183,7 @@ export default function AllyPaymentsConsole({
           fechaFin,
           numeroAprobacionBancaria: approvalNumber.trim(),
           previewToken,
+          ajustesIntermediacion: adjustmentState.adjustments,
         }),
       });
       const raw = (await response.json().catch(() => null)) as
@@ -933,6 +1197,7 @@ export default function AllyPaymentsConsole({
       setConfirmOpen(false);
       setPendingMutationId(null);
       setApprovalNumber("");
+      setIntermediationValues({});
       setPreview(null);
       setPreviewRequested(false);
       setActiveTab("recibidos");
@@ -986,7 +1251,7 @@ export default function AllyPaymentsConsole({
   };
 
   const previewTotal = summaryValue(
-    previewSummary(preview)?.total,
+    adjustedPreviewSummary?.total,
     "totalPagar",
     "valorPagar"
   );
@@ -1143,6 +1408,9 @@ export default function AllyPaymentsConsole({
             <p className="mt-1 text-xs leading-5 text-[var(--fp-muted)]">
               Credito autorizado = valor venta - inicial. La intermediacion se calcula sobre ese credito; valor a pagar = credito autorizado - intermediacion.
             </p>
+            <p className="mt-1 text-xs font-semibold leading-5 text-[#5c7a13]">
+              En la previsualizacion puedes ajustar el porcentaje de cada venta; la fila y el total se recalculan antes de confirmar.
+            </p>
           </Card>
 
           {previewLoading ? (
@@ -1166,16 +1434,44 @@ export default function AllyPaymentsConsole({
                     </p>
                   </div>
                 </div>
-                <StatusPill tone="positive">
-                  {formatNumber(previewSummary(preview)?.total?.numeroCreditos)} creditos elegibles
-                </StatusPill>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <StatusPill tone="positive">
+                    {formatNumber(adjustedPreviewSummary?.total?.numeroCreditos)} creditos elegibles
+                  </StatusPill>
+                  {adjustmentState.adjustments.length > 0 ? (
+                    <Badge tone="positive">
+                      {formatNumber(adjustmentState.adjustments.length)} ajustes
+                    </Badge>
+                  ) : null}
+                  {Object.keys(intermediationValues).length > 0 ? (
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setIntermediationValues({});
+                        setPendingMutationId(null);
+                        setNotice(null);
+                      }}
+                      disabled={submitting}
+                    >
+                      <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                      Restablecer porcentajes
+                    </Button>
+                  ) : null}
+                </div>
               </Card>
 
-              <SummaryGrid summary={previewSummary(preview)} title="Resumen de la liquidacion" />
+              <SummaryGrid summary={adjustedPreviewSummary} title="Resumen de la liquidacion" />
               <CreditItems
-                items={previewItems(preview)}
+                items={adjustedPreviewItems}
+                intermediationEditor={intermediationEditor}
                 emptyDescription="La previsualizacion no contiene detalle de creditos."
               />
+
+              {Object.keys(adjustmentState.errors).length > 0 ? (
+                <p className="mt-3 text-sm font-semibold text-[var(--fp-danger)]" role="alert">
+                  Corrige los porcentajes marcados antes de registrar el pago.
+                </p>
+              ) : null}
 
               <Card className="mt-4 !rounded-lg !p-5">
                 <div className="grid gap-4 lg:grid-cols-[minmax(280px,1fr)_minmax(260px,.8fr)] lg:items-end">
@@ -1207,6 +1503,7 @@ export default function AllyPaymentsConsole({
                     disabled={
                       submitting ||
                       !approvalNumber.trim() ||
+                      Object.keys(adjustmentState.errors).length > 0 ||
                       !(preview.previewToken || preview.token)
                     }
                   >
@@ -1261,14 +1558,30 @@ export default function AllyPaymentsConsole({
                     {formatDate(selectedSettlement.periodoFin)}
                   </p>
                 </div>
-                <Button
-                  variant="ghost"
-                  onClick={() => setSelectedSettlement(null)}
-                  aria-label="Cerrar detalle del periodo"
-                >
-                  <X className="h-4 w-4" aria-hidden="true" />
-                  Cerrar
-                </Button>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => openSettlementPdf(selectedSettlement.id)}
+                  >
+                    <Printer className="h-4 w-4" aria-hidden="true" />
+                    Ver / imprimir PDF
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => downloadSettlementPdf(selectedSettlement.id)}
+                  >
+                    <Download className="h-4 w-4" aria-hidden="true" />
+                    Descargar PDF
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setSelectedSettlement(null)}
+                    aria-label="Cerrar detalle del periodo"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                    Cerrar
+                  </Button>
+                </div>
                 </div>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1347,7 +1660,11 @@ export default function AllyPaymentsConsole({
           previewTotal
         )}, correspondiente al periodo ${formatDate(fechaInicio)} al ${formatDate(
           fechaFin
-        )}. Aprobacion bancaria: ${approvalNumber.trim() || "-"}.`}
+        )}. Aprobacion bancaria: ${approvalNumber.trim() || "-"}. ${
+          adjustmentState.adjustments.length
+            ? `${adjustmentState.adjustments.length} venta(s) con intermediacion ajustada.`
+            : "Sin ajustes manuales de intermediacion."
+        }`}
         confirmLabel="Confirmar y registrar"
         busy={submitting}
         onCancel={() => {
