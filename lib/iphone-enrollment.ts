@@ -551,7 +551,9 @@ export function hashIphoneEnrollmentChecklist(
     "checklist",
     JSON.stringify({
       version: IPHONE_ENROLLMENT_CHECKLIST_VERSION,
-      ...checklist,
+      documentMatched: checklist.documentMatched,
+      imeiMatched: checklist.imeiMatched,
+      enrollmentApproved: checklist.enrollmentApproved,
     })
   );
 }

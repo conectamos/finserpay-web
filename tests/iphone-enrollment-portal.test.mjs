@@ -540,6 +540,15 @@ test("valida origen estricto y construye únicamente el checklist aprobado", () 
     enrollment.hashIphoneEnrollmentChecklist(checklist),
     /^[a-f0-9]{64}$/
   );
+  assert.equal(
+    enrollment.hashIphoneEnrollmentChecklist({
+      enrollmentApproved: true,
+      imeiMatched: true,
+      documentMatched: true,
+    }),
+    enrollment.hashIphoneEnrollmentChecklist(checklist),
+    "el hash debe ser estable aunque PostgreSQL jsonb reordene las claves"
+  );
   assert.match(
     enrollment.IPHONE_ENROLLMENT_RESPONSE_HEADERS["Cache-Control"],
     /no-store/
