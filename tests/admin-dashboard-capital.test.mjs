@@ -129,8 +129,11 @@ test("el dashboard conecta el selector mensual con las consultas del servidor", 
   assert.match(dataSource, /fechaAbono:\s*\{[\s\S]*gte: monthStart,[\s\S]*lt: nextMonthStart/);
   assert.match(dataSource, /credit\.fechaCredito >= monthStart/);
   assert.match(uiSource, /<DashboardMonthSelector/);
-  assert.match(selectorSource, /type="month"/);
-  assert.match(selectorSource, /max=\{currentMonth\}/);
-  assert.match(selectorSource, /min="2000-01"/);
+  assert.doesNotMatch(selectorSource, /type="month"/);
+  assert.match(selectorSource, /aria-expanded=\{open\}/);
+  assert.match(selectorSource, /role="dialog"/);
+  assert.match(selectorSource, /MONTH_LABELS\.map/);
+  assert.match(selectorSource, /disabled=\{isFutureMonth\}/);
+  assert.match(selectorSource, /event\.key === "Escape"/);
   assert.match(selectorSource, /router\.push\(`\/dashboard\?month=/);
 });
