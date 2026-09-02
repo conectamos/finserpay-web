@@ -20,7 +20,13 @@ export const CREDIT_ABONO_CAJA_MARKER = "ABONO_CREDITO_ID:";
 export const DEFAULT_LEGAL_CONSUMER_RATE_EA = 17.84;
 export const DEFAULT_FIANCO_SURETY_PERCENTAGE = 60;
 export const DEFAULT_INITIAL_PAYMENT_PERCENTAGE = 20;
-export const ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE = 30;
+export const SIMULATOR_INITIAL_PAYMENT_PERCENTAGES = [20, 30] as const;
+export type SimulatorInitialPaymentPercentage =
+  (typeof SIMULATOR_INITIAL_PAYMENT_PERCENTAGES)[number];
+export const DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE: SimulatorInitialPaymentPercentage =
+  30;
+export const ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE =
+  DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE;
 export const ANDROID_SIMULATOR_TOTAL_SURETY_PERCENTAGE = 75;
 export const DEFAULT_CREDIT_INSTALLMENTS = 12;
 export const DEFAULT_MAX_CREDIT_INSTALLMENTS = 16;
@@ -89,14 +95,18 @@ export function resolveInitialPaymentAfterMinimumRefresh(input: {
 }
 
 export function calculateAndroidSimulatorInitialPayment(
-  valorTotalEquipo: number | null | undefined
+  valorTotalEquipo: number | null | undefined,
+  initialPaymentPercentage: number | null | undefined =
+    DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE
 ) {
   const total = Number(valorTotalEquipo || 0);
   if (!Number.isFinite(total) || total <= 0) return 0;
+  const normalizedPercentage =
+    SIMULATOR_INITIAL_PAYMENT_PERCENTAGES.find(
+      (percentage) => percentage === Number(initialPaymentPercentage)
+    ) ?? DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE;
 
-  return Math.round(
-    (total * ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE) / 100
-  );
+  return Math.round((total * normalizedPercentage) / 100);
 }
 
 export function calculateAndroidSimulatorInstallmentSuretyPercentage(

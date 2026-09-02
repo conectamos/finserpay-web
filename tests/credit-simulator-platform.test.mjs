@@ -13,6 +13,8 @@ const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const {
   ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
   ANDROID_SIMULATOR_TOTAL_SURETY_PERCENTAGE,
+  DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
+  SIMULATOR_INITIAL_PAYMENT_PERCENTAGES,
   calculateAndroidSimulatorInitialPayment,
   calculateAndroidSimulatorInstallmentSuretyPercentage,
 } = await jiti.import("../lib/credit-factory.ts");
@@ -69,14 +71,14 @@ test("el administrador central ve el simulador en menu y acciones rapidas", () =
   );
 });
 
-test("el simulador iPhone usa inicial del 30 por ciento y plazo flexible", () => {
+test("el simulador iPhone usa el porcentaje seleccionado y conserva el plazo flexible", () => {
   assert.match(
     consoleSource,
     /const simulatorIphoneRulesActive\s*=\s*simulatorMode && iphoneFactory/
   );
   assert.match(
     consoleSource,
-    /simulatorIphoneRulesActive\s*\? configuredInitialPaymentPercentage/
+    /const initialPaymentPercentage = simulatorMode\s*\? simulatorInitialPaymentPercentage/
   );
   assert.match(
     consoleSource,
@@ -116,10 +118,32 @@ test("el simulador iPhone usa inicial del 30 por ciento y plazo flexible", () =>
   );
 });
 
-test("el simulador Android usa inicial del 30 por ciento y fianza total del 75 por ciento", () => {
+test("el simulador permite consultar inicial del 20 o 30 por ciento", () => {
+  assert.deepEqual(SIMULATOR_INITIAL_PAYMENT_PERCENTAGES, [20, 30]);
+  assert.equal(DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE, 30);
+  assert.equal(ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE, 30);
+  assert.equal(calculateAndroidSimulatorInitialPayment(1_000_000, 20), 200_000);
+  assert.equal(calculateAndroidSimulatorInitialPayment(1_000_000, 30), 300_000);
+  assert.match(
+    consoleSource,
+    /useState<SimulatorInitialPaymentPercentage>\(\s*DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE/
+  );
+  assert.match(
+    consoleSource,
+    /SIMULATOR_INITIAL_PAYMENT_PERCENTAGES\.map\(\(percentage\)/
+  );
+  assert.match(consoleSource, /type="radio"/);
+  assert.match(consoleSource, /readOnly=\{simulatorMode\}/);
+  assert.match(
+    consoleSource,
+    /setSimulatorInitialPaymentPercentage\(percentage\);\s*setCuotaInicial\(""\)/
+  );
+});
+
+test("el simulador Android conserva la fianza total del 75 por ciento", () => {
   assert.match(
     creditFactorySource,
-    /const ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE = 30/
+    /const DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE[^=]*=\s*30/
   );
   assert.match(
     creditFactorySource,
@@ -131,11 +155,11 @@ test("el simulador Android usa inicial del 30 por ciento y fianza total del 75 p
   );
   assert.match(
     consoleSource,
-    /simulatorAndroidRulesActive\s*\? ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE/
+    /const initialPaymentPercentage = simulatorMode\s*\? simulatorInitialPaymentPercentage/
   );
   assert.match(
     consoleSource,
-    /const cuotaInicialMinimaNumero = simulatorAndroidRulesActive\s*\? calculateAndroidSimulatorInitialPayment\(valorTotalEquipoNumero\)/
+    /const cuotaInicialMinimaNumero = simulatorAndroidRulesActive\s*\? calculateAndroidSimulatorInitialPayment\(\s*valorTotalEquipoNumero,\s*simulatorInitialPaymentPercentage/
   );
   assert.match(
     consoleSource,
@@ -144,7 +168,7 @@ test("el simulador Android usa inicial del 30 por ciento y fianza total del 75 p
 
   const valorEquipo = 1_000_000;
   const numeroCuotas = 16;
-  const cuotaInicial = calculateAndroidSimulatorInitialPayment(valorEquipo);
+  const cuotaInicial = calculateAndroidSimulatorInitialPayment(valorEquipo, 30);
   const fianzaCuotaPorcentaje =
     calculateAndroidSimulatorInstallmentSuretyPercentage(numeroCuotas);
   const amortization = calculateFrenchAmortization({
@@ -158,7 +182,6 @@ test("el simulador Android usa inicial del 30 por ciento y fianza total del 75 p
     fechaPrimerPago: "2026-09-17",
   });
 
-  assert.equal(ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE, 30);
   assert.equal(ANDROID_SIMULATOR_TOTAL_SURETY_PERCENTAGE, 75);
   assert.equal(cuotaInicial, 300_000);
   assert.equal(amortization.valorFinanciado, 700_000);

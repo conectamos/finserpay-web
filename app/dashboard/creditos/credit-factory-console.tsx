@@ -69,7 +69,6 @@ import DatacreditoPrequalificationGate, {
   type DataCreditoApprovedResult,
 } from "@/app/dashboard/creditos/datacredito-prequalification-gate";
 import {
-  ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
   calculateAndroidSimulatorInitialPayment,
   calculateAndroidSimulatorInstallmentSuretyPercentage,
   calculateFinancedBalance,
@@ -80,6 +79,7 @@ import {
   DEFAULT_LEGAL_RATE_REFERENCE,
   DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
+  DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
   generatePagareNumber,
   getCreditClosureReadiness,
   getDefaultFirstPaymentDate,
@@ -101,6 +101,8 @@ import {
   PAYMENT_FREQUENCY_OPTIONS,
   resolveRequiredInitialPaymentByPlatform,
   resolveInitialPaymentAfterMinimumRefresh,
+  SIMULATOR_INITIAL_PAYMENT_PERCENTAGES,
+  type SimulatorInitialPaymentPercentage,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import {
@@ -2964,6 +2966,10 @@ export default function CreditFactoryConsole({
   const [imei, setImei] = useState("");
   const [valorEquipoTotal, setValorEquipoTotal] = useState("");
   const [cuotaInicial, setCuotaInicial] = useState("");
+  const [simulatorInitialPaymentPercentage, setSimulatorInitialPaymentPercentage] =
+    useState<SimulatorInitialPaymentPercentage>(
+      DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE
+    );
   const [plazoMeses, setPlazoMeses] = useState(String(DEFAULT_CREDIT_INSTALLMENTS));
   const [tasaInteresEa, setTasaInteresEa] = useState(
     String(DEFAULT_LEGAL_CONSUMER_RATE_EA)
@@ -3497,12 +3503,9 @@ export default function CreditFactoryConsole({
       IPHONE_INITIAL_PAYMENT_PERCENTAGE
     : creditSettings.cuotaInicialPorcentaje ??
       DEFAULT_INITIAL_PAYMENT_PERCENTAGE;
-  const initialPaymentPercentage =
-    simulatorAndroidRulesActive
-      ? ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE
-      : simulatorIphoneRulesActive
-      ? configuredInitialPaymentPercentage
-      : activeDataCreditoOffer
+  const initialPaymentPercentage = simulatorMode
+    ? simulatorInitialPaymentPercentage
+    : activeDataCreditoOffer
       ? activeDataCreditoOffer.initialPaymentPercentage
       : configuredInitialPaymentPercentage;
   const initialPaymentBreakdown = resolveRequiredInitialPaymentByPlatform({
@@ -3518,7 +3521,10 @@ export default function CreditFactoryConsole({
         : undefined,
   });
   const cuotaInicialMinimaNumero = simulatorAndroidRulesActive
-    ? calculateAndroidSimulatorInitialPayment(valorTotalEquipoNumero)
+    ? calculateAndroidSimulatorInitialPayment(
+        valorTotalEquipoNumero,
+        simulatorInitialPaymentPercentage
+      )
     : initialPaymentBreakdown.requiredInitialPayment;
   const dataCreditoFinancingExcess =
     !simulatorMode && activeDataCreditoOffer
@@ -6013,6 +6019,17 @@ export default function CreditFactoryConsole({
     );
 
     setCuotaInicial(String(Math.round(normalizedInitial)));
+  };
+
+  const handleSimulatorInitialPaymentPercentageChange = (
+    percentage: SimulatorInitialPaymentPercentage
+  ) => {
+    if (percentage === simulatorInitialPaymentPercentage) {
+      return;
+    }
+
+    setSimulatorInitialPaymentPercentage(percentage);
+    setCuotaInicial("");
   };
 
   const loadCredits = async (preserveSelected = true, searchValue = activeSearch) => {
@@ -13890,7 +13907,7 @@ export default function CreditFactoryConsole({
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {simulatorMode
-                          ? "Elige el equipo y ajusta la inicial para conocer la cuota estimada."
+                          ? "Elige el equipo y compara la cuota estimada con 20 % o 30 % de inicial."
                           : "Captura el equipo, define la inicial y confirma la cuota que vera el cliente."}
                       </p>
                       {!simulatorMode ? (
@@ -14150,6 +14167,49 @@ export default function CreditFactoryConsole({
                         <div className="md:col-span-2">
                           <h4 className="text-lg font-black text-slate-950">2. Configuración del plan</h4>
                         </div>
+                      {simulatorMode ? (
+                        <fieldset className="md:col-span-2">
+                          <legend className="mb-2 block text-sm font-semibold text-slate-700">
+                            Porcentaje de cuota inicial
+                          </legend>
+                          <div className="grid max-w-md grid-cols-2 gap-1 rounded-lg border border-[var(--fp-border)] bg-[var(--fp-bg)] p-1">
+                            {SIMULATOR_INITIAL_PAYMENT_PERCENTAGES.map((percentage) => {
+                              const selected =
+                                simulatorInitialPaymentPercentage === percentage;
+
+                              return (
+                                <label key={percentage} className="cursor-pointer">
+                                  <input
+                                    type="radio"
+                                    name="simulator-initial-payment-percentage"
+                                    value={percentage}
+                                    checked={selected}
+                                    onChange={() =>
+                                      handleSimulatorInitialPaymentPercentageChange(
+                                        percentage
+                                      )
+                                    }
+                                    className="peer sr-only"
+                                  />
+                                  <span
+                                    className={[
+                                      "flex min-h-11 items-center justify-center rounded-md border px-4 py-2.5 text-sm font-bold transition peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--fp-lime)] peer-focus-visible:ring-offset-2",
+                                      selected
+                                        ? "border-[#161a1b] bg-[#161a1b] text-white"
+                                        : "border-transparent bg-white text-slate-700 hover:border-slate-300",
+                                    ].join(" ")}
+                                  >
+                                    {percentage} % de inicial
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <p className="mt-2 text-xs font-medium text-slate-500">
+                            Cambia el porcentaje para comparar inmediatamente el valor financiado y la cuota.
+                          </p>
+                        </fieldset>
+                      ) : null}
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Cuota inicial
@@ -14160,10 +14220,13 @@ export default function CreditFactoryConsole({
                             setCuotaInicial(event.target.value.replace(/\D/g, ""))
                           }
                           onBlur={handleCuotaInicialBlur}
+                          readOnly={simulatorMode}
+                          aria-readonly={simulatorMode}
                           inputMode="numeric"
                           placeholder="$ 0"
                           className={[
-                            "w-full rounded-2xl border bg-white px-4 py-3 text-base font-semibold text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200",
+                            "w-full rounded-2xl border px-4 py-3 text-base font-semibold text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200",
+                            simulatorMode ? "cursor-default bg-slate-50" : "bg-white",
                             cuotaInicial || !valorTotalEquipoNumero
                               ? cuotaInicialValida || !valorTotalEquipoNumero
                                 ? "border-slate-300"
@@ -14179,12 +14242,23 @@ export default function CreditFactoryConsole({
                               : "text-slate-500",
                           ].join(" ")}
                         >
-                          Minimo: {currency(cuotaInicialMinimaNumero)}. Puedes subirla si el cliente da mas.
-                          {!simulatorMode && dataCreditoFinancingExcess > 0
-                            ? ` Ajuste adicional por cupo aprobado: ${currency(dataCreditoFinancingExcess)}.`
-                            : !simulatorMode && platformInitialPaymentAdjustment > 0
-                              ? ` Ajuste adicional por tope del equipo: ${currency(platformInitialPaymentAdjustment)}.`
-                              : ""}
+                          {simulatorMode ? (
+                            <>
+                              Calculada con {initialPaymentPercentage} % de inicial: {currency(cuotaInicialMinimaNumero)}.
+                              {platformInitialPaymentAdjustment > 0
+                                ? ` El tope de financiación requiere ${currency(platformInitialPaymentAdjustment)} adicionales.`
+                                : ""}
+                            </>
+                          ) : (
+                            <>
+                              Minimo: {currency(cuotaInicialMinimaNumero)}. Puedes subirla si el cliente da mas.
+                              {dataCreditoFinancingExcess > 0
+                                ? ` Ajuste adicional por cupo aprobado: ${currency(dataCreditoFinancingExcess)}.`
+                                : platformInitialPaymentAdjustment > 0
+                                  ? ` Ajuste adicional por tope del equipo: ${currency(platformInitialPaymentAdjustment)}.`
+                                  : ""}
+                            </>
+                          )}
                         </p>
                       </div>
 
@@ -14273,7 +14347,12 @@ export default function CreditFactoryConsole({
                         <dl className="mt-5 space-y-3 text-sm">
                           {[
                             ["Valor del equipo", currency(valorTotalEquipoNumero)],
-                            ["Inicial", currency(cuotaInicialNumero)],
+                            [
+                              simulatorMode
+                                ? `Inicial (${formatPercent(initialPaymentPercentage)})`
+                                : "Inicial",
+                              currency(cuotaInicialNumero),
+                            ],
                             ["Valor financiado", currency(saldoBaseFinanciado)],
                             ["Plazo", `${plazoMesesNumero || 0} cuotas`],
                             ["Frecuencia", frecuenciaPagoLabel],
