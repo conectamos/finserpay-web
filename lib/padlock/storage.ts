@@ -9,6 +9,7 @@ import {
   hasUnresolvedPadlockProviderAttempt,
   isPadlockProviderAttemptOpen,
   planPadlockCommandMutation,
+  shouldKeepPadlockProviderAttemptPending,
   type PadlockAction,
   type PadlockBindingContext,
   type PadlockDecision,
@@ -751,7 +752,7 @@ async function loadEvaluationContextWith(
                     )
               )
             )
-          )
+        )
       ) relevant_auto_lock ON TRUE
       WHERE binding."creditId" = $1
         AND binding."status" = 'ACTIVE'
@@ -1177,6 +1178,7 @@ type CommandRow = {
   providerAttemptCount: number;
   lastProviderAttemptStartedAt: Date | null;
   lastProviderAttemptCompletedAt: Date | null;
+  providerTransitionObservedAt: Date | null;
   maxAttempts: number;
   availableAt: Date;
   leaseOwner: string | null;
@@ -1708,6 +1710,7 @@ export async function claimPadlockCommands(input: {
           )
         )
           AND "attemptCount" >= "maxAttempts"
+          AND "providerTransitionObservedAt" IS NULL
         ORDER BY "availableAt", "createdAt"
         LIMIT $2
         FOR UPDATE SKIP LOCKED
@@ -1757,7 +1760,10 @@ export async function claimPadlockCommands(input: {
             AND candidate."leaseExpiresAt" <= $1::timestamp
           )
         )
-          AND candidate."attemptCount" < candidate."maxAttempts"
+          AND (
+            candidate."attemptCount" < candidate."maxAttempts"
+            OR candidate."providerTransitionObservedAt" IS NOT NULL
+          )
           AND NOT EXISTS (
             SELECT 1
             FROM "PadlockCommand" prior_attempt
@@ -2055,8 +2061,8 @@ export async function preparePadlockCommandDispatch(input: {
         binding.desiredLockCause === command.lockCause) ||
         (command.action === "UNLOCK" && binding.desiredState === "UNLOCKED"));
     // Once a POST has an unproven outcome, every later attempt is GET-only.
-    // This applies even when the desired state has not changed: without a
-    // provider idempotency contract or SLA, replaying the POST is unsafe.
+    // This applies even when the desired state has not changed: observing the
+    // device before the delayed transition does not make replaying POST safe.
     const reconciliationOnly = hasUnresolvedPadlockProviderAttempt(command);
     if (!desiredMatches && !reconciliationOnly) {
       await supersedeUndispatchedCommand(
@@ -2291,6 +2297,17 @@ function padlockRetryAt(now: Date, attemptCount: number) {
   return new Date(now.getTime() + delayMs);
 }
 
+function waitsForPadlockDeviceConnectivity(
+  command: CommandRow,
+  outcome: PadlockProviderOutcome
+) {
+  return shouldKeepPadlockProviderAttemptPending({
+    providerAttemptCount: Number(command.providerAttemptCount || 0),
+    providerTransitionObservedAt: command.providerTransitionObservedAt,
+    outcomeKind: outcome.kind,
+  });
+}
+
 export async function recordPadlockCommandOutcome(input: {
   commandId: string;
   workerId: string;
@@ -2382,6 +2399,13 @@ export async function recordPadlockCommandOutcome(input: {
     // previously ambiguous provider attempt has settled. An opposite stable
     // state may merely precede a delayed provider transition.
     const definitiveProviderObservation = validExpectedConfirmation;
+    const waitingForDeviceConnectivity = waitsForPadlockDeviceConnectivity(
+      command,
+      input.outcome
+    );
+    const transitionObservedThisOutcome =
+      input.outcome.kind === "PENDING" &&
+      Number(command.providerAttemptCount || 0) > 0;
     const desiredIsStale =
       Number(binding.desiredVersion) !== Number(command.desiredVersion) ||
       (command.action === "LOCK" && binding.desiredState !== "LOCKED") ||
@@ -2432,7 +2456,9 @@ export async function recordPadlockCommandOutcome(input: {
         );
       } else {
         lateReasonCode =
-          invalidConfirmationSource
+          waitingForDeviceConnectivity && input.outcome.kind === "PENDING"
+            ? "REMOTE_TRANSITION_PENDING"
+            : invalidConfirmationSource
             ? "LATE_CONFIRMATION_SOURCE_INVALID"
             : observedAutoMoraLockWithoutAttempt
               ? "LOCKED_OBSERVED_WITHOUT_PROVIDER_ATTEMPT"
@@ -2463,6 +2489,7 @@ export async function recordPadlockCommandOutcome(input: {
       }
 
       const reachedLimit =
+        !waitingForDeviceConnectivity &&
         Number(command.attemptCount) >= Number(command.maxAttempts);
       const lateStatus: PadlockCommandStatus = definitiveProviderObservation
         ? "SUPERSEDED"
@@ -2482,6 +2509,10 @@ export async function recordPadlockCommandOutcome(input: {
             END,
             "leaseOwner" = NULL, "leaseToken" = NULL, "leaseExpiresAt" = NULL,
             "lastErrorCode" = $6, "lastProviderState" = $3,
+            "providerTransitionObservedAt" = CASE
+              WHEN $9::boolean THEN COALESCE("providerTransitionObservedAt", $4::timestamp)
+              ELSE "providerTransitionObservedAt"
+            END,
             "lastProviderAttemptCompletedAt" = CASE
               WHEN $7::boolean THEN $4::timestamp
               ELSE "lastProviderAttemptCompletedAt"
@@ -2500,7 +2531,8 @@ export async function recordPadlockCommandOutcome(input: {
         lateAvailableAt,
         safeCode(lateReasonCode, "STALE_PROVIDER_RESULT", 64),
         definitiveProviderObservation,
-        validExpectedConfirmation
+        validExpectedConfirmation,
+        transitionObservedThisOutcome
       );
       await appendAudit(transaction, {
         bindingId: binding.id,
@@ -2629,6 +2661,7 @@ export async function recordPadlockCommandOutcome(input: {
       errorCode = safeCode(input.outcome.errorCode, "PROVIDER_ERROR", 64);
     } else {
       const reachedLimit =
+        !waitingForDeviceConnectivity &&
         Number(command.attemptCount) >= Number(command.maxAttempts);
       status = reachedLimit ? "REVIEW_REQUIRED" : "RETRY";
       errorCode =
@@ -2648,6 +2681,10 @@ export async function recordPadlockCommandOutcome(input: {
         SET "status" = $2, "availableAt" = $3::timestamp,
           "leaseOwner" = NULL, "leaseToken" = NULL, "leaseExpiresAt" = NULL,
           "lastErrorCode" = $4, "lastProviderState" = $5,
+          "providerTransitionObservedAt" = CASE
+            WHEN $8::boolean THEN COALESCE("providerTransitionObservedAt", $6::timestamp)
+            ELSE "providerTransitionObservedAt"
+          END,
           "confirmedAt" = CASE WHEN $2 = 'CONFIRMED' THEN $6::timestamp ELSE "confirmedAt" END,
           "lastProviderAttemptCompletedAt" = CASE
             WHEN $7::boolean
@@ -2670,7 +2707,8 @@ export async function recordPadlockCommandOutcome(input: {
       errorCode,
       providerState,
       now,
-      definitiveProviderObservation
+      definitiveProviderObservation,
+      transitionObservedThisOutcome
     );
     await appendAudit(transaction, {
       bindingId: binding.id,
@@ -2774,6 +2812,7 @@ export async function listPadlockCommands(options?: {
     providerAttemptCount: Number(row.providerAttemptCount || 0),
     lastProviderAttemptStartedAt: row.lastProviderAttemptStartedAt,
     lastProviderAttemptCompletedAt: row.lastProviderAttemptCompletedAt,
+    providerTransitionObservedAt: row.providerTransitionObservedAt,
     maxAttempts: Number(row.maxAttempts),
     availableAt: row.availableAt,
     lastErrorCode: row.lastErrorCode,

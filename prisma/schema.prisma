@@ -509,6 +509,7 @@ model PadlockCommand {
   providerAttemptCount           Int                    @default(0)
   lastProviderAttemptStartedAt   DateTime?
   lastProviderAttemptCompletedAt DateTime?
+  providerTransitionObservedAt   DateTime?
   maxAttempts                    Int                    @default(6)
   availableAt                    DateTime               @default(now())
   leaseOwner                     String?                @db.VarChar(100)

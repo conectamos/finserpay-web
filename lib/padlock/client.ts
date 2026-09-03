@@ -537,12 +537,6 @@ function normalizedCommandResult(
   };
 }
 
-function deviceIdentifiers(device: PadlockDevice) {
-  return [device.key1, device.key2, device.identifier, device.serial].filter(
-    (value): value is string => Boolean(value)
-  );
-}
-
 function validateListInput(rawInput: PadlockListDevicesInput | undefined) {
   const input = rawInput ?? {};
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -815,10 +809,7 @@ export function createPadlockClient(
     url.searchParams.set("limit", String(input.limit));
     if (input.search) {
       url.searchParams.set("search", input.search);
-      url.searchParams.set(
-        "searchFields",
-        "key1,key2,identifier,serial"
-      );
+      url.searchParams.set("searchFields", "identifier");
     }
 
     const { response } = await authenticatedFetch(
@@ -881,9 +872,7 @@ export function createPadlockClient(
       });
     }
 
-    const matches = result.items.filter((device) =>
-      deviceIdentifiers(device).includes(imei)
-    );
+    const matches = result.items.filter((device) => device.identifier === imei);
 
     if (matches.length > 1) {
       throw new PadlockError({

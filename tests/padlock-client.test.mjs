@@ -275,7 +275,7 @@ test("autentica con el contrato documentado y lista dispositivos sin cache ni re
   assert.equal(listUrl.searchParams.get("search"), allowedImei);
   assert.equal(
     listUrl.searchParams.get("searchFields"),
-    "key1,key2,identifier,serial"
+    "identifier"
   );
   assert.equal(calls[1].init.cache, "no-store");
   assert.equal(calls[1].init.redirect, "error");
@@ -297,7 +297,7 @@ test("autentica con el contrato documentado y lista dispositivos sin cache ni re
   });
 });
 
-test("busca IMEI por coincidencia exacta y no acepta resultados aproximados", async () => {
+test("busca IMEI por coincidencia exacta únicamente en identifier", async () => {
   const client = createPadlockClient({
     env: baseEnv,
     fetchImpl: async (url) =>
@@ -322,7 +322,7 @@ test("busca IMEI por coincidencia exacta y no acepta resultados aproximados", as
   assert.equal(result.key1, null);
 });
 
-test("devuelve null si la busqueda no contiene el IMEI exacto", async () => {
+test("no acepta key1, key2 ni serial como sustitutos del identifier IMEI", async () => {
   const client = createPadlockClient({
     env: baseEnv,
     fetchImpl: async (url) =>
@@ -332,7 +332,9 @@ test("devuelve null si la busqueda no contiene el IMEI exacto", async () => {
             listPayload([
               deviceFixture({
                 identifier: "111111111111111",
-                key1: "111111111111111",
+                key1: allowedImei,
+                key2: allowedImei,
+                serial: allowedImei,
               }),
             ])
           ),

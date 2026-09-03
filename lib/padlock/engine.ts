@@ -55,6 +55,27 @@ export function isPadlockProviderAttemptOpen(
   );
 }
 
+export function shouldKeepPadlockProviderAttemptPending(input: {
+  providerAttemptCount: number;
+  providerTransitionObservedAt?: Date | string | null;
+  outcomeKind:
+    | "CONFIRMED"
+    | "PENDING"
+    | "RETRY"
+    | "ERROR"
+    | "REVIEW"
+    | "NOT_ENROLLED";
+}) {
+  const transitionWasObserved =
+    Boolean(input.providerTransitionObservedAt) ||
+    (input.outcomeKind === "PENDING" &&
+      Number(input.providerAttemptCount || 0) > 0);
+  return (
+    transitionWasObserved &&
+    (input.outcomeKind === "PENDING" || input.outcomeKind === "RETRY")
+  );
+}
+
 export type PadlockPolicyRevision = {
   id: string;
   scopeType: PadlockPolicyScope;

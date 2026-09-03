@@ -598,6 +598,13 @@ export async function verifyAndBindPadlockIphone(input: {
       404
     );
   }
+  if (device.identifier !== input.imei) {
+    throw new PadlockAdminServiceError(
+      "PADLOCK_IDENTIFIER_MISMATCH",
+      "Padlock no confirmó el IMEI en su campo identifier canónico.",
+      409
+    );
+  }
   if (device.status === "locked") {
     throw new PadlockAdminServiceError(
       "PADLOCK_PREEXISTING_LOCK_REQUIRES_REVIEW",
@@ -616,7 +623,7 @@ export async function verifyAndBindPadlockIphone(input: {
   const providerFingerprint = createHash("sha256")
     .update(
       JSON.stringify({
-        identifiers: [device.key1, device.key2, device.identifier, device.serial],
+        identifier: device.identifier,
         status: device.status,
         updatedAt: device.updatedAt,
       }),

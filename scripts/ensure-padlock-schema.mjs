@@ -181,6 +181,7 @@ const statements = [
       "providerAttemptCount" INTEGER NOT NULL DEFAULT 0,
       "lastProviderAttemptStartedAt" TIMESTAMP(3),
       "lastProviderAttemptCompletedAt" TIMESTAMP(3),
+      "providerTransitionObservedAt" TIMESTAMP(3),
       "maxAttempts" INTEGER NOT NULL DEFAULT 6,
       "availableAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "leaseOwner" VARCHAR(100),
@@ -262,7 +263,8 @@ const statements = [
     ALTER TABLE public."PadlockCommand"
       ADD COLUMN IF NOT EXISTS "providerAttemptCount" INTEGER NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS "lastProviderAttemptStartedAt" TIMESTAMP(3),
-      ADD COLUMN IF NOT EXISTS "lastProviderAttemptCompletedAt" TIMESTAMP(3)
+      ADD COLUMN IF NOT EXISTS "lastProviderAttemptCompletedAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "providerTransitionObservedAt" TIMESTAMP(3)
   `,
   `
     DO $$
@@ -480,6 +482,7 @@ const expectedColumns = [
   ["PadlockCommand", "providerAttemptCount", "integer", "NO"],
   ["PadlockCommand", "lastProviderAttemptStartedAt", "timestamp without time zone", "YES"],
   ["PadlockCommand", "lastProviderAttemptCompletedAt", "timestamp without time zone", "YES"],
+  ["PadlockCommand", "providerTransitionObservedAt", "timestamp without time zone", "YES"],
   ["PadlockCommand", "leaseToken", "uuid", "YES"],
   ["PadlockAuditEvent", "reasonCode", "character varying", "YES"],
   ["PadlockAuditEvent", "operatorReason", "character varying", "YES"],

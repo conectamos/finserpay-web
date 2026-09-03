@@ -19,6 +19,7 @@ const {
   nextPadlockLockScheduleSlot,
   padlockLockScheduleSlot,
   planPadlockCommandMutation,
+  shouldKeepPadlockProviderAttemptPending,
 } = await jiti.import("../lib/padlock/engine.ts");
 const {
   buildPadlockFinancialPosition,
@@ -93,6 +94,44 @@ test("el cutoff de lock es solo el minuto 20:00 de los dias 5 y 20 en Bogota", (
   assert.equal(
     padlockLockScheduleSlot("2026-09-21T01:00:00.000Z")?.toISOString(),
     "2026-09-21T01:00:00.000Z"
+  );
+});
+
+test("una transicion Padlock observada espera al equipo sin agotar la conciliacion", () => {
+  assert.equal(
+    shouldKeepPadlockProviderAttemptPending({
+      providerAttemptCount: 1,
+      providerTransitionObservedAt: null,
+      outcomeKind: "PENDING",
+    }),
+    true
+  );
+  assert.equal(
+    shouldKeepPadlockProviderAttemptPending({
+      providerAttemptCount: 1,
+      providerTransitionObservedAt: "2026-09-05T01:00:00.000Z",
+      outcomeKind: "RETRY",
+    }),
+    true
+  );
+});
+
+test("un timeout sin transicion observada conserva el limite y requiere revision", () => {
+  assert.equal(
+    shouldKeepPadlockProviderAttemptPending({
+      providerAttemptCount: 1,
+      providerTransitionObservedAt: null,
+      outcomeKind: "RETRY",
+    }),
+    false
+  );
+  assert.equal(
+    shouldKeepPadlockProviderAttemptPending({
+      providerAttemptCount: 0,
+      providerTransitionObservedAt: null,
+      outcomeKind: "PENDING",
+    }),
+    false
   );
 });
 
@@ -591,6 +630,23 @@ test("persistencia declara lease SKIP LOCKED, auditoria inmutable y ningun paylo
   );
   assert.match(
     storage,
+    /"attemptCount" >= "maxAttempts"[\s\S]*"providerTransitionObservedAt" IS NULL[\s\S]*candidate\."providerTransitionObservedAt" IS NOT NULL/
+  );
+  assert.match(
+    storage,
+    /shouldKeepPadlockProviderAttemptPending\(\{[\s\S]*providerTransitionObservedAt: command\.providerTransitionObservedAt[\s\S]*outcomeKind: outcome\.kind/
+  );
+  assert.match(
+    storage,
+    /const waitingForDeviceConnectivity = waitsForPadlockDeviceConnectivity\([\s\S]*!waitingForDeviceConnectivity[\s\S]*"REVIEW_REQUIRED"/
+  );
+  assert.equal(
+    storage.match(/"providerTransitionObservedAt" = CASE/g)?.length,
+    2
+  );
+  assert.match(storage, /COALESCE\("providerTransitionObservedAt"/);
+  assert.match(
+    storage,
     /prior_attempt\."bindingId" = candidate\."bindingId"[\s\S]*prior_attempt\."lastProviderAttemptCompletedAt" IS NULL[\s\S]*prior_attempt\."lastProviderAttemptStartedAt"/
   );
   assert.match(
@@ -646,7 +702,12 @@ test("persistencia declara lease SKIP LOCKED, auditoria inmutable y ningun paylo
   );
   assert.match(schema, /providerAttemptCount\s+Int\s+@default\(0\)/);
   assert.match(schema, /lastProviderAttemptCompletedAt\s+DateTime\?/);
+  assert.match(schema, /providerTransitionObservedAt\s+DateTime\?/);
   assert.match(ensure, /ADD COLUMN IF NOT EXISTS "providerAttemptCount"/);
+  assert.match(
+    ensure,
+    /ADD COLUMN IF NOT EXISTS "providerTransitionObservedAt" TIMESTAMP\(3\)/
+  );
   assert.match(
     ensure,
     /ALTER TABLE public\."PadlockAuditEvent"[\s\S]*ADD COLUMN IF NOT EXISTS "operatorReason" VARCHAR\(500\)/

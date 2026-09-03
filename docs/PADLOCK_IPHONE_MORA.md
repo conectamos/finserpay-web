@@ -49,6 +49,13 @@ autorización operativa de FINSER PAY.
 - Una vinculación Padlock activa asume el control remoto exclusivo de ese IMEI.
   Las rutas heredadas de Equality omiten o rechazan ese equipo antes de hacer
   I/O; Android y los equipos sin vinculación Padlock mantienen su flujo actual.
+- El IMEI canónico de Padlock es exclusivamente el campo `identifier`; `key1`,
+  `key2` y `serial` no se aceptan como sustitutos durante la vinculación.
+- El comando requiere que el iPhone tenga internet. Si está apagado o sin red,
+  Padlock conserva la acción y la aplica cuando el equipo se enciende y se
+  conecta. Una vez Padlock haya mostrado `locking` o `unlocking`, FINSER PAY
+  mantiene la orden pendiente y consulta con espera progresiva, sin reenviar
+  el POST ni agotar la orden por el tiempo sin conexión.
 
 La política puede definir días de gracia y días adicionales de mora. El umbral
 efectivo es la suma de ambos valores. Con ambos en cero, basta con que el crédito
@@ -72,6 +79,10 @@ Un HTTP 200 no confirma por sí solo el resultado: puede contener éxitos y fall
 parciales. FINSER PAY procesa inicialmente un IMEI por orden, revisa el resultado
 individual y consulta el estado remoto hasta confirmar `locked` o `unlocked`.
 
+Además de lo verificable en los adjuntos, FINSER PAY confirmó operativamente que
+`identifier` es el campo canónico del IMEI y que los comandos pendientes se
+aplican cuando el iPhone recupera conexión a internet.
+
 ## Información pendiente de Padlock
 
 Antes de certificar hacen falta, por escrito:
@@ -79,19 +90,16 @@ Antes de certificar hacen falta, por escrito:
 1. URL HTTPS oficial de sandbox y URL HTTPS de producción.
 2. Confirmación de que la cuenta y los endpoints entregados soportan iPhone/iOS;
    el ejemplo recibido muestra un dispositivo Android.
-3. Confirmación del campo canónico para IMEI en consulta y comandos (`key1`,
-   `key2`, `identifier` o `serial` aparecen en las respuestas de ejemplo).
-4. Procedimiento de enrolamiento del iPhone y evidencia de qué ocurre si el
-   equipo fue restaurado, está sin red o dejó de estar enrolado.
-5. Límites de solicitudes, política de reintentos y ventanas de mantenimiento.
-6. SLA y tiempo máximo esperado para pasar de `locking`/`unlocking` al estado
+3. Procedimiento y requisitos de enrolamiento del iPhone.
+4. SLA y tiempo máximo esperado para pasar de `locking`/`unlocking` al estado
    final.
-7. Contrato de webhooks, firma y protección contra repetición. No se implementa
+5. Contrato de webhooks, firma y protección contra repetición. No se implementa
    un webhook hasta recibir ese contrato.
-8. Política de expiración/revocación del JWT y rotación de credenciales.
-9. Significado completo de códigos de error y canal de soporte para
-   conciliaciones.
-10. Lista de créditos e IMEI expresamente autorizados para las pruebas.
+6. Política de expiración/revocación del JWT y rotación de credenciales.
+7. Significado completo de los códigos de error documentados.
+
+Las listas de créditos e IMEI de sandbox serán definidas internamente por
+FINSER PAY; no se solicitan a Padlock.
 
 La colección recibida usa `http://localhost:8000`; esa dirección es ilustrativa
 y no se considera un ambiente de Padlock.
@@ -125,15 +133,24 @@ serializan por vinculación: una orden nueva no puede consultar ni actuar sobre
 el mismo IMEI mientras un POST anterior siga abierto. Si un bloqueo termina
 tarde, se registra su finalización y el desbloqueo compensatorio debe confirmarse
 después de esa barrera. Un intento ambiguo jamás se reenvía y tampoco permite
-retirar la vinculación; si Padlock no llega a mostrar su estado objetivo tras
-los reintentos de consulta, queda en `REVIEW_REQUIRED`. Los desbloqueos tienen
-prioridad absoluta sobre los bloqueos al tomar trabajo pendiente.
+retirar la vinculación. Si el equipo está sin conexión, la orden permanece
+pendiente y las consultas continúan con un backoff máximo de quince minutos
+hasta observar el estado final. Un timeout en el cual nunca se observó que
+Padlock aceptara la transición sí conserva un límite de conciliación y pasa a
+`REVIEW_REQUIRED`, sin reenviar el POST. Los desbloqueos tienen prioridad
+absoluta sobre los bloqueos al tomar trabajo pendiente.
 
-Mientras Padlock no publique límites ni contrato de webhooks, la conciliación
-automática se concentra en órdenes pendientes, transitorias o inciertas. No se
-hace un sondeo permanente de todos los equipos ya confirmados; por tanto, la
-certificación de producción también debe acordar cómo detectar cambios remotos
-hechos fuera de FINSER PAY.
+Si se confirma un pago mientras un `LOCK` aceptado espera que el iPhone vuelva
+a tener internet, el `UNLOCK` compensatorio queda en cola detrás de esa orden.
+Al reconectarse, el equipo podría bloquearse brevemente antes de que Padlock
+aplique el desbloqueo; serializar ambas acciones evita invertirlas o perder una
+de ellas.
+
+Mientras no exista un contrato de webhooks, la conciliación automática se
+concentra en órdenes pendientes, transitorias o inciertas. No se hace un sondeo
+permanente de todos los equipos ya confirmados; por tanto, la certificación de
+producción también debe acordar cómo detectar cambios remotos hechos fuera de
+FINSER PAY.
 
 El límite de mutaciones administrativas es local a cada proceso. Antes de usar
 múltiples réplicas en producción se debe sustituir por un limitador compartido o
@@ -195,7 +212,7 @@ secretos del ambiente autorizado y luego eliminarse de ese archivo local.
 El esquema se prepara con `npm run db:setup-padlock` o como parte del predeploy
 existente. Esta entrega valida el script y el modelo, pero no lo ejecuta contra
 una base de datos real ni realiza llamadas al proveedor mientras falten la URL
-oficial de sandbox y la lista de pruebas autorizadas.
+oficial de sandbox y las allowlists internas de pruebas.
 
 ## Certificación de sandbox
 

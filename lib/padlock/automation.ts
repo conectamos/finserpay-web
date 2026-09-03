@@ -969,7 +969,8 @@ export async function runPadlockWorkerCycle(options: {
     return report;
   }
 
-  // Process a small batch sequentially until Padlock publishes rate limits.
+  // Process a small batch sequentially. Devices waiting to reconnect are
+  // revisited with capped backoff and never receive a duplicate POST.
   // A ten-minute lease covers the bounded query + command timeouts per item.
   for (const command of claimed) {
     await processClaimedCommand({ dependencies, report, command });
