@@ -194,11 +194,12 @@ async function findMutationReplay(
     `
       SELECT audit."manualLimitId" AS "id", audit."documentLast4",
         audit."maxFinancedAmount", audit."reason", audit."active",
-        audit."version", limit."createdAt", audit."createdAt" AS "updatedAt",
+        audit."version", manual_limit."createdAt",
+        audit."createdAt" AS "updatedAt",
         audit."requestHash", audit."action"
       FROM "DataCreditoManualCreditLimitAudit" audit
-      JOIN "DataCreditoManualCreditLimit" limit
-        ON limit."id" = audit."manualLimitId"
+      JOIN "DataCreditoManualCreditLimit" AS manual_limit
+        ON manual_limit."id" = audit."manualLimitId"
       WHERE audit."mutationId" = $1
       LIMIT 1
     `,

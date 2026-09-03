@@ -72,6 +72,24 @@ test("storage hashes exact documents and never exposes the hash in public rows",
   assert.match(publicType, /documentLast4/);
 });
 
+test("mutation replay does not use a reserved PostgreSQL alias", async () => {
+  const storage = await source("lib/datacredito/manual-credit-limits.ts");
+  const replayQuery = storage.slice(
+    storage.indexOf("async function findMutationReplay"),
+    storage.indexOf("async function insertAudit")
+  );
+
+  assert.match(
+    replayQuery,
+    /JOIN "DataCreditoManualCreditLimit" AS manual_limit/
+  );
+  assert.match(replayQuery, /manual_limit\."createdAt"/);
+  assert.doesNotMatch(
+    replayQuery,
+    /JOIN "DataCreditoManualCreditLimit"\s+limit\b/i
+  );
+});
+
 test("central admin API is private, versioned and has no DELETE handler", async () => {
   const route = await source(
     "app/api/creditos/datacredito/cupos-manuales/route.ts"
