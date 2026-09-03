@@ -6,3 +6,4 @@ await import("./ensure-credit-amortization-schema.mjs");
 await import("./ensure-solicitudes-schema.mjs");
 await import("./ensure-iphone-enrollment-schema.mjs");
 await import("./ensure-credit-device-replacement-schema.mjs");
+await import("./ensure-padlock-schema.mjs");

@@ -10,6 +10,7 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import { canOperateSolicitud } from "@/lib/solicitud-operation-access";
 import { getActiveSolicitudCreditContext } from "@/lib/solicitudes-storage";
 import { tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
+import { hasActivePadlockBindingForDeviceIdentifier } from "@/lib/padlock/equality-exclusion";
 import {
   activateEqualityFinancingService,
   getEqualityProbeDeviceUid,
@@ -45,6 +46,17 @@ function parsePositiveId(value: unknown) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function padlockOwnershipConflict() {
+  return NextResponse.json(
+    {
+      code: "PADLOCK_DEVICE_MANAGED",
+      error:
+        "Este dispositivo se administra exclusivamente desde la consola Padlock.",
+    },
+    { status: 409 }
+  );
+}
+
 async function runBusinessSafe<T>(work: () => Promise<T>) {
   try {
     return await work();
@@ -76,6 +88,13 @@ export async function GET(req: Request) {
       searchParams.get("deviceUid") || searchParams.get("imei") || ""
     );
     const deviceUid = probe ? getEqualityProbeDeviceUid() : requestedDeviceUid;
+
+    if (
+      deviceUid &&
+      (await hasActivePadlockBindingForDeviceIdentifier(deviceUid))
+    ) {
+      return padlockOwnershipConflict();
+    }
 
     if (!isEqualityConfigured()) {
       return NextResponse.json({
@@ -186,16 +205,6 @@ export async function POST(req: Request) {
     const admin = isAdminRole(user.rolNombre);
     const centralAdmin = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
 
-    if (!isEqualityConfigured()) {
-      return NextResponse.json(
-        {
-          error:
-            "Configura TRUSTONIC_API_KEY o EQUALITY_HBM_ACCESS_TOKEN para usar Zero Touch",
-        },
-        { status: 503 }
-      );
-    }
-
     const body = (await req.json()) as Record<string, unknown>;
     action = String(body.action || "").trim().toLowerCase() as EqualityAction;
     deviceUid = normalizeEqualityDeviceUid(body.deviceUid);
@@ -274,6 +283,20 @@ export async function POST(req: Request) {
 
       const accessError = await validateDraftAccess();
       if (accessError) return accessError;
+    }
+
+    if (await hasActivePadlockBindingForDeviceIdentifier(deviceUid)) {
+      return padlockOwnershipConflict();
+    }
+
+    if (!isEqualityConfigured()) {
+      return NextResponse.json(
+        {
+          error:
+            "Configura TRUSTONIC_API_KEY o EQUALITY_HBM_ACCESS_TOKEN para usar Zero Touch",
+        },
+        { status: 503 }
+      );
     }
 
     let response;

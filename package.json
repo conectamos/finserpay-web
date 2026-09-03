@@ -18,6 +18,7 @@
     "test:firmaseguro": "node --experimental-strip-types --test tests/firmaseguro-dispatch.test.mjs tests/firmaseguro-ui-state.test.mjs tests/firmaseguro-folio.test.mjs tests/credit-step3-veriff-firmaseguro-ui.test.mjs",
     "test:amortization": "node --test tests/credit-amortization.test.mjs",
     "test:datacredito": "node --test tests/datacredito-client.test.mjs tests/datacredito-admin-report.test.mjs tests/datacredito-policy.test.mjs tests/datacredito-storage-controls.test.mjs tests/datacredito-financing-cap.test.mjs tests/datacredito-secure-record.test.mjs tests/datacredito-evaluation-security.test.mjs tests/datacredito-policy-assignment.test.mjs tests/datacredito-policy-catalog-ui.test.mjs tests/datacredito-policy-financial-settings.test.mjs tests/datacredito-manual-credit-limits.test.mjs tests/datacredito-platform-restore.test.mjs",
+    "test:padlock": "node --experimental-strip-types --test tests/padlock-client.test.mjs tests/padlock-domain.test.mjs tests/padlock-automation.test.mjs tests/padlock-admin-surface.test.mjs tests/padlock-equality-exclusion.test.mjs",
     "test:aliados": "node --experimental-strip-types --test tests/ally-platform-rediscount.test.mjs tests/admin-dashboard-capital.test.mjs",
     "test:pagos-aliados": "node --experimental-strip-types --test tests/ally-payments-core.test.mjs tests/ally-payments.test.mjs tests/ally-payment-settlement-pdf.test.mjs",
     "test:iphone-delivery": "node --test tests/iphone-delivery-evidence.test.mjs tests/credit-equipment-platform.test.mjs",
@@ -29,6 +30,7 @@
     "db:push": "npx prisma db push",
     "db:setup-aliados": "npx prisma db execute --file scripts/setup-aliado-conectamos.sql",
     "db:setup-datacredito": "npx prisma db execute --file scripts/setup-datacredito.sql",
+    "db:setup-padlock": "node scripts/ensure-padlock-schema.mjs",
     "seed:initial": "npx prisma db execute --file scripts/seed-initial-data.sql",
     "prisma:generate": "npx prisma generate",
     "lint": "eslint"

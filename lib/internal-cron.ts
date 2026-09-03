@@ -4,6 +4,11 @@ import {
   recoverRecentApprovedWompiUnlockCommands,
 } from "@/lib/device-unlock-queue";
 import { syncEfectyRecaudosFromSftp } from "@/lib/efecty-recaudos";
+import {
+  runPadlockLockEvaluationCycle,
+  runPadlockUnlockEvaluationCycle,
+  runPadlockWorkerCycle,
+} from "@/lib/padlock/automation";
 import { reconcilePendingWompiPayments } from "@/lib/wompi-reconciliation";
 
 const BOGOTA_TIME_ZONE = "America/Bogota";
@@ -16,7 +21,14 @@ const MORA_WINDOW_START_MINUTE = 23 * 60 + 30;
 const MORA_WINDOW_END_MINUTE = 1 * 60 + 50;
 const WOMPI_INTERVAL_MINUTES = 5;
 
-type InternalCronTask = "efecty" | "mora" | "unlock" | "wompi";
+type InternalCronTask =
+  | "efecty"
+  | "mora"
+  | "padlock-lock-evaluate"
+  | "padlock-unlock-evaluate"
+  | "padlock-worker"
+  | "unlock"
+  | "wompi";
 
 type InternalCronState = {
   completed: Set<string>;
@@ -37,6 +49,13 @@ function getState() {
   };
 
   return globalThis.__finserpayInternalCron;
+}
+
+export function canStartInternalCronTask(
+  running: ReadonlySet<string>,
+  taskName: string,
+) {
+  return !running.has(taskName);
 }
 
 function isInternalCronEnabled() {
@@ -156,7 +175,7 @@ async function runScheduledTask(
 ) {
   const state = getState();
 
-  if (state.running.has(taskName) || state.completed.has(runKey)) {
+  if (!canStartInternalCronTask(state.running, taskName) || state.completed.has(runKey)) {
     return;
   }
 
@@ -164,6 +183,36 @@ async function runScheduledTask(
   let completed = false;
 
   try {
+    if (
+      taskName === "padlock-lock-evaluate" ||
+      taskName === "padlock-unlock-evaluate" ||
+      taskName === "padlock-worker"
+    ) {
+      const result =
+        taskName === "padlock-lock-evaluate"
+          ? await runPadlockLockEvaluationCycle()
+          : taskName === "padlock-unlock-evaluate"
+            ? await runPadlockUnlockEvaluationCycle()
+            : await runPadlockWorkerCycle();
+      const hasActivity =
+        result.commandsClaimed > 0 ||
+        result.providerCommands > 0 ||
+        result.confirmed > 0 ||
+        result.pending > 0 ||
+        result.retries > 0 ||
+        result.errors > 0 ||
+        result.reviewRequired > 0 ||
+        result.evaluationErrors > 0 ||
+        result.storageErrors > 0;
+
+      if (result.enabled && hasActivity) {
+        logCron(`Tarea ${taskName} procesada.`, result);
+      }
+
+      completed = true;
+      return;
+    }
+
     if (taskName === "unlock") {
       const result = await processPendingDeviceUnlockCommands({ limit: 20 });
 
@@ -228,6 +277,19 @@ async function tick() {
   const dueTasks = getDueTasks(timeKey);
   const moraEffectiveDate = getMoraEffectiveDate(dateKey);
 
+  const padlockTickKey = `${dateKey}:${timeKey}:${Math.floor(
+    Date.now() / CHECK_INTERVAL_MS,
+  )}`;
+  void runScheduledTask(
+    "padlock-lock-evaluate",
+    `padlock-lock-evaluate:${padlockTickKey}`,
+  );
+  void runScheduledTask(
+    "padlock-unlock-evaluate",
+    `padlock-unlock-evaluate:${padlockTickKey}`,
+  );
+  void runScheduledTask("padlock-worker", `padlock-worker:${padlockTickKey}`);
+
   await runScheduledTask(
     "unlock",
     `unlock:${dateKey}:${timeKey}:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`,
@@ -257,6 +319,15 @@ async function runStartupRecovery() {
       error instanceof Error ? error.message : error,
     );
   }
+
+  void runScheduledTask(
+    "padlock-unlock-evaluate",
+    `padlock-unlock-evaluate:startup-recovery:${dateKey}:${timeKey}`,
+  );
+  void runScheduledTask(
+    "padlock-worker",
+    `padlock-worker:startup-recovery:${dateKey}:${timeKey}`,
+  );
 
   await runScheduledTask(
     "unlock",
@@ -291,7 +362,7 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, con recuperacion al iniciar, hora Colombia.",
+    "Programacion interna activa: Padlock y desbloqueos pendientes cada 30 segundos, Wompi cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, con recuperacion al iniciar, hora Colombia.",
   );
 
   void runStartupRecovery();

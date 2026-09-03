@@ -19,6 +19,7 @@ import {
   processDeviceUnlockCommand,
 } from "@/lib/device-unlock-queue";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import { hasActivePadlockBindingForCredit } from "@/lib/padlock/equality-exclusion";
 import prisma from "@/lib/prisma";
 import {
   isWompiEarlyPayoffIntent,
@@ -853,6 +854,9 @@ export async function processApprovedWompiPayment(
     };
   }
 
+  const padlockControlsDevice = await hasActivePadlockBindingForCredit(
+    intent.creditoId
+  );
   const transactionPromise = prisma.$transaction(async (tx) => {
     const locked = await tx.$queryRaw<Array<{ id: number }>>`
       SELECT "id"
@@ -1163,7 +1167,7 @@ export async function processApprovedWompiPayment(
     });
 
     const shouldUnlock = Boolean(earlyPayoff) || plan?.estadoPago !== "MORA";
-    const unlockCommand = shouldUnlock
+    const unlockCommand = shouldUnlock && !padlockControlsDevice
       ? await enqueueDeviceUnlockCommand({
           client: tx,
           commandKey: `WOMPI:${intent.id}:${created.id}`,

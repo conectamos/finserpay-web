@@ -27,6 +27,7 @@ model Aliado {
   dataCreditoPolicyId             String                             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   dataCreditoPolicy               DataCreditoPolicyProfile           @relation(fields: [dataCreditoPolicyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   dataCreditoPolicyAssignmentLogs DataCreditoPolicyAssignmentAudit[]
+  padlockPolicyRevisions          PadlockPolicyRevision[]
   liquidacionesAliado             LiquidacionAliado[]
   sedes                           Sede[]
   createdAt                       DateTime                           @default(now())
@@ -279,6 +280,9 @@ model Credito {
   amortizacion                  CreditoAmortizacion?
   wompiPaymentIntents           WompiPaymentIntent[]
   liquidacionAliadoCredito      LiquidacionAliadoCredito?
+  padlockDeviceBindings         PadlockDeviceBinding[]
+  padlockCommands               PadlockCommand[]
+  padlockAuditEvents            PadlockAuditEvent[]
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
 
@@ -428,6 +432,135 @@ model CreditoAmortizacionCuota {
 
   @@unique([amortizacionId, numero])
   @@index([fechaVencimiento])
+}
+
+model PadlockPolicyRevision {
+  id                   String              @id @default(uuid()) @db.Uuid
+  scopeKey             String              @db.VarChar(80)
+  scopeType            String              @db.VarChar(16)
+  allyId               Int?
+  product              String              @default("IPHONE") @db.VarChar(16)
+  version              Int
+  enabled              Boolean
+  graceDays            Int
+  lockAfterDaysPastDue Int
+  unlockCondition      String              @db.VarChar(16)
+  reason               String?             @db.VarChar(500)
+  createdByUserId      Int
+  createdAt            DateTime            @default(now())
+  ally                 Aliado?             @relation(fields: [allyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  commands             PadlockCommand[]
+  auditEvents          PadlockAuditEvent[]
+
+  @@unique([scopeKey, version])
+  @@index([scopeType, product, version])
+  @@index([allyId, product, version])
+}
+
+model PadlockDeviceBinding {
+  id                        String              @id @default(uuid()) @db.Uuid
+  creditId                  Int
+  imei                      String              @db.Char(15)
+  product                   String              @default("IPHONE") @db.VarChar(16)
+  status                    String              @default("ACTIVE") @db.VarChar(16)
+  verifiedAt                DateTime
+  verifiedByUserId          Int
+  verificationReferenceHash String              @db.Char(64)
+  desiredState              String              @default("UNKNOWN") @db.VarChar(16)
+  desiredVersion            Int                 @default(0)
+  desiredLockCause          String?             @db.VarChar(16)
+  confirmedState            String              @default("UNKNOWN") @db.VarChar(16)
+  confirmedLockCause        String?             @db.VarChar(16)
+  lastProviderState         String?             @db.VarChar(32)
+  lastConfirmedAt           DateTime?
+  retiredAt                 DateTime?
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
+  credit                    Credito             @relation(fields: [creditId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  commands                  PadlockCommand[]
+  auditEvents               PadlockAuditEvent[]
+
+  @@index([creditId, status])
+  @@index([imei])
+  @@index([status, product])
+  @@index([desiredState, status])
+}
+
+model PadlockCommand {
+  id                             String                 @id @default(uuid()) @db.Uuid
+  bindingId                      String                 @db.Uuid
+  creditId                       Int
+  policyRevisionId               String?                @db.Uuid
+  action                         String                 @db.VarChar(16)
+  lockCause                      String?                @db.VarChar(16)
+  desiredVersion                 Int
+  idempotencyKey                 String                 @unique @db.VarChar(180)
+  status                         String                 @default("PENDING") @db.VarChar(24)
+  source                         String                 @db.VarChar(64)
+  correlationId                  String                 @db.Uuid
+  operatorReason                 String?                @db.VarChar(500)
+  scheduleSlotAt                 DateTime?
+  decisionFinancialState         String                 @db.VarChar(16)
+  decisionDaysPastDue            Int
+  decisionOutstandingBalance     Decimal                @db.Decimal(20, 2)
+  decisionEffectiveDueDate       DateTime?              @db.Date
+  evaluatedAt                    DateTime
+  attemptCount                   Int                    @default(0)
+  providerAttemptCount           Int                    @default(0)
+  lastProviderAttemptStartedAt   DateTime?
+  lastProviderAttemptCompletedAt DateTime?
+  providerTransitionObservedAt   DateTime?
+  maxAttempts                    Int                    @default(6)
+  availableAt                    DateTime               @default(now())
+  leaseOwner                     String?                @db.VarChar(100)
+  leaseToken                     String?                @db.Uuid
+  leaseExpiresAt                 DateTime?
+  lastErrorCode                  String?                @db.VarChar(64)
+  lastProviderState              String?                @db.VarChar(32)
+  confirmedAt                    DateTime?
+  cancelledAt                    DateTime?
+  supersededAt                   DateTime?
+  createdAt                      DateTime               @default(now())
+  updatedAt                      DateTime               @updatedAt
+  binding                        PadlockDeviceBinding   @relation(fields: [bindingId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  credit                         Credito                @relation(fields: [creditId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  policyRevision                 PadlockPolicyRevision? @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  auditEvents                    PadlockAuditEvent[]
+
+  @@unique([bindingId, desiredVersion])
+  @@index([status, availableAt])
+  @@index([bindingId, createdAt])
+  @@index([creditId, createdAt])
+  @@index([leaseExpiresAt])
+}
+
+model PadlockAuditEvent {
+  id               String                 @id @default(uuid()) @db.Uuid
+  bindingId        String?                @db.Uuid
+  commandId        String?                @db.Uuid
+  policyRevisionId String?                @db.Uuid
+  creditId         Int?
+  eventType        String                 @db.VarChar(48)
+  action           String?                @db.VarChar(16)
+  fromStatus       String?                @db.VarChar(24)
+  toStatus         String?                @db.VarChar(24)
+  reasonCode       String?                @db.VarChar(64)
+  operatorReason   String?                @db.VarChar(500)
+  desiredVersion   Int?
+  attemptNumber    Int?
+  actorType        String                 @db.VarChar(16)
+  actorUserId      Int?
+  correlationId    String                 @db.Uuid
+  createdAt        DateTime               @default(now())
+  binding          PadlockDeviceBinding?  @relation(fields: [bindingId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  command          PadlockCommand?        @relation(fields: [commandId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  policyRevision   PadlockPolicyRevision? @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  credit           Credito?               @relation(fields: [creditId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([bindingId, createdAt])
+  @@index([commandId, createdAt])
+  @@index([creditId, createdAt])
+  @@index([eventType, createdAt])
 }
 
 model ExcepcionBloqueoMora {
