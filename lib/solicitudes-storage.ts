@@ -1104,6 +1104,44 @@ export async function markSolicitudDataCreditoTechnicalError(input: {
   return rows[0].id;
 }
 
+export async function markSolicitudDataCreditoRecoverablePending(input: {
+  solicitudId: number;
+  errorCode: string;
+  plataforma?: string | null;
+}) {
+  await ensureSolicitudSchema();
+  const errorCode = String(input.errorCode || "EVALUATION_PENDING")
+    .trim()
+    .toUpperCase()
+    .slice(0, 80);
+  const rows = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
+    `
+      UPDATE "CreditoBorrador"
+      SET "plataforma" = COALESCE("plataforma", $2),
+          "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
+            'solicitudOrigen', 'DATACREDITO',
+            'dataCreditoStatus', 'PENDING',
+            'dataCreditoErrorCode', $3::text,
+            'dataCreditoUpdatedAt', CURRENT_TIMESTAMP
+          ),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1
+        AND "estado" = 'ABIERTO'
+        AND "creditoId" IS NULL
+        AND "dataCreditoAssessmentId" IS NULL
+        AND NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NULL
+        AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') >
+          CURRENT_TIMESTAMP
+      RETURNING "id"
+    `,
+    input.solicitudId,
+    normalizePlatform(input.plataforma),
+    errorCode
+  );
+  if (rows.length !== 1) throw new SolicitudDataCreditoLinkError();
+  return rows[0].id;
+}
+
 export async function desistSolicitud(input: {
   solicitudId: number;
   userId: number;

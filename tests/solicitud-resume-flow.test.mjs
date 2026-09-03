@@ -201,6 +201,34 @@ test("la recuperación de apellido es reuse-only y nunca alcanza al proveedor", 
   );
 });
 
+test("RATE_LIMITED reabre el mismo borrador para un reintento normal, nunca reuse-only", async () => {
+  const gate = await readProjectFile(
+    "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
+  );
+  const bootstrap = gate.slice(
+    gate.indexOf("const loadInitialState"),
+    gate.indexOf("const validateForm")
+  );
+  const submit = gate.slice(
+    gate.indexOf("const submitAssessment"),
+    gate.indexOf("const retryTechnicalFailure")
+  );
+
+  assert.match(
+    gate,
+    /const rateLimitedRecovery = Boolean\([\s\S]*initialSolicitudId[\s\S]*!initialAssessmentId[\s\S]*normalizedInitialDocument[\s\S]*normalizedInitialSurname[\s\S]*normalizedInitialErrorCode === "RATE_LIMITED"/
+  );
+  assert.match(
+    bootstrap,
+    /identityMismatchRecovery \|\| rateLimitedRecovery[\s\S]{0,220}setView\("ready"\)/
+  );
+  assert.match(
+    submit,
+    /solicitudId: initialSolicitudId[\s\S]{0,320}reuseOnly: identityMismatchRecovery/
+  );
+  assert.doesNotMatch(submit, /reuseOnly:\s*rateLimitedRecovery/);
+});
+
 test("un POST DataCredito retomado autoriza antes de reservar y reutiliza antes del proveedor", async () => {
   const route = await readProjectFile(
     "app/api/creditos/datacredito/evaluaciones/route.ts"

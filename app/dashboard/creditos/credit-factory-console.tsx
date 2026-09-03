@@ -659,6 +659,7 @@ type CreditDraftListResponse = {
 type CreditDraftSingleResponse = {
   ok?: boolean;
   item?: CreditDraftItem | null;
+  code?: string;
   error?: string;
 };
 
@@ -1264,6 +1265,8 @@ type RequestJsonInit = RequestInit & {
 const REQUEST_JSON_DEFAULT_TIMEOUT_MS = 45_000;
 const REQUEST_JSON_UPLOAD_TIMEOUT_MS = 180_000;
 const VERIFF_REQUEST_TIMEOUT_MS = 15_000;
+const DRAFT_REQUIRES_DATACREDITO_CODE =
+  "SOLICITUD_REQUIERE_CONSULTA_DATACREDITO";
 const VERIFF_POLL_BACKOFF_MS = [4_000, 6_000, 10_000, 15_000, 30_000] as const;
 const VERIFF_POLL_MAX_ATTEMPTS = 12;
 
@@ -10436,6 +10439,10 @@ export default function CreditFactoryConsole({
     let requestController: AbortController | null = null;
     const timerId = window.setTimeout(() => {
       draftSaveTimerRef.current = null;
+      const canonicalDraftId = draftId;
+      if (!canonicalDraftId) {
+        return;
+      }
       requestController = new AbortController();
       draftSaveAbortControllerRef.current = requestController;
 
@@ -10455,7 +10462,7 @@ export default function CreditFactoryConsole({
               },
               signal: requestController?.signal,
               body: JSON.stringify({
-                id: draftId,
+                id: canonicalDraftId,
                 currentStep: persistedWizardStep,
                 payloadScope:
                   firmaSeguroProcessSigned && persistedWizardStep >= 5
@@ -10473,6 +10480,15 @@ export default function CreditFactoryConsole({
             requestController?.signal.aborted ||
             draftSaveGenerationRef.current !== saveGeneration
           ) {
+            return;
+          }
+
+          if (
+            result.status === 409 &&
+            result.data?.code === DRAFT_REQUIRES_DATACREDITO_CODE
+          ) {
+            setDraftStatus("idle");
+            setDraftErrorMessage("");
             return;
           }
 

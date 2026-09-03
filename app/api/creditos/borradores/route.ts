@@ -23,6 +23,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_DRAFT_PAYLOAD_BYTES = 12_000_000;
+const DRAFT_REQUIRES_DATACREDITO_CODE =
+  "SOLICITUD_REQUIERE_CONSULTA_DATACREDITO";
 const PRUNED_DRAFT_MEDIA_FIELDS = new Set([
   "contratoFirmaDataUrl",
   "firmaDataUrl",
@@ -412,7 +414,19 @@ export async function POST(req: Request) {
     if (!rows[0]) throw new Error("No se pudo leer el borrador guardado");
     return NextResponse.json({ ok: true, item: serializeDraft(rows[0]) });
   } catch (error) {
-    console.error("ERROR GUARDANDO BORRADOR:", error);
+    if (
+      error instanceof Error &&
+      error.message === DRAFT_REQUIRES_DATACREDITO_CODE
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "La solicitud se crea únicamente después de iniciar la consulta de DataCrédito.",
+          code: DRAFT_REQUIRES_DATACREDITO_CODE,
+        },
+        { status: 409 }
+      );
+    }
     if (
       error instanceof ActiveSolicitudConflictError ||
       error instanceof SolicitudCanonicalMutationError
@@ -422,6 +436,7 @@ export async function POST(req: Request) {
         { status: error.status }
       );
     }
+    console.error("ERROR GUARDANDO BORRADOR:", error);
     const forbidden = error instanceof Error && error.message === "SOLICITUD_NO_AUTORIZADA";
     return NextResponse.json(
       { error: forbidden ? "Solicitud no autorizada" : "No se pudo guardar el borrador" },

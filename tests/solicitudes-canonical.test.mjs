@@ -132,6 +132,88 @@ test("las salidas tecnicas posteriores a la reserva permanecen visibles y gestio
   assert.match(route, /errorCode: response\.code/);
 });
 
+test("los bloqueos recuperables conservan la solicitud pendiente sin crear ni reemplazar una consulta", async () => {
+  const [storage, route] = await Promise.all([
+    readProjectFile("lib/solicitudes-storage.ts"),
+    readProjectFile("app/api/creditos/datacredito/evaluaciones/route.ts"),
+  ]);
+  const recoverableMark = sourceBetween(
+    storage,
+    "export async function markSolicitudDataCreditoRecoverablePending",
+    "export async function desistSolicitud"
+  );
+  const branches = [
+    sourceBetween(
+      route,
+      'if (cached?.kind === "IDENTITY_MISMATCH")',
+      'if (cached?.kind === "REQUIRES_REVIEW")'
+    ),
+    sourceBetween(
+      route,
+      'if (cached?.kind === "IN_PROGRESS")',
+      "if (reuseOnly)"
+    ),
+    sourceBetween(
+      route,
+      "if (isDataCreditoUniqueViolation(error))",
+      "throw error;"
+    ),
+    sourceBetween(
+      route,
+      'if (reservation.kind === "IDENTITY_MISMATCH")',
+      'if (reservation.kind === "REQUIRES_REVIEW")'
+    ),
+    sourceBetween(
+      route,
+      'if (reservation.kind === "IN_PROGRESS")',
+      'if (reservation.kind === "RATE_LIMITED")'
+    ),
+    sourceBetween(
+      route,
+      'if (reservation.kind === "RATE_LIMITED")',
+      "const pending = reservation.assessment"
+    ),
+  ];
+
+  assert.match(recoverableMark, /'dataCreditoStatus', 'PENDING'/);
+  assert.match(recoverableMark, /'dataCreditoErrorCode', \$3::text/);
+  assert.match(recoverableMark, /"dataCreditoAssessmentId" IS NULL/);
+  assert.match(
+    recoverableMark,
+    /NULLIF\("payload"->>'dataCreditoAssessmentId', ''\) IS NULL/
+  );
+  assert.doesNotMatch(recoverableMark, /'dataCreditoStatus', 'NO_EVALUADO'/);
+  for (const branch of branches) {
+    assert.match(branch, /return solicitudRecoverableResponse\(\{/);
+  }
+
+  const rateLimit = branches.at(-1);
+  const providerCall = route.indexOf("await queryDataCreditoNaturalPerson({");
+  assert.ok(providerCall > route.indexOf(rateLimit));
+  assert.doesNotMatch(rateLimit, /queryDataCreditoNaturalPerson/);
+});
+
+test("un fallo posterior al inicio del proveedor deja el mismo resultado ambiguo en assessment y solicitud", async () => {
+  const route = await readProjectFile(
+    "app/api/creditos/datacredito/evaluaciones/route.ts"
+  );
+  const failureTracking = sourceBetween(
+    route,
+    "if (pendingAssessmentId) {",
+    "} else if (solicitudId) {"
+  );
+
+  assert.match(
+    failureTracking,
+    /const trackedErrorCode = providerStartedAt[\s\S]*?"PROVIDER_OUTCOME_AMBIGUOUS"/
+  );
+  assert.equal(
+    (failureTracking.match(/errorCode: trackedErrorCode/g) || []).length,
+    3
+  );
+  assert.doesNotMatch(failureTracking, /errorCode: code/);
+});
+
 test("DataCredito nunca confirma un resultado que no pudo vincular al borrador vigente", async () => {
   const [storage, route] = await Promise.all([
     readProjectFile("lib/solicitudes-storage.ts"),
@@ -466,4 +548,57 @@ test("la API devuelve 409 y codigo ante una mutacion de identidad canonica", asy
     post.indexOf("SolicitudCanonicalMutationError") <
       post.indexOf("const forbidden")
   );
+});
+
+test("el autosave preconsulta responde como conflicto esperado y no como error tecnico", async () => {
+  const [route, factory] = await Promise.all([
+    readProjectFile("app/api/creditos/borradores/route.ts"),
+    readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
+  ]);
+  const post = sourceBetween(
+    route,
+    "export async function POST",
+    "export async function PATCH"
+  );
+  const postErrorHandling = sourceBetween(
+    post,
+    "} catch (error) {",
+    "const forbidden"
+  );
+  const hydrationGuard = factory.indexOf(
+    "if (draftResumeHydrationRef.current)"
+  );
+  const autosaveStart = factory.lastIndexOf("useEffect(() => {", hydrationGuard);
+  const autosaveEnd = factory.indexOf(
+    "const handleDataCreditoBypass",
+    autosaveStart
+  );
+  assert.ok(hydrationGuard >= 0);
+  assert.ok(autosaveStart >= 0);
+  assert.ok(autosaveEnd > autosaveStart);
+  const autosave = factory.slice(autosaveStart, autosaveEnd);
+
+  assert.match(
+    postErrorHandling,
+    /error\.message === DRAFT_REQUIRES_DATACREDITO_CODE[\s\S]*code: DRAFT_REQUIRES_DATACREDITO_CODE[\s\S]*status: 409/
+  );
+  assert.ok(
+    postErrorHandling.indexOf("DRAFT_REQUIRES_DATACREDITO_CODE") <
+      postErrorHandling.indexOf('console.error("ERROR GUARDANDO BORRADOR:", error)')
+  );
+
+  assert.match(
+    autosave,
+    /!draftId[\s\S]*const canonicalDraftId = draftId;[\s\S]*if \(!canonicalDraftId\) \{[\s\S]*return;[\s\S]*id: canonicalDraftId/
+  );
+  assert.match(
+    autosave,
+    /result\.status === 409 &&[\s\S]*result\.data\?\.code === DRAFT_REQUIRES_DATACREDITO_CODE[\s\S]*setDraftStatus\("idle"\);[\s\S]*setDraftErrorMessage\(""\);[\s\S]*return;/
+  );
+  const expectedConflict = sourceBetween(
+    autosave,
+    "if (\n            result.status === 409",
+    "if (!result.ok || !result.data?.item)"
+  );
+  assert.doesNotMatch(expectedConflict, /setDraftId\(|setNotice\(|throw new Error/);
 });

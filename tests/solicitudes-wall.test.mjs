@@ -154,6 +154,14 @@ test("deriva etapas usando los estados reales de los subsistemas", () => {
   const cases = [
     [{ source: "DRAFT", draftState: "ABIERTO" }, "PROCESO"],
     [{ source: "DRAFT", dataCreditoStatus: "PENDING" }, "PROCESO"],
+    [
+      {
+        source: "DRAFT",
+        dataCreditoStatus: "PENDING",
+        dataCreditoErrorCode: "RATE_LIMITED",
+      },
+      "PROCESO",
+    ],
     [{ source: "DRAFT", dataCreditoStatus: "APROBADO" }, "PROCESO"],
     [{ source: "DRAFT", dataCreditoStatus: "RECHAZADO" }, "RECHAZADA"],
     [
@@ -210,6 +218,14 @@ test("deriva etapas usando los estados reales de los subsistemas", () => {
 test("mantiene la etapa operativa separada del estado PROCESO", () => {
   assert.equal(
     resolveSolicitudProcessStage({ source: "DRAFT", dataCreditoStatus: "PENDING" }),
+    "CONSULTA_PENDIENTE"
+  );
+  assert.equal(
+    resolveSolicitudProcessStage({
+      source: "DRAFT",
+      dataCreditoStatus: "PENDING",
+      dataCreditoErrorCode: "EVALUATION_IN_PROGRESS",
+    }),
     "CONSULTA_PENDIENTE"
   );
   assert.equal(

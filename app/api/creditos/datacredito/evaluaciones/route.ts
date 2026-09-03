@@ -52,6 +52,7 @@ import {
   ActiveSolicitudConflictError,
   attachDataCreditoToSolicitud,
   getActiveSolicitudCreditContext,
+  markSolicitudDataCreditoRecoverablePending,
   markSolicitudDataCreditoTechnicalError,
   reserveSolicitudForIdentity,
   SolicitudDataCreditoLinkError,
@@ -98,6 +99,35 @@ async function solicitudTechnicalResponse(input: {
   const { solicitudId, plataforma, ...response } = input;
   try {
     await markSolicitudDataCreditoTechnicalError({
+      solicitudId,
+      errorCode: response.code,
+      plataforma,
+    });
+  } catch (error) {
+    if (error instanceof SolicitudDataCreditoLinkError) {
+      return technicalResponse({
+        correlationId: response.correlationId,
+        code: error.code,
+        error: error.message,
+        status: error.status,
+      });
+    }
+    throw error;
+  }
+  return technicalResponse(response);
+}
+
+async function solicitudRecoverableResponse(input: {
+  correlationId: string;
+  code: string;
+  error: string;
+  status: number;
+  solicitudId: number;
+  plataforma?: string | null;
+}) {
+  const { solicitudId, plataforma, ...response } = input;
+  try {
+    await markSolicitudDataCreditoRecoverablePending({
       solicitudId,
       errorCode: response.code,
       plataforma,
@@ -540,7 +570,7 @@ export async function POST(request: Request) {
       });
     }
     if (cached?.kind === "IDENTITY_MISMATCH") {
-      return solicitudTechnicalResponse({
+      return solicitudRecoverableResponse({
         correlationId,
         solicitudId,
         plataforma: platform,
@@ -562,7 +592,7 @@ export async function POST(request: Request) {
       });
     }
     if (cached?.kind === "IN_PROGRESS") {
-      return solicitudTechnicalResponse({
+      return solicitudRecoverableResponse({
         correlationId,
         solicitudId,
         plataforma: platform,
@@ -611,7 +641,7 @@ export async function POST(request: Request) {
       });
     } catch (error) {
       if (isDataCreditoUniqueViolation(error)) {
-        return solicitudTechnicalResponse({
+        return solicitudRecoverableResponse({
           correlationId,
           solicitudId,
           plataforma: platform,
@@ -649,7 +679,7 @@ export async function POST(request: Request) {
       });
     }
     if (reservation.kind === "IDENTITY_MISMATCH") {
-      return solicitudTechnicalResponse({
+      return solicitudRecoverableResponse({
         correlationId,
         solicitudId,
         plataforma: platform,
@@ -671,7 +701,7 @@ export async function POST(request: Request) {
       });
     }
     if (reservation.kind === "IN_PROGRESS") {
-      return solicitudTechnicalResponse({
+      return solicitudRecoverableResponse({
         correlationId,
         solicitudId,
         plataforma: platform,
@@ -681,7 +711,7 @@ export async function POST(request: Request) {
       });
     }
     if (reservation.kind === "RATE_LIMITED") {
-      return solicitudTechnicalResponse({
+      return solicitudRecoverableResponse({
         correlationId,
         solicitudId,
         plataforma: platform,
@@ -965,12 +995,12 @@ export async function POST(request: Request) {
           : "EVALUATION_ERROR";
 
     if (pendingAssessmentId) {
-      const errorCode = providerStartedAt
+      const trackedErrorCode = providerStartedAt
         ? "PROVIDER_OUTCOME_AMBIGUOUS"
         : code;
       await failDataCreditoAssessment({
         id: pendingAssessmentId,
-        errorCode,
+        errorCode: trackedErrorCode,
         providerStatus:
           error instanceof DataCreditoError && error.providerHttpStatus
             ? `HTTP ${error.providerHttpStatus}`
@@ -983,11 +1013,11 @@ export async function POST(request: Request) {
           solicitudId: trackedSolicitudId,
           assessmentId: pendingAssessmentId,
           status: "NO_EVALUADO",
-          errorCode: code,
+          errorCode: trackedErrorCode,
         }).catch(() =>
           markSolicitudDataCreditoTechnicalError({
             solicitudId: trackedSolicitudId,
-            errorCode: code,
+            errorCode: trackedErrorCode,
           }).catch(() => undefined)
         );
       }

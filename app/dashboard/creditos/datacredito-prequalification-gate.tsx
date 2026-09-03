@@ -478,6 +478,13 @@ export default function DatacreditoPrequalificationGate({
       normalizedInitialDocument &&
       normalizedInitialErrorCode === "ASSESSMENT_IDENTITY_MISMATCH"
   );
+  const rateLimitedRecovery = Boolean(
+    initialSolicitudId &&
+      !initialAssessmentId &&
+      normalizedInitialDocument &&
+      normalizedInitialSurname &&
+      normalizedInitialErrorCode === "RATE_LIMITED"
+  );
   const [view, setView] = useState<GateView>("loading");
   const [documentNumber, setDocumentNumber] = useState(
     normalizedInitialDocument
@@ -705,7 +712,7 @@ export default function DatacreditoPrequalificationGate({
         }
 
         if (!initialAssessmentId) {
-          if (identityMismatchRecovery) {
+          if (identityMismatchRecovery || rateLimitedRecovery) {
             setConsentAccepted(false);
             setFormErrors({});
             setRetryMode("form");
@@ -844,6 +851,7 @@ export default function DatacreditoPrequalificationGate({
       initialAssessmentId,
       initialSolicitudId,
       identityMismatchRecovery,
+      rateLimitedRecovery,
       normalizedInitialDocument,
       normalizedInitialSurname,
       platform,
