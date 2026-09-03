@@ -104,7 +104,10 @@ export async function PATCH(req: Request) {
         solicitudId: Number(match[1]),
         userId: access.user.id,
       });
-    } else if (access.viewer.kind === "SELLER" && access.seller) {
+    } else if (
+      ["SELLER", "SUPERVISOR"].includes(access.viewer.kind) &&
+      access.seller
+    ) {
       result = await desistSolicitud({
         solicitudId: Number(match[1]),
         userId: access.user.id,
@@ -113,7 +116,7 @@ export async function PATCH(req: Request) {
       });
     } else {
       return response(
-        { error: "Solo el asesor titular o el administrador central pueden desistir esta solicitud" },
+        { error: "Solo el perfil comercial titular o el administrador central pueden desistir esta solicitud" },
         { status: 403 }
       );
     }

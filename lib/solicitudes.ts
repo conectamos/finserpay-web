@@ -493,7 +493,7 @@ export function getSolicitudActions(input: {
 
   const isOpen = normalized(input.draftState) === "ABIERTO";
   const isOwner = Boolean(
-    input.viewer.kind === "SELLER" &&
+    ["SELLER", "SUPERVISOR"].includes(input.viewer.kind) &&
       input.viewer.vendedorId &&
       input.viewer.vendedorId === input.ownership.vendedorId
   );

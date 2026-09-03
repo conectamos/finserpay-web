@@ -47,7 +47,10 @@ import { canRecoverAssessmentIdentityMismatch } from "@/lib/datacredito/resume-g
 import { tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
-import { canOperateSolicitud } from "@/lib/solicitud-operation-access";
+import {
+  canOperateSolicitud,
+  isDirectSalesProfile,
+} from "@/lib/solicitud-operation-access";
 import {
   ActiveSolicitudConflictError,
   attachDataCreditoToSolicitud,
@@ -197,11 +200,11 @@ export async function POST(request: Request) {
     const central =
       admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const seller = admin ? null : await getSellerSessionUser(user);
-    if (!central && seller?.tipoPerfil !== "VENDEDOR") {
+    if (!central && !isDirectSalesProfile(seller?.tipoPerfil)) {
       return technicalResponse({
         correlationId,
         code: "SELLER_SESSION_REQUIRED",
-        error: "Selecciona e ingresa con el perfil del asesor antes de consultar",
+        error: "Selecciona e ingresa con un perfil comercial antes de consultar",
         status: 403,
       });
     }

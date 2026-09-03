@@ -47,6 +47,11 @@ const otherSellerSameSede = {
   tipoPerfil: "VENDEDOR",
 };
 const supervisor = { id: 50, sedeId: 100, tipoPerfil: "SUPERVISOR" };
+const otherSupervisorSameSede = {
+  id: 51,
+  sedeId: 100,
+  tipoPerfil: "SUPERVISOR",
+};
 const ownerRow = {
   aliadoId: 10,
   estado: "ABIERTO",
@@ -55,7 +60,7 @@ const ownerRow = {
   vendedorId: owner.id,
 };
 
-test("Veriff respeta alcance central, aliado y asesor titular", () => {
+test("Veriff respeta alcance central, aliado y perfil comercial titular", () => {
   assert.equal(canAccessVeriffValidation(central, ownerRow, null), true);
   assert.equal(canAccessVeriffValidation(allyAdmin, ownerRow, null), true);
   assert.equal(
@@ -98,7 +103,21 @@ test("Veriff respeta alcance central, aliado y asesor titular", () => {
     false,
     "el mismo id de asesor no cruza aliados"
   );
-  assert.equal(canAccessVeriffValidation(sellerUser, ownerRow, supervisor), false);
+  assert.equal(canAccessVeriffValidation(sellerUser, ownerRow, supervisor), true);
+  assert.equal(
+    canAccessVeriffValidation(sellerUser, ownerRow, otherSupervisorSameSede),
+    false,
+    "un supervisor no puede acceder a una venta ajena aunque comparta sede"
+  );
+  assert.equal(
+    canAccessVeriffValidation(
+      { ...sellerUser, aliadoId: 11 },
+      ownerRow,
+      supervisor
+    ),
+    false,
+    "un supervisor titular no puede cruzar aliados"
+  );
   assert.equal(canAccessVeriffValidation(sellerUser, ownerRow, null), false);
 });
 
@@ -118,7 +137,19 @@ test("solo un borrador abierto y dentro del alcance puede iniciar Veriff", () =>
     canOperateVeriffDraft(sellerUser, ownerRow, otherSellerSameSede),
     false
   );
-  assert.equal(canOperateVeriffDraft(sellerUser, ownerRow, supervisor), false);
+  assert.equal(canOperateVeriffDraft(sellerUser, ownerRow, supervisor), true);
+  assert.equal(
+    canOperateVeriffDraft(sellerUser, ownerRow, otherSupervisorSameSede),
+    false
+  );
+  assert.equal(
+    canOperateVeriffDraft(
+      { ...sellerUser, aliadoId: 11 },
+      ownerRow,
+      supervisor
+    ),
+    false
+  );
 });
 
 test("POST autoriza el borrador y la cedula antes de reusar o llamar al proveedor", async () => {

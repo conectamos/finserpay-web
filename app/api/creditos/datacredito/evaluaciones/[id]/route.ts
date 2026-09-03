@@ -17,7 +17,10 @@ import {
 } from "@/lib/datacredito/storage";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
-import { canOperateSolicitud } from "@/lib/solicitud-operation-access";
+import {
+  canOperateSolicitud,
+  isDirectSalesProfile,
+} from "@/lib/solicitud-operation-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,9 +37,9 @@ export async function GET(request: Request, context: RouteContext) {
 
   const admin = isAdminRole(user.rolNombre);
   const seller = admin ? null : await getSellerSessionUser(user);
-  if (!admin && seller?.tipoPerfil !== "VENDEDOR") {
+  if (!admin && !isDirectSalesProfile(seller?.tipoPerfil)) {
     return NextResponse.json(
-      { ok: false, error: "Selecciona e ingresa con el perfil del asesor" },
+      { ok: false, error: "Selecciona e ingresa con un perfil comercial" },
       { status: 403 }
     );
   }

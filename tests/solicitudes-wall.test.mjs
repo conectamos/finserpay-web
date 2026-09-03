@@ -68,6 +68,12 @@ const ownSolicitud = {
   vendedorId: 401,
   usuarioId: 4,
 };
+const supervisorOwnSolicitud = {
+  aliadoId: 10,
+  sedeId: 101,
+  vendedorId: 300,
+  usuarioId: 3,
+};
 
 test("normaliza filtros, limita paginacion y descarta valores invalidos", () => {
   const filters = normalizeSolicitudFilters({
@@ -412,7 +418,7 @@ test("una solicitud no liberada prevalece sobre una desistida mas reciente", () 
   );
 });
 
-test("la fabrica del borrador respeta central, aliado y asesor titular aunque cambie de sede", () => {
+test("la fabrica del borrador permite al vendedor o supervisor titular y rechaza ventas ajenas", () => {
   const openDraft = {
     ownership: ownSolicitud,
     source: "DRAFT",
@@ -453,6 +459,23 @@ test("la fabrica del borrador respeta central, aliado y asesor titular aunque ca
   assert.deepEqual(getSolicitudActions({ viewer: supervisor, ...openDraft }), [
     "VER_DETALLE",
   ]);
+  assert.deepEqual(
+    getSolicitudActions({
+      viewer: supervisor,
+      ...openDraft,
+      ownership: supervisorOwnSolicitud,
+    }),
+    ["VER_DETALLE", "ABRIR_FABRICA", "DESISTIR"]
+  );
+  assert.deepEqual(
+    getSolicitudActions({
+      viewer: { ...supervisor, aliadoId: 20 },
+      ...openDraft,
+      ownership: supervisorOwnSolicitud,
+    }),
+    [],
+    "el supervisor titular no puede cruzar aliados"
+  );
   assert.deepEqual(getSolicitudActions({ viewer: allyAdmin, ...openDraft }), [
     "VER_DETALLE",
   ]);
@@ -1071,7 +1094,7 @@ test("la interfaz conserva filtros en URL y confirma el desistimiento", async ()
   assert.match(ui, /style=\{\{ paddingLeft: "2\.5rem" \}\}/);
 });
 
-test("el asesor retoma y desiste sus borradores propios por vendedor y aliado sin quedar atado a la sede activa", async () => {
+test("el perfil comercial retoma y desiste solo sus borradores por vendedor y aliado", async () => {
   const [policy, storage, draftRoute] = await Promise.all([
     readProjectFile("lib/solicitudes.ts"),
     readProjectFile("lib/solicitudes-storage.ts"),
@@ -1120,11 +1143,16 @@ test("el asesor retoma y desiste sus borradores propios por vendedor y aliado si
     actionPolicy,
     /ownership\.sedeId === viewer\.sedeId|viewer\.sedeId === ownership\.sedeId/
   );
+  assert.doesNotMatch(readScope, /SUPERVISOR[\s\S]*sedeId/);
   assert.match(
     readScope,
-    /SUPERVISOR[\s\S]*sedeId[\s\S]*else[\s\S]*access\.user\.aliadoId[\s\S]*s\."aliadoId"/
+    /access\.user\.aliadoId[\s\S]*s\."aliadoId"[\s\S]*access\.seller\?\.id[\s\S]*d\."vendedorId"/
   );
-  assert.match(readScope, /d\."vendedorId"/);
+  assert.match(
+    draftRoute,
+    /addReadScope\(where, values, access\)/,
+    "todo GET de borradores debe forzar aliadoId y vendedorId también para supervisor"
+  );
   assert.match(
     saveOwner,
     /canOperateSolicitud\(\{[\s\S]*viewerAllyId: access\.user\.aliadoId[\s\S]*owner: existingDraft/

@@ -9,6 +9,7 @@ import {
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
+import { isDirectSalesProfile } from "@/lib/solicitud-operation-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,7 +45,7 @@ export async function GET(
     const admin = isAdminRole(user.rolNombre);
     const central = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const seller = admin ? null : await getSellerSessionUser(user);
-    if (!admin && seller?.tipoPerfil !== "VENDEDOR") {
+    if (!admin && !isDirectSalesProfile(seller?.tipoPerfil)) {
       return response({ ok: false, error: "Acceso no autorizado" }, 403);
     }
     await ensureIphoneEnrollmentSchema();

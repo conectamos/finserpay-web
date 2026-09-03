@@ -137,7 +137,10 @@ import {
   ensureCreditDeviceReplacementSchema,
   lockCreditDeviceReplacementImeiForCreditCreation,
 } from "@/lib/credit-device-replacement-storage";
-import { canOperateSolicitud as canOperateSolicitudContext } from "@/lib/solicitud-operation-access";
+import {
+  canOperateSolicitud as canOperateSolicitudContext,
+  isDirectSalesProfile,
+} from "@/lib/solicitud-operation-access";
 import { getIphoneEnrollmentReviewForSolicitud } from "@/lib/iphone-enrollment-storage";
 
 export const runtime = "nodejs";
@@ -1088,12 +1091,12 @@ export async function POST(req: Request) {
     canViewSensitiveCredit = adminCentral;
     const sellerSession = admin ? null : await getSellerSessionUser(user);
 
-    if (!adminCentral && sellerSession?.tipoPerfil !== "VENDEDOR") {
+    if (!adminCentral && !isDirectSalesProfile(sellerSession?.tipoPerfil)) {
       return NextResponse.json(
         {
           code: "CREDIT_CLOSE_NOT_AUTHORIZED",
           error:
-            "Solo el asesor titular o un administrador central de FINSER PAY puede finalizar el crédito.",
+            "Solo el perfil comercial titular o un administrador central de FINSER PAY puede finalizar el crédito.",
         },
         { status: 403 }
       );

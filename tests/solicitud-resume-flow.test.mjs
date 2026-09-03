@@ -8,9 +8,11 @@ import { createJiti } from "jiti";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
-const { canOperateSolicitud, canSellerOperateSolicitud } = await jiti.import(
-  "../lib/solicitud-operation-access.ts"
-);
+const {
+  canOperateSolicitud,
+  canSellerOperateSolicitud,
+  isDirectSalesProfile,
+} = await jiti.import("../lib/solicitud-operation-access.ts");
 const {
   canRecoverAssessmentIdentityMismatch,
   resolveMissingAssessmentGateView,
@@ -21,7 +23,11 @@ const {
 const owner = { vendedorId: 80, aliadoId: 12 };
 const seller = { id: 80, tipoPerfil: "VENDEDOR", sedeId: 900 };
 
-test("la operacion depende del asesor titular y aliado, nunca de la sede activa", () => {
+test("la operacion depende del perfil comercial titular y aliado, nunca de la sede activa", () => {
+  assert.equal(isDirectSalesProfile("VENDEDOR"), true);
+  assert.equal(isDirectSalesProfile("SUPERVISOR"), true);
+  assert.equal(isDirectSalesProfile("ADMIN"), false);
+  assert.equal(isDirectSalesProfile(null), false);
   assert.equal(canSellerOperateSolicitud(seller, 12, owner), true);
   assert.equal(
     canSellerOperateSolicitud({ ...seller, sedeId: 901 }, 12, owner),
@@ -32,7 +38,26 @@ test("la operacion depende del asesor titular y aliado, nunca de la sede activa"
   assert.equal(canSellerOperateSolicitud(seller, 13, owner), false);
   assert.equal(
     canSellerOperateSolicitud({ ...seller, tipoPerfil: "SUPERVISOR" }, 12, owner),
-    false
+    true,
+    "el supervisor puede operar la venta que creo con su propio perfil"
+  );
+  assert.equal(
+    canSellerOperateSolicitud(
+      { ...seller, id: 81, tipoPerfil: "SUPERVISOR" },
+      12,
+      owner
+    ),
+    false,
+    "un supervisor no puede operar la venta de otro perfil"
+  );
+  assert.equal(
+    canSellerOperateSolicitud(
+      { ...seller, tipoPerfil: "SUPERVISOR" },
+      13,
+      owner
+    ),
+    false,
+    "un supervisor titular no puede cruzar aliados"
   );
   assert.equal(canSellerOperateSolicitud(null, 12, owner), false);
   assert.equal(canSellerOperateSolicitud(seller, null, owner), false);
@@ -74,6 +99,7 @@ test("retomar DataCredito usa GET, autoriza el borrador y conserva el scope hist
   assert.match(route, /sellerId: requestedDraft\.vendedorId/);
   assert.match(route, /sedeId: requestedDraft\.sedeId/);
   assert.match(route, /aliadoId: requestedDraft\.aliadoId/);
+  assert.match(route, /!isDirectSalesProfile\(seller\?\.tipoPerfil\)/);
   assert.match(route, /if \(draftId && !authorizedDraft\)/);
   assert.match(route, /dataCreditoAssessmentMatchesScope\(row, scope\)/);
   assert.doesNotMatch(route, /queryDataCreditoNaturalPerson/);
@@ -267,19 +293,19 @@ test("un POST DataCredito retomado autoriza antes de reservar y reutiliza antes 
   assert.doesNotMatch(route, /const centralSolicitud =/);
 });
 
-test("solo central o un VENDEDOR pueden consultar y la plataforma retomada no cambia", async () => {
+test("central, vendedor o supervisor pueden consultar y la plataforma retomada no cambia", async () => {
   const [route, storage] = await Promise.all([
     readProjectFile("app/api/creditos/datacredito/evaluaciones/route.ts"),
     readProjectFile("lib/solicitudes-storage.ts"),
   ]);
-  const roleGuard = route.indexOf(
-    'if (!central && seller?.tipoPerfil !== "VENDEDOR")'
+  const roleGuard = route.search(
+    /if\s*\(\s*!central\s*&&\s*!isDirectSalesProfile\(\s*seller\?\.tipoPerfil\s*\)\s*\)/
   );
   const platformGuard = route.indexOf('code: "SOLICITUD_PLATAFORMA_DIFERENTE"');
   const reservation = route.indexOf("reserveSolicitudForIdentity({");
   const provider = route.indexOf("queryDataCreditoNaturalPerson({");
 
-  assert.ok(roleGuard >= 0, "debe bloquear admin de aliado y supervisor");
+  assert.ok(roleGuard >= 0, "debe bloquear al admin de aliado y sesiones comerciales ausentes");
   assert.match(
     route,
     /const central =\s*admin && isFinserPayCentralAlly\(user\.aliadoAccesoCodigo\)/
@@ -394,7 +420,7 @@ test("el PATCH de borradores conserva DESISTIR pero no puede finalizar creditos"
   assert.doesNotMatch(patch, /parsePositiveId\(body\.creditoId\)/);
 });
 
-test("la fabrica directa vence solicitudes y bloquea supervisor y admin aliado al guardar", async () => {
+test("la fabrica directa permite perfiles comerciales y bloquea al admin aliado al guardar", async () => {
   const route = await readProjectFile("app/api/creditos/borradores/route.ts");
   const getSource = route.slice(
     route.indexOf("export async function GET"),
@@ -408,11 +434,15 @@ test("la fabrica directa vence solicitudes y bloquea supervisor y admin aliado a
 
   assert.match(
     getSource,
-    /!access\.admin && access\.seller\?\.tipoPerfil !== "VENDEDOR"/
+    /!access\.admin\s*&&\s*!isDirectSalesProfile\(access\.seller\?\.tipoPerfil\)/
   );
   assert.match(
     postSource,
-    /!access\.central && access\.seller\?\.tipoPerfil !== "VENDEDOR"/
+    /!access\.central\s*&&\s*!isDirectSalesProfile\(access\.seller\?\.tipoPerfil\)/
+  );
+  assert.match(
+    patchSource,
+    /!access\.seller\s*\|\|\s*!isDirectSalesProfile\(access\.seller\.tipoPerfil\)/
   );
   for (const source of [getSource, postSource, patchSource]) {
     assert.match(source, /expireStaleSolicitudes\(\)/);
@@ -450,12 +480,17 @@ test("Veriff, FirmaSeguro e iPhone permiten al titular por aliado y preservan el
   assert.match(veriffCreate, /vendedorId: draft\.vendedorId/);
   assert.match(firma, /d\."vendedorId" = \$\$\{values\.length\}/);
   assert.match(firma, /s\."aliadoId" = \$\$\{values\.length\}/);
+  assert.match(
+    firma,
+    /!isDirectSalesProfile\(seller(?:Session)?\?\.tipoPerfil\)/
+  );
   assert.doesNotMatch(
     firma.slice(firma.indexOf("} else if (!admin)"), firma.indexOf("const rows =")),
     /user\.sedeId|d\."sedeId"/
   );
   assert.match(iphone, /draft\."vendedorId" = \$\$\{values\.length\}/);
   assert.match(iphone, /sede\."aliadoId" = \$\$\{values\.length\}/);
+  assert.match(iphone, /!isDirectSalesProfile\(seller\?\.tipoPerfil\)/);
   assert.doesNotMatch(iphone, /seller\?\.sedeId/);
 });
 

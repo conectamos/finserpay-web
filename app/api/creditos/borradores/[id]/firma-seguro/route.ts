@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSellerSessionUser } from "@/lib/seller-auth";
+import { isDirectSalesProfile } from "@/lib/solicitud-operation-access";
 import prisma from "@/lib/prisma";
 import {
   allowsDataCreditoNonProductionProvider,
@@ -218,11 +219,11 @@ async function readAuthorizedDraft(
   const centralAdmin = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
   const sellerSession = admin ? null : await getSellerSessionUser(user);
 
-  if (!admin && sellerSession?.tipoPerfil !== "VENDEDOR") {
+  if (!admin && !isDirectSalesProfile(sellerSession?.tipoPerfil)) {
     return {
       ok: false as const,
       status: 403,
-      error: "Debes abrir primero el perfil del vendedor",
+      error: "Debes abrir primero un perfil comercial",
     };
   }
 

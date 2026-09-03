@@ -13,6 +13,11 @@ function positiveId(value: unknown) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+export function isDirectSalesProfile(value: unknown) {
+  const profile = String(value || "").trim().toUpperCase();
+  return profile === "VENDEDOR" || profile === "SUPERVISOR";
+}
+
 export function canSellerOperateSolicitud(
   seller: SolicitudSellerActor,
   viewerAllyId: number | null | undefined,
@@ -24,7 +29,7 @@ export function canSellerOperateSolicitud(
   const ownerAllyId = positiveId(owner?.aliadoId);
 
   return Boolean(
-    String(seller?.tipoPerfil || "").trim().toUpperCase() === "VENDEDOR" &&
+    isDirectSalesProfile(seller?.tipoPerfil) &&
       sellerId &&
       allyId &&
       sellerId === ownerSellerId &&

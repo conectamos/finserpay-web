@@ -5,7 +5,10 @@ import { sanitizeSearch, sanitizeText } from "@/lib/credit-factory";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
-import { canOperateSolicitud } from "@/lib/solicitud-operation-access";
+import {
+  canOperateSolicitud,
+  isDirectSalesProfile,
+} from "@/lib/solicitud-operation-access";
 import { SolicitudCanonicalMutationError } from "@/lib/solicitudes";
 import { isFirmaSeguroSuccessfulStatus } from "@/lib/firmaseguro-status";
 import { ensureFirmaSeguroSchema } from "@/lib/firmaseguro-storage";
@@ -211,8 +214,7 @@ async function getAccess() {
 function addReadScope(
   where: string[],
   values: unknown[],
-  access: NonNullable<Awaited<ReturnType<typeof getAccess>>>,
-  ownerOnly: boolean
+  access: NonNullable<Awaited<ReturnType<typeof getAccess>>>
 ) {
   if (access.central) return;
   if (access.admin) {
@@ -220,17 +222,10 @@ function addReadScope(
     where.push(`s."aliadoId" = $${values.length}`);
     return;
   }
-  if (access.seller?.tipoPerfil === "SUPERVISOR") {
-    values.push(access.seller.sedeId || -1);
-    where.push(`d."sedeId" = $${values.length}`);
-  } else {
-    values.push(access.user.aliadoId || -1);
-    where.push(`s."aliadoId" = $${values.length}`);
-  }
-  if (ownerOnly || access.seller?.tipoPerfil !== "SUPERVISOR") {
-    values.push(access.seller?.id || -1);
-    where.push(`d."vendedorId" = $${values.length}`);
-  }
+  values.push(access.user.aliadoId || -1);
+  where.push(`s."aliadoId" = $${values.length}`);
+  values.push(access.seller?.id || -1);
+  where.push(`d."vendedorId" = $${values.length}`);
 }
 
 async function readDrafts(
@@ -293,9 +288,9 @@ export async function GET(req: Request) {
   try {
     const access = await getAccess();
     if (!access) return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    if (!access.admin && access.seller?.tipoPerfil !== "VENDEDOR") {
+    if (!access.admin && !isDirectSalesProfile(access.seller?.tipoPerfil)) {
       return NextResponse.json(
-        { error: "Solo el asesor titular o un administrador autorizado puede consultar solicitudes" },
+        { error: "Solo el perfil comercial titular o un administrador autorizado puede consultar solicitudes" },
         { status: 403 }
       );
     }
@@ -311,7 +306,7 @@ export async function GET(req: Request) {
     const take = parseTake(params.get("take"));
     const where = [`d."estado" = 'ABIERTO'`];
     const values: unknown[] = [];
-    addReadScope(where, values, access, Boolean(id));
+    addReadScope(where, values, access);
 
     if (id) {
       values.push(id);
@@ -357,9 +352,9 @@ export async function POST(req: Request) {
   try {
     const access = await getAccess();
     if (!access) return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    if (!access.central && access.seller?.tipoPerfil !== "VENDEDOR") {
+    if (!access.central && !isDirectSalesProfile(access.seller?.tipoPerfil)) {
       return NextResponse.json(
-        { error: "Solo el asesor titular o el administrador central puede guardar esta solicitud" },
+        { error: "Solo el perfil comercial titular o el administrador central puede guardar esta solicitud" },
         { status: 403 }
       );
     }
@@ -474,7 +469,10 @@ export async function PATCH(req: Request) {
           { status: result.changed ? 200 : 409 }
         );
       }
-      if (access.seller?.tipoPerfil !== "VENDEDOR") {
+      if (
+        !access.seller ||
+        !isDirectSalesProfile(access.seller.tipoPerfil)
+      ) {
         return NextResponse.json({ error: "Accion no autorizada" }, { status: 403 });
       }
       const result = await desistSolicitud({
