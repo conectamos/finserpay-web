@@ -1649,6 +1649,129 @@ export async function enqueueManualPadlockCommand(input: {
   });
 }
 
+export async function requeuePadlockCommandReconciliation(input: {
+  commandId: string;
+  actorUserId: number;
+  reason: string;
+  correlationId?: string;
+  now?: Date;
+}) {
+  const commandId = requiredUuid(input.commandId, "PADLOCK_COMMAND_ID_INVALID");
+  const actorUserId = asInteger(
+    input.actorUserId,
+    "PADLOCK_ACTOR_INVALID",
+    { min: 1 }
+  );
+  const reason = requiredReason(input.reason);
+  const correlationId = input.correlationId
+    ? requiredCorrelationId(input.correlationId)
+    : randomUUID();
+  const now = input.now ? new Date(input.now) : new Date();
+  if (Number.isNaN(now.getTime())) {
+    throw new PadlockStorageError(
+      "PADLOCK_RECONCILIATION_TIME_INVALID",
+      "Fecha de conciliación Padlock inválida.",
+      400
+    );
+  }
+
+  return inTransaction(async (transaction) => {
+    const identity = await transaction.$queryRawUnsafe<
+      Array<{ bindingId: string }>
+    >(
+      'SELECT "bindingId"::text FROM "PadlockCommand" WHERE "id" = $1::uuid LIMIT 1',
+      commandId
+    );
+    if (!identity[0]) {
+      throw new PadlockStorageError(
+        "PADLOCK_COMMAND_NOT_FOUND",
+        "El comando Padlock no existe.",
+        404
+      );
+    }
+
+    await lockKeys(transaction, [`padlock:binding:${identity[0].bindingId}`]);
+    const commands = await transaction.$queryRawUnsafe<CommandRow[]>(
+      'SELECT * FROM "PadlockCommand" WHERE "id" = $1::uuid LIMIT 1 FOR UPDATE',
+      commandId
+    );
+    const command = commands[0];
+    const bindings = await transaction.$queryRawUnsafe<BindingRow[]>(
+      'SELECT * FROM "PadlockDeviceBinding" WHERE "id" = $1::uuid LIMIT 1 FOR UPDATE',
+      command?.bindingId || identity[0].bindingId
+    );
+    const binding = bindings[0];
+    if (!command || !binding || binding.status !== "ACTIVE") {
+      throw new PadlockStorageError(
+        "PADLOCK_RECONCILIATION_TARGET_NOT_ACTIVE",
+        "El comando o su vinculación ya no están activos.",
+        409
+      );
+    }
+    if (command.status !== "REVIEW_REQUIRED") {
+      throw new PadlockStorageError(
+        "PADLOCK_RECONCILIATION_NOT_REQUIRED",
+        "El comando no está esperando revisión.",
+        409
+      );
+    }
+    if (!hasUnresolvedPadlockProviderAttempt(command)) {
+      throw new PadlockStorageError(
+        "PADLOCK_RECONCILIATION_NOT_SAFE",
+        "El comando no tiene un intento remoto pendiente que pueda conciliarse solo por consulta.",
+        409
+      );
+    }
+
+    const updated = await transaction.$executeRawUnsafe(
+      `
+        UPDATE "PadlockCommand"
+        SET "status" = 'RETRY', "attemptCount" = 0,
+          "availableAt" = $2::timestamp,
+          "leaseOwner" = NULL, "leaseToken" = NULL, "leaseExpiresAt" = NULL,
+          "lastErrorCode" = 'MANUAL_GET_ONLY_RECONCILIATION_REQUESTED',
+          "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "id" = $1::uuid
+          AND "status" = 'REVIEW_REQUIRED'
+      `,
+      command.id,
+      now
+    );
+    if (updated !== 1) {
+      throw new PadlockStorageError(
+        "PADLOCK_RECONCILIATION_RACE",
+        "El comando cambió mientras se solicitaba la conciliación.",
+        409
+      );
+    }
+
+    await appendAudit(transaction, {
+      bindingId: binding.id,
+      commandId: command.id,
+      policyRevisionId: command.policyRevisionId,
+      creditId: command.creditId,
+      eventType: "COMMAND_RECONCILIATION_REQUEUED",
+      action: command.action,
+      fromStatus: command.status,
+      toStatus: "RETRY",
+      reasonCode: "MANUAL_GET_ONLY_RECONCILIATION_REQUESTED",
+      operatorReason: reason,
+      desiredVersion: Number(command.desiredVersion),
+      attemptNumber: Number(command.attemptCount),
+      actorType: "USER",
+      actorUserId,
+      correlationId,
+    });
+
+    return {
+      kind: "REQUEUED" as const,
+      commandId: command.id,
+      bindingId: binding.id,
+      desiredVersion: Number(command.desiredVersion),
+    };
+  });
+}
+
 export type ClaimedPadlockCommand = {
   id: string;
   bindingId: string;
@@ -1988,7 +2111,8 @@ export type PreparedPadlockDispatch =
         | "COMMAND_STALE"
         | "COMMAND_NO_LONGER_ELIGIBLE"
         | "POLICY_REVISION_CHANGED"
-        | "PRIOR_PROVIDER_ATTEMPT_IN_FLIGHT";
+        | "PRIOR_PROVIDER_ATTEMPT_IN_FLIGHT"
+        | "PROVIDER_POST_REPLAY_BLOCKED";
       reevaluateCreditId?: number;
     };
 
@@ -2064,6 +2188,44 @@ export async function preparePadlockCommandDispatch(input: {
     // This applies even when the desired state has not changed: observing the
     // device before the delayed transition does not make replaying POST safe.
     const reconciliationOnly = hasUnresolvedPadlockProviderAttempt(command);
+    if (input.startProviderAttempt === true && reconciliationOnly) {
+      const retryAt = new Date(now.getTime() + 30_000);
+      const blocked = await transaction.$executeRawUnsafe(
+        `
+          UPDATE "PadlockCommand"
+          SET "status" = 'RETRY', "availableAt" = $4::timestamp,
+            "leaseOwner" = NULL, "leaseToken" = NULL, "leaseExpiresAt" = NULL,
+            "lastErrorCode" = 'PROVIDER_POST_REPLAY_BLOCKED',
+            "updatedAt" = CURRENT_TIMESTAMP
+          WHERE "id" = $1::uuid
+            AND "status" = 'PROCESSING'
+            AND "leaseOwner" = $2
+            AND "leaseToken" = $3::uuid
+        `,
+        command.id,
+        workerId,
+        leaseToken,
+        retryAt
+      );
+      if (blocked === 1) {
+        await appendAudit(transaction, {
+          bindingId: binding.id,
+          commandId: command.id,
+          policyRevisionId: command.policyRevisionId,
+          creditId: command.creditId,
+          eventType: "PROVIDER_POST_REPLAY_BLOCKED",
+          action: command.action,
+          fromStatus: command.status,
+          toStatus: "RETRY",
+          reasonCode: "UNRESOLVED_PROVIDER_ATTEMPT",
+          desiredVersion: Number(command.desiredVersion),
+          attemptNumber: Number(command.attemptCount),
+          actorType: "WORKER",
+          correlationId: command.correlationId,
+        });
+      }
+      return { ready: false, code: "PROVIDER_POST_REPLAY_BLOCKED" };
+    }
     if (!desiredMatches && !reconciliationOnly) {
       await supersedeUndispatchedCommand(
         transaction,
@@ -2756,12 +2918,15 @@ export async function recordPadlockCommandOutcome(input: {
 export async function listPadlockCommands(options?: {
   limit?: number;
   status?: PadlockCommandStatus;
+  prioritizeUnresolvedProviderReviews?: boolean;
 }) {
   const limit = asInteger(options?.limit ?? 50, "PADLOCK_LIMIT_INVALID", {
     min: 1,
     max: 200,
   });
   const status = options?.status || null;
+  const prioritizeUnresolvedProviderReviews =
+    options?.prioritizeUnresolvedProviderReviews === true;
   const rows = await database.$queryRawUnsafe<
     Array<
       CommandRow & {
@@ -2787,11 +2952,26 @@ export async function listPadlockCommands(options?: {
       ) command_actor ON TRUE
       LEFT JOIN "Usuario" actor ON actor."id" = command_actor."actorUserId"
       WHERE ($1::text IS NULL OR command."status" = $1)
-      ORDER BY command."createdAt" DESC, command."id"
+      ORDER BY
+        CASE
+          WHEN $3::boolean
+            AND command."status" = 'REVIEW_REQUIRED'
+            AND command."providerAttemptCount" > 0
+            AND command."lastProviderAttemptStartedAt" IS NOT NULL
+            AND (
+              command."lastProviderAttemptCompletedAt" IS NULL
+              OR command."lastProviderAttemptCompletedAt" < command."lastProviderAttemptStartedAt"
+            )
+          THEN 0
+          ELSE 1
+        END,
+        command."createdAt" DESC,
+        command."id"
       LIMIT $2
     `,
     status,
-    limit
+    limit,
+    prioritizeUnresolvedProviderReviews
   );
   return rows.map((row) => ({
     id: row.id,

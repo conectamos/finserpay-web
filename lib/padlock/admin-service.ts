@@ -11,7 +11,10 @@ import {
 } from "@/lib/padlock/config";
 import { buildPadlockFinancialPosition } from "@/lib/padlock/finance";
 import { buildPadlockAdminStatusSummary } from "@/lib/padlock/admin-summary";
-import { decidePadlockAction } from "@/lib/padlock/engine";
+import {
+  decidePadlockAction,
+  hasUnresolvedPadlockProviderAttempt,
+} from "@/lib/padlock/engine";
 import {
   PadlockStorageError,
   bindPadlockIphoneDevice,
@@ -21,6 +24,7 @@ import {
   listPadlockCommands,
   listPadlockPolicies,
   loadPadlockEvaluationContext,
+  requeuePadlockCommandReconciliation as requeuePadlockCommandReconciliationWith,
   type PadlockCommandStatus,
   type PadlockProviderState,
 } from "@/lib/padlock/storage";
@@ -38,6 +42,9 @@ type AdminCommandRow = {
   operatorReason: string | null;
   actorName: string | null;
   attemptCount: number;
+  providerAttemptCount: number;
+  lastProviderAttemptStartedAt: Date | null;
+  lastProviderAttemptCompletedAt: Date | null;
   lastErrorCode: string | null;
   lastProviderState: PadlockProviderState | null;
   createdAt: Date;
@@ -367,7 +374,10 @@ export async function getPadlockAdminOverview(now = new Date()) {
   ] = await Promise.all([
     listPadlockPolicies(),
     listPadlockBindings({ limit: ADMIN_BINDING_LIMIT, status: "ACTIVE" }),
-    listPadlockCommands({ limit: ADMIN_COMMAND_LIMIT }),
+    listPadlockCommands({
+      limit: ADMIN_COMMAND_LIMIT,
+      prioritizeUnresolvedProviderReviews: true,
+    }),
     prisma.aliado.findMany({
       where: { activo: true },
       select: { id: true, nombre: true, codigo: true },
@@ -394,6 +404,9 @@ export async function getPadlockAdminOverview(now = new Date()) {
     reason: command.operatorReason || null,
     requestedBy: command.actorName || null,
     attempts: Number(command.attemptCount || 0),
+    canReconcile:
+      command.status === "REVIEW_REQUIRED" &&
+      hasUnresolvedPadlockProviderAttempt(command),
     errorCode: command.lastErrorCode || null,
     providerState: command.lastProviderState || null,
     createdAt: iso(command.createdAt),
@@ -705,6 +718,61 @@ export async function queueManualPadlockCommand(input: {
     commandId: "commandId" in result ? result.commandId : null,
     desiredVersion: result.desiredVersion,
   };
+}
+
+export async function requeueReviewedPadlockCommand(input: {
+  commandId: string;
+  reason: string;
+  actorUserId: number;
+  correlationId: string;
+}) {
+  assertProviderCallsAllowed();
+  if (!UUID_PATTERN.test(input.commandId)) {
+    throw new PadlockAdminServiceError(
+      "PADLOCK_COMMAND_ID_INVALID",
+      "El comando Padlock no es válido.",
+      400
+    );
+  }
+  const rows = await prisma.$queryRaw<
+    Array<{ creditId: number; bindingId: string; imei: string }>
+  >`
+    SELECT command."creditId", command."bindingId", binding."imei"
+    FROM "PadlockCommand" command
+    JOIN "PadlockDeviceBinding" binding ON binding."id" = command."bindingId"
+    WHERE command."id" = ${input.commandId}::uuid
+      AND binding."status" = 'ACTIVE'
+    LIMIT 1
+  `;
+  const target = rows[0];
+  if (!target) {
+    throw new PadlockAdminServiceError(
+      "PADLOCK_RECONCILIATION_TARGET_NOT_FOUND",
+      "El comando o su vinculación activa no existen.",
+      404
+    );
+  }
+
+  const config = resolvePadlockConfig(process.env, input.correlationId);
+  if (!isPadlockSandboxCreditAllowed(config, String(target.creditId))) {
+    throw new PadlockAdminServiceError(
+      "PADLOCK_SANDBOX_CREDIT_NOT_ALLOWED",
+      "El crédito no está autorizado para pruebas Padlock sandbox.",
+      403
+    );
+  }
+  assertPadlockSandboxDeviceAllowed(
+    config,
+    target.imei,
+    input.correlationId
+  );
+
+  return requeuePadlockCommandReconciliationWith({
+    commandId: input.commandId,
+    actorUserId: input.actorUserId,
+    reason: input.reason,
+    correlationId: input.correlationId,
+  });
 }
 
 export function publicPadlockAdminError(error: unknown) {

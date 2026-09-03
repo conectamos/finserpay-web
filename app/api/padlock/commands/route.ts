@@ -9,6 +9,7 @@ import { consumePadlockAdminRateLimit } from "@/lib/padlock/admin-rate-limit";
 import {
   publicPadlockAdminError,
   queueManualPadlockCommand,
+  requeueReviewedPadlockCommand,
 } from "@/lib/padlock/admin-service";
 
 export const runtime = "nodejs";
@@ -42,22 +43,11 @@ export async function POST(request: Request) {
 
   const parsed = await readPadlockAdminJson(request);
   if (!parsed.ok) return parsed.response;
-  const bindingId = String(parsed.body.bindingId || "").trim();
-  const action = parsed.body.action;
+  const operation = String(parsed.body.operation || "COMMAND")
+    .trim()
+    .toUpperCase();
   const reason = String(parsed.body.reason || "").trim();
 
-  if (!UUID_PATTERN.test(bindingId)) {
-    return padlockAdminJson(
-      { ok: false, error: "El dispositivo vinculado no es válido." },
-      400
-    );
-  }
-  if (action !== "LOCK" && action !== "UNLOCK") {
-    return padlockAdminJson(
-      { ok: false, error: "La acción manual no es válida." },
-      400
-    );
-  }
   if (reason.length < 10 || reason.length > 500) {
     return padlockAdminJson(
       { ok: false, error: "El motivo debe tener entre 10 y 500 caracteres." },
@@ -66,6 +56,53 @@ export async function POST(request: Request) {
   }
 
   try {
+    if (operation === "RECONCILE") {
+      const commandId = String(parsed.body.commandId || "").trim();
+      if (!UUID_PATTERN.test(commandId)) {
+        return padlockAdminJson(
+          { ok: false, error: "El comando por conciliar no es válido." },
+          400
+        );
+      }
+      const command = await requeueReviewedPadlockCommand({
+        commandId,
+        reason,
+        actorUserId: access.user.id,
+        correlationId,
+      });
+      return padlockAdminJson(
+        {
+          ok: true,
+          message:
+            "Conciliación GET reanudada. El worker no repetirá el comando remoto.",
+          command,
+          correlationId,
+        },
+        200,
+        { ...rateLimit.headers, "X-Correlation-Id": correlationId }
+      );
+    }
+    if (operation !== "COMMAND") {
+      return padlockAdminJson(
+        { ok: false, error: "La operación administrativa no es válida." },
+        400
+      );
+    }
+
+    const bindingId = String(parsed.body.bindingId || "").trim();
+    const action = parsed.body.action;
+    if (!UUID_PATTERN.test(bindingId)) {
+      return padlockAdminJson(
+        { ok: false, error: "El dispositivo vinculado no es válido." },
+        400
+      );
+    }
+    if (action !== "LOCK" && action !== "UNLOCK") {
+      return padlockAdminJson(
+        { ok: false, error: "La acción manual no es válida." },
+        400
+      );
+    }
     const command = await queueManualPadlockCommand({
       bindingId,
       action,

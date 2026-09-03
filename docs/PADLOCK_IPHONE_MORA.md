@@ -120,8 +120,9 @@ y no se considera un ambiente de Padlock.
 5. **Conciliación:** ante timeout o estado transitorio consulta primero el estado
    remoto y nunca repite una orden cuyo resultado es incierto. Ver todavía el
    estado opuesto no prueba que el comando anterior haya sido descartado: la
-   barrera se conserva hasta observar el estado objetivo o enviar el caso a
-   revisión manual.
+   barrera se conserva hasta observar el estado objetivo. Si se agotan las
+   consultas, el caso pasa a revisión sin liberar esa barrera; un administrador
+   puede reanudar exclusivamente los GET con un motivo auditado.
 6. **Auditoría:** conserva transiciones, correlación, actor, motivo y errores
    sanitizados. No conserva JWT, contraseña, payload HTTP crudo ni información
    personal innecesaria.
@@ -139,6 +140,12 @@ hasta observar el estado final. Un timeout en el cual nunca se observó que
 Padlock aceptara la transición sí conserva un límite de conciliación y pasa a
 `REVIEW_REQUIRED`, sin reenviar el POST. Los desbloqueos tienen prioridad
 absoluta sobre los bloqueos al tomar trabajo pendiente.
+
+Desde la consola, un administrador central puede seleccionar uno de esos
+intentos ambiguos, registrar el motivo de su revisión y reanudar otra ventana de
+consultas. La acción conserva el intento remoto abierto y no modifica sus marcas
+de inicio o terminación, por lo que el worker queda técnicamente obligado a usar
+solo GET y no puede repetir el POST.
 
 Si se confirma un pago mientras un `LOCK` aceptado espera que el iPhone vuelva
 a tener internet, el `UNLOCK` compensatorio queda en cola detrás de esa orden.
@@ -175,13 +182,14 @@ amplía ni se recupera la ventana sin una decisión operativa explícita.
 
 ## Estados visibles
 
-- `PENDING`: orden creada, aún no tomada por el worker.
+- `PENDING`: orden creada o conciliación/reintento en espera.
 - `PROCESSING`: llamada o conciliación en curso.
 - `LOCKED`: bloqueo confirmado por consulta a Padlock.
 - `UNLOCKED`: desbloqueo confirmado por consulta a Padlock.
-- `ERROR`: fallo reintentable o intento agotado, según el detalle.
+- `ERROR`: fallo terminal o no reintentable.
 - `REVIEW_REQUIRED`: resultado ambiguo, dispositivo no enrolado, identidad no
-  exacta u otra condición que exige intervención humana.
+  exacta u otra condición que exige intervención humana. Cuando conserva un
+  intento remoto abierto, la consola permite reanudar solo su conciliación GET.
 
 Las órdenes obsoletas también pueden quedar `CANCELLED` o `SUPERSEDED`; esos son
 estados de auditoría y no afirman el estado físico del iPhone.

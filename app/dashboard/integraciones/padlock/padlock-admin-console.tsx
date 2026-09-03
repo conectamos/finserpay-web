@@ -90,6 +90,7 @@ type PadlockCommand = {
   reason: string | null;
   requestedBy: string | null;
   attempts: number;
+  canReconcile: boolean;
   errorCode: string | null;
   providerState: PadlockProviderState | null;
   createdAt: string;
@@ -134,6 +135,11 @@ type OverviewPayload = {
 type PendingManualCommand = {
   binding: PadlockBinding;
   action: "LOCK" | "UNLOCK";
+  reason: string;
+};
+
+type PendingReconciliation = {
+  command: PadlockCommand;
   reason: string;
 };
 
@@ -268,18 +274,33 @@ export default function PadlockAdminConsole() {
   const [manualReason, setManualReason] = useState("");
   const [pendingManual, setPendingManual] =
     useState<PendingManualCommand | null>(null);
+  const [selectedReconciliationId, setSelectedReconciliationId] = useState("");
+  const [reconciliationReason, setReconciliationReason] = useState("");
+  const [pendingReconciliation, setPendingReconciliation] =
+    useState<PendingReconciliation | null>(null);
 
   const integration = payload.integration;
   const counters = payload.counters ?? EMPTY_COUNTERS;
   const allies = payload.allies ?? [];
   const policies = payload.policies ?? [];
   const bindings = useMemo(() => payload.bindings ?? [], [payload.bindings]);
-  const commands = payload.commands ?? [];
+  const commands = useMemo(() => payload.commands ?? [], [payload.commands]);
+  const reconcilableCommands = useMemo(
+    () => commands.filter((command) => command.canReconcile),
+    [commands]
+  );
   const bindingList = payload.lists?.bindings ?? EMPTY_LIST_WINDOW;
   const commandList = payload.lists?.commands ?? EMPTY_LIST_WINDOW;
   const selectedBinding = useMemo(
     () => bindings.find((item) => item.id === selectedBindingId) ?? null,
     [bindings, selectedBindingId]
+  );
+  const selectedReconciliation = useMemo(
+    () =>
+      reconcilableCommands.find(
+        (command) => command.id === selectedReconciliationId
+      ) ?? null,
+    [reconcilableCommands, selectedReconciliationId]
   );
 
   const loadOverview = useCallback(async () => {
@@ -316,6 +337,16 @@ export default function PadlockAdminConsole() {
       setSelectedBindingId(bindings[0].id);
     }
   }, [bindings, selectedBindingId]);
+
+  useEffect(() => {
+    if (
+      !reconcilableCommands.some(
+        (command) => command.id === selectedReconciliationId
+      )
+    ) {
+      setSelectedReconciliationId(reconcilableCommands[0]?.id || "");
+    }
+  }, [reconcilableCommands, selectedReconciliationId]);
 
   const mutate = useCallback(
     async (path: string, method: "POST" | "PUT", body: Record<string, unknown>) => {
@@ -479,6 +510,37 @@ export default function PadlockAdminConsole() {
     if (saved) {
       setManualReason("");
       setPendingManual(null);
+    }
+  };
+
+  const requestReconciliationConfirmation = (
+    event: React.FormEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+    if (!selectedReconciliation) {
+      setError("Seleccione un comando que requiera conciliación.");
+      return;
+    }
+    if (reconciliationReason.trim().length < 10) {
+      setError("El motivo de conciliación debe tener al menos 10 caracteres.");
+      return;
+    }
+    setPendingReconciliation({
+      command: selectedReconciliation,
+      reason: reconciliationReason.trim(),
+    });
+  };
+
+  const confirmReconciliation = async () => {
+    if (!pendingReconciliation) return;
+    const saved = await mutate("/api/padlock/commands", "POST", {
+      operation: "RECONCILE",
+      commandId: pendingReconciliation.command.id,
+      reason: pendingReconciliation.reason,
+    });
+    if (saved) {
+      setReconciliationReason("");
+      setPendingReconciliation(null);
     }
   };
 
@@ -933,6 +995,77 @@ export default function PadlockAdminConsole() {
         </Card>
       </section>
 
+      {reconcilableCommands.length ? (
+        <Card className="border-[var(--fp-amber)] p-5 sm:p-6">
+          <div className="flex items-start gap-3">
+            <RefreshCw
+              className="mt-0.5 h-6 w-6 shrink-0 text-[var(--fp-graphite)]"
+              aria-hidden="true"
+            />
+            <div>
+              <h2 className="text-lg font-black">Conciliación segura</h2>
+              <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
+                Reactiva únicamente consultas de estado para un intento remoto
+                incierto. No vuelve a enviar el bloqueo ni el desbloqueo.
+              </p>
+            </div>
+          </div>
+          <form
+            className="mt-5 grid gap-4 lg:grid-cols-2"
+            onSubmit={requestReconciliationConfirmation}
+          >
+            <label className="grid gap-2 text-sm font-bold">
+              Comando en revisión
+              <Select
+                value={selectedReconciliationId}
+                onChange={(event) =>
+                  setSelectedReconciliationId(event.target.value)
+                }
+                disabled={busy}
+                required
+              >
+                {reconcilableCommands.map((command) => (
+                  <option key={command.id} value={command.id}>
+                    {command.folio} · {command.imeiMasked} · {command.action}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <label className="grid gap-2 text-sm font-bold">
+              Motivo obligatorio
+              <textarea
+                className="fp-ui-input min-h-24 resize-y py-3"
+                value={reconciliationReason}
+                onChange={(event) => setReconciliationReason(event.target.value)}
+                maxLength={500}
+                placeholder="Describa la validación realizada antes de reanudar consultas"
+                disabled={busy}
+                required
+              />
+            </label>
+            <div className="lg:col-span-2">
+              <Button
+                type="submit"
+                variant="secondary"
+                disabled={
+                  busy ||
+                  !selectedReconciliation ||
+                  !integration?.providerCallsAllowed
+                }
+              >
+                Revisar conciliación
+              </Button>
+            </div>
+            {!integration?.providerCallsAllowed ? (
+              <p className="text-sm leading-6 text-[var(--fp-muted)] lg:col-span-2">
+                La conciliación permanece deshabilitada mientras el interruptor
+                general o la configuración impidan consultar Padlock.
+              </p>
+            ) : null}
+          </form>
+        </Card>
+      ) : null}
+
       <Card className="p-5 sm:p-6">
         <h2 className="text-lg font-black">Dispositivos vinculados</h2>
         <p className="mt-1 text-sm text-[var(--fp-muted)]">
@@ -1073,6 +1206,11 @@ export default function PadlockAdminConsole() {
                             Proveedor: {providerStateLabel(command.providerState)}
                           </small>
                         ) : null}
+                        {command.canReconcile ? (
+                          <small className="mt-1 block text-[var(--fp-muted)]">
+                            Conciliación GET disponible
+                          </small>
+                        ) : null}
                       </td>
                       <td>{command.attempts}</td>
                       <td>
@@ -1157,6 +1295,22 @@ export default function PadlockAdminConsole() {
           if (!busy) setPendingManual(null);
         }}
         onConfirm={() => void confirmManualCommand()}
+      />
+
+      <ConfirmDialog
+        open={Boolean(pendingReconciliation)}
+        title="Confirmar conciliación solo por consulta"
+        description={
+          pendingReconciliation
+            ? `Reanudar consultas para el comando ${pendingReconciliation.command.action} de ${pendingReconciliation.command.imeiMasked}, crédito ${pendingReconciliation.command.folio}. No se repetirá el POST remoto y el motivo quedará auditado.`
+            : ""
+        }
+        confirmLabel="Reanudar consultas"
+        busy={busy}
+        onCancel={() => {
+          if (!busy) setPendingReconciliation(null);
+        }}
+        onConfirm={() => void confirmReconciliation()}
       />
     </div>
   );

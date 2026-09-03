@@ -77,7 +77,65 @@ test("la consola confirma políticas y vinculaciones con un resumen seguro antes
   assert.match(ui, /Padlock asumirá la gestión remota/);
   assert.match(ui, /pendingBinding\.imei\.slice\(-4\)/);
   assert.doesNotMatch(ui, /\$\{pendingBinding\.imei\}(?!\.slice)/);
-  assert.equal((ui.match(/<ConfirmDialog/g) || []).length, 3);
+  assert.equal((ui.match(/<ConfirmDialog/g) || []).length, 4);
+});
+
+test("la conciliación manual exige motivo y reactiva solo GET sin replay", async () => {
+  const [ui, route, service, storage] = await Promise.all([
+    source("app/dashboard/integraciones/padlock/padlock-admin-console.tsx"),
+    source("app/api/padlock/commands/route.ts"),
+    source("lib/padlock/admin-service.ts"),
+    source("lib/padlock/storage.ts"),
+  ]);
+
+  assert.match(ui, /command\.canReconcile/);
+  assert.match(ui, /reconciliationReason\.trim\(\)\.length < 10/);
+  assert.match(ui, /operation: "RECONCILE"/);
+  assert.match(ui, /No vuelve a enviar el bloqueo ni el desbloqueo/);
+  assert.match(route, /operation === "RECONCILE"/);
+  assert.match(route, /requeueReviewedPadlockCommand/);
+  assert.match(service, /requeuePadlockCommandReconciliationWith/);
+  assert.match(service, /prioritizeUnresolvedProviderReviews:\s*true/);
+  assert.match(
+    service,
+    /isPadlockSandboxCreditAllowed[\s\S]*assertPadlockSandboxDeviceAllowed/
+  );
+
+  const start = storage.indexOf(
+    "export async function requeuePadlockCommandReconciliation"
+  );
+  assert.match(storage, /CASE\s+WHEN \$3::boolean/);
+  assert.match(storage, /command\."status" = 'REVIEW_REQUIRED'/);
+  const end = storage.indexOf("export type ClaimedPadlockCommand", start);
+  const reconciliation = storage.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(reconciliation, /command\.status !== "REVIEW_REQUIRED"/);
+  assert.match(reconciliation, /hasUnresolvedPadlockProviderAttempt\(command\)/);
+  assert.match(
+    reconciliation,
+    /"status" = 'RETRY', "attemptCount" = 0[\s\S]*MANUAL_GET_ONLY_RECONCILIATION_REQUESTED/
+  );
+  assert.match(reconciliation, /COMMAND_RECONCILIATION_REQUEUED/);
+  assert.match(reconciliation, /operatorReason: reason/);
+  assert.doesNotMatch(
+    reconciliation,
+    /"lastProviderAttempt(?:Started|Completed)At"\s*=/
+  );
+  assert.match(
+    storage,
+    /input\.startProviderAttempt === true && reconciliationOnly[\s\S]*PROVIDER_POST_REPLAY_BLOCKED/
+  );
+  const replayGuard = storage.indexOf(
+    "input.startProviderAttempt === true && reconciliationOnly"
+  );
+  const providerAttemptIncrement = storage.indexOf(
+    '"providerAttemptCount" = "providerAttemptCount" + 1',
+    replayGuard
+  );
+  assert.ok(
+    replayGuard >= 0 && providerAttemptIncrement > replayGuard,
+    "el guard anti-replay debe ejecutarse antes de registrar un nuevo POST"
+  );
 });
 
 test("el servicio valida crédito iPhone, allowlist y coincidencia exacta antes del binding", async () => {
