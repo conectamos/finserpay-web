@@ -9,6 +9,7 @@ import {
   CalendarDays,
   CircleDollarSign,
   CreditCard,
+  FileSearch,
   FileSpreadsheet,
   Filter,
   Monitor,
@@ -43,7 +44,13 @@ type SearchParams = Promise<{
 
 type PeriodKey = "month" | "previous-month" | "quarter" | "year" | "all";
 type ReportPermission = "all" | "admin" | "central";
-type ReportKind = "credits" | "payments" | "portfolio" | "stores" | "sellers";
+type ReportKind =
+  | "credits"
+  | "payments"
+  | "portfolio"
+  | "stores"
+  | "sellers"
+  | "datacredito-sales";
 
 type ReportDefinition = {
   category: string;
@@ -86,6 +93,17 @@ const REPORTS: ReportDefinition[] = [
     kind: "portfolio",
     permission: "central",
     title: "Cartera",
+  },
+  {
+    category: "Riesgo",
+    description:
+      "Compara consultas nuevas y reutilizadas de DataCrédito con las ventas finalizadas por aliado.",
+    formats: ["Vista web"],
+    href: "/dashboard/reportes/datacredito-ventas",
+    icon: FileSearch,
+    kind: "datacredito-sales",
+    permission: "central",
+    title: "DataCrédito vs. ventas",
   },
   {
     category: "Sedes",
@@ -214,6 +232,13 @@ function ymd(value: Date | null) {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function normalizeReportSearch(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es-CO");
+}
+
 function money(value: number) {
   return moneyFormatter.format(Math.round(Number(value || 0)));
 }
@@ -259,6 +284,25 @@ function ReportPreview({
   kind: ReportKind;
   riskDistribution: Array<{ label: string; value: number }>;
 }) {
+  if (kind === "datacredito-sales") {
+    return (
+      <div className="space-y-2.5 bg-[#f8fafb] px-3 py-3" aria-hidden="true">
+        {[
+          { label: "Consultas", width: 78, color: "bg-[#344054]" },
+          { label: "Reutilizadas", width: 42, color: "bg-[#98a2b3]" },
+          { label: "Ventas", width: 64, color: "bg-[#8caf27]" },
+        ].map((item) => (
+          <span key={item.label} className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-2 text-[10px] font-bold text-[#667085]">
+            <span>{item.label}</span>
+            <span className="h-2 overflow-hidden rounded-full bg-[#e4e7ec]">
+              <span className={`block h-full rounded-full ${item.color}`} style={{ width: `${item.width}%` }} />
+            </span>
+          </span>
+        ))}
+      </div>
+    );
+  }
+
   if (kind === "portfolio") {
     return (
       <div className="space-y-2 bg-[#f8fafb] px-3 py-3" aria-label="Distribucion real de la cartera">
@@ -448,13 +492,12 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
     { label: "30+ dias", value: ratio(riskBalances.advanced, portfolioBalance) },
   ];
   const availableReports = REPORTS.filter((report) => canOpenReport(report, admin, adminCentral));
-  const normalizedQuery = query.toLocaleLowerCase("es-CO");
+  const normalizedQuery = normalizeReportSearch(query);
   const visibleReports = normalizedQuery
     ? availableReports.filter((report) =>
-        [report.title, report.description, report.category]
-          .join(" ")
-          .toLocaleLowerCase("es-CO")
-          .includes(normalizedQuery)
+        normalizeReportSearch(
+          [report.title, report.description, report.category].join(" ")
+        ).includes(normalizedQuery)
       )
     : availableReports;
   const reportParams = new URLSearchParams();
