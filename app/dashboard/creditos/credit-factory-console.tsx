@@ -813,6 +813,7 @@ type FirmaSeguroResponse = {
     draftId?: number | null;
     draftFolio?: string | null;
     processUuid?: string | null;
+    draftImei?: string | null;
     status?: string | null;
     hasSignedDocument?: boolean;
     signedDocumentFileName?: string | null;
@@ -8724,8 +8725,11 @@ export default function CreditFactoryConsole({
 
   const correctFirmaSeguroImei = async () => {
     const correctedImei = firmaSeguroImeiCorrectionValue.trim();
-    const expectedCurrentImei = imeiDigits;
+    const expectedCurrentImei = String(
+      firmaSeguroDraftProcess?.draftImei || imeiDigits
+    ).replace(/\D/g, "");
     const hadApprovedEnrollment = Boolean(iphoneEnrollmentReview);
+    const previousProcessWasSigned = firmaSeguroProcessSigned;
     const expectedProcessUuid = String(
       firmaSeguroDraftProcess?.processUuid || ""
     ).trim();
@@ -8733,7 +8737,7 @@ export default function CreditFactoryConsole({
 
     if (!canSeeInternalPricing || !draftId) {
       setNotice({
-        text: "Solo el administrador central puede corregir el IMEI de un expediente firmado.",
+        text: "Solo el administrador central puede corregir el IMEI de un proceso de FirmaSeguro.",
         tone: "red",
       });
       return;
@@ -8745,7 +8749,7 @@ export default function CreditFactoryConsole({
       });
       return;
     }
-    if (correctedImei === imeiDigits) {
+    if (correctedImei === expectedCurrentImei) {
       setNotice({
         text: "Ingresa un IMEI diferente al que ya tiene la solicitud.",
         tone: "amber",
@@ -8759,9 +8763,12 @@ export default function CreditFactoryConsole({
       });
       return;
     }
-    if (!firmaSeguroProcessSigned || !expectedProcessUuid) {
+    if (
+      (!firmaSeguroProcessSigned && !firmaSeguroProcessFailed) ||
+      !expectedProcessUuid
+    ) {
       setNotice({
-        text: "Actualiza FirmaSeguro: solo se puede corregir un expediente firmado y vigente.",
+        text: "Actualiza FirmaSeguro: solo se puede reemplazar un proceso firmado o fallido.",
         tone: "amber",
       });
       return;
@@ -8770,9 +8777,11 @@ export default function CreditFactoryConsole({
     const correctionConfirmed = window.confirm(
       [
         "Confirma la correccion del IMEI:",
-        `IMEI firmado actual: ${expectedCurrentImei}`,
+        `${previousProcessWasSigned ? "IMEI firmado actual" : "IMEI del intento fallido"}: ${expectedCurrentImei}`,
         `IMEI nuevo: ${correctedImei}`,
-        "El contrato anterior quedara como historico y el cliente debera firmar uno nuevo.",
+        previousProcessWasSigned
+          ? "El contrato firmado quedara como historico y el cliente debera firmar uno nuevo."
+          : "El intento fallido quedara como historico y deberas enviar un contrato nuevo.",
         ...(hadApprovedEnrollment
           ? [
               "El enrolamiento aprobado quedara reemplazado y se conservara como historico.",
@@ -14127,7 +14136,8 @@ export default function CreditFactoryConsole({
                           inputMode="numeric"
                           maxLength={15}
                           placeholder="15 numeros del IMEI"
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          disabled={firmaSeguroProcessExists}
+                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                         />
                         <p
                           className={[
@@ -14137,7 +14147,11 @@ export default function CreditFactoryConsole({
                               : "text-slate-500",
                           ].join(" ")}
                         >
-                          {imeiDigits.length > 0
+                          {firmaSeguroProcessExists
+                            ? canSeeInternalPricing
+                              ? "El IMEI está protegido por el proceso de firma. Usa la corrección controlada para cambiarlo."
+                              : "El IMEI está protegido porque el contrato ya fue enviado a firma."
+                            : imeiDigits.length > 0
                             ? `${imeiDigits.length}/15 digitos`
                             : "Debe tener exactamente 15 numeros."}
                         </p>
@@ -15438,6 +15452,90 @@ export default function CreditFactoryConsole({
                           Esperando la confirmación de firma del cliente.
                         </p>
                       ) : null}
+                    </section>
+                  ) : null}
+
+                  {canSeeInternalPricing &&
+                  iphoneFactory &&
+                  draftId &&
+                  firmaSeguroProcessFailed ? (
+                    <section
+                      className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-5 py-5"
+                      data-testid="firmaseguro-failed-imei-correction"
+                    >
+                      <div className="flex items-start gap-3">
+                        <span
+                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-amber-200 bg-white text-amber-700"
+                          aria-hidden="true"
+                        >
+                          <History className="h-5 w-5" strokeWidth={1.8} />
+                        </span>
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-800">
+                            Control exclusivo FINSER PAY
+                          </p>
+                          <h4 className="mt-1 text-lg font-black text-slate-950">
+                            Corregir IMEI y preparar contrato nuevo
+                          </h4>
+                          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">
+                            FirmaSeguro no completó el intento actual. Si el IMEI fue
+                            digitado mal, esta acción conserva el proceso fallido como
+                            histórico, corrige la solicitud y permite enviar un contrato
+                            nuevo. Los procesos que aún estén activos no se pueden reemplazar.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(220px,0.65fr)_minmax(320px,1.35fr)_auto] lg:items-end">
+                        <div>
+                          <label className="mb-2 block text-sm font-semibold text-slate-800">
+                            IMEI correcto
+                          </label>
+                          <input
+                            value={firmaSeguroImeiCorrectionValue}
+                            onChange={(event) =>
+                              setFirmaSeguroImeiCorrectionValue(event.target.value)
+                            }
+                            inputMode="numeric"
+                            placeholder="15 números"
+                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-sm font-semibold text-slate-800">
+                            Motivo de la corrección
+                          </label>
+                          <input
+                            value={firmaSeguroImeiCorrectionReason}
+                            onChange={(event) =>
+                              setFirmaSeguroImeiCorrectionReason(event.target.value.slice(0, 240))
+                            }
+                            minLength={5}
+                            maxLength={240}
+                            placeholder="Ej. IMEI digitado incorrectamente antes del envío"
+                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void correctFirmaSeguroImei()}
+                          disabled={
+                            firmaSeguroImeiCorrecting ||
+                            firmaSeguroSubmitting ||
+                            firmaSeguroRefreshing
+                          }
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {firmaSeguroImeiCorrecting ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" strokeWidth={2} />
+                          ) : (
+                            <RotateCcw className="h-4 w-4" strokeWidth={2} />
+                          )}
+                          {firmaSeguroImeiCorrecting
+                            ? "Corrigiendo..."
+                            : "Corregir y preparar contrato"}
+                        </button>
+                      </div>
                     </section>
                   ) : null}
 
@@ -16898,7 +16996,8 @@ export default function CreditFactoryConsole({
                   inputMode="numeric"
                   maxLength={15}
                   placeholder="15 numeros del IMEI"
-                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                  disabled={firmaSeguroProcessExists}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                 />
                 <p
                   className={[
@@ -16906,7 +17005,11 @@ export default function CreditFactoryConsole({
                     imeiDigits.length > 0 && !imeiValido ? "text-red-600" : "text-slate-500",
                   ].join(" ")}
                 >
-                  {imeiDigits.length > 0
+                  {firmaSeguroProcessExists
+                    ? canSeeInternalPricing
+                      ? "El IMEI está protegido por el proceso de firma. Usa la corrección controlada para cambiarlo."
+                      : "El IMEI está protegido porque el contrato ya fue enviado a firma."
+                    : imeiDigits.length > 0
                     ? `${imeiDigits.length}/15 digitos`
                     : "Debe tener exactamente 15 numeros."}
                 </p>

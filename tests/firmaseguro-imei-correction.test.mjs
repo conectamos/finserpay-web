@@ -95,7 +95,7 @@ test("el control optimista liga la correccion al IMEI y firma observados", () =>
     "previousImei !== expectedCurrentImei"
   );
   const processLookup = correctionSource.indexOf(
-    'SELECT "processUuid", "draftPayload", "signedDocumentBase64", "completedAt"'
+    'SELECT "processUuid", "status", "draftPayload", "signedDocumentBase64", "completedAt"'
   );
   const processLock = correctionSource.indexOf("FOR UPDATE", processLookup);
   const processComparison = correctionSource.indexOf(
@@ -113,7 +113,13 @@ test("el control optimista liga la correccion al IMEI y firma observados", () =>
     correctionSource,
     /activeProcessImei !== expectedCurrentImei/
   );
-  assert.match(correctionSource, /FIRMASEGURO_FIRMADO_REQUERIDO/);
+  assert.match(correctionSource, /FIRMASEGURO_PROCESO_REQUERIDO/);
+  assert.match(correctionSource, /FIRMASEGURO_PROCESO_EN_CURSO/);
+  assert.match(
+    correctionSource,
+    /activeProcessSigned[\s\S]*isFirmaSeguroFailedStatus\(activeProcess\.status\)[\s\S]*!activeProcessSigned && !activeProcessFailed/
+  );
+  assert.doesNotMatch(correctionSource, /FIRMASEGURO_FIRMADO_REQUERIDO/);
   assert.match(correctionSource, /CORRECCION_IMEI_CONFLICTO/);
   assert.match(
     correctionSource,

@@ -83,7 +83,7 @@ test("el Paso 3 usa el sistema visual sobrio y responde en pantallas pequeñas",
   const redesign = sourceBetween(
     css,
     "/* Credit factory: Veriff and FirmaSeguro step */",
-    "@media (prefers-reduced-motion: reduce) {\n  .fp-credit-factory .fp-step3-documents-toggle"
+    "@media (prefers-reduced-motion: reduce) {"
   );
 
   assert.match(redesign, /\.fp-step3-identity-pending/);

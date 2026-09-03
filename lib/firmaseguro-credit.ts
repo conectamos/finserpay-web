@@ -106,10 +106,22 @@ type PersonPayload = {
   phone: string;
 };
 
-export function serializeFirmaSeguroProcess(row: FirmaSeguroProcessRow | null) {
+export function serializeFirmaSeguroProcess(
+  row: FirmaSeguroProcessRow | null,
+  options: { includeDraftImei?: boolean } = {}
+) {
   if (!row) {
     return null;
   }
+
+  const draftPayload =
+    row.draftPayload &&
+    typeof row.draftPayload === "object" &&
+    !Array.isArray(row.draftPayload)
+      ? (row.draftPayload as Record<string, unknown>)
+      : {};
+  const draftImei = String(draftPayload.imei || draftPayload.deviceUid || "")
+    .replace(/\D/g, "");
 
   return {
     id: row.id,
@@ -117,6 +129,9 @@ export function serializeFirmaSeguroProcess(row: FirmaSeguroProcessRow | null) {
     draftId: row.draftId,
     draftFolio: row.draftFolio,
     processUuid: row.processUuid,
+    ...(options.includeDraftImei
+      ? { draftImei: /^\d{15}$/.test(draftImei) ? draftImei : null }
+      : {}),
     status: row.status,
     hasSignedDocument: Boolean(row.signedDocumentBase64),
     signedDocumentFileName: row.signedDocumentFileName,

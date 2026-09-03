@@ -240,10 +240,8 @@ function maskImei(value: string) {
     ? value
     : value.slice(0, 3) + "•".repeat(value.length - 7) + value.slice(-4);
 }
-function limitedClientName(value: unknown) {
-  const parts = cleanText(value, 160).split(" ").filter(Boolean);
-  if (!parts.length) return "Cliente";
-  return parts.length === 1 ? parts[0] : parts[0] + " " + parts[1][0] + ".";
+function displayClientName(value: unknown) {
+  return cleanText(value, 160) || "Cliente";
 }
 function equipmentLabel(row: {
   referenciaEquipo: string | null;
@@ -1167,7 +1165,7 @@ export async function findCreditDeviceReplacementEnrollmentCase(input: {
     solicitudId: row.solicitudId,
     solicitudNumero: "SOL-" + String(row.solicitudId).padStart(6, "0"),
     currentStep: 4,
-    clienteNombre: limitedClientName(row.clienteNombre),
+    clienteNombre: displayClientName(row.clienteNombre),
     documentoMasked: maskDocument(document),
     imeiMasked: maskImei(imei),
     equipo: equipmentLabel(row),

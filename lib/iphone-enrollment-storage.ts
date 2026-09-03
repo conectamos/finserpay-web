@@ -709,15 +709,12 @@ function maskImei(value: string) {
     : `${value.slice(0, 3)}${"•".repeat(value.length - 7)}${value.slice(-4)}`;
 }
 
-function limitedClientName(value: string | null) {
-  const parts = String(value || "")
+function displayClientName(value: string | null) {
+  const normalized = String(value || "")
     .replace(/[\u0000-\u001f\u007f]/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")
-    .filter(Boolean);
-  if (!parts.length) return "Cliente";
-  return parts.length === 1 ? parts[0] : `${parts[0]} ${parts[1][0]}.`;
+    .trim();
+  return normalized.slice(0, 160) || "Cliente";
 }
 
 function equipmentLabel(row: EnrollmentCaseRow) {
@@ -1322,7 +1319,7 @@ export async function findIphoneEnrollmentCase(input: {
       solicitudId: row.solicitudId,
       solicitudNumero: `SOL-${String(row.solicitudId).padStart(6, "0")}`,
       currentStep: row.currentStep,
-      clienteNombre: limitedClientName(row.clienteNombre),
+      clienteNombre: displayClientName(row.clienteNombre),
       documentoMasked: maskDocument(input.document),
       imeiMasked: maskImei(input.imei),
       equipo: equipmentLabel(row),

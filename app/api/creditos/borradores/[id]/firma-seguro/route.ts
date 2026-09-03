@@ -282,7 +282,7 @@ async function readAuthorizedDraft(
     return { ok: false as const, status: 404, error: "Borrador no encontrado" };
   }
 
-  return { ok: true as const, row };
+  return { ok: true as const, row, centralAdmin };
 }
 
 async function getDraftDataCreditoOffer(
@@ -806,7 +806,9 @@ export async function GET(
 
     return NextResponse.json({
       ok: true,
-      process: serializeFirmaSeguroProcess(process),
+      process: serializeFirmaSeguroProcess(process, {
+        includeDraftImei: authorized.centralAdmin,
+      }),
     });
   } catch (error) {
     logFirmaSeguroDraftError("GET", draftIdForLog, error);

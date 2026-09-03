@@ -107,6 +107,9 @@ const [
   readProjectFile("Dockerfile"),
   readProjectFile("next.config.ts"),
 ]);
+const replacementStorageSource = await readProjectFile(
+  "lib/credit-device-replacement-storage.ts"
+);
 
 function tamperSignedValue(value) {
   const lastCharacter = value.at(-1);
@@ -341,7 +344,7 @@ test("el token de caso queda ligado al grant y a la sesión exacta", () => {
   });
   const verified = enrollment.verifyIphoneEnrollmentCaseToken(
     token,
-    new Date("2026-08-26T15:05:00.000Z")
+    new Date("2026-08-26T15:59:59.000Z")
   );
 
   assert.equal(verified?.solicitudId, 387);
@@ -381,17 +384,18 @@ test("el token de caso queda ligado al grant y a la sesión exacta", () => {
   assert.equal(
     enrollment.verifyIphoneEnrollmentCaseToken(
       tamperSignedValue(token),
-      new Date("2026-08-26T15:05:00.000Z")
+      new Date("2026-08-26T15:59:59.000Z")
     ),
     null
   );
   assert.equal(
     enrollment.verifyIphoneEnrollmentCaseToken(
       token,
-      new Date("2026-08-26T15:10:00.000Z")
+      new Date("2026-08-26T16:00:00.000Z")
     ),
     null
   );
+  assert.equal(enrollment.IPHONE_ENROLLMENT_CASE_TTL_SECONDS, 60 * 60);
 });
 
 test("el token de caso vincula un reemplazo posventa exacto", () => {
@@ -922,7 +926,14 @@ test("el DTO público está enmascarado y no expone score, fotos ni finanzas", (
     dtoSource,
     /score|puntaje|foto|selfie|monto|cuota|saldo|financi|telefono|correo|direccion|providerPayload/i
   );
-  assert.match(storageSource, /clienteNombre: limitedClientName/);
+  assert.match(storageSource, /clienteNombre: displayClientName/);
+  assert.match(
+    storageSource,
+    /function displayClientName[\s\S]*normalized\.slice\(0, 160\) \|\| "Cliente"/
+  );
+  assert.doesNotMatch(storageSource, /parts\[1\]\[0\]/);
+  assert.match(replacementStorageSource, /clienteNombre: displayClientName/);
+  assert.doesNotMatch(replacementStorageSource, /parts\[1\]\[0\]/);
   assert.match(storageSource, /documentoMasked: maskDocument/);
   assert.match(storageSource, /imeiMasked: maskImei/);
   assert.match(casesRouteSource, /creditDecision: "APROBADA"/);

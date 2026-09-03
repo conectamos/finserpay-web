@@ -595,10 +595,15 @@ test("el autosave preconsulta responde como conflicto esperado y no como error t
     autosave,
     /result\.status === 409 &&[\s\S]*result\.data\?\.code === DRAFT_REQUIRES_DATACREDITO_CODE[\s\S]*setDraftStatus\("idle"\);[\s\S]*setDraftErrorMessage\(""\);[\s\S]*return;/
   );
-  const expectedConflict = sourceBetween(
-    autosave,
-    "if (\n            result.status === 409",
-    "if (!result.ok || !result.data?.item)"
+  const conflictCondition = autosave.indexOf("result.status === 409");
+  const conflictStart = autosave.lastIndexOf("if (", conflictCondition);
+  const conflictEnd = autosave.indexOf(
+    "if (!result.ok || !result.data?.item)",
+    conflictCondition
   );
+  assert.ok(conflictCondition >= 0);
+  assert.ok(conflictStart >= 0);
+  assert.ok(conflictEnd > conflictCondition);
+  const expectedConflict = autosave.slice(conflictStart, conflictEnd);
   assert.doesNotMatch(expectedConflict, /setDraftId\(|setNotice\(|throw new Error/);
 });

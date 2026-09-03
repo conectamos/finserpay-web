@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
+import { isFirmaSeguroFailedStatus } from "@/lib/firmaseguro-status";
 import { ensureIphoneEnrollmentSchema } from "@/lib/iphone-enrollment-storage";
 import {
   ensureFirmaSeguroSchema,
@@ -27,6 +28,7 @@ type DraftCorrectionRow = {
 
 type ActiveFirmaSeguroCorrectionRow = {
   processUuid: string;
+  status: string;
   draftPayload: unknown;
   signedDocumentBase64: string | null;
   completedAt: Date | null;
@@ -252,7 +254,7 @@ export async function correctFirmaSeguroDraftImei(input: {
   if (!expectedProcessUuid) {
     throw new FirmaSeguroImeiCorrectionError(
       "FIRMASEGURO_PROCESO_ESPERADO_REQUERIDO",
-      "Recarga el proceso firmado antes de corregir el IMEI.",
+      "Recarga el proceso de FirmaSeguro antes de corregir el IMEI.",
       400
     );
   }
@@ -337,7 +339,7 @@ export async function correctFirmaSeguroDraftImei(input: {
       ActiveFirmaSeguroCorrectionRow[]
     >(
       `
-        SELECT "processUuid", "draftPayload", "signedDocumentBase64", "completedAt"
+        SELECT "processUuid", "status", "draftPayload", "signedDocumentBase64", "completedAt"
         FROM "FirmaSeguroProcess"
         WHERE "draftId" = $1
           AND "supersededAt" IS NULL
@@ -353,14 +355,23 @@ export async function correctFirmaSeguroDraftImei(input: {
     const activeProcessImei = normalizeImei(
       activeProcessPayload.imei || activeProcessPayload.deviceUid
     );
-    if (
-      !activeProcess ||
-      (!activeProcess.completedAt &&
-        !String(activeProcess.signedDocumentBase64 || "").trim())
-    ) {
+    if (!activeProcess) {
       throw new FirmaSeguroImeiCorrectionError(
-        "FIRMASEGURO_FIRMADO_REQUERIDO",
-        "La solicitud no tiene un proceso firmado vigente para corregir.",
+        "FIRMASEGURO_PROCESO_REQUERIDO",
+        "La solicitud no tiene un proceso vigente de FirmaSeguro para reemplazar.",
+        409
+      );
+    }
+    const activeProcessSigned = Boolean(
+      activeProcess.completedAt ||
+        String(activeProcess.signedDocumentBase64 || "").trim()
+    );
+    const activeProcessFailed =
+      !activeProcessSigned && isFirmaSeguroFailedStatus(activeProcess.status);
+    if (!activeProcessSigned && !activeProcessFailed) {
+      throw new FirmaSeguroImeiCorrectionError(
+        "FIRMASEGURO_PROCESO_EN_CURSO",
+        "El proceso de FirmaSeguro todavía está activo. Actualiza su estado antes de reemplazarlo.",
         409
       );
     }
@@ -370,7 +381,7 @@ export async function correctFirmaSeguroDraftImei(input: {
     ) {
       throw new FirmaSeguroImeiCorrectionError(
         "CORRECCION_IMEI_CONFLICTO",
-        "El proceso firmado cambio desde que lo consultaste. Recarga el caso.",
+        "El proceso de FirmaSeguro cambió desde que lo consultaste. Recarga el caso.",
         409
       );
     }
