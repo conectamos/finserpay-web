@@ -56,8 +56,10 @@ export function isPadlockProviderAttemptOpen(
 }
 
 export function shouldKeepPadlockProviderAttemptPending(input: {
+  action: PadlockAction;
   providerAttemptCount: number;
   providerTransitionObservedAt?: Date | string | null;
+  providerState?: string | null;
   outcomeKind:
     | "CONFIRMED"
     | "PENDING"
@@ -66,9 +68,12 @@ export function shouldKeepPadlockProviderAttemptPending(input: {
     | "REVIEW"
     | "NOT_ENROLLED";
 }) {
+  const expectedTransitionState =
+    input.action === "LOCK" ? "LOCKING" : "UNLOCKING";
   const transitionWasObserved =
     Boolean(input.providerTransitionObservedAt) ||
     (input.outcomeKind === "PENDING" &&
+      input.providerState === expectedTransitionState &&
       Number(input.providerAttemptCount || 0) > 0);
   return (
     transitionWasObserved &&

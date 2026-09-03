@@ -100,16 +100,20 @@ test("el cutoff de lock es solo el minuto 20:00 de los dias 5 y 20 en Bogota", (
 test("una transicion Padlock observada espera al equipo sin agotar la conciliacion", () => {
   assert.equal(
     shouldKeepPadlockProviderAttemptPending({
+      action: "LOCK",
       providerAttemptCount: 1,
       providerTransitionObservedAt: null,
+      providerState: "LOCKING",
       outcomeKind: "PENDING",
     }),
     true
   );
   assert.equal(
     shouldKeepPadlockProviderAttemptPending({
+      action: "UNLOCK",
       providerAttemptCount: 1,
       providerTransitionObservedAt: "2026-09-05T01:00:00.000Z",
+      providerState: "LOCKED",
       outcomeKind: "RETRY",
     }),
     true
@@ -119,16 +123,30 @@ test("una transicion Padlock observada espera al equipo sin agotar la conciliaci
 test("un timeout sin transicion observada conserva el limite y requiere revision", () => {
   assert.equal(
     shouldKeepPadlockProviderAttemptPending({
+      action: "LOCK",
       providerAttemptCount: 1,
       providerTransitionObservedAt: null,
+      providerState: "UNLOCKED",
       outcomeKind: "RETRY",
     }),
     false
   );
   assert.equal(
     shouldKeepPadlockProviderAttemptPending({
+      action: "LOCK",
       providerAttemptCount: 0,
       providerTransitionObservedAt: null,
+      providerState: "LOCKING",
+      outcomeKind: "PENDING",
+    }),
+    false
+  );
+  assert.equal(
+    shouldKeepPadlockProviderAttemptPending({
+      action: "LOCK",
+      providerAttemptCount: 1,
+      providerTransitionObservedAt: null,
+      providerState: "UNLOCKING",
       outcomeKind: "PENDING",
     }),
     false
@@ -634,7 +652,11 @@ test("persistencia declara lease SKIP LOCKED, auditoria inmutable y ningun paylo
   );
   assert.match(
     storage,
-    /shouldKeepPadlockProviderAttemptPending\(\{[\s\S]*providerTransitionObservedAt: command\.providerTransitionObservedAt[\s\S]*outcomeKind: outcome\.kind/
+    /shouldKeepPadlockProviderAttemptPending\(\{[\s\S]*action: command\.action[\s\S]*providerTransitionObservedAt: command\.providerTransitionObservedAt[\s\S]*providerState[\s\S]*outcomeKind: outcome\.kind/
+  );
+  assert.match(
+    storage,
+    /const expectedTransitionState =[\s\S]*command\.action === "LOCK" \? "LOCKING" : "UNLOCKING"[\s\S]*providerState === expectedTransitionState/
   );
   assert.match(
     storage,

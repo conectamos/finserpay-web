@@ -2299,11 +2299,14 @@ function padlockRetryAt(now: Date, attemptCount: number) {
 
 function waitsForPadlockDeviceConnectivity(
   command: CommandRow,
-  outcome: PadlockProviderOutcome
+  outcome: PadlockProviderOutcome,
+  providerState: PadlockProviderState | null
 ) {
   return shouldKeepPadlockProviderAttemptPending({
+    action: command.action,
     providerAttemptCount: Number(command.providerAttemptCount || 0),
     providerTransitionObservedAt: command.providerTransitionObservedAt,
+    providerState,
     outcomeKind: outcome.kind,
   });
 }
@@ -2401,10 +2404,14 @@ export async function recordPadlockCommandOutcome(input: {
     const definitiveProviderObservation = validExpectedConfirmation;
     const waitingForDeviceConnectivity = waitsForPadlockDeviceConnectivity(
       command,
-      input.outcome
+      input.outcome,
+      providerState
     );
+    const expectedTransitionState =
+      command.action === "LOCK" ? "LOCKING" : "UNLOCKING";
     const transitionObservedThisOutcome =
       input.outcome.kind === "PENDING" &&
+      providerState === expectedTransitionState &&
       Number(command.providerAttemptCount || 0) > 0;
     const desiredIsStale =
       Number(binding.desiredVersion) !== Number(command.desiredVersion) ||
