@@ -37,6 +37,7 @@ import { hasCreditAmortization } from "@/lib/credit-amortization-storage";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isMassImportedCredit } from "@/lib/credit-import-flags";
+import { hasActivePadlockBindingForCredit } from "@/lib/padlock/equality-exclusion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -400,6 +401,19 @@ export async function POST(
             "Este credito fue importado como historico sin gestion de bloqueo.",
         },
         { status: 400 }
+      );
+    }
+
+    if (
+      DEVICE_CONTROL_COMMANDS.has(command) &&
+      (await hasActivePadlockBindingForCredit(current.id))
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Este iPhone esta vinculado a Padlock. Usa la consola Padlock para consultar, bloquear o desbloquear el dispositivo.",
+        },
+        { status: 409 }
       );
     }
 

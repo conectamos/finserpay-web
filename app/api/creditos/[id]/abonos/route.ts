@@ -41,6 +41,7 @@ import {
   processDeviceUnlockCommand,
 } from "@/lib/device-unlock-queue";
 import { resolveSelectedPaymentAmount } from "@/lib/manual-payment-amount";
+import { hasActivePadlockBindingForCredit } from "@/lib/padlock/equality-exclusion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -413,6 +414,15 @@ async function syncMoraAutomation(credit: LoadedCredit, plan: PaymentPlan) {
       action: "SKIPPED" as const,
       credit,
       message: "Credito importado sin gestion de bloqueo; mora solo informativa.",
+      remote: null as unknown,
+    };
+  }
+
+  if (await hasActivePadlockBindingForCredit(credit.id)) {
+    return {
+      action: "SKIPPED" as const,
+      credit,
+      message: "Credito vinculado a Padlock; Equality no controla este dispositivo.",
       remote: null as unknown,
     };
   }

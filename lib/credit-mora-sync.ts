@@ -18,6 +18,7 @@ import {
 } from "@/lib/credit-factory";
 import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import { isMassImportedCredit } from "@/lib/credit-import-flags";
+import { hasActivePadlockBindingForCredit } from "@/lib/padlock/equality-exclusion";
 import {
   getActiveMoraBlockExemptionDocuments,
   isMoraBlockExempt,
@@ -169,11 +170,33 @@ export type MoraSyncReport = {
 
 export type MoraSyncOptions = {
   dryRun?: boolean;
+  dependencies?: Partial<MoraSyncDependencies>;
   exemptDocuments?: ReadonlySet<string>;
   forceRemoteAudit?: boolean;
   limit?: unknown;
   today?: Date | string | null;
 };
+
+type MoraSyncDependencies = {
+  hasActivePadlockBindingForCredit: typeof hasActivePadlockBindingForCredit;
+  isEqualityConfigured: typeof isEqualityConfigured;
+  lockEqualityDevice: typeof lockEqualityDevice;
+  queryEqualityDevices: typeof queryEqualityDevices;
+  unlockEqualityDevice: typeof unlockEqualityDevice;
+};
+
+function resolveMoraSyncDependencies(
+  overrides?: Partial<MoraSyncDependencies>
+): MoraSyncDependencies {
+  return {
+    hasActivePadlockBindingForCredit,
+    isEqualityConfigured,
+    lockEqualityDevice,
+    queryEqualityDevices,
+    unlockEqualityDevice,
+    ...overrides,
+  };
+}
 
 function dateOnly(value: Date | string | null | undefined) {
   const date = normalizeDateInput(value);
@@ -317,6 +340,7 @@ export async function syncCreditMora(
   credit: MoraSyncCredit,
   options: MoraSyncOptions = {}
 ): Promise<MoraSyncResult> {
+  const dependencies = resolveMoraSyncDependencies(options.dependencies);
   const today = normalizeDateInput(options.today || null);
   const plan = buildCreditPaymentPlan({
     montoCredito: Number(credit.montoCredito || 0),
@@ -356,6 +380,15 @@ export async function syncCreditMora(
       credit,
       "SKIPPED",
       "Credito importado sin gestion de bloqueo; mora solo informativa.",
+      plan
+    );
+  }
+
+  if (await dependencies.hasActivePadlockBindingForCredit(credit.id)) {
+    return buildResult(
+      credit,
+      "SKIPPED",
+      "Credito vinculado a Padlock; se excluye del control remoto Equality.",
       plan
     );
   }
@@ -405,7 +438,7 @@ export async function syncCreditMora(
       );
     }
 
-    if (!isEqualityConfigured()) {
+    if (!dependencies.isEqualityConfigured()) {
       return buildResult(
         credit,
         "FAILED",
@@ -415,8 +448,8 @@ export async function syncCreditMora(
     }
 
     try {
-      const remotePayload = await unlockEqualityDevice(credit.deviceUid);
-      const remoteQuery = await queryEqualityDevices(credit.deviceUid).catch(
+      const remotePayload = await dependencies.unlockEqualityDevice(credit.deviceUid);
+      const remoteQuery = await dependencies.queryEqualityDevices(credit.deviceUid).catch(
         () => null
       );
       const payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
@@ -524,7 +557,7 @@ export async function syncCreditMora(
     );
   }
 
-  if (!isEqualityConfigured()) {
+  if (!dependencies.isEqualityConfigured()) {
     return buildResult(
       credit,
       "SKIPPED",
@@ -535,14 +568,16 @@ export async function syncCreditMora(
 
   try {
     const remotePayload = isInMora
-      ? await lockEqualityDevice(credit.deviceUid, {
+      ? await dependencies.lockEqualityDevice(credit.deviceUid, {
           lockMsgTitle: "Pago vencido",
           lockMsgContent: buildMoraLockMessage(credit.clienteDocumento),
         })
       : credit.bloqueoRobo
         ? null
-        : await unlockEqualityDevice(credit.deviceUid);
-    const remoteQuery = await queryEqualityDevices(credit.deviceUid).catch(() => null);
+        : await dependencies.unlockEqualityDevice(credit.deviceUid);
+    const remoteQuery = await dependencies
+      .queryEqualityDevices(credit.deviceUid)
+      .catch(() => null);
     const payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
     const deviceMeta = getEqualityDeviceMeta(payloadSource);
     const updated = await prisma.credito.update({
@@ -617,6 +652,11 @@ export async function syncAllCreditMora(
     where: {
       estado: {
         not: "ANULADO",
+      },
+      padlockDeviceBindings: {
+        none: {
+          status: "ACTIVE",
+        },
       },
     },
     select: moraSyncCreditSelect,

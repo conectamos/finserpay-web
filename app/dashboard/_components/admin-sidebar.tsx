@@ -12,6 +12,7 @@ import {
   Files,
   Handshake,
   LayoutDashboard,
+  LockKeyhole,
   MapPin,
   Menu,
   PieChart,
@@ -198,6 +199,11 @@ export default function AdminSidebar({
                 href: "/dashboard/integraciones/enrolamiento-iphone",
                 icon: ShieldCheck,
                 label: "Enrolamiento iPhone",
+              },
+              {
+                href: "/dashboard/integraciones/padlock",
+                icon: LockKeyhole,
+                label: "Padlock iPhone",
               },
               {
                 href: "/dashboard/datacredito",

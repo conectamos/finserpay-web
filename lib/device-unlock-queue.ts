@@ -14,6 +14,7 @@ import {
 } from "@/lib/equality-zero-touch";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { isMassImportedCredit } from "@/lib/credit-import-flags";
+import { hasActivePadlockBindingForCredit } from "@/lib/padlock/equality-exclusion";
 import prisma from "@/lib/prisma";
 
 type RawSqlClient = Pick<
@@ -323,6 +324,19 @@ export async function processDeviceUnlockCommand(
     };
   }
 
+  if (await hasActivePadlockBindingForCredit(credit.id)) {
+    await markCommandCancelled(
+      command.id,
+      "Credito vinculado a Padlock; Equality no controla este dispositivo."
+    );
+    return {
+      commandId: command.id,
+      confirmed: false,
+      reason: "PADLOCK_ACTIVE_BINDING",
+      status: "CANCELLED",
+    };
+  }
+
   if (isMassImportedCredit(credit)) {
     await markCommandCancelled(command.id, "Credito importado sin control remoto.");
     return {
@@ -545,7 +559,15 @@ export async function enqueueUnlockForCurrentCredit(options: {
     },
   });
 
-  if (!credit || credit.bloqueoRobo || isMassImportedCredit(credit)) {
+  if (!credit) {
+    return null;
+  }
+
+  if (await hasActivePadlockBindingForCredit(credit.id)) {
+    return null;
+  }
+
+  if (credit.bloqueoRobo || isMassImportedCredit(credit)) {
     return null;
   }
 
