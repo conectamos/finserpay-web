@@ -14250,13 +14250,10 @@ export default function CreditFactoryConsole({
                             setCuotaInicial(event.target.value.replace(/\D/g, ""))
                           }
                           onBlur={handleCuotaInicialBlur}
-                          readOnly={simulatorMode}
-                          aria-readonly={simulatorMode}
                           inputMode="numeric"
                           placeholder="$ 0"
                           className={[
-                            "w-full rounded-2xl border px-4 py-3 text-base font-semibold text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200",
-                            simulatorMode ? "cursor-default bg-slate-50" : "bg-white",
+                            "w-full rounded-2xl border bg-white px-4 py-3 text-base font-semibold text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200",
                             cuotaInicial || !valorTotalEquipoNumero
                               ? cuotaInicialValida || !valorTotalEquipoNumero
                                 ? "border-slate-300"
@@ -14274,7 +14271,7 @@ export default function CreditFactoryConsole({
                         >
                           {simulatorMode ? (
                             <>
-                              Calculada con {initialPaymentPercentage} % de inicial: {currency(cuotaInicialMinimaNumero)}.
+                              Mínimo con {initialPaymentPercentage} % de inicial: {currency(cuotaInicialMinimaNumero)}. Puedes aumentarla para comparar una cuota menor.
                               {platformInitialPaymentAdjustment > 0
                                 ? ` El tope de financiación requiere ${currency(platformInitialPaymentAdjustment)} adicionales.`
                                 : ""}

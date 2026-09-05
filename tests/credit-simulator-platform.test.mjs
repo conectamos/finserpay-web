@@ -17,6 +17,7 @@ const {
   SIMULATOR_INITIAL_PAYMENT_PERCENTAGES,
   calculateAndroidSimulatorInitialPayment,
   calculateAndroidSimulatorInstallmentSuretyPercentage,
+  resolveInitialPaymentAfterMinimumRefresh,
 } = await jiti.import("../lib/credit-factory.ts");
 const { calculateFrenchAmortization } = await jiti.import(
   "../lib/credit-amortization.ts"
@@ -133,10 +134,27 @@ test("el simulador permite consultar inicial del 20 o 30 por ciento", () => {
     /SIMULATOR_INITIAL_PAYMENT_PERCENTAGES\.map\(\(percentage\)/
   );
   assert.match(consoleSource, /type="radio"/);
-  assert.match(consoleSource, /readOnly=\{simulatorMode\}/);
+  assert.doesNotMatch(consoleSource, /readOnly=\{simulatorMode\}/);
+  assert.match(consoleSource, /Puedes aumentarla para comparar una cuota menor/);
   assert.match(
     consoleSource,
     /setSimulatorInitialPaymentPercentage\(percentage\);\s*setCuotaInicial\(""\)/
+  );
+  assert.equal(
+    resolveInitialPaymentAfterMinimumRefresh({
+      currentValue: "400000",
+      totalValue: "1000000",
+      minimumValue: 300000,
+    }),
+    "400000"
+  );
+  assert.equal(
+    resolveInitialPaymentAfterMinimumRefresh({
+      currentValue: "250000",
+      totalValue: "1000000",
+      minimumValue: 300000,
+    }),
+    "300000"
   );
 });
 
