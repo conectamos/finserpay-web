@@ -18,15 +18,11 @@ import {
   type AllyPaymentSummary,
 } from "@/lib/ally-payments-core";
 import { colombiaDateKey } from "@/lib/colombia-date";
+import { buildAllyPaymentEligibilityQuery } from "@/lib/ally-payment-eligibility";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import prisma from "@/lib/prisma";
 
 const PAYMENT_CALCULATION_VERSION = "ALLY_INTERMEDIATION_V3";
-const CANCELLED_STATES = ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"] as const;
-const PAYMENT_AVAILABILITY_START = resolveColombiaPaymentPeriod(
-  ALLY_PAYMENTS_AVAILABLE_FROM,
-  ALLY_PAYMENTS_AVAILABLE_FROM
-).start;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH_PATTERN = /^[0-9a-f]{64}$/i;
@@ -36,6 +32,7 @@ type DbClient = Pick<Prisma.TransactionClient, "$queryRawUnsafe" | "$executeRawU
 type EligibleCreditRow = {
   id: number;
   fechaCredito: Date;
+  fechaLiquidacion: Date;
   folio: string;
   clienteNombre: string;
   clienteDocumento: string | null;
@@ -58,6 +55,7 @@ export type AllyPaymentLine = {
   id?: number;
   creditoId: number;
   fechaCredito: string;
+  fechaLiquidacion?: string;
   folio: string;
   clienteNombre: string;
   clienteDocumento: string;
@@ -270,6 +268,7 @@ function buildLine(row: EligibleCreditRow): AllyPaymentLine | null {
   return {
     creditoId: row.id,
     fechaCredito: colombiaDateKey(row.fechaCredito),
+    fechaLiquidacion: colombiaDateKey(row.fechaLiquidacion),
     folio: compactText(row.folio, "Credito " + row.id, 80),
     clienteNombre: compactText(row.clienteNombre, "Cliente", 180),
     clienteDocumento: compactText(row.clienteDocumento, "Sin documento", 80),
@@ -294,41 +293,8 @@ async function loadEligibleCreditRows(
     lock?: boolean;
   }
 ) {
-  const lockClause = input.lock ? " FOR UPDATE OF credit" : "";
-  const query =
-    `
-      SELECT credit."id", credit."fechaCredito", credit."folio",
-        credit."clienteNombre", credit."clienteDocumento", credit."imei",
-        credit."deviceUid", credit."referenciaEquipo", credit."equipoMarca",
-        credit."equipoModelo", credit."valorEquipoTotal", credit."cuotaInicial",
-        credit."contratoSnapshot", ally."id" AS "aliadoId",
-        ally."nombre" AS "aliadoNombre",
-        ally."redescuentoPorcentaje",
-        ally."redescuentoAndroidPorcentaje",
-        ally."redescuentoIphonePorcentaje"
-      FROM "Credito" credit
-      JOIN "Sede" site ON site."id" = credit."sedeId"
-      JOIN "Aliado" ally ON ally."id" = site."aliadoId"
-      LEFT JOIN "LiquidacionAliadoCredito" paid
-        ON paid."creditoId" = credit."id"
-      WHERE paid."id" IS NULL
-        AND UPPER(BTRIM(COALESCE(credit."estado", ''))) <> ALL($4::text[])
-        AND UPPER(BTRIM(COALESCE(ally."codigo", ''))) <> $5
-        AND ($1::integer IS NULL OR ally."id" = $1)
-        AND credit."fechaCredito" >= $6
-        AND ($2::timestamp IS NULL OR credit."fechaCredito" >= $2)
-        AND ($3::timestamp IS NULL OR credit."fechaCredito" < $3)
-      ORDER BY credit."fechaCredito" ASC, credit."id" ASC` + lockClause;
-
-  return db.$queryRawUnsafe<EligibleCreditRow[]>(
-    query,
-    input.allyId,
-    input.start || null,
-    input.endExclusive || null,
-    [...CANCELLED_STATES],
-    ALIADO_FINSER_PAY.codigo,
-    PAYMENT_AVAILABILITY_START
-  );
+  const { query, values } = buildAllyPaymentEligibilityQuery(input);
+  return db.$queryRawUnsafe<EligibleCreditRow[]>(query, ...values);
 }
 
 async function loadEligibleLines(
@@ -377,6 +343,7 @@ function previewFingerprint(
     creditos: lines.map((line) => ({
       creditoId: line.creditoId,
       fechaCredito: line.fechaCredito,
+      fechaLiquidacion: line.fechaLiquidacion,
       clienteDocumento: line.clienteDocumento,
       imei: line.imei,
       plataforma: line.plataforma,

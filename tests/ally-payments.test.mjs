@@ -27,6 +27,7 @@ const [
   pageSource,
   pdfRouteSource,
   pdfBuilderSource,
+  eligibilitySource,
 ] = await Promise.all([
   readProjectFile("lib/ally-payment-access.ts"),
   readProjectFile("app/api/pagos-aliados/route.ts"),
@@ -42,6 +43,7 @@ const [
   readProjectFile("app/dashboard/pagos-aliados/page.tsx"),
   readProjectFile("app/api/pagos-aliados/[id]/comprobante/route.ts"),
   readProjectFile("lib/ally-payment-settlement-pdf.ts"),
+  readProjectFile("lib/ally-payment-eligibility.ts"),
 ]);
 
 function sectionBetween(contents, startMarker, endMarker) {
@@ -232,11 +234,14 @@ test("las rutas aplican alcance por aliado y reservan escritura al central", () 
 });
 
 test("las consultas excluyen pagados y acotan aliado y periodo en base de datos", () => {
-  const eligibleQuery = sectionBetween(
+  const eligibleLoader = sectionBetween(
     storage,
     "async function loadEligibleCreditRows",
     "async function loadEligibleLines"
   );
+  assert.match(eligibleLoader, /buildAllyPaymentEligibilityQuery\(input\)/);
+  assert.match(eligibleLoader, /query, \.\.\.values/);
+  const eligibleQuery = eligibilitySource;
   const history = sectionBetween(
     storage,
     "export async function listAllyPaymentHistory",
@@ -260,9 +265,9 @@ test("las consultas excluyen pagados y acotan aliado y periodo en base de datos"
     eligibleQuery,
     /\(\$1::integer\s+IS NULL\s+OR\s+ally\."id"\s*=\s*\$1\)/
   );
-  assert.match(eligibleQuery, /credit\."fechaCredito"\s*>=\s*\$2/);
-  assert.match(eligibleQuery, /credit\."fechaCredito"\s*<\s*\$3/);
-  assert.match(eligibleQuery, /credit\."fechaCredito"\s*>=\s*\$6/);
+  assert.match(eligibleQuery, /eligibility\."fechaLiquidacion"\s*>=\s*\$2/);
+  assert.match(eligibleQuery, /eligibility\."fechaLiquidacion"\s*<\s*\$3/);
+  assert.match(eligibleQuery, /eligibility\."fechaLiquidacion"\s*>=\s*\$6/);
   assert.match(
     eligibleQuery,
     /UPPER\(BTRIM\(COALESCE\(ally\."codigo",\s*''\)\)\)\s*<>\s*\$5/
