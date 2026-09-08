@@ -290,6 +290,7 @@ export async function GET(req: Request) {
           [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" "),
         equipoMarca: item.equipoMarca,
         equipoModelo: item.equipoModelo,
+        valorEquipoTotal: Number(item.valorEquipoTotal || 0),
         creditoAutorizado: Number(
           item.saldoBaseFinanciado ||
             Math.max(0, Number(item.valorEquipoTotal || 0) - Number(item.cuotaInicial || 0))

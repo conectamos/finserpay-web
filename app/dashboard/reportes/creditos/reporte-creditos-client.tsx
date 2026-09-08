@@ -64,6 +64,7 @@ type CreditReportItem = {
   referenciaEquipo: string | null;
   equipoMarca: string | null;
   equipoModelo: string | null;
+  valorEquipoTotal: number;
   creditoAutorizado: number;
   montoCredito: number;
   cuotaInicial: number;
@@ -122,6 +123,25 @@ type CreditCommandResponse = {
 
 function formatMoney(value: number) {
   return `$ ${Number(value || 0).toLocaleString("es-CO")}`;
+}
+
+function CreditValues({ item }: { item: CreditReportItem }) {
+  return (
+    <dl className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1 text-xs leading-5">
+      <dt className="text-[var(--fp-muted)]">Valor venta</dt>
+      <dd className="whitespace-nowrap text-right text-[13px] font-semibold tabular-nums text-[var(--fp-graphite)]">
+        {formatMoney(item.valorEquipoTotal)}
+      </dd>
+      <dt className="text-[var(--fp-muted)]">Inicial</dt>
+      <dd className="whitespace-nowrap text-right text-[13px] font-semibold tabular-nums text-[var(--fp-graphite)]">
+        {formatMoney(item.cuotaInicial)}
+      </dd>
+      <dt className="font-semibold text-[var(--fp-graphite)]">Valor crédito autorizado</dt>
+      <dd className="whitespace-nowrap text-right text-[13px] font-extrabold tabular-nums text-[var(--fp-graphite)]">
+        {formatMoney(item.creditoAutorizado)}
+      </dd>
+    </dl>
+  );
 }
 
 function formatDate(value: string | null) {
@@ -570,10 +590,10 @@ export default function ReporteCreditosPage({
       ) : null}
 
       <Card className="mt-4 overflow-hidden !rounded-lg !p-0">
-        <div className="flex flex-col gap-3 border-b border-[#e4e7ec] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <div className="flex flex-col gap-2 border-b border-[var(--fp-border)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div>
-            <h2 className="text-lg font-black text-[#151a21]">Detalle de creditos</h2>
-            <p className="mt-1 text-sm text-[#667085]">
+            <h2 className="text-lg font-black text-[var(--fp-graphite)]">Detalle de creditos</h2>
+            <p className="mt-1 text-sm text-[var(--fp-muted)]">
               {loading
                 ? "Actualizando informacion..."
                 : "Identidad, equipo, operacion y valores de cada credito."}
@@ -585,20 +605,20 @@ export default function ReporteCreditosPage({
         </div>
 
         {/* Both responsive views expose the same report fields and credit actions. */}
-        <div className="divide-y divide-[#e4e7ec] lg:hidden" aria-busy={loading}>
+        <div className="divide-y divide-[var(--fp-border)] lg:hidden" aria-busy={loading}>
           {loading ? (
-            <div className="px-4 py-12 text-center text-sm text-[#667085]">
+            <div className="px-4 py-12 text-center text-sm text-[var(--fp-muted)]">
               Consultando creditos...
             </div>
           ) : items.length ? (
             items.map((item) => (
-              <article key={item.id} className="px-4 py-5 sm:px-5">
+              <article key={item.id} className="px-4 py-3 sm:px-5">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="break-all text-sm font-black text-[#151a21]">
+                    <p className="break-all text-sm font-black text-[var(--fp-graphite)]">
                       {item.folio}
                     </p>
-                    <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-[#667085]">
+                    <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-[var(--fp-muted)]">
                       <CalendarDays className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
                       {formatDate(item.fechaCredito)}
                     </p>
@@ -609,67 +629,52 @@ export default function ReporteCreditosPage({
                   </div>
                 </div>
 
-                <div className="mt-4">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#667085]">
+                <div className="mt-3">
+                  <p className="text-xs font-semibold text-[var(--fp-muted)]">
                     Cliente
                   </p>
-                  <p className="mt-1 text-base font-black text-[#151a21]">
+                  <p className="mt-1 text-sm font-bold text-[var(--fp-graphite)]">
                     {item.clienteNombre}
                   </p>
-                  <p className="mt-0.5 text-sm text-[#667085]">
+                  <p className="mt-0.5 text-sm text-[var(--fp-muted)]">
                     {item.clienteDocumento || "Sin documento"}
                   </p>
                 </div>
 
-                <div className="mt-4 grid gap-4 border-t border-[#eef0f2] pt-4 sm:grid-cols-2">
+                <div className="mt-3 grid gap-3 border-t border-[var(--fp-border)] pt-3 sm:grid-cols-2">
                   <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#667085]">
+                    <p className="text-xs font-semibold text-[var(--fp-muted)]">
                       Equipo
                     </p>
-                    <p className="mt-1 text-sm font-bold text-[#344054]">
+                    <p className="mt-1 text-sm font-bold text-[var(--fp-graphite)]">
                       {item.referenciaEquipo ||
                         [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" ") ||
                         "Sin referencia"}
                     </p>
-                    <p className="mt-1 break-all font-mono text-[11px] text-[#667085]">
+                    <p className="mt-1 break-all font-mono text-xs text-[var(--fp-muted)]">
                       IMEI {item.imei || "Sin IMEI"}
                     </p>
                   </div>
                   <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#667085]">
+                    <p className="text-xs font-semibold text-[var(--fp-muted)]">
                       Operacion
                     </p>
-                    <p className="mt-1 text-sm font-bold text-[#344054]">
+                    <p className="mt-1 text-sm font-bold text-[var(--fp-graphite)]">
                       {item.sede.aliado?.nombre || "Sin aliado"}
                     </p>
-                    <p className="mt-1 text-xs text-[#667085]">
+                    <p className="mt-1 text-xs text-[var(--fp-muted)]">
                       {item.sede.nombre} / {item.usuario.nombre}
                     </p>
                   </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-3 rounded-md bg-[#f7f8f8] px-3 py-3">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#667085]">
-                      Inicial
-                    </p>
-                    <p className="mt-1 whitespace-nowrap text-sm font-semibold tabular-nums text-[#344054]">
-                      {formatMoney(item.cuotaInicial)}
-                    </p>
-                  </div>
-                  <div className="border-l border-[#dfe3e7] pl-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#667085]">
-                      Autorizado
-                    </p>
-                    <p className="mt-1 whitespace-nowrap text-sm font-black tabular-nums text-[#151a21]">
-                      {formatMoney(item.creditoAutorizado)}
-                    </p>
-                  </div>
+                <div className="mt-3 border-t border-[var(--fp-border)] pt-3">
+                  <CreditValues item={item} />
                 </div>
               </article>
             ))
           ) : (
-            <div className="px-4 py-12 text-center text-sm text-[#667085]">
+            <div className="px-4 py-12 text-center text-sm text-[var(--fp-muted)]">
               No hay creditos para los filtros seleccionados.
             </div>
           )}
@@ -677,36 +682,36 @@ export default function ReporteCreditosPage({
 
         <DataTable className="hidden !rounded-none !border-0 lg:block">
           <table
-            className="w-full min-w-[1230px] table-fixed text-[13px]"
+            className="w-full min-w-[1280px] table-fixed text-[13px]"
             aria-busy={loading}
           >
             <caption className="sr-only">
               Detalle de creditos encontrados con los filtros seleccionados
             </caption>
             <colgroup>
-              <col className="w-[170px]" />
-              <col className="w-[220px]" />
-              <col className="w-[235px]" />
-              <col className="w-[230px]" />
-              <col className="w-[180px]" />
+              <col className="w-[205px]" />
+              <col className="w-[175px]" />
+              <col className="w-[205px]" />
+              <col className="w-[190px]" />
+              <col className="w-[310px]" />
               <col className="w-[135px]" />
               <col className="w-[60px]" />
             </colgroup>
-            <thead className="bg-[#151a21] text-white">
+            <thead className="bg-[var(--fp-graphite)] text-white">
               <tr>
-                <th scope="col" className="px-4 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Credito</th>
-                <th scope="col" className="px-4 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Cliente</th>
-                <th scope="col" className="px-4 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Equipo / IMEI</th>
-                <th scope="col" className="px-4 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Operacion</th>
-                <th scope="col" className="px-4 py-3.5 text-right text-[11px] font-bold uppercase tracking-[0.08em]">Valores</th>
-                <th scope="col" className="px-4 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Estado</th>
-                <th scope="col" className="px-3 py-3.5 text-right"><span className="sr-only">Acciones</span></th>
+                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Credito</th>
+                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Cliente</th>
+                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Equipo / IMEI</th>
+                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Operacion</th>
+                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Valores</th>
+                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Estado</th>
+                <th scope="col" className="px-3 py-2 text-right"><span className="sr-only">Acciones</span></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#e4e7ec]">
+            <tbody className="divide-y divide-[var(--fp-border)]">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-14 text-center text-sm text-[#667085]">
+                  <td colSpan={7} className="py-14 text-center text-sm text-[var(--fp-muted)]">
                     Consultando creditos...
                   </td>
                 </tr>
@@ -714,70 +719,58 @@ export default function ReporteCreditosPage({
                 items.map((item) => (
                   <tr
                     key={item.id}
-                    className="bg-white transition-colors even:bg-[#fbfcfa] hover:bg-[#f6f9ef]"
+                    className="bg-[var(--fp-surface)] transition-colors even:bg-[var(--fp-bg)] hover:bg-[var(--fp-lime-soft)]"
                   >
-                    <td className="px-4 py-4 align-top">
-                      <p className="break-all font-black leading-5 text-[#151a21]">
+                    <td className="px-3 py-2 align-top">
+                      <p className="break-all font-black leading-5 text-[var(--fp-graphite)]">
                         {item.folio}
                       </p>
-                      <p className="mt-2 inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-[#667085]">
+                      <p className="mt-1 inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-[var(--fp-muted)]">
                         <CalendarDays className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
                         {formatDate(item.fechaCredito)}
                       </p>
                     </td>
-                    <td className="px-4 py-4 align-top">
-                      <p className="font-bold leading-5 text-[#151a21]">{item.clienteNombre}</p>
-                      <p className="mt-1 text-xs text-[#667085]">
+                    <td className="px-3 py-2 align-top">
+                      <p className="font-bold leading-5 text-[var(--fp-graphite)]">{item.clienteNombre}</p>
+                      <p className="mt-1 text-xs text-[var(--fp-muted)]">
                         {item.clienteDocumento || "Sin documento"}
                       </p>
                     </td>
-                    <td className="px-4 py-4 align-top">
-                      <p className="font-semibold leading-5 text-[#344054]">
+                    <td className="px-3 py-2 align-top">
+                      <p className="font-semibold leading-5 text-[var(--fp-graphite)]">
                         {item.referenciaEquipo ||
                           [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" ") ||
                           "Sin referencia"}
                       </p>
-                      <p className="mt-1.5 break-all font-mono text-[11px] text-[#667085]">
+                      <p className="mt-1 break-all font-mono text-xs text-[var(--fp-muted)]">
                         IMEI {item.imei || "Sin IMEI"}
                       </p>
                     </td>
-                    <td className="px-4 py-4 align-top">
-                      <p className="font-bold leading-5 text-[#344054]">
+                    <td className="px-3 py-2 align-top">
+                      <p className="font-bold leading-5 text-[var(--fp-graphite)]">
                         {item.sede.aliado?.nombre || "Sin aliado"}
                       </p>
-                      <dl className="mt-2 grid grid-cols-[62px_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
-                        <dt className="text-[#98a2b3]">Sede</dt>
-                        <dd className="font-medium text-[#475467]">{item.sede.nombre}</dd>
-                        <dt className="text-[#98a2b3]">Vendedor</dt>
-                        <dd className="font-medium text-[#475467]">{item.usuario.nombre}</dd>
+                      <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
+                        <dt className="text-[var(--fp-muted)]">Sede</dt>
+                        <dd className="font-medium text-[var(--fp-graphite)]">{item.sede.nombre}</dd>
+                        <dt className="text-[var(--fp-muted)]">Vendedor</dt>
+                        <dd className="font-medium text-[var(--fp-graphite)]">{item.usuario.nombre}</dd>
                       </dl>
                     </td>
-                    <td className="px-4 py-4 text-right align-top tabular-nums">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#98a2b3]">
-                        Inicial
-                      </p>
-                      <p className="mt-1 whitespace-nowrap font-semibold text-[#475467]">
-                        {formatMoney(item.cuotaInicial)}
-                      </p>
-                      <div className="my-2 ml-auto h-px w-24 bg-[#e4e7ec]" />
-                      <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#98a2b3]">
-                        Autorizado
-                      </p>
-                      <p className="mt-1 whitespace-nowrap font-black text-[#151a21]">
-                        {formatMoney(item.creditoAutorizado)}
-                      </p>
+                    <td className="px-3 py-2 align-top">
+                      <CreditValues item={item} />
                     </td>
-                    <td className="px-4 py-4 align-top">
+                    <td className="px-3 py-2 align-top">
                       <StatusPill tone={creditStatusTone(item.estado)}>{item.estado}</StatusPill>
                     </td>
-                    <td className="px-3 py-4 text-right align-top">
+                    <td className="px-3 py-2 text-right align-top">
                       {renderCreditActions(item)}
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-14 text-center text-sm text-[#667085]">
+                  <td colSpan={7} className="py-14 text-center text-sm text-[var(--fp-muted)]">
                     No hay creditos para los filtros seleccionados.
                   </td>
                 </tr>
