@@ -636,7 +636,8 @@ export async function createAllyPayment(input: {
   try {
     return await prisma.$transaction(
       async (tx) => {
-        await tx.$queryRawUnsafe(
+        // Advisory locks return PostgreSQL void; execute without deserializing it.
+        await tx.$executeRawUnsafe(
           "SELECT pg_advisory_xact_lock(hashtext($1))",
           "ALLY_PAYMENT_MUTATION:" + mutationId
         );
@@ -660,7 +661,7 @@ export async function createAllyPayment(input: {
           };
         }
 
-        await tx.$queryRawUnsafe(
+        await tx.$executeRawUnsafe(
           "SELECT pg_advisory_xact_lock(hashtext($1))",
           "ALLY_PAYMENT_ALLY:" + allyId
         );
