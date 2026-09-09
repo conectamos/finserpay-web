@@ -44,6 +44,17 @@ model ListaNegraDocumentoEvento {
   @@index([registroId, createdAt])
 }
 
+model ListaNegraImportacion {
+  id String @id @db.Uuid
+  requestHash String @db.Char(64)
+  actorUserId Int
+  actorName String
+  motivo String
+  result Json
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  actor Usuario @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+}
+
 model Rol {
   id          Int       @id @default(autoincrement())
   nombre      String    @unique
@@ -166,6 +177,7 @@ model Usuario {
   bloqueosDocumentoCreados ListaNegraDocumento[] @relation("BlacklistCreatedBy")
   bloqueosDocumentoActualizados ListaNegraDocumento[] @relation("BlacklistUpdatedBy")
   eventosListaNegra ListaNegraDocumentoEvento[]
+  importacionesListaNegra ListaNegraImportacion[]
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
 }

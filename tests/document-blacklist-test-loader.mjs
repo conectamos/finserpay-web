@@ -15,7 +15,7 @@ export function loadBlacklistModule(path, dependencies = {}) {
       assert.ok(name in dependencies, `Unexpected dependency: ${name}`);
       return dependencies[name];
     },
-    console, URL, URLSearchParams, Date, Request, Response,
+    console, URL, URLSearchParams, Date, Request, Response, TextDecoder,
   }, { filename: path });
   return loadedModule.exports;
 }

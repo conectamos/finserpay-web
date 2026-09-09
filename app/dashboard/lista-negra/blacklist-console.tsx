@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { RefreshCw, Search, ShieldBan, ShieldCheck, X } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
-import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, PageHeader, Select, StatusPill } from "@/app/_components/finser-ui";
+import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, PageHeader, Select, StatusPill, Tabs } from "@/app/_components/finser-ui";
+import BlacklistBulkPanel from "./blacklist-bulk-panel";
 
 type BlacklistItem = {
   id: string;
@@ -51,11 +52,13 @@ export default function BlacklistConsole() {
   const [editing, setEditing] = useState<BlacklistItem | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [saving, setSaving] = useState(false);
+  const [registrationMode, setRegistrationMode] = useState<"individual" | "bulk">("individual");
+  const [bulkBusy, setBulkBusy] = useState(false);
   const requestVersion = useRef(0);
   const submitting = useRef(false);
   const lastMutation = useRef<{ signature: string; mutationId: string } | null>(null);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
-  const busy = saving || Boolean(confirmation);
+  const busy = saving || Boolean(confirmation) || bulkBusy;
   const targetActive = editing ? !editing.activa : true;
 
   const loadRecords = useCallback(async () => {
@@ -95,6 +98,8 @@ export default function BlacklistConsole() {
   }
 
   function selectItem(item: BlacklistItem) {
+    if (busy) return;
+    setRegistrationMode("individual");
     setEditing(item);
     setDocumento(item.documento);
     setMotivo("");
@@ -176,6 +181,19 @@ export default function BlacklistConsole() {
 
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
 
+  function handleBulkCompleted() {
+    setNotice(null);
+    setQueryInput("");
+    setFilterInput("ACTIVA");
+    setFilters({ q: "", estado: "ACTIVA", page: 1 });
+  }
+
+  function changeRegistrationMode(mode: "individual" | "bulk") {
+    if (busy) return;
+    setRegistrationMode(mode);
+    setNotice(null);
+  }
+
   return (
     <main className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
       <PageHeader
@@ -199,7 +217,12 @@ export default function BlacklistConsole() {
         </div>
       ) : null}
 
-      <Card className="mt-5 p-4 sm:p-5">
+      <Tabs className="mt-5" aria-label="Forma de registrar cédulas">
+        <button type="button" id="blacklist-individual-tab" role="tab" aria-selected={registrationMode === "individual"} aria-controls="blacklist-individual-panel" disabled={busy} onClick={() => changeRegistrationMode("individual")}>Registro individual</button>
+        <button type="button" id="blacklist-bulk-tab" role="tab" aria-selected={registrationMode === "bulk"} aria-controls="blacklist-bulk-panel" disabled={busy} onClick={() => changeRegistrationMode("bulk")}>Pegar lista</button>
+      </Tabs>
+
+      <Card className="mt-4 p-4 sm:p-5" id="blacklist-individual-panel" role="tabpanel" aria-labelledby="blacklist-individual-tab" hidden={registrationMode !== "individual"}>
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h2 className="flex items-center gap-2 text-lg font-bold">
@@ -229,6 +252,10 @@ export default function BlacklistConsole() {
           </Button>
         </form>
         <p className="mt-3 text-sm text-[var(--fp-muted)]">El motivo, la fecha y el usuario de cada cambio quedan registrados. Las fechas se muestran en hora de Colombia.</p>
+      </Card>
+
+      <Card className="mt-4 p-4 sm:p-5" id="blacklist-bulk-panel" role="tabpanel" aria-labelledby="blacklist-bulk-tab" hidden={registrationMode !== "bulk"}>
+        <BlacklistBulkPanel disabled={saving || Boolean(confirmation)} onBusyChange={setBulkBusy} onCompleted={handleBulkCompleted} />
       </Card>
 
       <section className="mt-6" aria-labelledby="blacklist-records-title">
