@@ -6,7 +6,7 @@ export default async function DashboardLayout({
 }: {
   children: ReactNode;
 }) {
-  await requireDashboardAccess();
+  await requireDashboardAccess({ allowApprovalAnalyst: true });
 
   return children;
 }

@@ -10,6 +10,7 @@ import {
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { ensureVendorProfileVisualColumns } from "@/lib/vendor-profile-schema";
 import { ensureUserProfileVisualColumns } from "@/lib/user-profile-schema";
+import { APPROVAL_ANALYST_ROLE, canManageApprovalAnalysts, isApprovalAnalystRole } from "@/lib/roles";
 
 function isAdminRole(rolNombre: string) {
   return String(rolNombre || "").trim().toUpperCase() === "ADMIN";
@@ -103,7 +104,7 @@ function getAliadoScope(user: Awaited<ReturnType<typeof getSessionUser>>) {
   return Number.isInteger(aliadoId) && aliadoId > 0 ? aliadoId : null;
 }
 
-async function loadAdminSellersPayload(aliadoScopeId: number | null) {
+async function loadAdminSellersPayload(aliadoScopeId: number | null, includeAnalysts = false) {
   await Promise.all([
     ensureVendorProfileVisualColumns(),
     ensureUserProfileVisualColumns(),
@@ -186,7 +187,7 @@ async function loadAdminSellersPayload(aliadoScopeId: number | null) {
     prisma.usuario.findMany({
       where: {
         rol: {
-          nombre: "ADMIN",
+          nombre: includeAnalysts ? { in: ["ADMIN", APPROVAL_ANALYST_ROLE] } : "ADMIN",
         },
         ...(aliadoScopeId
           ? {
@@ -240,7 +241,14 @@ async function loadAdminSellersPayload(aliadoScopeId: number | null) {
       aliadoId: aliadoScopeId,
     },
     sedes,
-    administradores: administradores.map((item) => ({
+    analistas: includeAnalysts ? administradores
+      .filter((item) => isApprovalAnalystRole(item.rol.nombre))
+      .map((item) => ({
+        id: item.id, nombre: item.nombre, usuario: item.usuario,
+        activo: item.activo, sede: item.sede,
+        updatedAt: item.updatedAt.toISOString(),
+      })) : [],
+    administradores: administradores.filter((item) => !isApprovalAnalystRole(item.rol.nombre)).map((item) => ({
       id: item.id,
       nombre: item.nombre,
       usuario: item.usuario,
@@ -331,7 +339,7 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
-      ...(await loadAdminSellersPayload(aliadoScopeId)),
+      ...(await loadAdminSellersPayload(aliadoScopeId, canManageApprovalAnalysts(session.user))),
     });
   } catch (error) {
     console.error("ERROR LISTANDO VENDEDORES:", error);
@@ -364,6 +372,43 @@ export async function POST(req: Request) {
     const tipoPerfilRaw = String(body.tipoPerfil || "").trim().toUpperCase();
     const tipoPerfil = normalizarTipoPerfilVendedor(body.tipoPerfil);
     const avatarKey = normalizarAvatarPerfil(body.avatarKey, tipoPerfil);
+
+    if (tipoPerfilRaw === APPROVAL_ANALYST_ROLE) {
+      if (!canManageApprovalAnalysts(session.user)) {
+        return NextResponse.json({ error: "Solo el administrador central puede gestionar analistas" }, { status: 403 });
+      }
+      const usuario = normalizeUsername(body.usuario);
+      const clave = String(body.clave || "").trim();
+      const sedeId = parseSedeId(body.sedeId);
+      if (!nombre || nombre.length > 120 || !/^[a-z0-9._@-]{3,80}$/.test(usuario) || clave.length < 8 || clave.length > 128) {
+        return NextResponse.json({ error: "Ingresa nombre, usuario de 3 a 80 caracteres y clave de 8 a 128 caracteres" }, { status: 400 });
+      }
+      const sede = sedeId ? await prisma.sede.findFirst({
+        where: { id: sedeId, activa: true, aliado: { codigo: "FINSERPAY", activo: true } },
+        select: { id: true },
+      }) : null;
+      if (!sede) return NextResponse.json({ error: "Selecciona una sede central activa de FINSER PAY" }, { status: 400 });
+      try {
+        await prisma.$transaction(async (tx) => {
+          const rol = await tx.rol.upsert({
+            where: { nombre: APPROVAL_ANALYST_ROLE }, update: {},
+            create: { nombre: APPROVAL_ANALYST_ROLE, descripcion: "Revision de creditos para liquidacion a aliados" },
+          });
+          await tx.usuario.create({
+            data: { nombre, usuario, claveHash: hashPassword(clave), activo, sedeId: sede.id, rolId: rol.id },
+          });
+        });
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+          return NextResponse.json({ error: "Ya existe un usuario con ese acceso" }, { status: 409 });
+        }
+        throw error;
+      }
+      return NextResponse.json({
+        ok: true, mensaje: "Analista de aprobacion creado",
+        ...(await loadAdminSellersPayload(aliadoScopeId, true)),
+      });
+    }
 
     if (tipoPerfilRaw === "ADMINISTRADOR") {
       await ensureUserProfileVisualColumns();
@@ -445,7 +490,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ok: true,
         mensaje: "Administrador creado correctamente",
-        ...(await loadAdminSellersPayload(aliadoScopeId)),
+        ...(await loadAdminSellersPayload(aliadoScopeId, canManageApprovalAnalysts(session.user))),
       });
     }
 
@@ -516,7 +561,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       mensaje: "Usuario creado correctamente",
-      ...(await loadAdminSellersPayload(aliadoScopeId)),
+      ...(await loadAdminSellersPayload(aliadoScopeId, canManageApprovalAnalysts(session.user))),
     });
   } catch (error) {
     console.error("ERROR CREANDO VENDEDOR:", error);
@@ -539,6 +584,39 @@ export async function PATCH(req: Request) {
     const aliadoScopeId = getAliadoScope(session.user);
 
     const body = (await req.json()) as Record<string, unknown>;
+    if ("analistaId" in body || String(body.tipoPerfil || "").trim().toUpperCase() === APPROVAL_ANALYST_ROLE) {
+      if (!canManageApprovalAnalysts(session.user)) {
+        return NextResponse.json({ error: "Solo el administrador central puede gestionar analistas" }, { status: 403 });
+      }
+      const analistaId = parseSellerId(body.analistaId);
+      const expectedUpdatedAt = new Date(String(body.expectedUpdatedAt || ""));
+      const action = String(body.action || "");
+      const clave = String(body.clave || "").trim();
+      if (!analistaId || !Number.isFinite(expectedUpdatedAt.getTime()) ||
+        !["SET_ACTIVE", "RESET_PASSWORD"].includes(action) ||
+        (action === "SET_ACTIVE" && typeof body.activo !== "boolean") ||
+        (action === "RESET_PASSWORD" && (clave.length < 8 || clave.length > 128))) {
+        return NextResponse.json({ error: "Operacion de analista invalida; la clave debe tener de 8 a 128 caracteres" }, { status: 400 });
+      }
+      const result = await prisma.usuario.updateMany({
+        where: {
+          id: analistaId, updatedAt: expectedUpdatedAt,
+          rol: { nombre: APPROVAL_ANALYST_ROLE },
+          sede: { aliado: { codigo: "FINSERPAY" } },
+        },
+        data: action === "RESET_PASSWORD"
+          ? { claveHash: hashPassword(clave) }
+          : { activo: body.activo as boolean },
+      });
+      if (result.count !== 1) {
+        return NextResponse.json({ error: "El analista cambio o ya no esta disponible. Actualiza la lista antes de continuar." }, { status: 409 });
+      }
+      return NextResponse.json({
+        ok: true,
+        mensaje: action === "RESET_PASSWORD" ? "Clave del analista restablecida" : body.activo ? "Analista activado" : "Analista desactivado",
+        ...(await loadAdminSellersPayload(aliadoScopeId, true)),
+      });
+    }
     const vendedorId = parseSellerId(body.vendedorId);
     const nombre = normalizeText(body.nombre);
     const documento = normalizeDocument(body.documento);
@@ -681,7 +759,7 @@ export async function PATCH(req: Request) {
       mensaje: pin
         ? "Usuario actualizado y PIN reiniciado correctamente"
         : "Usuario actualizado correctamente",
-      ...(await loadAdminSellersPayload(aliadoScopeId)),
+      ...(await loadAdminSellersPayload(aliadoScopeId, canManageApprovalAnalysts(session.user))),
     });
   } catch (error) {
     console.error("ERROR ACTUALIZANDO VENDEDOR:", error);
@@ -766,7 +844,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({
       ok: true,
       mensaje: "Usuario eliminado correctamente",
-      ...(await loadAdminSellersPayload(aliadoScopeId)),
+      ...(await loadAdminSellersPayload(aliadoScopeId, canManageApprovalAnalysts(session.user))),
     });
   } catch (error) {
     console.error("ERROR ELIMINANDO VENDEDOR:", error);

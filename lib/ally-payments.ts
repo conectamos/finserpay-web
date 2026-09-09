@@ -33,6 +33,7 @@ type EligibleCreditRow = {
   id: number;
   fechaCredito: Date;
   fechaLiquidacion: Date;
+  approvalRevision: number | null;
   folio: string;
   clienteNombre: string;
   clienteDocumento: string | null;
@@ -56,6 +57,7 @@ export type AllyPaymentLine = {
   creditoId: number;
   fechaCredito: string;
   fechaLiquidacion?: string;
+  approvalRevision?: number;
   folio: string;
   clienteNombre: string;
   clienteDocumento: string;
@@ -269,6 +271,7 @@ function buildLine(row: EligibleCreditRow): AllyPaymentLine | null {
     creditoId: row.id,
     fechaCredito: colombiaDateKey(row.fechaCredito),
     fechaLiquidacion: colombiaDateKey(row.fechaLiquidacion),
+    ...(row.approvalRevision == null ? {} : { approvalRevision: row.approvalRevision }),
     folio: compactText(row.folio, "Credito " + row.id, 80),
     clienteNombre: compactText(row.clienteNombre, "Cliente", 180),
     clienteDocumento: compactText(row.clienteDocumento, "Sin documento", 80),
@@ -344,6 +347,7 @@ function previewFingerprint(
       creditoId: line.creditoId,
       fechaCredito: line.fechaCredito,
       fechaLiquidacion: line.fechaLiquidacion,
+      ...(line.approvalRevision == null ? {} : { approvalRevision: line.approvalRevision }),
       clienteDocumento: line.clienteDocumento,
       imei: line.imei,
       plataforma: line.plataforma,

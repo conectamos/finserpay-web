@@ -3,16 +3,17 @@ import prisma from "@/lib/prisma";
 import {
   SELLER_SESSION_COOKIE_NAME,
   SESSION_COOKIE_NAME,
+  getSessionCredentialVersion,
   verifySellerSessionToken,
   verifySessionToken,
 } from "@/lib/session";
-import { isAdminRole } from "@/lib/roles";
+import { canReviewCreditApprovals, isAdminRole, isApprovalAnalystRole } from "@/lib/roles";
 import {
   ensureAliadoSchema,
   ensureFinserPayCentralAdmin,
 } from "@/lib/aliados";
 
-export async function getSessionUser() {
+export async function getSessionUser(options: { allowApprovalAnalyst?: boolean } = {}) {
   const cookieStore = await cookies();
   const sessionToken = cookieStore.get(SESSION_COOKIE_NAME)?.value;
 
@@ -30,6 +31,8 @@ export async function getSessionUser() {
       nombre: true,
       usuario: true,
       activo: true,
+      claveHash: true,
+      updatedAt: true,
       sedeId: true,
       rolId: true,
       rol: {
@@ -58,6 +61,18 @@ export async function getSessionUser() {
 
   if (!user || !user.activo) return null;
 
+  // Operational callers deny the specialist by default, including API routes
+  // that historically required only a session. Approval routes opt in explicitly.
+  const approvalAnalyst = isApprovalAnalystRole(user.rol?.nombre);
+  if (approvalAnalyst && (
+    !options.allowApprovalAnalyst ||
+    !canReviewCreditApprovals({
+      rolNombre: user.rol.nombre,
+      aliadoAccesoCodigo: user.sede?.aliado?.codigo,
+    }) ||
+    session.credentialVersion !== getSessionCredentialVersion(user.claveHash, user.updatedAt)
+  )) return null;
+
   const sellerSession = verifySellerSessionToken(
     cookieStore.get(SELLER_SESSION_COOKIE_NAME)?.value
   );
@@ -65,6 +80,7 @@ export async function getSessionUser() {
     sellerSession &&
     sellerSession.userId === user.id &&
     !isAdminRole(user.rol?.nombre) &&
+    !approvalAnalyst &&
     (!sellerSession.accesoSedeId || sellerSession.accesoSedeId === user.sedeId);
 
   const operatingSede = canUseSellerSede
@@ -114,4 +130,9 @@ export async function getSessionUser() {
     rolId: user.rolId,
     rolNombre: user.rol?.nombre ?? "",
   };
+}
+
+export async function getCreditApprovalSessionUser() {
+  const user = await getSessionUser({ allowApprovalAnalyst: true });
+  return canReviewCreditApprovals(user) ? user : null;
 }

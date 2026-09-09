@@ -26,6 +26,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import FinserBrand from "@/app/_components/finser-brand";
+import { isApprovalAnalystRole } from "@/lib/roles";
 import LogoutButton from "./logout-button";
 
 type IconType = ComponentType<{
@@ -107,7 +108,9 @@ export default function AdminSidebar({
   nombreUsuario,
   rolUsuario,
 }: AdminSidebarProps) {
-  const navGroups: NavGroup[] = [
+  const navGroups: NavGroup[] = isApprovalAnalystRole(rolUsuario) ? [
+    { label: "Operacion", items: [{ href: "/dashboard/aprobaciones", icon: ShieldCheck, label: "Aprobaciones" }] },
+  ] : [
     {
       label: "Principal",
       items: [
@@ -121,6 +124,7 @@ export default function AdminSidebar({
     {
       label: "Operacion",
       items: [
+        ...(adminCentral ? [{ href: "/dashboard/aprobaciones", icon: ShieldCheck, label: "Aprobaciones" }] : []),
         { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
         { href: "/dashboard/creditos", icon: FileText, label: "Creditos" },
         ...(adminCentral

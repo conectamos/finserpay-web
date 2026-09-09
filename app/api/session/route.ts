@@ -3,7 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 
 export async function GET() {
-  const user = await getSessionUser();
+  const user = await getSessionUser({ allowApprovalAnalyst: true });
 
   if (!user) {
     return NextResponse.json(

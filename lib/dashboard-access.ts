@@ -2,29 +2,31 @@ import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
-import { isAdminRole } from "@/lib/roles";
+import { isAdminRole, isApprovalAnalystRole } from "@/lib/roles";
 
-export async function getDashboardAccess() {
-  const session = await getSessionUser();
+export async function getDashboardAccess(options: { allowApprovalAnalyst?: boolean } = {}) {
+  const session = await getSessionUser(options);
 
   if (!session) {
     return null;
   }
 
   const admin = isAdminRole(session.rolNombre);
-  const seller = admin ? null : await getSellerSessionUser(session);
+  const approvalAnalyst = isApprovalAnalystRole(session.rolNombre);
+  const seller = admin || approvalAnalyst ? null : await getSellerSessionUser(session);
 
   return {
     session,
     admin,
+    approvalAnalyst,
     seller,
     supervisor: !admin && seller?.tipoPerfil === "SUPERVISOR",
     vendedor: !admin && seller?.tipoPerfil === "VENDEDOR",
   };
 }
 
-export async function requireDashboardAccess() {
-  const access = await getDashboardAccess();
+export async function requireDashboardAccess(options: { allowApprovalAnalyst?: boolean } = {}) {
+  const access = await getDashboardAccess(options);
 
   if (!access) {
     redirect("/");

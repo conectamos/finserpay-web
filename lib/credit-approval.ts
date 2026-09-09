@@ -1,0 +1,272 @@
+import "server-only";
+
+import { createHash, randomUUID } from "node:crypto";
+import type { Prisma } from "@/app/generated/prisma/client";
+import { buildCreditApprovalRequiredSql } from "@/lib/credit-approval-policy";
+import { normalizeBlacklistedDocument } from "@/lib/document-blacklist-core";
+import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
+import { isFirmaSeguroCompletedStatus } from "@/lib/firmaseguro";
+
+export type ApprovalDatabase = Pick<Prisma.TransactionClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
+export type ApprovalActor = { id: number; nombre: string };
+
+export class CreditApprovalError extends Error {
+  constructor(readonly code: string, message: string, readonly status = 400) {
+    super(message);
+    this.name = "CreditApprovalError";
+  }
+}
+
+export const APPROVAL_EVIDENCE = [
+  { key: "cedula-frente", label: "Cédula frontal", field: "contratoCedulaFrenteDataUrl" },
+  { key: "cedula-posterior", label: "Cédula posterior", field: "contratoCedulaRespaldoDataUrl" },
+  { key: "selfie-cedula", label: "Selfie con cédula", field: "iphoneSelfieCedulaDataUrl" },
+  { key: "foto-entrega", label: "Foto de entrega", field: "fotoEntregaDataUrl" },
+  { key: "foto-remision", label: "Remisión", field: "fotoRemisionDataUrl" },
+] as const;
+type EvidenceField = (typeof APPROVAL_EVIDENCE)[number]["field"];
+
+export type ApprovalCredit = Record<EvidenceField, string | null> & {
+  id: number; folio: string; clienteNombre: string; clienteDocumento: string | null;
+  fechaCredito: Date; createdAt: Date; estado: string; aliadoId: number;
+  aliadoNombre: string; aliadoCodigo: string; valorEquipoTotal: number;
+  cuotaInicial: number; saldoBaseFinanciado: number; contratoSnapshot: unknown;
+  imei: string; equipoMarca: string | null; equipoModelo: string | null;
+  required: boolean; paid: boolean;
+};
+export type ApprovalReview = {
+  status: "PENDING" | "APPROVED"; revision: number; approvedRevision: number | null;
+  approvedAt: Date | null; approvedByName: string | null; reviewHash: string | null;
+};
+export type ApprovalAssessment = {
+  id: string; score: number | null; offer: unknown; status: string;
+};
+export type ApprovalDocument = {
+  id: number; processUuid: string; status: string; signedDocumentBase64: string | null;
+  signedDocumentFileName: string | null; completedAt: Date | null;
+};
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+}
+function numeric(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+function iso(value: Date | string | null) {
+  return value ? new Date(value).toISOString() : null;
+}
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, canonical(item)]));
+  }
+  return value;
+}
+const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+
+export function approvalCreditId(value: unknown) {
+  if (typeof value !== "string" || !/^[1-9]\d{0,9}$/.test(value) || Number(value) > 2_147_483_647) {
+    throw new CreditApprovalError("INVALID_CREDIT", "Selecciona un crédito válido.");
+  }
+  return Number(value);
+}
+export function approvalDocumentNumber(value: unknown) {
+  try { return normalizeBlacklistedDocument(value); }
+  catch { throw new CreditApprovalError("INVALID_DOCUMENT", "Ingresa una cédula válida de 3 a 13 dígitos."); }
+}
+export function parseCreditApproval(input: unknown) {
+  const body = record(input);
+  if (Object.keys(body).sort().join(",") !== "reviewHash,revision" ||
+      typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision < 1 ||
+      typeof body.reviewHash !== "string" || !/^[a-f0-9]{64}$/.test(body.reviewHash)) {
+    throw new CreditApprovalError("INVALID_REVIEW", "Actualiza y revisa el expediente antes de dar el OK.");
+  }
+  return { revision: body.revision, reviewHash: body.reviewHash };
+}
+
+export function approvalImage(value: string | null) {
+  const match = value?.match(/^data:(image\/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/]+={0,2})$/i);
+  if (!match) return null;
+  const bytes = Buffer.from(match[2], "base64");
+  const mime = match[1].toLowerCase().replace("image/jpg", "image/jpeg");
+  const valid = mime === "image/png" ? bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+    : mime === "image/jpeg" ? bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255
+    : bytes.subarray(0, 4).toString() === "RIFF" && bytes.subarray(8, 12).toString() === "WEBP";
+  return valid ? { bytes, mime } : null;
+}
+export function approvalPdf(value: string | null) {
+  const raw = value?.replace(/^data:application\/pdf;base64,/i, "").replace(/\s/g, "");
+  if (!raw || !/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) return null;
+  const bytes = Buffer.from(raw, "base64");
+  return bytes.subarray(0, 5).toString() === "%PDF-" ? bytes : null;
+}
+
+const requiredSql = buildCreditApprovalRequiredSql("credit");
+const scopeSql = `UPPER(BTRIM(COALESCE(ally."codigo", ''))) <> 'FINSERPAY'`;
+
+async function requirePolicy(db: ApprovalDatabase) {
+  const rows = await db.$queryRawUnsafe<Array<{ id: number }>>('SELECT "id" FROM "CreditApprovalPolicy" WHERE "id" = 1');
+  if (!rows.length) throw new CreditApprovalError("APPROVAL_UNAVAILABLE", "La revisión de créditos aún no está activada.", 503);
+}
+
+export async function listCreditApprovals(db: ApprovalDatabase, documento: string) {
+  await requirePolicy(db);
+  return db.$queryRawUnsafe<Array<{
+    id: number; folio: string; clienteDocumento: string | null; clienteNombre: string;
+    aliadoNombre: string; fechaCredito: Date; required: boolean; status: string;
+  }>>(`SELECT credit."id", credit."folio", credit."clienteDocumento", credit."clienteNombre",
+      ally."nombre" AS "aliadoNombre", credit."fechaCredito", ${requiredSql} AS required,
+      CASE WHEN NOT ${requiredSql} THEN 'NOT_REQUIRED'
+        WHEN review."status" = 'APPROVED' AND review."approvedRevision" = review."revision" THEN 'APPROVED'
+        ELSE 'PENDING' END AS status
+    FROM "Credito" credit JOIN "Sede" site ON site."id" = credit."sedeId"
+    JOIN "Aliado" ally ON ally."id" = site."aliadoId"
+    LEFT JOIN "CreditApprovalReview" review ON review."creditoId" = credit."id"
+    WHERE ${scopeSql} AND credit."clienteDocumento" = $1
+    ORDER BY credit."createdAt" DESC, credit."id" DESC LIMIT 100`, documento);
+}
+
+async function readCredit(db: ApprovalDatabase, id: number, lock = false) {
+  const rows = await db.$queryRawUnsafe<ApprovalCredit[]>(`SELECT credit."id", credit."folio",
+      credit."clienteNombre", credit."clienteDocumento", credit."fechaCredito", credit."createdAt",
+      credit."estado", credit."valorEquipoTotal", credit."cuotaInicial", credit."saldoBaseFinanciado",
+      credit."contratoSnapshot", credit."imei", credit."equipoMarca", credit."equipoModelo",
+      ${APPROVAL_EVIDENCE.map(({ field }) => `credit."${field}"`).join(", ")},
+      ally."id" AS "aliadoId", ally."nombre" AS "aliadoNombre", ally."codigo" AS "aliadoCodigo",
+      ${requiredSql} AS required,
+      EXISTS (SELECT 1 FROM "LiquidacionAliadoCredito" paid WHERE paid."creditoId" = credit."id") AS paid
+    FROM "Credito" credit JOIN "Sede" site ON site."id" = credit."sedeId"
+    JOIN "Aliado" ally ON ally."id" = site."aliadoId"
+    WHERE credit."id" = $1 AND ${scopeSql}${lock ? " FOR UPDATE OF credit" : ""}`, id);
+  if (!rows[0]) throw new CreditApprovalError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
+  return rows[0];
+}
+async function readReview(db: ApprovalDatabase, id: number, lock = false) {
+  const rows = await db.$queryRawUnsafe<ApprovalReview[]>(`SELECT "status", "revision", "approvedRevision",
+      "approvedAt", "approvedByName", "reviewHash" FROM "CreditApprovalReview"
+    WHERE "creditoId" = $1${lock ? " FOR UPDATE" : ""}`, id);
+  return rows[0] || null;
+}
+async function readAssessment(db: ApprovalDatabase, credit: ApprovalCredit) {
+  const assessmentId = record(record(record(credit.contratoSnapshot).financiero).dataCredito).assessmentId;
+  const rows = await db.$queryRawUnsafe<ApprovalAssessment[]>(`SELECT "id", "score", "offer", "status"
+    FROM "DataCreditoAssessment" WHERE "creditId" = $1 AND "consumedAt" IS NOT NULL
+      AND "retainedUntil" > CURRENT_TIMESTAMP AND ($2::text IS NULL OR "id"::text = $2)
+    ORDER BY "consumedAt" DESC, "id" DESC LIMIT 1`, credit.id, typeof assessmentId === "string" ? assessmentId : null);
+  return rows[0] || null;
+}
+async function readDocument(db: ApprovalDatabase, id: number) {
+  const rows = await db.$queryRawUnsafe<ApprovalDocument[]>(`SELECT "id", "processUuid", "status",
+      "signedDocumentBase64", "signedDocumentFileName", "completedAt"
+    FROM "FirmaSeguroProcess" WHERE "creditoId" = $1 AND "supersededAt" IS NULL
+    ORDER BY "createdAt" DESC, "id" DESC LIMIT 1`, id);
+  return rows[0] || null;
+}
+
+export function buildCreditApprovalDetail(credit: ApprovalCredit, review: ApprovalReview | null, assessment: ApprovalAssessment | null, document: ApprovalDocument | null) {
+  const evidence = APPROVAL_EVIDENCE.map((item) => ({
+    key: item.key, label: item.label, available: Boolean(approvalImage(credit[item.field])),
+    href: `/api/aprobaciones/${credit.id}/evidencias?tipo=${item.key}`,
+  }));
+  const documentAvailable = Boolean(document && approvalPdf(document.signedDocumentBase64) &&
+    (document.completedAt || isFirmaSeguroCompletedStatus(document.status)));
+  const offer = record(assessment?.offer);
+  const savedTerms = record(record(record(credit.contratoSnapshot).financiero).dataCredito);
+  const score = numeric(assessment?.score);
+  const validScore = score !== null && Number.isInteger(score) && score >= -1 && score <= 950;
+  const approved = review?.status === "APPROVED" && review.approvedRevision === review.revision;
+  const reviewHash = digest({
+    creditId: credit.id, document: credit.clienteDocumento, name: credit.clienteNombre,
+    allyId: credit.aliadoId, imei: credit.imei, marca: credit.equipoMarca, modelo: credit.equipoModelo,
+    valorVenta: credit.valorEquipoTotal, inicial: credit.cuotaInicial, principal: credit.saldoBaseFinanciado,
+    financial: record(credit.contratoSnapshot).financiero,
+    evidence: APPROVAL_EVIDENCE.map(({ field }) => digest(credit[field])),
+    assessment: assessment ? [assessment.id, assessment.score, assessment.offer, assessment.status] : null,
+    firmaSeguro: document ? [document.id, document.processUuid, document.status, iso(document.completedAt), digest(document.signedDocumentBase64)] : null,
+  });
+  const blockingReasons: string[] = [];
+  if (!credit.required) blockingReasons.push("Este crédito conserva las reglas anteriores a la activación.");
+  if (credit.paid) blockingReasons.push("Este crédito ya está incluido en una liquidación pagada.");
+  if (["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(credit.estado.trim().toUpperCase())) blockingReasons.push("El crédito está anulado o cancelado.");
+  if (!resolveAllyPaymentPlatform(credit.contratoSnapshot, credit.equipoMarca)) blockingReasons.push("La plataforma del crédito no está identificada.");
+  if (!(credit.valorEquipoTotal > credit.cuotaInicial && credit.cuotaInicial >= 0)) blockingReasons.push("Los valores del crédito no permiten liquidación.");
+  if (!assessment || !validScore || assessment.status !== "APROBADO") blockingReasons.push("La evaluación de DataCrédito vinculada al crédito no está disponible para revisión.");
+  for (const item of evidence) if (!item.available) blockingReasons.push(`Falta evidencia válida: ${item.label}.`);
+  if (!documentAvailable) blockingReasons.push("El documento firmado de FirmaSeguro aún no está disponible.");
+  return {
+    id: credit.id, folio: credit.folio, clienteDocumento: credit.clienteDocumento,
+    clienteNombre: credit.clienteNombre, aliadoNombre: credit.aliadoNombre, fechaCredito: iso(credit.fechaCredito),
+    score: validScore && score !== -1 ? score : null,
+    scoreLabel: validScore ? score === -1 ? "Sin información" : String(score) : "No disponible",
+    initialPaymentPercentage: numeric(offer.initialPaymentPercentage), cuotaInicial: Number(credit.cuotaInicial),
+    creditoAutorizado: Number(credit.saldoBaseFinanciado || Math.max(0, credit.valorEquipoTotal - credit.cuotaInicial)),
+    approvedLimit: numeric(savedTerms.resolvedMaxFinancedAmount ?? savedTerms.maxFinancedAmount ?? offer.maxFinancedAmount),
+    valorVenta: Number(credit.valorEquipoTotal),
+    review: { required: credit.required, status: !credit.required ? "NOT_REQUIRED" : approved ? "APPROVED" : "PENDING",
+      revision: review?.revision || 1, reviewHash, approvedAt: approved ? iso(review?.approvedAt || null) : null,
+      approvedByName: approved ? review?.approvedByName || null : null },
+    canApprove: blockingReasons.length === 0 && !approved, blockingReasons, evidence,
+    document: { available: documentAvailable, href: `/api/aprobaciones/${credit.id}/documento`, fileName: document?.signedDocumentFileName || null },
+  };
+}
+
+export async function getCreditApprovalDetail(db: ApprovalDatabase, id: number) {
+  await requirePolicy(db);
+  const credit = await readCredit(db, id);
+  const review = await readReview(db, id);
+  const assessment = await readAssessment(db, credit);
+  const document = await readDocument(db, id);
+  return buildCreditApprovalDetail(credit, review, assessment, document);
+}
+
+/** Caller supplies a transaction. Lock order matches corrections and ally payments. */
+export async function approveCredit(db: ApprovalDatabase, id: number, input: ReturnType<typeof parseCreditApproval>, actor: ApprovalActor) {
+  await requirePolicy(db);
+  const credit = await readCredit(db, id, true);
+  const review = await readReview(db, id, true);
+  const assessment = await readAssessment(db, credit);
+  const document = await readDocument(db, id);
+  const item = buildCreditApprovalDetail(credit, review, assessment, document);
+  if (input.revision !== item.review.revision || input.reviewHash !== item.review.reviewHash) {
+    throw new CreditApprovalError("REVIEW_CHANGED", "El expediente cambió. Actualiza y vuelve a revisar los documentos antes de dar el OK.", 409);
+  }
+  // A retry of the same confirmed revision produces no second event or actor change.
+  if (item.review.status === "APPROVED" && review?.reviewHash === input.reviewHash) return { item, unchanged: true };
+  if (!item.canApprove) throw new CreditApprovalError("REVIEW_NOT_READY", item.blockingReasons[0] || "El crédito no permite esta aprobación.", 409);
+  await db.$executeRawUnsafe(`INSERT INTO "CreditApprovalReview" ("creditoId", "status", "revision", "createdAt", "updatedAt")
+    VALUES ($1, 'PENDING', 1, CURRENT_TIMESTAMP AT TIME ZONE 'UTC', CURRENT_TIMESTAMP AT TIME ZONE 'UTC') ON CONFLICT ("creditoId") DO NOTHING`, id);
+  const updated = await db.$executeRawUnsafe(`UPDATE "CreditApprovalReview" SET "status" = 'APPROVED',
+    "approvedRevision" = "revision", "approvedByUserId" = $2, "approvedByName" = $3,
+    "approvedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC', "reviewHash" = $4, "updatedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+    WHERE "creditoId" = $1 AND "revision" = $5`, id, actor.id, actor.nombre, input.reviewHash, input.revision);
+  if (updated !== 1) throw new CreditApprovalError("REVIEW_CHANGED", "La revisión cambió. Actualiza el expediente.", 409);
+  await db.$executeRawUnsafe(`INSERT INTO "CreditApprovalEvent"
+    ("id", "creditoId", "eventType", "revision", "actorUserId", "actorName", "reason", "reviewHash", "createdAt")
+    VALUES ($1::uuid, $2, 'APPROVED', $3, $4, $5, 'Documentación revisada para liquidación al aliado', $6, CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`,
+    randomUUID(), id, input.revision, actor.id, actor.nombre, input.reviewHash);
+  const confirmedReview = await readReview(db, id);
+  return { item: buildCreditApprovalDetail(credit, confirmedReview, assessment, document), unchanged: false };
+}
+
+export async function getApprovalEvidence(db: ApprovalDatabase, id: number, key: string) {
+  const config = APPROVAL_EVIDENCE.find((item) => item.key === key);
+  if (!config) throw new CreditApprovalError("INVALID_EVIDENCE", "Evidencia no válida.");
+  const rows = await db.$queryRawUnsafe<Array<{ value: string | null }>>(`SELECT credit."${config.field}" AS value
+    FROM "Credito" credit JOIN "Sede" site ON site."id" = credit."sedeId"
+    JOIN "Aliado" ally ON ally."id" = site."aliadoId" WHERE credit."id" = $1 AND ${scopeSql}`, id);
+  const image = approvalImage(rows[0]?.value || null);
+  if (!image) throw new CreditApprovalError("EVIDENCE_NOT_FOUND", "Evidencia no disponible.", 404);
+  return image;
+}
+export async function getApprovalDocument(db: ApprovalDatabase, id: number) {
+  await readCredit(db, id);
+  const document = await readDocument(db, id);
+  const bytes = approvalPdf(document?.signedDocumentBase64 || null);
+  if (!bytes || !document || !(document.completedAt || isFirmaSeguroCompletedStatus(document.status))) {
+    throw new CreditApprovalError("DOCUMENT_NOT_READY", "El documento firmado aún no está disponible.", 409);
+  }
+  return { bytes, fileName: (document.signedDocumentFileName || `firmaseguro-${id}.pdf`).replace(/[\r\n"\\/]/g, "_") };
+}

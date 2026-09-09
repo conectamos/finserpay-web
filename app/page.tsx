@@ -74,7 +74,7 @@ export default function Home() {
       setMensaje(`Bienvenido ${data.usuario.nombre}`);
 
       window.setTimeout(() => {
-        router.push("/dashboard");
+        router.push(data.destination === "/dashboard/aprobaciones" ? data.destination : "/dashboard");
       }, 700);
     } catch {
       setMensajeTipo("error");

@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export const SESSION_COOKIE_NAME = "session";
 export const SELLER_SESSION_COOKIE_NAME = "seller_session";
@@ -7,6 +7,7 @@ export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 type SessionPayload = {
   exp: number;
   userId: number;
+  credentialVersion?: string;
 };
 
 type SellerSessionPayload = {
@@ -43,9 +44,14 @@ function sign(value: string) {
   return createHmac("sha256", getSessionSecret()).update(value).digest("base64url");
 }
 
-export function createSessionToken(userId: number) {
+export function getSessionCredentialVersion(passwordHash: string, updatedAt?: Date) {
+  return createHash("sha256").update(passwordHash).update("|").update(updatedAt?.toISOString() || "").digest("base64url");
+}
+
+export function createSessionToken(userId: number, credentialVersion?: string) {
   const payload: SessionPayload = {
     userId,
+    ...(credentialVersion ? { credentialVersion } : {}),
     exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS,
   };
 
