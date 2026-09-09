@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSellerSessionUser } from "@/lib/seller-auth";
@@ -77,6 +79,7 @@ type DraftPayload = Record<string, unknown>;
 
 type DraftRow = {
   id: number;
+  clienteDocumento: string | null;
   estado: string;
   usuarioId: number;
   vendedorId: number | null;
@@ -282,6 +285,8 @@ async function readAuthorizedDraft(
   if (!row) {
     return { ok: false as const, status: 404, error: "Borrador no encontrado" };
   }
+  await assertDocumentNotBlacklisted(row.clienteDocumento);
+  await assertDocumentNotBlacklisted(payloadObject(row.payload).clienteDocumento);
 
   return { ok: true as const, row, centralAdmin };
 }
@@ -812,6 +817,8 @@ export async function GET(
       }),
     });
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     logFirmaSeguroDraftError("GET", draftIdForLog, error);
     return firmaSeguroErrorResponse(error);
   }
@@ -1109,6 +1116,8 @@ export async function POST(
       await dispatchLock.release();
     }
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     logFirmaSeguroDraftError("POST", draftIdForLog, error);
     return firmaSeguroErrorResponse(error);
   }

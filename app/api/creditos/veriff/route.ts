@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import { getSessionUser } from "@/lib/auth";
 import {
   PAYMENT_FREQUENCY_OPTIONS,
@@ -300,6 +302,7 @@ export async function POST(request: Request) {
       );
     }
     const lockedPlatform = String(draft.plataforma || "").trim().toUpperCase();
+    await assertDocumentNotBlacklisted(clienteDocumento);
     if (!["ANDROID", "IPHONE"].includes(lockedPlatform)) {
       return NextResponse.json(
         {
@@ -540,6 +543,8 @@ export async function POST(request: Request) {
       veriff: getVeriffPublicSummary(),
     });
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     return veriffErrorResponse(error);
   } finally {
     await operationLock?.release();

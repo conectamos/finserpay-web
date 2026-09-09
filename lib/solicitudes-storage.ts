@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import {
+  assertSolicitudBlacklistDocumentsLocked,
+  collectSolicitudBlacklistDocuments,
+} from "@/lib/solicitud-blacklist-locks";
 import { ensureDataCreditoSchema } from "@/lib/datacredito/storage";
 import {
   isFirmaSeguroFailedStatus,
@@ -607,6 +612,7 @@ export async function reserveSolicitudForIdentity(input: {
   if (!platform) throw new Error("PLATAFORMA_SOLICITUD_INVALIDA");
 
   return prisma.$transaction(async (transaction) => {
+    await assertDocumentNotBlacklisted(input.clienteDocumento, transaction);
     await lockIdentity(transaction, "document", document);
     if (imei) {
       await lockIdentity(transaction, "imei", imei);
@@ -746,6 +752,39 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
 
   return prisma.$transaction(async (transaction) => {
     let targetId = input.id || null;
+    // Evidence-only autosaves omit the CC. Resolve it without row locks so all
+    // paths acquire blacklist -> operation -> identity locks in the same order.
+    const preliminaryRows = targetId
+      ? await transaction.$queryRawUnsafe<Array<{
+          id: number;
+          usuarioId: number;
+          vendedorId: number | null;
+          sedeId: number;
+          clienteDocumento: string | null;
+          blacklistPayloadDocument: unknown;
+        }>>(
+          `SELECT "id", "usuarioId", "vendedorId", "sedeId", "clienteDocumento",
+            "payload"->'clienteDocumento' AS "blacklistPayloadDocument"
+           FROM "CreditoBorrador"
+           WHERE "id" = $1 AND "estado" = 'ABIERTO'
+             AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
+           LIMIT 1`,
+          targetId,
+        )
+      : [];
+    const preliminary = preliminaryRows[0];
+    if (targetId && (!preliminary || !sameOwner(preliminary, input))) {
+      throw new Error("SOLICITUD_NO_AUTORIZADA");
+    }
+    const lockedBlacklistDocuments = new Set(collectSolicitudBlacklistDocuments(
+      input.clienteDocumento,
+      input.payload.clienteDocumento,
+      preliminary?.clienteDocumento,
+      preliminary?.blacklistPayloadDocument,
+    ));
+    for (const blacklistDocument of lockedBlacklistDocuments) {
+      await assertDocumentNotBlacklisted(blacklistDocument, transaction);
+    }
     if (targetId) await lockSolicitudOperationMutation(transaction, targetId);
     if (document) await lockIdentity(transaction, "document", document);
     if (imei) await lockIdentity(transaction, "imei", imei);
@@ -800,6 +839,11 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     const incomingAssessmentId =
       String(input.dataCreditoAssessmentId || "").trim() ||
       input.payload.dataCreditoAssessmentId;
+    assertSolicitudBlacklistDocumentsLocked(
+      lockedBlacklistDocuments,
+      targetRow?.clienteDocumento,
+      targetRow?.payload?.clienteDocumento,
+    );
     const canonical = targetRow
       ? resolveSolicitudDraftCanonicalIdentity({
           materialized: Boolean(targetRow.materialized),
@@ -820,6 +864,13 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           payload: input.payload,
         };
     let canonicalPayload: Record<string, unknown> = { ...canonical.payload };
+    // If the identity changed since the preliminary read, retry rather than
+    // taking a new blacklist lock after the operation/identity/row locks.
+    assertSolicitudBlacklistDocumentsLocked(
+      lockedBlacklistDocuments,
+      canonical.clienteDocumento,
+      canonical.payload.clienteDocumento,
+    );
     const storedCorrectionId = String(
       targetRow?.payload?.firmaSeguroCorrectionId || ""
     ).trim();
@@ -954,6 +1005,10 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         : {}),
     };
     const payloadJson = JSON.stringify(persistedPayload);
+    assertSolicitudBlacklistDocumentsLocked(
+      lockedBlacklistDocuments,
+      persistedPayload.clienteDocumento,
+    );
     if (targetId) {
       const updated = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
         `

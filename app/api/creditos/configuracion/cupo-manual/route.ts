@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import { getSessionUser } from "@/lib/auth";
 import { getActiveDataCreditoManualCreditLimit } from "@/lib/datacredito/manual-credit-limits";
 
@@ -51,6 +53,7 @@ export async function POST(req: Request) {
       );
     }
 
+    await assertDocumentNotBlacklisted(documentNumber);
     const activeManualCreditLimit =
       await getActiveDataCreditoManualCreditLimit(documentNumber);
     const manualCreditLimit = activeManualCreditLimit
@@ -67,6 +70,8 @@ export async function POST(req: Request) {
       manualCreditLimit,
     });
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     console.error("ERROR LOOKUP CUPO MANUAL DATACREDITO:", {
       errorType: error instanceof Error ? error.name : "UnknownError",
     });

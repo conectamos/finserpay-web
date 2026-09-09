@@ -17,6 +17,7 @@ import {
   PieChart,
   Plug,
   Settings,
+  ShieldBan,
   ShieldCheck,
   Smartphone,
   TriangleAlert,
@@ -164,7 +165,10 @@ export default function AdminSidebar({
       label: "Administracion",
       items: [
         ...(adminCentral
-          ? [{ href: "/dashboard/aliados", icon: Handshake, label: "Aliados" }]
+          ? [
+              { href: "/dashboard/aliados", icon: Handshake, label: "Aliados" },
+              { href: "/dashboard/lista-negra", icon: ShieldBan, label: "LISTA NEGRA" },
+            ]
           : []),
         { href: "/dashboard/sedes", icon: MapPin, label: "Sedes" },
         { href: "/dashboard/usuarios", icon: UserRound, label: "Usuarios" },

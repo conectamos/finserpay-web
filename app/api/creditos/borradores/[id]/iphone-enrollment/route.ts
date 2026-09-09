@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { IPHONE_ENROLLMENT_RESPONSE_HEADERS } from "@/lib/iphone-enrollment";
@@ -81,6 +83,7 @@ export async function GET(
       return response({ ok: false, error: "Solicitud no disponible" }, 404);
     }
     const document = String(draft.clienteDocumento || "").replace(/\D/g, "");
+    await assertDocumentNotBlacklisted(document);
     const imei = String(draft.imei || "").replace(/\D/g, "");
     const review =
       document && imei
@@ -105,6 +108,8 @@ export async function GET(
       200
     );
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     console.error("ERROR CONSULTANDO APROBACION DE ENROLAMIENTO IPHONE:", error);
     return response(
       { ok: false, error: "No se pudo consultar el enrolamiento" },

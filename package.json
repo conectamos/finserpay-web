@@ -31,7 +31,8 @@
     "db:setup-datacredito": "npx prisma db execute --file scripts/setup-datacredito.sql",
     "seed:initial": "npx prisma db execute --file scripts/seed-initial-data.sql",
     "prisma:generate": "npx prisma generate",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:lista-negra": "node --experimental-strip-types --test tests/document-blacklist-*.test.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.7.0",

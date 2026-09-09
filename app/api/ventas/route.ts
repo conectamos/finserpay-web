@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import { normalizeBlacklistedDocument } from "@/lib/document-blacklist-core";
+import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import {
   buildLegacyFinancieraPayload,
   construirDetalleFinancieras,
@@ -365,6 +368,8 @@ export async function POST(req: Request) {
 
     const user = session.user;
     const data = (await req.json()) as Record<string, unknown>;
+    const clienteDocumento = normalizeBlacklistedDocument(data.clienteDocumento);
+    await assertDocumentNotBlacklisted(clienteDocumento);
     const input = parseVentaInput(data);
     const catalogo = await obtenerCatalogoPersonalVenta();
     const validationError = validateVentaInput(input);
@@ -426,9 +431,11 @@ export async function POST(req: Request) {
     const calculo = buildVentaData(input, inventario.costo, catalogo.financieras);
 
     const venta = await prisma.$transaction(async (tx) => {
+      await assertDocumentNotBlacklisted(clienteDocumento, tx);
       const creada = await tx.venta.create({
         data: {
           idVenta,
+          clienteDocumento,
           fecha: now,
           hora: now.toLocaleTimeString("es-CO", { hour12: false }),
           servicio: input.servicio,
@@ -492,6 +499,8 @@ export async function POST(req: Request) {
       venta,
     });
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     console.error("ERROR POST VENTAS:", error);
     return NextResponse.json({ error: "Error guardando venta" }, { status: 500 });
   }

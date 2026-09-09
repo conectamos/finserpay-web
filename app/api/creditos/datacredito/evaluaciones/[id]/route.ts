@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getActiveSolicitudCreditContext } from "@/lib/solicitudes-storage";
@@ -153,6 +155,17 @@ export async function GET(request: Request, context: RouteContext) {
     const identitySurname = draftId
       ? resumeIdentity?.firstSurname || draftSurname
       : requestedFirstSurname || "";
+    if (!identityDocument || !identitySurname) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "NO_EVALUADO",
+          code: "ASSESSMENT_IDENTITY_REQUIRED",
+          error: "Debes identificar al titular de la solicitud antes de retomar la evaluacion.",
+        },
+        { status: 409 }
+      );
+    }
 
     if (
       draftId ||
@@ -182,6 +195,11 @@ export async function GET(request: Request, context: RouteContext) {
           { status: 409 }
         );
       }
+    }
+
+    await assertDocumentNotBlacklisted(identityDocument);
+    if (draftDocument) {
+      await assertDocumentNotBlacklisted(draftDocument);
     }
 
     if (expectedPlatform && row.platform !== expectedPlatform) {
@@ -303,6 +321,8 @@ export async function GET(request: Request, context: RouteContext) {
         : {}),
     });
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     console.error("ERROR GET EVALUACION DATACREDITO:", {
       id,
       errorType: error instanceof Error ? error.name : "UnknownError",

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
@@ -107,6 +109,7 @@ export async function GET(
       });
     }
 
+    await assertDocumentNotBlacklisted(current.clienteDocumento);
     let row = current;
     let decisionPayload: unknown = null;
     let personPayload: unknown = null;
@@ -169,6 +172,7 @@ export async function GET(
       );
     }
 
+    await assertDocumentNotBlacklisted(row.clienteDocumento);
     if (decisionPayload) {
       row =
         (await updateVeriffValidationFromDecision(
@@ -226,6 +230,8 @@ export async function GET(
       veriff: getVeriffPublicSummary(),
     });
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     const message =
       error instanceof Error ? error.message : "No se pudo consultar Veriff";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });

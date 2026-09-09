@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Input } from "@/app/_components/finser-ui";
+import { normalizeBlacklistedDocument } from "@/lib/document-blacklist-core";
 import {
   calcularValorNetoFinanciera,
   type CatalogoFinanciera,
@@ -82,6 +84,7 @@ export default function NuevaVentaPage() {
   const [cerradores, setCerradores] = useState<string[]>([]);
   const [financierasCatalogo, setFinancierasCatalogo] = useState<CatalogoFinanciera[]>([]);
   const [serial, setSerial] = useState("");
+  const [clienteDocumento, setClienteDocumento] = useState("");
   const [servicio, setServicio] = useState("");
   const [descripcion, setDescripcion] = useState("");
   const [jalador, setJalador] = useState("");
@@ -290,6 +293,7 @@ export default function NuevaVentaPage() {
 
   const limpiarTodo = () => {
     setSerial("");
+    setClienteDocumento("");
     setServicio("");
     setDescripcion("");
     setJalador("");
@@ -315,6 +319,13 @@ export default function NuevaVentaPage() {
     try {
       setGuardando(true);
       setMensaje("");
+
+      let documentoNormalizado: string;
+      try {
+        documentoNormalizado = normalizeBlacklistedDocument(clienteDocumento);
+      } catch {
+        return setMensaje("Ingresa una cedula valida del cliente para registrar la venta");
+      }
 
       if (!serial) return setMensaje("Ingrese el IMEI");
       if (!servicio) return setMensaje("Seleccione el servicio");
@@ -353,6 +364,7 @@ export default function NuevaVentaPage() {
         },
         body: JSON.stringify({
           serial,
+          clienteDocumento: documentoNormalizado,
           servicio,
           descripcion,
           jalador,
@@ -432,6 +444,29 @@ export default function NuevaVentaPage() {
 
             <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1.85fr)_420px] xl:gap-10">
               <div className="space-y-6">
+                <div className={sectionCardClass()}>
+                  <h3 className={sectionTitleClass()}>Cliente</h3>
+                  <label htmlFor="venta-cliente-documento" className="mb-2 block text-sm font-semibold text-[var(--fp-graphite)]">
+                    Cedula del cliente
+                  </label>
+                  <Input
+                    id="venta-cliente-documento"
+                    name="clienteDocumento"
+                    value={clienteDocumento}
+                    onChange={(event) => setClienteDocumento(event.target.value)}
+                    inputMode="numeric"
+                    autoComplete="off"
+                    maxLength={26}
+                    required
+                    disabled={guardando}
+                    aria-describedby="venta-cliente-documento-ayuda"
+                    placeholder="Ingresa la cedula del comprador"
+                  />
+                  <p id="venta-cliente-documento-ayuda" className="mt-2 text-sm text-[var(--fp-muted)]">
+                    La cedula es obligatoria. Los clientes en lista negra no pueden comprar en ningun aliado.
+                  </p>
+                </div>
+
                 <div className={sectionCardClass()}>
                   <h3 className={sectionTitleClass()}>Equipo</h3>
 

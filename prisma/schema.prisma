@@ -7,6 +7,43 @@ datasource db {
   provider = "postgresql"
 }
 
+model ListaNegraDocumento {
+  id String @id @db.Uuid
+  documento String @unique @db.VarChar(13)
+  motivo String
+  activa Boolean @default(true)
+  version Int @default(1)
+  createdByUserId Int
+  createdByName String
+  updatedByUserId Int
+  updatedByName String
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @db.Timestamptz(6)
+  createdBy Usuario @relation("BlacklistCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  updatedBy Usuario @relation("BlacklistUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: Restrict)
+  eventos ListaNegraDocumentoEvento[]
+
+  @@index([activa, updatedAt])
+}
+
+model ListaNegraDocumentoEvento {
+  id String @id @db.Uuid
+  registroId String @db.Uuid
+  mutationId String @unique @db.Uuid
+  requestHash String @db.Char(64)
+  accion String
+  motivo String
+  actorUserId Int
+  actorName String
+  before Json?
+  after Json
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  registro ListaNegraDocumento @relation(fields: [registroId], references: [id], onDelete: Restrict)
+  actor Usuario @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([registroId, createdAt])
+}
+
 model Rol {
   id          Int       @id @default(autoincrement())
   nombre      String    @unique
@@ -126,6 +163,9 @@ model Usuario {
   ventas          Venta[]
   arqueosDiarios  ArqueoDiario[]
   liquidacionesAliadoRegistradas LiquidacionAliado[]
+  bloqueosDocumentoCreados ListaNegraDocumento[] @relation("BlacklistCreatedBy")
+  bloqueosDocumentoActualizados ListaNegraDocumento[] @relation("BlacklistUpdatedBy")
+  eventosListaNegra ListaNegraDocumentoEvento[]
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
 }
@@ -518,6 +558,7 @@ model Inventario {
 model Venta {
   id                 Int      @id @default(autoincrement())
   idVenta            String   @unique
+  clienteDocumento   String?
   fecha              DateTime
   hora               String?
   servicio           String

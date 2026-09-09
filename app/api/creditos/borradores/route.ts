@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { sanitizeSearch, sanitizeText } from "@/lib/credit-factory";
@@ -315,6 +317,9 @@ export async function GET(req: Request) {
       if (!rows[0]) {
         return NextResponse.json({ error: "Borrador no encontrado" }, { status: 404 });
       }
+      if (rows[0].clienteDocumento) {
+        await assertDocumentNotBlacklisted(rows[0].clienteDocumento);
+      }
       return NextResponse.json({ ok: true, item: serializeDraft(rows[0]) });
     }
 
@@ -340,6 +345,8 @@ export async function GET(req: Request) {
       items: rows.map(serializeDraft),
     });
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     console.error("ERROR LISTANDO BORRADORES:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "No se pudieron cargar los borradores" },
@@ -385,6 +392,12 @@ export async function POST(req: Request) {
     if (!canOperateExistingDraft) {
       return NextResponse.json({ error: "Solicitud no autorizada" }, { status: 403 });
     }
+    if (fields.clienteDocumento) {
+      await assertDocumentNotBlacklisted(fields.clienteDocumento);
+    }
+    if (existingDraft?.clienteDocumento) {
+      await assertDocumentNotBlacklisted(existingDraft.clienteDocumento);
+    }
     const owner = existingDraft || {
       usuarioId: access.user.id,
       vendedorId: access.seller?.id || null,
@@ -409,6 +422,8 @@ export async function POST(req: Request) {
     if (!rows[0]) throw new Error("No se pudo leer el borrador guardado");
     return NextResponse.json({ ok: true, item: serializeDraft(rows[0]) });
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     if (
       error instanceof Error &&
       error.message === DRAFT_REQUIRES_DATACREDITO_CODE

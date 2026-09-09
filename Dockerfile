@@ -44,6 +44,8 @@ COPY --from=builder /app/scripts/ensure-credit-device-replacement-schema.mjs ./s
 COPY --from=builder /app/scripts/ensure-aliado-redescuento-schema.mjs ./scripts/ensure-aliado-redescuento-schema.mjs
 COPY --from=builder /app/scripts/ensure-ally-payments-schema.mjs ./scripts/ensure-ally-payments-schema.mjs
 COPY --from=builder /app/scripts/railway-predeploy.mjs ./scripts/railway-predeploy.mjs
+COPY --from=builder /app/scripts/ensure-document-blacklist-schema.mjs ./scripts/ensure-document-blacklist-schema.mjs
+COPY --from=builder /app/scripts/document-blacklist-schema.mjs ./scripts/document-blacklist-schema.mjs
  
 EXPOSE 3000
 

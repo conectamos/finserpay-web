@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
+import { resolveDataCreditoConfig } from "@/lib/datacredito/config";
+import prisma from "@/lib/prisma";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSessionUser } from "@/lib/auth";
 import {
@@ -281,6 +285,7 @@ export async function POST(request: Request) {
     }
 
     const provider = getDataCreditoPublicConfig();
+    await assertDocumentNotBlacklisted(documentNumber);
     if (!provider.enabled) {
       return technicalResponse({
         correlationId,
@@ -531,6 +536,8 @@ export async function POST(request: Request) {
       });
     }
 
+    await assertDocumentNotBlacklisted(documentNumber);
+
     // A terminal inquiry for the same CC/provider environment is valid across
     // FINSER PAY. The destination policy is applied again for the current ally.
     // It remains reusable for exactly 15 days, before credential readiness and rate
@@ -749,12 +756,18 @@ export async function POST(request: Request) {
     };
     await storePendingDataCreditoSecureRecord(pendingSecure);
 
-    providerStartedAt = Date.now();
-    const result = await queryDataCreditoNaturalPerson({
-      documentNumber,
-      firstSurname,
-      correlationId,
-    });
+    // Serialize the paid provider request with blacklist activation for this CC.
+    // A token refresh can issue two auth requests and two provider requests.
+    const providerTimeoutMs = resolveDataCreditoConfig(process.env, correlationId).timeoutMs;
+    const result = await prisma.$transaction(async (transaction) => {
+      await assertDocumentNotBlacklisted(documentNumber, transaction);
+      providerStartedAt = Date.now();
+      return await queryDataCreditoNaturalPerson({
+        documentNumber,
+        firstSurname,
+        correlationId,
+      });
+    }, { timeout: providerTimeoutMs * 4 + 5_000 });
     const transactionCode = safeProviderValue(result.transactionCode, 32);
     const providerStatus = safeProviderValue(result.providerStatus, 64);
     const durationMs = safeDuration(result.durationMs);
@@ -770,6 +783,9 @@ export async function POST(request: Request) {
         providerPayload: result.providerPayload,
       }),
     };
+    // Retain the encrypted provider reply even if a later blacklist check
+    // prevents publishing its decision to the sales flow.
+    await storePendingDataCreditoSecureRecord(completedSecure);
 
     const scoredOutcome =
       result.outcome === "SCORE" &&
@@ -943,6 +959,7 @@ export async function POST(request: Request) {
       });
     }
 
+    await assertDocumentNotBlacklisted(documentNumber);
     const completed = await completeDataCreditoAssessmentWithSecureRecord({
       id: pending.id,
       score: assessmentScore,
@@ -970,6 +987,7 @@ export async function POST(request: Request) {
       ...serializeDataCreditoAssessment(completed),
     });
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
     if (error instanceof ActiveSolicitudConflictError) {
       return technicalResponse({
         correlationId,
@@ -986,8 +1004,9 @@ export async function POST(request: Request) {
         status: error.status,
       });
     }
-    const code =
-      error instanceof DataCreditoError
+    const code = blacklistResponse
+      ? safeProviderValue((error as { code?: unknown }).code, 64) || "DOCUMENT_BLACKLISTED"
+      : error instanceof DataCreditoError
         ? safeProviderValue(error.code, 64) || "PROVIDER_ERROR"
         : error instanceof DataCreditoStorageConfigurationError
           ? error.code
@@ -1030,6 +1049,8 @@ export async function POST(request: Request) {
         errorCode: code,
       }).catch(() => undefined);
     }
+
+    if (blacklistResponse) return blacklistResponse;
 
     console.error("ERROR EVALUACION DATACREDITO:", {
       correlationId,

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import type { Prisma } from "@/app/generated/prisma/client";
 import {
   generateCreditFolio,
@@ -772,6 +774,9 @@ export async function POST(req: Request) {
     }
 
     const validation = await validateRows(rows);
+    for (const row of validation.prepared) {
+      await assertDocumentNotBlacklisted(row.cedula);
+    }
 
     if (!commit || validation.summary.invalid > 0) {
       return NextResponse.json({
@@ -797,6 +802,10 @@ export async function POST(req: Request) {
     await ensureCreditDeviceReplacementSchema();
     const createdRows = await prisma.$transaction(async (tx) => {
       const created: Array<{ id: number; folio: string; rowNumber: number }> = [];
+      const documents = [...new Set(validation.prepared.map((row) => row.cedula))].sort();
+      for (const document of documents) {
+        await assertDocumentNotBlacklisted(document, tx);
+      }
 
       const rowsByImei = [...validation.prepared].sort((left, right) =>
         left.imei.localeCompare(right.imei)
@@ -904,6 +913,8 @@ export async function POST(req: Request) {
       },
     });
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     if (error instanceof CreditDeviceReplacementError) {
       return NextResponse.json(
         { error: error.message, code: error.code },

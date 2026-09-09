@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
+import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import { NextResponse } from "next/server";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
@@ -1282,6 +1284,7 @@ export async function POST(req: Request) {
         { status: 409 }
       );
     }
+    await assertDocumentNotBlacklisted(clienteDocumento);
     const requestedAssessmentId = sanitizeText(body.dataCreditoAssessmentId);
     if (
       solicitudContext?.dataCreditoAssessmentId &&
@@ -3541,6 +3544,7 @@ export async function POST(req: Request) {
     const createCreditWithAmortization = async (
       transaction: Prisma.TransactionClient
     ) => {
+      await assertDocumentNotBlacklisted(clienteDocumento, transaction);
       let transactionVeriffValidation = veriffValidation;
 
       await lockCreditDeviceReplacementImeiForCreditCreation(transaction, {
@@ -3796,6 +3800,8 @@ export async function POST(req: Request) {
         : null,
     });
   } catch (error) {
+    const blacklistResponse = documentBlacklistErrorResponse(error);
+    if (blacklistResponse) return blacklistResponse;
     if (error instanceof ActiveSolicitudConflictError) {
       return NextResponse.json(
         {
