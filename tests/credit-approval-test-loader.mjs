@@ -28,6 +28,8 @@ const importFlags = loadApprovalModule("lib/credit-import-flags.ts");
 const policy = loadApprovalModule("lib/credit-approval-policy.ts", { "./credit-import-flags": importFlags });
 const documentCore = loadApprovalModule("lib/document-blacklist-core.ts");
 const paymentsCore = loadApprovalModule("lib/ally-payments-core.ts");
+const colombiaDate = loadApprovalModule("lib/colombia-date.ts");
+const creditFactory = loadApprovalModule("lib/credit-factory.ts", { "@/lib/colombia-date": colombiaDate });
 const reissueState = loadApprovalModule("lib/credit-approval-reissue-state.ts");
 export const approvalErrors = loadApprovalModule("lib/credit-approval-errors.ts");
 export const approvalActors = loadApprovalModule("lib/credit-approval-actor.ts");
@@ -38,6 +40,7 @@ export const noveltyState = loadApprovalModule("lib/credit-approval-novelty-stat
   "@/lib/credit-approval-errors": approvalErrors, "@/lib/credit-approval-novelty-core": noveltyCore,
 });
 export const service = loadApprovalModule("lib/credit-approval.ts", {
+  "@/lib/credit-factory": creditFactory,
   "@/lib/credit-approval-errors": approvalErrors,
   "@/lib/credit-approval-actor": approvalActors,
   "@/lib/credit-approval-novelty-state": noveltyState,
@@ -55,6 +58,9 @@ export const pdf = Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF"
 export function approvalFixture() {
   const credit = {
     id: 81, folio: "FNS-TEST-81", clienteNombre: "Cliente de prueba", clienteDocumento: "100000001",
+    clienteCorreo: "cliente@example.test", clienteTelefono: "3001234567",
+    plazoMeses: 12, frecuenciaPago: "QUINCENAL", valorCuota: 98765.43,
+    cuotaComercialGuardada: null, fechaPrimerPago: new Date("2026-10-01T00:00:00.000Z"),
     fechaCredito: new Date("2026-09-10T15:00:00Z"), createdAt: new Date("2026-09-10T15:00:00Z"),
     estado: "ACTIVO", aliadoId: 5, aliadoNombre: "Aliado de prueba", aliadoCodigo: "ALIADO_TEST",
     valorEquipoTotal: 1000000, cuotaInicial: 200000, saldoBaseFinanciado: 800000,

@@ -4,6 +4,7 @@ import { approvalActorAudit, assertApprovalActorActive, assertApprovalActorCredi
 import { getCreditApprovalNoveltyState, resolveCreditApprovalNoveltyForApproval } from "@/lib/credit-approval-novelty-state";
 
 import { createHash, randomUUID } from "node:crypto";
+import { PAYMENT_FREQUENCY_OPTIONS } from "@/lib/credit-factory";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditApprovalRequiredSql } from "@/lib/credit-approval-policy";
 import { normalizeBlacklistedDocument } from "@/lib/document-blacklist-core";
@@ -26,6 +27,9 @@ type EvidenceField = (typeof APPROVAL_EVIDENCE)[number]["field"];
 
 export type ApprovalCredit = Record<EvidenceField, string | null> & {
   id: number; folio: string; clienteNombre: string; clienteDocumento: string | null;
+  clienteCorreo: string | null; clienteTelefono: string | null;
+  plazoMeses: number | null; frecuenciaPago: string | null; valorCuota: number | null;
+  cuotaComercialGuardada: string | null; fechaPrimerPago: Date | null;
   fechaCredito: Date; createdAt: Date; estado: string; aliadoId: number;
   aliadoNombre: string; aliadoCodigo: string; valorEquipoTotal: number;
   cuotaInicial: number; saldoBaseFinanciado: number; contratoSnapshot: unknown;
@@ -55,6 +59,19 @@ function numeric(value: unknown) {
 }
 function iso(value: Date | string | null) {
   return value ? new Date(value).toISOString() : null;
+}
+function contact(value: unknown) {
+  return typeof value === "string" ? value.trim() || null : null;
+}
+function positiveAmount(value: unknown) {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  const amount = numeric(value);
+  return amount !== null && amount > 0 ? amount : null;
+}
+function storedCalendarDate(value: Date | string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : null;
 }
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -130,6 +147,8 @@ export async function listCreditApprovals(db: ApprovalDatabase, documento: strin
 async function readCredit(db: ApprovalDatabase, id: number, lock = false) {
   const rows = await db.$queryRawUnsafe<ApprovalCredit[]>(`SELECT credit."id", credit."folio",
       credit."clienteNombre", credit."clienteDocumento", credit."fechaCredito", credit."createdAt",
+      credit."clienteCorreo", credit."clienteTelefono", credit."plazoMeses", credit."frecuenciaPago",
+      credit."valorCuota", credit."fechaPrimerPago", amortization."cuotaComercial"::text AS "cuotaComercialGuardada",
       credit."estado", credit."valorEquipoTotal", credit."cuotaInicial", credit."saldoBaseFinanciado",
       credit."contratoSnapshot", credit."imei", credit."equipoMarca", credit."equipoModelo",
       ${APPROVAL_EVIDENCE.map(({ field }) => `credit."${field}"`).join(", ")},
@@ -138,6 +157,7 @@ async function readCredit(db: ApprovalDatabase, id: number, lock = false) {
       EXISTS (SELECT 1 FROM "LiquidacionAliadoCredito" paid WHERE paid."creditoId" = credit."id") AS paid
     FROM "Credito" credit JOIN "Sede" site ON site."id" = credit."sedeId"
     JOIN "Aliado" ally ON ally."id" = site."aliadoId"
+    LEFT JOIN "CreditoAmortizacion" amortization ON amortization."creditoId" = credit."id"
     WHERE credit."id" = $1 AND ${scopeSql}${lock ? " FOR UPDATE OF credit" : ""}`, id);
   if (!rows[0]) throw new CreditApprovalError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
   return rows[0];
@@ -185,6 +205,12 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
     assessment: assessment ? [assessment.id, assessment.score, assessment.offer, assessment.status] : null,
     firmaSeguro: document ? [document.id, document.processUuid, document.status, iso(document.completedAt), digest(document.signedDocumentBase64)] : null,
   });
+  // Same stored commercial installment precedence used by the credit factory.
+  const financial = record(credit.contratoSnapshot).financiero;
+  const valorCuota = positiveAmount(credit.cuotaComercialGuardada)
+    ?? positiveAmount(record(financial).cuotaComercial) ?? positiveAmount(credit.valorCuota);
+  const installments = positiveAmount(credit.plazoMeses);
+  const frequency = contact(credit.frecuenciaPago)?.toUpperCase();
   const cancelled = ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(credit.estado.trim().toUpperCase());
   const correctionBlockedReason = !credit.required ? "Este crédito conserva las reglas anteriores a la activación."
     : credit.paid ? "Este crédito ya está incluido en una liquidación pagada."
@@ -206,6 +232,10 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
   return {
     id: credit.id, folio: credit.folio, clienteDocumento: credit.clienteDocumento,
     clienteNombre: credit.clienteNombre, aliadoNombre: credit.aliadoNombre, fechaCredito: iso(credit.fechaCredito),
+    clienteCorreo: contact(credit.clienteCorreo), clienteTelefono: contact(credit.clienteTelefono),
+    numeroCuotas: installments !== null && Number.isSafeInteger(installments) ? installments : null,
+    frecuenciaPago: frequency && PAYMENT_FREQUENCY_OPTIONS.some((option) => option.value === frequency) ? frequency : null,
+    valorCuota, fechaPrimerPago: storedCalendarDate(credit.fechaPrimerPago),
     score: validScore && score !== -1 ? score : null,
     scoreLabel: validScore ? score === -1 ? "Sin información" : String(score) : "No disponible",
     initialPaymentPercentage: numeric(offer.initialPaymentPercentage), cuotaInicial: Number(credit.cuotaInicial),

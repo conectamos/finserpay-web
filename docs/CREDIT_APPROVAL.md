@@ -177,12 +177,17 @@ actualiza al abrir el reporte o volver a consultar con Aplicar.
 | Dato | Fuente y tratamiento |
 | --- | --- |
 | Score | Evaluación DataCrédito consumida y vinculada al crédito; se respeta el identificador guardado en el contrato cuando existe. `-1` se presenta como **Sin información**, sin inventar un puntaje. |
-| Porcentaje aprobado en la oferta | `offer.initialPaymentPercentage` de esa evaluación. Puede diferir del porcentaje efectivamente pagado por el cliente. |
-| Inicial aplicada | `Credito.cuotaInicial`; es el valor registrado en el crédito. |
+| Nombre, cédula, correo y teléfono | Datos de contacto guardados en el propio crédito. Los campos vacíos se muestran como **No disponible**. |
+| Inicial | `Credito.cuotaInicial`; es el valor registrado en el crédito. |
 | Crédito autorizado | Capital registrado en `saldoBaseFinanciado`, con el respaldo existente de valor del equipo menos inicial. |
-| Cupo aprobado | Valor guardado en los términos DataCrédito del contrato; la oferta es el respaldo cuando esos términos no lo contienen. |
+| Valor venta | `Credito.valorEquipoTotal`, mostrado como importe independiente. |
+| Plazo de financiación | `Credito.plazoMeses` guarda cantidad de cuotas, junto con `frecuenciaPago`; por ejemplo, **12 cuotas · Quincenal**. No se interpreta automáticamente como meses. |
+| Valor de cuota | Cuota comercial persistida en `CreditoAmortizacion`; si no existe, `contratoSnapshot.financiero.cuotaComercial` y finalmente `Credito.valorCuota`. No se recalcula ni redondea el crédito al consultar. |
+| Fecha primer pago | `Credito.fechaPrimerPago`, conservando el día calendario UTC. No se sustituye por la fecha del próximo pago. |
 | Cinco fotografías | Cédula frontal, cédula posterior, selfie con cédula, entrega y remisión guardadas en el crédito. |
 | PDF firmado | Proceso FirmaSeguro vigente, no sustituido, asociado al crédito y con documento firmado disponible; el visor muestra su última página. |
+
+El resumen ya no muestra **Cupo aprobado** ni el porcentaje de inicial de la oferta. Los datos opcionales inválidos o ausentes no se convierten en cero ni en fechas actuales. Esta ampliación de lectura no modifica contratos, amortización, aprobaciones existentes ni el esquema de la base.
 
 El visor utiliza PDF.js y sus recursos servidos por la propia aplicación, sin
 CDN. Obtiene internamente el PDF completo mediante la ruta autorizada y renderiza

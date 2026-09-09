@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Expand, FileText, ImageOff, RefreshCw, ShieldCheck } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
+import { PAYMENT_FREQUENCY_OPTIONS } from "@/lib/credit-factory";
 import LastPdfPagePreview from "./last-pdf-page-preview";
 import ApprovalEvidenceCorrection from "./approval-evidence-correction";
 import ApprovalSignatureReissue from "./approval-signature-reissue";
@@ -11,12 +12,26 @@ import { Badge, Button, Card, DataTable, EmptyState, LoadingState, MetricCard, P
 import { ApprovalRequestError, approveCreditReview, readApprovalCredit, readApprovalQueue, mergeApprovalQueuePage, type ApprovalDetail, type ApprovalQueueItem, type ApprovalStatus } from "./approval-client";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
-const percent = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 });
+const calendarDates = new Intl.DateTimeFormat("es-CO", { timeZone: "UTC", day: "2-digit", month: "2-digit", year: "numeric" });
 const dates = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", dateStyle: "medium", timeStyle: "short" });
 
 function dateLabel(value: string | null) {
   const date = value ? new Date(value) : null;
   return date && !Number.isNaN(date.getTime()) ? dates.format(date) : "No disponible";
+}
+
+function calendarDateLabel(value: string | null) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return "No disponible";
+  const date = new Date(value + "T00:00:00.000Z");
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value ? calendarDates.format(date) : "No disponible";
+}
+
+function amountLabel(value: number | null | undefined) {
+  return value != null && Number.isFinite(value) ? money.format(value) : "No disponible";
+}
+
+function frequencyLabel(value: string | null) {
+  return PAYMENT_FREQUENCY_OPTIONS.find((option) => option.value === value?.trim().toUpperCase())?.label ?? "No disponible";
 }
 
 function ReviewStatus({ status, required }: { status: ApprovalStatus; required: boolean }) {
@@ -271,18 +286,31 @@ export default function ApprovalConsole() {
         <section aria-label={`Expediente del crédito ${detail.folio}`} aria-busy={loadingDetail} className="space-y-6">
           <Card className="p-4 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
-              <div><p className="text-sm text-[var(--fp-muted)]">Crédito {detail.folio}</p><h2 className="mt-1 text-xl font-bold">{detail.clienteNombre}</h2><p className="mt-2 text-sm text-[var(--fp-muted)]">Cédula {detail.clienteDocumento} · {detail.aliadoNombre}</p><p className="mt-1 text-sm text-[var(--fp-muted)]">{dateLabel(detail.fechaCredito)}</p></div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-[var(--fp-muted)]">Crédito {detail.folio}</p>
+                <h2 className="mt-1 break-words text-xl font-bold">{detail.clienteNombre?.trim() || "No disponible"}</h2>
+                <p className="mt-2 text-sm text-[var(--fp-muted)]">{detail.aliadoNombre}</p>
+                <p className="mt-1 text-sm text-[var(--fp-muted)]">{dateLabel(detail.fechaCredito)}</p>
+              </div>
               <ReviewStatus status={detail.review.status} required={detail.review.required} />
             </div>
+            <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
+              {[["Cédula", detail.clienteDocumento], ["Correo", detail.clienteCorreo], ["Teléfono", detail.clienteTelefono]].map(([label, value]) => (
+                <div key={label} className="min-w-0"><dt className="text-[var(--fp-muted)]">{label}</dt><dd className="mt-1 break-words font-medium">{value?.trim() || "No disponible"}</dd></div>
+              ))}
+            </dl>
             {detail.review.status === "APPROVED" ? <p className="mt-4 flex items-center gap-2 text-sm"><CheckCircle2 className="h-4 w-4" aria-hidden="true" />Aprobado por {detail.review.approvedByName || "analista autorizado"} · {dateLabel(detail.review.approvedAt)}</p> : null}
             {!detail.review.required ? <p className="mt-4 text-sm text-[var(--fp-muted)]">Este crédito no está sujeto a la nueva revisión para liquidación.</p> : null}
           </Card>
 
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard label="Score" value={detail.score ?? detail.scoreLabel ?? "No disponible"} detail="Registrado al evaluar el crédito" />
-            <MetricCard label="Inicial aplicada" value={money.format(detail.cuotaInicial)} detail={detail.initialPaymentPercentage === null ? "Porcentaje aprobado en la oferta no disponible" : `${percent.format(detail.initialPaymentPercentage)} % aprobado en la oferta`} />
-            <MetricCard label="Crédito autorizado" value={money.format(detail.creditoAutorizado)} detail={`Valor de venta: ${money.format(detail.valorVenta)}`} />
-            <MetricCard label="Cupo aprobado" value={detail.approvedLimit === null ? "No disponible" : money.format(detail.approvedLimit)} detail="Cupo registrado en la evaluación" />
+            <MetricCard label="Valor de venta" value={amountLabel(detail.valorVenta)} />
+            <MetricCard label="Inicial" value={amountLabel(detail.cuotaInicial)} />
+            <MetricCard label="Crédito autorizado" value={amountLabel(detail.creditoAutorizado)} />
+            <MetricCard label="Plazo de financiación" value={detail.numeroCuotas != null && Number.isSafeInteger(detail.numeroCuotas) && detail.numeroCuotas > 0 ? `${detail.numeroCuotas} ${detail.numeroCuotas === 1 ? "cuota" : "cuotas"}` : "No disponible"} detail={`Frecuencia: ${frequencyLabel(detail.frecuenciaPago)}`} />
+            <MetricCard label="Valor de cuota" value={amountLabel(detail.valorCuota)} />
+            <MetricCard label="Fecha de primer pago" value={calendarDateLabel(detail.fechaPrimerPago)} />
           </div>
 
           <Card className="p-4 sm:p-6">
