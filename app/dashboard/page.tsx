@@ -1,8 +1,9 @@
 import prisma from "@/lib/prisma";
+import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { getSellerSessionUser } from "@/lib/seller-auth";
-import { isAdminRole } from "@/lib/roles";
+import { isAdminRole, isApprovalAnalystRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { obtenerAvatarPerfilSrc } from "@/lib/profile-avatars";
 import { ensureVendorProfileVisualColumns } from "@/lib/vendor-profile-schema";
@@ -26,11 +27,13 @@ export default async function DashboardPage({
 }) {
   const params = searchParams ? await searchParams : {};
   const requestedMonth = Array.isArray(params.month) ? params.month[0] : params.month;
-  const session = await getSessionUser();
+  const session = await getSessionUser({ allowApprovalAnalyst: true });
 
   if (!session) {
     return <div className="p-10">No autenticado</div>;
   }
+
+  if (isApprovalAnalystRole(session.rolNombre)) redirect("/dashboard/aprobaciones");
 
   const usuario = await prisma.usuario.findUnique({
     where: { id: session.id },

@@ -11,6 +11,7 @@ import {
   normalizarTipoPerfilVendedor,
 } from "@/lib/profile-avatars";
 import { ensureVendorProfileVisualColumns } from "@/lib/vendor-profile-schema";
+import { isApprovalAnalystRole } from "@/lib/roles";
 
 export type SellerSessionUser = {
   id: number;
@@ -40,7 +41,7 @@ export async function getSellerSessionUser(
 ) {
   const currentUser = sessionUser ?? (await getSessionUser());
 
-  if (!currentUser) {
+  if (!currentUser || isApprovalAnalystRole(currentUser.rolNombre)) {
     return null;
   }
 

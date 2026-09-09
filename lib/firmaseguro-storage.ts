@@ -251,6 +251,11 @@ async function runFirmaSeguroSchemaSetup() {
     END
     $$
   `);
+  await prisma.$executeRawUnsafe(`DO $$ BEGIN
+    IF to_regprocedure('public.install_credit_approval_firmaseguro_trigger()') IS NOT NULL THEN
+      PERFORM public.install_credit_approval_firmaseguro_trigger();
+    END IF;
+  END $$`);
 }
 
 export async function ensureFirmaSeguroSchema() {

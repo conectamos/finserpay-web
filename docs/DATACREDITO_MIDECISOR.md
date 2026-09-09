@@ -356,6 +356,12 @@ migración falla cerrada y debe reintentarse cuando hayan vencido.
 - Cada apertura del expediente central genera una auditoría con actor,
   correlación, resultado del acceso e IP/agente de usuario seudonimizados.
 - IP y agente de usuario se conservan como HMAC, no en claro.
+- El analista central activo con rol `ANALISTA_APROBACION` tiene una lectura
+  limitada en `/dashboard/aprobaciones`: puntaje y campos de la oferta de la
+  evaluación consumida vinculada al crédito que revisa. El acceso no descifra el
+  expediente cifrado ni entrega la respuesta del proveedor, mora o umbrales, y
+  no ejecuta una nueva consulta. Respeta la retención vigente; el valor `-1` se
+  presenta como **Sin información**. Véase [Aprobaciones documentales](CREDIT_APPROVAL.md).
 - El asesor no recibe el puntaje, la respuesta completa, la mora TELCOS, la
   mora total ni los umbrales.
 - Los errores públicos incluyen un identificador de correlación, no detalles de

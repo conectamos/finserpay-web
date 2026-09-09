@@ -41,6 +41,7 @@ const BEARER_AUTH_API_ROUTES = new Set([
 ]);
 
 const PROTECTED_API_PREFIXES = [
+  "/api/aprobaciones",
   "/api/alertas",
   "/api/arqueo",
   "/api/caja",

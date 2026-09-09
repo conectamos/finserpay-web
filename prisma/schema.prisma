@@ -174,6 +174,8 @@ model Usuario {
   ventas          Venta[]
   arqueosDiarios  ArqueoDiario[]
   liquidacionesAliadoRegistradas LiquidacionAliado[]
+  aprobacionesCredito CreditApprovalReview[]
+  eventosAprobacionCredito CreditApprovalEvent[]
   bloqueosDocumentoCreados ListaNegraDocumento[] @relation("BlacklistCreatedBy")
   bloqueosDocumentoActualizados ListaNegraDocumento[] @relation("BlacklistUpdatedBy")
   eventosListaNegra ListaNegraDocumentoEvento[]
@@ -331,6 +333,7 @@ model Credito {
   amortizacion                  CreditoAmortizacion?
   wompiPaymentIntents           WompiPaymentIntent[]
   liquidacionAliadoCredito      LiquidacionAliadoCredito?
+  aprobacionAnalista            CreditApprovalReview?
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
 
@@ -339,6 +342,45 @@ model Credito {
   @@index([sedeId, createdAt])
   @@index([deviceUid])
   @@index([imei])
+}
+
+model CreditApprovalPolicy {
+  id Int @id
+  activatedAt DateTime @default(now()) @db.Timestamp(3)
+}
+
+model CreditApprovalReview {
+  creditoId Int @id
+  status String @default("PENDING") @db.VarChar(16)
+  revision Int @default(1)
+  approvedRevision Int?
+  approvedByUserId Int?
+  approvedByName String? @db.VarChar(160)
+  approvedAt DateTime? @db.Timestamp(3)
+  reviewHash String? @db.VarChar(64)
+  createdAt DateTime @default(now()) @db.Timestamp(3)
+  updatedAt DateTime @default(now()) @db.Timestamp(3)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict)
+  approvedBy Usuario? @relation(fields: [approvedByUserId], references: [id], onDelete: Restrict)
+  eventos CreditApprovalEvent[]
+
+  @@index([status, updatedAt])
+}
+
+model CreditApprovalEvent {
+  id String @id @default(uuid()) @db.Uuid
+  creditoId Int
+  eventType String @db.VarChar(16)
+  revision Int
+  actorUserId Int?
+  actorName String? @db.VarChar(160)
+  reason String?
+  reviewHash String? @db.VarChar(64)
+  createdAt DateTime @default(now()) @db.Timestamp(3)
+  review CreditApprovalReview @relation(fields: [creditoId], references: [creditoId], onDelete: Restrict)
+  actor Usuario? @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([creditoId, createdAt])
 }
 
 model LiquidacionAliado {

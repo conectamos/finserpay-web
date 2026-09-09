@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { hashPassword, isPasswordHash, verifyPassword } from "@/lib/password";
+import { canReviewCreditApprovals, isApprovalAnalystRole } from "@/lib/roles";
 import {
   SELLER_SESSION_COOKIE_NAME,
   createSessionToken,
+  getSessionCredentialVersion,
   getSessionCookieOptions,
   SESSION_COOKIE_NAME,
 } from "@/lib/session";
@@ -28,9 +30,11 @@ export async function POST(req: Request) {
         nombre: true,
         usuario: true,
         claveHash: true,
+        updatedAt: true,
         rol: true,
         sedeId: true,
         activo: true,
+        sede: { select: { aliado: { select: { codigo: true } } } },
       },
     });
 
@@ -55,17 +59,31 @@ export async function POST(req: Request) {
       );
     }
 
+    const approvalAnalyst = isApprovalAnalystRole(user.rol.nombre);
+    if (approvalAnalyst && !canReviewCreditApprovals({
+      rolNombre: user.rol.nombre,
+      aliadoAccesoCodigo: user.sede?.aliado?.codigo,
+    })) {
+      return NextResponse.json({ error: "Acceso no autorizado" }, { status: 403 });
+    }
+
+    let passwordHash = user.claveHash;
+    let credentialUpdatedAt = user.updatedAt;
     if (!isPasswordHash(user.claveHash)) {
-      await prisma.usuario.update({
+      passwordHash = hashPassword(clave);
+      const updatedUser = await prisma.usuario.update({
         where: { id: user.id },
         data: {
-          claveHash: hashPassword(clave),
+          claveHash: passwordHash,
         },
+        select: { updatedAt: true },
       });
+      credentialUpdatedAt = updatedUser.updatedAt;
     }
 
     const response = NextResponse.json({
       mensaje: "Login correcto",
+      destination: approvalAnalyst ? "/dashboard/aprobaciones" : "/dashboard",
       usuario: {
         id: user.id,
         nombre: user.nombre,
@@ -77,7 +95,7 @@ export async function POST(req: Request) {
 
     response.cookies.set(
       SESSION_COOKIE_NAME,
-      createSessionToken(user.id),
+      createSessionToken(user.id, approvalAnalyst ? getSessionCredentialVersion(passwordHash, credentialUpdatedAt) : undefined),
       getSessionCookieOptions()
     );
     response.cookies.set(SELLER_SESSION_COOKIE_NAME, "", {

@@ -6,8 +6,8 @@ import { resolveColombiaPaymentPeriod } from "../lib/ally-payments-core.ts";
 const eligibilityModuleUrl = new URL("../lib/ally-payment-eligibility.ts", import.meta.url).href;
 const eligibilityImports = registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (context.parentURL === eligibilityModuleUrl && specifier === "./ally-payments-core") {
-      return nextResolve("./ally-payments-core.ts", context);
+    if (["./ally-payments-core", "./credit-approval-policy", "./credit-import-flags"].includes(specifier)) {
+      return nextResolve(specifier + ".ts", context);
     }
     return nextResolve(specifier, context);
   },
@@ -76,6 +76,7 @@ function fixtureQuery(input, credits, paidCreditIds = []) {
       "Credito" AS (
         SELECT fixture."id", fixture."fechaCredito", fixture."sedeId",
           fixture."estado", fixture."clienteDocumento",
+          '2020-01-01'::timestamp AS "createdAt", NULL::text AS "equalityService",
           'FOLIO-TEST'::text AS "folio",
           'Cliente sintetico'::text AS "clienteNombre",
           'IMEI-TEST'::text AS "imei", 'DEVICE-TEST'::text AS "deviceUid",
@@ -87,6 +88,13 @@ function fixtureQuery(input, credits, paidCreditIds = []) {
         FROM (VALUES ${creditTuples.join(", ")}) AS fixture(
           "id", "fechaCredito", "sedeId", "estado", "clienteDocumento", "plataforma"
         )
+      ),
+      "CreditApprovalPolicy" ("id", "activatedAt") AS (
+        VALUES (1::integer, '2099-01-01'::timestamp)
+      ),
+      "CreditApprovalReview" AS (
+        SELECT NULL::integer AS "creditoId", NULL::text AS "status",
+          NULL::integer AS "revision", NULL::integer AS "approvedRevision" WHERE false
       ),
       "Sede" ("id", "aliadoId") AS (
         VALUES (1::integer, 65588::integer), (2::integer, 65589::integer),

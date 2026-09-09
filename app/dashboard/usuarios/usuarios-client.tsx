@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { ShieldCheck, UserCog, UserRound } from "lucide-react";
 import { MetricCard, PageHeader } from "@/app/_components/finser-ui";
+import ApprovalAnalystAccounts, { type ApprovalAnalystAccount } from "./approval-analyst-accounts";
 import {
   type AvatarPerfilKey,
   type TipoPerfilVendedor,
@@ -87,6 +88,7 @@ type AdminItem = {
 };
 
 type AdminUsersResponse = {
+  analistas?: ApprovalAnalystAccount[];
   ok: boolean;
   mensaje?: string;
   sedes: SedeItem[];
@@ -441,6 +443,8 @@ export default function GestionVendedoresPage() {
     sedeIds: [],
   });
 
+  const [analistas, setAnalistas] = useState<ApprovalAnalystAccount[]>([]);
+
   const [ediciones, setEdiciones] = useState<Record<number, SellerDraft>>({});
 
   const esAdmin = user?.rolNombre?.toUpperCase() === "ADMIN";
@@ -470,6 +474,7 @@ export default function GestionVendedoresPage() {
     setSedes(sedeItems);
     setVendedores(sellers);
     setAdministradores(adminItems);
+    setAnalistas(Array.isArray(data.analistas) ? data.analistas : []);
     setEdiciones(
       sellers.reduce(
         (acc, item) => {
@@ -1084,6 +1089,10 @@ export default function GestionVendedoresPage() {
             </button>
           </div>
         </section>
+
+        {esAdminCentral && (
+          <ApprovalAnalystAccounts accounts={analistas} sedes={sedes} onUpdated={cargarTodo} />
+        )}
 
         <section className="mt-4 rounded-lg border border-[#e4e7ec] bg-white p-5 shadow-[0_4px_18px_rgba(16,24,40,0.05)]">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
