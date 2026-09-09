@@ -8,6 +8,7 @@ import {
   getSessionCredentialVersion,
   getSessionCookieOptions,
   SESSION_COOKIE_NAME,
+  APPROVAL_ACCESS_COOKIE_NAME,
 } from "@/lib/session";
 
 export async function POST(req: Request) {
@@ -103,6 +104,7 @@ export async function POST(req: Request) {
       expires: new Date(0),
       maxAge: 0,
     });
+    response.cookies.set(APPROVAL_ACCESS_COOKIE_NAME, "", { ...getSessionCookieOptions(), expires: new Date(0), maxAge: 0 });
     response.cookies.delete("userId");
 
     return response;

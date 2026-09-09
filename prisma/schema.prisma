@@ -204,6 +204,8 @@ model Usuario {
   liquidacionesAliadoRegistradas LiquidacionAliado[]
   aprobacionesCredito CreditApprovalReview[]
   eventosAprobacionCredito CreditApprovalEvent[]
+  approvalAccessLink CreditApprovalAccessLink? @relation("ApprovalAccessLinkOwner")
+  issuedApprovalAccessLinks CreditApprovalAccessLink[] @relation("ApprovalAccessLinkIssuer")
   bloqueosDocumentoCreados ListaNegraDocumento[] @relation("BlacklistCreatedBy")
   bloqueosDocumentoActualizados ListaNegraDocumento[] @relation("BlacklistUpdatedBy")
   eventosListaNegra ListaNegraDocumentoEvento[]
@@ -370,6 +372,17 @@ model Credito {
   @@index([sedeId, createdAt])
   @@index([deviceUid])
   @@index([imei])
+}
+
+model CreditApprovalAccessLink {
+  userId Int @id
+  id String @unique @db.Uuid
+  credentialVersion String @db.VarChar(64)
+  issuedByUserId Int
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  revokedAt DateTime? @db.Timestamp(3)
+  owner Usuario @relation("ApprovalAccessLinkOwner", fields: [userId], references: [id], onDelete: Restrict)
+  issuedBy Usuario @relation("ApprovalAccessLinkIssuer", fields: [issuedByUserId], references: [id], onDelete: Restrict)
 }
 
 model CreditApprovalPolicy {

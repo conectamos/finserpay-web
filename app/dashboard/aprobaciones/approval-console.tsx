@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CheckCircle2, Expand, FileText, ImageOff, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
+import LastPdfPagePreview from "./last-pdf-page-preview";
 import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, MetricCard, PageHeader, StatusPill } from "@/app/_components/finser-ui";
 import { ApprovalRequestError, approveCreditReview, readApprovalCredit, searchApprovalCredits, type ApprovalDetail, type ApprovalListItem, type ApprovalStatus } from "./approval-client";
 
@@ -248,8 +249,8 @@ export default function ApprovalConsole() {
           </Card>
 
           <Card className="p-4 sm:p-6">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="flex items-center gap-2 text-lg font-semibold"><FileText className="h-5 w-5" aria-hidden="true" />Documento firmado</h2>{detail.document.available ? <a className="fp-ui-button is-secondary" href={detail.document.href} target="_blank" rel="noopener noreferrer">Abrir PDF firmado</a> : null}</div>
-            {detail.document.available ? <><p className="mb-3 text-sm text-[var(--fp-muted)]">{detail.document.fileName || "Documento de FirmaSeguro"}</p><iframe key={`${detail.id}:${detail.review.reviewHash}`} src={detail.document.href} title={`Documento firmado del crédito ${detail.folio}`} className="h-[36rem] w-full rounded-[var(--fp-radius-md)] border border-[var(--fp-border)]" /><p className="mt-3 text-sm text-[var(--fp-muted)]">Si el visor no está disponible en tu navegador, abre el PDF firmado.</p></> : <EmptyState title="Documento firmado no disponible" description="El expediente debe contar con el documento firmado para completar la aprobación." />}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="flex items-center gap-2 text-lg font-semibold"><FileText className="h-5 w-5" aria-hidden="true" />Documento firmado</h2></div>
+            {detail.document.available ? <><p className="mb-3 text-sm text-[var(--fp-muted)]">{detail.document.fileName || "Documento de FirmaSeguro"}</p><LastPdfPagePreview key={`${detail.id}:${detail.review.reviewHash}`} href={detail.document.href} folio={detail.folio} /></> : <EmptyState title="Documento firmado no disponible" description="El expediente debe contar con el documento firmado para completar la aprobación." />}
           </Card>
 
           {detail.review.required && detail.review.status === "PENDING" ? (

@@ -5,7 +5,8 @@ import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isAdminRole, isApprovalAnalystRole } from "@/lib/roles";
 
 export async function getDashboardAccess(options: { allowApprovalAnalyst?: boolean } = {}) {
-  const session = await getSessionUser(options);
+  const session = await getSessionUser(options) || (options.allowApprovalAnalyst
+    ? await getSessionUser({ allowApprovalAnalyst: true, preferApprovalAccess: true }) : null);
 
   if (!session) {
     return null;
