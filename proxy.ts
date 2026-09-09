@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 const SESSION_COOKIE_NAME = "session";
 const APPROVAL_ACCESS_COOKIE_NAME = "approval_access_session";
+const APPROVAL_SHARED_COOKIE_NAME = "approval_shared_session";
 const SELLER_SESSION_COOKIE_NAME = "seller_session";
 
 const LEGACY_PAGE_PREFIXES = [
@@ -34,6 +35,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/logout",
   "/api/public/iphone-enrollment",
   "/api/public/approval-access",
+  "/api/public/approval-shared-access",
   "/api/wompi",
   "/api/creditos/captura-session/",
 ];
@@ -118,6 +120,7 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
   const hasApprovalAccess = Boolean(request.cookies.get(APPROVAL_ACCESS_COOKIE_NAME)?.value);
+  const hasSharedApprovalAccess = Boolean(request.cookies.get(APPROVAL_SHARED_COOKIE_NAME)?.value);
   const approvalApi = pathMatches(pathname, ["/api/aprobaciones"]);
   const approvalPage = pathMatches(pathname, ["/dashboard/aprobaciones"]);
   const hasSellerProfile = Boolean(
@@ -133,7 +136,7 @@ export function proxy(request: NextRequest) {
       return NextResponse.next();
     }
 
-    if (pathMatches(pathname, PROTECTED_API_PREFIXES) && !hasSession && !(approvalApi && hasApprovalAccess)) {
+    if (pathMatches(pathname, PROTECTED_API_PREFIXES) && !hasSession && !(approvalApi && (hasApprovalAccess || hasSharedApprovalAccess))) {
       return unauthorizedApi();
     }
 

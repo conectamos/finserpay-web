@@ -203,3 +203,39 @@ export function getSessionCookieOptions() {
     maxAge: SESSION_MAX_AGE_SECONDS,
   };
 }
+
+export const APPROVAL_SHARED_COOKIE_NAME = "approval_shared_session";
+export const APPROVAL_SHARED_SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
+export function createApprovalSharedToken(grantId: string) {
+  if (!approvalGrantIdPattern.test(grantId)) throw new Error("Invalid shared grant");
+  const payload = "shared-v1." + grantId;
+  return payload + "." + sign("approval-shared-link:" + payload);
+}
+export function verifyApprovalSharedToken(value: unknown) {
+  if (typeof value !== "string" || value.length > 160) return null;
+  const [version, grantId, signature, extra] = value.split(".");
+  if (version !== "shared-v1" || !approvalGrantIdPattern.test(grantId || "") || !signature || extra !== undefined) return null;
+  const expected = Buffer.from(createApprovalSharedToken(grantId));
+  const received = Buffer.from(value);
+  return expected.length === received.length && timingSafeEqual(expected, received) ? { grantId } : null;
+}
+export function createApprovalSharedSessionToken(grantId: string, sessionId: string, expiresAt: Date) {
+  if (!approvalGrantIdPattern.test(grantId) || !approvalGrantIdPattern.test(sessionId)) throw new Error("Invalid shared session");
+  const encoded = base64UrlEncode(JSON.stringify({ purpose: "approval-shared-session", grantId, sessionId, exp: Math.floor(expiresAt.getTime()/1000) }));
+  return encoded + "." + sign("approval-shared-session:" + encoded);
+}
+export function verifyApprovalSharedSessionToken(value: unknown) {
+  if (typeof value !== "string" || value.length > 1024) return null;
+  const [encoded, signature, extra] = value.split(".");
+  if (!encoded || !signature || extra !== undefined) return null;
+  const expected = Buffer.from(sign("approval-shared-session:" + encoded));
+  const received = Buffer.from(signature);
+  if (expected.length !== received.length || !timingSafeEqual(expected, received)) return null;
+  try {
+    const payload = JSON.parse(base64UrlDecode(encoded));
+    if (payload.purpose !== "approval-shared-session" || !approvalGrantIdPattern.test(payload.grantId)
+      || !approvalGrantIdPattern.test(payload.sessionId) || !Number.isSafeInteger(payload.exp)
+      || payload.exp <= Math.floor(Date.now()/1000)) return null;
+    return { grantId: payload.grantId as string, sessionId: payload.sessionId as string, exp: payload.exp as number };
+  } catch { return null; }
+}

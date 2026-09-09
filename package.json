@@ -33,7 +33,7 @@
     "prisma:generate": "npx prisma generate",
     "lint": "eslint",
     "test:lista-negra": "node --experimental-strip-types --test tests/document-blacklist-*.test.mjs",
-    "test:aprobaciones": "node --experimental-strip-types --test tests/credit-approval-*.test.mjs tests/approval-analyst-access.test.mjs tests/approval-access*.test.mjs",
+    "test:aprobaciones": "node --experimental-strip-types --test tests/credit-approval-*.test.mjs tests/approval-analyst-access.test.mjs tests/approval-access*.test.mjs tests/approval-shared*.test.mjs",
     "predev": "node scripts/prepare-pdfjs-assets.mjs",
     "prebuild": "node scripts/prepare-pdfjs-assets.mjs"
   },

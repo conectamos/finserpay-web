@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { exchangeApprovalAccess } from "@/lib/approval-access";
 import { CreditApprovalError } from "@/lib/credit-approval";
 import { approvalErrorResponse, approvalPrivateHeaders, readApprovalRequest } from "@/lib/credit-approval-http";
-import { APPROVAL_ACCESS_SESSION_MAX_AGE_SECONDS, createApprovalAccessSessionToken, getSessionCookieOptions, APPROVAL_ACCESS_COOKIE_NAME, verifyApprovalAccessToken } from "@/lib/session";
+import { APPROVAL_SHARED_COOKIE_NAME, APPROVAL_ACCESS_SESSION_MAX_AGE_SECONDS, createApprovalAccessSessionToken, getSessionCookieOptions, APPROVAL_ACCESS_COOKIE_NAME, verifyApprovalAccessToken } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,6 +43,7 @@ export async function POST(request: Request) {
     response.cookies.set(APPROVAL_ACCESS_COOKIE_NAME, createApprovalAccessSessionToken(access.userId, access.credentialVersion, access.grantId), {
       ...getSessionCookieOptions(), maxAge: APPROVAL_ACCESS_SESSION_MAX_AGE_SECONDS,
     });
+    response.cookies.set(APPROVAL_SHARED_COOKIE_NAME, "", { ...getSessionCookieOptions(), expires: new Date(0), maxAge: 0 });
     return response;
   } catch (error) { return approvalErrorResponse(error); }
 }

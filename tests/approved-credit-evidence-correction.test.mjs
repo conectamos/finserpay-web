@@ -87,7 +87,7 @@ test("la correccion actualiza solo la evidencia elegida y el snapshot auditado",
   assert.match(route, /actor: \{/);
   assert.match(route, /source: "CORRECCION_ADMIN_CENTRAL"/);
   const updateBlock = route.match(
-    /const updated = await prisma\.credito\.update\(\{([\s\S]*?)\n    \}\);/
+    /const updated = await tx\.credito\.update\(\{([\s\S]*?)\n\s+\}\);/
   )?.[1];
   assert.ok(updateBlock, "debe existir una unica actualizacion del credito");
   assert.doesNotMatch(updateBlock, /\bestado\s*:/);

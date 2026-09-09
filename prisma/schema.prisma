@@ -202,6 +202,10 @@ model Usuario {
   ventas          Venta[]
   arqueosDiarios  ArqueoDiario[]
   liquidacionesAliadoRegistradas LiquidacionAliado[]
+  reemisionesFirma CreditApprovalReissue[]
+  approvalSharedGrantsIssued CreditApprovalSharedGrant[] @relation("ApprovalSharedIssuer")
+  approvalSharedGrantsRevoked CreditApprovalSharedGrant[] @relation("ApprovalSharedRevoker")
+  approvalNoveltyEvents CreditApprovalNoveltyEvent[]
   aprobacionesCredito CreditApprovalReview[]
   eventosAprobacionCredito CreditApprovalEvent[]
   approvalAccessLink CreditApprovalAccessLink? @relation("ApprovalAccessLinkOwner")
@@ -363,7 +367,10 @@ model Credito {
   amortizacion                  CreditoAmortizacion?
   wompiPaymentIntents           WompiPaymentIntent[]
   liquidacionAliadoCredito      LiquidacionAliadoCredito?
+  reemisionesFirma            CreditApprovalReissue[]
+  revisionesEvidencia          CreditApprovalEvidenceRevision[]
   aprobacionAnalista            CreditApprovalReview?
+  novedadesAprobacion           CreditApprovalNovelty[]
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
 
@@ -385,6 +392,90 @@ model CreditApprovalAccessLink {
   issuedBy Usuario @relation("ApprovalAccessLinkIssuer", fields: [issuedByUserId], references: [id], onDelete: Restrict)
 }
 
+model CreditApprovalSharedGrant {
+  id String @id @db.Uuid
+  generation BigInt @unique @default(autoincrement())
+  scope String @default("CREDIT_APPROVAL") @db.VarChar(32)
+  issuedByUserId Int
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  revokedAt DateTime? @db.Timestamp(3)
+  revokedByUserId Int?
+  issuedBy Usuario @relation("ApprovalSharedIssuer", fields: [issuedByUserId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  revokedBy Usuario? @relation("ApprovalSharedRevoker", fields: [revokedByUserId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  sessions CreditApprovalSharedSession[]
+}
+
+model CreditApprovalSharedSession {
+  id String @id @db.Uuid
+  grantId String @db.Uuid
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  expiresAt DateTime @db.Timestamp(3)
+  revokedAt DateTime? @db.Timestamp(3)
+  grant CreditApprovalSharedGrant @relation(fields: [grantId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reviews CreditApprovalReview[]
+  approvalEvents CreditApprovalEvent[]
+  evidenceRevisions CreditApprovalEvidenceRevision[]
+  reissues CreditApprovalReissue[]
+  noveltyEvents CreditApprovalNoveltyEvent[]
+
+  @@unique([id, grantId], map: "CreditApprovalSharedSession_id_grant")
+  @@index([grantId, expiresAt], map: "CreditApprovalSharedSession_grant_idx")
+}
+
+model CreditApprovalNovelty {
+  id String @id @db.Uuid
+  creditoId Int
+  status String @default("WAITING_ALLY") @db.VarChar(16)
+  version Int @default(1)
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  updatedAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  resolvedAt DateTime? @db.Timestamp(3)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  items CreditApprovalNoveltyItem[]
+  events CreditApprovalNoveltyEvent[]
+
+  @@index([creditoId, createdAt(sort: Desc)], map: "CreditApprovalNovelty_credit_created")
+}
+
+model CreditApprovalNoveltyItem {
+  id String @id @db.Uuid
+  noveltyId String @db.Uuid
+  key String @db.VarChar(32)
+  status String @default("OPEN") @db.VarChar(16)
+  version Int @default(1)
+  reason String @db.VarChar(1000)
+  openedAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  respondedAt DateTime? @db.Timestamp(3)
+  responseText String? @db.VarChar(2000)
+  responsePhotoHash String? @db.VarChar(64)
+  novelty CreditApprovalNovelty @relation(fields: [noveltyId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  events CreditApprovalNoveltyEvent[]
+
+  @@unique([noveltyId, key], map: "CreditApprovalNoveltyItem_case_key")
+}
+
+model CreditApprovalNoveltyEvent {
+  id String @id @db.Uuid
+  noveltyId String @db.Uuid
+  itemId String? @db.Uuid
+  type String @db.VarChar(32)
+  actorKind String @default("USER") @db.VarChar(16)
+  actorUserId Int?
+  actorName String @db.VarChar(160)
+  actorGrantId String? @db.Uuid
+  actorSessionId String? @db.Uuid
+  payload Json
+  requestKey String? @db.Uuid
+  requestHash String? @db.VarChar(64)
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  novelty CreditApprovalNovelty @relation(fields: [noveltyId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  item CreditApprovalNoveltyItem? @relation(fields: [itemId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actor Usuario? @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actorSharedSession CreditApprovalSharedSession? @relation(fields: [actorSessionId, actorGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalNoveltyEvent_shared_actor_fkey")
+
+  @@index([noveltyId, createdAt, id], map: "CreditApprovalNoveltyEvent_case_created")
+}
+
 model CreditApprovalPolicy {
   id Int @id
   activatedAt DateTime @default(now()) @db.Timestamp(3)
@@ -397,6 +488,10 @@ model CreditApprovalReview {
   approvedRevision Int?
   approvedByUserId Int?
   approvedByName String? @db.VarChar(160)
+  approvedByKind String? @db.VarChar(16)
+  approvedByGrantId String? @db.Uuid
+  approvedBySessionId String? @db.Uuid
+  approvedBySharedSession CreditApprovalSharedSession? @relation(fields: [approvedBySessionId, approvedByGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalReview_shared_actor_fkey")
   approvedAt DateTime? @db.Timestamp(3)
   reviewHash String? @db.VarChar(64)
   createdAt DateTime @default(now()) @db.Timestamp(3)
@@ -408,6 +503,71 @@ model CreditApprovalReview {
   @@index([status, updatedAt])
 }
 
+model CreditApprovalReissue {
+  id String @id @db.Uuid
+  creditoId Int
+  previousProcessUuid String
+  sourceRevision Int
+  reason String @db.VarChar(500)
+  requestedByUserId Int?
+  requestedByName String @db.VarChar(160)
+  requestedByKind String @default("USER") @db.VarChar(16)
+  requestedByGrantId String? @db.Uuid
+  requestedBySessionId String? @db.Uuid
+  requestedBySharedSession CreditApprovalSharedSession? @relation(fields: [requestedBySessionId, requestedByGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalReissue_shared_actor_fkey")
+  frozenCredit Json
+  originalContractSnapshot Json
+  originalSignedDocumentBase64 String
+  originalDocumentHash String @db.VarChar(64)
+  sourceTermsHash String @db.VarChar(64)
+  documentBase64 String?
+  documentHash String? @db.VarChar(64)
+  requestPayload Json?
+  newProcessUuid String? @unique
+  status String @db.VarChar(32)
+  requestedAt DateTime @default(now()) @db.Timestamp(3)
+  updatedAt DateTime @default(now()) @db.Timestamp(3)
+  lastCheckedAt DateTime? @db.Timestamp(3)
+  dispatchedAt DateTime? @db.Timestamp(3)
+  completedAt DateTime? @db.Timestamp(3)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict)
+  requestedBy Usuario? @relation(fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  events CreditApprovalReissueEvent[]
+
+  @@index([creditoId, requestedAt(sort: Desc)], map: "CreditApprovalReissue_credit_created")
+}
+
+model CreditApprovalReissueEvent {
+  id BigInt @id @default(autoincrement())
+  operationId String @db.Uuid
+  previousStatus String? @db.VarChar(32)
+  status String @db.VarChar(32)
+  createdAt DateTime @default(now()) @db.Timestamp(3)
+  operation CreditApprovalReissue @relation(fields: [operationId], references: [id], onDelete: Restrict)
+}
+
+model CreditApprovalEvidenceRevision {
+  id String @id @default(uuid()) @db.Uuid
+  creditoId Int
+  evidenceKey String @db.VarChar(32)
+  previousDataUrl String?
+  previousSha256 String? @db.VarChar(64)
+  nextSha256 String @db.VarChar(64)
+  actorUserId Int?
+  actorName String
+  actorKind String @default("USER") @db.VarChar(16)
+  actorGrantId String? @db.Uuid
+  actorSessionId String? @db.Uuid
+  actorSharedSession CreditApprovalSharedSession? @relation(fields: [actorSessionId, actorGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalEvidenceRevision_shared_actor_fkey")
+  source String @db.VarChar(32)
+  reviewRevision Int?
+  reviewHash String? @db.VarChar(64)
+  createdAt DateTime @default(now()) @db.Timestamp(3)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict)
+
+  @@index([creditoId, createdAt], map: "CreditApprovalEvidenceRevision_credit_created_idx")
+}
+
 model CreditApprovalEvent {
   id String @id @default(uuid()) @db.Uuid
   creditoId Int
@@ -415,6 +575,10 @@ model CreditApprovalEvent {
   revision Int
   actorUserId Int?
   actorName String? @db.VarChar(160)
+  actorKind String @default("USER") @db.VarChar(16)
+  actorGrantId String? @db.Uuid
+  actorSessionId String? @db.Uuid
+  actorSharedSession CreditApprovalSharedSession? @relation(fields: [actorSessionId, actorGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalEvent_shared_actor_fkey")
   reason String?
   reviewHash String? @db.VarChar(64)
   createdAt DateTime @default(now()) @db.Timestamp(3)

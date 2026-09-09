@@ -1,5 +1,8 @@
+import { markNoveltyPhotoCorrected } from "@/lib/credit-approval-novelty-state";
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
+import { archiveEvidenceRevision, evidenceSha256 } from "@/lib/credit-approval-evidence-history";
+import { getCreditApprovalReissueState } from "@/lib/credit-approval-reissue-state";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
@@ -566,94 +569,111 @@ export async function PATCH(
       );
     }
 
-    const credit = await prisma.credito.findFirst({
-      where: buildCreditLookupWhere(creditLookup),
-      select: {
-        id: true,
-        folio: true,
-        estado: true,
-        contratoSnapshot: true,
-        contratoCedulaFrenteDataUrl: true,
-        contratoCedulaRespaldoDataUrl: true,
-        iphoneSelfieCedulaDataUrl: true,
-        fotoEntregaDataUrl: true,
-        fotoRemisionDataUrl: true,
-      },
-    });
+    return await prisma.$transaction(async (tx) => {
+      const target = await tx.credito.findFirst({ where: buildCreditLookupWhere(creditLookup), select: { id: true } });
+      if (!target) return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
+      // Serialize both correction entry points before reading photos or the audit snapshot.
+      await tx.$queryRawUnsafe('SELECT "id" FROM "Credito" WHERE "id" = $1 FOR UPDATE', target.id);
+      await tx.$queryRawUnsafe('SELECT "creditoId" FROM "CreditApprovalReview" WHERE "creditoId" = $1 FOR UPDATE', target.id);
+      const reissue = await getCreditApprovalReissueState(tx, target.id);
+      if (reissue.blocked) return NextResponse.json({
+        error: reissue.operation?.message || "No se pueden corregir fotos mientras se actualiza el documento firmado.",
+      }, { status: 409 });
+      const credit = await tx.credito.findFirst({
+        where: buildCreditLookupWhere(creditLookup),
+        select: {
+          id: true,
+          folio: true,
+          estado: true,
+          contratoSnapshot: true,
+          contratoCedulaFrenteDataUrl: true,
+          contratoCedulaRespaldoDataUrl: true,
+          iphoneSelfieCedulaDataUrl: true,
+          fotoEntregaDataUrl: true,
+          fotoRemisionDataUrl: true,
+        },
+      });
 
-    if (!credit) {
-      return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
-    }
+      if (!credit) {
+        return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
+      }
 
-    if (isCancelledCreditState(credit.estado)) {
-      return NextResponse.json(
-        { error: "No se pueden corregir evidencias de un credito anulado" },
-        { status: 409 }
+      if (isCancelledCreditState(credit.estado)) {
+        return NextResponse.json(
+          { error: "No se pueden corregir evidencias de un credito anulado" },
+          { status: 409 }
+        );
+      }
+
+      const previousSha256 = evidenceSha256(
+        evidenceValue(credit, correction.key)
       );
-    }
+      const nextSha256 = hashImageDataUrl(sanitizedDataUrl);
 
-    const previousSha256 = hashImageDataUrl(
-      evidenceValue(credit, correction.key)
-    );
-    const nextSha256 = hashImageDataUrl(sanitizedDataUrl);
+      if (!nextSha256) {
+        return NextResponse.json(
+          { error: "No fue posible verificar la evidencia" },
+          { status: 400 }
+        );
+      }
 
-    if (!nextSha256) {
-      return NextResponse.json(
-        { error: "No fue posible verificar la evidencia" },
-        { status: 400 }
+      if (previousSha256 === nextSha256) {
+        return NextResponse.json({
+          ok: true,
+          unchanged: true,
+          creditId: credit.id,
+          folio: credit.folio,
+          key: correction.key,
+        });
+      }
+
+      const correctedAt = new Date().toISOString();
+      const contratoSnapshot = correctedContractSnapshot(
+        credit.contratoSnapshot,
+        {
+          key: correction.key,
+          previousSha256,
+          nextSha256,
+          correctedAt,
+          actor: {
+            id: user.id,
+            nombre: user.nombre,
+            usuario: user.usuario,
+            rol: user.rolNombre,
+            aliadoCodigo: user.aliadoAccesoCodigo,
+          },
+        }
       );
-    }
 
-    if (previousSha256 === nextSha256) {
+      await archiveEvidenceRevision(tx, {
+        creditId: credit.id, key: correction.key,
+        previousDataUrl: evidenceValue(credit, correction.key), previousSha256, nextSha256,
+        actor: { id: user.id, nombre: user.nombre }, source: "ADMIN_CENTRAL",
+      });
+      const updated = await tx.credito.update({
+        where: { id: credit.id },
+        data: {
+          ...creditEvidenceUpdateData(correction.key, sanitizedDataUrl),
+          contratoSnapshot: contratoSnapshot as Prisma.InputJsonValue,
+        },
+        select: {
+          id: true,
+          folio: true,
+          updatedAt: true,
+        },
+      });
+
+      await markNoveltyPhotoCorrected(tx, credit.id, correction.key, nextSha256, { id: user.id, nombre: user.nombre });
       return NextResponse.json({
         ok: true,
-        unchanged: true,
-        creditId: credit.id,
-        folio: credit.folio,
+        unchanged: false,
+        creditId: updated.id,
+        folio: updated.folio,
         key: correction.key,
-      });
-    }
-
-    const correctedAt = new Date().toISOString();
-    const contratoSnapshot = correctedContractSnapshot(
-      credit.contratoSnapshot,
-      {
-        key: correction.key,
-        previousSha256,
-        nextSha256,
         correctedAt,
-        actor: {
-          id: user.id,
-          nombre: user.nombre,
-          usuario: user.usuario,
-          rol: user.rolNombre,
-          aliadoCodigo: user.aliadoAccesoCodigo,
-        },
-      }
-    );
-
-    const updated = await prisma.credito.update({
-      where: { id: credit.id },
-      data: {
-        ...creditEvidenceUpdateData(correction.key, sanitizedDataUrl),
-        contratoSnapshot: contratoSnapshot as Prisma.InputJsonValue,
-      },
-      select: {
-        id: true,
-        folio: true,
-        updatedAt: true,
-      },
-    });
-
-    return NextResponse.json({
-      ok: true,
-      unchanged: false,
-      creditId: updated.id,
-      folio: updated.folio,
-      key: correction.key,
-      correctedAt,
-      updatedAt: updated.updatedAt.toISOString(),
-    });
+        updatedAt: updated.updatedAt.toISOString(),
+      });
+    }, { isolationLevel: "ReadCommitted", timeout: 20_000 });
   } catch (error) {
     console.error("PATCH /api/creditos/[id]/evidencias", error);
     return NextResponse.json(

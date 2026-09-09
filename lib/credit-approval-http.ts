@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { getCreditApprovalSessionUser } from "@/lib/auth";
 import { canReviewCreditApprovals } from "@/lib/roles";
+import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
+import { ApprovalActorAccessError, ApprovalActorCreditAccessError, type ApprovalActor } from "@/lib/credit-approval-actor";
 import { CreditApprovalError } from "@/lib/credit-approval";
 
 export const approvalPrivateHeaders = { "Cache-Control": "private, no-store, max-age=0", "X-Content-Type-Options": "nosniff" };
 
-export async function getApprovalActor() {
+export async function getApprovalActor(): Promise<ApprovalActor> {
+  const shared = await getApprovalSharedRequestActor();
+  if (shared === null) throw new ApprovalActorAccessError();
+  if (shared) return shared;
   const user = await getCreditApprovalSessionUser();
   if (!user) throw new CreditApprovalError("UNAUTHENTICATED", "Inicia sesión para revisar créditos.", 401);
   if (!canReviewCreditApprovals(user)) throw new CreditApprovalError("FORBIDDEN", "No tienes permiso para revisar estos créditos.", 403);
@@ -38,14 +43,16 @@ function isSameApprovalOrigin(request: Request) {
   }
 }
 
-export async function readApprovalRequest(request: Request) {
+export async function readApprovalRequest(request: Request, options: { maxBytes?: number } = {}) {
   if (!isSameApprovalOrigin(request)) {
     throw new CreditApprovalError("INVALID_ORIGIN", "La solicitud debe realizarse desde FINSER PAY.", 403);
   }
+  const maxBytes = options.maxBytes ?? 1024;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 3_000_000) throw new Error("Invalid approval request limit");
   const tooLarge = () => new CreditApprovalError("INVALID_REQUEST", "Solicitud demasiado extensa.");
-  if (Number(request.headers.get("content-length")) > 1024) throw tooLarge();
+  if (Number(request.headers.get("content-length")) > maxBytes) throw tooLarge();
   const reader = request.body?.getReader();
-  const bytes = new Uint8Array(1024);
+  const bytes = new Uint8Array(maxBytes);
   let length = 0;
   if (reader) {
     try {
@@ -67,7 +74,7 @@ export async function readApprovalRequest(request: Request) {
 }
 
 export function approvalErrorResponse(error: unknown) {
-  if (error instanceof CreditApprovalError) {
+  if (error instanceof CreditApprovalError || error instanceof ApprovalActorAccessError || error instanceof ApprovalActorCreditAccessError) {
     return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status, headers: approvalPrivateHeaders });
   }
   const code = error && typeof error === "object" && "code" in error ? error.code : null;

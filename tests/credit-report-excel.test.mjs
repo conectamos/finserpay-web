@@ -116,3 +116,21 @@ test("la fecha de Excel conserva el día mostrado en Colombia cerca de medianoch
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "2026-09-08T00:00:00.000Z");
 });
+
+test("la columna Estado coincide con el reporte aprobado y conserva el fallback historico", async () => {
+  const items = [
+    { ...example, estado: "INSCRITO", estadoReporte: "APROBADO" },
+    { ...example, estado: "ANULADO", estadoReporte: "ANULADO" },
+    { ...example, estado: "INSCRITO" },
+  ];
+  const snapshot = structuredClone(items);
+  const sheet = await roundTrip(items);
+  assert.deepEqual([2, 3, 4].map(row => sheet.getCell("N" + row).value), ["APROBADO", "ANULADO", "INSCRITO"]);
+  for (const row of [2, 3, 4]) {
+    assert.equal(sheet.getCell("K" + row).value, example.valorEquipoTotal);
+    assert.equal(sheet.getCell("L" + row).value, example.cuotaInicial);
+    assert.equal(sheet.getCell("M" + row).value, example.creditoAutorizado);
+  }
+  assert.equal(sheet.columnCount, 14);
+  assert.deepEqual(items, snapshot);
+});

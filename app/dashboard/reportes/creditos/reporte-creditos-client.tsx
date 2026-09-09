@@ -71,6 +71,7 @@ type CreditReportItem = {
   valorCuota: number;
   plazoMeses: number | null;
   estado: string;
+  estadoReporte?: string;
   deliverableReady: boolean;
   deliverableLabel: string | null;
   totalAbonado: number;
@@ -183,7 +184,7 @@ async function exportCreditsToExcel(items: CreditReportItem[]) {
 function creditStatusTone(status: string) {
   const normalized = String(status || "").toUpperCase();
   if (normalized.includes("ANUL")) return "danger" as const;
-  if (normalized.includes("PAG") || normalized.includes("ENTREG")) return "positive" as const;
+  if (normalized === "APROBADO" || normalized.includes("PAG") || normalized.includes("ENTREG")) return "positive" as const;
   if (normalized.includes("PEND") || normalized.includes("PROCES")) return "warning" as const;
   return "neutral" as const;
 }
@@ -605,7 +606,7 @@ export default function ReporteCreditosPage({
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    <StatusPill tone={creditStatusTone(item.estado)}>{item.estado}</StatusPill>
+                    <StatusPill tone={creditStatusTone(item.estadoReporte ?? item.estado)}>{item.estadoReporte ?? item.estado}</StatusPill>
                     {renderCreditActions(item)}
                   </div>
                 </div>
@@ -748,7 +749,7 @@ export default function ReporteCreditosPage({
                       <CreditValues item={item} />
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <StatusPill tone={creditStatusTone(item.estado)}>{item.estado}</StatusPill>
+                      <StatusPill tone={creditStatusTone(item.estadoReporte ?? item.estado)}>{item.estadoReporte ?? item.estado}</StatusPill>
                     </td>
                     <td className="px-3 py-2 text-right align-top">
                       {renderCreditActions(item)}

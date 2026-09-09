@@ -926,7 +926,32 @@ export async function markCreditoFirmaSeguroCompleted(
     completedAt?: Date | null;
   },
   database: Prisma.TransactionClient | typeof prisma = prisma
-) {
+): Promise<unknown> {
+  if (database === prisma) {
+    return prisma.$transaction((transaction) => markCreditoFirmaSeguroCompleted(creditoId, options, transaction));
+  }
+  await database.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, creditoId);
+  const current = await database.$queryRawUnsafe<Array<{ processUuid: string; signedDocumentBase64: string | null }>>(
+    `SELECT "processUuid", "signedDocumentBase64" FROM "FirmaSeguroProcess"
+      WHERE "creditoId"=$1 AND "supersededAt" IS NULL ORDER BY "createdAt" DESC, "id" DESC LIMIT 1`, creditoId);
+  if (current[0]?.processUuid !== options.processUuid) return null;
+  const reissues = await database.$queryRawUnsafe<Array<{ id: string; newProcessUuid: string | null; status: string }>>(
+    `SELECT "id"::text, "newProcessUuid", "status" FROM "CreditApprovalReissue"
+      WHERE "creditoId"=$1 AND ("newProcessUuid"=$2 OR "status" IN ('PREPARING','DISPATCHING','AWAITING_SIGNATURE','UNCERTAIN'))
+      ORDER BY "requestedAt" DESC LIMIT 1 FOR UPDATE`, creditoId, options.processUuid);
+  if (reissues.length) {
+    const operation = reissues[0];
+    if (operation.newProcessUuid === options.processUuid
+      && ["AWAITING_SIGNATURE", "UNCERTAIN"].includes(operation.status)
+      && Buffer.from(current[0]?.signedDocumentBase64 || "", "base64").subarray(0,5).toString() === "%PDF-") {
+      await database.$executeRawUnsafe(`UPDATE "CreditApprovalReissue"
+        SET "status"='COMPLETED', "completedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+          "lastCheckedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC', "updatedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+        WHERE "id"=$1::uuid AND "newProcessUuid"=$2 AND "status" IN ('AWAITING_SIGNATURE','UNCERTAIN')`,
+        operation.id, options.processUuid);
+    }
+    return null;
+  }
   const credito = await database.credito.findUnique({
     where: { id: creditoId },
     select: {
@@ -1199,9 +1224,62 @@ async function createFirmaSeguroProcess(
   return row;
 }
 
+/** Prepare authentication before reserving the one provider call. No create retries or endpoint fallback. */
+export async function prepareFirmaSeguroReissue(
+  credito: CreditForFirmaSeguroPdf, pdf: Buffer, operationId: string
+) {
+  if (!isFirmaSeguroConfigured() || !pdf.subarray(0, 5).equals(Buffer.from("%PDF-"))) {
+    throw new Error("REISSUE_PREPARATION_UNAVAILABLE");
+  }
+  const callbackUrl = buildFirmaSeguroCallbackUrl();
+  if (!callbackUrl) throw new Error("REISSUE_PREPARATION_UNAVAILABLE");
+  const person = splitClientName(credito);
+  const config = getFirmaSeguroConfig();
+  let delivery = getFirmaSeguroDelivery(person);
+  if (!person.document || (!delivery.sendByEmail && !delivery.sendByWhatsApp)
+    || (config.notifyByEmail && !delivery.signerEmail)) throw new Error("REISSUE_CONTACT_UNAVAILABLE");
+  const auth = await firmaSeguroSignIn();
+  delivery = await resolveFirmaSeguroDeliveryAuth(auth.token, delivery);
+  const company = Boolean(config.nit && config.useCompanyEndpoint);
+  const payload = company
+    ? buildCreateFullByCompanyPayload(credito, person, pdf.toString("base64"), callbackUrl, delivery)
+    : buildCreateFullPayload(credito, person, pdf.toString("base64"), callbackUrl, delivery);
+  if ("process" in payload) payload.process.tags.push({ reissue: operationId } as never);
+  else payload.tags.push({ reissue: operationId } as never);
+  let attempted = false;
+  return {
+    requestPayload: redactBase64Payload({ endpoint: company ? "create-full-by-company" : "create-full", payload }),
+    async sendOnce() {
+      if (attempted) throw new Error("REISSUE_ALREADY_DISPATCHED");
+      attempted = true;
+      const response = company
+        ? await firmaSeguroCreateFullByCompany(auth.token, payload, { retryAuthorization: false })
+        : await firmaSeguroCreateFull(auth.token, payload, { retryAuthorization: false });
+      const processUuid = extractFirmaSeguroUuid(response);
+      if (!processUuid) throw new Error("REISSUE_PROVIDER_RESULT_UNCERTAIN");
+      return { processUuid, status: extractFirmaSeguroStatus(response) || "CREATED",
+        createPayload: redactBase64Payload(response) };
+    },
+  };
+}
+
 export async function createFirmaSeguroProcessForCredit(
   credito: StoredFirmaSeguroCredit
 ) {
+  const approvalScope = await prisma.$queryRawUnsafe<Array<{ required: boolean }>>(
+    "SELECT public.credit_approval_is_required($1::integer) AS required", credito.id);
+  if (approvalScope[0]?.required !== false) {
+    throw new FirmaSeguroApiError("Los créditos sujetos a revisión deben solicitar nuevas firmas desde Aprobaciones.", 409, null);
+  }
+  const existing = await getLatestFirmaSeguroProcessByCredit(credito.id);
+  if (existing?.completedAt || existing?.signedDocumentBase64 || isFirmaSeguroCompletedStatus(existing?.status)) {
+    throw new FirmaSeguroApiError("Este crédito ya tiene firma. Solicita una reemisión desde Aprobaciones.", 409, null);
+  }
+  const pending = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    `SELECT "id"::text FROM "CreditApprovalReissue" WHERE "creditoId"=$1
+      AND "status" IN ('PREPARING','DISPATCHING','AWAITING_SIGNATURE','UNCERTAIN') LIMIT 1`, credito.id);
+  if (pending.length) throw new FirmaSeguroApiError("El crédito tiene una reemisión en curso.", 409, null);
+  if (existing) return existing;
   return createFirmaSeguroProcess(credito, {
     creditoId: credito.id,
   });
@@ -1226,6 +1304,8 @@ export async function refreshFirmaSeguroProcess(
   process: FirmaSeguroProcessRow,
   options: { credito?: FirmaSeguroCredit | null } = {}
 ) {
+  // Historic credit versions keep their signed bytes/status; callback payloads are archived by storage.
+  if (process.supersededAt && process.creditoId) return process;
   const { result: refreshPayload } = await runWithFirmaSeguroAuth(
     async (token) => {
       const statusPayload = await firmaSeguroGetProcessStatus(

@@ -6,7 +6,6 @@ import {
 } from "@/lib/firmaseguro";
 import {
   getFirmaSeguroProcessForCallback,
-  markCreditoFirmaSeguroCompleted,
   refreshFirmaSeguroProcess,
   serializeFirmaSeguroProcess,
 } from "@/lib/firmaseguro-credit";
@@ -73,14 +72,6 @@ export async function POST(request: Request) {
       ? await refreshFirmaSeguroProcess(updated)
       : await refreshFirmaSeguroProcess(current);
 
-    if (refreshed?.completedAt && refreshed.creditoId) {
-      await markCreditoFirmaSeguroCompleted(refreshed.creditoId, {
-        processUuid: refreshed.processUuid,
-        status: refreshed.status,
-        signedDocumentFileName: refreshed.signedDocumentFileName,
-        completedAt: refreshed.completedAt,
-      });
-    }
 
     return NextResponse.json({
       ok: true,

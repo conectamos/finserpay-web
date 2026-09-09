@@ -96,6 +96,9 @@ function fixtureQuery(input, credits, paidCreditIds = []) {
         SELECT NULL::integer AS "creditoId", NULL::text AS "status",
           NULL::integer AS "revision", NULL::integer AS "approvedRevision" WHERE false
       ),
+      "CreditApprovalNovelty" AS (
+        SELECT NULL::integer AS "creditoId", NULL::text AS "status" WHERE false
+      ),
       "Sede" ("id", "aliadoId") AS (
         VALUES (1::integer, 65588::integer), (2::integer, 65589::integer),
           (3::integer, 1::integer)

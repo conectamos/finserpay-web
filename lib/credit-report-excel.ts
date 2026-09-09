@@ -19,6 +19,7 @@ export type CreditReportExportItem = {
   cuotaInicial: number;
   creditoAutorizado: number;
   estado: string;
+  estadoReporte?: string;
 };
 
 function excelDate(value: string) {
@@ -80,7 +81,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
       item.valorEquipoTotal,
       item.cuotaInicial,
       item.creditoAutorizado,
-      item.estado,
+      item.estadoReporte ?? item.estado,
     ]);
     row.height = 32;
     row.eachCell({ includeEmpty: true }, (cell) => {

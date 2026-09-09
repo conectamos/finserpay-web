@@ -50,6 +50,7 @@ export function buildAllyPaymentEligibilityQuery(input: {
       LEFT JOIN "LiquidacionAliadoCredito" paid
         ON paid."creditoId" = credit."id"
       WHERE paid."id" IS NULL
+        AND NOT EXISTS (SELECT 1 FROM "CreditApprovalNovelty" novelty WHERE novelty."creditoId"=credit."id" AND novelty."status"<>'RESOLVED')
         AND EXISTS (SELECT 1 FROM "CreditApprovalPolicy" WHERE "id" = 1)
         AND (NOT ${approvalRequired} OR
           (approval."status" = 'APPROVED' AND approval."approvedRevision" = approval."revision"))

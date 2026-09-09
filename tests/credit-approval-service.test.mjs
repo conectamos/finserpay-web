@@ -224,3 +224,93 @@ test("evidencia fuera de la lista permitida no llega a la base de datos", async 
   await assert.rejects(service.getApprovalEvidence(db, 81, 'fotoEntregaDataUrl" FROM "Usuario"'), { code: "INVALID_EVIDENCE" });
   assert.equal(state.queries.length, 0);
 });
+
+test("las URLs de fotografías cambian al actualizar el expediente para evitar imágenes anteriores en pantalla", () => {
+  const fixture = approvalFixture();
+  const before = details(fixture);
+  fixture.credit.fotoEntregaDataUrl = png.replace("image/png", "image/PNG");
+  const after = details(fixture);
+  for (let index = 0; index < before.evidence.length; index += 1) {
+    const previous = new URL(before.evidence[index].href, "https://finser.example");
+    const current = new URL(after.evidence[index].href, "https://finser.example");
+    assert.equal(previous.searchParams.get("revision"), before.review.reviewHash);
+    assert.equal(current.searchParams.get("revision"), after.review.reviewHash);
+    assert.notEqual(current.href, previous.href);
+    assert.equal(current.pathname, previous.pathname);
+    assert.equal(current.searchParams.get("tipo"), previous.searchParams.get("tipo"));
+  }
+});
+
+
+test("novedad abierta bloquea OK incluso con un intento repetido", async () => {
+  const {db,state}=approvalDatabase({novelty:{id:"novelty-test",status:"WAITING_ALLY",version:1},noveltyItems:[{id:"photo-test",key:"foto-entrega",status:"OPEN",version:1,reason:"Foto borrosa",openedAt:new Date()}]});
+  const item=await service.getCreditApprovalDetail(db,81);
+  assert.equal(item.canApprove,false);
+  state.review={status:"APPROVED",revision:1,approvedRevision:1,reviewHash:item.review.reviewHash};
+  await assert.rejects(service.approveCredit(db,81,{revision:1,reviewHash:item.review.reviewHash},actor),{code:"NOVELTY_PENDING"});
+  assert.equal(state.writes.length,0);
+});
+
+test("respuestas completas requieren OK y se resuelven antes de aprobar en la misma transaccion",async()=>{
+  const {db,state}=approvalDatabase({novelty:{id:"novelty-test",status:"RESPONDED",version:2},noveltyItems:[{id:"photo-test",key:"foto-entrega",status:"RESPONDED",version:2,reason:"Foto borrosa",openedAt:new Date(),respondedAt:new Date()}]});
+  const item=await service.getCreditApprovalDetail(db,81);
+  assert.equal(item.canApprove,true);
+  assert.equal(item.novelties.blocksSettlement,true);
+  const result=await service.approveCredit(db,81,{revision:item.review.revision,reviewHash:item.review.reviewHash},actor);
+  assert.equal(result.item.review.status,"APPROVED");
+  assert.equal(result.item.novelties.novelty.status,"RESOLVED");
+  assert.equal(result.item.novelties.blocksSettlement,false);
+  assert.equal(state.noveltyEvents.length,1);
+  const resolved=state.writes.findIndex(write=>write.sql.includes('UPDATE "CreditApprovalNovelty"'));
+  const approved=state.writes.findIndex(write=>write.sql.includes('UPDATE "CreditApprovalReview"'));
+  assert.ok(resolved>=0 && approved>resolved);
+});
+
+test("una respuesta completa no se resuelve con revision obsoleta o documento incompleto",async()=>{
+  for(const incomplete of [false,true]){
+    const fixture=approvalDatabase({novelty:{id:"novelty-test",status:"RESPONDED",version:2},noveltyItems:[{id:"photo-test",key:"foto-entrega",status:"RESPONDED",version:2,openedAt:new Date()}]});
+    const item=await service.getCreditApprovalDetail(fixture.db,81);
+    if(incomplete)fixture.state.document=null;
+    await assert.rejects(service.approveCredit(fixture.db,81,{revision:incomplete?item.review.revision:item.review.revision+1,reviewHash:item.review.reviewHash},actor));
+    assert.equal(fixture.state.novelty.status,"RESPONDED");
+    assert.equal(fixture.state.writes.length,0);
+  }
+});
+
+test("OK compartido registra grant y sesion sin usuario ficticio; revocado no escribe",async()=>{
+  const shared={kind:"SHARED_LINK",id:null,nombre:"Nombre no confiable",grantId:"10000000-0000-4000-8000-000000000001",sessionId:"20000000-0000-4000-8000-000000000001"};
+  for(const active of [true,false]){
+    const {db,state}=approvalDatabase({sharedAccess:active});
+    const item=await service.getCreditApprovalDetail(db,81);
+    const result=service.approveCredit(db,81,{revision:item.review.revision,reviewHash:item.review.reviewHash},shared);
+    if(!active){await assert.rejects(result,{status:401});assert.equal(state.writes.length,0);continue;}
+    await result;
+    assert.equal(state.review.approvedByUserId,null);
+    assert.equal(state.review.approvedByName,"Acceso compartido");
+    assert.equal(state.review.approvedByGrantId,shared.grantId);
+    assert.equal(state.review.approvedBySessionId,shared.sessionId);
+    assert.equal(state.events[0][3],null);
+    assert.equal(state.events[0][6],"SHARED_LINK");
+  }
+});
+
+
+test("OK compartido revalida scope tras lock y rechaza historico/importado con Review residual antes de escribir",async()=>{
+  const shared={kind:"SHARED_LINK",id:null,nombre:"Acceso compartido",grantId:"10000000-0000-4000-8000-000000000001",sessionId:"20000000-0000-4000-8000-000000000001"};
+  for(const reason of ["historical","imported"]){
+    const {db,state}=approvalDatabase({review:{status:"PENDING",revision:7,approvedRevision:null,reviewHash:null}});
+    const item=await service.getCreditApprovalDetail(db,81);
+    if(reason==="historical") state.credit.createdAt=new Date("2020-01-01T00:00:00Z");
+    else {state.credit.equalityService="IMPORTACION_MASIVA";state.credit.contratoSnapshot.origen={tipo:"IMPORTACION_MASIVA"};}
+    // A residual Review keeps the payment policy required; the portal scope is narrower.
+    assert.equal(state.credit.required,true);
+    assert.equal((await service.getCreditApprovalDetail(db,81)).review.reviewHash,item.review.reviewHash);
+    state.queries.length=0;
+    await assert.rejects(service.approveCredit(db,81,{revision:7,reviewHash:item.review.reviewHash},shared),{code:"CREDIT_NOT_FOUND",status:404});
+    assert.equal(state.writes.length,0);assert.equal(state.events.length,0);assert.equal(state.noveltyEvents.length,0);
+    const lock=state.queries.findIndex(query=>query.sql.includes('FOR UPDATE OF credit'));
+    const scope=state.queries.findIndex(query=>query.sql.startsWith('SELECT credit."id" FROM "Credito" credit'));
+    assert.ok(lock>=0 && scope>lock);
+    assert.equal(state.queries.some(query=>query.sql.startsWith('SELECT "status", "revision"')),false);
+  }
+});

@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import pg from "pg";
 import { installCreditApprovalSchema } from "../scripts/credit-approval-schema.mjs";
+import { installCreditApprovalActorSchema } from "../scripts/credit-approval-actor-schema.mjs";
+import { installCreditApprovalNoveltiesSchema } from "../scripts/credit-approval-novelties-schema.mjs";
 
 const hooks = registerHooks({
   resolve(specifier, context, next) {
@@ -27,7 +29,7 @@ test("PostgreSQL aislado: activacion, revision, auditoria y concurrencia de liqu
   const db = new pg.Client({ connectionString });
   await db.connect();
   t.after(async () => { await db.end(); });
-  const fixtureTables = ["CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy",
+  const fixtureTables = ["CreditApprovalNoveltyEvent", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy",
     "FirmaSeguroProcess", "LiquidacionAliadoCredito", "Credito", "Usuario", "Sede", "Aliado"];
   const previous = await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(previous.rows.every(({ tablename }) => fixtureTables.includes(tablename)),
@@ -93,6 +95,8 @@ test("PostgreSQL aislado: activacion, revision, auditoria y concurrencia de liqu
     }
     return db.query(statement);
   } });
+  await installCreditApprovalActorSchema(db);
+  await installCreditApprovalNoveltiesSchema(db);
   const activatedAt = (await db.query('SELECT "activatedAt"::text FROM "CreditApprovalPolicy"')).rows[0].activatedAt;
   {
     await t.test("instantes UTC explicitos con defaults Prisma y TimeZone America/Bogota", async () => {
