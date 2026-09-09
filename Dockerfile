@@ -48,6 +48,8 @@ COPY --from=builder /app/scripts/ensure-document-blacklist-schema.mjs ./scripts/
 COPY --from=builder /app/scripts/document-blacklist-schema.mjs ./scripts/document-blacklist-schema.mjs
 COPY --from=builder /app/scripts/ensure-credit-approval-schema.mjs ./scripts/ensure-credit-approval-schema.mjs
 COPY --from=builder /app/scripts/credit-approval-schema.mjs ./scripts/credit-approval-schema.mjs
+COPY --from=builder /app/scripts/ensure-approval-access-schema.mjs ./scripts/ensure-approval-access-schema.mjs
+COPY --from=builder /app/scripts/approval-access-schema.mjs ./scripts/approval-access-schema.mjs
  
 EXPOSE 3000
 

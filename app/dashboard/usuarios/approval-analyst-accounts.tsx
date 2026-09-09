@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { Badge, Button, Card, DataTable, Input, Select } from "@/app/_components/finser-ui";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
+import ApprovalAnalystLink from "./approval-analyst-link";
 
 export type ApprovalAnalystAccount = {
   id: number;
@@ -122,6 +123,7 @@ export default function ApprovalAnalystAccounts({ accounts, sedes, onUpdated }: 
               <thead><tr>
                 <th className="p-3" scope="col">Analista</th>
                 <th className="p-3" scope="col">Estado</th>
+                <th className="p-3" scope="col">Enlace personal</th>
                 <th className="p-3" scope="col">Restablecer clave</th>
                 <th className="p-3" scope="col">Acceso</th>
               </tr></thead>
@@ -129,6 +131,11 @@ export default function ApprovalAnalystAccounts({ accounts, sedes, onUpdated }: 
                 <tr key={account.id} className="border-t border-[var(--fp-border)]">
                   <td className="p-3"><p className="font-semibold">{account.nombre}</p><p className="text-[var(--fp-muted)]">{account.usuario} · {account.sede.nombre}</p></td>
                   <td className="p-3"><Badge>{account.activo ? "Activo" : "Inactivo"}</Badge></td>
+                  <td className="p-3">
+                    <ApprovalAnalystLink key={account.id + ":" + account.updatedAt + ":" + account.activo}
+                      analystId={account.id} analystName={account.nombre}
+                      accountActive={account.activo} disabled={busy} />
+                  </td>
                   <td className="p-3">
                     <div className="flex min-w-64 flex-wrap gap-2">
                       <Input type="password" autoComplete="new-password" minLength={8} maxLength={128}

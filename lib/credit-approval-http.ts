@@ -42,8 +42,26 @@ export async function readApprovalRequest(request: Request) {
   if (!isSameApprovalOrigin(request)) {
     throw new CreditApprovalError("INVALID_ORIGIN", "La solicitud debe realizarse desde FINSER PAY.", 403);
   }
-  const text = await request.text();
-  if (text.length > 1024) throw new CreditApprovalError("INVALID_REQUEST", "Solicitud demasiado extensa.");
+  const tooLarge = () => new CreditApprovalError("INVALID_REQUEST", "Solicitud demasiado extensa.");
+  if (Number(request.headers.get("content-length")) > 1024) throw tooLarge();
+  const reader = request.body?.getReader();
+  const bytes = new Uint8Array(1024);
+  let length = 0;
+  if (reader) {
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        if (length + chunk.value.length > bytes.length) {
+          await reader.cancel();
+          throw tooLarge();
+        }
+        bytes.set(chunk.value, length);
+        length += chunk.value.length;
+      }
+    } finally { reader.releaseLock(); }
+  }
+  const text = new TextDecoder().decode(bytes.subarray(0, length));
   try { return JSON.parse(text) as unknown; }
   catch { throw new CreditApprovalError("INVALID_REQUEST", "Solicitud no válida."); }
 }

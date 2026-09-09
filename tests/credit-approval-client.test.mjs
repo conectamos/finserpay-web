@@ -86,7 +86,8 @@ test("el panel ofrece consulta de evidencias y PDF sin controles de corrección"
   const panel = await readFile(new URL("../app/dashboard/aprobaciones/approval-console.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(panel, /type=["']file["']|ApprovedCreditEvidenceCorrection|method:\s*["'](?:PATCH|PUT|DELETE)["']/);
   assert.match(panel, /<ConfirmDialog/);
-  assert.match(panel, /<iframe[^>]+title=/);
+  assert.match(panel, /<LastPdfPagePreview/);
+  assert.doesNotMatch(panel, /<iframe|Abrir PDF firmado/);
   assert.match(panel, /reviewChanged \|\| rereviewed/);
 });
 

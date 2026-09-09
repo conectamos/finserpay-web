@@ -12,16 +12,51 @@ El administrador central de FINSER PAY y los usuarios activos con el rol
 panel; el rol no concede acceso a la fábrica de créditos, recaudos, administración
 de usuarios, políticas de riesgo ni al expediente completo de DataCrédito.
 La creación y administración de analistas corresponde al administrador central.
-Los vendedores, administradores de aliados y usuarios sin sesión no pueden usar
-las APIs del módulo ni abrir sus fotografías o documentos.
+Los vendedores, administradores de aliados y usuarios sin sesión no pueden
+consultar el expediente ni abrir sus fotografías o documentos.
+
+### Enlaces personales
+
+En **Usuarios > Analistas de aprobación**, el administrador central puede
+**Generar enlace**, **Copiar enlace**, **Abrir**, **Regenerar enlace** y
+**Revocar**. El enlace corresponde a la misma cuenta individual del analista y
+se puede reutilizar mientras esté vigente. Regenerarlo o revocarlo requiere
+confirmación. La tabla muestra el secreto enmascarado; copiar conserva el enlace
+completo. Una cuenta inactiva no permite generar, copiar ni abrir su acceso, y
+la tabla vuelve a consultar el enlace cuando cambia la cuenta.
+
+La dirección tiene la forma `/acceso-aprobaciones#acceso=<secreto>`. El navegador
+retira inmediatamente el fragmento del historial y de la barra de direcciones,
+antes de enviar el token por `POST /api/public/approval-access`. La página usa
+metadatos de no indexación y no caché, con política de referencia `no-referrer`.
+No conserva el token en almacenamiento del navegador ni lo muestra en errores.
+Al validar el enlace, navega únicamente a `/dashboard/aprobaciones`; si falta o
+ya no es válido, solicita volver a abrir un enlace vigente del administrador.
+
+Cada apertura válida establece la cookie `approval_access_session` durante
+**8 horas**. Esta cookie es independiente de la sesión administrativa: permite
+abrir el acceso personal sin sustituir la sesión del administrador en el mismo
+navegador. Las rutas de aprobaciones validan en base de datos, en cada petición,
+la cuenta, el rol, la sede y el aliado central activos, la versión de credenciales
+y el identificador vigente del enlace. Las decisiones siguen atribuidas al
+usuario individual del analista.
+
+Regenerar o revocar invalida el enlace anterior y las sesiones vinculadas a su
+identificador (`grantId`). Restablecer la clave o desactivar la cuenta invalida
+su acceso mediante `credentialVersion`. Iniciar una nueva sesión con usuario y
+clave elimina la cookie de acceso por enlace. Cerrar sesión también elimina esa
+cookie; volver a abrir un enlace que sigue vigente permite iniciar otra sesión.
+
+### Revisión de un crédito
 
 El flujo consiste en:
 
 1. Buscar la cédula completa. La búsqueda es exacta y está limitada a créditos de
    aliados distintos de FINSER PAY.
 2. Elegir el folio cuando el cliente tiene varios créditos.
-3. Revisar el resumen financiero, las cinco fotografías y el PDF firmado de
-   FirmaSeguro. Las imágenes se pueden ampliar y el PDF se puede abrir aparte.
+3. Revisar el resumen financiero, las cinco fotografías y la última página del
+   PDF firmado de FirmaSeguro. Las imágenes se pueden ampliar y la página del
+   contrato se consulta en el visor integrado.
 4. Pulsar **OK para liquidación** y confirmar la identidad y el folio mostrados.
 
 El flujo tiene dos estados: **Pendiente de revisión** (`PENDING`) y **Aprobado**
@@ -40,7 +75,12 @@ de solo lectura en este panel.
 | Crédito autorizado | Capital registrado en `saldoBaseFinanciado`, con el respaldo existente de valor del equipo menos inicial. |
 | Cupo aprobado | Valor guardado en los términos DataCrédito del contrato; la oferta es el respaldo cuando esos términos no lo contienen. |
 | Cinco fotografías | Cédula frontal, cédula posterior, selfie con cédula, entrega y remisión guardadas en el crédito. |
-| PDF firmado | Proceso FirmaSeguro vigente, no sustituido, asociado al crédito y con documento firmado disponible. |
+| PDF firmado | Proceso FirmaSeguro vigente, no sustituido, asociado al crédito y con documento firmado disponible; el visor muestra su última página. |
+
+El visor utiliza PDF.js y sus recursos servidos por la propia aplicación, sin
+CDN. Obtiene internamente el PDF completo mediante la ruta autorizada y renderiza
+su última página en el navegador. Los bytes y la huella del documento original
+se conservan intactos; no se extrae ni se guarda un PDF derivado.
 
 El módulo consulta el puntaje y la oferta operativa, sin descifrar el payload del
 proveedor ni iniciar otra consulta de riesgo o proceso de firma. Una evaluación
@@ -56,8 +96,8 @@ revoca una aprobación ya registrada.
 
 ## Activación y conservación del historial
 
-La activación sucede en la **primera instalación correcta del script de esquema
-durante un despliegue futuro autorizado**. Crear una rama, subirla a GitHub o
+La activación queda fijada en la **primera instalación correcta del script de
+esquema durante un despliegue autorizado**. Crear una rama, subirla a GitHub o
 ejecutar las pruebas sin ese despliegue no activa la regla en producción.
 
 `scripts/railway-predeploy.mjs` incorpora
@@ -66,6 +106,11 @@ ejecutar las pruebas sin ese despliegue no activa la regla en producción.
 una única fila en `CreditApprovalPolicy`, con `activatedAt` como corte duradero
 en UTC. Las ejecuciones posteriores conservan ese valor; no lo reemplazan por
 una fecha de configuración ni reclasifican todo el historial.
+
+El mismo predespliegue instala el esquema de enlaces personales mediante
+`scripts/ensure-approval-access-schema.mjs` y
+`scripts/approval-access-schema.mjs`. Esta instalación aditiva conserva el corte
+existente de `CreditApprovalPolicy` y las reglas de revisión del historial.
 
 Se exige revisión a los créditos creados desde ese corte, según
 `Credito.createdAt`, y que no tengan simultáneamente los marcadores de
@@ -110,8 +155,10 @@ las demás reglas de elegibilidad de pagos a aliados.
 
 ## Contrato HTTP
 
-Todas las rutas autentican y autorizan antes de consultar datos. Las respuestas,
-incluidas las fotografías y el PDF, usan `Cache-Control: private, no-store` y
+Las rutas del expediente autentican y autorizan antes de consultar datos.
+La administración de enlaces requiere una sesión de administrador central; el
+canje público valida el token personal y su vigencia. Las respuestas, incluidas
+las fotografías y el PDF, usan `Cache-Control: private, no-store` y
 `X-Content-Type-Options: nosniff`.
 
 | Método y ruta | Uso |
@@ -120,7 +167,18 @@ incluidas las fotografías y el PDF, usan `Cache-Control: private, no-store` y
 | `GET /api/aprobaciones/[id]` | Devuelve `item` con información financiera, `review`, disponibilidad de documentos, `canApprove` y `blockingReasons`. |
 | `POST /api/aprobaciones/[id]` | Recibe únicamente `{revision, reviewHash}`; confirma el OK con el actor de la sesión. |
 | `GET /api/aprobaciones/[id]/evidencias?tipo=...` | Entrega una de las cinco fotografías permitidas. |
-| `GET /api/aprobaciones/[id]/documento` | Entrega el PDF firmado vigente. |
+| `GET /api/aprobaciones/[id]/documento` | Entrega el PDF firmado vigente completo para renderizar localmente su última página. |
+| `GET /api/usuarios/analistas/[id]/enlace` | Consulta el estado del enlace personal y su URL cuando está vigente. |
+| `POST /api/usuarios/analistas/[id]/enlace` | Genera o regenera el enlace; recibe `{expectedGrantId}`, con `null` para la primera generación. |
+| `DELETE /api/usuarios/analistas/[id]/enlace` | Revoca el enlace indicado por `{expectedGrantId}`. |
+| `POST /api/public/approval-access` | Recibe `{token}`, valida el origen de la petición y establece la cookie de acceso personal. |
+
+La consulta y las mutaciones de enlaces devuelven
+`{ok, active, hasLink, grantId, accessUrl, createdAt}`. `active` indica que el
+enlace permite acceder; `accessUrl` es `null` si no está vigente. Las mutaciones
+comparan `expectedGrantId` con el identificador almacenado: un cambio concurrente
+produce `409` y requiere consultar de nuevo antes de tomar otra decisión. El
+canje devuelve `{ok: true, destination: "/dashboard/aprobaciones"}`.
 
 Los códigos principales son `401` sin sesión, `403` sin permiso o con origen no
 permitido, `400` para entradas inválidas, `404` para recursos no encontrados,
@@ -137,8 +195,12 @@ npm run test:aprobaciones
 ```
 
 Incluye permisos de analistas, servicio, API, cliente, selección de liquidación,
-esquema y regresiones del flujo. Las pruebas de PostgreSQL son opcionales sin
-conexión configurada y quedan marcadas como omitidas. Para ejecutarlas se debe
+esquema y regresiones del flujo. Las pruebas del visor comprueban la selección y
+renderizado de la última página, la conservación del documento original, los
+límites de tamaño y la cancelación de cargas.
+
+Las pruebas de PostgreSQL son opcionales sin conexión configurada y quedan
+marcadas como omitidas. Para ejecutarlas se debe
 preparar una base **local y exclusiva de fixtures** llamada `approval_test`:
 
 ```powershell
@@ -151,6 +213,30 @@ Reinicia las tablas de sus fixtures; esa conexión no debe contener trabajo real
 Comprueba corte de activación, exenciones, auditoría, invalidación y concurrencia
 de liquidaciones. La suite no requiere credenciales de producción.
 
+La suite específica de enlaces personales se ejecuta con:
+
+```powershell
+node --test tests/approval-access*.test.mjs
+```
+
+Comprueba autenticación, permisos, generación, reutilización, rotación,
+revocación, invalidación por credenciales y la cookie de 8 horas. Su prueba
+PostgreSQL requiere otra base **local y exclusiva de fixtures**, llamada
+`approval_access_test`:
+
+```powershell
+$env:APPROVAL_ACCESS_TEST_DATABASE_URL = "<conexión PostgreSQL local a approval_access_test>"
+node --test tests/approval-access*.test.mjs
+```
+
+Sin esa variable, la prueba PostgreSQL queda omitida. Valida el host y el nombre
+de base antes de reiniciar fixtures; comprueba unicidad, revocación, instalación
+repetible y conservación del corte de activación.
+
 La comprobación de interfaz debe incluir búsqueda con uno y varios folios,
-documentación completa y faltante, ampliación de fotos, apertura del PDF,
-confirmación del OK, revisión obsoleta y errores que conservan la selección.
+documentación completa y faltante, ampliación de fotos, carga y zoom de la última
+página del PDF, confirmación del OK, revisión obsoleta y errores que conservan la
+selección. Para los enlaces, comprobar generación y reutilización, copia con
+portapapeles restringido, confirmación de regeneración y revocación, cuenta
+desactivada y clave restablecida, fragmento retirado antes del canje, apertura sin
+token, un solo canje en StrictMode y coexistencia con la sesión administrativa.

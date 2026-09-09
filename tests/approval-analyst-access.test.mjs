@@ -37,18 +37,20 @@ function authFixture() {
   };
   const values = new Map();
   let operatingSedeReads = 0;
+  let liveGrant = true;
   const token = () => session.createSessionToken(user.id, session.getSessionCredentialVersion(user.claveHash, user.updatedAt));
   values.set("session", token());
   const auth = load("lib/auth.ts", {
     "next/headers": { cookies: async () => ({ get: (name) => ({ value: values.get(name) }) }) },
     "@/lib/prisma": { default: {
+      $queryRawUnsafe: async () => liveGrant ? [{ id: "11111111-1111-4111-8111-111111111111" }] : [],
       usuario: { findUnique: async () => user },
       sede: { findFirst: async () => { operatingSedeReads++; throw new Error("Analyst cannot select an operating sede"); } },
     } },
     "@/lib/session": session, "@/lib/roles": roles,
     "@/lib/aliados": { ensureAliadoSchema: async () => {}, ensureFinserPayCentralAdmin: async () => {} },
   });
-  return { auth, values, token, setUser: (value) => { user = { ...user, ...value }; }, operatingSedeReads: () => operatingSedeReads };
+  return { auth, values, token, revokeLink: () => { liveGrant = false; }, linkToken: () => session.createApprovalAccessSessionToken(user.id, session.getSessionCredentialVersion(user.claveHash, user.updatedAt), "11111111-1111-4111-8111-111111111111"), setUser: (value) => { user = { ...user, ...value }; }, operatingSedeReads: () => operatingSedeReads };
 }
 
 test("la capacidad de revisar exige perfil autorizado, cuenta activa y aliado central", () => {
@@ -252,4 +254,43 @@ test("el login rechaza analista externo, inactivo o con clave equivocada y conse
   const admin = loginApi({ rol: { nombre: "ADMIN" } });
   const response = await admin.api.POST(request({ usuario: "admin", clave: "test-login-passphrase" }));
   assert.equal((await response.json()).destination, "/dashboard");
+});
+
+test("las sesiones de enlace quedan revocadas y no se convierten en sesiones de administrador", async () => {
+  const f = authFixture();
+  f.values.set("session", f.linkToken());
+  assert.equal(await f.auth.getSessionUser(), null);
+  assert.equal((await f.auth.getCreditApprovalSessionUser()).id, 7);
+  f.revokeLink();
+  assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
+  const promoted = authFixture();
+  promoted.values.set("session", promoted.linkToken());
+  promoted.setUser({ rol: { nombre: "ADMIN" } });
+  assert.equal(await promoted.auth.getSessionUser(), null);
+  assert.equal(await promoted.auth.getCreditApprovalSessionUser(), null);
+});
+
+test("el enlace dedicado válido abre el layout aunque quede una sesión normal obsoleta", async () => {
+  const f = authFixture();
+  f.values.set("session", "obsolete-cookie");
+  f.values.set(session.APPROVAL_ACCESS_COOKIE_NAME, f.linkToken());
+  assert.equal(await f.auth.getSessionUser(), null);
+  const dashboard = load("lib/dashboard-access.ts", {
+    "next/navigation": { redirect: () => { throw new Error("Unexpected redirect"); } },
+    "@/lib/auth": f.auth, "@/lib/roles": roles,
+    "@/lib/seller-auth": { getSellerSessionUser: async () => null },
+    "@/lib/aliados": { isFinserPayCentralAlly: code => code === "FINSERPAY" },
+  });
+  assert.equal((await dashboard.requireDashboardAccess({ allowApprovalAnalyst: true })).session.id, 7);
+  f.revokeLink();
+  assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
+});
+
+test("una cookie dedicada inválida nunca cambia silenciosamente al administrador normal", async () => {
+  const f = authFixture();
+  f.setUser({ rol: { nombre: "ADMIN" } });
+  f.values.set("session", session.createSessionToken(7));
+  f.values.set(session.APPROVAL_ACCESS_COOKIE_NAME, "revoked-or-invalid-link-session");
+  assert.equal((await f.auth.getSessionUser()).rolNombre, "ADMIN");
+  assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
 });

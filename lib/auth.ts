@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import {
   SELLER_SESSION_COOKIE_NAME,
   SESSION_COOKIE_NAME,
+  APPROVAL_ACCESS_COOKIE_NAME,
   getSessionCredentialVersion,
   verifySellerSessionToken,
   verifySessionToken,
@@ -13,13 +14,16 @@ import {
   ensureFinserPayCentralAdmin,
 } from "@/lib/aliados";
 
-export async function getSessionUser(options: { allowApprovalAnalyst?: boolean } = {}) {
+export async function getSessionUser(options: { allowApprovalAnalyst?: boolean; preferApprovalAccess?: boolean } = {}) {
   const cookieStore = await cookies();
-  const sessionToken = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+  const regularToken = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+  const accessToken = options.allowApprovalAnalyst ? cookieStore.get(APPROVAL_ACCESS_COOKIE_NAME)?.value : undefined;
+  const usingAccessCookie = Boolean(accessToken && (options.preferApprovalAccess || !regularToken));
+  const sessionToken = usingAccessCookie ? accessToken : regularToken;
 
   const session = verifySessionToken(sessionToken);
 
-  if (!session) return null;
+  if (!session || (usingAccessCookie && !session.approvalAccessGrantId)) return null;
 
   await ensureAliadoSchema(prisma);
   await ensureFinserPayCentralAdmin(prisma);
@@ -72,6 +76,18 @@ export async function getSessionUser(options: { allowApprovalAnalyst?: boolean }
     }) ||
     session.credentialVersion !== getSessionCredentialVersion(user.claveHash, user.updatedAt)
   )) return null;
+
+  if (session.approvalAccessGrantId) {
+    // A link can never become an administrative/seller login after a role change.
+    if (!approvalAnalyst) return null;
+    const grants = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+      `SELECT "id"::text FROM "CreditApprovalAccessLink" WHERE "userId" = $1 AND "id" = $2::uuid AND "credentialVersion" = $3 AND "revokedAt" IS NULL
+        AND EXISTS (SELECT 1 FROM "Sede" site JOIN "Aliado" ally ON ally."id" = site."aliadoId"
+          WHERE site."id" = $4 AND site."activa" = TRUE AND ally."activo" = TRUE AND UPPER(BTRIM(ally."codigo")) = 'FINSERPAY')`,
+      user.id, session.approvalAccessGrantId, session.credentialVersion, user.sedeId
+    );
+    if (!grants.length) return null;
+  }
 
   const sellerSession = verifySellerSessionToken(
     cookieStore.get(SELLER_SESSION_COOKIE_NAME)?.value
@@ -133,6 +149,6 @@ export async function getSessionUser(options: { allowApprovalAnalyst?: boolean }
 }
 
 export async function getCreditApprovalSessionUser() {
-  const user = await getSessionUser({ allowApprovalAnalyst: true });
+  const user = await getSessionUser({ allowApprovalAnalyst: true, preferApprovalAccess: true });
   return canReviewCreditApprovals(user) ? user : null;
 }

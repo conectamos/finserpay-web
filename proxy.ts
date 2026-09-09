@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 const SESSION_COOKIE_NAME = "session";
+const APPROVAL_ACCESS_COOKIE_NAME = "approval_access_session";
 const SELLER_SESSION_COOKIE_NAME = "seller_session";
 
 const LEGACY_PAGE_PREFIXES = [
@@ -32,6 +33,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/login",
   "/api/logout",
   "/api/public/iphone-enrollment",
+  "/api/public/approval-access",
   "/api/wompi",
   "/api/creditos/captura-session/",
 ];
@@ -115,6 +117,9 @@ function usesDedicatedBearerAuth(request: NextRequest, pathname: string) {
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
+  const hasApprovalAccess = Boolean(request.cookies.get(APPROVAL_ACCESS_COOKIE_NAME)?.value);
+  const approvalApi = pathMatches(pathname, ["/api/aprobaciones"]);
+  const approvalPage = pathMatches(pathname, ["/dashboard/aprobaciones"]);
   const hasSellerProfile = Boolean(
     request.cookies.get(SELLER_SESSION_COOKIE_NAME)?.value
   );
@@ -128,7 +133,7 @@ export function proxy(request: NextRequest) {
       return NextResponse.next();
     }
 
-    if (pathMatches(pathname, PROTECTED_API_PREFIXES) && !hasSession) {
+    if (pathMatches(pathname, PROTECTED_API_PREFIXES) && !hasSession && !(approvalApi && hasApprovalAccess)) {
       return unauthorizedApi();
     }
 
@@ -144,7 +149,7 @@ export function proxy(request: NextRequest) {
   }
 
   if (pathname === "/dashboard" || pathname.startsWith("/dashboard/")) {
-    if (!hasSession) {
+    if (!hasSession && !(approvalPage && hasApprovalAccess)) {
       return redirectToLogin(request);
     }
 

@@ -1,13 +1,17 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export const SESSION_COOKIE_NAME = "session";
+export const APPROVAL_ACCESS_COOKIE_NAME = "approval_access_session";
 export const SELLER_SESSION_COOKIE_NAME = "seller_session";
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+export const APPROVAL_ACCESS_SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
+const approvalGrantIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 type SessionPayload = {
   exp: number;
   userId: number;
   credentialVersion?: string;
+  approvalAccessGrantId?: string;
 };
 
 type SellerSessionPayload = {
@@ -61,6 +65,36 @@ export function createSessionToken(userId: number, credentialVersion?: string) {
   return `${encodedPayload}.${sign(encodedPayload)}`;
 }
 
+/** A link session remains limited to the analyst role and its live grant. */
+export function createApprovalAccessSessionToken(userId: number, credentialVersion: string, grantId: string) {
+  if (!approvalGrantIdPattern.test(grantId)) throw new Error("Invalid approval access grant");
+  const payload: SessionPayload = { userId, credentialVersion, approvalAccessGrantId: grantId,
+    exp: Math.floor(Date.now() / 1000) + APPROVAL_ACCESS_SESSION_MAX_AGE_SECONDS };
+  const encoded = base64UrlEncode(JSON.stringify(payload));
+  return encoded + "." + sign(encoded);
+}
+
+export function createApprovalAccessToken(userId: number, grantId: string) {
+  if (!Number.isSafeInteger(userId) || userId < 1 || userId > 2_147_483_647 || !approvalGrantIdPattern.test(grantId)) {
+    throw new Error("Invalid approval access grant");
+  }
+  const payload = "v1." + userId + "." + grantId;
+  return payload + "." + sign("approval-access:" + payload);
+}
+
+export function verifyApprovalAccessToken(value: unknown) {
+  if (typeof value !== "string" || value.length > 160) return null;
+  const parts = value.split(".");
+  if (parts.length !== 4 || parts[0] !== "v1" || !/^[1-9]\d{0,9}$/.test(parts[1]) || !approvalGrantIdPattern.test(parts[2])) return null;
+  const userId = Number(parts[1]);
+  if (userId > 2_147_483_647) return null;
+  const expected = createApprovalAccessToken(userId, parts[2]);
+  const receivedBytes = Buffer.from(value);
+  const expectedBytes = Buffer.from(expected);
+  if (receivedBytes.length !== expectedBytes.length || !timingSafeEqual(receivedBytes, expectedBytes)) return null;
+  return { userId, grantId: parts[2] };
+}
+
 export function createSellerSessionToken(payload: {
   accesoSedeId?: number;
   sedeId: number;
@@ -111,6 +145,8 @@ export function verifySessionToken(token?: string | null) {
     if (payload.exp <= Math.floor(Date.now() / 1000)) {
       return null;
     }
+
+    if ("approvalAccessGrantId" in payload && (typeof payload.approvalAccessGrantId !== "string" || !approvalGrantIdPattern.test(payload.approvalAccessGrantId) || !payload.credentialVersion)) return null;
 
     return payload;
   } catch {
