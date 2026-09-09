@@ -73,8 +73,11 @@ model Aliado {
   redescuentoAndroidPorcentaje    Float                              @default(10)
   redescuentoIphonePorcentaje     Float                              @default(10)
   dataCreditoPolicyId             String                             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  dataCreditoDailyQueryLimit      Int?
   dataCreditoPolicy               DataCreditoPolicyProfile           @relation(fields: [dataCreditoPolicyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   dataCreditoPolicyAssignmentLogs DataCreditoPolicyAssignmentAudit[]
+  dataCreditoDailyQuotaUsage      DataCreditoDailyQuotaUsage[]
+  dataCreditoDailyQuotaAudit      DataCreditoDailyQuotaAudit[]
   liquidacionesAliado             LiquidacionAliado[]
   sedes                           Sede[]
   createdAt                       DateTime                           @default(now())
@@ -126,6 +129,31 @@ model DataCreditoPolicyAssignmentAudit {
 
   @@index([allyId, createdAt])
   @@index([policyId, createdAt])
+}
+
+model DataCreditoDailyQuotaUsage {
+  allyId       Int
+  businessDate DateTime @db.Date
+  usedCount    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  ally         Aliado   @relation(fields: [allyId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "DataCreditoDailyQuotaUsage_ally_fkey")
+
+  @@id([allyId, businessDate])
+}
+
+model DataCreditoDailyQuotaAudit {
+  id                   String   @id @default(uuid()) @db.Uuid
+  allyId               Int
+  previousLimit        Int?
+  dailyLimit           Int?
+  actorUserId          Int
+  requestCorrelationId String   @db.Uuid
+  reason               String?  @db.VarChar(240)
+  createdAt            DateTime @default(now())
+  ally                 Aliado   @relation(fields: [allyId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "DataCreditoDailyQuotaAudit_ally_fkey")
+
+  @@index([allyId, createdAt], map: "DataCreditoDailyQuotaAudit_ally_created_idx")
 }
 
 model Sede {

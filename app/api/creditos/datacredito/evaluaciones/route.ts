@@ -37,6 +37,7 @@ import {
   buildDataCreditoIdentityHashes,
   DataCreditoStorageConfigurationError,
   failDataCreditoAssessment,
+  failDataCreditoAssessmentBeforeProviderDispatch,
   getAssignedDataCreditoPolicy,
   hashDataCreditoRequestMetadata,
   isDataCreditoAuditConfigured,
@@ -46,6 +47,7 @@ import {
   reuseDataCreditoAssessment,
   serializeDataCreditoAssessment,
   type DataCreditoAssessmentScope,
+  type DataCreditoDailyQuotaReservation,
 } from "@/lib/datacredito/storage";
 import { canRecoverAssessmentIdentityMismatch } from "@/lib/datacredito/resume-gate";
 import { tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
@@ -82,6 +84,12 @@ function technicalResponse(input: {
   code: string;
   error: string;
   status: number;
+  dailyQuota?: {
+    limit: number;
+    used: number;
+    remaining: number;
+    resetsAt: string;
+  };
 }) {
   return NextResponse.json(
     {
@@ -90,6 +98,7 @@ function technicalResponse(input: {
       error: input.error,
       code: input.code,
       correlationId: input.correlationId,
+      ...(input.dailyQuota ? { dailyQuota: input.dailyQuota } : {}),
     },
     { status: input.status }
   );
@@ -131,6 +140,12 @@ async function solicitudRecoverableResponse(input: {
   status: number;
   solicitudId: number;
   plataforma?: string | null;
+  dailyQuota?: {
+    limit: number;
+    used: number;
+    remaining: number;
+    resetsAt: string;
+  };
 }) {
   const { solicitudId, plataforma, ...response } = input;
   try {
@@ -184,6 +199,7 @@ export async function POST(request: Request) {
   const correlationId = randomUUID();
   let pendingAssessmentId: string | null = null;
   let providerStartedAt: number | null = null;
+  let dailyQuotaReservation: DataCreditoDailyQuotaReservation | null = null;
   let solicitudId: number | null = null;
   let solicitudOperationLock: Awaited<
     ReturnType<typeof tryAcquireSolicitudOperationLock>
@@ -730,12 +746,30 @@ export async function POST(request: Request) {
         status: 429,
       });
     }
+    if (reservation.kind === "DAILY_QUOTA_EXHAUSTED") {
+      return solicitudRecoverableResponse({
+        correlationId,
+        solicitudId,
+        plataforma: platform,
+        code: "ALLY_DAILY_QUERY_LIMIT_REACHED",
+        error:
+          "El aliado alcanzo su cupo diario de consultas de credito. Intenta de nuevo despues del reinicio del cupo.",
+        status: 429,
+        dailyQuota: {
+          limit: reservation.limit,
+          used: reservation.used,
+          remaining: reservation.remaining,
+          resetsAt: reservation.resetsAt.toISOString(),
+        },
+      });
+    }
 
     const pending = reservation.assessment;
     if (!pending) {
       throw new Error("No se pudo crear la auditoria de evaluacion");
     }
     pendingAssessmentId = pending.id;
+    dailyQuotaReservation = reservation.dailyQuotaReservation;
     await attachDataCreditoToSolicitud({
       solicitudId,
       assessmentId: pending.id,
@@ -988,52 +1022,62 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const blacklistResponse = documentBlacklistErrorResponse(error);
-    if (error instanceof ActiveSolicitudConflictError) {
-      return technicalResponse({
-        correlationId,
-        code: error.code,
-        error: error.message,
-        status: error.status,
-      });
-    }
-    if (error instanceof SolicitudDataCreditoLinkError) {
-      return technicalResponse({
-        correlationId,
-        code: error.code,
-        error: error.message,
-        status: error.status,
-      });
-    }
     const code = blacklistResponse
       ? safeProviderValue((error as { code?: unknown }).code, 64) || "DOCUMENT_BLACKLISTED"
-      : error instanceof DataCreditoError
-        ? safeProviderValue(error.code, 64) || "PROVIDER_ERROR"
-        : error instanceof DataCreditoStorageConfigurationError
+      : error instanceof ActiveSolicitudConflictError
+        ? error.code
+        : error instanceof SolicitudDataCreditoLinkError
           ? error.code
-          : error instanceof DataCreditoSecureRecordConfigurationError
-            ? "SECURE_RECORD_NOT_CONFIGURED"
-            : error instanceof DataCreditoSecureRecordValidationError
-              ? "PROVIDER_PAYLOAD_INVALID"
-          : "EVALUATION_ERROR";
+          : error instanceof DataCreditoError
+            ? safeProviderValue(error.code, 64) || "PROVIDER_ERROR"
+            : error instanceof DataCreditoStorageConfigurationError
+              ? error.code
+              : error instanceof DataCreditoSecureRecordConfigurationError
+                ? "SECURE_RECORD_NOT_CONFIGURED"
+                : error instanceof DataCreditoSecureRecordValidationError
+                  ? "PROVIDER_PAYLOAD_INVALID"
+                  : "EVALUATION_ERROR";
 
     if (pendingAssessmentId) {
-      const trackedErrorCode = providerStartedAt
+      const failedAssessmentId = pendingAssessmentId;
+      const trackedErrorCode = providerStartedAt !== null
         ? "PROVIDER_OUTCOME_AMBIGUOUS"
         : code;
-      await failDataCreditoAssessment({
-        id: pendingAssessmentId,
-        errorCode: trackedErrorCode,
-        providerStatus:
-          error instanceof DataCreditoError && error.providerHttpStatus
-            ? `HTTP ${error.providerHttpStatus}`
-            : null,
-        durationMs: providerStartedAt ? Date.now() - providerStartedAt : null,
-      }).catch(() => undefined);
+      if (providerStartedAt === null && dailyQuotaReservation) {
+        await failDataCreditoAssessmentBeforeProviderDispatch({
+          id: failedAssessmentId,
+          errorCode: trackedErrorCode,
+          dailyQuotaReservation,
+        }).catch(async (compensationError) => {
+          console.error("ERROR COMPENSACION CUPO DATACREDITO:", {
+            correlationId,
+            errorType:
+              compensationError instanceof Error
+                ? compensationError.name
+                : "UnknownError",
+          });
+          await failDataCreditoAssessment({
+            id: failedAssessmentId,
+            errorCode: trackedErrorCode,
+          }).catch(() => undefined);
+        });
+      } else {
+        await failDataCreditoAssessment({
+          id: failedAssessmentId,
+          errorCode: trackedErrorCode,
+          providerStatus:
+            error instanceof DataCreditoError && error.providerHttpStatus
+              ? `HTTP ${error.providerHttpStatus}`
+              : null,
+          durationMs:
+            providerStartedAt !== null ? Date.now() - providerStartedAt : null,
+        }).catch(() => undefined);
+      }
       if (solicitudId) {
         const trackedSolicitudId = solicitudId;
         await attachDataCreditoToSolicitud({
           solicitudId: trackedSolicitudId,
-          assessmentId: pendingAssessmentId,
+          assessmentId: failedAssessmentId,
           status: "NO_EVALUADO",
           errorCode: trackedErrorCode,
         }).catch(() =>
@@ -1050,6 +1094,22 @@ export async function POST(request: Request) {
       }).catch(() => undefined);
     }
 
+    if (error instanceof ActiveSolicitudConflictError) {
+      return technicalResponse({
+        correlationId,
+        code: error.code,
+        error: error.message,
+        status: error.status,
+      });
+    }
+    if (error instanceof SolicitudDataCreditoLinkError) {
+      return technicalResponse({
+        correlationId,
+        code: error.code,
+        error: error.message,
+        status: error.status,
+      });
+    }
     if (blacklistResponse) return blacklistResponse;
 
     console.error("ERROR EVALUACION DATACREDITO:", {

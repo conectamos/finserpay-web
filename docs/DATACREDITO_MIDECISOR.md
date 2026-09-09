@@ -143,7 +143,7 @@ Todas son variables exclusivas del servidor. Ninguna debe usar el prefijo
 | `DATACREDITO_ASSESSMENT_TTL_MINUTES` | Variable histórica ignorada por el runtime nuevo. La vigencia contractual es fija: 21.600 minutos (15 días), sin ventana deslizante. |
 | `DATACREDITO_RETENTION_DAYS` | Retención de la evaluación, su expediente cifrado y las auditorías asociadas. Mínimo 15 días; recomendado 90 días. |
 | `DATACREDITO_RETENTION_TOKEN` | Token aleatorio de al menos 32 bytes para el cron de eliminacion por retencion. Puede usarse `CRON_SECRET` como respaldo. |
-| `DATACREDITO_RATE_LIMIT_MAX` | Maximo de intentos en 15 minutos por usuario o cedula seudonimizada dentro de la sede. |
+| `DATACREDITO_RATE_LIMIT_MAX` | Maximo de intentos en 15 minutos por usuario o cedula seudonimizada dentro de la sede. Es un control tecnico antiabuso y no reemplaza el cupo comercial diario del aliado. |
 
 `DATACREDITO_AUDIT_HMAC_SECRET` no debe reutilizar la clave de sesion ni otra
 credencial. Debe tener al menos 32 bytes aleatorios y rotarse mediante un plan
@@ -257,18 +257,25 @@ configuración.
 
 `GET /api/creditos/datacredito/politicas` devuelve el catálogo completo de
 perfiles, su última revisión, `revisionCreatedAt`, aliados y estado público del
-proveedor. `POST` crea un perfil con su revisión 1 y devuelve
-`createdPolicyId`. `PATCH` admite:
+proveedor. Para cada aliado incluye `dailyQueryLimit`, `dailyQueriesUsed`,
+`dailyQueriesRemaining` y `dailyQuotaResetsAt`. `POST` crea un perfil con su
+revisión 1 y devuelve `createdPolicyId`. `PATCH` admite:
 
 - `SAVE_REVISION` con `policyId`, `expectedVersion`, `bands`,
   `financialSettings` y `priorityRules`;
-- `ASSIGN_ALLY` con `allyId`, `policyId` y `expectedPolicyId`.
+- `ASSIGN_ALLY` con `allyId`, `policyId` y `expectedPolicyId`;
+- `SET_ALLY_DAILY_QUOTA` con `allyId`, `dailyQueryLimit`,
+  `expectedDailyQueryLimit` y, opcionalmente, `reason` de hasta 240 caracteres.
 
-Ambas mutaciones usan concurrencia optimista. Los conflictos devuelven `409`
-con `POLICY_VERSION_CONFLICT` o `POLICY_ASSIGNMENT_CONFLICT`. Crear nombres
+Las mutaciones usan concurrencia optimista. Un cambio de cupo debe enviar en
+`expectedDailyQueryLimit` el valor observado, incluido `null`; si otra sesión lo
+cambió primero, la API responde `409 ALLY_DAILY_QUERY_LIMIT_CONFLICT` e informa
+`currentDailyQueryLimit`. Un valor fuera de contrato responde
+`400 ALLY_DAILY_QUERY_LIMIT_INVALID`; un cuerpo mal formado responde
+`400 INVALID_DAILY_QUOTA`. Los demás conflictos continúan devolviendo
+`POLICY_VERSION_CONFLICT` o `POLICY_ASSIGNMENT_CONFLICT`, y crear nombres
 duplicados devuelve `POLICY_NAME_CONFLICT`. El catálogo y todas sus mutaciones
-son exclusivos del administrador central; cada reasignación conserva actor,
-perfil anterior, perfil nuevo y fecha en una auditoría inmutable.
+son exclusivos del administrador central.
 
 `maxFinancedAmount` es un entero en pesos colombianos y representa el saldo
 máximo que DataCrédito permite financiar. No es una base sobre la cual se
@@ -338,6 +345,85 @@ también serializan claim/consumo entre runtimes nuevos y antiguos, y convierten
 el consumo masivo legado en una actualización exclusiva del assessment
 reclamado. Si ya existen dos claims vigentes para la misma cédula y ambiente, la
 migración falla cerrada y debe reintentarse cuando hayan vencido.
+
+## Cupo diario de consultas por aliado
+
+El administrador central puede configurar `dataCreditoDailyQueryLimit` para
+cada aliado. Su semántica es explícita:
+
+- `null`: no limita las consultas nuevas. El sistema sigue midiendo el uso para
+  que la consola muestre la actividad del día y permita activar un límite sin
+  perder contexto.
+- `0`: bloquea toda reserva nueva; no llama a DataCrédito.
+- `1..10000`: máximo de consultas nuevas que puede reservar el aliado durante
+  un día calendario de Colombia.
+
+El contador agrupa todas las sedes, usuarios y asesores del mismo aliado. La
+fecha operativa se calcula con `America/Bogota` después de bloquear el registro
+del aliado y cambia a las 00:00 de Bogotá. La respuesta administrativa y el
+error de agotamiento informan `resetsAt`, el instante exacto del próximo
+reinicio. Cambiar el límite no borra el uso ya acumulado: si se reduce por debajo
+de lo consumido, las restantes quedan en cero hasta el siguiente día; si se
+aumenta, las restantes se recalculan de inmediato.
+
+### Cuándo consume y cuándo no consume
+
+La reserva se realiza de forma atómica en PostgreSQL, dentro de la misma
+transacción que crea el assessment `PENDING`. Las solicitudes concurrentes no
+pueden superar el límite y una transacción fallida no incrementa el contador.
+Solo consume una consulta nueva que llegó al punto de preparar un despacho al
+proveedor. No consume:
+
+- reutilizar un inquiry vigente durante los 15 días, incluso si lo reutiliza
+  otro aliado o cambia la plataforma;
+- usar el simulador;
+- encontrar una evaluación en curso, agotar el límite técnico antiabuso o
+  detectar el cupo diario agotado antes de crear el `PENDING`;
+- una validación que termina antes de reservar una consulta nueva.
+
+Si ocurre un fallo local ordinario después de crear el `PENDING` pero antes de
+iniciar la llamada HTTP a DataCrédito, una segunda transacción marca ese
+assessment como `NO_EVALUADO` y resta exactamente una unidad de
+`DataCreditoDailyQuotaUsage` para el aliado y la fecha Colombia originalmente
+reservados. Una vez iniciado el despacho, la reserva permanece consumida aunque
+el resultado sea aprobado, rechazado, sin información o termine en un error
+ambiguo del proveedor. Este criterio conservador evita exceder el presupuesto
+cuando DataCrédito pudo haber recibido la solicitud.
+
+### API y experiencia operativa
+
+Cuando no hay cupo, `POST /api/creditos/datacredito/evaluaciones` responde
+`429` con `status: "NO_EVALUADO"`, código
+`ALLY_DAILY_QUERY_LIMIT_REACHED` y el objeto
+`dailyQuota: { limit, used, remaining, resetsAt }`. No se crea una decisión
+crediticia y la interfaz muestra `Cupo diario de consultas agotado` como alerta
+ámbar de negocio; nunca muestra `NO APROBADO` ni lo trata como error técnico.
+Los datos ingresados permanecen en el flujo para continuar cuando el
+administrador amplíe el cupo o llegue el reinicio de Bogotá.
+
+En `/dashboard/parametros-credito`, la pestaña de asignación muestra por aliado
+las columnas `Cupo diario` y `Uso hoy`, con consultas usadas, restantes y hora
+de reinicio. El campo vacío guarda `null`, `0` bloquea y cualquier otro valor
+debe ser un entero hasta `10000`. La política y el cupo comparten una sola acción
+principal y una sola confirmación; los borradores inválidos impiden guardar. Un
+conflicto obliga a recargar para no sobrescribir el cambio de otro
+administrador.
+
+### Persistencia, auditoría y preflight
+
+- `Aliado.dataCreditoDailyQueryLimit` conserva el límite y tiene una restricción
+  PostgreSQL que solo permite `null` o `0..10000`.
+- `DataCreditoDailyQuotaUsage` conserva `allyId`, `businessDate` y `usedCount`;
+  su llave primaria compuesta impide dos contadores para el mismo aliado y día.
+- `DataCreditoDailyQuotaAudit` registra cada cambio efectivo con límite
+  anterior, límite nuevo, actor, correlación, motivo opcional y fecha. El índice
+  por aliado y fecha permite la revisión operativa.
+
+Estas tablas no guardan cédula, apellido, puntaje ni respuesta crediticia. El
+preflight idempotente `npm run db:setup-datacredito` instala la columna, las dos
+tablas, restricciones, llaves foráneas e índices. En producción el runtime solo
+verifica ese esquema; si falta una pieza o una restricción es inválida, falla
+cerrado con `503` y no intenta crearla durante una consulta.
 
 ## Protección, expediente y auditoría
 
@@ -416,27 +502,33 @@ pagada sin verificar si el credito ya fue creado.
    `rejectAboveCopByPlatform.ANDROID` y
    `rejectAboveCopByPlatform.IPHONE` dentro de ambas reglas. No deben rellenarse
    revisiones históricas automáticamente.
-6. Cargar las credenciales y hosts de certificación, nunca en el repositorio, y
+6. Configurar el cupo diario de cada aliado desde la pestaña de asignación del
+   catálogo central. Confirmar expresamente cuáles quedan sin límite y probar en
+   un ambiente no productivo los valores `0`, un cupo pequeño, su agotamiento,
+   el reinicio de Bogotá, la reutilización sin consumo y la compensación previa
+   al despacho.
+7. Cargar las credenciales y hosts de certificación, nunca en el repositorio, y
    fijar `DATACREDITO_ENVIRONMENT=uat` (o la etiqueta no productiva acordada).
    Confirmar que el guard impide ventas reales. Usar
    `DATACREDITO_ALLOW_NON_PRODUCTION_PROVIDER=true` solo durante una prueba
    controlada que requiera un build productivo y retirarlo al terminar.
-7. Configurar y probar `VERIFF_BASE_URL`, `VERIFF_API_KEY` y
+8. Configurar y probar `VERIFF_BASE_URL`, `VERIFF_API_KEY` y
    `VERIFF_SHARED_SECRET`, junto con el modo compatible del flujo. Un caso
    aprobado debe abrir y completar Veriff antes de habilitar consultas para
    asesores.
-8. Validar casos oficiales de aprobado, rechazado, sin información y error, y
+9. Validar casos oficiales de aprobado, rechazado, sin información y error, y
    comprobar que el módulo central muestra el expediente y registra su acceso.
-9. Confirmar que la ruta, módulos, límites y cobro de consultas coinciden con el
-   contrato de Experian.
-10. Obtener validación legal escrita del texto, evidencia, finalidad y retención
+10. Confirmar que la ruta, módulos, límites y cobro de consultas coinciden con el
+    contrato de Experian.
+11. Obtener validación legal escrita del texto, evidencia, finalidad y retención
     del consentimiento. Sin esa aprobación, producción debe permanecer con
     `DATACREDITO_QUERY_ENABLED=false`.
-11. Activar la bandera primero en certificación. Los resultados DEMO/UAT solo
+12. Activar la bandera primero en certificación. Los resultados DEMO/UAT solo
     validan conectividad y reglas; no originan ventas reales.
-12. Repetir todo el preflight con keyring, credenciales y hosts de producción
+13. Repetir todo el preflight con keyring, credenciales y hosts de producción
     separados. Confirmar `DATACREDITO_ENVIRONMENT=production`, ausencia del
     override no productivo y acceso central antes de activar la bandera.
+
 ## Confirmaciones pendientes de Experian
 
 - host canonico de certificacion y host productivo;

@@ -28,6 +28,7 @@ import {
 
 export const DATACREDITO_ADMIN_PAGE_SIZE = 25;
 export const DATACREDITO_ADMIN_MAX_PAGE_SIZE = 50;
+export const DATACREDITO_DAILY_QUERY_LIMIT_MAX = 10_000;
 
 type AdminAssessmentRow = {
   id: string;
@@ -595,6 +596,9 @@ type DataCreditoPolicyAllyCatalogRow = {
   active: boolean;
   policyId: string;
   policyName: string;
+  dailyQueryLimit: number | null;
+  dailyQueriesUsed: number;
+  dailyQuotaResetsAt: Date;
 };
 
 export class DataCreditoPolicyAssignmentConflictError extends Error {
@@ -605,6 +609,36 @@ export class DataCreditoPolicyAssignmentConflictError extends Error {
     this.name = "DataCreditoPolicyAssignmentConflictError";
     this.currentPolicyId = currentPolicyId;
   }
+}
+
+export class DataCreditoDailyQueryLimitConflictError extends Error {
+  readonly currentDailyQueryLimit: number | null;
+
+  constructor(currentDailyQueryLimit: number | null) {
+    super("El cupo diario del aliado fue modificado. Recarga antes de guardar.");
+    this.name = "DataCreditoDailyQueryLimitConflictError";
+    this.currentDailyQueryLimit = currentDailyQueryLimit;
+  }
+}
+
+export class DataCreditoDailyQueryLimitValidationError extends Error {
+  constructor(message = "El cupo diario debe ser nulo o un entero entre 0 y 10000.") {
+    super(message);
+    this.name = "DataCreditoDailyQueryLimitValidationError";
+  }
+}
+
+export function parseDataCreditoDailyQueryLimit(value: unknown) {
+  if (value === null) return null;
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > DATACREDITO_DAILY_QUERY_LIMIT_MAX
+  ) {
+    throw new DataCreditoDailyQueryLimitValidationError();
+  }
+  return value;
 }
 
 export class DataCreditoPolicyProfileNameConflictError extends Error {
@@ -665,12 +699,30 @@ export async function listDataCreditoPolicyCatalog() {
       ORDER BY profile."name" ASC, profile."id" ASC
     `),
     prisma.$queryRawUnsafe<DataCreditoPolicyAllyCatalogRow[]>(`
+      WITH quota_clock AS (
+        SELECT current_clock."businessDate",
+          (
+            (current_clock."businessDate" + 1)::timestamp
+            AT TIME ZONE 'America/Bogota'
+          ) AS "resetsAt"
+        FROM (
+          SELECT
+            (clock_timestamp() AT TIME ZONE 'America/Bogota')::date AS "businessDate"
+        ) current_clock
+      )
       SELECT ally."id", ally."nombre" AS "name", ally."codigo" AS "code",
         ally."activo" AS "active", ally."dataCreditoPolicyId" AS "policyId",
-        profile."name" AS "policyName"
+        profile."name" AS "policyName",
+        ally."dataCreditoDailyQueryLimit" AS "dailyQueryLimit",
+        COALESCE(usage."usedCount", 0)::integer AS "dailyQueriesUsed",
+        quota_clock."resetsAt" AS "dailyQuotaResetsAt"
       FROM "Aliado" ally
       INNER JOIN "DataCreditoPolicyProfile" profile
         ON profile."id" = ally."dataCreditoPolicyId"
+      CROSS JOIN quota_clock
+      LEFT JOIN "DataCreditoDailyQuotaUsage" usage
+        ON usage."allyId" = ally."id"
+       AND usage."businessDate" = quota_clock."businessDate"
       ORDER BY ally."nombre" ASC, ally."id" ASC
     `),
     getCreditSettings(),
@@ -716,6 +768,13 @@ export async function listDataCreditoPolicyCatalog() {
       active: row.active,
       policyId: row.policyId,
       policyName: row.policyName,
+      dailyQueryLimit: row.dailyQueryLimit,
+      dailyQueriesUsed: Number(row.dailyQueriesUsed || 0),
+      dailyQueriesRemaining:
+        row.dailyQueryLimit === null
+          ? null
+          : Math.max(0, row.dailyQueryLimit - Number(row.dailyQueriesUsed || 0)),
+      dailyQuotaResetsAt: iso(row.dailyQuotaResetsAt),
     })),
   };
 }
@@ -837,5 +896,76 @@ export async function assignDataCreditoPolicyToAlly(input: {
       input.policyId,
       input.actorUserId
     );
+  });
+}
+
+export async function setDataCreditoDailyQueryLimitForAlly(input: {
+  allyId: number;
+  dailyQueryLimit: number | null;
+  expectedDailyQueryLimit: number | null;
+  actorUserId: number;
+  requestCorrelationId: string;
+  reason?: string | null;
+}) {
+  await ensureDataCreditoSchema();
+  const dailyQueryLimit = parseDataCreditoDailyQueryLimit(input.dailyQueryLimit);
+  const expectedDailyQueryLimit = parseDataCreditoDailyQueryLimit(
+    input.expectedDailyQueryLimit
+  );
+  const reason = String(input.reason || "").replace(/\s+/g, " ").trim();
+  if (reason.length > 240) {
+    throw new DataCreditoDailyQueryLimitValidationError(
+      "El motivo del cambio no puede superar 240 caracteres."
+    );
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    const allies = await transaction.$queryRawUnsafe<
+      Array<{ dailyQueryLimit: number | null }>
+    >(
+      `
+        SELECT "dataCreditoDailyQueryLimit" AS "dailyQueryLimit"
+        FROM "Aliado"
+        WHERE "id" = $1
+        FOR UPDATE
+      `,
+      input.allyId
+    );
+    const current = allies[0];
+    if (!current) throw new Error("DATACREDITO_ALLY_NOT_FOUND");
+    if (current.dailyQueryLimit !== expectedDailyQueryLimit) {
+      throw new DataCreditoDailyQueryLimitConflictError(current.dailyQueryLimit);
+    }
+    if (current.dailyQueryLimit === dailyQueryLimit) {
+      return { allyId: input.allyId, dailyQueryLimit };
+    }
+
+    await transaction.$executeRawUnsafe(
+      `
+        UPDATE "Aliado"
+        SET "dataCreditoDailyQueryLimit" = $2,
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "id" = $1
+      `,
+      input.allyId,
+      dailyQueryLimit
+    );
+    await transaction.$executeRawUnsafe(
+      `
+        INSERT INTO "DataCreditoDailyQuotaAudit" (
+          "id", "allyId", "previousLimit", "dailyLimit", "actorUserId",
+          "requestCorrelationId", "reason"
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      randomUUID(),
+      input.allyId,
+      current.dailyQueryLimit,
+      dailyQueryLimit,
+      input.actorUserId,
+      input.requestCorrelationId,
+      reason || null
+    );
+
+    return { allyId: input.allyId, dailyQueryLimit };
   });
 }

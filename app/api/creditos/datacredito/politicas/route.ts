@@ -5,10 +5,14 @@ import { getDataCreditoCentralAdmin } from "@/lib/datacredito/admin-access";
 import {
   assignDataCreditoPolicyToAlly,
   createDataCreditoPolicyProfile,
+  DataCreditoDailyQueryLimitConflictError,
+  DataCreditoDailyQueryLimitValidationError,
   DataCreditoPolicyAssignmentConflictError,
   DataCreditoPolicyProfileNameConflictError,
   DataCreditoPolicyProfileNotFoundError,
   listDataCreditoPolicyCatalog,
+  parseDataCreditoDailyQueryLimit,
+  setDataCreditoDailyQueryLimitForAlly,
 } from "@/lib/datacredito/admin-storage";
 import {
   DataCreditoPolicyValidationError,
@@ -113,6 +117,29 @@ function policyErrorResponse(error: unknown, correlationId: string) {
         correlationId,
       },
       { status: 409, headers: NO_STORE_HEADERS }
+    );
+  }
+  if (error instanceof DataCreditoDailyQueryLimitConflictError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "ALLY_DAILY_QUERY_LIMIT_CONFLICT",
+        error: error.message,
+        currentDailyQueryLimit: error.currentDailyQueryLimit,
+        correlationId,
+      },
+      { status: 409, headers: NO_STORE_HEADERS }
+    );
+  }
+  if (error instanceof DataCreditoDailyQueryLimitValidationError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "ALLY_DAILY_QUERY_LIMIT_INVALID",
+        error: error.message,
+        correlationId,
+      },
+      { status: 400, headers: NO_STORE_HEADERS }
     );
   }
   if (error instanceof DataCreditoPolicyDeleteDefaultError) {
@@ -367,6 +394,46 @@ export async function PATCH(request: Request) {
       return NextResponse.json(await catalogPayload({ assignedAllyId: allyId }), {
         headers: NO_STORE_HEADERS,
       });
+    }
+
+    if (action === "SET_ALLY_DAILY_QUOTA") {
+      const allyId = Number(body.allyId);
+      if (
+        !Number.isInteger(allyId) ||
+        allyId <= 0 ||
+        !("dailyQueryLimit" in body) ||
+        !("expectedDailyQueryLimit" in body) ||
+        (body.reason !== undefined &&
+          body.reason !== null &&
+          typeof body.reason !== "string")
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: "INVALID_DAILY_QUOTA",
+            error: "La configuracion del cupo diario no es valida",
+          },
+          { status: 400, headers: NO_STORE_HEADERS }
+        );
+      }
+      const dailyQueryLimit = parseDataCreditoDailyQueryLimit(
+        body.dailyQueryLimit
+      );
+      const expectedDailyQueryLimit = parseDataCreditoDailyQueryLimit(
+        body.expectedDailyQueryLimit
+      );
+      await setDataCreditoDailyQueryLimitForAlly({
+        allyId,
+        dailyQueryLimit,
+        expectedDailyQueryLimit,
+        actorUserId: access.user.id,
+        requestCorrelationId: correlationId,
+        reason: typeof body.reason === "string" ? body.reason : null,
+      });
+      return NextResponse.json(
+        await catalogPayload({ dailyQuotaUpdatedAllyId: allyId }),
+        { headers: NO_STORE_HEADERS }
+      );
     }
 
     return NextResponse.json(

@@ -46,3 +46,34 @@ test("el gate solicita, valida y entrega la plataforma sin reetiquetarla", () =>
     /setDataCreditoApproval\(\{\s*\.\.\.result,\s*platform:\s*dataCreditoPlatform\s*\}\)/
   );
 });
+
+test("restaura el cupo diario agotado como reintento recuperable de consulta nueva", () => {
+  const recoveryDeclaration = gate.match(
+    /const newQueryRetryRecovery = Boolean\([\s\S]*?\n  \);/
+  )?.[0];
+  assert.ok(recoveryDeclaration);
+  assert.match(recoveryDeclaration, /"RATE_LIMITED"/);
+  assert.match(
+    recoveryDeclaration,
+    /"ALLY_DAILY_QUERY_LIMIT_REACHED"/
+  );
+
+  const missingAssessmentStart = gate.indexOf("if (!initialAssessmentId)");
+  const assessmentLookupStart = gate.indexOf(
+    "const assessmentParams",
+    missingAssessmentStart
+  );
+  const missingAssessmentFlow = gate.slice(
+    missingAssessmentStart,
+    assessmentLookupStart
+  );
+
+  assert.ok(missingAssessmentStart >= 0);
+  assert.match(
+    missingAssessmentFlow,
+    /identityMismatchRecovery \|\| newQueryRetryRecovery/
+  );
+  assert.match(missingAssessmentFlow, /setView\("ready"\)/);
+  assert.match(gate, /reuseOnly: identityMismatchRecovery/);
+  assert.doesNotMatch(gate, /reuseOnly: newQueryRetryRecovery/);
+});
