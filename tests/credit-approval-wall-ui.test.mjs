@@ -27,6 +27,7 @@ function load(path, dependencies, globals = {}) {
   return loadedModule.exports;
 }
 const client = load("app/dashboard/aprobaciones/approval-client.ts", {});
+const creditFactory = load("lib/credit-factory.ts", { "@/lib/colombia-date": load("lib/colombia-date.ts", {}) });
 const pendingClient = load("app/dashboard/pendientes/pending-client.ts", {});
 
 // Run the actual parent component's handlers and effects with controlled promises.
@@ -103,6 +104,7 @@ const detail = (id, revision = 1) => ({ ...row(id), score: 800, initialPaymentPe
 const page = (items) => ({ items, hasMore: false, nextCursor: null });
 function wall(api = {}) {
   return mount("app/dashboard/aprobaciones/approval-console.tsx", {
+    "@/lib/credit-factory": creditFactory,
     "./approval-client": { ...client, readApprovalQueue: async () => page([row(81), row(82)]), readApprovalCredit: async (id) => detail(id),
       approveCreditReview: async () => ({ ok: true }), ...api },
     "@/app/_components/finser-confirm-dialog": { default: parts.ConfirmDialog },
@@ -243,4 +245,73 @@ test("guardar desde PENDIENTES refresca automáticamente y bloquea solo la foto 
   assert.equal(remaining.disabled, false);
   assert.equal(remaining.detail.novelty.pendingCount, 1);
   h.unmount();
+});
+
+
+const metricValues = (h) => Object.fromEntries(h.all((node) => node.type === ui.MetricCard).map(({ props }) => [props.label, props]));
+
+test("el resumen muestra contacto y valores del crédito sin cupo ni porcentaje de oferta", async () => {
+  const summary = { ...detail(81), clienteNombre: "Cliente de prueba", clienteDocumento: "1030000001",
+    clienteCorreo: "cliente@example.test", clienteTelefono: "+57 300 000 0001", score: 720,
+    valorVenta: 1500000, cuotaInicial: 300000, creditoAutorizado: 1200000, approvedLimit: 6000000,
+    numeroCuotas: 12, frecuenciaPago: "QUINCENAL", valorCuota: 137500, fechaPrimerPago: "2026-09-10" };
+  const h = wall({ readApprovalCredit: async () => summary });
+  try {
+    await h.flush(); select(h, 81); await h.flush();
+    assert.equal(h.find((node) => node.type === "h2" && node.props.children === "Cliente de prueba").props.children, summary.clienteNombre);
+    assert.deepEqual(h.all((node) => node.type === "dt").map((node) => node.props.children), ["Cédula", "Correo", "Teléfono"]);
+    assert.deepEqual(h.all((node) => node.type === "dd").map((node) => node.props.children), ["1030000001", "cliente@example.test", "+57 300 000 0001"]);
+    const metrics = metricValues(h);
+    assert.deepEqual(Object.keys(metrics), ["Score", "Valor de venta", "Inicial", "Crédito autorizado", "Plazo de financiación", "Valor de cuota", "Fecha de primer pago"]);
+    assert.equal(metrics.Score.value, 720);
+    const amount = (label) => metrics[label].value.replace(/\s+/g, " ");
+    assert.equal(amount("Valor de venta"), "$ 1.500.000");
+    assert.equal(amount("Inicial"), "$ 300.000");
+    assert.equal(amount("Crédito autorizado"), "$ 1.200.000");
+    assert.equal(amount("Valor de cuota"), "$ 137.500");
+    assert.equal(metrics["Inicial"].detail, undefined);
+    assert.equal(metrics["Plazo de financiación"].value, "12 cuotas");
+    assert.equal(metrics["Plazo de financiación"].detail, "Frecuencia: Quincenal");
+    assert.equal(metrics["Fecha de primer pago"].value, "10/09/2026");
+    assert.equal(approveButton(h).props.disabled, false, "Los datos del resumen no cambian el flujo de aprobación");
+  } finally { h.unmount(); }
+});
+
+test("el resumen distingue datos ausentes y conserva una inicial de cero", async () => {
+  const h = wall({ readApprovalCredit: async () => ({ ...detail(81), clienteNombre: " ", clienteDocumento: null,
+    clienteCorreo: "  ", clienteTelefono: null, score: null, scoreLabel: null, valorVenta: null,
+    cuotaInicial: 0, creditoAutorizado: null, numeroCuotas: null, frecuenciaPago: null, valorCuota: null, fechaPrimerPago: null }) });
+  try {
+    await h.flush(); select(h, 81); await h.flush();
+    assert.ok(h.find((node) => node.type === "h2" && node.props.children === "No disponible"));
+    assert.deepEqual(h.all((node) => node.type === "dd").map((node) => node.props.children), Array(3).fill("No disponible"));
+    const metrics = metricValues(h);
+    for (const label of ["Score", "Valor de venta", "Crédito autorizado", "Plazo de financiación", "Valor de cuota", "Fecha de primer pago"]) {
+      assert.equal(metrics[label].value, "No disponible", label);
+    }
+    assert.equal(metrics["Inicial"].value.replace(/\s+/g, " "), "$ 0");
+    assert.equal(metrics["Plazo de financiación"].detail, "Frecuencia: No disponible");
+  } finally { h.unmount(); }
+});
+
+test("el plazo usa las frecuencias registradas y no asigna una frecuencia a un valor desconocido", async () => {
+  for (const [value, label] of [["SEMANAL", "Semanal"], ["CATORCENAL", "Catorcenal"], ["QUINCENAL", "Quincenal"], ["MENSUAL", "Mensual"], ["DESCONOCIDA", "No disponible"]]) {
+    const h = wall({ readApprovalCredit: async () => ({ ...detail(81), numeroCuotas: 1, frecuenciaPago: value }) });
+    try {
+      await h.flush(); select(h, 81); await h.flush();
+      const metric = metricValues(h)["Plazo de financiación"];
+      assert.equal(metric.value, "1 cuota");
+      assert.equal(metric.detail, "Frecuencia: " + label);
+    } finally { h.unmount(); }
+  }
+});
+
+test("el primer pago conserva su día calendario UTC y rechaza fechas inexistentes", async () => {
+  for (const [date, expected] of [["2028-02-29", "29/02/2028"], ["2026-01-01", "01/01/2026"], ["2026-02-29", "No disponible"], ["fecha-inválida", "No disponible"]]) {
+    const h = wall({ readApprovalCredit: async () => ({ ...detail(81), fechaPrimerPago: date }) });
+    try {
+      await h.flush(); select(h, 81); await h.flush();
+      assert.equal(metricValues(h)["Fecha de primer pago"].value, expected, date);
+    } finally { h.unmount(); }
+  }
 });

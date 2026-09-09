@@ -10,6 +10,8 @@ import { installCreditApprovalNoveltiesSchema } from "../scripts/credit-approval
 import { installApprovalSharedSchema } from "../scripts/approval-shared-schema.mjs";
 import { evidence, history, photos, actor, service, correctionInput } from "./credit-approval-evidence-test-loader.mjs";
 
+// Match Prisma: PostgreSQL DateTime columns without timezone contain UTC values.
+pg.types.setTypeParser(1114, (value) => new Date(value.replace(" ", "T") + "Z"));
 const connectionString = process.env.CREDIT_APPROVAL_EVIDENCE_TEST_DATABASE_URL;
 const adapter = (client) => ({
   $queryRawUnsafe: async (sql, ...values) => (await client.query(sql, values)).rows,
@@ -30,7 +32,7 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
   const client = new pg.Client({ connectionString });
   await client.connect();
   t.after(() => client.end());
-  const tables = ["CreditApprovalNoveltyEvent", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalEvidenceRevision", "CreditApprovalReissueEvent", "CreditApprovalReissue", "CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy", "FirmaSeguroProcess", "DataCreditoAssessment", "LiquidacionAliadoCredito", "Credito", "Usuario", "Sede", "Aliado"];
+  const tables = ["CreditApprovalNoveltyEvent", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalEvidenceRevision", "CreditApprovalReissueEvent", "CreditApprovalReissue", "CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy", "FirmaSeguroProcess", "DataCreditoAssessment", "LiquidacionAliadoCredito", "CreditoAmortizacion", "Credito", "Usuario", "Sede", "Aliado"];
   const existing = await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(existing.rows.every(({ tablename }) => tables.includes(tablename)), "No se reinicia una base con tablas ajenas");
   for (const table of tables) await client.query(`DROP TABLE IF EXISTS public."${table}" CASCADE`);
@@ -43,7 +45,9 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
     INSERT INTO "Sede" VALUES (10,10),(20,20);
     CREATE TABLE "Credito" (
       "id" SERIAL PRIMARY KEY,"folio" TEXT DEFAULT 'TEST',"clienteNombre" TEXT DEFAULT 'Cliente sintético',
-      "clienteDocumento" TEXT DEFAULT '100000001',"fechaCredito" TIMESTAMP DEFAULT '2026-09-10T12:00:00',
+      "clienteDocumento" TEXT DEFAULT '100000001',"clienteCorreo" TEXT,"clienteTelefono" TEXT,
+      "plazoMeses" INTEGER,"frecuenciaPago" TEXT,"valorCuota" FLOAT,"fechaPrimerPago" TIMESTAMP(3),
+      "fechaCredito" TIMESTAMP DEFAULT '2026-09-10T12:00:00',
       "createdAt" TIMESTAMP(3) DEFAULT '2099-01-01T00:00:00',"updatedAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
       "estado" TEXT DEFAULT 'ACTIVO',"sedeId" INTEGER DEFAULT 10,"imei" TEXT DEFAULT '000000000000001',
       "equipoMarca" TEXT DEFAULT 'Samsung',"equipoModelo" TEXT DEFAULT 'Sintético',
@@ -53,6 +57,7 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
       "contratoCedulaFrenteDataUrl" TEXT,"contratoCedulaRespaldoDataUrl" TEXT,"iphoneSelfieCedulaDataUrl" TEXT,
       "fotoEntregaDataUrl" TEXT,"fotoRemisionDataUrl" TEXT
     );
+    CREATE TABLE "CreditoAmortizacion" ("creditoId" INTEGER PRIMARY KEY REFERENCES "Credito"("id"),"cuotaComercial" NUMERIC(20,2));
     CREATE TABLE "LiquidacionAliadoCredito" ("id" SERIAL PRIMARY KEY,"creditoId" INTEGER UNIQUE REFERENCES "Credito"("id"));
     CREATE TABLE "DataCreditoAssessment" ("id" TEXT PRIMARY KEY,"creditId" INTEGER,"score" INTEGER,"offer" JSONB,
       "status" TEXT,"consumedAt" TIMESTAMP,"retainedUntil" TIMESTAMP);
@@ -90,6 +95,40 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
     return transaction(client, (tx) => service.approveCredit(tx, id, { revision: current.review.revision, reviewHash: current.review.reviewHash }, actor));
   }
   const archives = async (id) => (await client.query('SELECT * FROM "CreditApprovalEvidenceRevision" WHERE "creditoId"=$1 ORDER BY "createdAt"', [id])).rows;
+
+  await t.test("resumen lee cuota comercial persistida y fecha UTC sin alterar crédito, firma ni aprobación", async () => {
+    for (const scenario of [
+      { stored: 230100, snapshot: 230000, expected: 230100 },
+      { stored: null, snapshot: 230000, expected: 230000 },
+      { stored: null, snapshot: null, expected: 229999.5 },
+    ]) {
+      const id = await createCredit({
+        clienteCorreo: "cliente@example.invalid", clienteTelefono: "3000000001",
+        plazoMeses: 12, frecuenciaPago: "QUINCENAL", valorCuota: 229999.5,
+        fechaPrimerPago: "2099-02-17T00:00:00.000Z",
+        contratoSnapshot: { equipo: { plataforma: "ANDROID" }, financiero: { cuotaComercial: scenario.snapshot }, firma: { valor: "original" } },
+      });
+      if (scenario.stored !== null) await client.query('INSERT INTO "CreditoAmortizacion" ("creditoId","cuotaComercial") VALUES ($1,$2)', [id, scenario.stored]);
+      await approve(id);
+      const creditBefore = (await client.query('SELECT * FROM "Credito" WHERE "id"=$1', [id])).rows[0];
+      const reviewBefore = (await client.query('SELECT * FROM "CreditApprovalReview" WHERE "creditoId"=$1', [id])).rows[0];
+      const signatureBefore = (await client.query('SELECT * FROM "FirmaSeguroProcess" WHERE "creditoId"=$1', [id])).rows[0];
+      const current = await service.getCreditApprovalDetail({ ...db,
+        $executeRawUnsafe: async () => { assert.fail("Consultar el resumen no debe escribir datos"); },
+      }, id);
+      assert.equal(current.clienteCorreo, "cliente@example.invalid");
+      assert.equal(current.clienteTelefono, "3000000001");
+      assert.equal(current.numeroCuotas, 12);
+      assert.equal(current.frecuenciaPago, "QUINCENAL");
+      assert.equal(current.valorCuota, scenario.expected);
+      assert.equal(current.fechaPrimerPago, "2099-02-17", "La medianoche UTC conserva el día en una sesión Bogotá");
+      assert.equal(current.review.status, "APPROVED");
+      assert.equal(current.review.reviewHash, reviewBefore.reviewHash);
+      assert.deepEqual((await client.query('SELECT * FROM "Credito" WHERE "id"=$1', [id])).rows[0], creditBefore);
+      assert.deepEqual((await client.query('SELECT * FROM "CreditApprovalReview" WHERE "creditoId"=$1', [id])).rows[0], reviewBefore);
+      assert.deepEqual((await client.query('SELECT * FROM "FirmaSeguroProcess" WHERE "creditoId"=$1', [id])).rows[0], signatureBefore);
+    }
+  });
 
   await t.test("Prisma primero instala todos los CHECK y defaults UTC en Bogotá", async () => {
     const id = await createCredit();
