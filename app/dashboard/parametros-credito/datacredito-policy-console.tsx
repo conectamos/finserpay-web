@@ -80,6 +80,10 @@ export type DataCreditoPolicyAlly = {
   active: boolean;
   policyId: string;
   policyName: string;
+  dailyQueryLimit: number | null;
+  dailyQueriesUsed: number;
+  dailyQueriesRemaining: number | null;
+  dailyQuotaResetsAt: string;
 };
 
 type PolicyCatalogSnapshot = {
@@ -148,6 +152,14 @@ type ValidationResult = {
 type AssignmentChange = {
   ally: DataCreditoPolicyAlly;
   policyId: string;
+  dailyQueryLimit: number | null;
+  policyChanged: boolean;
+  dailyQueryLimitChanged: boolean;
+};
+
+type DailyQueryLimitDraftValidation = {
+  value: number | null;
+  error: string | null;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -169,6 +181,7 @@ const MAX_FINANCED_AMOUNT_COP = DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT;
 const MAX_INSTALLMENT_AMOUNT_COP = DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT;
 const MAX_PRIORITY_REJECTION_AMOUNT_COP =
   DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT;
+const MAX_ALLY_DAILY_QUERY_LIMIT = 10_000;
 const MAX_INSTALLMENT_COUNT = DATACREDITO_MAX_INSTALLMENT_COUNT;
 const DEFAULT_PRIORITY_REJECTION_AMOUNT_COP = 2_000_000;
 const DEFAULT_ANDROID_INSTALLMENT_COUNT =
@@ -755,6 +768,16 @@ function parsePolicyAlly(value: unknown, index: number): DataCreditoPolicyAlly {
   const code = readString(value.code);
   const policyId = readString(value.policyId);
   const policyName = readString(value.policyName);
+  const dailyQueryLimit =
+    value.dailyQueryLimit === null
+      ? null
+      : readFiniteNumber(value.dailyQueryLimit);
+  const dailyQueriesUsed = readFiniteNumber(value.dailyQueriesUsed);
+  const dailyQueriesRemaining =
+    value.dailyQueriesRemaining === null
+      ? null
+      : readFiniteNumber(value.dailyQueriesRemaining);
+  const dailyQuotaResetsAt = readString(value.dailyQuotaResetsAt);
 
   if (
     id === null ||
@@ -763,7 +786,21 @@ function parsePolicyAlly(value: unknown, index: number): DataCreditoPolicyAlly {
     !name ||
     !policyId ||
     !policyName ||
-    typeof value.active !== "boolean"
+    typeof value.active !== "boolean" ||
+    (value.dailyQueryLimit !== null &&
+      (dailyQueryLimit === null ||
+        !Number.isInteger(dailyQueryLimit) ||
+        dailyQueryLimit < 0 ||
+        dailyQueryLimit > MAX_ALLY_DAILY_QUERY_LIMIT)) ||
+    dailyQueriesUsed === null ||
+    !Number.isInteger(dailyQueriesUsed) ||
+    dailyQueriesUsed < 0 ||
+    (value.dailyQueriesRemaining !== null &&
+      (dailyQueriesRemaining === null ||
+        !Number.isInteger(dailyQueriesRemaining) ||
+        dailyQueriesRemaining < 0)) ||
+    (dailyQueryLimit === null) !== (dailyQueriesRemaining === null) ||
+    !dailyQuotaResetsAt
   ) {
     throw new PolicyRequestError(`Aliado ${index + 1} incompleto.`);
   }
@@ -775,6 +812,10 @@ function parsePolicyAlly(value: unknown, index: number): DataCreditoPolicyAlly {
     active: value.active,
     policyId,
     policyName,
+    dailyQueryLimit,
+    dailyQueriesUsed,
+    dailyQueriesRemaining,
+    dailyQuotaResetsAt,
   };
 }
 
@@ -1172,6 +1213,49 @@ function formatDate(value: string | null) {
         dateStyle: "medium",
         timeStyle: "short",
       }).format(date);
+}
+
+function parseDailyQueryLimitDraft(
+  value: string
+): DailyQueryLimitDraftValidation {
+  const normalized = value.trim();
+  if (!normalized) {
+    return { value: null, error: null };
+  }
+
+  const parsed = Number(normalized);
+  if (
+    !/^\d+$/.test(normalized) ||
+    !Number.isInteger(parsed) ||
+    parsed < 0 ||
+    parsed > MAX_ALLY_DAILY_QUERY_LIMIT
+  ) {
+    return {
+      value: null,
+      error: `Ingresa un entero entre 0 y ${MAX_ALLY_DAILY_QUERY_LIMIT.toLocaleString(
+        "es-CO"
+      )}, o deja el campo vacío para no limitar.`,
+    };
+  }
+
+  return { value: parsed, error: null };
+}
+
+function dailyQueryLimitDraftValue(ally: DataCreditoPolicyAlly) {
+  return ally.dailyQueryLimit === null ? "" : String(ally.dailyQueryLimit);
+}
+
+function formatDailyQuotaReset(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "al iniciar el siguiente día";
+  }
+
+  return new Intl.DateTimeFormat("es-CO", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "America/Bogota",
+  }).format(date);
 }
 
 function formatCop(value: number | null) {
@@ -1837,6 +1921,9 @@ export default function DatacreditoPolicyConsole() {
   const [priorityRules, setPriorityRules] =
     useState<EditablePriorityRules | null>(null);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
+  const [dailyQueryLimitDrafts, setDailyQueryLimitDrafts] = useState<
+    Record<string, string>
+  >({});
   const [activeTab, setActiveTab] = useState<PolicyConsoleTab>("POLICIES");
   const [assignmentQuery, setAssignmentQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1887,15 +1974,78 @@ export default function DatacreditoPolicyConsole() {
     () => profiles.find((profile) => profile.id === selectedPolicyId) || null,
     [profiles, selectedPolicyId]
   );
+  const dailyQueryLimitValidations = useMemo(
+    () =>
+      Object.fromEntries(
+        allies.map((ally) => {
+          const key = allyDraftKey(ally.id);
+          return [
+            key,
+            parseDailyQueryLimitDraft(
+              dailyQueryLimitDrafts[key] ?? dailyQueryLimitDraftValue(ally)
+            ),
+          ];
+        })
+      ) as Record<string, DailyQueryLimitDraftValidation>,
+    [allies, dailyQueryLimitDrafts]
+  );
+  const dailyQueryLimitsValid = useMemo(
+    () =>
+      Object.values(dailyQueryLimitValidations).every(
+        (validationResult) => !validationResult.error
+      ),
+    [dailyQueryLimitValidations]
+  );
+  const hasDailyQueryLimitDraftChanges = useMemo(
+    () =>
+      allies.some((ally) => {
+        const key = allyDraftKey(ally.id);
+        const draft =
+          dailyQueryLimitDrafts[key] ?? dailyQueryLimitDraftValue(ally);
+        const validationResult = dailyQueryLimitValidations[key];
+        return validationResult?.error
+          ? draft.trim() !== dailyQueryLimitDraftValue(ally)
+          : validationResult?.value !== ally.dailyQueryLimit;
+      }),
+    [allies, dailyQueryLimitDrafts, dailyQueryLimitValidations]
+  );
   const assignmentChanges = useMemo<AssignmentChange[]>(
     () =>
       allies.flatMap((ally) => {
-        const policyId = assignmentDrafts[allyDraftKey(ally.id)];
-        return policyId && policyId !== ally.policyId ? [{ ally, policyId }] : [];
+        const key = allyDraftKey(ally.id);
+        const policyId = assignmentDrafts[key] || ally.policyId;
+        const dailyLimitValidation = dailyQueryLimitValidations[key];
+        if (!dailyLimitValidation || dailyLimitValidation.error) return [];
+
+        const dailyQueryLimit = dailyLimitValidation.value;
+        const policyChanged = policyId !== ally.policyId;
+        const dailyQueryLimitChanged =
+          dailyQueryLimit !== ally.dailyQueryLimit;
+
+        return policyChanged || dailyQueryLimitChanged
+          ? [
+              {
+                ally,
+                policyId,
+                dailyQueryLimit,
+                policyChanged,
+                dailyQueryLimitChanged,
+              },
+            ]
+          : [];
       }),
-    [allies, assignmentDrafts]
+    [allies, assignmentDrafts, dailyQueryLimitValidations]
   );
-  const hasPendingChanges = hasUnsavedChanges || assignmentChanges.length > 0;
+  const policyAssignmentChangeCount = assignmentChanges.filter(
+    (change) => change.policyChanged
+  ).length;
+  const dailyQueryLimitChangeCount = assignmentChanges.filter(
+    (change) => change.dailyQueryLimitChanged
+  ).length;
+  const hasPendingChanges =
+    hasUnsavedChanges ||
+    assignmentChanges.length > 0 ||
+    hasDailyQueryLimitDraftChanges;
   const filteredAllies = useMemo(() => {
     const query = assignmentQuery.trim().toLocaleLowerCase("es-CO");
     if (!query) return allies;
@@ -1951,6 +2101,12 @@ export default function DatacreditoPolicyConsole() {
       const freshAssignmentDrafts = Object.fromEntries(
         catalog.allies.map((ally) => [allyDraftKey(ally.id), ally.policyId])
       );
+      const freshDailyQueryLimitDrafts = Object.fromEntries(
+        catalog.allies.map((ally) => [
+          allyDraftKey(ally.id),
+          dailyQueryLimitDraftValue(ally),
+        ])
+      );
       const availablePolicyIds = new Set(
         catalog.profiles.map((profile) => profile.id)
       );
@@ -1965,6 +2121,19 @@ export default function DatacreditoPolicyConsole() {
           const pendingPolicyId = current[key];
           if (pendingPolicyId && availablePolicyIds.has(pendingPolicyId)) {
             next[key] = pendingPolicyId;
+          }
+        }
+        return next;
+      });
+      setDailyQueryLimitDrafts((current) => {
+        if (!preserveAssignmentDrafts) return freshDailyQueryLimitDrafts;
+
+        const next = { ...freshDailyQueryLimitDrafts };
+        for (const ally of catalog.allies) {
+          if (confirmedAllyIdSet.has(ally.id)) continue;
+          const key = allyDraftKey(ally.id);
+          if (key in current) {
+            next[key] = current[key];
           }
         }
         return next;
@@ -2468,18 +2637,41 @@ export default function DatacreditoPolicyConsole() {
     }
   };
 
+  const updateDailyQueryLimitDraft = (allyId: number, value: string) => {
+    setNotice(null);
+    setError(null);
+    setDailyQueryLimitDrafts((current) => ({
+      ...current,
+      [allyDraftKey(allyId)]: value,
+    }));
+  };
+
   const openAssignmentConfirmation = () => {
     setNotice(null);
     setError(null);
+    if (!dailyQueryLimitsValid) {
+      setError(
+        `Corrige los cupos diarios: deben ser enteros entre 0 y ${MAX_ALLY_DAILY_QUERY_LIMIT.toLocaleString(
+          "es-CO"
+        )}, o quedar vacíos para no limitar.`
+      );
+      return;
+    }
     if (!assignmentChanges.length) {
-      setNotice("No hay reasignaciones pendientes por guardar.");
+      setNotice("No hay cambios de política o cupo pendientes por guardar.");
       return;
     }
     setAssignmentConfirmOpen(true);
   };
 
   const saveAssignments = async () => {
-    if (!assignmentChanges.length || savingAssignments) return;
+    if (
+      !assignmentChanges.length ||
+      savingAssignments ||
+      !dailyQueryLimitsValid
+    ) {
+      return;
+    }
 
     setSavingAssignments(true);
     setError(null);
@@ -2490,39 +2682,78 @@ export default function DatacreditoPolicyConsole() {
 
     try {
       for (const change of assignmentChanges) {
-        const response = await fetch("/api/creditos/datacredito/politicas", {
-          method: "PATCH",
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            action: "ASSIGN_ALLY",
-            allyId: change.ally.id,
-            policyId: change.policyId,
-            expectedPolicyId: change.ally.policyId,
-          }),
-        });
-        const payload = await readJson(response);
+        if (change.policyChanged) {
+          const response = await fetch("/api/creditos/datacredito/politicas", {
+            method: "PATCH",
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "ASSIGN_ALLY",
+              allyId: change.ally.id,
+              policyId: change.policyId,
+              expectedPolicyId: change.ally.policyId,
+            }),
+          });
+          const payload = await readJson(response);
 
-        if (!response.ok || payload.ok === false) {
-          const code = String(payload.code || "").trim().toUpperCase();
-          if (code === "POLICY_ASSIGNMENT_CONFLICT") {
+          if (!response.ok || payload.ok === false) {
+            const code = String(payload.code || "").trim().toUpperCase();
+            if (code === "POLICY_ASSIGNMENT_CONFLICT") {
+              throw new PolicyRequestError(
+                `La asignación de ${change.ally.name} cambió en otra sesión. Recarga y revisa antes de intentarlo de nuevo.`,
+                getCorrelationId(payload, response)
+              );
+            }
+
             throw new PolicyRequestError(
-              `La asignación de ${change.ally.name} cambió en otra sesión. Recarga y revisa antes de intentarlo de nuevo.`,
+              readString(payload.error) ||
+                `No se pudo reasignar a ${change.ally.name}.`,
               getCorrelationId(payload, response)
             );
           }
 
-          throw new PolicyRequestError(
-            readString(payload.error) ||
-              `No se pudo reasignar a ${change.ally.name}.`,
-            getCorrelationId(payload, response)
-          );
+          latestCatalog = parseCatalog(payload, response);
         }
 
-        latestCatalog = parseCatalog(payload, response);
+        if (change.dailyQueryLimitChanged) {
+          const response = await fetch("/api/creditos/datacredito/politicas", {
+            method: "PATCH",
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "SET_ALLY_DAILY_QUOTA",
+              allyId: change.ally.id,
+              dailyQueryLimit: change.dailyQueryLimit,
+              expectedDailyQueryLimit: change.ally.dailyQueryLimit,
+            }),
+          });
+          const payload = await readJson(response);
+
+          if (!response.ok || payload.ok === false) {
+            const code = String(payload.code || "").trim().toUpperCase();
+            if (code === "ALLY_DAILY_QUERY_LIMIT_CONFLICT") {
+              throw new PolicyRequestError(
+                `El cupo diario de ${change.ally.name} cambió en otra sesión. Recarga y revisa antes de intentarlo de nuevo.`,
+                getCorrelationId(payload, response)
+              );
+            }
+
+            throw new PolicyRequestError(
+              readString(payload.error) ||
+                `No se pudo actualizar el cupo diario de ${change.ally.name}.`,
+              getCorrelationId(payload, response)
+            );
+          }
+
+          latestCatalog = parseCatalog(payload, response);
+        }
+
         completed += 1;
         completedAllyIds.push(change.ally.id);
       }
@@ -2537,8 +2768,24 @@ export default function DatacreditoPolicyConsole() {
         );
       }
       setAssignmentConfirmOpen(false);
+      const savedParts = [
+        policyAssignmentChangeCount
+          ? `${policyAssignmentChangeCount} ${
+              policyAssignmentChangeCount === 1
+                ? "política reasignada"
+                : "políticas reasignadas"
+            }`
+          : null,
+        dailyQueryLimitChangeCount
+          ? `${dailyQueryLimitChangeCount} ${
+              dailyQueryLimitChangeCount === 1
+                ? "cupo diario actualizado"
+                : "cupos diarios actualizados"
+            }`
+          : null,
+      ].filter(Boolean);
       setNotice(
-        `${completed} ${completed === 1 ? "aliado reasignado" : "aliados reasignados"}. Las nuevas políticas solo se aplicarán a consultas futuras.`
+        `${savedParts.join(" y ")}. Los cambios se aplicarán únicamente a consultas futuras.`
       );
     } catch (requestError) {
       setAssignmentConfirmOpen(false);
@@ -2552,10 +2799,10 @@ export default function DatacreditoPolicyConsole() {
         );
       }
       setError(
-        `${completed ? `${completed} cambio(s) sí se guardaron. ` : ""}${
+        `${completed ? `${completed} aliado(s) sí se actualizaron. ` : ""}${
           requestError instanceof PolicyRequestError
             ? requestError.message
-            : "No se pudieron guardar las reasignaciones."
+            : "No se pudieron guardar las políticas y los cupos diarios."
         }`
       );
       setCorrelationId(
@@ -3400,11 +3647,14 @@ export default function DatacreditoPolicyConsole() {
           <Card className="p-5 sm:p-6">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <h3 className="text-xl font-black">Asignación a aliados</h3>
+                <h3 className="text-xl font-black">
+                  Políticas y cupos por aliado
+                </h3>
                 <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
                   Cada aliado debe conservar exactamente una política. Una
-                  reasignación solo cambia las consultas que se creen después
-                  de guardarla.
+                  reasignación o un cambio de cupo solo afecta las nuevas
+                  consultas después de guardarlo. El uso diario se calcula con
+                  hora de Bogotá.
                 </p>
               </div>
               <label className="grid w-full gap-2 text-sm font-bold lg:max-w-sm">
@@ -3420,23 +3670,38 @@ export default function DatacreditoPolicyConsole() {
 
             {filteredAllies.length ? (
               <DataTable className="mt-5">
-                <table className="min-w-[820px]">
+                <table className="min-w-[1180px]">
                   <thead>
                     <tr>
                       <th scope="col">Aliado</th>
                       <th scope="col">Estado</th>
                       <th scope="col">Política asignada</th>
                       <th scope="col">Versión vigente</th>
+                      <th scope="col">Cupo diario</th>
+                      <th scope="col">Uso hoy</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredAllies.map((ally) => {
+                      const allyKey = allyDraftKey(ally.id);
                       const draftPolicyId =
-                        assignmentDrafts[allyDraftKey(ally.id)] || ally.policyId;
+                        assignmentDrafts[allyKey] || ally.policyId;
                       const draftProfile = profiles.find(
                         (profile) => profile.id === draftPolicyId
                       );
                       const changed = draftPolicyId !== ally.policyId;
+                      const dailyQueryLimitDraft =
+                        dailyQueryLimitDrafts[allyKey] ??
+                        dailyQueryLimitDraftValue(ally);
+                      const dailyQueryLimitError =
+                        dailyQueryLimitValidations[allyKey]?.error || null;
+                      const dailyQueryLimitChanged =
+                        !dailyQueryLimitError &&
+                        dailyQueryLimitValidations[allyKey]?.value !==
+                          ally.dailyQueryLimit;
+                      const quotaExhausted =
+                        ally.dailyQueryLimit !== null &&
+                        ally.dailyQueriesRemaining === 0;
 
                       return (
                         <tr key={ally.id}>
@@ -3498,6 +3763,81 @@ export default function DatacreditoPolicyConsole() {
                                 : "No disponible"}
                             </span>
                           </td>
+                          <td className="min-w-[230px]">
+                            <label
+                              htmlFor={`datacredito-daily-limit-${ally.id}`}
+                              className="sr-only"
+                            >
+                              Cupo diario para {ally.name}
+                            </label>
+                            <Input
+                              id={`datacredito-daily-limit-${ally.id}`}
+                              aria-label={`Cupo diario para ${ally.name}`}
+                              aria-invalid={Boolean(dailyQueryLimitError)}
+                              aria-describedby={`datacredito-daily-limit-help-${ally.id}${
+                                dailyQueryLimitError ? ` datacredito-daily-limit-error-${ally.id}` : ""
+                              }`}
+                              type="number"
+                              inputMode="numeric"
+                              min={0}
+                              max={MAX_ALLY_DAILY_QUERY_LIMIT}
+                              step={1}
+                              value={dailyQueryLimitDraft}
+                              onChange={(event) =>
+                                updateDailyQueryLimitDraft(
+                                  ally.id,
+                                  event.target.value
+                                )
+                              }
+                              placeholder="Sin límite"
+                              disabled={savingAssignments}
+                              className={
+                                dailyQueryLimitChanged
+                                  ? "border-[var(--fp-lime)] bg-[var(--fp-lime-soft)]"
+                                  : undefined
+                              }
+                            />
+                            <span
+                              id={`datacredito-daily-limit-help-${ally.id}`}
+                              className="mt-2 block text-xs leading-5 text-[var(--fp-muted)]"
+                            >
+                              Vacío: sin límite · 0: consultas bloqueadas
+                            </span>
+                            {dailyQueryLimitError ? (
+                              <span
+                                id={`datacredito-daily-limit-error-${ally.id}`}
+                                className="mt-2 block text-xs font-bold text-[var(--fp-danger)]"
+                                role="alert"
+                              >
+                                {dailyQueryLimitError}
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="min-w-[210px]">
+                            <StatusPill
+                              tone={
+                                quotaExhausted
+                                  ? "warning"
+                                  : ally.dailyQueryLimit === null
+                                    ? "neutral"
+                                    : "positive"
+                              }
+                            >
+                              {ally.dailyQueryLimit === null
+                                ? `${ally.dailyQueriesUsed} usadas`
+                                : `${ally.dailyQueriesUsed} de ${ally.dailyQueryLimit}`}
+                            </StatusPill>
+                            <span className="mt-2 block text-xs font-bold text-[var(--fp-graphite)]">
+                              {ally.dailyQueriesRemaining === null
+                                ? "Sin límite diario"
+                                : ally.dailyQueryLimit === 0
+                                  ? "Consultas bloqueadas"
+                                  : `${ally.dailyQueriesRemaining} restantes`}
+                            </span>
+                            <span className="mt-1 block text-xs leading-5 text-[var(--fp-muted)]">
+                              Reinicia {formatDailyQuotaReset(ally.dailyQuotaResetsAt)} (hora de Bogotá).
+                            </span>
+                          </td>
                         </tr>
                       );
                     })}
@@ -3511,7 +3851,7 @@ export default function DatacreditoPolicyConsole() {
                 description={
                   allies.length
                     ? "Prueba con otro nombre, código o política."
-                    : "Cuando exista un aliado, su política obligatoria aparecerá aquí."
+                    : "Cuando exista un aliado, su política y su cupo diario aparecerán aquí."
                 }
               />
             )}
@@ -3519,30 +3859,41 @@ export default function DatacreditoPolicyConsole() {
             <div className="mt-5 flex flex-col gap-4 border-t border-[var(--fp-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <Badge
-                  tone={assignmentChanges.length ? "warning" : "positive"}
+                  tone={
+                    assignmentChanges.length || !dailyQueryLimitsValid
+                      ? "warning"
+                      : "positive"
+                  }
                 >
-                  {assignmentChanges.length
-                    ? `${assignmentChanges.length} cambio(s) pendiente(s)`
-                    : "Asignaciones al día"}
+                  {!dailyQueryLimitsValid
+                    ? "Hay cupos por corregir"
+                    : assignmentChanges.length
+                      ? `${assignmentChanges.length} aliado(s) con cambios`
+                      : "Políticas y cupos al día"}
                 </Badge>
                 <p
                   id="datacredito-assignment-save-help"
                   className="mt-2 text-sm leading-6 text-[var(--fp-muted)]"
                 >
                   Las consultas anteriores y las ofertas vigentes no se
-                  recalculan al reasignar una política.
+                  recalculan. Vacío deja al aliado sin límite diario; 0 bloquea
+                  nuevas consultas.
                 </p>
               </div>
               <Button
                 onClick={openAssignmentConfirmation}
-                disabled={savingAssignments || !assignmentChanges.length}
+                disabled={
+                  savingAssignments ||
+                  !assignmentChanges.length ||
+                  !dailyQueryLimitsValid
+                }
                 aria-describedby="datacredito-assignment-save-help"
               >
                 <Save className="h-4 w-4" aria-hidden="true" />
                 {savingAssignments
                   ? "Guardando..."
                   : `Guardar ${assignmentChanges.length || ""} ${
-                      assignmentChanges.length === 1 ? "cambio" : "cambios"
+                      assignmentChanges.length === 1 ? "aliado" : "aliados"
                     }`}
               </Button>
             </div>
@@ -3586,11 +3937,11 @@ export default function DatacreditoPolicyConsole() {
 
       <ConfirmDialog
         open={assignmentConfirmOpen}
-        title="Guardar reasignaciones"
-        description={`Se cambiará la política de ${assignmentChanges.length} ${
+        title="Guardar políticas y cupos diarios"
+        description={`Se guardarán ${policyAssignmentChangeCount} cambio(s) de política y ${dailyQueryLimitChangeCount} cambio(s) de cupo en ${assignmentChanges.length} ${
           assignmentChanges.length === 1 ? "aliado" : "aliados"
-        }. Las consultas y ofertas ya emitidas conservarán la revisión con la que fueron evaluadas.`}
-        confirmLabel="Guardar asignaciones"
+        }. El campo vacío significa sin límite y 0 bloquea nuevas consultas. Las consultas y ofertas ya emitidas conservarán sus condiciones.`}
+        confirmLabel="Guardar cambios"
         busy={savingAssignments}
         onCancel={() => setAssignmentConfirmOpen(false)}
         onConfirm={() => void saveAssignments()}

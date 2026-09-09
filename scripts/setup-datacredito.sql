@@ -153,7 +153,8 @@ BEFORE UPDATE OR DELETE ON "DataCreditoPolicyRevision"
 FOR EACH ROW EXECUTE FUNCTION "finser_prevent_datacredito_revision_mutation"();
 
 ALTER TABLE "Aliado"
-  ADD COLUMN IF NOT EXISTS "dataCreditoPolicyId" UUID;
+  ADD COLUMN IF NOT EXISTS "dataCreditoPolicyId" UUID,
+  ADD COLUMN IF NOT EXISTS "dataCreditoDailyQueryLimit" INTEGER;
 
 UPDATE "Aliado"
 SET "dataCreditoPolicyId" = '00000000-0000-4000-8000-000000000001'::uuid
@@ -182,6 +183,23 @@ $$;
 
 CREATE INDEX IF NOT EXISTS "Aliado_dataCreditoPolicyId_idx"
   ON "Aliado" ("dataCreditoPolicyId");
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'Aliado_dataCreditoDailyQueryLimit_check'
+      AND conrelid = '"Aliado"'::regclass
+  ) THEN
+    ALTER TABLE "Aliado"
+      ADD CONSTRAINT "Aliado_dataCreditoDailyQueryLimit_check"
+      CHECK (
+        "dataCreditoDailyQueryLimit" IS NULL
+        OR "dataCreditoDailyQueryLimit" BETWEEN 0 AND 10000
+      );
+  END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS "DataCreditoAssessment" (
   "id" UUID PRIMARY KEY,
@@ -711,11 +729,47 @@ CREATE TABLE IF NOT EXISTS "DataCreditoPolicyAssignmentAudit" (
     REFERENCES "DataCreditoPolicyProfile" ("id") ON DELETE RESTRICT
 );
 
+CREATE TABLE IF NOT EXISTS "DataCreditoDailyQuotaUsage" (
+  "allyId" INTEGER NOT NULL,
+  "businessDate" DATE NOT NULL,
+  "usedCount" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "DataCreditoDailyQuotaUsage_pkey"
+    PRIMARY KEY ("allyId", "businessDate"),
+  CONSTRAINT "DataCreditoDailyQuotaUsage_ally_fkey"
+    FOREIGN KEY ("allyId") REFERENCES "Aliado" ("id")
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT "DataCreditoDailyQuotaUsage_used_check"
+    CHECK ("usedCount" >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS "DataCreditoDailyQuotaAudit" (
+  "id" UUID PRIMARY KEY,
+  "allyId" INTEGER NOT NULL,
+  "previousLimit" INTEGER,
+  "dailyLimit" INTEGER,
+  "actorUserId" INTEGER NOT NULL,
+  "requestCorrelationId" UUID NOT NULL,
+  "reason" VARCHAR(240),
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "DataCreditoDailyQuotaAudit_ally_fkey"
+    FOREIGN KEY ("allyId") REFERENCES "Aliado" ("id")
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT "DataCreditoDailyQuotaAudit_previous_limit_check"
+    CHECK ("previousLimit" IS NULL OR "previousLimit" BETWEEN 0 AND 10000),
+  CONSTRAINT "DataCreditoDailyQuotaAudit_daily_limit_check"
+    CHECK ("dailyLimit" IS NULL OR "dailyLimit" BETWEEN 0 AND 10000)
+);
+
 CREATE INDEX IF NOT EXISTS "DataCreditoPolicyAssignmentAudit_ally_created_idx"
   ON "DataCreditoPolicyAssignmentAudit" ("allyId", "createdAt" DESC);
 
 CREATE INDEX IF NOT EXISTS "DataCreditoPolicyAssignmentAudit_policy_created_idx"
   ON "DataCreditoPolicyAssignmentAudit" ("policyId", "createdAt" DESC);
+
+CREATE INDEX IF NOT EXISTS "DataCreditoDailyQuotaAudit_ally_created_idx"
+  ON "DataCreditoDailyQuotaAudit" ("allyId", "createdAt" DESC);
 
 -- Manual financed-amount caps are keyed exclusively by a deterministic HMAC.
 -- The clear document number is intentionally never persisted.

@@ -227,7 +227,7 @@ test("la recuperación de apellido es reuse-only y nunca alcanza al proveedor", 
   );
 });
 
-test("RATE_LIMITED reabre el mismo borrador para un reintento normal, nunca reuse-only", async () => {
+test("los límites recuperables reabren el mismo borrador para un reintento normal, nunca reuse-only", async () => {
   const gate = await readProjectFile(
     "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
   );
@@ -242,17 +242,17 @@ test("RATE_LIMITED reabre el mismo borrador para un reintento normal, nunca reus
 
   assert.match(
     gate,
-    /const rateLimitedRecovery = Boolean\([\s\S]*initialSolicitudId[\s\S]*!initialAssessmentId[\s\S]*normalizedInitialDocument[\s\S]*normalizedInitialSurname[\s\S]*normalizedInitialErrorCode === "RATE_LIMITED"/
+    /const newQueryRetryRecovery = Boolean\([\s\S]*initialSolicitudId[\s\S]*!initialAssessmentId[\s\S]*normalizedInitialDocument[\s\S]*normalizedInitialSurname[\s\S]*normalizedInitialErrorCode === "RATE_LIMITED"[\s\S]*normalizedInitialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED"/
   );
   assert.match(
     bootstrap,
-    /identityMismatchRecovery \|\| rateLimitedRecovery[\s\S]{0,220}setView\("ready"\)/
+    /identityMismatchRecovery \|\| newQueryRetryRecovery[\s\S]{0,220}setView\("ready"\)/
   );
   assert.match(
     submit,
     /solicitudId: initialSolicitudId[\s\S]{0,320}reuseOnly: identityMismatchRecovery/
   );
-  assert.doesNotMatch(submit, /reuseOnly:\s*rateLimitedRecovery/);
+  assert.doesNotMatch(submit, /reuseOnly:\s*newQueryRetryRecovery/);
 });
 
 test("un POST DataCredito retomado autoriza antes de reservar y reutiliza antes del proveedor", async () => {

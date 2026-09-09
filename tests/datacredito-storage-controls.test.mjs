@@ -86,6 +86,83 @@ test("reserva reutilizacion, rate limit e insercion bajo locks de base de datos"
   assert.doesNotMatch(evaluationRoute, /countRecentDataCreditoAssessments/);
 });
 
+test("el cupo diario se reserva atomicamente con una sola fecha de Bogota", () => {
+  const dailyQuota = storage.match(
+    /async function reserveDataCreditoDailyQuota[\s\S]*?(?=async function insertPendingDataCreditoAssessment)/
+  )?.[0];
+  assert.ok(dailyQuota);
+  assert.match(dailyQuota, /FROM "Aliado"[\s\S]*?FOR SHARE/);
+  assert.equal(
+    dailyQuota.match(/clock_timestamp\(\)/g)?.length,
+    1,
+    "debe capturar una sola fecha de negocio despues del lock del aliado"
+  );
+  assert.match(dailyQuota, /AT TIME ZONE 'America\/Bogota'/);
+  assert.match(dailyQuota, /SELECT \$1, \$3::date, 1/);
+  assert.match(
+    dailyQuota,
+    /ON CONFLICT \("allyId", "businessDate"\) DO UPDATE[\s\S]*?usage\."usedCount" < \$2::integer/
+  );
+  assert.match(dailyQuota, /usage\."businessDate" = \$2::date/);
+
+  const reservation = storage.match(
+    /export async function reserveDataCreditoAssessment[\s\S]*?(?=export async function completeDataCreditoAssessment)/
+  )?.[0];
+  assert.ok(reservation);
+  const reuse = reservation.indexOf("tryReuseDataCreditoAssessment");
+  const rateLimit = reservation.indexOf("countRecentDataCreditoAssessments");
+  const quota = reservation.indexOf("reserveDataCreditoDailyQuota");
+  const pending = reservation.indexOf("insertPendingDataCreditoAssessment");
+  assert.ok(reuse >= 0 && reuse < rateLimit);
+  assert.ok(rateLimit < quota && quota < pending);
+  assert.match(reservation, /kind: "DAILY_QUOTA_EXHAUSTED"/);
+  assert.match(reservation, /dailyQuotaReservation:[\s\S]*?businessDate: dailyQuota\.businessDate/);
+});
+
+test("el agotamiento responde 429 y el fallo local predespacho compensa sin dejar PENDING", () => {
+  assert.match(
+    evaluationRoute,
+    /reservation\.kind === "DAILY_QUOTA_EXHAUSTED"[\s\S]*?code: "ALLY_DAILY_QUERY_LIMIT_REACHED"[\s\S]*?status: 429[\s\S]*?dailyQuota:/
+  );
+  const exhaustedBranch = evaluationRoute.match(
+    /if \(reservation\.kind === "DAILY_QUOTA_EXHAUSTED"\)[\s\S]*?\n    }/
+  )?.[0];
+  assert.ok(exhaustedBranch);
+  assert.doesNotMatch(exhaustedBranch, /RECHAZADO/);
+
+  const compensation = storage.match(
+    /export async function failDataCreditoAssessmentBeforeProviderDispatch[\s\S]*?(?=export async function getDataCreditoAssessmentById)/
+  )?.[0];
+  assert.ok(compensation);
+  assert.match(compensation, /return prisma\.\$transaction/);
+  assert.match(compensation, /"status" = 'PENDING'/);
+  assert.match(compensation, /"aliadoId" = \$3/);
+  assert.match(compensation, /"businessDate" = \$2::date/);
+  assert.match(compensation, /"usedCount" > 0/);
+  assert.match(compensation, /DATACREDITO_DAILY_QUOTA_COMPENSATION_FAILED/);
+
+  assert.match(
+    evaluationRoute,
+    /pendingAssessmentId = pending\.id;\s*dailyQuotaReservation = reservation\.dailyQuotaReservation;\s*await attachDataCreditoToSolicitud/
+  );
+  assert.match(
+    evaluationRoute,
+    /providerStartedAt = Date\.now\(\);\s*return await queryDataCreditoNaturalPerson/
+  );
+  assert.match(
+    evaluationRoute,
+    /providerStartedAt === null && dailyQuotaReservation[\s\S]*?failDataCreditoAssessmentBeforeProviderDispatch/
+  );
+  assert.match(
+    evaluationRoute,
+    /failDataCreditoAssessmentBeforeProviderDispatch\([\s\S]*?\.catch\(async \(compensationError\)[\s\S]*?await failDataCreditoAssessment\(/
+  );
+  assert.match(
+    evaluationRoute,
+    /providerStartedAt !== null\s*\? "PROVIDER_OUTCOME_AMBIGUOUS"/
+  );
+});
+
 test("el lock documental serializa globalmente la misma cedula y ambiente", () => {
   const lockDefinition = storage.match(
     /function dataCreditoDocumentLockKey[\s\S]*?(?=export async function reuseDataCreditoAssessment)/
@@ -152,6 +229,9 @@ test("incluye preflight idempotente antes de habilitar la integracion", () => {
     /COPY --from=builder \/app\/scripts\/setup-datacredito\.sql \.\/scripts\/setup-datacredito\.sql/
   );
   assert.match(setupSql, /ALTER COLUMN "retainedUntil" SET NOT NULL/);
+  assert.match(setupSql, /CREATE TABLE IF NOT EXISTS "DataCreditoDailyQuotaUsage"/);
+  assert.match(setupSql, /CREATE TABLE IF NOT EXISTS "DataCreditoDailyQuotaAudit"/);
+  assert.match(storage, /verifyDataCreditoDailyQuotaSchema/);
 });
 
 test("migra STALE_PENDING historicos al bloqueo ambiguo antes del TTL global", () => {
