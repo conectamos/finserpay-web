@@ -27,6 +27,7 @@ type RequestOptions = {
   method?: string;
   token?: string;
   body?: unknown;
+  retryAuthorization?: boolean;
 };
 
 export class FirmaSeguroApiError extends Error {
@@ -558,6 +559,7 @@ async function firmaSeguroRequest<T>(
   if (!response.ok) {
     let message = getFirmaSeguroErrorMessage(response.status, payload);
     if (
+      options.retryAuthorization !== false &&
       options.token &&
       shouldRetryWithRawAuthorization(
         response.status,
@@ -1054,22 +1056,17 @@ export async function firmaSeguroSignIn(
   );
 }
 
-export async function firmaSeguroCreateFull(token: string, payload: unknown) {
+export async function firmaSeguroCreateFull(token: string, payload: unknown, options: { retryAuthorization?: boolean } = {}) {
   return firmaSeguroRequest<unknown>("/api/v2/Process/create-full", {
-    method: "POST",
-    token,
-    body: payload,
+    method: "POST", token, body: payload, retryAuthorization: options.retryAuthorization,
   });
 }
 
 export async function firmaSeguroCreateFullByCompany(
-  token: string,
-  payload: unknown
+  token: string, payload: unknown, options: { retryAuthorization?: boolean } = {}
 ) {
   return firmaSeguroRequest<unknown>("/api/v2/Process/create-full-by-company", {
-    method: "POST",
-    token,
-    body: payload,
+    method: "POST", token, body: payload, retryAuthorization: options.retryAuthorization,
   });
 }
 

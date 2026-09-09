@@ -118,7 +118,7 @@ function apiHarness(actor = { id: 1, rolNombre: "ADMIN", aliadoAccesoCodigo: "FI
     response.cookies = { set: (...args) => cookies.push(args), delete: (...args) => cookies.push(args) };
     return response;
   } };
-  const http = load("lib/credit-approval-http.ts", { "next/server": { NextResponse }, "@/lib/auth": {}, "@/lib/roles": roles, "@/lib/credit-approval": errors });
+  const http = load("lib/credit-approval-http.ts", { "@/lib/approval-shared-session": { getApprovalSharedRequestActor: async () => undefined }, "@/lib/credit-approval-actor": load("lib/credit-approval-actor.ts"), "next/server": { NextResponse }, "@/lib/auth": {}, "@/lib/roles": roles, "@/lib/credit-approval": errors });
   const dependencies = { "next/server": { NextResponse }, "@/lib/prisma": { default: { $transaction: async callback => { transactions++; return callback(f.db); } } },
     "@/lib/auth": { getSessionUser: async () => actor }, "@/lib/roles": roles, "@/lib/credit-approval": errors,
     "@/lib/credit-approval-http": http, "@/lib/approval-access": access, "@/lib/session": session };
@@ -151,7 +151,10 @@ test("el canje fija cookie dedicada de 8 horas y no sobrescribe el login adminis
   const opened = await api.public.POST(request("/api/public/approval-access", "POST", { token }));
   assert.equal(opened.status, 200);
   assert.equal((await opened.json()).destination, "/dashboard/aprobaciones");
-  assert.equal(api.cookies.length, 1);
+  assert.equal(api.cookies.length, 2);
+  assert.equal(api.cookies[1][0], session.APPROVAL_SHARED_COOKIE_NAME);
+  assert.equal(api.cookies[1][2].maxAge, 0);
+  assert.ok(api.cookies.every(([name]) => name !== session.SESSION_COOKIE_NAME));
   assert.equal(api.cookies[0][0], session.APPROVAL_ACCESS_COOKIE_NAME);
   assert.equal(api.cookies[0][2].maxAge, 8 * 3600);
   assert.equal(api.cookies[0][2].httpOnly, true);

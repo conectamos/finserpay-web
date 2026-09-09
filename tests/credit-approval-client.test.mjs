@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   ApprovalRequestError,
   approveCreditReview,
+  requestApprovalSignature,
+  refreshApprovalSignature,
   readApprovalCredit,
   searchApprovalCredits,
 } from "../app/dashboard/aprobaciones/approval-client.ts";
@@ -82,11 +84,14 @@ test("no convierte una respuesta incompleta de búsqueda en una lista vacía vá
   await assert.rejects(searchApprovalCredits("123456789"), /respuesta válida/);
 });
 
-test("el panel ofrece consulta de evidencias y PDF sin controles de corrección", async () => {
+test("el panel mantiene el visor y separa las correcciones del OK", async () => {
   const panel = await readFile(new URL("../app/dashboard/aprobaciones/approval-console.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(panel, /type=["']file["']|ApprovedCreditEvidenceCorrection|method:\s*["'](?:PATCH|PUT|DELETE)["']/);
   assert.match(panel, /<ConfirmDialog/);
   assert.match(panel, /<LastPdfPagePreview/);
+  assert.match(panel, /<ApprovalEvidenceCorrection/);
+  assert.match(panel, /<ApprovalSignatureReissue/);
+  assert.match(panel, /correctionBusy \|\| signatureBusy/);
   assert.doesNotMatch(panel, /<iframe|Abrir PDF firmado/);
   assert.match(panel, /reviewChanged \|\| rereviewed/);
 });
@@ -94,4 +99,22 @@ test("el panel ofrece consulta de evidencias y PDF sin controles de corrección"
 test("solo muestra éxito cuando el servidor confirma que aprobó", async (t) => {
   t.mock.method(globalThis, "fetch", async () => Response.json({}));
   await assert.rejects(approveCreditReview(81, 1, "review"), /No se recibió confirmación/);
+});
+
+test("el reenvío envía solo la versión observada, motivo e identificador idempotente", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => { calls.push({ url, options }); return Response.json({ ok: true }); });
+  const input = { expectedRevision: 3, expectedProcessUuid: "original-process", reason: "Firma incompleta del cliente", idempotencyKey: "11111111-1111-4111-8111-111111111111" };
+  await requestApprovalSignature(81, input);
+  assert.equal(calls[0].url, "/api/aprobaciones/81/firma-seguro");
+  assert.deepEqual(JSON.parse(calls[0].options.body), { action: "REQUEST", ...input });
+  await refreshApprovalSignature(81, input.idempotencyKey);
+  assert.deepEqual(JSON.parse(calls[1].options.body), { action: "REFRESH", operationId: input.idempotencyKey });
+});
+
+test("un reenvío de resultado incierto no se repite ni se presenta como exitoso", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => { calls++; throw new Error("Connection lost"); });
+  await assert.rejects(requestApprovalSignature(81, { expectedRevision: 3, expectedProcessUuid: "process", reason: "Firma incompleta", idempotencyKey: "test" }), /Connection lost/);
+  assert.equal(calls, 1);
 });

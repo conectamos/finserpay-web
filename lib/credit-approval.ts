@@ -1,21 +1,19 @@
 import "server-only";
+import { CreditApprovalError } from "@/lib/credit-approval-errors";
+import { approvalActorAudit, assertApprovalActorActive, assertApprovalActorCreditAccess, type ApprovalActor } from "@/lib/credit-approval-actor";
+import { getCreditApprovalNoveltyState, resolveCreditApprovalNoveltyForApproval } from "@/lib/credit-approval-novelty-state";
 
 import { createHash, randomUUID } from "node:crypto";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditApprovalRequiredSql } from "@/lib/credit-approval-policy";
 import { normalizeBlacklistedDocument } from "@/lib/document-blacklist-core";
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
+import { getCreditApprovalReissueState } from "@/lib/credit-approval-reissue-state";
 import { isFirmaSeguroCompletedStatus } from "@/lib/firmaseguro";
 
 export type ApprovalDatabase = Pick<Prisma.TransactionClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
-export type ApprovalActor = { id: number; nombre: string };
-
-export class CreditApprovalError extends Error {
-  constructor(readonly code: string, message: string, readonly status = 400) {
-    super(message);
-    this.name = "CreditApprovalError";
-  }
-}
+export type { ApprovalActor } from "@/lib/credit-approval-actor";
+export { CreditApprovalError } from "@/lib/credit-approval-errors";
 
 export const APPROVAL_EVIDENCE = [
   { key: "cedula-frente", label: "Cédula frontal", field: "contratoCedulaFrenteDataUrl" },
@@ -166,7 +164,7 @@ async function readDocument(db: ApprovalDatabase, id: number) {
   return rows[0] || null;
 }
 
-export function buildCreditApprovalDetail(credit: ApprovalCredit, review: ApprovalReview | null, assessment: ApprovalAssessment | null, document: ApprovalDocument | null) {
+export function buildCreditApprovalDetail(credit: ApprovalCredit, review: ApprovalReview | null, assessment: ApprovalAssessment | null, document: ApprovalDocument | null, reissue: Awaited<ReturnType<typeof getCreditApprovalReissueState>> = { available: true, blocked: false, operation: null }, novelties: Awaited<ReturnType<typeof getCreditApprovalNoveltyState>> = { available: true, blocksApproval: false, blocksSettlement: false, pendingCount: 0, answeredCount: 0, novelty: null }) {
   const evidence = APPROVAL_EVIDENCE.map((item) => ({
     key: item.key, label: item.label, available: Boolean(approvalImage(credit[item.field])),
     href: `/api/aprobaciones/${credit.id}/evidencias?tipo=${item.key}`,
@@ -187,10 +185,19 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
     assessment: assessment ? [assessment.id, assessment.score, assessment.offer, assessment.status] : null,
     firmaSeguro: document ? [document.id, document.processUuid, document.status, iso(document.completedAt), digest(document.signedDocumentBase64)] : null,
   });
+  const cancelled = ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(credit.estado.trim().toUpperCase());
+  const correctionBlockedReason = !credit.required ? "Este crédito conserva las reglas anteriores a la activación."
+    : credit.paid ? "Este crédito ya está incluido en una liquidación pagada."
+    : cancelled ? "El crédito está anulado o cancelado."
+    : reissue.blocked ? "Resuelve el reenvío de firma en curso antes de corregir o aprobar este expediente."
+    : !reissue.available ? "No se pudo verificar el estado de la firma. Actualiza el expediente." : null;
   const blockingReasons: string[] = [];
+  if (!novelties.available) blockingReasons.push("No se pudo verificar el estado de las novedades. Actualiza el expediente.");
+  else if (novelties.blocksApproval) blockingReasons.push("Hay novedades pendientes de corrección. Revisa las respuestas antes de confirmar el OK.");
+  if (reissue.blocked || !reissue.available) blockingReasons.push(correctionBlockedReason || "La firma está pendiente de verificación.");
   if (!credit.required) blockingReasons.push("Este crédito conserva las reglas anteriores a la activación.");
   if (credit.paid) blockingReasons.push("Este crédito ya está incluido en una liquidación pagada.");
-  if (["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(credit.estado.trim().toUpperCase())) blockingReasons.push("El crédito está anulado o cancelado.");
+  if (cancelled) blockingReasons.push("El crédito está anulado o cancelado.");
   if (!resolveAllyPaymentPlatform(credit.contratoSnapshot, credit.equipoMarca)) blockingReasons.push("La plataforma del crédito no está identificada.");
   if (!(credit.valorEquipoTotal > credit.cuotaInicial && credit.cuotaInicial >= 0)) blockingReasons.push("Los valores del crédito no permiten liquidación.");
   if (!assessment || !validScore || assessment.status !== "APROBADO") blockingReasons.push("La evaluación de DataCrédito vinculada al crédito no está disponible para revisión.");
@@ -208,8 +215,9 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
     review: { required: credit.required, status: !credit.required ? "NOT_REQUIRED" : approved ? "APPROVED" : "PENDING",
       revision: review?.revision || 1, reviewHash, approvedAt: approved ? iso(review?.approvedAt || null) : null,
       approvedByName: approved ? review?.approvedByName || null : null },
-    canApprove: blockingReasons.length === 0 && !approved, blockingReasons, evidence,
-    document: { available: documentAvailable, href: `/api/aprobaciones/${credit.id}/documento`, fileName: document?.signedDocumentFileName || null },
+    canApprove: blockingReasons.length === 0 && !approved, blockingReasons, evidence: evidence.map((item) => ({ ...item, href: `${item.href}&revision=${reviewHash}` })), reissue, novelties,
+    capabilities: { canCreateNovelty: correctionBlockedReason === null && novelties.available, canCorrectEvidence: correctionBlockedReason === null, canReissueSignature: correctionBlockedReason === null && documentAvailable && Boolean(document?.processUuid?.trim()), correctionBlockedReason },
+    document: { processUuid: document?.processUuid || null, available: documentAvailable, href: `/api/aprobaciones/${credit.id}/documento`, fileName: document?.signedDocumentFileName || null },
   };
 }
 
@@ -219,17 +227,25 @@ export async function getCreditApprovalDetail(db: ApprovalDatabase, id: number) 
   const review = await readReview(db, id);
   const assessment = await readAssessment(db, credit);
   const document = await readDocument(db, id);
-  return buildCreditApprovalDetail(credit, review, assessment, document);
+  const reissue = await getCreditApprovalReissueState(db, id);
+  const novelties = await getCreditApprovalNoveltyState(db, id);
+  return buildCreditApprovalDetail(credit, review, assessment, document, reissue, novelties);
 }
 
 /** Caller supplies a transaction. Lock order matches corrections and ally payments. */
 export async function approveCredit(db: ApprovalDatabase, id: number, input: ReturnType<typeof parseCreditApproval>, actor: ApprovalActor) {
+  await assertApprovalActorActive(db, actor);
   await requirePolicy(db);
   const credit = await readCredit(db, id, true);
+  await assertApprovalActorCreditAccess(db, id, actor);
   const review = await readReview(db, id, true);
   const assessment = await readAssessment(db, credit);
   const document = await readDocument(db, id);
-  const item = buildCreditApprovalDetail(credit, review, assessment, document);
+  const reissue = await getCreditApprovalReissueState(db, id);
+  const novelties = await getCreditApprovalNoveltyState(db, id);
+  const item = buildCreditApprovalDetail(credit, review, assessment, document, reissue, novelties);
+  if (!novelties.available || novelties.blocksApproval) throw new CreditApprovalError("NOVELTY_PENDING", "Hay novedades que deben corregirse antes de confirmar el OK.", 409);
+  if (reissue.blocked || !reissue.available) throw new CreditApprovalError("SIGNATURE_REISSUE_PENDING", "La nueva firma debe quedar completa antes de confirmar el OK.", 409);
   if (input.revision !== item.review.revision || input.reviewHash !== item.review.reviewHash) {
     throw new CreditApprovalError("REVIEW_CHANGED", "El expediente cambió. Actualiza y vuelve a revisar los documentos antes de dar el OK.", 409);
   }
@@ -238,17 +254,20 @@ export async function approveCredit(db: ApprovalDatabase, id: number, input: Ret
   if (!item.canApprove) throw new CreditApprovalError("REVIEW_NOT_READY", item.blockingReasons[0] || "El crédito no permite esta aprobación.", 409);
   await db.$executeRawUnsafe(`INSERT INTO "CreditApprovalReview" ("creditoId", "status", "revision", "createdAt", "updatedAt")
     VALUES ($1, 'PENDING', 1, CURRENT_TIMESTAMP AT TIME ZONE 'UTC', CURRENT_TIMESTAMP AT TIME ZONE 'UTC') ON CONFLICT ("creditoId") DO NOTHING`, id);
+  await resolveCreditApprovalNoveltyForApproval(db, id, actor);
+  const audit = approvalActorAudit(actor);
   const updated = await db.$executeRawUnsafe(`UPDATE "CreditApprovalReview" SET "status" = 'APPROVED',
     "approvedRevision" = "revision", "approvedByUserId" = $2, "approvedByName" = $3,
+    "approvedByKind" = $6, "approvedByGrantId" = $7::uuid, "approvedBySessionId" = $8::uuid,
     "approvedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC', "reviewHash" = $4, "updatedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
-    WHERE "creditoId" = $1 AND "revision" = $5`, id, actor.id, actor.nombre, input.reviewHash, input.revision);
+    WHERE "creditoId" = $1 AND "revision" = $5`, id, audit.actorUserId, audit.actorName, input.reviewHash, input.revision, audit.actorKind, audit.actorGrantId, audit.actorSessionId);
   if (updated !== 1) throw new CreditApprovalError("REVIEW_CHANGED", "La revisión cambió. Actualiza el expediente.", 409);
   await db.$executeRawUnsafe(`INSERT INTO "CreditApprovalEvent"
-    ("id", "creditoId", "eventType", "revision", "actorUserId", "actorName", "reason", "reviewHash", "createdAt")
-    VALUES ($1::uuid, $2, 'APPROVED', $3, $4, $5, 'Documentación revisada para liquidación al aliado', $6, CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`,
-    randomUUID(), id, input.revision, actor.id, actor.nombre, input.reviewHash);
+    ("id", "creditoId", "eventType", "revision", "actorUserId", "actorName", "reason", "reviewHash", "createdAt", "actorKind", "actorGrantId", "actorSessionId")
+    VALUES ($1::uuid, $2, 'APPROVED', $3, $4, $5, 'Documentación revisada para liquidación al aliado', $6, CURRENT_TIMESTAMP AT TIME ZONE 'UTC', $7, $8::uuid, $9::uuid)`,
+    randomUUID(), id, input.revision, audit.actorUserId, audit.actorName, input.reviewHash, audit.actorKind, audit.actorGrantId, audit.actorSessionId);
   const confirmedReview = await readReview(db, id);
-  return { item: buildCreditApprovalDetail(credit, confirmedReview, assessment, document), unchanged: false };
+  return { item: buildCreditApprovalDetail(credit, confirmedReview, assessment, document, reissue, await getCreditApprovalNoveltyState(db, id)), unchanged: false };
 }
 
 export async function getApprovalEvidence(db: ApprovalDatabase, id: number, key: string) {

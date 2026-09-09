@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CheckCircle2, Expand, FileText, ImageOff, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { CheckCircle2, Expand, FileText, ImageOff, RefreshCw, ShieldCheck } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import LastPdfPagePreview from "./last-pdf-page-preview";
-import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, MetricCard, PageHeader, StatusPill } from "@/app/_components/finser-ui";
-import { ApprovalRequestError, approveCreditReview, readApprovalCredit, searchApprovalCredits, type ApprovalDetail, type ApprovalListItem, type ApprovalStatus } from "./approval-client";
+import ApprovalEvidenceCorrection from "./approval-evidence-correction";
+import ApprovalSignatureReissue from "./approval-signature-reissue";
+import ApprovalNoveltyPanel from "./approval-novelty-panel";
+import { Badge, Button, Card, DataTable, EmptyState, LoadingState, MetricCard, PageHeader, StatusPill } from "@/app/_components/finser-ui";
+import { ApprovalRequestError, approveCreditReview, readApprovalCredit, readApprovalQueue, mergeApprovalQueuePage, type ApprovalDetail, type ApprovalQueueItem, type ApprovalStatus } from "./approval-client";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 const percent = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 });
@@ -50,10 +53,11 @@ function EvidencePhoto({ item, clientName }: { item: ApprovalDetail["evidence"][
 type Confirmation = { id: number; folio: string; clienteNombre: string; clienteDocumento: string | null; revision: number; reviewHash: string };
 
 export default function ApprovalConsole() {
-  const [documentInput, setDocumentInput] = useState("");
-  const [searchedDocument, setSearchedDocument] = useState("");
-  const [items, setItems] = useState<ApprovalListItem[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [items, setItems] = useState<ApprovalQueueItem[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasExtraPages, setHasExtraPages] = useState(false);
+  const [queueLoaded, setQueueLoaded] = useState(false);
+  const [searching, setSearching] = useState(true);
   const [searchError, setSearchError] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<ApprovalDetail | null>(null);
@@ -62,12 +66,15 @@ export default function ApprovalConsole() {
   const [notice, setNotice] = useState<{ text: string; warning: boolean } | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [saving, setSaving] = useState(false);
+  const [correctionBusy, setCorrectionBusy] = useState(false);
+  const [signatureBusy, setSignatureBusy] = useState(false);
+  const [noveltyBusy, setNoveltyBusy] = useState(false);
   const [reviewChanged, setReviewChanged] = useState(false);
   const [rereviewed, setRereviewed] = useState(false);
   const searchController = useRef<AbortController | null>(null);
   const detailController = useRef<AbortController | null>(null);
   const submitting = useRef(false);
-  const busy = saving || Boolean(confirmation);
+  const busy = saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy;
 
   useEffect(() => () => {
     searchController.current?.abort();
@@ -83,13 +90,31 @@ export default function ApprovalConsole() {
     try {
       const nextDetail = await readApprovalCredit(id, controller.signal);
       if (controller.signal.aborted) return;
+      if (nextDetail.review.status === "APPROVED") {
+        setItems((current) => current.filter((item) => item.id !== id)); setSelectedId(null); setDetail(null);
+        setNotice({ text: `Crédito ${nextDetail.folio} aprobado. Ya no aparece entre los pendientes.`, warning: false });
+        return nextDetail;
+      }
       setDetail(nextDetail);
       setItems((current) => current.map((item) => item.id === id ? { ...item, status: nextDetail.review.status, required: nextDetail.review.required } : item));
+      return nextDetail;
     } catch (error) {
       if (controller.signal.aborted) return;
       setDetailError(error instanceof Error ? error.message : "No fue posible cargar el expediente.");
     } finally {
       if (!controller.signal.aborted) setLoadingDetail(false);
+    }
+  }
+
+  async function reloadAfterCorrection() {
+    if (!detail) return;
+    setConfirmation(null);
+    const next = await loadDetail(detail.id);
+    await loadQueue();
+    if (next && (next.review.revision !== detail.review.revision || next.review.reviewHash !== detail.review.reviewHash)) {
+      setReviewChanged(true);
+      setRereviewed(false);
+      setNotice({ text: "El expediente se actualizó. Revisa las fotografías y la firma vigente antes de confirmar un nuevo OK.", warning: true });
     }
   }
 
@@ -104,42 +129,63 @@ export default function ApprovalConsole() {
     void loadDetail(id);
   }
 
-  async function searchCredits(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (busy || submitting.current) return;
-    const document = documentInput.replace(/[.\s-]/g, "");
-    if (!/^\d{3,13}$/.test(document)) {
-      setSearchError("Ingresa la cédula completa, entre 3 y 13 dígitos.");
-      return;
-    }
+  const loadQueue = useCallback(async (cursor: string | null = null) => {
     searchController.current?.abort();
-    const controller = new AbortController();
-    searchController.current = controller;
-    setSearching(true);
-    setSearchError("");
+    const controller = new AbortController(); searchController.current = controller;
+    setSearching(true); setSearchError("");
     try {
-      const nextItems = await searchApprovalCredits(document, controller.signal);
+      const page = await readApprovalQueue(cursor, controller.signal);
       if (controller.signal.aborted) return;
-      detailController.current?.abort();
-      setLoadingDetail(false);
-      setItems(nextItems);
-      setSearchedDocument(document);
-      setSelectedId(null);
-      setDetail(null);
-      setDetailError("");
-      setNotice(null);
-      setReviewChanged(false);
-      setRereviewed(false);
-      if (nextItems.length === 1) selectCredit(nextItems[0].id);
+      setItems((current) => mergeApprovalQueuePage(current, page.items, Boolean(cursor)));
+      setNextCursor(page.nextCursor); setHasExtraPages(Boolean(cursor)); setQueueLoaded(true);
     } catch (error) {
-      if (controller.signal.aborted) return;
-      setSearchError(error instanceof Error ? error.message : "No fue posible buscar los créditos.");
-    } finally {
-      if (!controller.signal.aborted) setSearching(false);
-    }
-  }
+      if (!controller.signal.aborted) setSearchError(error instanceof Error ? error.message : "No fue posible cargar el muro.");
+    } finally { if (!controller.signal.aborted) setSearching(false); }
+  }, []);
 
-  const canConfirm = Boolean(detail?.review.required && detail.review.status === "PENDING" && detail.canApprove && !loadingDetail && !detailError && !searching && !busy && (!reviewChanged || rereviewed));
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve().then(() => { if (!cancelled) void loadQueue(); });
+    return () => { cancelled = true; searchController.current?.abort(); };
+  }, [loadQueue]);
+
+  // Refresh the visible first page while idle. Manual refresh restarts pagination.
+  // A form in progress cancels background requests so its observed revision stays intact.
+  useEffect(() => {
+    if (busy || searching || loadingDetail || !queueLoaded || hasExtraPages) return;
+    const controller = new AbortController();
+    let fetching = false;
+    const refresh = async () => {
+      if (fetching || document.visibilityState === "hidden") return;
+      fetching = true;
+      try {
+        const page = await readApprovalQueue(null, controller.signal);
+        const updated = selectedId ? await readApprovalCredit(selectedId, controller.signal) : null;
+        if (controller.signal.aborted) return;
+        setItems(page.items); setNextCursor(page.nextCursor); setSearchError("");
+        if (updated) {
+          if (updated.review.status === "APPROVED") {
+            setSelectedId(null); setDetail(null);
+            setNotice({ text: `Crédito ${updated.folio} aprobado. Ya no aparece entre los pendientes.`, warning: false });
+          } else {
+            setDetail(updated);
+            if (detail && (updated.review.revision !== detail.review.revision || updated.review.reviewHash !== detail.review.reviewHash)) {
+              setReviewChanged(true); setRereviewed(false);
+              setNotice({ text: "El expediente cambió. Revisa las correcciones y la documentación vigente antes de dar el OK.", warning: true });
+            }
+          }
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) setSearchError(error instanceof Error ? error.message : "No se pudo actualizar el muro.");
+      } finally { fetching = false; }
+    };
+    const interval = window.setInterval(() => { void refresh(); }, 30_000);
+    const focused = () => { void refresh(); };
+    window.addEventListener("focus", focused);
+    return () => { controller.abort(); window.clearInterval(interval); window.removeEventListener("focus", focused); };
+  }, [busy, searching, loadingDetail, queueLoaded, hasExtraPages, selectedId, detail]);
+
+  const canConfirm = Boolean(detail?.review.required && detail.review.status === "PENDING" && detail.canApprove && !loadingDetail && !detailError && !searchError && !searching && !busy && (!reviewChanged || rereviewed));
 
   function requestApproval() {
     if (!detail || !canConfirm || submitting.current) return;
@@ -155,7 +201,10 @@ export default function ApprovalConsole() {
       await approveCreditReview(confirmation.id, confirmation.revision, confirmation.reviewHash);
       setConfirmation(null);
       setNotice({ text: `Crédito ${confirmation.folio} aprobado para liquidación al aliado.`, warning: false });
-      await loadDetail(confirmation.id);
+      setItems((current) => current.filter((item) => item.id !== confirmation.id));
+      detailController.current?.abort(); setSelectedId(null); setDetail(null); setLoadingDetail(false);
+      setReviewChanged(false); setRereviewed(false);
+      await loadQueue();
     } catch (error) {
       setConfirmation(null);
       if (error instanceof ApprovalRequestError && error.status === 409) {
@@ -175,25 +224,14 @@ export default function ApprovalConsole() {
 
   return (
     <main className="space-y-6 p-4 text-[var(--fp-graphite)] sm:p-6 lg:p-8">
-      <PageHeader eyebrow="Control documental" title="Aprobaciones" description="Consulta por cédula, revisa el expediente y confirma el OK para liquidación al aliado." />
-      <Card className="p-4 sm:p-6">
-        <form onSubmit={searchCredits} className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="w-full sm:max-w-md">
-            <label htmlFor="approval-document" className="mb-2 block text-sm font-semibold">Cédula del cliente</label>
-            <Input id="approval-document" name="documento" inputMode="numeric" autoComplete="off" maxLength={20} value={documentInput} placeholder="Ingresa la cédula completa" disabled={busy} onChange={(event) => setDocumentInput(event.target.value)} aria-describedby="approval-search-help" />
-          </div>
-          <Button type="submit" disabled={busy || searching}><Search className="h-4 w-4" aria-hidden="true" />{searching ? "Buscando..." : "Buscar crédito"}</Button>
-        </form>
-        <p id="approval-search-help" className="mt-3 text-sm text-[var(--fp-muted)]">La búsqueda es exacta. Si hay varios folios, selecciona el crédito que vas a revisar.</p>
-        {searchError ? <p role="alert" className="mt-4 text-sm text-[var(--fp-danger)]">{searchError}{items.length ? " Se conserva la consulta anterior." : ""}</p> : null}
-      </Card>
-
-      {searching ? <LoadingState label="Buscando créditos por cédula..." /> : null}
-      {!searchedDocument && !searching ? <EmptyState title="Busca un cliente para comenzar" description="Aquí podrás consultar su resumen financiero, las cinco fotos y el documento firmado." /> : null}
-      {searchedDocument && !items.length && !searching ? <Card><EmptyState title="No se encontraron créditos" description={`No hay créditos para la cédula ${searchedDocument}. Verifica el número e intenta otra búsqueda.`} /></Card> : null}
+      <PageHeader eyebrow="Control documental" title="Muro de aprobaciones" description="Revisa los créditos pendientes de todos los aliados. Los aprobados salen de esta bandeja." actions={<Button variant="secondary" disabled={busy || searching} onClick={() => void loadQueue()}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar muro</Button>} />
+      <p className="text-sm text-[var(--fp-muted)]">Los créditos más antiguos aparecen primero. Las correcciones del aliado vuelven a revisión del analista.</p>
+      {searchError ? <div role="alert" className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-amber-soft)] p-4 text-sm">{searchError} Actualiza el muro para continuar.</div> : null}
+      {searching ? <LoadingState label="Cargando créditos pendientes..." /> : null}
+      {queueLoaded && !items.length && !searching && !searchError ? <Card><EmptyState title="No hay créditos pendientes" description="Los nuevos créditos y los expedientes que requieran otra revisión aparecerán aquí." /></Card> : null}
       {items.length ? (
         <Card className="overflow-hidden">
-          <div className="border-b border-[var(--fp-border)] p-4 sm:px-6"><h2 className="font-semibold">Créditos de la cédula {searchedDocument}</h2><p className="mt-1 text-sm text-[var(--fp-muted)]">{items.length} {items.length === 1 ? "folio encontrado" : "folios encontrados"}</p></div>
+          <div className="border-b border-[var(--fp-border)] p-4 sm:px-6"><h2 className="font-semibold">Créditos por revisar</h2><p className="mt-1 text-sm text-[var(--fp-muted)]">{items.length} {items.length === 1 ? "crédito visible" : "créditos visibles"}{nextCursor ? " · Hay más pendientes" : ""}</p></div>
           <DataTable className="max-w-full">
             <table className="w-full min-w-[44rem] border-collapse text-left text-sm">
               <thead className="bg-[var(--fp-bg)] text-[var(--fp-muted)]">
@@ -208,14 +246,19 @@ export default function ApprovalConsole() {
               <tbody>{items.map((item) => (
                 <tr key={item.id} className={`border-t border-[var(--fp-border)] ${selectedId === item.id ? "bg-[var(--fp-lime-soft)]" : ""}`}>
                   <td className="px-4 py-4 align-top sm:px-6"><strong>{item.folio}</strong><span className="mt-1 block text-[var(--fp-muted)]">{item.clienteNombre}</span></td>
-                  <td className="px-4 py-4 align-top sm:px-6">{item.aliadoNombre}</td>
+                  <td className="px-4 py-4 align-top sm:px-6">{item.aliadoNombre}{item.sedeNombre ? <span className="mt-1 block text-[var(--fp-muted)]">{item.sedeNombre}</span> : null}</td>
                   <td className="whitespace-nowrap px-4 py-4 align-top sm:px-6">{dateLabel(item.fechaCredito)}</td>
-                  <td className="px-4 py-4 align-top sm:px-6"><ReviewStatus status={item.status} required={item.required} /></td>
+                  <td className="px-4 py-4 align-top sm:px-6"><div className="flex flex-col items-start gap-2"><ReviewStatus status={item.status} required={item.required} />
+                    {item.novelty?.pendingCount ? <Badge tone="warning">{item.novelty.pendingCount} por corregir en el aliado</Badge> : null}
+                    {item.novelty?.answeredCount ? <Badge tone="positive">Correcciones por revisar</Badge> : null}
+                    {item.reissue?.blocked ? <Badge tone="warning">Firma pendiente</Badge> : null}
+                  </div></td>
                   <td className="px-4 py-4 align-top sm:px-6"><Button variant="secondary" onClick={() => selectCredit(item.id)} disabled={busy || searching} aria-label={`Revisar crédito ${item.folio}`} aria-pressed={selectedId === item.id}>{selectedId === item.id ? "Seleccionado" : "Revisar"}</Button></td>
                 </tr>
               ))}</tbody>
             </table>
           </DataTable>
+          {nextCursor ? <div className="border-t border-[var(--fp-border)] p-4"><Button variant="secondary" disabled={busy || searching} onClick={() => void loadQueue(nextCursor)}>Cargar más créditos</Button></div> : null}
           {!selectedId && items.length > 1 ? <p className="p-4 text-sm text-[var(--fp-muted)]">Selecciona un folio para abrir su expediente.</p> : null}
         </Card>
       ) : null}
@@ -246,12 +289,16 @@ export default function ApprovalConsole() {
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Fotografías del expediente</h2><Badge>{detail.evidence.filter((item) => item.available).length} de {detail.evidence.length} disponibles</Badge></div>
             <p className="mb-4 text-sm text-[var(--fp-muted)]">Abre cada fotografía para revisarla en tamaño completo.</p>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{detail.evidence.map((item) => <EvidencePhoto key={`${detail.id}:${detail.review.reviewHash}:${item.key}`} item={item} clientName={detail.clienteNombre} />)}</div>
+            <ApprovalEvidenceCorrection detail={detail} disabled={saving || Boolean(confirmation) || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCorrectionBusy} />
           </Card>
 
           <Card className="p-4 sm:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="flex items-center gap-2 text-lg font-semibold"><FileText className="h-5 w-5" aria-hidden="true" />Documento firmado</h2></div>
             {detail.document.available ? <><p className="mb-3 text-sm text-[var(--fp-muted)]">{detail.document.fileName || "Documento de FirmaSeguro"}</p><LastPdfPagePreview key={`${detail.id}:${detail.review.reviewHash}`} href={detail.document.href} folio={detail.folio} /></> : <EmptyState title="Documento firmado no disponible" description="El expediente debe contar con el documento firmado para completar la aprobación." />}
+            <ApprovalSignatureReissue detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} />
           </Card>
+
+          <ApprovalNoveltyPanel key={detail.id} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} />
 
           {detail.review.required && detail.review.status === "PENDING" ? (
             <Card className="p-4 sm:p-6">

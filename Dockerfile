@@ -51,6 +51,19 @@ COPY --from=builder /app/scripts/credit-approval-schema.mjs ./scripts/credit-app
 COPY --from=builder /app/scripts/ensure-approval-access-schema.mjs ./scripts/ensure-approval-access-schema.mjs
 COPY --from=builder /app/scripts/approval-access-schema.mjs ./scripts/approval-access-schema.mjs
  
+COPY --from=builder /app/scripts/ensure-approval-evidence-schema.mjs ./scripts/ensure-approval-evidence-schema.mjs
+COPY --from=builder /app/scripts/approval-evidence-schema.mjs ./scripts/approval-evidence-schema.mjs
+
+COPY --from=builder /app/scripts/ensure-credit-approval-reissue-schema.mjs ./scripts/ensure-credit-approval-reissue-schema.mjs
+COPY --from=builder /app/scripts/credit-approval-reissue-schema.mjs ./scripts/credit-approval-reissue-schema.mjs
+
+COPY --from=builder /app/scripts/credit-approval-actor-schema.mjs ./scripts/credit-approval-actor-schema.mjs
+COPY --from=builder /app/scripts/ensure-credit-approval-actor-schema.mjs ./scripts/ensure-credit-approval-actor-schema.mjs
+COPY --from=builder /app/scripts/credit-approval-novelties-schema.mjs ./scripts/credit-approval-novelties-schema.mjs
+COPY --from=builder /app/scripts/ensure-credit-approval-novelties-schema.mjs ./scripts/ensure-credit-approval-novelties-schema.mjs
+COPY --from=builder /app/scripts/approval-shared-schema.mjs ./scripts/approval-shared-schema.mjs
+COPY --from=builder /app/scripts/ensure-approval-shared-schema.mjs ./scripts/ensure-approval-shared-schema.mjs
+
 EXPOSE 3000
 
 CMD ["node", "server.js"]

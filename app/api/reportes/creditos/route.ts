@@ -8,6 +8,7 @@ import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { resolveCreditPaymentSummary, sanitizeSearch } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
+import { resolveCreditReportState } from "@/lib/credit-report-status";
 
 type PaymentAggregate = {
   abonosCount: number;
@@ -210,6 +211,13 @@ export async function GET(req: Request) {
     const items = await prisma.credito.findMany({
       where,
       include: {
+        aprobacionAnalista: {
+          select: {
+            status: true,
+            revision: true,
+            approvedRevision: true,
+          },
+        },
         usuario: {
           select: {
             id: true,
@@ -300,6 +308,7 @@ export async function GET(req: Request) {
         valorCuota: Number(item.valorCuota || 0),
         plazoMeses: item.plazoMeses,
         estado: item.estado,
+        estadoReporte: resolveCreditReportState(item.estado, item.aprobacionAnalista),
         deliverableReady: item.deliverableReady,
         deliverableLabel: item.deliverableLabel,
         totalAbonado: summary.totalAbonado,

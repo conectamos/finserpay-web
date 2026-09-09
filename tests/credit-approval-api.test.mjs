@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadApprovalModule, service, roles, approvalFixture, plain, pdf } from "./credit-approval-test-loader.mjs";
+import { loadApprovalModule, service, roles, approvalActors, approvalFixture, plain, pdf } from "./credit-approval-test-loader.mjs";
 
 const centralAnalyst = { id: 7, nombre: "Analista de prueba", rolNombre: "ANALISTA_APROBACION", aliadoAccesoCodigo: "FINSERPAY", activo: true };
 const context = (id = "81") => ({ params: Promise.resolve({ id }) });
@@ -34,15 +34,20 @@ function apiHarness(user = centralAnalyst, methods = {}, transactionError = null
     "next/server": { NextResponse: Response },
     "@/lib/auth": { getCreditApprovalSessionUser: async () => user },
     "@/lib/roles": roles,
+    "@/lib/approval-shared-session": { getApprovalSharedRequestActor: async () => undefined },
+    "@/lib/credit-approval-actor": approvalActors,
     "@/lib/credit-approval": service,
   });
   const routes = Object.fromEntries(Object.entries(paths).map(([name, path]) => [name, loadApprovalModule(path, {
     "next/server": { NextResponse: Response },
     "@/lib/prisma": { default: prisma },
     "@/lib/credit-approval": routedService,
+    "@/lib/credit-approval-actor": approvalActors,
+    "@/lib/credit-approval-queue": { approvalQueueLimit: () => 50, listCreditApprovalQueue: async (...args) => { calls.push({ name: "listCreditApprovalQueue", args }); return methods.listCreditApprovalQueue(...args); } },
+    "@/lib/credit-approval-evidence": {},
     "@/lib/credit-approval-http": http,
   })]));
-  return { routes, calls, transactions, database, prisma };
+  return { routes, calls, transactions, database, prisma, http };
 }
 
 const makeRequest = (path, method = "GET", body, headers = {}) => new Request(`https://finserpay.test${path}`, {
@@ -96,15 +101,17 @@ test("búsqueda exacta normaliza cédula y conserva varios folios", async () => 
   assert.equal(api.calls.length, 1);
 });
 
-test("no permite búsqueda general ni identificadores inválidos", async () => {
-  const api = apiHarness();
+test("abre la cola general autorizada y rechaza identificadores inválidos", async () => {
+  const api = apiHarness(centralAnalyst, { listCreditApprovalQueue: async () => ({ items: [{ id: 81 }], nextCursor: null, hasMore: false }) });
   const response = await api.routes.search.GET(makeRequest("/api/aprobaciones"));
-  assert.equal(response.status, 400);
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).items, [{ id: 81 }]);
+  privateResponse(response);
   for (const id of ["-1", "0", "81 OR 1=1"]) {
     const invalid = await api.routes.detail.GET(makeRequest("/api/aprobaciones/81"), context(id));
     assert.equal(invalid.status, 400);
   }
-  assert.equal(api.calls.length, 0);
+  assert.equal(api.calls.length, 1);
   assert.equal(api.transactions.length, 0);
 });
 
@@ -294,4 +301,22 @@ test("mantiene clientes autenticados sin Origin y usa URL solo cuando Host está
     assert.equal(response.status, 200);
     assert.equal(api.calls.length, 1);
   }
+});
+
+test("el lector permite un límite específico para fotos sin ampliar el cuerpo del OK", async () => {
+  const { http } = apiHarness();
+  const body = { data: "x".repeat(1600) };
+  await assert.rejects(http.readApprovalRequest(makeRequest("/api/aprobaciones/81", "POST", body)), /demasiado extensa/);
+  const parsed = await http.readApprovalRequest(makeRequest("/api/aprobaciones/81/evidencias", "PATCH", body), { maxBytes: 2000 });
+  assert.deepEqual(plain(parsed), body);
+  await assert.rejects(http.readApprovalRequest(makeRequest("/api/aprobaciones/81/evidencias", "PATCH", body), { maxBytes: 1000 }), /demasiado extensa/);
+});
+
+test("el lector corta un stream excesivo aunque no declare Content-Length", async () => {
+  const { http } = apiHarness();
+  let cancelled = false;
+  const stream = new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array(800)); }, cancel() { cancelled = true; } });
+  const request = new Request("https://finserpay.test/api/aprobaciones/81", { method: "POST", body: stream, duplex: "half" });
+  await assert.rejects(http.readApprovalRequest(request), /demasiado extensa/);
+  assert.equal(cancelled, true);
 });

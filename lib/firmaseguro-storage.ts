@@ -256,6 +256,13 @@ async function runFirmaSeguroSchemaSetup() {
       PERFORM public.install_credit_approval_firmaseguro_trigger();
     END IF;
   END $$`);
+  await prisma.$executeRawUnsafe(`DO $$ BEGIN
+    IF to_regprocedure('public.credit_approval_reissue_preserve_document()') IS NOT NULL THEN
+      EXECUTE 'CREATE OR REPLACE TRIGGER "FirmaSeguroProcess_preserve_reissue_original"
+        BEFORE UPDATE OR DELETE ON public."FirmaSeguroProcess"
+        FOR EACH ROW EXECUTE FUNCTION public.credit_approval_reissue_preserve_document()';
+    END IF;
+  END $$`);
 }
 
 export async function ensureFirmaSeguroSchema() {
@@ -589,38 +596,49 @@ export async function updateFirmaSeguroProcess(
 ) {
   await ensureFirmaSeguroSchema();
 
-  const rows = await prisma.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
-    `
-      UPDATE "FirmaSeguroProcess"
-      SET
-        "status" = COALESCE($2, "status"),
-        "statusPayload" = COALESCE($3::jsonb, "statusPayload"),
-        "signaturesPayload" = COALESCE($4::jsonb, "signaturesPayload"),
-        "documentsPayload" = COALESCE($5::jsonb, "documentsPayload"),
-        "signedDocumentBase64" = COALESCE(
-          NULLIF("signedDocumentBase64", ''),
-          $6
-        ),
-        "signedDocumentFileName" = COALESCE(
-          NULLIF("signedDocumentFileName", ''),
-          $7
-        ),
-        "lastError" = $8,
-        "completedAt" = COALESCE("completedAt", $9),
-        "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "processUuid" = $1
-      RETURNING *
-    `,
-    processUuid,
-    input.status || null,
-    jsonValue(input.statusPayload),
-    jsonValue(input.signaturesPayload),
-    jsonValue(input.documentsPayload),
-    input.signedDocumentBase64 || null,
-    input.signedDocumentFileName || null,
-    input.lastError || null,
-    input.completedAt || null
-  );
-
-  return rows[0] || null;
+  return prisma.$transaction(async (database) => {
+    const associations = await database.$queryRawUnsafe<Array<{ creditoId: number | null }>>(
+      'SELECT "creditoId" FROM "FirmaSeguroProcess" WHERE "processUuid"=$1', processUuid);
+    if (!associations[0]) return null;
+    const creditoId = associations[0].creditoId;
+    // The approval trigger also locks Credit. Take that lock before the process row
+    // so callbacks and reissue binding cannot wait on each other in reverse order.
+    if (creditoId !== null) {
+      await database.$queryRawUnsafe('SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE', creditoId);
+    }
+    const rows = await database.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
+      `
+        UPDATE "FirmaSeguroProcess"
+        SET
+          "status" = CASE WHEN "supersededAt" IS NOT NULL AND "creditoId" IS NOT NULL
+            THEN "status" ELSE COALESCE($2, "status") END,
+          "statusPayload" = COALESCE($3::jsonb, "statusPayload"),
+          "signaturesPayload" = COALESCE($4::jsonb, "signaturesPayload"),
+          "documentsPayload" = COALESCE($5::jsonb, "documentsPayload"),
+          "signedDocumentBase64" = CASE WHEN "supersededAt" IS NOT NULL AND "creditoId" IS NOT NULL
+            THEN "signedDocumentBase64" ELSE COALESCE(NULLIF("signedDocumentBase64", ''), $6) END,
+          "signedDocumentFileName" = CASE WHEN "supersededAt" IS NOT NULL AND "creditoId" IS NOT NULL
+            THEN "signedDocumentFileName" ELSE COALESCE(NULLIF("signedDocumentFileName", ''), $7) END,
+          "lastError" = $8,
+          "completedAt" = CASE WHEN "supersededAt" IS NOT NULL AND "creditoId" IS NOT NULL
+            THEN "completedAt" ELSE COALESCE("completedAt", $9) END,
+          "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "processUuid" = $1 AND "creditoId" IS NOT DISTINCT FROM $10::integer
+        RETURNING *
+      `,
+      processUuid,
+      input.status || null,
+      jsonValue(input.statusPayload),
+      jsonValue(input.signaturesPayload),
+      jsonValue(input.documentsPayload),
+      input.signedDocumentBase64 || null,
+      input.signedDocumentFileName || null,
+      input.lastError || null,
+      input.completedAt || null,
+      creditoId
+    );
+    // A draft linked concurrently must be handled by the next refresh with its
+    // new credit lock; never apply this update under an obsolete association.
+    return rows[0] || null;
+  });
 }

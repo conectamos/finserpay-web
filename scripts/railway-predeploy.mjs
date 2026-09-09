@@ -9,3 +9,9 @@ await import("./ensure-iphone-enrollment-schema.mjs");
 await import("./ensure-credit-device-replacement-schema.mjs");
 await import("./ensure-credit-approval-schema.mjs");
 await import("./ensure-approval-access-schema.mjs");
+await import("./ensure-approval-evidence-schema.mjs");
+await import("./ensure-credit-approval-reissue-schema.mjs");
+
+await import("./ensure-credit-approval-actor-schema.mjs");
+await import("./ensure-credit-approval-novelties-schema.mjs");
+await import("./ensure-approval-shared-schema.mjs");

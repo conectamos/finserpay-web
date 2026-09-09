@@ -1,3 +1,4 @@
+import { assertApprovalActorActive, assertApprovalActorCreditAccess } from "@/lib/credit-approval-actor";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { approvalCreditId, getCreditApprovalDetail, approveCredit, parseCreditApproval } from "@/lib/credit-approval";
@@ -9,9 +10,12 @@ type Context = { params: Promise<{ id: string }> };
 
 export async function GET(_request: Request, context: Context) {
   try {
-    await getApprovalActor();
+    const actor = await getApprovalActor();
     const id = approvalCreditId((await context.params).id);
-    const item = await prisma.$transaction((db) => getCreditApprovalDetail(db, id), { isolationLevel: "RepeatableRead", timeout: 20_000 });
+    const item = await prisma.$transaction(async (db) => {
+      await assertApprovalActorActive(db, actor); await assertApprovalActorCreditAccess(db, id, actor);
+      return getCreditApprovalDetail(db, id);
+    }, { isolationLevel: "RepeatableRead", timeout: 20_000 });
     return NextResponse.json({ ok: true, item }, { headers: approvalPrivateHeaders });
   } catch (error) { return approvalErrorResponse(error); }
 }

@@ -28,8 +28,21 @@ const importFlags = loadApprovalModule("lib/credit-import-flags.ts");
 const policy = loadApprovalModule("lib/credit-approval-policy.ts", { "./credit-import-flags": importFlags });
 const documentCore = loadApprovalModule("lib/document-blacklist-core.ts");
 const paymentsCore = loadApprovalModule("lib/ally-payments-core.ts");
+const reissueState = loadApprovalModule("lib/credit-approval-reissue-state.ts");
+export const approvalErrors = loadApprovalModule("lib/credit-approval-errors.ts");
+export const approvalActors = loadApprovalModule("lib/credit-approval-actor.ts");
+const noveltyCore = loadApprovalModule("lib/credit-approval-novelty-core.ts", {
+  "@/lib/credit-approval-errors": approvalErrors, "@/lib/credit-approval-actor": approvalActors,
+});
+export const noveltyState = loadApprovalModule("lib/credit-approval-novelty-state.ts", {
+  "@/lib/credit-approval-errors": approvalErrors, "@/lib/credit-approval-novelty-core": noveltyCore,
+});
 export const service = loadApprovalModule("lib/credit-approval.ts", {
+  "@/lib/credit-approval-errors": approvalErrors,
+  "@/lib/credit-approval-actor": approvalActors,
+  "@/lib/credit-approval-novelty-state": noveltyState,
   "@/lib/credit-approval-policy": policy,
+  "@/lib/credit-approval-reissue-state": reissueState,
   "@/lib/document-blacklist-core": documentCore,
   "@/lib/ally-payments-core": paymentsCore,
   "@/lib/firmaseguro": { isFirmaSeguroCompletedStatus: (status) => status === "COMPLETED" },
@@ -61,11 +74,22 @@ export function approvalFixture() {
 }
 
 export function approvalDatabase(overrides = {}) {
-  const state = { ...approvalFixture(), policy: true, events: [], queries: [], writes: [], ...overrides };
+  const state = { ...approvalFixture(), policy: true, activatedAt: new Date("2026-09-09T00:00:00Z"), events: [], noveltyEvents: [], sharedAccess: true, queries: [], writes: [], ...overrides };
   const db = {
     async $queryRawUnsafe(sql, ...params) {
       state.queries.push({ sql, params });
       if (/^SELECT "id" FROM "CreditApprovalPolicy"/.test(sql)) return state.policy ? [{ id: 1 }] : [];
+      if (sql.startsWith('SELECT credit."id" FROM "Credito" credit')) {
+        assert.match(sql, /credit\."createdAt">=policy\."activatedAt"/);
+        assert.match(sql, /IMPORTACION_MASIVA/);
+        assert.match(sql, /LiquidacionAliadoCredito/);
+        const credit = state.credit;
+        const inScope = credit && state.policy && new Date(credit.createdAt) >= state.activatedAt &&
+          credit.aliadoCodigo !== "FINSERPAY" && !credit.paid &&
+          !["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(credit.estado.trim().toUpperCase()) &&
+          !(credit.equalityService === "IMPORTACION_MASIVA" && credit.contratoSnapshot?.origen?.tipo === "IMPORTACION_MASIVA");
+        return inScope ? [{ id: credit.id }] : [];
+      }
       if (sql.includes('FROM "Credito" credit')) return state.credit ? [state.credit] : [];
       if (sql.includes('FROM "CreditApprovalReview"')) return state.review ? [state.review] : [];
       if (sql.includes('FROM "DataCreditoAssessment"')) {
@@ -77,6 +101,13 @@ export function approvalDatabase(overrides = {}) {
         return item && item.creditId === params[0] && (!params[1] || item.id === params[1]) && item.consumedAt && item.retainedUntil > new Date() ? [item] : [];
       }
       if (sql.includes('FROM "FirmaSeguroProcess"')) return state.document ? [state.document] : [];
+      if (sql.includes('FROM "CreditApprovalReissue"')) return state.reissue ? [state.reissue] : [];
+      if (sql.includes('FROM "CreditApprovalSharedGrant"')) return state.sharedAccess ? [{ id: params[1] }] : [];
+      if (sql.includes('FROM "CreditApprovalNoveltyItem"')) return state.noveltyItems || [];
+      if (sql.includes('FROM "CreditApprovalNovelty"')) {
+        if (sql.includes('FOR UPDATE') && state.novelty?.status === "RESOLVED") return [];
+        return state.novelty ? [state.novelty] : [];
+      }
       throw new Error(`Unexpected query: ${sql}`);
     },
     async $executeRawUnsafe(sql, ...params) {
@@ -86,9 +117,13 @@ export function approvalDatabase(overrides = {}) {
       } else if (sql.includes('UPDATE "CreditApprovalReview"')) {
         assert.equal(params[0], state.credit.id);
         assert.equal(params[4], state.review.revision);
-        Object.assign(state.review, { status: "APPROVED", approvedRevision: state.review.revision, approvedAt: new Date(), approvedByName: params[2], reviewHash: params[3] });
+        Object.assign(state.review, { status: "APPROVED", approvedRevision: state.review.revision, approvedAt: new Date(), approvedByUserId: params[1], approvedByName: params[2], reviewHash: params[3], approvedByKind: params[5], approvedByGrantId: params[6], approvedBySessionId: params[7] });
       } else if (sql.includes('INSERT INTO "CreditApprovalEvent"')) {
         state.events.push(params);
+      } else if (sql.includes('UPDATE "CreditApprovalNovelty"')) {
+        state.novelty.status = "RESOLVED"; state.novelty.version += 1;
+      } else if (sql.includes('INSERT INTO "CreditApprovalNoveltyEvent"')) {
+        state.noveltyEvents.push(params);
       } else throw new Error(`Unexpected write: ${sql}`);
       return 1;
     },

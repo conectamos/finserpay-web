@@ -256,11 +256,11 @@ test("el proceso anterior solo se marca reemplazado y conserva PDF y estado", ()
   const callbackUpdate = storageSource.slice(callbackUpdateStart);
   assert.match(
     callbackUpdate,
-    /"signedDocumentBase64" = COALESCE\([\s\S]*NULLIF\("signedDocumentBase64", ''\),[\s\S]*\$6/
+    /"signedDocumentBase64" = CASE WHEN "supersededAt" IS NOT NULL AND "creditoId" IS NOT NULL[\s\S]*THEN "signedDocumentBase64" ELSE COALESCE\(NULLIF\("signedDocumentBase64", ''\), \$6\) END/
   );
   assert.match(
     callbackUpdate,
-    /"completedAt" = COALESCE\("completedAt", \$9\)/
+    /"completedAt" = CASE WHEN "supersededAt" IS NOT NULL AND "creditoId" IS NOT NULL[\s\S]*THEN "completedAt" ELSE COALESCE\("completedAt", \$9\) END/
   );
 });
 

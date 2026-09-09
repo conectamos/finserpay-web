@@ -1,0 +1,246 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+import { setImmediate } from "node:timers/promises";
+import test from "node:test";
+import * as jsxRuntime from "react/jsx-runtime";
+import ts from "typescript";
+
+const placeholder = (name) => Object.defineProperty(() => null, "name", { value: name });
+const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "LoadingState", "MetricCard", "PageHeader", "StatusPill", "Select"].map((name) => [name, placeholder(name)]));
+const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalNoveltyPanel", "PendingItemEditor"].map((name) => [name, placeholder(name)]));
+const icons = new Proxy({}, { get: (_, key) => placeholder(String(key)) });
+
+function load(path, dependencies, globals = {}) {
+  const source = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  const { outputText } = ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
+  } });
+  const loadedModule = { exports: {} };
+  runInNewContext(outputText, { module: loadedModule, exports: loadedModule.exports, console, AbortController,
+    URLSearchParams, Response, Request, Intl, ...globals, require(name) {
+      if (name === "react/jsx-runtime") return jsxRuntime;
+      if (name === "lucide-react") return icons;
+      assert.ok(name in dependencies, `Unexpected dependency ${name} from ${path}`);
+      return dependencies[name];
+    } }, { filename: path });
+  return loadedModule.exports;
+}
+const client = load("app/dashboard/aprobaciones/approval-client.ts", {});
+const pendingClient = load("app/dashboard/pendientes/pending-client.ts", {});
+
+// Run the actual parent component's handlers and effects with controlled promises.
+// Child widgets stay opaque: their public callbacks drive the same parent state
+// transitions that the browser uses, without depending on private hook indexes.
+function mount(path, dependencies) {
+  const slots = [];
+  const listeners = new Map();
+  const intervals = new Map();
+  let hookIndex = 0, dirty = true, effects = [], tree;
+  const changed = (old, next) => !old || !next || old.length !== next.length || next.some((value, index) => !Object.is(value, old[index]));
+  const hooks = {
+    useState(initial) {
+      const index = hookIndex++;
+      slots[index] ||= { value: typeof initial === "function" ? initial() : initial,
+        set(value) { const next = typeof value === "function" ? value(slots[index].value) : value;
+          if (!Object.is(next, slots[index].value)) { slots[index].value = next; dirty = true; } } };
+      return [slots[index].value, slots[index].set];
+    },
+    useRef(value) { const index = hookIndex++; slots[index] ||= { current: value }; return slots[index]; },
+    useCallback(fn, deps) {
+      const index = hookIndex++;
+      if (!slots[index] || changed(slots[index].deps, deps)) slots[index] = { value: fn, deps };
+      return slots[index].value;
+    },
+    useEffect(effect, deps) {
+      const index = hookIndex++;
+      if (!slots[index] || changed(slots[index].deps, deps)) {
+        effects.push(() => { slots[index]?.cleanup?.(); slots[index] = { deps, cleanup: effect() }; });
+      }
+    },
+  };
+  const Component = load(path, { react: hooks, "@/app/_components/finser-ui": ui, ...dependencies }, {
+    document: { visibilityState: "visible" },
+    window: { addEventListener: (name, callback) => listeners.set(name, callback),
+      removeEventListener: (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); },
+      setInterval: (callback) => { const id = Symbol(); intervals.set(id, callback); return id; },
+      clearInterval: (id) => intervals.delete(id) },
+  }).default;
+  const nodes = (node) => {
+    if (Array.isArray(node)) return node.flatMap((child) => nodes(child));
+    if (!node || typeof node !== "object") return [];
+    return [node, ...nodes(node.props?.children), ...nodes(node.props?.actions)];
+  };
+  return {
+    async flush() {
+      for (let cycle = 0; cycle < 30; cycle++) {
+        if (dirty) {
+          dirty = false; hookIndex = 0; effects = []; tree = Component();
+          for (const effect of effects) effect();
+        }
+        await setImmediate();
+        if (!dirty) return;
+      }
+      assert.fail("Component did not settle");
+    },
+    find(predicate) { const node = nodes(tree).find(predicate); assert.ok(node, "Expected rendered control"); return node; },
+    all(predicate) { return nodes(tree).filter(predicate); },
+    focus() { listeners.get("focus")?.(); },
+    unmount() { for (const slot of slots) slot?.cleanup?.(); },
+  };
+}
+function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
+const row = (id) => ({ id, folio: `QA-${id}`, clienteNombre: `Cliente ${id}`, clienteDocumento: String(id), aliadoNombre: "Aliado QA",
+  fechaCredito: "2026-09-09T12:00:00Z", status: "PENDING", required: true });
+const detail = (id, revision = 1) => ({ ...row(id), score: 800, initialPaymentPercentage: 20, cuotaInicial: 200,
+  creditoAutorizado: 800, approvedLimit: 1000, valorVenta: 1000,
+  review: { required: true, status: "PENDING", revision, reviewHash: String(revision).repeat(64), approvedAt: null, approvedByName: null },
+  capabilities: { canCreateNovelty: true, canCorrectEvidence: true, canReissueSignature: true, correctionBlockedReason: null },
+  reissue: { available: true, blocked: false, operation: null },
+  novelties: { available: true, blocksApproval: false, blocksSettlement: false, pendingCount: 0, answeredCount: 0, novelty: null },
+  canApprove: true, blockingReasons: [], evidence: [], document: { available: true, href: `/doc/${id}`, fileName: "QA.pdf", processUuid: "QA-process" },
+});
+const page = (items) => ({ items, hasMore: false, nextCursor: null });
+function wall(api = {}) {
+  return mount("app/dashboard/aprobaciones/approval-console.tsx", {
+    "./approval-client": { ...client, readApprovalQueue: async () => page([row(81), row(82)]), readApprovalCredit: async (id) => detail(id),
+      approveCreditReview: async () => ({ ok: true }), ...api },
+    "@/app/_components/finser-confirm-dialog": { default: parts.ConfirmDialog },
+    "./last-pdf-page-preview": { default: parts.LastPdfPagePreview },
+    "./approval-evidence-correction": { default: parts.ApprovalEvidenceCorrection },
+    "./approval-signature-reissue": { default: parts.ApprovalSignatureReissue },
+    "./approval-novelty-panel": { default: parts.ApprovalNoveltyPanel },
+  });
+}
+const select = (h, id) => h.find((node) => node.props?.["aria-label"] === `Revisar crédito QA-${id}`).props.onClick();
+const current = (h) => h.find((node) => node.type === parts.ApprovalNoveltyPanel).props;
+const approveButton = (h) => h.find((node) => node.type === ui.Button && node.props.onClick?.name === "requestApproval");
+const confirm = (h) => h.find((node) => node.type === parts.ConfirmDialog && node.props.title === "Aprobar para liquidación");
+
+test("una ficha atrasada no reemplaza al crédito que se seleccionó después", async () => {
+  const first = deferred(); let firstSignal;
+  const h = wall({ readApprovalCredit: (id, signal) => id === 81 ? (firstSignal = signal, first.promise) : Promise.resolve(detail(id)) });
+  await h.flush(); select(h, 81); await h.flush(); select(h, 82); await h.flush();
+  assert.equal(firstSignal.aborted, true);
+  first.resolve(detail(81)); await h.flush();
+  assert.equal(current(h).detail.id, 82);
+  approveButton(h).props.onClick(); await h.flush();
+  assert.match(confirm(h).props.description, /QA-82/);
+  h.unmount();
+});
+
+test("abrir un formulario aborta el refresco en vuelo y conserva la revisión observada", async () => {
+  const background = deferred(); let calls = 0, backgroundSignal;
+  const h = wall({ readApprovalCredit: (id, signal) => ++calls === 1 ? Promise.resolve(detail(id)) : (backgroundSignal = signal, background.promise) });
+  await h.flush(); select(h, 81); await h.flush(); h.focus(); await h.flush();
+  current(h).onBusyChange(true); await h.flush();
+  assert.equal(backgroundSignal.aborted, true);
+  background.resolve(detail(81, 2)); await h.flush();
+  assert.equal(current(h).detail.review.revision, 1);
+  assert.equal(approveButton(h).props.disabled, true);
+  h.unmount();
+});
+
+test("el refresco en segundo plano espera una ficha manual en vuelo antes de consultar una nueva versión", async () => {
+  const manual = deferred(); let calls = 0;
+  const h = wall({ readApprovalCredit: () => ++calls === 1 ? manual.promise : Promise.resolve(detail(81, 2)) });
+  await h.flush(); select(h, 81); await h.flush(); h.focus(); await h.flush();
+  assert.equal(calls, 1, "La ficha manual y el auto-refresh no deben competir por la misma selección");
+  manual.resolve(detail(81)); await h.flush();
+  h.focus(); await h.flush();
+  assert.equal(current(h).detail.review.revision, 2);
+  assert.equal(approveButton(h).props.disabled, true, "La versión nueva requiere revisar de nuevo");
+  h.unmount();
+});
+
+test("una capacidad de firma cambia en el refresco aunque revisión y hash sigan iguales", async () => {
+  let fresh = detail(81);
+  const h = wall({ readApprovalCredit: async () => fresh });
+  await h.flush(); select(h, 81); await h.flush();
+  assert.equal(approveButton(h).props.disabled, false);
+  fresh = { ...fresh, canApprove: false, blockingReasons: ["Firma en proceso"],
+    capabilities: { ...fresh.capabilities, canCreateNovelty: false, canCorrectEvidence: false, canReissueSignature: false },
+    reissue: { available: true, blocked: true, operation: { id: "refirma", status: "PREPARING" } } };
+  h.focus(); await h.flush();
+  assert.equal(current(h).detail.reissue.blocked, true);
+  assert.equal(current(h).detail.canApprove, false);
+  assert.equal(approveButton(h).props.disabled, true);
+  assert.equal(h.all((node) => node.type === "input" && node.props.type === "checkbox").length, 0, "Un cambio de capacidad no inventa revisión documental");
+  fresh = detail(81); h.focus(); await h.flush();
+  assert.equal(current(h).detail.reissue.blocked, false);
+  assert.equal(approveButton(h).props.disabled, false);
+  h.unmount();
+});
+
+test("la corrección recibida exige revisar la nueva versión y un solo OK quita el crédito del muro", async () => {
+  let fresh = { ...detail(81), canApprove: false, blockingReasons: ["Foto pendiente del aliado"] };
+  let queue = [row(81), row(82)]; const approvals = [];
+  const h = wall({ readApprovalQueue: async () => page(queue), readApprovalCredit: async () => fresh,
+    approveCreditReview: async (...args) => { approvals.push(args); queue = queue.filter((item) => item.id !== args[0]); return { ok: true }; } });
+  await h.flush(); select(h, 81); await h.flush(); assert.equal(approveButton(h).props.disabled, true);
+  fresh = detail(81, 2); h.focus(); await h.flush();
+  assert.equal(approveButton(h).props.disabled, true);
+  h.find((node) => node.type === "input" && node.props.type === "checkbox").props.onChange({ target: { checked: true } });
+  await h.flush(); assert.equal(approveButton(h).props.disabled, false);
+  approveButton(h).props.onClick(); await h.flush();
+  const approve = confirm(h).props.onConfirm; approve(); approve(); await h.flush();
+  assert.equal(approvals.length, 1);
+  assert.deepEqual(approvals[0], [81, 2, "2".repeat(64)]);
+  assert.equal(h.all((node) => node.props?.["aria-label"] === "Revisar crédito QA-81").length, 0);
+  assert.equal(h.all((node) => node.type === parts.ApprovalNoveltyPanel).length, 0);
+  h.unmount();
+});
+
+test("un conflicto recarga la ficha y no vuelve a aprobar sin revisión y confirmación nuevas", async () => {
+  let fresh = detail(81); let approvals = 0;
+  const h = wall({ readApprovalCredit: async () => fresh, approveCreditReview: async () => {
+    approvals++; fresh = detail(81, 2); throw new client.ApprovalRequestError("Cambió la foto", 409);
+  } });
+  await h.flush(); select(h, 81); await h.flush(); approveButton(h).props.onClick(); await h.flush();
+  confirm(h).props.onConfirm(); await h.flush();
+  assert.equal(approvals, 1); assert.equal(current(h).detail.review.revision, 2);
+  assert.equal(confirm(h).props.open, false); assert.equal(approveButton(h).props.disabled, true);
+  assert.equal(h.find((node) => node.type === "input" && node.props.type === "checkbox").props.checked, false);
+  h.unmount();
+});
+
+test("si no se puede comprobar la ficha conserva selección pero bloquea el OK", async () => {
+  let fail = false;
+  const h = wall({ readApprovalCredit: async () => { if (fail) throw new Error("Sin conexión"); return detail(81); } });
+  await h.flush(); select(h, 81); await h.flush(); fail = true;
+  h.find((node) => node.type === ui.Button && node.props.children?.some?.((child) => child === "Actualizar expediente")).props.onClick();
+  await h.flush();
+  assert.equal(current(h).detail.id, 81); assert.equal(approveButton(h).props.disabled, true);
+  assert.equal(current(h).disabled, true);
+  h.unmount();
+});
+
+test("guardar desde PENDIENTES refresca automáticamente y bloquea solo la foto respondida", async () => {
+  const open = { id: "photo-1", key: "foto-entrega", label: "Foto entrega", status: "OPEN", version: 1, reason: "Foto incompleta" };
+  const second = { ...open, id: "photo-2", key: "foto-remision", label: "Foto remisión" };
+  let fresh = { ...row(81), sedeNombre: "Sede QA", canRespond: true, blockedReason: null,
+    novelty: { id: "case-1", status: "WAITING_ALLY", version: 1, pendingCount: 2, answeredCount: 0, items: [open, second] } };
+  let reads = 0, lists = 0;
+  const h = mount("app/dashboard/pendientes/pending-console.tsx", {
+    "./pending-client": { ...pendingClient, listPendingCredits: async () => { lists++; return page([fresh]); },
+      readPendingCredit: async () => { reads++; return fresh; } },
+    "./pending-item-editor": { default: parts.PendingItemEditor },
+  });
+  await h.flush(); h.find((node) => node.props?.["aria-label"] === "Ver novedades del crédito QA-81").props.onClick(); await h.flush();
+  const editor = h.find((node) => node.type === parts.PendingItemEditor && node.props.issue.id === "photo-1");
+  editor.props.onBusyChange("photo-1", true); await h.flush();
+  fresh = { ...fresh, novelty: { ...fresh.novelty, version: 2, pendingCount: 1, answeredCount: 1,
+    items: [{ ...open, version: 2, status: "RESPONDED" }, second] } };
+  await editor.props.onUpdated("Foto guardada: vuelve al analista"); await h.flush();
+  // Child cleanup after its key changes releases the parent's draft lock.
+  editor.props.onBusyChange("photo-1", false); await h.flush();
+  assert.equal(reads, 2); assert.equal(lists, 2);
+  const editors = h.all((node) => node.type === parts.PendingItemEditor);
+  const answered = editors.find((node) => node.props.issue.id === "photo-1").props;
+  const remaining = editors.find((node) => node.props.issue.id === "photo-2").props;
+  assert.equal(pendingClient.canRespondToPendingIssue(answered.detail, answered.issue), false);
+  assert.equal(pendingClient.canRespondToPendingIssue(remaining.detail, remaining.issue), true);
+  assert.equal(remaining.disabled, false);
+  assert.equal(remaining.detail.novelty.pendingCount, 1);
+  h.unmount();
+});
