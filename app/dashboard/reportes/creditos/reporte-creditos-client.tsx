@@ -639,6 +639,9 @@ export default function ReporteCreditosPage({
                   <p className="mt-0.5 text-sm text-[var(--fp-muted)]">
                     {item.clienteDocumento || "Sin documento"}
                   </p>
+                  <p className="mt-1 break-words text-xs text-[var(--fp-muted)]">
+                    Tel. {item.clienteTelefono || "Sin registrar"}
+                  </p>
                 </div>
 
                 <div className="mt-3 grid gap-3 border-t border-[var(--fp-border)] pt-3 sm:grid-cols-2">
@@ -734,6 +737,9 @@ export default function ReporteCreditosPage({
                       <p className="font-bold leading-5 text-[var(--fp-graphite)]">{item.clienteNombre}</p>
                       <p className="mt-1 text-xs text-[var(--fp-muted)]">
                         {item.clienteDocumento || "Sin documento"}
+                      </p>
+                      <p className="mt-1 break-words text-xs text-[var(--fp-muted)]">
+                        Tel. {item.clienteTelefono || "Sin registrar"}
                       </p>
                     </td>
                     <td className="px-3 py-2 align-top">
