@@ -80,6 +80,7 @@ type GateView =
   | "rejected"
   | "active-request"
   | "seller-session-required"
+  | "daily-limit-reached"
   | "unavailable"
   | "technical-error"
   | "approved"
@@ -116,6 +117,13 @@ type AssessmentFallback = {
   assessmentId?: string;
   documentNumber?: string;
   firstSurname?: string;
+};
+
+type DailyQueryLimitReached = {
+  limit: number | null;
+  used: number | null;
+  remaining: number | null;
+  resetsAt: string | null;
 };
 
 const CONSENT_ATTESTATION =
@@ -326,6 +334,39 @@ function normalizeDecision(payload: JsonRecord) {
   return null;
 }
 
+function normalizeDailyQueryLimitReached(
+  payload: JsonRecord
+): DailyQueryLimitReached {
+  const source = isRecord(payload.dailyQuota) ? payload.dailyQuota : payload;
+  const readNonNegativeInteger = (value: unknown) => {
+    const parsed = readNumber(value);
+    return parsed !== null && Number.isInteger(parsed) && parsed >= 0
+      ? parsed
+      : null;
+  };
+
+  return {
+    limit: readNonNegativeInteger(source.limit),
+    used: readNonNegativeInteger(source.used),
+    remaining: readNonNegativeInteger(source.remaining),
+    resetsAt: readString(source.resetsAt),
+  };
+}
+
+function formatDailyQueryLimitReset(value: string | null) {
+  if (!value) return "al iniciar el siguiente día";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "al iniciar el siguiente día";
+  }
+
+  return new Intl.DateTimeFormat("es-CO", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "America/Bogota",
+  }).format(date);
+}
+
 function isRecoverableInitialAssessmentFailure(
   response: Response,
   payload: JsonRecord
@@ -478,12 +519,13 @@ export default function DatacreditoPrequalificationGate({
       normalizedInitialDocument &&
       normalizedInitialErrorCode === "ASSESSMENT_IDENTITY_MISMATCH"
   );
-  const rateLimitedRecovery = Boolean(
+  const newQueryRetryRecovery = Boolean(
     initialSolicitudId &&
       !initialAssessmentId &&
       normalizedInitialDocument &&
       normalizedInitialSurname &&
-      normalizedInitialErrorCode === "RATE_LIMITED"
+      (normalizedInitialErrorCode === "RATE_LIMITED" ||
+        normalizedInitialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED")
   );
   const [view, setView] = useState<GateView>("loading");
   const [documentNumber, setDocumentNumber] = useState(
@@ -504,6 +546,8 @@ export default function DatacreditoPrequalificationGate({
   const [correlationId, setCorrelationId] = useState<string | null>(null);
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   const [consumedCreditId, setConsumedCreditId] = useState<number | null>(null);
+  const [dailyQueryLimitReached, setDailyQueryLimitReached] =
+    useState<DailyQueryLimitReached | null>(null);
   const [retryMode, setRetryMode] = useState<"bootstrap" | "form">("bootstrap");
   const [approvedResult, setApprovedResult] =
     useState<DataCreditoApprovedResult | null>(null);
@@ -664,6 +708,7 @@ export default function DatacreditoPrequalificationGate({
       setView("loading");
       setCorrelationId(null);
       setConsumedCreditId(null);
+      setDailyQueryLimitReached(null);
       setApprovedResult(null);
       setRetryMode("bootstrap");
 
@@ -712,7 +757,7 @@ export default function DatacreditoPrequalificationGate({
         }
 
         if (!initialAssessmentId) {
-          if (identityMismatchRecovery || rateLimitedRecovery) {
+          if (identityMismatchRecovery || newQueryRetryRecovery) {
             setConsentAccepted(false);
             setFormErrors({});
             setRetryMode("form");
@@ -851,7 +896,7 @@ export default function DatacreditoPrequalificationGate({
       initialAssessmentId,
       initialSolicitudId,
       identityMismatchRecovery,
-      rateLimitedRecovery,
+      newQueryRetryRecovery,
       normalizedInitialDocument,
       normalizedInitialSurname,
       platform,
@@ -905,6 +950,7 @@ export default function DatacreditoPrequalificationGate({
 
     setView("submitting");
     setCorrelationId(null);
+    setDailyQueryLimitReached(null);
     setConflictMessage(null);
     setRetryMode("form");
 
@@ -931,6 +977,17 @@ export default function DatacreditoPrequalificationGate({
       const payload = await readJson(response);
 
       if (!response.ok || payload.ok === false) {
+        if (
+          response.status === 429 &&
+          getResponseCode(payload) === "ALLY_DAILY_QUERY_LIMIT_REACHED"
+        ) {
+          setDailyQueryLimitReached(
+            normalizeDailyQueryLimitReached(payload)
+          );
+          setCorrelationId(getCorrelationId(payload, response));
+          setView("daily-limit-reached");
+          return;
+        }
         if (
           identityMismatchRecovery &&
           getResponseCode(payload) === "ASSESSMENT_IDENTITY_MISMATCH"
@@ -1217,6 +1274,84 @@ export default function DatacreditoPrequalificationGate({
         >
           Ir a perfiles
           <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </Card>
+    );
+  }
+
+  if (view === "daily-limit-reached") {
+    return (
+      <Card
+        className="border-[var(--fp-amber)] p-6 sm:p-8"
+        role="status"
+        aria-labelledby="datacredito-daily-limit-title"
+      >
+        <div className="flex items-start gap-4">
+          <span
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-amber-soft)] text-[var(--fp-amber)]"
+            aria-hidden="true"
+          >
+            <CircleAlert className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <Badge tone="warning">Límite operativo</Badge>
+            <h2
+              id="datacredito-daily-limit-title"
+              className="mt-3 text-xl font-black text-[var(--fp-graphite)]"
+            >
+              Cupo diario de consultas agotado
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
+              El aliado alcanzó el número de consultas autorizado para hoy. No
+              se realizó una nueva consulta a DataCrédito y esto no corresponde
+              a un rechazo crediticio.
+            </p>
+          </div>
+        </div>
+
+        {dailyQueryLimitReached &&
+        dailyQueryLimitReached.limit !== null &&
+        dailyQueryLimitReached.used !== null ? (
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
+              <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
+                Uso de hoy
+              </p>
+              <p className="mt-2 text-2xl font-black text-[var(--fp-graphite)]">
+                {dailyQueryLimitReached.used} de{" "}
+                {dailyQueryLimitReached.limit}
+              </p>
+            </div>
+            <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] p-4">
+              <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
+                Consultas restantes
+              </p>
+              <p className="mt-2 text-2xl font-black text-[var(--fp-graphite)]">
+                {dailyQueryLimitReached.remaining ?? 0}
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        <p className="mt-5 text-sm font-semibold leading-6 text-[var(--fp-graphite)]">
+          El cupo se restablece{" "}
+          {formatDailyQueryLimitReset(dailyQueryLimitReached?.resetsAt || null)} (hora de Bogotá).
+        </p>
+        <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
+          Los datos ingresados se conservaron. Continúa cuando el cupo vuelva a
+          estar disponible o cuando el administrador lo actualice.
+        </p>
+        {correlationId ? (
+          <p className="mt-3 break-all text-xs text-[var(--fp-muted)]">
+            Código de seguimiento: <code>{correlationId}</code>
+          </p>
+        ) : null}
+        <Link
+          href="/dashboard/creditos?mode=create-client"
+          className="fp-ui-button is-secondary mt-6 focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Volver a créditos
         </Link>
       </Card>
     );

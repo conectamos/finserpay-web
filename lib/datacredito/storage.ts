@@ -144,6 +144,11 @@ export type DataCreditoAssessmentReuseInput = DataCreditoAssessmentScope & {
 
 type CreatePendingAssessmentInput = DataCreditoAssessmentReuseInput;
 
+export type DataCreditoDailyQuotaReservation = {
+  allyId: number;
+  businessDate: string;
+};
+
 type CompleteAssessmentInput = {
   id: string;
   score: number;
@@ -155,9 +160,20 @@ type CompleteAssessmentInput = {
 };
 
 export type DataCreditoAssessmentReservation =
-  | { kind: "CREATED"; assessment: DataCreditoAssessmentRow }
+  | {
+      kind: "CREATED";
+      assessment: DataCreditoAssessmentRow;
+      dailyQuotaReservation: DataCreditoDailyQuotaReservation;
+    }
   | { kind: "IN_PROGRESS" }
   | { kind: "RATE_LIMITED" }
+  | {
+      kind: "DAILY_QUOTA_EXHAUSTED";
+      limit: number;
+      used: number;
+      remaining: 0;
+      resetsAt: Date;
+    }
   | { kind: "ALREADY_CONSUMED"; assessment: DataCreditoAssessmentRow }
   | { kind: "IDENTITY_MISMATCH" }
   | { kind: "REQUIRES_REVIEW" }
@@ -739,8 +755,245 @@ async function verifyDataCreditoPolicyProfileSchema() {
   }
 }
 
+async function verifyDataCreditoDailyQuotaSchema() {
+  const tableRows = await prisma.$queryRawUnsafe<
+    Array<{
+      allyDailyQuotaColumnPresent: boolean;
+      auditHasPrimaryKey: boolean;
+      auditTable: string | null;
+      usageHasPrimaryKey: boolean;
+      usageTable: string | null;
+    }>
+  >(`
+    SELECT
+      to_regclass('"DataCreditoDailyQuotaUsage"')::text AS "usageTable",
+      to_regclass('"DataCreditoDailyQuotaAudit"')::text AS "auditTable",
+      EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = to_regclass('"Aliado"')
+          AND attname = 'dataCreditoDailyQueryLimit'
+          AND attnum > 0 AND NOT attisdropped
+      ) AS "allyDailyQuotaColumnPresent",
+      EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = to_regclass('"DataCreditoDailyQuotaUsage"')
+          AND contype = 'p'
+      ) AS "usageHasPrimaryKey",
+      EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = to_regclass('"DataCreditoDailyQuotaAudit"')
+          AND contype = 'p'
+      ) AS "auditHasPrimaryKey"
+  `);
+  const tableState = tableRows[0];
+  if (
+    !tableState?.allyDailyQuotaColumnPresent ||
+    !tableState.usageTable ||
+    !tableState.auditTable ||
+    !tableState.usageHasPrimaryKey ||
+    !tableState.auditHasPrimaryKey
+  ) {
+    throw schemaNotReady();
+  }
+
+  const columnRows = await prisma.$queryRawUnsafe<
+    Array<{ columnName: string; isNotNull: boolean; tableName: string }>
+  >(`
+    SELECT c.relname AS "tableName", a.attname AS "columnName",
+      a.attnotnull AS "isNotNull"
+    FROM pg_attribute a
+    INNER JOIN pg_class c ON c.oid = a.attrelid
+    WHERE a.attrelid IN (
+      to_regclass('"DataCreditoDailyQuotaUsage"'),
+      to_regclass('"DataCreditoDailyQuotaAudit"')
+    ) AND a.attnum > 0 AND NOT a.attisdropped
+  `);
+  const requiredColumns: Record<string, string[]> = {
+    DataCreditoDailyQuotaUsage: [
+      "allyId", "businessDate", "usedCount", "createdAt", "updatedAt",
+    ],
+    DataCreditoDailyQuotaAudit: [
+      "id", "allyId", "previousLimit", "dailyLimit", "actorUserId",
+      "requestCorrelationId", "reason", "createdAt",
+    ],
+  };
+  const nullableColumns = new Set([
+    "DataCreditoDailyQuotaAudit:previousLimit",
+    "DataCreditoDailyQuotaAudit:dailyLimit",
+    "DataCreditoDailyQuotaAudit:reason",
+  ]);
+  for (const [tableName, columns] of Object.entries(requiredColumns)) {
+    for (const columnName of columns) {
+      const column = columnRows.find(
+        (candidate) =>
+          candidate.tableName === tableName && candidate.columnName === columnName
+      );
+      if (
+        !column ||
+        (!nullableColumns.has(`${tableName}:${columnName}`) && !column.isNotNull)
+      ) {
+        throw schemaNotReady();
+      }
+    }
+  }
+
+  const constraintRows = await prisma.$queryRawUnsafe<
+    Array<{
+      constraintName: string;
+      constraintType: string;
+      deleteAction: string;
+      isValid: boolean;
+      referencedTable: string | null;
+      tableName: string;
+    }>
+  >(`
+    SELECT constraint_state.conname AS "constraintName",
+      constraint_state.contype::text AS "constraintType",
+      constraint_state.confdeltype::text AS "deleteAction",
+      constraint_state.convalidated AS "isValid",
+      referenced_table.relname AS "referencedTable",
+      source_table.relname AS "tableName"
+    FROM pg_constraint constraint_state
+    INNER JOIN pg_class source_table
+      ON source_table.oid = constraint_state.conrelid
+    LEFT JOIN pg_class referenced_table
+      ON referenced_table.oid = constraint_state.confrelid
+    WHERE constraint_state.conrelid IN (
+      to_regclass('"Aliado"'),
+      to_regclass('"DataCreditoDailyQuotaUsage"'),
+      to_regclass('"DataCreditoDailyQuotaAudit"')
+    )
+  `);
+  const constraints = new Map(
+    constraintRows.map((row) => [`${row.tableName}:${row.constraintName}`, row])
+  );
+  const validCheck = (tableName: string, constraintName: string) => {
+    const constraint = constraints.get(`${tableName}:${constraintName}`);
+    return constraint?.constraintType === "c" && constraint.isValid;
+  };
+  const validAllyForeignKey = (tableName: string, constraintName: string) => {
+    const constraint = constraints.get(`${tableName}:${constraintName}`);
+    return (
+      constraint?.constraintType === "f" &&
+      constraint.deleteAction === "r" &&
+      constraint.isValid &&
+      constraint.referencedTable === "Aliado"
+    );
+  };
+  if (
+    !validCheck("Aliado", "Aliado_dataCreditoDailyQueryLimit_check") ||
+    !validCheck(
+      "DataCreditoDailyQuotaUsage",
+      "DataCreditoDailyQuotaUsage_used_check"
+    ) ||
+    !validCheck(
+      "DataCreditoDailyQuotaAudit",
+      "DataCreditoDailyQuotaAudit_previous_limit_check"
+    ) ||
+    !validCheck(
+      "DataCreditoDailyQuotaAudit",
+      "DataCreditoDailyQuotaAudit_daily_limit_check"
+    ) ||
+    !validAllyForeignKey(
+      "DataCreditoDailyQuotaUsage",
+      "DataCreditoDailyQuotaUsage_ally_fkey"
+    ) ||
+    !validAllyForeignKey(
+      "DataCreditoDailyQuotaAudit",
+      "DataCreditoDailyQuotaAudit_ally_fkey"
+    )
+  ) {
+    throw schemaNotReady();
+  }
+
+  const indexRows = await prisma.$queryRawUnsafe<
+    Array<
+      DataCreditoSchemaIndexMetadata & {
+        indexName: string;
+        tableName: string;
+      }
+    >
+  >(`
+    SELECT
+      ARRAY(
+        SELECT indexed_attribute.attname::text
+        FROM unnest(index_state.indkey::smallint[]) WITH ORDINALITY
+          AS index_key(attnum, position)
+        LEFT JOIN pg_attribute indexed_attribute
+          ON indexed_attribute.attrelid = index_state.indrelid
+          AND indexed_attribute.attnum = index_key.attnum
+          AND index_key.attnum > 0
+        WHERE index_key.position <= index_state.indnkeyatts
+        ORDER BY index_key.position
+      ) AS "columnNames",
+      ARRAY(
+        SELECT CASE
+          WHEN index_key.attnum = 0 THEN pg_get_indexdef(
+            index_state.indexrelid,
+            index_key.position::integer,
+            false
+          )
+          ELSE NULL
+        END
+        FROM unnest(index_state.indkey::smallint[]) WITH ORDINALITY
+          AS index_key(attnum, position)
+        WHERE index_key.position <= index_state.indnkeyatts
+        ORDER BY index_key.position
+      ) AS "expressionDefinitions",
+      index_class.relname AS "indexName",
+      index_table.relname AS "tableName",
+      index_state.indisunique AS "isUnique",
+      index_state.indisvalid AS "isValid",
+      pg_get_expr(index_state.indpred, index_state.indrelid) AS "predicate"
+    FROM pg_index index_state
+    INNER JOIN pg_class index_class ON index_class.oid = index_state.indexrelid
+    INNER JOIN pg_class index_table ON index_table.oid = index_state.indrelid
+    WHERE index_state.indrelid IN (
+      to_regclass('"DataCreditoDailyQuotaUsage"'),
+      to_regclass('"DataCreditoDailyQuotaAudit"')
+    )
+  `);
+  const index = (tableName: string, indexName: string) =>
+    indexRows.find(
+      (candidate) =>
+        candidate.tableName === tableName && candidate.indexName === indexName
+    );
+  if (
+    !matchesDataCreditoSchemaIndex(
+      index("DataCreditoDailyQuotaUsage", "DataCreditoDailyQuotaUsage_pkey"),
+      {
+        keys: [{ column: "allyId" }, { column: "businessDate" }],
+        predicate: null,
+        unique: true,
+      }
+    ) ||
+    !matchesDataCreditoSchemaIndex(
+      index("DataCreditoDailyQuotaAudit", "DataCreditoDailyQuotaAudit_pkey"),
+      {
+        keys: [{ column: "id" }],
+        predicate: null,
+        unique: true,
+      }
+    ) ||
+    !matchesDataCreditoSchemaIndex(
+      index(
+        "DataCreditoDailyQuotaAudit",
+        "DataCreditoDailyQuotaAudit_ally_created_idx"
+      ),
+      {
+        keys: [{ column: "allyId" }, { column: "createdAt" }],
+        predicate: null,
+        unique: false,
+      }
+    )
+  ) {
+    throw schemaNotReady();
+  }
+}
+
 async function verifyDataCreditoSchema() {
   await verifyDataCreditoPolicyProfileSchema();
+  await verifyDataCreditoDailyQuotaSchema();
   const tableRows = await prisma.$queryRawUnsafe<
     Array<{
       adminAuditHasPrimaryKey: boolean;
@@ -1938,6 +2191,135 @@ async function countRecentDataCreditoAssessments(
   return Number(rows[0]?.count || 0);
 }
 
+type DataCreditoDailyQuotaState =
+  | {
+      allowed: true;
+      limit: number | null;
+      used: number;
+      remaining: number | null;
+      resetsAt: Date;
+      businessDate: string;
+    }
+  | {
+      allowed: false;
+      limit: number;
+      used: number;
+      remaining: 0;
+      resetsAt: Date;
+    };
+
+async function reserveDataCreditoDailyQuota(
+  aliadoId: number | null,
+  database: DataCreditoQueryExecutor
+): Promise<DataCreditoDailyQuotaState> {
+  if (!Number.isInteger(aliadoId) || Number(aliadoId) <= 0) {
+    throw new DataCreditoStorageConfigurationError(
+      "El usuario no tiene un aliado valido para reservar el cupo diario",
+      "SCHEMA_NOT_READY"
+    );
+  }
+
+  const allyRows = await database.$queryRawUnsafe<
+    Array<{ dailyQueryLimit: number | null }>
+  >(
+    `
+      SELECT "dataCreditoDailyQueryLimit" AS "dailyQueryLimit"
+      FROM "Aliado"
+      WHERE "id" = $1
+      FOR SHARE
+    `,
+    aliadoId
+  );
+  if (!allyRows[0]) {
+    throw new DataCreditoStorageConfigurationError(
+      "El aliado de la evaluacion no existe",
+      "SCHEMA_NOT_READY"
+    );
+  }
+
+  const limit = allyRows[0].dailyQueryLimit;
+  if (
+    limit !== null &&
+    (!Number.isInteger(limit) || limit < 0 || limit > 10_000)
+  ) {
+    throw schemaNotReady();
+  }
+
+  // Capture the Colombia date only after the ally lock was acquired. Both the
+  // UPSERT and the exhaustion read reuse it, even if execution crosses midnight.
+  const clockRows = await database.$queryRawUnsafe<
+    Array<{ businessDate: string; resetsAt: Date }>
+  >(`
+    SELECT
+      to_char(quota_clock."businessDate", 'YYYY-MM-DD') AS "businessDate",
+      (
+        (quota_clock."businessDate" + 1)::timestamp
+        AT TIME ZONE 'America/Bogota'
+      ) AS "resetsAt"
+    FROM (
+      SELECT
+        (clock_timestamp() AT TIME ZONE 'America/Bogota')::date AS "businessDate"
+    ) quota_clock
+  `);
+  const quotaClock = clockRows[0];
+  if (!quotaClock || !/^\d{4}-\d{2}-\d{2}$/.test(quotaClock.businessDate)) {
+    throw schemaNotReady();
+  }
+
+  const businessDate = quotaClock.businessDate;
+  const rows = await database.$queryRawUnsafe<Array<{ used: number }>>(
+    `
+      INSERT INTO "DataCreditoDailyQuotaUsage" AS usage (
+        "allyId", "businessDate", "usedCount", "createdAt", "updatedAt"
+      )
+      SELECT $1, $3::date, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      WHERE $2::integer IS NULL OR $2::integer > 0
+      ON CONFLICT ("allyId", "businessDate") DO UPDATE
+      SET "usedCount" = usage."usedCount" + 1,
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE $2::integer IS NULL OR usage."usedCount" < $2::integer
+      RETURNING "usedCount" AS "used"
+    `,
+    aliadoId,
+    limit,
+    businessDate
+  );
+  const reserved = rows[0];
+  if (reserved) {
+    const used = Number(reserved.used);
+    return {
+      allowed: true,
+      limit,
+      used,
+      remaining: limit === null ? null : Math.max(0, limit - used),
+      resetsAt: quotaClock.resetsAt,
+      businessDate,
+    };
+  }
+
+  const stateRows = await database.$queryRawUnsafe<Array<{ used: number }>>(
+    `
+      SELECT COALESCE(usage."usedCount", 0)::integer AS "used"
+      FROM (SELECT 1) singleton
+      LEFT JOIN "DataCreditoDailyQuotaUsage" usage
+        ON usage."allyId" = $1
+       AND usage."businessDate" = $2::date
+    `,
+    aliadoId,
+    businessDate
+  );
+  const current = stateRows[0];
+  if (limit === null || !current) throw schemaNotReady();
+
+  return {
+    allowed: false,
+    limit,
+    used: Number(current.used),
+    remaining: 0,
+    resetsAt: quotaClock.resetsAt,
+  };
+}
+
 async function insertPendingDataCreditoAssessment(
   input: CreatePendingAssessmentInput,
   database: DataCreditoQueryExecutor
@@ -2065,12 +2447,36 @@ export async function reserveDataCreditoAssessment(
         return { kind: "RATE_LIMITED" };
       }
 
+      // Only new paid inquiries reach this point. Provider-side outcomes remain
+      // consumed; an ordinary local pre-dispatch failure can compensate the exact
+      // date reservation returned here.
+      const dailyQuota = await reserveDataCreditoDailyQuota(
+        input.aliadoId,
+        transaction
+      );
+      if (!dailyQuota.allowed) {
+        return {
+          kind: "DAILY_QUOTA_EXHAUSTED",
+          limit: dailyQuota.limit,
+          used: dailyQuota.used,
+          remaining: 0,
+          resetsAt: dailyQuota.resetsAt,
+        };
+      }
+
       const assessment = await insertPendingDataCreditoAssessment(input, transaction);
       if (!assessment) {
         throw new Error("DATACREDITO_ASSESSMENT_RESERVATION_FAILED");
       }
 
-      return { kind: "CREATED", assessment };
+      return {
+        kind: "CREATED",
+        assessment,
+        dailyQuotaReservation: {
+          allyId: Number(input.aliadoId),
+          businessDate: dailyQuota.businessDate,
+        },
+      };
     },
     { maxWait: 5_000, timeout: 10_000 }
   );
@@ -2131,6 +2537,68 @@ export async function failDataCreditoAssessment(input: {
     input.durationMs ?? null
   );
   return rows[0] || null;
+}
+
+export async function failDataCreditoAssessmentBeforeProviderDispatch(input: {
+  id: string;
+  errorCode: string;
+  dailyQuotaReservation: DataCreditoDailyQuotaReservation;
+}) {
+  await ensureDataCreditoSchema();
+  const { allyId, businessDate } = input.dailyQuotaReservation;
+  if (
+    !Number.isInteger(allyId) ||
+    allyId <= 0 ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(businessDate)
+  ) {
+    throw new Error("DATACREDITO_DAILY_QUOTA_RESERVATION_INVALID");
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    const failedRows = await transaction.$queryRawUnsafe<
+      DataCreditoAssessmentRow[]
+    >(
+      `
+        UPDATE "DataCreditoAssessment"
+        SET "status" = 'NO_EVALUADO',
+            "errorCode" = $2,
+            "transactionCode" = NULL,
+            "providerStatus" = NULL,
+            "durationMs" = NULL,
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "id" = $1
+          AND "status" = 'PENDING'
+          AND "aliadoId" = $3
+        RETURNING *
+      `,
+      input.id,
+      input.errorCode,
+      allyId
+    );
+    const failed = failedRows[0];
+    if (!failed) return null;
+
+    const compensatedRows = await transaction.$queryRawUnsafe<
+      Array<{ usedCount: number }>
+    >(
+      `
+        UPDATE "DataCreditoDailyQuotaUsage"
+        SET "usedCount" = "usedCount" - 1,
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "allyId" = $1
+          AND "businessDate" = $2::date
+          AND "usedCount" > 0
+        RETURNING "usedCount"
+      `,
+      allyId,
+      businessDate
+    );
+    if (!compensatedRows[0]) {
+      throw new Error("DATACREDITO_DAILY_QUOTA_COMPENSATION_FAILED");
+    }
+
+    return failed;
+  });
 }
 
 export async function getDataCreditoAssessmentById(id: string) {

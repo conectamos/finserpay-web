@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [consoleSource, pageSource, manualCapSource] = await Promise.all([
+const [consoleSource, pageSource, manualCapSource, gateSource] = await Promise.all([
   readFile(
     new URL(
       "../app/dashboard/parametros-credito/datacredito-policy-console.tsx",
@@ -20,6 +20,13 @@ const [consoleSource, pageSource, manualCapSource] = await Promise.all([
   readFile(
     new URL(
       "../app/dashboard/parametros-credito/manual-credit-cap-console.tsx",
+      import.meta.url
+    ),
+    "utf8"
+  ),
+  readFile(
+    new URL(
+      "../app/dashboard/creditos/datacredito-prequalification-gate.tsx",
       import.meta.url
     ),
     "utf8"
@@ -79,14 +86,14 @@ test("gestiona un catálogo de políticas con revisiones inmutables", () => {
   assert.match(consoleSource, /no reemplazará ni modificará revisiones históricas/);
 });
 
-test("asigna siempre una política nombrada a cada aliado con concurrencia optimista", () => {
+test("guarda política y cupo diario por aliado con concurrencia optimista", () => {
   assert.match(consoleSource, /action: "ASSIGN_ALLY"/);
   assert.match(consoleSource, /expectedPolicyId: change\.ally\.policyId/);
   assert.match(consoleSource, /POLICY_ASSIGNMENT_CONFLICT/);
   assert.match(consoleSource, /value=\{draftPolicyId\}/);
-  assert.match(consoleSource, /Guardar reasignaciones/);
-  assert.match(consoleSource, /exactamente una a cada aliado/);
-  assert.match(consoleSource, /solo (?:afectan|se aplicarán a) consultas futuras/i);
+  assert.match(consoleSource, /Guardar políticas y cupos diarios/);
+  assert.match(consoleSource, /exactamente una política/);
+  assert.match(consoleSource, /solo afecta las nuevas[\s\S]*consultas/);
 });
 
 test("la consola conserva navegación accesible y estados responsivos", () => {
@@ -286,4 +293,68 @@ test("no activa la mora total en revisiones históricas y la versiona en ambos p
     consoleSource,
     /Mora TELCOS: Android superior a[\s\S]*Mora vigente total: Android superior a[\s\S]*únicamente en consultas futuras/
   );
+});
+
+test("configura y muestra el cupo diario de consultas de cada aliado", () => {
+  assert.match(consoleSource, /dailyQueryLimit: number \| null/);
+  assert.match(consoleSource, /dailyQueriesUsed: number/);
+  assert.match(consoleSource, /dailyQueriesRemaining: number \| null/);
+  assert.match(consoleSource, /dailyQuotaResetsAt: string/);
+  assert.match(consoleSource, /MAX_ALLY_DAILY_QUERY_LIMIT = 10_000/);
+  assert.match(consoleSource, /Cupo diario/);
+  assert.match(consoleSource, /Uso hoy/);
+  assert.match(consoleSource, /Vacío: sin límite · 0: consultas bloqueadas/);
+  assert.match(
+    consoleSource,
+    /type="number"[\s\S]*min=\{0\}[\s\S]*max=\{MAX_ALLY_DAILY_QUERY_LIMIT\}/
+  );
+  assert.match(consoleSource, /dailyQueriesRemaining/);
+  assert.match(consoleSource, /timeZone: "America\/Bogota"/);
+  assert.match(consoleSource, /hora de Bogotá/);
+});
+
+test("envía política y cupo en un solo flujo de guardado", () => {
+  assert.match(consoleSource, /policyChanged: boolean/);
+  assert.match(consoleSource, /dailyQueryLimitChanged: boolean/);
+  assert.match(consoleSource, /if \(change\.policyChanged\)/);
+  assert.match(consoleSource, /if \(change\.dailyQueryLimitChanged\)/);
+  assert.match(consoleSource, /action: "SET_ALLY_DAILY_QUOTA"/);
+  assert.match(consoleSource, /dailyQueryLimit: change\.dailyQueryLimit/);
+  assert.match(
+    consoleSource,
+    /expectedDailyQueryLimit: change\.ally\.dailyQueryLimit/
+  );
+  assert.match(consoleSource, /ALLY_DAILY_QUERY_LIMIT_CONFLICT/);
+  assert.match(consoleSource, /confirmLabel="Guardar cambios"/);
+  assert.equal(
+    (consoleSource.match(/onClick=\{openAssignmentConfirmation\}/g) || [])
+      .length,
+    1
+  );
+});
+
+test("presenta el agotamiento como límite operativo y conserva los datos", () => {
+  assert.match(gateSource, /\| "daily-limit-reached"/);
+  assert.match(gateSource, /response\.status === 429/);
+  assert.match(gateSource, /ALLY_DAILY_QUERY_LIMIT_REACHED/);
+  assert.match(gateSource, /setView\("daily-limit-reached"\)/);
+
+  const limitPanelStart = gateSource.indexOf(
+    'if (view === "daily-limit-reached")'
+  );
+  const nextPanelStart = gateSource.indexOf(
+    'if (view === "technical-error")',
+    limitPanelStart
+  );
+  const limitPanel = gateSource.slice(limitPanelStart, nextPanelStart);
+
+  assert.ok(limitPanelStart >= 0);
+  assert.match(limitPanel, /tone="warning"/);
+  assert.match(limitPanel, /Cupo diario de consultas agotado/);
+  assert.match(limitPanel, /no corresponde[\s\S]*a un rechazo crediticio/i);
+  assert.match(limitPanel, /Los datos ingresados se conservaron/);
+  assert.match(limitPanel, /hora de Bogotá/);
+  assert.match(limitPanel, /Volver a créditos/);
+  assert.doesNotMatch(limitPanel, /Solicitud no aprobada/);
+  assert.doesNotMatch(limitPanel, /Intentar de nuevo/);
 });

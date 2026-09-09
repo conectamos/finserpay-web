@@ -43,6 +43,20 @@ test("el esquema asigna exactamente un perfil requerido a cada aliado", () => {
   assert.match(setupSql, /ON DELETE RESTRICT/);
 });
 
+test("el esquema modela cupo diario nullable, consumo agregado y auditoria", () => {
+  const ally = section(schema, "model Aliado {", "model DataCreditoPolicyProfile {");
+  assert.match(ally, /dataCreditoDailyQueryLimit\s+Int\?/);
+  assert.match(schema, /model DataCreditoDailyQuotaUsage \{/);
+  assert.match(schema, /@@id\(\[allyId, businessDate\]\)/);
+  assert.match(schema, /model DataCreditoDailyQuotaAudit \{/);
+  assert.match(schema, /previousLimit\s+Int\?/);
+  assert.match(schema, /dailyLimit\s+Int\?/);
+  assert.match(setupSql, /Aliado_dataCreditoDailyQueryLimit_check/);
+  assert.match(setupSql, /"dataCreditoDailyQueryLimit" BETWEEN 0 AND 10000/);
+  assert.match(setupSql, /DataCreditoDailyQuotaUsage_used_check/);
+  assert.match(setupSql, /DataCreditoDailyQuotaAudit_ally_created_idx/);
+});
+
 test("la migracion conserva la tabla global y copia todas sus versiones al perfil general", () => {
   assert.match(setupSql, /CREATE TABLE IF NOT EXISTS "DataCreditoPolicy"/);
   assert.match(setupSql, /CREATE TABLE IF NOT EXISTS "DataCreditoPolicyProfile"/);
@@ -74,6 +88,7 @@ test("catalogo y asignaciones solo exponen mutaciones al administrador central",
   }
   assert.match(catalogRoute, /action === "SAVE_REVISION"/);
   assert.match(catalogRoute, /action === "ASSIGN_ALLY"/);
+  assert.match(catalogRoute, /action === "SET_ALLY_DAILY_QUOTA"/);
   assert.doesNotMatch(catalogRoute, /UPDATE_PROFILE/);
   assert.match(catalogRoute, /createdPolicyId/);
   assert.match(catalogRoute, /updatedPolicyId/);
@@ -81,6 +96,7 @@ test("catalogo y asignaciones solo exponen mutaciones al administrador central",
   assert.match(catalogRoute, /POLICY_VERSION_CONFLICT/);
   assert.match(catalogRoute, /POLICY_ASSIGNMENT_CONFLICT/);
   assert.match(catalogRoute, /POLICY_NAME_CONFLICT/);
+  assert.match(catalogRoute, /ALLY_DAILY_QUERY_LIMIT_CONFLICT/);
   assert.equal(
     catalogRoute.match(/requireFinancingTerms:\s*true/g)?.length,
     2
@@ -95,6 +111,32 @@ test("catalogo y asignaciones solo exponen mutaciones al administrador central",
     2,
     "POST y PATCH deben exigir también la regla versionada de mora total"
   );
+});
+
+test("el catalogo y PATCH administran el cupo con conflicto optimista y auditoria", () => {
+  assert.match(adminStorage, /dailyQueryLimit:/);
+  assert.match(adminStorage, /dailyQueriesUsed:/);
+  assert.match(adminStorage, /dailyQueriesRemaining:/);
+  assert.match(adminStorage, /dailyQuotaResetsAt:/);
+  assert.match(adminStorage, /clock_timestamp\(\)[\s\S]*?America\/Bogota/);
+
+  const setter = adminStorage.slice(
+    adminStorage.indexOf("export async function setDataCreditoDailyQueryLimitForAlly")
+  );
+  assert.match(setter, /expectedDailyQueryLimit/);
+  assert.match(setter, /FROM "Aliado"[\s\S]*?FOR UPDATE/);
+  assert.match(setter, /DataCreditoDailyQueryLimitConflictError/);
+  assert.match(setter, /INSERT INTO "DataCreditoDailyQuotaAudit"/);
+  assert.match(setter, /requestCorrelationId/);
+  assert.match(setter, /actorUserId/);
+
+  const quotaAction = catalogRoute.slice(
+    catalogRoute.indexOf('if (action === "SET_ALLY_DAILY_QUOTA")')
+  );
+  assert.match(quotaAction, /body\.dailyQueryLimit/);
+  assert.match(quotaAction, /body\.expectedDailyQueryLimit/);
+  assert.match(quotaAction, /setDataCreditoDailyQueryLimitForAlly/);
+  assert.match(quotaAction, /catalogPayload\(\{ dailyQuotaUpdatedAllyId: allyId \}\)/);
 });
 
 test("el endpoint legado exige la regla al publicar una revision historica que no la tiene", () => {
