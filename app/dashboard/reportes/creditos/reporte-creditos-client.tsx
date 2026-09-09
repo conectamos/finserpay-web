@@ -160,58 +160,24 @@ function isFinserPayCentral(codigo: string | null | undefined) {
   return String(codigo || "").trim().toUpperCase() === "FINSERPAY";
 }
 
-function excelCell(value: string | number | null | undefined) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function exportCreditsToExcel(items: CreditReportItem[]) {
-  const headers = [
-    "Fecha",
-    "Folio",
-    "Cliente",
-    "Referencia",
-    "IMEI",
-    "Aliado",
-    "Sede",
-    "Vendedor",
-    "Inicial",
-    "Credito autorizado",
-    "Estado",
-  ];
-  const rows = items.map((item) => [
-    formatDate(item.fechaCredito),
-    item.folio,
-    item.clienteNombre,
-    item.referenciaEquipo || [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" "),
-    item.imei,
-    item.sede.aliado?.nombre || "",
-    item.sede.nombre,
-    item.usuario.nombre,
-    item.cuotaInicial,
-    item.creditoAutorizado,
-    item.estado,
-  ]);
-  const table = [headers, ...rows]
-    .map(
-      (row) =>
-        `<tr>${row.map((cell) => `<td>${excelCell(cell)}</td>`).join("")}</tr>`
-    )
-    .join("");
-  const html = `<!doctype html><html><head><meta charset="utf-8" /></head><body><table>${table}</table></body></html>`;
-  const blob = new Blob([html], {
-    type: "application/vnd.ms-excel;charset=utf-8",
+async function exportCreditsToExcel(items: CreditReportItem[]) {
+  const { buildCreditReportWorkbook } = await import("@/lib/credit-report-excel");
+  const workbook = buildCreditReportWorkbook(items);
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([new Uint8Array(buffer)], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `creditos-finserpay-${new Date().toISOString().slice(0, 10)}.xls`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  link.download = `creditos-finserpay-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  try {
+    document.body.appendChild(link);
+    link.click();
+  } finally {
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 
 function creditStatusTone(status: string) {
@@ -237,6 +203,7 @@ export default function ReporteCreditosPage({
   const [items, setItems] = useState<CreditReportItem[]>([]);
   const [summary, setSummary] = useState<CreditReportResponse["summary"] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [annullingId, setAnnullingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
@@ -251,6 +218,19 @@ export default function ReporteCreditosPage({
   const sedesFiltradas = aliadoId
     ? sedes.filter((sede) => String(sede.aliadoId || "") === aliadoId)
     : sedes;
+
+  const exportReport = async () => {
+    if (exporting || loading || !items.length) return;
+    setExporting(true);
+    setMessage("");
+    try {
+      await exportCreditsToExcel(items);
+    } catch {
+      setMessage("No se pudo generar el Excel. Intenta descargarlo nuevamente.");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const loadContext = async () => {
     const [sessionRes, sedesRes, aliadosRes] = await Promise.all([
@@ -484,11 +464,12 @@ export default function ReporteCreditosPage({
             </Link>
             <Button
               variant="primary"
-              onClick={() => exportCreditsToExcel(items)}
-              disabled={!items.length || loading}
+              onClick={() => void exportReport()}
+              disabled={!items.length || loading || exporting}
+              aria-busy={exporting}
             >
               <Download className="h-4 w-4" strokeWidth={1.8} />
-              Exportar Excel
+              {exporting ? "Generando Excel..." : "Exportar Excel"}
             </Button>
           </div>
         }
