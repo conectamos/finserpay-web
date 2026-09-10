@@ -38,6 +38,7 @@ import {
   DATACREDITO_MAX_INSTALLMENT_COUNT,
 } from "@/lib/datacredito/policy";
 import { resolveMissingAssessmentGateView } from "@/lib/datacredito/resume-gate";
+import DataCreditoDailyQuotaModal from "./datacredito-daily-quota-modal";
 
 export type DataCreditoPlatform = "ANDROID" | "IPHONE";
 
@@ -121,9 +122,11 @@ type AssessmentFallback = {
 
 type DailyQueryLimitReached = {
   limit: number | null;
-  used: number | null;
+  used: number;
   remaining: number | null;
-  resetsAt: string | null;
+  percentUsed: number | null;
+  exhausted: boolean;
+  resetsAt: string;
 };
 
 const CONSENT_ATTESTATION =
@@ -336,20 +339,36 @@ function normalizeDecision(payload: JsonRecord) {
 
 function normalizeDailyQueryLimitReached(
   payload: JsonRecord
-): DailyQueryLimitReached {
-  const source = isRecord(payload.dailyQuota) ? payload.dailyQuota : payload;
+): DailyQueryLimitReached | null {
+  if (!isRecord(payload.dailyQuota)) return null;
+  const source = payload.dailyQuota;
   const readNonNegativeInteger = (value: unknown) => {
-    const parsed = readNumber(value);
-    return parsed !== null && Number.isInteger(parsed) && parsed >= 0
-      ? parsed
+    return typeof value === "number" && Number.isInteger(value) && value >= 0
+      ? value
       : null;
   };
-
+  const limit = readNonNegativeInteger(source.limit);
+  const used = readNonNegativeInteger(source.used);
+  const remaining = readNonNegativeInteger(source.remaining);
+  const percentUsed = readNonNegativeInteger(source.percentUsed);
+  const resetsAt = readString(source.resetsAt);
+  if (
+    used === null || !resetsAt || !Number.isFinite(Date.parse(resetsAt)) ||
+    typeof source.exhausted !== "boolean"
+  ) return null;
+  if (source.limit === null) {
+    if (source.remaining !== null || source.percentUsed !== null || source.exhausted) return null;
+  } else if (
+    limit === null || remaining === null || percentUsed === null || percentUsed > 100 ||
+    (source.exhausted && (percentUsed !== 100 || remaining !== 0 || used < limit)) ||
+    (!source.exhausted && (percentUsed >= 100 || remaining <= 0 || used >= limit))
+  ) return null;
+  // El porcentaje y el agotamiento vienen del servidor, nunca del reloj ni de
+  // un contador local. Una respuesta incompleta no se presenta como cupo agotado.
   return {
-    limit: readNonNegativeInteger(source.limit),
-    used: readNonNegativeInteger(source.used),
-    remaining: readNonNegativeInteger(source.remaining),
-    resetsAt: readString(source.resetsAt),
+    limit, used, remaining, percentUsed,
+    exhausted: source.exhausted,
+    resetsAt,
   };
 }
 
@@ -549,6 +568,11 @@ export default function DatacreditoPrequalificationGate({
   const [consumedCreditId, setConsumedCreditId] = useState<number | null>(null);
   const [dailyQueryLimitReached, setDailyQueryLimitReached] =
     useState<DailyQueryLimitReached | null>(null);
+  const [dailyQuotaModalOpen, setDailyQuotaModalOpen] = useState(false);
+  const [checkingDailyQuota, setCheckingDailyQuota] = useState(false);
+  const [dailyQuotaCheckError, setDailyQuotaCheckError] = useState<string | null>(null);
+  const quotaRefreshAbortRef = useRef<AbortController | null>(null);
+  const submissionInFlightRef = useRef(false);
   const [retryMode, setRetryMode] = useState<"bootstrap" | "form">("bootstrap");
   const [approvedResult, setApprovedResult] =
     useState<DataCreditoApprovedResult | null>(null);
@@ -710,12 +734,19 @@ export default function DatacreditoPrequalificationGate({
       setCorrelationId(null);
       setConsumedCreditId(null);
       setDailyQueryLimitReached(null);
+      setDailyQuotaModalOpen(false);
+      setDailyQuotaCheckError(null);
+      quotaRefreshAbortRef.current?.abort();
+      quotaRefreshAbortRef.current = null;
+      setCheckingDailyQuota(false);
       setApprovedResult(null);
       setRetryMode("bootstrap");
 
       try {
         const policyResponse = await fetch(
-          "/api/creditos/datacredito/politica",
+          initialSolicitudId && !initialAssessmentId && normalizedInitialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED"
+            ? `/api/creditos/datacredito/politica?solicitudId=${encodeURIComponent(initialSolicitudId)}`
+            : "/api/creditos/datacredito/politica",
           {
             cache: "no-store",
             headers: { Accept: "application/json" },
@@ -758,6 +789,16 @@ export default function DatacreditoPrequalificationGate({
         }
 
         if (!initialAssessmentId) {
+          if (newQueryRetryRecovery && normalizedInitialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED") {
+            const quota = normalizeDailyQueryLimitReached(policyPayload);
+            if (quota?.exhausted && quota.percentUsed === 100) {
+              setDailyQueryLimitReached(quota);
+              setDailyQuotaModalOpen(true);
+              setRetryMode("form");
+              setView("daily-limit-reached");
+              return;
+            }
+          }
           if (identityMismatchRecovery || newQueryRetryRecovery) {
             setConsentAccepted(false);
             setFormErrors({});
@@ -900,6 +941,7 @@ export default function DatacreditoPrequalificationGate({
       newQueryRetryRecovery,
       normalizedInitialDocument,
       normalizedInitialSurname,
+      normalizedInitialErrorCode,
       platform,
       showApproved,
     ]
@@ -912,6 +954,67 @@ export default function DatacreditoPrequalificationGate({
     });
     return () => controller.abort();
   }, [loadInitialState]);
+
+  const checkDailyQueryQuota = useCallback(async (reopen = false) => {
+    if (quotaRefreshAbortRef.current) return;
+    const controller = new AbortController();
+    quotaRefreshAbortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 10_000);
+    setCheckingDailyQuota(true);
+    setDailyQuotaCheckError(null);
+    try {
+      const response = await fetch(initialSolicitudId
+        ? `/api/creditos/datacredito/politica?solicitudId=${encodeURIComponent(initialSolicitudId)}`
+        : "/api/creditos/datacredito/politica", {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      const payload = await readJson(response);
+      const quota = normalizeDailyQueryLimitReached(payload);
+      if (!response.ok || payload.ok === false || !quota) throw new Error("QUOTA_CHECK_UNAVAILABLE");
+      if (controller.signal.aborted) return;
+      if (quota.exhausted && quota.percentUsed === 100) {
+        setDailyQueryLimitReached(quota);
+        if (reopen) setDailyQuotaModalOpen(true);
+      } else {
+        // Una comprobación del cupo no inicia una consulta pagada: el asesor
+        // debe volver a pulsar Evaluar cuando el servidor confirme disponibilidad.
+        setDailyQueryLimitReached(null);
+        setDailyQuotaModalOpen(false);
+        setCorrelationId(null);
+        setView("ready");
+      }
+    } catch {
+      if (quotaRefreshAbortRef.current === controller) {
+        setDailyQuotaCheckError("No pudimos verificar el cupo disponible. Intenta verificarlo nuevamente; no se realizó una consulta crediticia.");
+      }
+    } finally {
+      window.clearTimeout(timeout);
+      if (quotaRefreshAbortRef.current === controller) {
+        quotaRefreshAbortRef.current = null;
+        setCheckingDailyQuota(false);
+      }
+    }
+  }, [initialSolicitudId]);
+
+  useEffect(() => {
+    if (view !== "daily-limit-reached" || !dailyQueryLimitReached) return;
+    const recheck = () => { void checkDailyQueryQuota(); };
+    const delay = Date.parse(dailyQueryLimitReached.resetsAt) - Date.now();
+    // El reloj solo programa una lectura; únicamente el servidor libera el cupo.
+    const timer = delay > 0 && delay < 2_147_483_647
+      ? window.setTimeout(recheck, delay + 250)
+      : null;
+    window.addEventListener("focus", recheck);
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      window.removeEventListener("focus", recheck);
+      const controller = quotaRefreshAbortRef.current;
+      quotaRefreshAbortRef.current = null;
+      controller?.abort();
+    };
+  }, [checkDailyQueryQuota, dailyQueryLimitReached, view]);
 
   const validateForm = () => {
     const errors: FormErrors = {};
@@ -945,9 +1048,16 @@ export default function DatacreditoPrequalificationGate({
 
   const submitAssessment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (view === "daily-limit-reached") {
+      // Reabre la explicación mediante una lectura, nunca una consulta pagada.
+      void checkDailyQueryQuota(true);
+      return;
+    }
+    if (submissionInFlightRef.current) return;
     const validation = validateForm();
 
     if (!validation.valid) return;
+    submissionInFlightRef.current = true;
 
     setView("submitting");
     setCorrelationId(null);
@@ -978,13 +1088,14 @@ export default function DatacreditoPrequalificationGate({
       const payload = await readJson(response);
 
       if (!response.ok || payload.ok === false) {
+        const dailyQuota = normalizeDailyQueryLimitReached(payload);
         if (
           response.status === 429 &&
-          getResponseCode(payload) === "ALLY_DAILY_QUERY_LIMIT_REACHED"
+          getResponseCode(payload) === "ALLY_DAILY_QUERY_LIMIT_REACHED" &&
+          dailyQuota?.exhausted === true && dailyQuota.percentUsed === 100
         ) {
-          setDailyQueryLimitReached(
-            normalizeDailyQueryLimitReached(payload)
-          );
+          setDailyQueryLimitReached(dailyQuota);
+          setDailyQuotaModalOpen(true);
           setCorrelationId(getCorrelationId(payload, response));
           setView("daily-limit-reached");
           return;
@@ -1045,6 +1156,8 @@ export default function DatacreditoPrequalificationGate({
       setView("technical-error");
     } catch {
       setView("technical-error");
+    } finally {
+      submissionInFlightRef.current = false;
     }
   };
 
@@ -1280,84 +1393,6 @@ export default function DatacreditoPrequalificationGate({
     );
   }
 
-  if (view === "daily-limit-reached") {
-    return (
-      <Card
-        className="border-[var(--fp-amber)] p-6 sm:p-8"
-        role="status"
-        aria-labelledby="datacredito-daily-limit-title"
-      >
-        <div className="flex items-start gap-4">
-          <span
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-amber-soft)] text-[var(--fp-amber)]"
-            aria-hidden="true"
-          >
-            <CircleAlert className="h-5 w-5" />
-          </span>
-          <div className="min-w-0">
-            <Badge tone="warning">Límite operativo</Badge>
-            <h2
-              id="datacredito-daily-limit-title"
-              className="mt-3 text-xl font-black text-[var(--fp-graphite)]"
-            >
-              Cupo diario de consultas agotado
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
-              El aliado alcanzó el número de consultas autorizado para hoy. No
-              se realizó una nueva consulta a DataCrédito y esto no corresponde
-              a un rechazo crediticio.
-            </p>
-          </div>
-        </div>
-
-        {dailyQueryLimitReached &&
-        dailyQueryLimitReached.limit !== null &&
-        dailyQueryLimitReached.used !== null ? (
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
-              <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
-                Uso de hoy
-              </p>
-              <p className="mt-2 text-2xl font-black text-[var(--fp-graphite)]">
-                {dailyQueryLimitReached.used} de{" "}
-                {dailyQueryLimitReached.limit}
-              </p>
-            </div>
-            <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] p-4">
-              <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
-                Consultas restantes
-              </p>
-              <p className="mt-2 text-2xl font-black text-[var(--fp-graphite)]">
-                {dailyQueryLimitReached.remaining ?? 0}
-              </p>
-            </div>
-          </div>
-        ) : null}
-
-        <p className="mt-5 text-sm font-semibold leading-6 text-[var(--fp-graphite)]">
-          El cupo se restablece{" "}
-          {formatDailyQueryLimitReset(dailyQueryLimitReached?.resetsAt || null)} (hora de Bogotá).
-        </p>
-        <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
-          Los datos ingresados se conservaron. Continúa cuando el cupo vuelva a
-          estar disponible o cuando el administrador lo actualice.
-        </p>
-        {correlationId ? (
-          <p className="mt-3 break-all text-xs text-[var(--fp-muted)]">
-            Código de seguimiento: <code>{correlationId}</code>
-          </p>
-        ) : null}
-        <Link
-          href="/dashboard/creditos?mode=create-client"
-          className="fp-ui-button is-secondary mt-6 focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          Volver a créditos
-        </Link>
-      </Card>
-    );
-  }
-
   if (view === "technical-error") {
     return (
       <TechnicalErrorPanel
@@ -1484,6 +1519,7 @@ export default function DatacreditoPrequalificationGate({
   }
 
   const isSubmitting = view === "submitting";
+  const dailyQuotaBlocked = view === "daily-limit-reached" && dailyQueryLimitReached?.exhausted === true;
   const platformArtwork =
     platform === "ANDROID"
       ? "/assets/creditos/platform-android.png"
@@ -1537,6 +1573,20 @@ export default function DatacreditoPrequalificationGate({
       </div>
 
       <form className="p-5 sm:p-8" noValidate onSubmit={submitAssessment}>
+        {dailyQuotaBlocked ? (
+          <div className="mb-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] p-4 text-sm leading-6" role="status" id="datacredito-quota-status">
+            <p className="font-bold">Límite diario de consultas alcanzado.</p>
+            <p>El cupo se restablece {formatDailyQueryLimitReset(dailyQueryLimitReached.resetsAt)} (hora de Bogotá). Las solicitudes existentes y el simulador siguen disponibles.</p>
+            <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+              <Button variant="secondary" onClick={() => void checkDailyQueryQuota()} disabled={checkingDailyQuota} aria-disabled={checkingDailyQuota}>
+                {checkingDailyQuota ? "Verificando cupo..." : "Verificar cupo disponible"}
+              </Button>
+              <Link className="fp-ui-button is-secondary" href="/dashboard/solicitudes?estado=APROBADA">Retomar solicitudes aprobadas</Link>
+              <Link className="fp-ui-button is-secondary" href="/dashboard/creditos?mode=simulator">Ir al simulador</Link>
+            </div>
+            {dailyQuotaCheckError ? <p className="mt-3" role="alert">{dailyQuotaCheckError}</p> : null}
+          </div>
+        ) : null}
         {identityMismatchRecovery ? (
           <div
             className="mb-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm leading-6 text-[var(--fp-graphite)]"
@@ -1738,8 +1788,11 @@ export default function DatacreditoPrequalificationGate({
           </Link>
           <Button
             type="submit"
-            disabled={isSubmitting}
-            className="min-h-12 px-6 text-base shadow-[var(--fp-shadow-md)] !border-[var(--fp-lime-strong)] !bg-[var(--fp-lime)] !text-[var(--fp-graphite)] hover:!bg-[var(--fp-graphite)] hover:!text-white sm:min-w-56"
+            id="datacredito-evaluate"
+            disabled={isSubmitting || checkingDailyQuota}
+            aria-disabled={isSubmitting || checkingDailyQuota || dailyQuotaBlocked}
+            aria-describedby={dailyQuotaBlocked ? "datacredito-quota-status" : undefined}
+            className="min-h-12 px-6 text-base shadow-[var(--fp-shadow-md)] !border-[var(--fp-lime-strong)] !bg-[var(--fp-lime)] !text-[var(--fp-graphite)] hover:!bg-[var(--fp-graphite)] hover:!text-white aria-disabled:cursor-not-allowed aria-disabled:opacity-60 sm:min-w-56"
           >
             {isSubmitting ? (
               <>
@@ -1757,6 +1810,17 @@ export default function DatacreditoPrequalificationGate({
           </Button>
         </div>
       </form>
+      {dailyQuotaBlocked && dailyQueryLimitReached.percentUsed !== null ? (
+        <DataCreditoDailyQuotaModal
+          open={dailyQuotaModalOpen}
+          onClose={() => setDailyQuotaModalOpen(false)}
+          percentUsed={dailyQueryLimitReached.percentUsed}
+          approvedHref="/dashboard/solicitudes?estado=APROBADA"
+          simulatorHref="/dashboard/creditos?mode=simulator"
+          illustrationSrc="/assets/creditos/datacredito-daily-quota-mascot.webp"
+          returnFocusId="datacredito-evaluate"
+        />
+      ) : null}
     </Card>
   );
 }

@@ -15,6 +15,10 @@ import {
 import { buildDataCreditoAdminRiskSummary } from "@/lib/datacredito/admin-report";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import {
+  serializeDataCreditoDailyQuota,
+  type DataCreditoDailyQuotaSnapshot,
+} from "@/lib/datacredito/daily-quota";
+import {
   DATACREDITO_MAX_SCORE,
   DATACREDITO_MIN_SCORE,
   DATACREDITO_NO_INFORMATION_SCORE,
@@ -84,12 +88,7 @@ function technicalResponse(input: {
   code: string;
   error: string;
   status: number;
-  dailyQuota?: {
-    limit: number;
-    used: number;
-    remaining: number;
-    resetsAt: string;
-  };
+  dailyQuota?: DataCreditoDailyQuotaSnapshot;
 }) {
   return NextResponse.json(
     {
@@ -140,12 +139,7 @@ async function solicitudRecoverableResponse(input: {
   status: number;
   solicitudId: number;
   plataforma?: string | null;
-  dailyQuota?: {
-    limit: number;
-    used: number;
-    remaining: number;
-    resetsAt: string;
-  };
+  dailyQuota?: DataCreditoDailyQuotaSnapshot;
 }) {
   const { solicitudId, plataforma, ...response } = input;
   try {
@@ -755,12 +749,11 @@ export async function POST(request: Request) {
         error:
           "El aliado alcanzo su cupo diario de consultas de credito. Intenta de nuevo despues del reinicio del cupo.",
         status: 429,
-        dailyQuota: {
+        dailyQuota: serializeDataCreditoDailyQuota({
           limit: reservation.limit,
           used: reservation.used,
-          remaining: reservation.remaining,
-          resetsAt: reservation.resetsAt.toISOString(),
-        },
+          resetsAt: reservation.resetsAt,
+        }),
       });
     }
 
