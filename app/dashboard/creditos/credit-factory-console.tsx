@@ -4903,15 +4903,17 @@ export default function CreditFactoryConsole({
     setFirmaSeguroDocumentsOpen(false);
   }, [veriffApproved]);
 
-  const stepEquipoReady =
+  const financialPreviewReady =
     simulationPolicyReady &&
-    Boolean(equipoMarca.trim()) &&
-    Boolean(equipoModelo.trim()) &&
-    (simulatorMode || imeiValido) &&
     cuotaInicialValida &&
     saldoFinanciado > 0 &&
     plazoMesesNumero > 0 &&
     !iphoneInstallmentLimitExceeded;
+  const stepEquipoReady =
+    financialPreviewReady &&
+    Boolean(equipoMarca.trim()) &&
+    Boolean(equipoModelo.trim()) &&
+    (simulatorMode || imeiValido);
   const contratoListo = stepClienteReady && stepContratoReady && stepEquipoReady;
   const firmaSeguroDocumentItems = [
     {
@@ -7887,6 +7889,16 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    if (targetStep > wizardStep && wizardStep === 2 && !stepEquipoReady) {
+      setNotice({
+        text: iphoneInstallmentLimitExceeded
+          ? visibleIphoneInstallmentLimitMessage
+          : "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de continuar.",
+        tone: "amber",
+      });
+      return;
+    }
+
     if (canAdminMoveFreelyInFactory) {
       setWizardStep(clampWizardStep(targetStep));
       return;
@@ -7998,6 +8010,16 @@ export default function CreditFactoryConsole({
       setNotice({
         text: dataCreditoVeriffDocumentRejectionMessage,
         tone: "red",
+      });
+      return;
+    }
+
+    if (targetStep > wizardStep && wizardStep === 2 && !stepEquipoReady) {
+      setNotice({
+        text: iphoneInstallmentLimitExceeded
+          ? visibleIphoneInstallmentLimitMessage
+          : "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de continuar.",
+        tone: "amber",
       });
       return;
     }
@@ -14395,14 +14417,14 @@ export default function CreditFactoryConsole({
                         <div className="mt-5 rounded-lg bg-[#161a1b] p-5 text-white">
                           <p className="text-xs font-semibold text-slate-300">Cuota {frecuenciaPagoLabel.toLowerCase()}</p>
                           <strong className="mt-2 block text-3xl font-black">
-                            {stepEquipoReady ? currency(valorCuota) : "-"}
+                            {financialPreviewReady ? currency(valorCuota) : "-"}
                           </strong>
                           <p className="mt-2 text-xs leading-5 text-slate-300">
-                            {stepEquipoReady
+                            {financialPreviewReady
                               ? "Cálculo actualizado con los datos actuales del plan."
-                              : "Complete los datos para calcular"}
+                              : "Completa los datos financieros para calcular"}
                           </p>
-                          {stepEquipoReady && canSeeInternalPricing && amortizationPlan ? (
+                          {financialPreviewReady && canSeeInternalPricing && amortizationPlan ? (
                             <p className="mt-3 border-t border-white/15 pt-3 text-xs text-slate-300">
                               Cuota exacta {exactCurrency(amortizationPlan.cuotaTotal)}
                             </p>

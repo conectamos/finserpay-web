@@ -27,7 +27,7 @@ test("solo el administrador central FINSERPAY puede inspeccionar libremente la f
   );
 });
 
-test("la navegacion central se resuelve antes de las guardas secuenciales", () => {
+test("el paso 2 exige datos completos incluso en la navegacion central", () => {
   const advance = sourceBlock("const advanceToStep", "const createWhatsAppOtp");
   const centralGuard = advance.indexOf("if (canAdminMoveFreelyInFactory)");
   const clientGuard = advance.indexOf("wizardStep === 1 && !stepClienteReady");
@@ -41,7 +41,7 @@ test("la navegacion central se resuelve antes de las guardas secuenciales", () =
   assert.notEqual(equipmentGuard, -1);
   assert.notEqual(identityAndSignatureGuard, -1);
   assert.ok(centralGuard < clientGuard);
-  assert.ok(centralGuard < equipmentGuard);
+  assert.ok(equipmentGuard < centralGuard);
   assert.ok(centralGuard < identityAndSignatureGuard);
   assert.match(advance, /wizardStep === 1 && !stepClienteReady/);
   assert.match(advance, /wizardStep === 2 && !stepEquipoReady/);
