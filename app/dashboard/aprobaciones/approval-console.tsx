@@ -320,13 +320,17 @@ export default function ApprovalConsole() {
             <ApprovalEvidenceCorrection detail={detail} disabled={saving || Boolean(confirmation) || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCorrectionBusy} />
           </Card>
 
-          <Card className="p-4 sm:p-6">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="flex items-center gap-2 text-lg font-semibold"><FileText className="h-5 w-5" aria-hidden="true" />Documento firmado</h2></div>
-            {detail.document.available ? <><p className="mb-3 text-sm text-[var(--fp-muted)]">{detail.document.fileName || "Documento de FirmaSeguro"}</p><LastPdfPagePreview key={`${detail.id}:${detail.review.reviewHash}`} href={detail.document.href} folio={detail.folio} /></> : <EmptyState title="Documento firmado no disponible" description="El expediente debe contar con el documento firmado para completar la aprobación." />}
-            <ApprovalSignatureReissue detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} />
-          </Card>
+          <div className={`grid items-start gap-6 ${detail.review.required ? "xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]" : ""}`}>
+            <Card role="region" aria-label="Documento firmado" className="min-w-0 p-4 sm:p-6">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="flex items-center gap-2 text-lg font-semibold"><FileText className="h-5 w-5" aria-hidden="true" />Documento firmado</h2></div>
+              {detail.document.available ? <><p className="mb-3 break-words text-sm text-[var(--fp-muted)]">{detail.document.fileName || "Documento de FirmaSeguro"}</p><LastPdfPagePreview key={`${detail.id}:${detail.review.reviewHash}`} href={detail.document.href} folio={detail.folio} /></> : <EmptyState title="Documento firmado no disponible" description="El expediente debe contar con el documento firmado para completar la aprobación." />}
+            </Card>
 
-          <ApprovalNoveltyPanel key={detail.id} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} />
+            {detail.review.required ? <aside aria-label="Acciones de revisión" className="min-w-0 space-y-6">
+              <ApprovalNoveltyPanel key={detail.id} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} />
+              <ApprovalSignatureReissue detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} />
+            </aside> : null}
+          </div>
 
           {detail.review.required && detail.review.status === "PENDING" ? (
             <Card className="p-4 sm:p-6">
