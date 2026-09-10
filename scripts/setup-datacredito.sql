@@ -712,6 +712,30 @@ CREATE TABLE IF NOT EXISTS "DataCreditoAdminAccessAudit" (
     CHECK ("outcome" ~ '^[A-Z][A-Z0-9_]{0,31}$')
 );
 
+-- An explicitly authorized TX06 surname correction may end the failed root's
+-- reuse window. Reapply only that audited exception after the contractual
+-- backfill above so subsequent deployments cannot reinstate its review block.
+-- The original result and retention period remain unchanged.
+UPDATE "DataCreditoAssessment" root
+SET "expiresAt" = LEAST(root."expiresAt", retry_authorization."authorizedAt")
+FROM (
+  SELECT "assessmentId", MIN("createdAt") AS "authorizedAt"
+  FROM "DataCreditoAdminAccessAudit"
+  WHERE "action" = 'OPS_TX06_RETRY_AUTHORIZED'
+    AND "outcome" = 'AUTHORIZED'
+  GROUP BY "assessmentId"
+) retry_authorization
+WHERE root."id" = retry_authorization."assessmentId"
+  AND root."reusedFromAssessmentId" IS NULL
+  AND root."status" = 'NO_EVALUADO'
+  AND root."errorCode" = 'NO_EVALUABLE_INFORMATION'
+  AND root."providerStatus" = 'ACCEPTED'
+  AND root."transactionCode" = '06'
+  AND root."consumedAt" IS NULL
+  AND root."creditId" IS NULL
+  AND retry_authorization."authorizedAt" >= root."createdAt"
+  AND root."expiresAt" > retry_authorization."authorizedAt";
+
 CREATE TABLE IF NOT EXISTS "DataCreditoPolicyAssignmentAudit" (
   "id" UUID PRIMARY KEY,
   "allyId" INTEGER NOT NULL,
