@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw, Send } from "lucide-react";
-import { Button, StatusPill } from "@/app/_components/finser-ui";
+import { Button, Card, StatusPill } from "@/app/_components/finser-ui";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import { requestApprovalSignature, refreshApprovalSignature, type ApprovalDetail } from "./approval-client";
 
@@ -71,13 +71,13 @@ export default function ApprovalSignatureReissue({ detail, disabled = false, onU
 
   if (!detail.review.required) return null;
   return (
-    <section aria-label="Reenviar folio a firma" className="mt-5 border-t border-[var(--fp-border)] pt-5">
-      <h3 className="font-semibold">¿El folio quedó mal firmado?</h3>
+    <Card role="region" aria-label="Reenviar folio a firma" className="min-w-0 p-4 sm:p-6">
+      <h2 className="flex items-center gap-2 text-lg font-semibold"><Send className="h-5 w-5 shrink-0" aria-hidden="true" />¿El folio quedó mal firmado?</h2>
       <p className="mt-2 text-sm text-[var(--fp-muted)]">Solicita una nueva firma conservando el folio, sus condiciones y el documento anterior. El crédito necesitará un nuevo OK antes de liquidarse.</p>
       {operation ? <div className="mt-4 space-y-2" role="status">
         <StatusPill tone={operation.status === "COMPLETED" ? "positive" : "warning"}>{statusLabels[operation.status] || "Reenvío en revisión"}</StatusPill>
-        <p className="text-sm text-[var(--fp-muted)]">{operation.message}</p>
-        {operation.reason ? <p className="text-sm">Motivo: {operation.reason}</p> : null}
+        <p className="break-words text-sm text-[var(--fp-muted)]">{operation.message}</p>
+        {operation.reason ? <p className="break-words text-sm">Motivo: {operation.reason}</p> : null}
       </div> : null}
       {error ? <p className="mt-3 text-sm text-[var(--fp-danger)]" role="alert">{error}</p> : null}
       {editing ? <div className="mt-4 space-y-3">
@@ -99,6 +99,6 @@ export default function ApprovalSignatureReissue({ detail, disabled = false, onU
       <ConfirmDialog open={confirming} title="Reenviar folio a firma" confirmLabel="Confirmar reenvío" busy={saving}
         description={`Se enviará nuevamente el folio ${detail.folio} de ${detail.clienteNombre}, cédula ${detail.clienteDocumento}. Motivo: ${reason.trim()}. El crédito quedará pendiente de nueva firma y revisión; su documento anterior se conservará.`}
         onCancel={() => { if (!submitting.current) setConfirming(false); }} onConfirm={() => void send()} />
-    </section>
+    </Card>
   );
 }

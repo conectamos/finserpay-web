@@ -53,9 +53,9 @@ export default function ApprovalNoveltyPanel({ detail, disabled = false, onUpdat
     }
   }
   if (!detail.review.required) return null;
-  return <Card className="space-y-4 p-4 sm:p-6">
+  return <Card role="region" aria-label="Novedades del expediente" className="min-w-0 space-y-4 p-4 sm:p-6">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 className="flex items-center gap-2 text-lg font-semibold"><MessageSquareWarning className="h-5 w-5" aria-hidden="true" />Novedades del expediente</h2>
+      <h2 className="flex items-center gap-2 text-lg font-semibold"><MessageSquareWarning className="h-5 w-5 shrink-0" aria-hidden="true" />Novedades del expediente</h2>
       {!editing && canCreate ? <Button variant="secondary" disabled={disabled || saving} onClick={open}><Plus className="h-4 w-4" aria-hidden="true" />Colocar novedad</Button> : null}
     </div>
     <p className="text-sm text-[var(--fp-muted)]">Indica al administrador del aliado qué debe corregir. Al guardar una foto nueva, el crédito vuelve a revisión del analista.</p>
@@ -73,7 +73,7 @@ export default function ApprovalNoveltyPanel({ detail, disabled = false, onUpdat
     </div> : <p className="text-sm text-[var(--fp-muted)]">Este crédito no tiene novedades registradas.</p>}
     {editing ? <div className="space-y-4 border-t border-[var(--fp-border)] pt-4">
       <label className="block space-y-2 text-sm font-semibold"><span>Tipo de novedad</span><Select value={mode} onChange={(event) => setMode(event.target.value)} disabled={disabled || saving || confirming} aria-label="Tipo de novedad"><option value="PHOTO">Corregir fotografías</option><option value="GENERAL">Otra novedad</option></Select></label>
-      {mode === "PHOTO" ? <fieldset className="space-y-2" disabled={disabled || saving || confirming}><legend className="mb-2 text-sm font-semibold">Fotografías que debe reemplazar el aliado</legend><div className="grid gap-2 sm:grid-cols-2">{detail.evidence.map((photo) => <label key={photo.key} className="flex min-h-10 items-center gap-3 text-sm"><input type="checkbox" checked={keys.includes(photo.key)} onChange={(event) => setKeys((current) => event.target.checked ? [...current, photo.key] : current.filter((key) => key !== photo.key))} className="h-5 w-5 accent-[var(--fp-graphite)]" />{photo.label}</label>)}</div></fieldset> : null}
+      {mode === "PHOTO" ? <fieldset className="space-y-2" disabled={disabled || saving || confirming}><legend className="mb-2 text-sm font-semibold">Fotografías que debe reemplazar el aliado</legend><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">{detail.evidence.map((photo) => <label key={photo.key} className="flex min-h-10 items-center gap-3 text-sm"><input type="checkbox" checked={keys.includes(photo.key)} onChange={(event) => setKeys((current) => event.target.checked ? [...current, photo.key] : current.filter((key) => key !== photo.key))} className="h-5 w-5 shrink-0 accent-[var(--fp-graphite)]" />{photo.label}</label>)}</div></fieldset> : null}
       <label className="block space-y-2 text-sm font-semibold"><span>Qué debe corregir el aliado</span><textarea aria-label="Qué debe corregir el aliado" rows={3} minLength={10} maxLength={1000} value={reason} disabled={disabled || saving || confirming} onChange={(event) => setReason(event.target.value)} placeholder="Describe el problema y la corrección requerida" className="w-full rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] p-3 text-sm focus-visible:outline-2 focus-visible:outline-[var(--fp-graphite)]" /></label>
       <p className="text-sm text-[var(--fp-muted)]">La novedad quedará visible en PENDIENTES del aliado y bloqueará el OK hasta que sea atendida y revisada.</p>
       <div className="flex flex-wrap gap-3"><Button variant="secondary" disabled={saving || confirming} onClick={close}>Cancelar</Button><Button disabled={disabled || saving || confirming || !valid} onClick={() => setConfirming(true)}>Registrar novedad</Button></div>
