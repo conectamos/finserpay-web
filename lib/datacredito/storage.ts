@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { buildDataCreditoAdminRiskSummary } from "@/lib/datacredito/admin-report";
+import { serializeDataCreditoDailyQuota } from "@/lib/datacredito/daily-quota";
 import {
   DataCreditoPolicyValidationError,
   parseDataCreditoPolicyBands,
@@ -2189,6 +2190,52 @@ async function countRecentDataCreditoAssessments(
     input.documentHash
   );
   return Number(rows[0]?.count || 0);
+}
+
+export async function getDataCreditoQuotaSolicitudOwner(solicitudId: number) {
+  const rows = await prisma.$queryRawUnsafe<
+    Array<{ vendedorId: number | null; aliadoId: number | null }>
+  >(
+    `
+      SELECT d."vendedorId", s."aliadoId"
+      FROM "CreditoBorrador" d
+      LEFT JOIN "Sede" s ON s."id" = d."sedeId"
+      WHERE d."id" = $1
+        AND d."estado" = 'ABIERTO'
+        AND COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
+      LIMIT 1
+    `,
+    solicitudId
+  );
+  return rows[0] || null;
+}
+
+export async function getDataCreditoDailyQuotaSnapshot(aliadoId: number | null) {
+  if (!Number.isInteger(aliadoId) || Number(aliadoId) <= 0) return null;
+  await ensureDataCreditoSchema();
+  const rows = await prisma.$queryRawUnsafe<
+    Array<{ limit: number | null; used: number; resetsAt: Date }>
+  >(
+    `
+      WITH quota_clock AS MATERIALIZED (
+        SELECT
+          (clock_timestamp() AT TIME ZONE 'America/Bogota')::date AS "businessDate"
+      )
+      SELECT
+        ally."dataCreditoDailyQueryLimit" AS "limit",
+        COALESCE(usage."usedCount", 0)::integer AS "used",
+        ((quota_clock."businessDate" + 1)::timestamp
+          AT TIME ZONE 'America/Bogota') AS "resetsAt"
+      FROM "Aliado" ally
+      CROSS JOIN quota_clock
+      LEFT JOIN "DataCreditoDailyQuotaUsage" usage
+        ON usage."allyId" = ally."id"
+       AND usage."businessDate" = quota_clock."businessDate"
+      WHERE ally."id" = $1
+    `,
+    aliadoId
+  );
+  return rows[0] ? serializeDataCreditoDailyQuota(rows[0]) : null;
 }
 
 type DataCreditoDailyQuotaState =

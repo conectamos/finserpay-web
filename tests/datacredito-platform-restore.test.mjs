@@ -101,8 +101,8 @@ async function bootstrapRestoredGate(overrides = {}, policyOverrides = {}) {
   let approvals = 0;
   let bypasses = 0;
   const setters = Object.fromEntries(
-    ["View", "CorrelationId", "ConsumedCreditId", "DailyQueryLimitReached",
-      "ApprovedResult", "RetryMode", "ConsentText", "ConsentAccepted", "FormErrors"]
+    ["View", "CorrelationId", "ConsumedCreditId", "DailyQueryLimitReached", "DailyQuotaModalOpen", "DailyQuotaCheckError",
+      "CheckingDailyQuota", "ApprovedResult", "RetryMode", "ConsentText", "ConsentAccepted", "FormErrors"]
       .map((name) => [`set${name}`, (value) => {
         state[name[0].toLowerCase() + name.slice(1)] = value;
       }])
@@ -119,7 +119,9 @@ async function bootstrapRestoredGate(overrides = {}, policyOverrides = {}) {
     useCallback: (callback) => callback,
     fetch: async (url, options) => {
       requests.push({ url, method: options.method || "GET" });
-      assert.equal(url, "/api/creditos/datacredito/politica");
+      assert.equal(url, overrides.initialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED"
+        ? "/api/creditos/datacredito/politica?solicitudId=37"
+        : "/api/creditos/datacredito/politica");
       return Response.json({
         ok: true, enabled: true, configured: true, hasPolicy: true,
         policy: { version: 1 }, ...policyOverrides,
@@ -127,9 +129,11 @@ async function bootstrapRestoredGate(overrides = {}, policyOverrides = {}) {
     },
     readJson: (response) => response.json(),
     readString: (value) => typeof value === "string" ? value : null,
+    normalizeDailyQueryLimitReached: () => null,
     CONSENT_ATTESTATION: "Autorización del titular requerida",
     resolveMissingAssessmentGateView,
     expiredRequerySolicitudIdRef: { current: null },
+    quotaRefreshAbortRef: { current: null },
     getCorrelationId: () => null,
     finishBypass: () => { bypasses++; },
     showApproved: () => { approvals++; },
@@ -145,7 +149,12 @@ test("un reintento autorizado abre el formulario con consentimiento nuevo y no c
     assert.equal(result.state.view, "ready");
     assert.equal(result.state.consentAccepted, false);
     assert.equal(result.state.retryMode, "form");
-    assert.deepEqual(result.requests, [{ url: "/api/creditos/datacredito/politica", method: "GET" }]);
+    assert.deepEqual(result.requests, [{
+      url: initialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED"
+        ? "/api/creditos/datacredito/politica?solicitudId=37"
+        : "/api/creditos/datacredito/politica",
+      method: "GET",
+    }]);
     assert.equal(result.approvals, 0);
     assert.equal(result.bypasses, 0);
   }

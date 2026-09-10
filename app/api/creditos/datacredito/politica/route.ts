@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
+import type { DataCreditoDailyQuotaSnapshot } from "@/lib/datacredito/daily-quota";
 import {
   DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM,
   shouldLoadDataCreditoPolicy,
@@ -27,9 +28,13 @@ import {
   DataCreditoPolicyConflictError,
   DataCreditoStorageConfigurationError,
   getAssignedDataCreditoPolicy,
+  getDataCreditoDailyQuotaSnapshot,
+  getDataCreditoQuotaSolicitudOwner,
   isDataCreditoAuditConfigured,
 } from "@/lib/datacredito/storage";
 import { isAdminRole } from "@/lib/roles";
+import { getSellerSessionUser } from "@/lib/seller-auth";
+import { canOperateSolicitud, isDirectSalesProfile } from "@/lib/solicitud-operation-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +52,7 @@ function serializePolicyResponse(input: {
   policy: Awaited<ReturnType<typeof createDataCreditoPolicyVersion>>;
   provider: ReturnType<typeof getDataCreditoPublicConfig>;
   simulationRequested?: boolean;
+  dailyQuota?: DataCreditoDailyQuotaSnapshot | null;
   simulation?: {
     kind: "POLICY_NO_INFORMATION";
     simulationOnly: true;
@@ -81,6 +87,7 @@ function serializePolicyResponse(input: {
     ...(input.simulationRequested
       ? { simulation: input.simulation || null }
       : {}),
+    ...(input.dailyQuota !== undefined ? { dailyQuota: input.dailyQuota } : {}),
     consent: {
       version: DATACREDITO_CONSENT_VERSION,
       text: DATACREDITO_CONSENT_TEXT,
@@ -140,7 +147,44 @@ export async function GET(request: Request) {
       );
     }
 
+    let quotaAllyId = user.aliadoId || null;
+    const requestedSolicitudIdValue = requestUrl.searchParams.get("solicitudId");
+    if (!simulationRequested && requestedSolicitudIdValue !== null) {
+      const requestedSolicitudId = Number(requestedSolicitudIdValue);
+      if (!Number.isInteger(requestedSolicitudId) || requestedSolicitudId <= 0) {
+        return NextResponse.json(
+          { ok: false, code: "INVALID_SOLICITUD_ID", error: "La solicitud que intentas retomar no es valida" },
+          { status: 400 }
+        );
+      }
+      const seller = isAdminRole(user.rolNombre) ? null : await getSellerSessionUser(user);
+      if (!centralAdmin && !isDirectSalesProfile(seller?.tipoPerfil)) {
+        return NextResponse.json(
+          { ok: false, code: "SELLER_SESSION_REQUIRED", error: "Selecciona e ingresa con un perfil comercial antes de consultar" },
+          { status: 403 }
+        );
+      }
+      const solicitudOwner = await getDataCreditoQuotaSolicitudOwner(requestedSolicitudId);
+      if (!solicitudOwner || !canOperateSolicitud({
+        central: centralAdmin,
+        seller,
+        viewerAllyId: user.aliadoId,
+        owner: solicitudOwner,
+      })) {
+        return NextResponse.json(
+          { ok: false, code: "SOLICITUD_NOT_AUTHORIZED", error: "La solicitud que intentas retomar no esta disponible" },
+          { status: 403 }
+        );
+      }
+      // The POST charges the original solicitud owner, including when a central
+      // administrator resumes another ally's request. Read that same quota.
+      quotaAllyId = solicitudOwner.aliadoId;
+    }
+
     const assigned = await getAssignedDataCreditoPolicy(user.aliadoId || null);
+    const dailyQuota = simulationRequested
+      ? undefined
+      : await getDataCreditoDailyQuotaSnapshot(quotaAllyId);
     const policy = assigned.kind === "READY" ? assigned.policy : null;
     const simulationResolution =
       simulationRequested && simulationPlatform && policy
@@ -172,6 +216,7 @@ export async function GET(request: Request) {
         provider,
         simulationRequested,
         simulation,
+        dailyQuota,
       })
     );
   } catch (error) {

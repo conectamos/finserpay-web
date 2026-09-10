@@ -333,28 +333,16 @@ test("envía política y cupo en un solo flujo de guardado", () => {
   );
 });
 
-test("presenta el agotamiento como límite operativo y conserva los datos", () => {
+test("presenta el agotamiento en el modal operativo y conserva el formulario", () => {
   assert.match(gateSource, /\| "daily-limit-reached"/);
   assert.match(gateSource, /response\.status === 429/);
   assert.match(gateSource, /ALLY_DAILY_QUERY_LIMIT_REACHED/);
   assert.match(gateSource, /setView\("daily-limit-reached"\)/);
-
-  const limitPanelStart = gateSource.indexOf(
-    'if (view === "daily-limit-reached")'
-  );
-  const nextPanelStart = gateSource.indexOf(
-    'if (view === "technical-error")',
-    limitPanelStart
-  );
-  const limitPanel = gateSource.slice(limitPanelStart, nextPanelStart);
-
-  assert.ok(limitPanelStart >= 0);
-  assert.match(limitPanel, /tone="warning"/);
-  assert.match(limitPanel, /Cupo diario de consultas agotado/);
-  assert.match(limitPanel, /no corresponde[\s\S]*a un rechazo crediticio/i);
-  assert.match(limitPanel, /Los datos ingresados se conservaron/);
-  assert.match(limitPanel, /hora de Bogotá/);
-  assert.match(limitPanel, /Volver a créditos/);
-  assert.doesNotMatch(limitPanel, /Solicitud no aprobada/);
-  assert.doesNotMatch(limitPanel, /Intentar de nuevo/);
+  assert.match(gateSource, /datacredito-daily-quota-modal/);
+  assert.match(gateSource, /dailyQuotaModalOpen/);
+  assert.match(gateSource, /onSubmit=\{submitAssessment\}/);
+  assert.match(gateSource, /aria-disabled=\{[^}]*dailyQuotaBlocked/);
+  assert.match(gateSource, /\/dashboard\/solicitudes\?estado=APROBADA/);
+  assert.match(gateSource, /\/dashboard\/creditos\?mode=simulator/);
+  assert.doesNotMatch(gateSource, /if \(view === "daily-limit-reached"\)\s*\{\s*return/);
 });
