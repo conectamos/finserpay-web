@@ -525,7 +525,8 @@ export default function DatacreditoPrequalificationGate({
       normalizedInitialDocument &&
       normalizedInitialSurname &&
       (normalizedInitialErrorCode === "RATE_LIMITED" ||
-        normalizedInitialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED")
+        normalizedInitialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED" ||
+        normalizedInitialErrorCode === "ASSESSMENT_RETRY_AUTHORIZED")
   );
   const [view, setView] = useState<GateView>("loading");
   const [documentNumber, setDocumentNumber] = useState(

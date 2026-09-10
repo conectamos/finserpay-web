@@ -3,6 +3,9 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
+import { resolveMissingAssessmentGateView } from "../lib/datacredito/resume-gate.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = (file) => readFile(path.join(projectRoot, file), "utf8");
@@ -76,4 +79,93 @@ test("restaura el cupo diario agotado como reintento recuperable de consulta nue
   assert.match(missingAssessmentFlow, /setView\("ready"\)/);
   assert.match(gate, /reuseOnly: identityMismatchRecovery/);
   assert.doesNotMatch(gate, /reuseOnly: newQueryRetryRecovery/);
+});
+
+async function bootstrapRestoredGate(overrides = {}, policyOverrides = {}) {
+  const normalizationStart = gate.indexOf("  const normalizedInitialDocument =");
+  const normalizationEnd = gate.indexOf("  const [view, setView]", normalizationStart);
+  const bootstrapStart = gate.indexOf("  const loadInitialState = useCallback(");
+  const bootstrapEnd = gate.indexOf("\n  useEffect(", bootstrapStart);
+  assert.ok(normalizationStart >= 0 && normalizationEnd > normalizationStart);
+  assert.ok(bootstrapStart >= 0 && bootstrapEnd > bootstrapStart);
+  const { outputText } = ts.transpileModule(
+    `(async () => {
+      ${gate.slice(normalizationStart, normalizationEnd)}
+      ${gate.slice(bootstrapStart, bootstrapEnd)}
+      await loadInitialState();
+    })()`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
+  );
+  const state = { consentAccepted: true, view: "loading" };
+  const requests = [];
+  let approvals = 0;
+  let bypasses = 0;
+  const setters = Object.fromEntries(
+    ["View", "CorrelationId", "ConsumedCreditId", "DailyQueryLimitReached",
+      "ApprovedResult", "RetryMode", "ConsentText", "ConsentAccepted", "FormErrors"]
+      .map((name) => [`set${name}`, (value) => {
+        state[name[0].toLowerCase() + name.slice(1)] = value;
+      }])
+  );
+  await runInNewContext(outputText, {
+    initialSolicitudId: 37,
+    initialAssessmentId: null,
+    initialDocumentNumber: "123456789",
+    initialFirstSurname: "APELLIDO PRUEBA",
+    initialErrorCode: "ASSESSMENT_RETRY_AUTHORIZED",
+    platform: "IPHONE",
+    ...overrides,
+    ...setters,
+    useCallback: (callback) => callback,
+    fetch: async (url, options) => {
+      requests.push({ url, method: options.method || "GET" });
+      assert.equal(url, "/api/creditos/datacredito/politica");
+      return Response.json({
+        ok: true, enabled: true, configured: true, hasPolicy: true,
+        policy: { version: 1 }, ...policyOverrides,
+      });
+    },
+    readJson: (response) => response.json(),
+    readString: (value) => typeof value === "string" ? value : null,
+    CONSENT_ATTESTATION: "Autorización del titular requerida",
+    resolveMissingAssessmentGateView,
+    expiredRequerySolicitudIdRef: { current: null },
+    getCorrelationId: () => null,
+    finishBypass: () => { bypasses++; },
+    showApproved: () => { approvals++; },
+    onApprovedRef: { current: () => { approvals++; } },
+    DOMException,
+  }, { timeout: 1000 });
+  return { state, requests, approvals, bypasses };
+}
+
+test("un reintento autorizado abre el formulario con consentimiento nuevo y no consulta ni aprueba automáticamente", async () => {
+  for (const initialErrorCode of ["ASSESSMENT_RETRY_AUTHORIZED", "RATE_LIMITED", "ALLY_DAILY_QUERY_LIMIT_REACHED"]) {
+    const result = await bootstrapRestoredGate({ initialErrorCode });
+    assert.equal(result.state.view, "ready");
+    assert.equal(result.state.consentAccepted, false);
+    assert.equal(result.state.retryMode, "form");
+    assert.deepEqual(result.requests, [{ url: "/api/creditos/datacredito/politica", method: "GET" }]);
+    assert.equal(result.approvals, 0);
+    assert.equal(result.bypasses, 0);
+  }
+});
+
+test("el reintento no abre una solicitud incompleta, un error no autorizado o un proveedor sin configurar", async () => {
+  for (const overrides of [
+    { initialErrorCode: "PROVIDER_RESPONSE_ERROR" },
+    { initialErrorCode: null },
+    { initialDocumentNumber: "" },
+    { initialFirstSurname: "" },
+  ]) {
+    const result = await bootstrapRestoredGate(overrides);
+    assert.equal(result.state.view, "technical-error");
+    assert.equal(result.approvals, 0);
+    assert.equal(result.bypasses, 0);
+    assert.equal(result.requests.length, 1);
+  }
+  const unavailable = await bootstrapRestoredGate({}, { configured: false });
+  assert.equal(unavailable.state.view, "unavailable");
+  assert.equal(unavailable.approvals, 0);
+  assert.equal(unavailable.bypasses, 0);
 });
