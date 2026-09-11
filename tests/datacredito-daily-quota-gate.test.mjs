@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
+import * as React from "react";
+import * as jsxRuntime from "react/jsx-runtime";
+import { renderToStaticMarkup } from "react-dom/server";
+import * as icons from "lucide-react";
 import ts from "typescript";
 import {
   DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT,
@@ -9,16 +13,65 @@ import {
 } from "../lib/datacredito/policy.ts";
 import { resolveMissingAssessmentGateView } from "../lib/datacredito/resume-gate.ts";
 import { normalizeSolicitudFilters } from "../lib/solicitudes.ts";
+import { formatQuotaRehabilitationDate } from "../lib/datacredito/quota-rehabilitation-date.ts";
 
 const readSource = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [gate, factory, creditPage, wall, modal] = await Promise.all([
+const [gate, factory, creditPage, wall, modal, sharedUi] = await Promise.all([
   readSource("../app/dashboard/creditos/datacredito-prequalification-gate.tsx"),
   readSource("../app/dashboard/creditos/credit-factory-console.tsx"),
   readSource("../app/dashboard/creditos/page.tsx"),
   readSource("../app/dashboard/solicitudes/solicitudes-wall-client.tsx"),
   readSource("../app/dashboard/creditos/datacredito-daily-quota-modal.tsx"),
+  readSource("../app/_components/finser-ui.tsx"),
 ]);
 const ast = ts.createSourceFile("gate.tsx", gate, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+function loadJsxModule(source, dependencies = {}, globals = {}) {
+  const { outputText } = ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
+  } });
+  const loadedModule = { exports: {} };
+  runInNewContext(outputText, {
+    module: loadedModule, exports: loadedModule.exports,
+    require(name) {
+      if (name === "react/jsx-runtime") return jsxRuntime;
+      if (name === "lucide-react") return icons;
+      assert.ok(name in dependencies, `Unexpected modal dependency: ${name}`);
+      return dependencies[name];
+    },
+    ...globals,
+  }, { timeout: 1000 });
+  return loadedModule.exports;
+}
+
+function renderQuotaModal(overrides = {}) {
+  let nextId = 0;
+  const ui = loadJsxModule(sharedUi);
+  const component = loadJsxModule(modal, {
+    react: {
+      ...React,
+      useEffect: () => undefined,
+      useRef: () => ({ current: null }),
+      useId: () => `quota-modal-test-${++nextId}`,
+      useSyncExternalStore: () => true,
+    },
+    "react-dom": { createPortal: (children) => children },
+    "next/link": { default: ({ children, ...props }) => React.createElement("a", props, children) },
+    "next/image": { default: ({ src, alt, className }) => React.createElement("img", { src, alt, className }) },
+    "@/app/_components/finser-ui": ui,
+    "@/lib/datacredito/quota-rehabilitation-date": { formatQuotaRehabilitationDate },
+    "./datacredito-daily-quota-modal.module.css": { default: new Proxy({}, { get: (_target, name) => String(name) }) },
+  }, { document: { body: {} } }).default;
+  // Render the actual JSX, shared UI and icons; browser-only lifecycle is covered by browser QA.
+  return renderToStaticMarkup(component({
+    open: true, onClose() {}, percentUsed: 100, resetsAt: "2026-09-12T05:00:00.000Z",
+    approvedHref: "/dashboard/solicitudes?estado=APROBADA",
+    simulatorHref: "/dashboard/creditos?mode=simulator",
+    illustrationSrc: "/assets/creditos/approved-sad-phone-only.webp",
+    returnFocusId: "datacredito-evaluate-submit",
+    ...overrides,
+  }));
+}
 
 // Execute the real component's helpers and callbacks, retaining their branches.
 // Only React state, refs and HTTP transport are replaced by an in-memory harness.
@@ -389,8 +442,49 @@ test("uses the existing approved filter and simulator without changing the facto
   assert.match(factory, /const dataCreditoCreditCreationMode\s*=\s*!paymentsView && !lookupMode && !simulatorMode/);
   assert.match(modal, /href=\{approvedHref\}/);
   assert.match(modal, /href=\{simulatorHref\}/);
-  assert.match(modal, /Estimado aliado, hoy alcanzó el \{percentUsed\} % de consultas permitidas/);
+  assert.match(gate, /percentUsed=\{dailyQueryLimitReached\.percentUsed\}/);
+  assert.match(gate, /resetsAt=\{dailyQueryLimitReached\.resetsAt\}/);
+  assert.match(modal, /formatQuotaRehabilitationDate\(resetsAt\)/);
   assert.doesNotMatch(modal, /percentUsed\s*=\s*100/);
+  assert.doesNotMatch(modal, /Date\.now\(|new Date\(\)/);
+});
+
+test("the vertical modal renders the exact approved copy, real links and one separate mascot image", () => {
+  const html = renderQuotaModal();
+  const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  assert.match(html, /<dialog[^>]*role="dialog"[^>]*aria-modal="true"/);
+  assert.match(html, /<h2[^>]*>LÍMITE DIARIO ALCANZADO<\/h2>/);
+  assert.match(html, /<time[^>]*dateTime="2026-09-12T05:00:00\.000Z"[^>]*>12 de septiembre de 2026\.?<\/time>/);
+  assert.match(text, /Las consultas estarán habilitadas el 12 de septiembre de 2026\s*\./);
+  assert.match(text, /Retome sus solicitudes aprobadas y conviértalas en ventas\./);
+  assert.match(html, /href="\/dashboard\/solicitudes\?estado=APROBADA"/);
+  assert.match(html, /href="\/dashboard\/creditos\?mode=simulator"/);
+  assert.match(text, /Ver aprobados/);
+  assert.match(text, /Cotizar en el simulador/);
+  assert.equal((html.match(/<a\b/g) || []).length, 2);
+  assert.equal((html.match(/<p\b/g) || []).length, 2, "No extra paragraphs or simulator card");
+  assert.equal((html.match(/<img\b/g) || []).length, 1);
+  assert.match(html, /<img[^>]*src="\/assets\/creditos\/approved-sad-phone-only\.webp"/);
+  assert.doesNotMatch(text, /Estimado aliado|Consultas disponibles nuevamente mañana|Para cotizaciones, utilice|Puede seguir trabajando|Retomar solicitudes aprobadas|Ir al simulador/);
+  assert.doesNotMatch(modal, /styles\.simulatorNote|styles\.phoneBrand|ChartNoAxesColumnIncreasing/);
+});
+
+test("rehabilitation copy follows the server reset date, hides an invalid date and never invents tomorrow", () => {
+  const nextYear = renderQuotaModal({ resetsAt: "2027-01-01T05:00:00.000Z" });
+  assert.match(nextYear, /1 de enero de 2027/);
+  assert.doesNotMatch(nextYear, /12 de septiembre de 2026/);
+  const invalid = renderQuotaModal({ resetsAt: "not-a-date" });
+  assert.doesNotMatch(invalid, /<time\b|Las consultas estarán habilitadas el|mañana|Invalid Date/);
+  assert.match(invalid, /Retome sus solicitudes aprobadas/);
+  assert.equal((invalid.match(/<a\b/g) || []).length, 2);
+  assert.equal(renderQuotaModal({ open: false }), "");
+});
+
+test("the mascot indicator uses the supplied server percentage as HTML instead of a fixed image label", () => {
+  const html = renderQuotaModal({ percentUsed: 73 });
+  assert.match(html, /class="indicator">73<small> %<\/small>/);
+  assert.doesNotMatch(html, />100<small>/);
+  assert.equal((html.match(/<img\b/g) || []).length, 1);
 });
 
 test("automatic quota checks use a fixed visible-page interval regardless of the client's clock", async () => {

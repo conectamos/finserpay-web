@@ -1818,9 +1818,10 @@ export default function DatacreditoPrequalificationGate({
           open={dailyQuotaModalOpen}
           onClose={() => setDailyQuotaModalOpen(false)}
           percentUsed={dailyQueryLimitReached.percentUsed}
+          resetsAt={dailyQueryLimitReached.resetsAt}
           approvedHref="/dashboard/solicitudes?estado=APROBADA"
           simulatorHref="/dashboard/creditos?mode=simulator"
-          illustrationSrc="/assets/creditos/datacredito-daily-quota-mascot.webp"
+          illustrationSrc="/assets/creditos/datacredito-daily-quota-sad-mascot.png"
           returnFocusId="datacredito-evaluate"
         />
       ) : null}
