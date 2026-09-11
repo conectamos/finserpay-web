@@ -56,12 +56,14 @@ test('GET lista y detalle pasan filtros/cursor bajo snapshot de lectura',async()
 });
 test('cola compartida no usa compatibilidad histórica por cédula',async()=>{
   for(const kind of ['USER','SHARED_LINK']){
-    let legacy=0,queue=0;const route=load('app/api/aprobaciones/route.ts',{'next/server':next,'@/lib/prisma':{default:{}},
-      '@/lib/credit-approval':{approvalDocumentNumber:v=>v,listCreditApprovals:async()=>{legacy++;return[];}},
-      '@/lib/credit-approval-queue':{listCreditApprovalQueue:async()=>{queue++;return{items:[],nextCursor:null,hasMore:false};},approvalQueueLimit:()=>50},
+    let legacy=0,queue=0,approved=0;const route=load('app/api/aprobaciones/route.ts',{'next/server':next,'@/lib/prisma':{default:{}},
+      '@/lib/credit-approval':{CreditApprovalError,approvalDocumentNumber:v=>v,listCreditApprovals:async()=>{legacy++;return[];}},
+      '@/lib/credit-approval-queue':{listCreditApprovalQueue:async()=>{queue++;return{items:[],nextCursor:null,hasMore:false};},listApprovedCreditQueue:async()=>{approved++;return{items:[],nextCursor:null,hasMore:false};},approvalQueueLimit:()=>50},
       '@/lib/credit-approval-http':{...http,getApprovalActor:async()=>({kind,id:kind==='USER'?1:null})}});
     assert.equal((await route.GET(new Request('https://finser.test/api/aprobaciones?documento=100000'))).status,200);assert.equal(legacy,kind==='USER'?1:0);assert.equal(queue,kind==='SHARED_LINK'?1:0);
     await route.GET(new Request('https://finser.test/api/aprobaciones'));assert.equal(queue,kind==='SHARED_LINK'?2:1);
+    assert.equal((await route.GET(new Request('https://finser.test/api/aprobaciones?view=approved&documento=100000'))).status,200);assert.equal(approved,1);assert.equal(legacy,kind==='USER'?1:0);
+    assert.equal((await route.GET(new Request('https://finser.test/api/aprobaciones?view=history'))).status,400);assert.equal(approved,1);
   }
 });
 test('API de analista verifica grant y scope también al leer historial',async()=>{

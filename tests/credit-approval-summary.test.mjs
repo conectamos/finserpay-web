@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { service, approvalFixture, approvalDatabase, plain } from "./credit-approval-test-loader.mjs";
-const detail = (fixture) => service.buildCreditApprovalDetail(fixture.credit, fixture.review, fixture.assessment, fixture.document);
+import { completeApprovalDetail, service, approvalFixture, approvalDatabase, plain } from "./credit-approval-test-loader.mjs";
+const detail = (fixture) => completeApprovalDetail(fixture);
 
 test("el resumen muestra contacto y condiciones guardadas sin alterar el crédito", () => {
   const fixture = approvalFixture();

@@ -1,4 +1,5 @@
 import "server-only";
+import { readCreditApprovalCallState, type ApprovalCallState } from "@/lib/credit-approval-call-state";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { approvalActorAudit, assertApprovalActorActive, assertApprovalActorCreditAccess, type ApprovalActor } from "@/lib/credit-approval-actor";
 import { getCreditApprovalNoveltyState, resolveCreditApprovalNoveltyForApproval } from "@/lib/credit-approval-novelty-state";
@@ -38,7 +39,7 @@ export type ApprovalCredit = Record<EvidenceField, string | null> & {
 };
 export type ApprovalReview = {
   status: "PENDING" | "APPROVED"; revision: number; approvedRevision: number | null;
-  approvedAt: Date | null; approvedByName: string | null; reviewHash: string | null;
+  approvedAt: Date | null; approvedByName: string | null; reviewHash: string | null; callRecordingId?: string | null;
 };
 export type ApprovalAssessment = {
   id: string; score: number | null; offer: unknown; status: string;
@@ -94,12 +95,14 @@ export function approvalDocumentNumber(value: unknown) {
 }
 export function parseCreditApproval(input: unknown) {
   const body = record(input);
-  if (Object.keys(body).sort().join(",") !== "reviewHash,revision" ||
+  const keys = Object.keys(body).sort().join(",");
+  if (!["reviewHash,revision", "recordingId,reviewHash,revision"].includes(keys) ||
+      ("recordingId" in body && (typeof body.recordingId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.recordingId))) ||
       typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision < 1 ||
       typeof body.reviewHash !== "string" || !/^[a-f0-9]{64}$/.test(body.reviewHash)) {
     throw new CreditApprovalError("INVALID_REVIEW", "Actualiza y revisa el expediente antes de dar el OK.");
   }
-  return { revision: body.revision, reviewHash: body.reviewHash };
+  return { revision: body.revision, reviewHash: body.reviewHash, ...(typeof body.recordingId === "string" ? { recordingId: body.recordingId } : {}) };
 }
 
 export function approvalImage(value: string | null) {
@@ -164,7 +167,7 @@ async function readCredit(db: ApprovalDatabase, id: number, lock = false) {
 }
 async function readReview(db: ApprovalDatabase, id: number, lock = false) {
   const rows = await db.$queryRawUnsafe<ApprovalReview[]>(`SELECT "status", "revision", "approvedRevision",
-      "approvedAt", "approvedByName", "reviewHash" FROM "CreditApprovalReview"
+      "approvedAt", "approvedByName", "reviewHash", "callRecordingId"::text FROM "CreditApprovalReview"
     WHERE "creditoId" = $1${lock ? " FOR UPDATE" : ""}`, id);
   return rows[0] || null;
 }
@@ -184,7 +187,19 @@ async function readDocument(db: ApprovalDatabase, id: number) {
   return rows[0] || null;
 }
 
-export function buildCreditApprovalDetail(credit: ApprovalCredit, review: ApprovalReview | null, assessment: ApprovalAssessment | null, document: ApprovalDocument | null, reissue: Awaited<ReturnType<typeof getCreditApprovalReissueState>> = { available: true, blocked: false, operation: null }, novelties: Awaited<ReturnType<typeof getCreditApprovalNoveltyState>> = { available: true, blocksApproval: false, blocksSettlement: false, pendingCount: 0, answeredCount: 0, novelty: null }) {
+function creditApprovalReviewHash(credit: ApprovalCredit, assessment: ApprovalAssessment | null, document: ApprovalDocument | null) {
+  return digest({
+    creditId: credit.id, document: credit.clienteDocumento, name: credit.clienteNombre,
+    allyId: credit.aliadoId, imei: credit.imei, marca: credit.equipoMarca, modelo: credit.equipoModelo,
+    valorVenta: credit.valorEquipoTotal, inicial: credit.cuotaInicial, principal: credit.saldoBaseFinanciado,
+    financial: record(credit.contratoSnapshot).financiero,
+    evidence: APPROVAL_EVIDENCE.map(({ field }) => digest(credit[field])),
+    assessment: assessment ? [assessment.id, assessment.score, assessment.offer, assessment.status] : null,
+    firmaSeguro: document ? [document.id, document.processUuid, document.status, iso(document.completedAt), digest(document.signedDocumentBase64)] : null,
+  });
+}
+
+export function buildCreditApprovalDetail(credit: ApprovalCredit, review: ApprovalReview | null, assessment: ApprovalAssessment | null, document: ApprovalDocument | null, reissue: Awaited<ReturnType<typeof getCreditApprovalReissueState>> = { available: true, blocked: false, operation: null }, novelties: Awaited<ReturnType<typeof getCreditApprovalNoveltyState>> = { available: true, blocksApproval: false, blocksSettlement: false, pendingCount: 0, answeredCount: 0, novelty: null }, callState: ApprovalCallState = { available: true, recording: null }, reviewHash = creditApprovalReviewHash(credit, assessment, document)) {
   const evidence = APPROVAL_EVIDENCE.map((item) => ({
     key: item.key, label: item.label, available: Boolean(approvalImage(credit[item.field])),
     href: `/api/aprobaciones/${credit.id}/evidencias?tipo=${item.key}`,
@@ -196,15 +211,7 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
   const score = numeric(assessment?.score);
   const validScore = score !== null && Number.isInteger(score) && score >= -1 && score <= 950;
   const approved = review?.status === "APPROVED" && review.approvedRevision === review.revision;
-  const reviewHash = digest({
-    creditId: credit.id, document: credit.clienteDocumento, name: credit.clienteNombre,
-    allyId: credit.aliadoId, imei: credit.imei, marca: credit.equipoMarca, modelo: credit.equipoModelo,
-    valorVenta: credit.valorEquipoTotal, inicial: credit.cuotaInicial, principal: credit.saldoBaseFinanciado,
-    financial: record(credit.contratoSnapshot).financiero,
-    evidence: APPROVAL_EVIDENCE.map(({ field }) => digest(credit[field])),
-    assessment: assessment ? [assessment.id, assessment.score, assessment.offer, assessment.status] : null,
-    firmaSeguro: document ? [document.id, document.processUuid, document.status, iso(document.completedAt), digest(document.signedDocumentBase64)] : null,
-  });
+
   // Same stored commercial installment precedence used by the credit factory.
   const financial = record(credit.contratoSnapshot).financiero;
   const valorCuota = positiveAmount(credit.cuotaComercialGuardada)
@@ -217,6 +224,14 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
     : cancelled ? "El crédito está anulado o cancelado."
     : reissue.blocked ? "Resuelve el reenvío de firma en curso antes de corregir o aprobar este expediente."
     : !reissue.available ? "No se pudo verificar el estado de la firma. Actualiza el expediente." : null;
+  const recordingRequired = credit.required && !approved;
+  const currentRecording = callState.recording && (!recordingRequired || (
+    callState.recording.revision === (review?.revision || 1) && callState.recording.reviewHash === reviewHash
+  )) ? callState.recording : null;
+  const recordingBlockedReason = recordingRequired && (!callState.available || !currentRecording)
+    ? !callState.available ? "No se pudo verificar la grabación de la llamada. Actualiza el expediente."
+      : "Realiza la llamada y adjunta su grabación antes de confirmar el OK para liquidación."
+    : null;
   const blockingReasons: string[] = [];
   if (!novelties.available) blockingReasons.push("No se pudo verificar el estado de las novedades. Actualiza el expediente.");
   else if (novelties.blocksApproval) blockingReasons.push("Hay novedades pendientes de corrección. Revisa las respuestas antes de confirmar el OK.");
@@ -229,6 +244,7 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
   if (!assessment || !validScore || assessment.status !== "APROBADO") blockingReasons.push("La evaluación de DataCrédito vinculada al crédito no está disponible para revisión.");
   for (const item of evidence) if (!item.available) blockingReasons.push(`Falta evidencia válida: ${item.label}.`);
   if (!documentAvailable) blockingReasons.push("El documento firmado de FirmaSeguro aún no está disponible.");
+  if (recordingBlockedReason) blockingReasons.push(recordingBlockedReason);
   return {
     id: credit.id, folio: credit.folio, clienteDocumento: credit.clienteDocumento,
     clienteNombre: credit.clienteNombre, aliadoNombre: credit.aliadoNombre, fechaCredito: iso(credit.fechaCredito),
@@ -245,6 +261,9 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
     review: { required: credit.required, status: !credit.required ? "NOT_REQUIRED" : approved ? "APPROVED" : "PENDING",
       revision: review?.revision || 1, reviewHash, approvedAt: approved ? iso(review?.approvedAt || null) : null,
       approvedByName: approved ? review?.approvedByName || null : null },
+    callRecording: { available: callState.available, recording: currentRecording, required: recordingRequired,
+      canUpload: recordingRequired && correctionBlockedReason === null && callState.available,
+      blockedReason: recordingBlockedReason || (recordingRequired ? correctionBlockedReason : null) },
     canApprove: blockingReasons.length === 0 && !approved, blockingReasons, evidence: evidence.map((item) => ({ ...item, href: `${item.href}&revision=${reviewHash}` })), reissue, novelties,
     capabilities: { canCreateNovelty: correctionBlockedReason === null && novelties.available, canCorrectEvidence: correctionBlockedReason === null, canReissueSignature: correctionBlockedReason === null && documentAvailable && Boolean(document?.processUuid?.trim()), correctionBlockedReason },
     document: { processUuid: document?.processUuid || null, available: documentAvailable, href: `/api/aprobaciones/${credit.id}/documento`, fileName: document?.signedDocumentFileName || null },
@@ -259,7 +278,10 @@ export async function getCreditApprovalDetail(db: ApprovalDatabase, id: number) 
   const document = await readDocument(db, id);
   const reissue = await getCreditApprovalReissueState(db, id);
   const novelties = await getCreditApprovalNoveltyState(db, id);
-  return buildCreditApprovalDetail(credit, review, assessment, document, reissue, novelties);
+  const reviewHash = creditApprovalReviewHash(credit, assessment, document);
+  const approved = review?.status === "APPROVED" && review.approvedRevision === review.revision;
+  const callState = await readCreditApprovalCallState(db, id, review?.revision || 1, reviewHash, approved ? review.callRecordingId ?? null : undefined);
+  return buildCreditApprovalDetail(credit, review, assessment, document, reissue, novelties, callState, reviewHash);
 }
 
 /** Caller supplies a transaction. Lock order matches corrections and ally payments. */
@@ -273,14 +295,23 @@ export async function approveCredit(db: ApprovalDatabase, id: number, input: Ret
   const document = await readDocument(db, id);
   const reissue = await getCreditApprovalReissueState(db, id);
   const novelties = await getCreditApprovalNoveltyState(db, id);
-  const item = buildCreditApprovalDetail(credit, review, assessment, document, reissue, novelties);
+  const reviewHash = creditApprovalReviewHash(credit, assessment, document);
+  const approved = review?.status === "APPROVED" && review.approvedRevision === review.revision;
+  const callState = await readCreditApprovalCallState(db, id, review?.revision || 1, reviewHash, approved ? review.callRecordingId ?? null : undefined);
+  const item = buildCreditApprovalDetail(credit, review, assessment, document, reissue, novelties, callState, reviewHash);
   if (!novelties.available || novelties.blocksApproval) throw new CreditApprovalError("NOVELTY_PENDING", "Hay novedades que deben corregirse antes de confirmar el OK.", 409);
   if (reissue.blocked || !reissue.available) throw new CreditApprovalError("SIGNATURE_REISSUE_PENDING", "La nueva firma debe quedar completa antes de confirmar el OK.", 409);
   if (input.revision !== item.review.revision || input.reviewHash !== item.review.reviewHash) {
     throw new CreditApprovalError("REVIEW_CHANGED", "El expediente cambió. Actualiza y vuelve a revisar los documentos antes de dar el OK.", 409);
   }
   // A retry of the same confirmed revision produces no second event or actor change.
-  if (item.review.status === "APPROVED" && review?.reviewHash === input.reviewHash) return { item, unchanged: true };
+  if (item.review.status === "APPROVED" && review?.reviewHash === input.reviewHash) {
+    if (input.recordingId && input.recordingId !== review.callRecordingId) throw new CreditApprovalError("CALL_RECORDING_CHANGED", "La aprobación conserva una grabación diferente. Actualiza el expediente.", 409);
+    return { item, unchanged: true };
+  }
+  if (!callState.available) throw new CreditApprovalError("CALL_RECORDING_UNAVAILABLE", "No se pudo verificar la grabación de la llamada. Actualiza el expediente.", 503);
+  if (!item.callRecording.recording) throw new CreditApprovalError("CALL_RECORDING_REQUIRED", "Realiza la llamada y adjunta su grabación antes de confirmar el OK para liquidación.", 409);
+  if (!input.recordingId || input.recordingId !== item.callRecording.recording.id) throw new CreditApprovalError("CALL_RECORDING_CHANGED", "Revisa la grabación vigente antes de confirmar el OK para liquidación.", 409);
   if (!item.canApprove) throw new CreditApprovalError("REVIEW_NOT_READY", item.blockingReasons[0] || "El crédito no permite esta aprobación.", 409);
   await db.$executeRawUnsafe(`INSERT INTO "CreditApprovalReview" ("creditoId", "status", "revision", "createdAt", "updatedAt")
     VALUES ($1, 'PENDING', 1, CURRENT_TIMESTAMP AT TIME ZONE 'UTC', CURRENT_TIMESTAMP AT TIME ZONE 'UTC') ON CONFLICT ("creditoId") DO NOTHING`, id);
@@ -288,16 +319,16 @@ export async function approveCredit(db: ApprovalDatabase, id: number, input: Ret
   const audit = approvalActorAudit(actor);
   const updated = await db.$executeRawUnsafe(`UPDATE "CreditApprovalReview" SET "status" = 'APPROVED',
     "approvedRevision" = "revision", "approvedByUserId" = $2, "approvedByName" = $3,
-    "approvedByKind" = $6, "approvedByGrantId" = $7::uuid, "approvedBySessionId" = $8::uuid,
+    "approvedByKind" = $6, "approvedByGrantId" = $7::uuid, "approvedBySessionId" = $8::uuid, "callRecordingId" = $9::uuid,
     "approvedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC', "reviewHash" = $4, "updatedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
-    WHERE "creditoId" = $1 AND "revision" = $5`, id, audit.actorUserId, audit.actorName, input.reviewHash, input.revision, audit.actorKind, audit.actorGrantId, audit.actorSessionId);
+    WHERE "creditoId" = $1 AND "revision" = $5`, id, audit.actorUserId, audit.actorName, input.reviewHash, input.revision, audit.actorKind, audit.actorGrantId, audit.actorSessionId, input.recordingId);
   if (updated !== 1) throw new CreditApprovalError("REVIEW_CHANGED", "La revisión cambió. Actualiza el expediente.", 409);
   await db.$executeRawUnsafe(`INSERT INTO "CreditApprovalEvent"
-    ("id", "creditoId", "eventType", "revision", "actorUserId", "actorName", "reason", "reviewHash", "createdAt", "actorKind", "actorGrantId", "actorSessionId")
-    VALUES ($1::uuid, $2, 'APPROVED', $3, $4, $5, 'Documentación revisada para liquidación al aliado', $6, CURRENT_TIMESTAMP AT TIME ZONE 'UTC', $7, $8::uuid, $9::uuid)`,
-    randomUUID(), id, input.revision, audit.actorUserId, audit.actorName, input.reviewHash, audit.actorKind, audit.actorGrantId, audit.actorSessionId);
+    ("id", "creditoId", "eventType", "revision", "actorUserId", "actorName", "reason", "reviewHash", "createdAt", "actorKind", "actorGrantId", "actorSessionId", "callRecordingId")
+    VALUES ($1::uuid, $2, 'APPROVED', $3, $4, $5, 'Documentación revisada para liquidación al aliado', $6, CURRENT_TIMESTAMP AT TIME ZONE 'UTC', $7, $8::uuid, $9::uuid, $10::uuid)`,
+    randomUUID(), id, input.revision, audit.actorUserId, audit.actorName, input.reviewHash, audit.actorKind, audit.actorGrantId, audit.actorSessionId, input.recordingId);
   const confirmedReview = await readReview(db, id);
-  return { item: buildCreditApprovalDetail(credit, confirmedReview, assessment, document, reissue, await getCreditApprovalNoveltyState(db, id)), unchanged: false };
+  return { item: buildCreditApprovalDetail(credit, confirmedReview, assessment, document, reissue, await getCreditApprovalNoveltyState(db, id), callState, reviewHash), unchanged: false };
 }
 
 export async function getApprovalEvidence(db: ApprovalDatabase, id: number, key: string) {

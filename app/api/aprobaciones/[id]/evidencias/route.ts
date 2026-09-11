@@ -1,4 +1,4 @@
-import { assertApprovalActorActive, assertApprovalActorCreditAccess } from "@/lib/credit-approval-actor";
+import { assertApprovalActorCreditReadAccess } from "@/lib/credit-approval-actor";
 import { NextResponse } from "next/server";
 import { prepareEvidenceCorrection, replaceApprovalEvidence } from "@/lib/credit-approval-evidence";
 import { approvalCreditId, getApprovalEvidence } from "@/lib/credit-approval";
@@ -13,7 +13,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const actor = await getApprovalActor();
     const id = approvalCreditId((await context.params).id);
     const result = await prisma.$transaction(async (db) => {
-      await assertApprovalActorActive(db, actor); await assertApprovalActorCreditAccess(db, id, actor);
+      await assertApprovalActorCreditReadAccess(db, id, actor);
       return getApprovalEvidence(db, id, new URL(request.url).searchParams.get("tipo") || "");
     }, { isolationLevel: "RepeatableRead", timeout: 20_000 });
     return new Response(new Uint8Array(result.bytes), { headers: { ...approvalPrivateHeaders, "Content-Type": result.mime, "Content-Disposition": "inline" } });

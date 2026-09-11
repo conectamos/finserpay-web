@@ -1,14 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import pg from "pg";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { installCreditApprovalSchema } from "../scripts/credit-approval-schema.mjs";
 import { installApprovalEvidenceSchema } from "../scripts/approval-evidence-schema.mjs";
 import { installCreditApprovalReissueSchema } from "../scripts/credit-approval-reissue-schema.mjs";
 import { installCreditApprovalActorSchema } from "../scripts/credit-approval-actor-schema.mjs";
 import { installCreditApprovalNoveltiesSchema } from "../scripts/credit-approval-novelties-schema.mjs";
 import { installApprovalSharedSchema } from "../scripts/approval-shared-schema.mjs";
+import { installCreditApprovalCallSchema } from "../scripts/credit-approval-call-schema.mjs";
+import { loadCallModule, stateModule, actors as callActors } from "./credit-approval-call-test-loader.mjs";
 import { evidence, history, photos, actor, service, correctionInput } from "./credit-approval-evidence-test-loader.mjs";
+
+const callStore = loadCallModule("lib/credit-approval-call-store.ts", {
+  "@/lib/credit-approval": service, "@/lib/credit-approval-errors": service,
+  "@/lib/credit-approval-actor": callActors, "@/lib/credit-approval-call-state": stateModule,
+});
+const callBytes = readFileSync(new URL("fixtures/approval-call/tone.wav", import.meta.url));
 
 // Match Prisma: PostgreSQL DateTime columns without timezone contain UTC values.
 pg.types.setTypeParser(1114, (value) => new Date(value.replace(" ", "T") + "Z"));
@@ -32,7 +41,7 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
   const client = new pg.Client({ connectionString });
   await client.connect();
   t.after(() => client.end());
-  const tables = ["CreditApprovalNoveltyEvent", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalEvidenceRevision", "CreditApprovalReissueEvent", "CreditApprovalReissue", "CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy", "FirmaSeguroProcess", "DataCreditoAssessment", "LiquidacionAliadoCredito", "CreditoAmortizacion", "Credito", "Usuario", "Sede", "Aliado"];
+  const tables = ["CreditApprovalCallRecording", "CreditApprovalNoveltyEvent", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalEvidenceRevision", "CreditApprovalReissueEvent", "CreditApprovalReissue", "CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy", "FirmaSeguroProcess", "DataCreditoAssessment", "LiquidacionAliadoCredito", "CreditoAmortizacion", "Credito", "Usuario", "Sede", "Aliado"];
   const existing = await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(existing.rows.every(({ tablename }) => tables.includes(tablename)), "No se reinicia una base con tablas ajenas");
   for (const table of tables) await client.query(`DROP TABLE IF EXISTS public."${table}" CASCADE`);
@@ -79,6 +88,7 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
   await installCreditApprovalActorSchema(client);
   await installCreditApprovalNoveltiesSchema(client);
   await installApprovalSharedSchema(client);
+  await installCreditApprovalCallSchema(client);
   const db = adapter(client);
   const pdf = Buffer.from("%PDF-1.4\nDocumento firmado sintético e inalterable\n%%EOF").toString("base64");
   async function createCredit(overrides = {}) {
@@ -91,8 +101,17 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
   }
   const detail = (id) => service.getCreditApprovalDetail(db, id);
   async function approve(id) {
-    const current = await detail(id);
-    return transaction(client, (tx) => service.approveCredit(tx, id, { revision: current.review.revision, reviewHash: current.review.reviewHash }, actor));
+    let current = await detail(id);
+    if (current.review.status !== "APPROVED" && !current.callRecording.recording) {
+      await transaction(client, (tx) => callStore.saveCreditApprovalCall(tx, id, {
+        bytes: callBytes, fileName: "llamada.wav", mimeType: "audio/wav", sizeBytes: callBytes.length,
+        sha256: createHash("sha256").update(callBytes).digest("hex"), idempotencyKey: randomUUID(),
+        revision: current.review.revision, reviewHash: current.review.reviewHash,
+      }, actor));
+      current = await detail(id);
+    }
+    return transaction(client, (tx) => service.approveCredit(tx, id, { revision: current.review.revision,
+      reviewHash: current.review.reviewHash, recordingId: current.callRecording.recording?.id }, actor));
   }
   const archives = async (id) => (await client.query('SELECT * FROM "CreditApprovalEvidenceRevision" WHERE "creditoId"=$1 ORDER BY "createdAt"', [id])).rows;
 

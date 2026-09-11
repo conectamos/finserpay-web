@@ -17,7 +17,7 @@ export async function getApprovalActor(): Promise<ApprovalActor> {
   return { id: user.id, nombre: user.nombre };
 }
 
-function isSameApprovalOrigin(request: Request) {
+export function isSameApprovalOrigin(request: Request) {
   const fetchSite = request.headers.get("sec-fetch-site")?.trim().toLowerCase();
   if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") return false;
 

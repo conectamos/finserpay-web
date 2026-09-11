@@ -32,13 +32,21 @@ usuario inventado. El portal no concede acceso a administración, fábrica ni
 pagos. Cuando el mismo navegador conserva una cuenta individual, el panel avisa
 si las revisiones se atribuirán al acceso compartido y permite cerrarlo.
 
-El muro carga automáticamente los créditos nuevos sujetos al control, de todos
-los aliados externos, pendientes y sin liquidación pagada. No tiene búsqueda por
-cédula. Ordena por antigüedad, pagina sin cargar fotos ni PDF en la lista y permite
-actualizar. Muestra créditos esperando al aliado y respuestas para revisar; los
-aprobados desaparecen. Un cambio posterior que invalide el OK devuelve el crédito
-al muro. El refresco periódico respeta formularios abiertos y exige revisar otra
-vez cuando cambia el expediente.
+El muro ofrece dos vistas sin búsqueda por cédula:
+
+- **Pendientes por aprobar**: créditos sujetos al control, de todos los aliados
+  externos, pendientes y sin liquidación pagada. Ordena por antigüedad e incluye
+  novedades esperando al aliado y correcciones que el analista debe revisar.
+- **Aprobadas**: créditos con un OK de liquidación vigente, del más reciente al
+  más antiguo. Incluye aprobaciones previas sin audio y créditos ya incluidos en
+  liquidación. Muestra fecha y autor del OK; su expediente se consulta en lectura.
+
+Solo confirmar el OK tras revisar el expediente mueve un crédito a Aprobadas.
+Un cambio posterior que invalide la aprobación lo devuelve a Pendientes.
+Aprobadas no es un listado de eventos históricos invalidados. Ambas vistas
+paginan sin fotos, documentos ni audio en la respuesta de la lista. El refresco
+periódico respeta formularios abiertos y exige revisar otra vez cuando cambia el
+expediente; cambiar de pestaña cancela las consultas de la vista anterior.
 
 ### Enlaces personales
 
@@ -78,9 +86,46 @@ El flujo consiste en:
 
 1. Abrir el enlace común y elegir un crédito del muro.
 2. Revisar los valores, las cinco fotografías y la última página del PDF firmado.
-3. Registrar una novedad si algo requiere corrección, o confirmar **OK para
-   liquidación** cuando toda la documentación esté en orden.
-4. Revisar las respuestas del aliado y dar el OK; responder nunca aprueba solo.
+3. Registrar novedades cuando algo requiera corrección y revisar las respuestas
+   del aliado. Una novedad abierta impide aprobar; responder nunca aprueba solo.
+4. Realizar la llamada al cliente y guardar su grabación para la revisión vigente.
+5. Confirmar **OK para liquidación** cuando todo esté en orden. El crédito sale de
+   Pendientes y queda en Aprobadas. Subir el audio no concede el OK.
+
+### Grabación obligatoria antes del OK
+
+La llamada la realiza el analista; el teléfono del cliente permite abrir la
+aplicación de llamadas disponible en su dispositivo. El sistema recibe una
+**grabación MP3, M4A o WAV de hasta 10 MiB**. La fecha mostrada es la de carga,
+no una fecha de llamada inferida. El analista confirma que realizó la llamada
+al conceder el OK; no se integra un proveedor de telefonía ni se graba automáticamente.
+
+El audio se almacena de forma privada y separada del contrato. No se incorpora al
+snapshot contractual ni a sus valores. Cada carga conserva su archivo, autor,
+fecha, huella y revisión. Las cargas anteriores no se sobrescriben. Cambiar los
+documentos e invalidar la revisión exige adjuntar la grabación de la nueva revisión.
+
+El servidor valida contenido y contenedor, permisos, origen, revisión y huella;
+la extensión por sí sola no es suficiente. El envío es binario, con límite durante
+la lectura e identificador de operación para reintentos. Reproducir el audio exige
+una sesión vigente, acceso al crédito y admite peticiones Range autenticadas.
+No se generan URL públicas para los archivos ni se entrega audio en los listados.
+
+El OK nuevo debe identificar la grabación vigente observada por el analista.
+Otra carga concurrente invalida esa selección y requiere actualizar. Las
+aprobaciones existentes conservan su estado aunque no tengan audio. Una aprobación
+que se invalide deberá satisfacer los requisitos del nuevo OK.
+
+Rutas adicionales:
+
+- `GET /api/aprobaciones?view=approved`: aprobaciones vigentes; cursor exclusivo
+  de esta vista por fecha de aprobación e identificador.
+- `POST /api/aprobaciones/:id/grabaciones`: cuerpo binario y cabeceras
+  `x-recording-file-name` (nombre codificado), `x-review-revision`,
+  `x-review-hash` e `idempotency-key`.
+- `GET /api/aprobaciones/:id/grabaciones/:recordingId`: reproducción privada.
+- `POST /api/aprobaciones/:id`: incorpora `recordingId` al OK junto a revisión
+  y huella. Un reintento de un OK previo no altera su grabación registrada.
 
 ### Novedades y PENDIENTES del aliado
 
@@ -388,8 +433,9 @@ El predespliegue conserva los instaladores anteriores e incorpora, en orden,
 `ensure-credit-approval-actor-schema.mjs`,
 `ensure-credit-approval-novelties-schema.mjs` y
 `ensure-approval-shared-schema.mjs`. Las claves compartidas se incorporan después
-de sus columnas. La instalación aditiva conserva la activación, aprobaciones y
-contratos previos; las filas históricas mantienen su autor individual.
+de sus columnas. Al final se ejecuta `ensure-credit-approval-call-schema.mjs`,
+que instala la tabla de audio y la barrera para nuevos OK. La instalación aditiva
+conserva la activación, aprobaciones y contratos previos; las filas históricas mantienen su autor individual.
 
 Las suites adicionales de PostgreSQL exigen bases locales exclusivas:
 
@@ -404,3 +450,30 @@ foto respondida con otra aún abierta → segunda respuesta → nuevo OK → des
 de ambas listas. Incluir otro aliado sin permiso, un enlace revocado, contratos y
 fotos anteriores intactos, y respuestas simultáneas. Todo se valida con datos y
 proveedor de firma sintéticos, sin contactar clientes.
+
+## Validación de grabaciones y aprobaciones vigentes
+
+El despliegue debe instalar primero el esquema del audio y luego iniciar la
+versión que envía `recordingId`. No hay backfill ni cambio de la fecha original
+que decide qué créditos requieren revisión. La instalación se puede repetir;
+conserva las decisiones existentes y sus documentos. Una versión anterior de la
+aplicación que no envíe audio no podrá conceder nuevos OK después de esta instalación.
+
+Las pruebas adicionales de PostgreSQL usan bases locales exclusivas de fixtures:
+
+| Variable | Base |
+| --- | --- |
+| CREDIT_APPROVAL_QUEUE_TEST_DATABASE_URL | approval_queue_test |
+| CREDIT_APPROVAL_CALL_TEST_DATABASE_URL | approval_call_test |
+| CREDIT_APPROVAL_CALL_GATE_TEST_DATABASE_URL | approval_gate_test |
+
+Cubren instalación repetida y después de Prisma, aprobaciones previas sin audio,
+checksum/tamaño/autoría, inmutabilidad, invalidación, selección de la última
+carga y las carreras entre subir, sustituir y aprobar. El OK sin audio se rechaza
+en el servicio y en SQL; liquidación continúa usando su bloqueo existente.
+
+Verificar en navegador el enlace común, ambas pestañas, novedad de fotografía,
+respuesta desde PENDIENTES del aliado, carga del audio sin aprobación automática,
+OK explícito, expediente aprobado en lectura y reproducción autenticada con
+Range. Revisar recuperación de cargas fallidas y reproducción, escritorio y
+celular, y que contratos, condiciones y aprobaciones históricas permanezcan intactos.

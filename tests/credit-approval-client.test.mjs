@@ -3,6 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   ApprovalRequestError,
+  readApprovalQueue,
+  mergeApprovalQueuePage,
+  uploadApprovalCallRecording,
   approveCreditReview,
   requestApprovalSignature,
   refreshApprovalSignature,
@@ -117,4 +120,31 @@ test("un reenvío de resultado incierto no se repite ni se presenta como exitoso
   t.mock.method(globalThis, "fetch", async () => { calls++; throw new Error("Connection lost"); });
   await assert.rejects(requestApprovalSignature(81, { expectedRevision: 3, expectedProcessUuid: "process", reason: "Firma incompleta", idempotencyKey: "test" }), /Connection lost/);
   assert.equal(calls, 1);
+});
+
+test("Aprobadas consulta y valida solo aprobaciones vigentes sin mezclar pendientes", async (t) => {
+  let result = { items: [{ id: 81, status: "APPROVED", required: true }], nextCursor: null, hasMore: false };
+  t.mock.method(globalThis, "fetch", async (url) => { assert.equal(url, "/api/aprobaciones?view=approved"); return Response.json(result); });
+  assert.equal((await readApprovalQueue(null, undefined, "approved")).items.length, 1);
+  assert.deepEqual(mergeApprovalQueuePage([], result.items, false, "approved"), result.items);
+  assert.equal(mergeApprovalQueuePage([], result.items, false).length, 0);
+  result = { ...result, items: [{ id: 82, status: "PENDING", required: true }] };
+  await assert.rejects(readApprovalQueue(null, undefined, "approved"), /respuesta válida/);
+});
+
+test("la grabación se envía binaria y el OK queda asociado al audio revisado", async (t) => {
+  const requests = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    requests.push({ url, options }); return Response.json({ ok: true, state: { recording: { id: "audio-id" } }, unchanged: false });
+  });
+  const file = new File(["synthetic"], "llamada cliente.wav", { type: "audio/wav" });
+  await uploadApprovalCallRecording(81, { file, revision: 2, reviewHash: "hash", idempotencyKey: "operation-id" });
+  assert.equal(requests[0].url, "/api/aprobaciones/81/grabaciones");
+  assert.equal(requests[0].options.body, file);
+  assert.equal(requests[0].options.headers["Content-Type"], "application/octet-stream");
+  assert.equal(requests[0].options.headers["x-recording-file-name"], "llamada%20cliente.wav");
+  assert.equal(requests[0].options.headers["x-review-revision"], "2");
+  assert.equal(requests[0].options.headers["idempotency-key"], "operation-id");
+  await approveCreditReview(81, 2, "hash", "audio-id");
+  assert.deepEqual(JSON.parse(requests[1].options.body), { revision: 2, reviewHash: "hash", recordingId: "audio-id" });
 });

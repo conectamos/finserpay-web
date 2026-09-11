@@ -7,9 +7,10 @@ import { PAYMENT_FREQUENCY_OPTIONS } from "@/lib/credit-factory";
 import LastPdfPagePreview from "./last-pdf-page-preview";
 import ApprovalEvidenceCorrection from "./approval-evidence-correction";
 import ApprovalSignatureReissue from "./approval-signature-reissue";
+import ApprovalCallRecording from "./approval-call-recording";
 import ApprovalNoveltyPanel from "./approval-novelty-panel";
-import { Badge, Button, Card, DataTable, EmptyState, LoadingState, MetricCard, PageHeader, StatusPill } from "@/app/_components/finser-ui";
-import { ApprovalRequestError, approveCreditReview, readApprovalCredit, readApprovalQueue, mergeApprovalQueuePage, type ApprovalDetail, type ApprovalQueueItem, type ApprovalStatus } from "./approval-client";
+import { Badge, Button, Card, DataTable, EmptyState, LoadingState, MetricCard, PageHeader, StatusPill, Tabs } from "@/app/_components/finser-ui";
+import { ApprovalRequestError, approveCreditReview, readApprovalCredit, readApprovalQueue, mergeApprovalQueuePage, type ApprovalDetail, type ApprovalQueueItem, type ApprovalStatus, type ApprovalView } from "./approval-client";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 const calendarDates = new Intl.DateTimeFormat("es-CO", { timeZone: "UTC", day: "2-digit", month: "2-digit", year: "numeric" });
@@ -65,9 +66,11 @@ function EvidencePhoto({ item, clientName }: { item: ApprovalDetail["evidence"][
   );
 }
 
-type Confirmation = { id: number; folio: string; clienteNombre: string; clienteDocumento: string | null; revision: number; reviewHash: string };
+type Confirmation = { id: number; folio: string; clienteNombre: string; clienteDocumento: string | null; revision: number; reviewHash: string; recordingId: string };
 
 export default function ApprovalConsole() {
+  const [view, setView] = useState<ApprovalView>("pending");
+  const [callBusy, setCallBusy] = useState(false);
   const [items, setItems] = useState<ApprovalQueueItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasExtraPages, setHasExtraPages] = useState(false);
@@ -89,7 +92,7 @@ export default function ApprovalConsole() {
   const searchController = useRef<AbortController | null>(null);
   const detailController = useRef<AbortController | null>(null);
   const submitting = useRef(false);
-  const busy = saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy;
+  const busy = saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || callBusy;
 
   useEffect(() => () => {
     searchController.current?.abort();
@@ -105,9 +108,9 @@ export default function ApprovalConsole() {
     try {
       const nextDetail = await readApprovalCredit(id, controller.signal);
       if (controller.signal.aborted) return;
-      if (nextDetail.review.status === "APPROVED") {
+      if (nextDetail.review.status !== (view === "approved" ? "APPROVED" : "PENDING")) {
         setItems((current) => current.filter((item) => item.id !== id)); setSelectedId(null); setDetail(null);
-        setNotice({ text: `Crédito ${nextDetail.folio} aprobado. Ya no aparece entre los pendientes.`, warning: false });
+        setNotice({ text: view === "pending" ? `Crédito ${nextDetail.folio} aprobado. Puedes consultarlo en Aprobadas.` : `El crédito ${nextDetail.folio} ya no tiene una aprobación vigente. Consulta Pendientes por aprobar.`, warning: view === "approved" });
         return nextDetail;
       }
       setDetail(nextDetail);
@@ -144,19 +147,28 @@ export default function ApprovalConsole() {
     void loadDetail(id);
   }
 
+  function changeView(next: ApprovalView) {
+    if (next === view || busy || submitting.current) return;
+    searchController.current?.abort(); detailController.current?.abort();
+    setSelectedId(null); setDetail(null); setItems([]); setNextCursor(null);
+    setHasExtraPages(false); setQueueLoaded(false); setLoadingDetail(false);
+    setSearchError(""); setDetailError(""); setNotice(null); setConfirmation(null);
+    setReviewChanged(false); setRereviewed(false); setView(next);
+  }
+
   const loadQueue = useCallback(async (cursor: string | null = null) => {
     searchController.current?.abort();
     const controller = new AbortController(); searchController.current = controller;
     setSearching(true); setSearchError("");
     try {
-      const page = await readApprovalQueue(cursor, controller.signal);
+      const page = await readApprovalQueue(cursor, controller.signal, view);
       if (controller.signal.aborted) return;
-      setItems((current) => mergeApprovalQueuePage(current, page.items, Boolean(cursor)));
+      setItems((current) => mergeApprovalQueuePage(current, page.items, Boolean(cursor), view));
       setNextCursor(page.nextCursor); setHasExtraPages(Boolean(cursor)); setQueueLoaded(true);
     } catch (error) {
       if (!controller.signal.aborted) setSearchError(error instanceof Error ? error.message : "No fue posible cargar el muro.");
     } finally { if (!controller.signal.aborted) setSearching(false); }
-  }, []);
+  }, [view]);
 
   useEffect(() => {
     let cancelled = false;
@@ -174,14 +186,15 @@ export default function ApprovalConsole() {
       if (fetching || document.visibilityState === "hidden") return;
       fetching = true;
       try {
-        const page = await readApprovalQueue(null, controller.signal);
+        const page = await readApprovalQueue(null, controller.signal, view);
         const updated = selectedId ? await readApprovalCredit(selectedId, controller.signal) : null;
         if (controller.signal.aborted) return;
         setItems(page.items); setNextCursor(page.nextCursor); setSearchError("");
         if (updated) {
-          if (updated.review.status === "APPROVED") {
+          if (updated.review.status !== (view === "approved" ? "APPROVED" : "PENDING")) {
             setSelectedId(null); setDetail(null);
-            setNotice({ text: `Crédito ${updated.folio} aprobado. Ya no aparece entre los pendientes.`, warning: false });
+            setItems((current) => current.filter((item) => item.id !== updated.id));
+            setNotice({ text: view === "pending" ? `Crédito ${updated.folio} aprobado. Puedes consultarlo en Aprobadas.` : `El crédito ${updated.folio} ya no tiene una aprobación vigente. Consulta Pendientes por aprobar.`, warning: view === "approved" });
           } else {
             setDetail(updated);
             if (detail && (updated.review.revision !== detail.review.revision || updated.review.reviewHash !== detail.review.reviewHash)) {
@@ -198,24 +211,24 @@ export default function ApprovalConsole() {
     const focused = () => { void refresh(); };
     window.addEventListener("focus", focused);
     return () => { controller.abort(); window.clearInterval(interval); window.removeEventListener("focus", focused); };
-  }, [busy, searching, loadingDetail, queueLoaded, hasExtraPages, selectedId, detail]);
+  }, [busy, searching, loadingDetail, queueLoaded, hasExtraPages, selectedId, detail, view]);
 
-  const canConfirm = Boolean(detail?.review.required && detail.review.status === "PENDING" && detail.canApprove && !loadingDetail && !detailError && !searchError && !searching && !busy && (!reviewChanged || rereviewed));
+  const canConfirm = Boolean(view === "pending" && detail?.callRecording?.recording && detail?.review.required && detail.review.status === "PENDING" && detail.canApprove && !loadingDetail && !detailError && !searchError && !searching && !busy && (!reviewChanged || rereviewed));
 
   function requestApproval() {
-    if (!detail || !canConfirm || submitting.current) return;
+    if (!detail || !detail.callRecording?.recording || !canConfirm || submitting.current) return;
     setNotice(null);
-    setConfirmation({ id: detail.id, folio: detail.folio, clienteNombre: detail.clienteNombre, clienteDocumento: detail.clienteDocumento, revision: detail.review.revision, reviewHash: detail.review.reviewHash });
+    setConfirmation({ id: detail.id, folio: detail.folio, clienteNombre: detail.clienteNombre, clienteDocumento: detail.clienteDocumento, revision: detail.review.revision, reviewHash: detail.review.reviewHash, recordingId: detail.callRecording.recording.id });
   }
 
   async function confirmApproval() {
-    if (!confirmation || submitting.current || !detail || detail.id !== confirmation.id || detail.review.revision !== confirmation.revision || detail.review.reviewHash !== confirmation.reviewHash) return;
+    if (!confirmation || submitting.current || !detail || detail.id !== confirmation.id || detail.review.revision !== confirmation.revision || detail.review.reviewHash !== confirmation.reviewHash || detail.callRecording?.recording?.id !== confirmation.recordingId) return;
     submitting.current = true;
     setSaving(true);
     try {
-      await approveCreditReview(confirmation.id, confirmation.revision, confirmation.reviewHash);
+      await approveCreditReview(confirmation.id, confirmation.revision, confirmation.reviewHash, confirmation.recordingId);
       setConfirmation(null);
-      setNotice({ text: `Crédito ${confirmation.folio} aprobado para liquidación al aliado.`, warning: false });
+      setNotice({ text: `Crédito ${confirmation.folio} aprobado para liquidación al aliado. Puedes consultarlo en Aprobadas.`, warning: false });
       setItems((current) => current.filter((item) => item.id !== confirmation.id));
       detailController.current?.abort(); setSelectedId(null); setDetail(null); setLoadingDetail(false);
       setReviewChanged(false); setRereviewed(false);
@@ -239,21 +252,30 @@ export default function ApprovalConsole() {
 
   return (
     <main className="space-y-6 p-4 text-[var(--fp-graphite)] sm:p-6 lg:p-8">
-      <PageHeader eyebrow="Control documental" title="Muro de aprobaciones" description="Revisa los créditos pendientes de todos los aliados. Los aprobados salen de esta bandeja." actions={<Button variant="secondary" disabled={busy || searching} onClick={() => void loadQueue()}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar muro</Button>} />
-      <p className="text-sm text-[var(--fp-muted)]">Los créditos más antiguos aparecen primero. Las correcciones del aliado vuelven a revisión del analista.</p>
+      <PageHeader eyebrow="Control documental" title="Muro de aprobaciones" description="Revisa los expedientes de todos los aliados y consulta las aprobaciones vigentes para liquidación." actions={<Button variant="secondary" disabled={busy || searching} onClick={() => void loadQueue()}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar muro</Button>} />
+      <Tabs role="tablist" aria-label="Vistas de aprobaciones">
+        {(["pending", "approved"] as const).map((tab) => <button key={tab} id={"approval-tab-" + tab} role="tab" type="button" aria-selected={view === tab} aria-controls="approval-view" tabIndex={view === tab ? 0 : -1} disabled={busy} onClick={() => changeView(tab)} onKeyDown={(event) => {
+          if (busy || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          const next = event.key === "Home" ? "pending" : event.key === "End" ? "approved" : view === "pending" ? "approved" : "pending";
+          changeView(next); document.getElementById("approval-tab-" + next)?.focus();
+        }}>{tab === "pending" ? "Pendientes por aprobar" : "Aprobadas"}</button>)}
+      </Tabs>
+      <div id="approval-view" role="tabpanel" aria-labelledby={"approval-tab-" + view} className="space-y-6">
+      <p className="text-sm text-[var(--fp-muted)]">{view === "pending" ? "Los créditos más antiguos aparecen primero. Las correcciones del aliado vuelven a revisión del analista." : "Créditos con OK de liquidación vigente, del más reciente al más antiguo."}</p>
       {searchError ? <div role="alert" className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-amber-soft)] p-4 text-sm">{searchError} Actualiza el muro para continuar.</div> : null}
-      {searching ? <LoadingState label="Cargando créditos pendientes..." /> : null}
-      {queueLoaded && !items.length && !searching && !searchError ? <Card><EmptyState title="No hay créditos pendientes" description="Los nuevos créditos y los expedientes que requieran otra revisión aparecerán aquí." /></Card> : null}
+      {searching ? <LoadingState label={view === "pending" ? "Cargando créditos pendientes..." : "Cargando aprobaciones..."} /> : null}
+      {queueLoaded && !items.length && !searching && !searchError ? <Card><EmptyState title={view === "pending" ? "No hay créditos pendientes" : "No hay créditos aprobados"} description={view === "pending" ? "Los nuevos créditos y los expedientes que requieran otra revisión aparecerán aquí." : "Aquí aparecerán los créditos después de confirmar el OK para liquidación."} /></Card> : null}
       {items.length ? (
         <Card className="overflow-hidden">
-          <div className="border-b border-[var(--fp-border)] p-4 sm:px-6"><h2 className="font-semibold">Créditos por revisar</h2><p className="mt-1 text-sm text-[var(--fp-muted)]">{items.length} {items.length === 1 ? "crédito visible" : "créditos visibles"}{nextCursor ? " · Hay más pendientes" : ""}</p></div>
+          <div className="border-b border-[var(--fp-border)] p-4 sm:px-6"><h2 className="font-semibold">{view === "pending" ? "Créditos por revisar" : "Aprobaciones vigentes"}</h2><p className="mt-1 text-sm text-[var(--fp-muted)]">{items.length} {items.length === 1 ? "crédito visible" : "créditos visibles"}{nextCursor ? " · Hay más créditos" : ""}</p></div>
           <DataTable className="max-w-full">
             <table className="w-full min-w-[44rem] border-collapse text-left text-sm">
               <thead className="bg-[var(--fp-bg)] text-[var(--fp-muted)]">
                 <tr>
                   <th scope="col" className="px-4 py-3 font-semibold sm:px-6">Folio / cliente</th>
                   <th scope="col" className="px-4 py-3 font-semibold sm:px-6">Aliado</th>
-                  <th scope="col" className="px-4 py-3 font-semibold sm:px-6">Fecha del crédito</th>
+                  <th scope="col" className="px-4 py-3 font-semibold sm:px-6">{view === "pending" ? "Fecha del crédito" : "Aprobación"}</th>
                   <th scope="col" className="px-4 py-3 font-semibold sm:px-6">Revisión</th>
                   <th scope="col" className="relative px-4 py-3 sm:px-6"><span className="sr-only">Seleccionar crédito</span></th>
                 </tr>
@@ -262,13 +284,14 @@ export default function ApprovalConsole() {
                 <tr key={item.id} className={`border-t border-[var(--fp-border)] ${selectedId === item.id ? "bg-[var(--fp-lime-soft)]" : ""}`}>
                   <td className="px-4 py-4 align-top sm:px-6"><strong>{item.folio}</strong><span className="mt-1 block text-[var(--fp-muted)]">{item.clienteNombre}</span></td>
                   <td className="px-4 py-4 align-top sm:px-6">{item.aliadoNombre}{item.sedeNombre ? <span className="mt-1 block text-[var(--fp-muted)]">{item.sedeNombre}</span> : null}</td>
-                  <td className="whitespace-nowrap px-4 py-4 align-top sm:px-6">{dateLabel(item.fechaCredito)}</td>
+                  <td className="whitespace-nowrap px-4 py-4 align-top sm:px-6">{dateLabel(view === "approved" ? item.approvedAt ?? null : item.fechaCredito)}{view === "approved" ? <span className="mt-1 block whitespace-normal text-[var(--fp-muted)]">{item.approvedByName || "Analista autorizado"}</span> : null}</td>
                   <td className="px-4 py-4 align-top sm:px-6"><div className="flex flex-col items-start gap-2"><ReviewStatus status={item.status} required={item.required} />
+                    {item.paid ? <Badge>Incluido en liquidación</Badge> : null}
                     {item.novelty?.pendingCount ? <Badge tone="warning">{item.novelty.pendingCount} por corregir en el aliado</Badge> : null}
                     {item.novelty?.answeredCount ? <Badge tone="positive">Correcciones por revisar</Badge> : null}
                     {item.reissue?.blocked ? <Badge tone="warning">Firma pendiente</Badge> : null}
                   </div></td>
-                  <td className="px-4 py-4 align-top sm:px-6"><Button variant="secondary" onClick={() => selectCredit(item.id)} disabled={busy || searching} aria-label={`Revisar crédito ${item.folio}`} aria-pressed={selectedId === item.id}>{selectedId === item.id ? "Seleccionado" : "Revisar"}</Button></td>
+                  <td className="px-4 py-4 align-top sm:px-6"><Button variant="secondary" onClick={() => selectCredit(item.id)} disabled={busy || searching} aria-label={`${view === "pending" ? "Revisar" : "Ver"} crédito ${item.folio}`} aria-pressed={selectedId === item.id}>{selectedId === item.id ? "Seleccionado" : view === "pending" ? "Revisar" : "Ver expediente"}</Button></td>
                 </tr>
               ))}</tbody>
             </table>
@@ -317,7 +340,7 @@ export default function ApprovalConsole() {
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Fotografías del expediente</h2><Badge>{detail.evidence.filter((item) => item.available).length} de {detail.evidence.length} disponibles</Badge></div>
             <p className="mb-4 text-sm text-[var(--fp-muted)]">Abre cada fotografía para revisarla en tamaño completo.</p>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{detail.evidence.map((item) => <EvidencePhoto key={`${detail.id}:${detail.review.reviewHash}:${item.key}`} item={item} clientName={detail.clienteNombre} />)}</div>
-            <ApprovalEvidenceCorrection detail={detail} disabled={saving || Boolean(confirmation) || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCorrectionBusy} />
+            {view === "pending" ? <ApprovalEvidenceCorrection detail={detail} disabled={saving || Boolean(confirmation) || signatureBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCorrectionBusy} /> : null}
           </Card>
 
           <div className={`grid items-start gap-6 ${detail.review.required ? "xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]" : ""}`}>
@@ -327,15 +350,16 @@ export default function ApprovalConsole() {
             </Card>
 
             {detail.review.required ? <aside aria-label="Acciones de revisión" className="min-w-0 space-y-6">
-              <ApprovalNoveltyPanel key={detail.id} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} />
-              <ApprovalSignatureReissue detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} />
+              <ApprovalCallRecording key={detail.id} detail={detail} readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} />
+              {view === "pending" ? <ApprovalNoveltyPanel key={detail.id} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null}
+              {view === "pending" ? <ApprovalSignatureReissue detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null}
             </aside> : null}
           </div>
 
-          {detail.review.required && detail.review.status === "PENDING" ? (
+          {view === "pending" && detail.review.required && detail.review.status === "PENDING" ? (
             <Card className="p-4 sm:p-6">
               <h2 className="flex items-center gap-2 text-lg font-semibold"><ShieldCheck className="h-5 w-5" aria-hidden="true" />OK para liquidación</h2>
-              <p className="mt-2 text-sm text-[var(--fp-muted)]">Confirma después de revisar los datos financieros, las fotografías y el documento firmado.</p>
+              <p className="mt-2 text-sm text-[var(--fp-muted)]">Confirma después de revisar los datos financieros, las fotografías, el documento firmado y la llamada al cliente. La grabación debe estar guardada y las novedades resueltas.</p>
               {detail.blockingReasons.length ? <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-[var(--fp-danger)]">{detail.blockingReasons.map((reason, index) => <li key={`${index}:${reason}`}>{reason}</li>)}</ul> : null}
               {!detail.canApprove && !detail.blockingReasons.length ? <p className="mt-4 text-sm text-[var(--fp-muted)]">Este crédito todavía no está disponible para aprobación. Actualiza el expediente para consultar su estado.</p> : null}
               {reviewChanged ? <label className="mt-4 flex min-h-10 items-center gap-3 text-sm"><input type="checkbox" checked={rereviewed} disabled={busy || loadingDetail || Boolean(detailError)} onChange={(event) => setRereviewed(event.target.checked)} className="h-5 w-5 accent-[var(--fp-graphite)]" />Revisé de nuevo las fotografías y el documento actualizado.</label> : null}
@@ -345,7 +369,9 @@ export default function ApprovalConsole() {
         </section>
       ) : null}
 
-      <ConfirmDialog open={Boolean(confirmation)} title="Aprobar para liquidación" description={confirmation ? `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, folio ${confirmation.folio}. Tu aprobación habilitará este crédito para la liquidación al aliado y quedará registrada.` : ""} confirmLabel="Confirmar OK para liquidación" busy={saving} onCancel={() => { if (!saving && !submitting.current) setConfirmation(null); }} onConfirm={() => void confirmApproval()} />
+      </div>
+
+      <ConfirmDialog open={Boolean(confirmation)} title="Aprobar para liquidación" description={confirmation ? `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, folio ${confirmation.folio}. Confirma que realizaste la llamada, guardaste su grabación y verificaste las correcciones. Tu aprobación habilitará este crédito para la liquidación al aliado y quedará registrada.` : ""} confirmLabel="Confirmar OK para liquidación" busy={saving} onCancel={() => { if (!saving && !submitting.current) setConfirmation(null); }} onConfirm={() => void confirmApproval()} />
     </main>
   );
 }
