@@ -28,9 +28,12 @@ pagos, Android nativo ni las integraciones existentes.
 
 ## Navegación
 
-- Aprobadas: `/dashboard/solicitudes?estado=APROBADA`, filtro existente del muro.
+- “Ver aprobados”: `/dashboard/solicitudes?estado=PROCESO`, filtro existente
+  solicitado por el usuario para retomar los trámites sin finalizar. El acceso
+  “Retomar solicitudes aprobadas” después de cerrar el modal usa el mismo filtro.
 - Simulador: `/dashboard/creditos?mode=simulator`, modo existente sin consulta.
-- El filtro `APROBADA` conserva su semántica actual; no reclasifica borradores.
+- `PROCESO` incluye trámites pendientes, también las consultas aún pendientes;
+  `APROBADA` mantiene su semántica comercial actual. No se reclasifican registros.
 
 ## Validación
 

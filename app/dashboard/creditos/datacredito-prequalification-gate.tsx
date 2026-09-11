@@ -1584,7 +1584,7 @@ export default function DatacreditoPrequalificationGate({
               <Button variant="secondary" onClick={() => void checkDailyQueryQuota()} disabled={checkingDailyQuota} aria-disabled={checkingDailyQuota}>
                 {checkingDailyQuota ? "Verificando cupo..." : "Verificar cupo disponible"}
               </Button>
-              <Link className="fp-ui-button is-secondary" href="/dashboard/solicitudes?estado=APROBADA">Retomar solicitudes aprobadas</Link>
+              <Link className="fp-ui-button is-secondary" href="/dashboard/solicitudes?estado=PROCESO">Retomar solicitudes aprobadas</Link>
               <Link className="fp-ui-button is-secondary" href="/dashboard/creditos?mode=simulator">Ir al simulador</Link>
             </div>
             {dailyQuotaCheckError ? <p className="mt-3" role="alert">{dailyQuotaCheckError}</p> : null}
@@ -1819,7 +1819,7 @@ export default function DatacreditoPrequalificationGate({
           onClose={() => setDailyQuotaModalOpen(false)}
           percentUsed={dailyQueryLimitReached.percentUsed}
           resetsAt={dailyQueryLimitReached.resetsAt}
-          approvedHref="/dashboard/solicitudes?estado=APROBADA"
+          approvedHref="/dashboard/solicitudes?estado=PROCESO"
           simulatorHref="/dashboard/creditos?mode=simulator"
           illustrationSrc="/assets/creditos/datacredito-daily-quota-sad-mascot.png"
           returnFocusId="datacredito-evaluate"

@@ -39,7 +39,12 @@ No se utilizó generación adicional ni se sustituyó la mascota.
   mensajes y acciones exactos. El porcentaje se renderiza como HTML separado.
 - El verde sobrio `#428b2d` está limitado a la marca y acción de este aviso para
   respetar la referencia aprobada. El resto reutiliza tokens y componentes.
-- Las acciones conservan `/dashboard/solicitudes?estado=APROBADA` y
+- Por indicación posterior del usuario, “Ver aprobados” y el acceso equivalente
+  fuera del modal abren `/dashboard/solicitudes?estado=PROCESO`. Se mantienen el
+  texto del botón y la clasificación existente: una consulta DataCrédito aprobada
+  aún por terminar pertenece a PROCESO, mientras APROBADA es un estado comercial.
+  El filtro PROCESO también incluye consultas pendientes. No se filtran ni
+  reclasifican datos de otra forma. El simulador conserva
   `/dashboard/creditos?mode=simulator`; no se agregan rutas de producto.
 - No se necesitan variables de entorno nuevas ni migraciones.
 - El backend existente se mantiene intacto: su fecha real de rehabilitación ya

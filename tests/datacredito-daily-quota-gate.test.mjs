@@ -12,7 +12,7 @@ import {
   DATACREDITO_MAX_INSTALLMENT_COUNT,
 } from "../lib/datacredito/policy.ts";
 import { resolveMissingAssessmentGateView } from "../lib/datacredito/resume-gate.ts";
-import { normalizeSolicitudFilters } from "../lib/solicitudes.ts";
+import { normalizeSolicitudFilters, resolveSolicitudStage, SOLICITUD_STATE_LABELS } from "../lib/solicitudes.ts";
 import { formatQuotaRehabilitationDate } from "../lib/datacredito/quota-rehabilitation-date.ts";
 
 const readSource = (path) => readFile(new URL(path, import.meta.url), "utf8");
@@ -65,7 +65,7 @@ function renderQuotaModal(overrides = {}) {
   // Render the actual JSX, shared UI and icons; browser-only lifecycle is covered by browser QA.
   return renderToStaticMarkup(component({
     open: true, onClose() {}, percentUsed: 100, resetsAt: "2026-09-12T05:00:00.000Z",
-    approvedHref: "/dashboard/solicitudes?estado=APROBADA",
+    approvedHref: "/dashboard/solicitudes?estado=PROCESO",
     simulatorHref: "/dashboard/creditos?mode=simulator",
     illustrationSrc: "/assets/creditos/approved-sad-phone-only.webp",
     returnFocusId: "datacredito-evaluate-submit",
@@ -433,9 +433,16 @@ test("an ordinary approved or rejected response retains its credit decision flow
   }
 });
 
-test("uses the existing approved filter and simulator without changing the factory gate scope", () => {
-  assert.match(gate, /\/dashboard\/solicitudes\?estado=APROBADA/);
-  assert.equal(normalizeSolicitudFilters(new URLSearchParams("estado=APROBADA")).estado, "APROBADA");
+test("both quota recovery links use the existing PROCESO filter without changing the factory gate scope", () => {
+  const recoveryLinks = [...gate.matchAll(/(?:approvedHref|href)="(\/dashboard\/solicitudes\?estado=[^"]+)"/g)];
+  assert.deepEqual(recoveryLinks.map((match) => match[1]), [
+    "/dashboard/solicitudes?estado=PROCESO",
+    "/dashboard/solicitudes?estado=PROCESO",
+  ]);
+  assert.equal(normalizeSolicitudFilters(new URLSearchParams("estado=PROCESO")).estado, "PROCESO");
+  assert.equal(SOLICITUD_STATE_LABELS.PROCESO, "Proceso");
+  assert.equal(resolveSolicitudStage({ source: "DRAFT", dataCreditoStatus: "APROBADO" }), "PROCESO");
+  assert.equal(resolveSolicitudStage({ source: "CREDIT", creditState: "ENTREGABLE" }), "APROBADA");
   assert.match(wall, /estado:\s*params\.get\("estado"\)/);
   assert.match(gate, /\/dashboard\/creditos\?mode=simulator/);
   assert.match(creditPage, /rawEntryMode === "simulator"/);
@@ -457,7 +464,7 @@ test("the vertical modal renders the exact approved copy, real links and one sep
   assert.match(html, /<time[^>]*dateTime="2026-09-12T05:00:00\.000Z"[^>]*>12 de septiembre de 2026\.?<\/time>/);
   assert.match(text, /Las consultas estarán habilitadas el 12 de septiembre de 2026\s*\./);
   assert.match(text, /Retome sus solicitudes aprobadas y conviértalas en ventas\./);
-  assert.match(html, /href="\/dashboard\/solicitudes\?estado=APROBADA"/);
+  assert.match(html, /href="\/dashboard\/solicitudes\?estado=PROCESO"/);
   assert.match(html, /href="\/dashboard\/creditos\?mode=simulator"/);
   assert.match(text, /Ver aprobados/);
   assert.match(text, /Cotizar en el simulador/);
