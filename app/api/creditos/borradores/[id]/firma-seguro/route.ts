@@ -610,12 +610,13 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
   const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
     platform: plataformaDispositivo,
     valorCuota: amortizationPlan.cuotaTotal,
+    enforceFactoryRange: true,
     iphoneMaxInstallmentValue: dataCreditoOffer
       ? dataCreditoOffer.maxInstallmentAmount
       : creditSettings.iphoneTopeCuota,
   });
 
-  if (iphoneInstallmentLimit.exceeded) {
+  if (iphoneInstallmentLimit.outsideRange) {
     throw new CreditValidationError(iphoneInstallmentLimit.message);
   }
 

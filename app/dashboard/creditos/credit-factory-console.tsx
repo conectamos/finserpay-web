@@ -101,6 +101,7 @@ import {
   PAYMENT_FREQUENCY_OPTIONS,
   resolveRequiredInitialPaymentByPlatform,
   resolveInitialPaymentAfterMinimumRefresh,
+  shouldPreserveIphoneFactoryInstallments,
   SIMULATOR_INITIAL_PAYMENT_PERCENTAGES,
   type SimulatorInitialPaymentPercentage,
   validateIphoneInstallmentLimit,
@@ -3043,6 +3044,9 @@ export default function CreditFactoryConsole({
     useState("");
   const [firmaSeguroDraftProcess, setFirmaSeguroDraftProcess] =
     useState<FirmaSeguroProcess | null>(null);
+  // A null process is not evidence of an unsigned draft until its GET succeeds.
+  const [firmaSeguroPendingDraftId, setFirmaSeguroPendingDraftId] =
+    useState<number | null>(initialDraftId);
   const [paymentValue, setPaymentValue] = useState("");
   const [receivedPaymentValue, setReceivedPaymentValue] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("EFECTIVO");
@@ -3571,7 +3575,22 @@ export default function CreditFactoryConsole({
       DEFAULT_CREDIT_INSTALLMENTS,
     plazoMaximoCuotas
   );
+  const firmaSeguroProcessUiState = resolveFirmaSeguroProcessUiState(
+    firmaSeguroDraftProcess
+  );
+  const iphoneFactorySignaturePending = dataCreditoCreditCreationMode && iphoneFactory && (
+    draftResumeHydrating || Boolean(draftId && firmaSeguroPendingDraftId === draftId)
+  );
+  const iphoneFactoryTermsLocked = shouldPreserveIphoneFactoryInstallments({
+    platform: currentDevicePlatform,
+    isFactoryMode: dataCreditoCreditCreationMode,
+    signatureLoading: iphoneFactorySignaturePending,
+    signatureState: firmaSeguroProcessUiState,
+  });
+  const iphoneFactoryRangeActive =
+    dataCreditoCreditCreationMode && iphoneFactory && !iphoneFactoryTermsLocked;
   const creditInstallmentOptions = useMemo(() => {
+    if (iphoneFactoryTermsLocked) return policyInstallmentOptions;
     if (
       !iphoneFactory ||
       !simulationPolicyReady ||
@@ -3581,7 +3600,7 @@ export default function CreditFactoryConsole({
       !fechaPrimerPago ||
       iphoneMaxInstallmentValue <= 0
     ) {
-      return policyInstallmentOptions;
+      return iphoneFactoryRangeActive ? [] : policyInstallmentOptions;
     }
 
     return policyInstallmentOptions.filter((option) => {
@@ -3626,8 +3645,9 @@ export default function CreditFactoryConsole({
         return !validateIphoneInstallmentLimit({
           platform: "IPHONE",
           valorCuota: candidatePlan.cuotaTotal,
+          enforceFactoryRange: iphoneFactoryRangeActive,
           iphoneMaxInstallmentValue,
-        }).exceeded;
+        }).outsideRange;
       } catch {
         return false;
       }
@@ -3639,6 +3659,8 @@ export default function CreditFactoryConsole({
     fechaPrimerPago,
     globalCreditSettings,
     iphoneFactory,
+    iphoneFactoryTermsLocked,
+    iphoneFactoryRangeActive,
     iphoneMaxInstallmentValue,
     plazoMaximoCuotas,
     policyInstallmentOptions,
@@ -3709,13 +3731,17 @@ export default function CreditFactoryConsole({
   const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
     platform: currentDevicePlatform,
     valorCuota: amortizationPlan?.cuotaTotal ?? valorCuota,
+    enforceFactoryRange: iphoneFactoryRangeActive,
     iphoneMaxInstallmentValue,
   });
-  const iphoneInstallmentLimitExceeded = iphoneInstallmentLimit.exceeded;
+  const iphoneInstallmentLimitExceeded = Boolean(amortizationPlan) &&
+    iphoneInstallmentLimit.outsideRange;
   const iphoneInstallmentLimitMessage = iphoneInstallmentLimit.message;
   const visibleIphoneInstallmentLimitMessage = canSeeInternalPricing
     ? iphoneInstallmentLimitMessage
-    : "La cuota supera el limite permitido para iPhone. Aumenta la inicial o ajusta el plazo para continuar.";
+    : iphoneFactoryRangeActive
+      ? `Elige un plazo cuya cuota esté entre ${currency(iphoneInstallmentLimit.minInstallment)} y ${currency(iphoneInstallmentLimit.maxInstallment)}, sin superar el máximo de cuotas autorizado.`
+      : "La cuota supera el limite permitido para iPhone. Aumenta la inicial o ajusta el plazo para continuar.";
   const frecuenciaPagoLabel = getPaymentFrequencyLabel(frecuenciaPagoCredito);
   const creditSettingsScopeLabel = activeDataCreditoManualCreditLimit
     ? "Cupo manual por cédula"
@@ -4908,6 +4934,8 @@ export default function CreditFactoryConsole({
     cuotaInicialValida &&
     saldoFinanciado > 0 &&
     plazoMesesNumero > 0 &&
+    !iphoneFactorySignaturePending &&
+    (!iphoneFactoryRangeActive || creditInstallmentOptions.includes(plazoMeses)) &&
     !iphoneInstallmentLimitExceeded;
   const stepEquipoReady =
     financialPreviewReady &&
@@ -4942,9 +4970,6 @@ export default function CreditFactoryConsole({
   );
   const firmaSeguroDocumentsReady =
     firmaSeguroAvailableDocuments.length === firmaSeguroDocumentItems.length;
-  const firmaSeguroProcessUiState = resolveFirmaSeguroProcessUiState(
-    firmaSeguroDraftProcess
-  );
   const firmaSeguroProcessExists = Boolean(
     firmaSeguroDraftProcess?.processUuid
   );
@@ -6313,6 +6338,7 @@ export default function CreditFactoryConsole({
   useEffect(() => {
     if (
       !iphoneFactory ||
+      iphoneFactoryTermsLocked ||
       creditInstallmentOptions.length === 0 ||
       !activeDataCreditoOffer ||
       creditInstallmentOptions.includes(plazoMeses)
@@ -6325,6 +6351,7 @@ export default function CreditFactoryConsole({
     creditInstallmentOptions,
     activeDataCreditoOffer,
     iphoneFactory,
+    iphoneFactoryTermsLocked,
     plazoMeses,
   ]);
 
@@ -8488,6 +8515,7 @@ export default function CreditFactoryConsole({
 
     setWizardStep(1);
     setDraftId(null);
+    setFirmaSeguroPendingDraftId(null);
     setDraftStatus("idle");
     updateDraftResumeHydration(false);
     restoredDraftSnapshotRef.current = null;
@@ -8663,6 +8691,7 @@ export default function CreditFactoryConsole({
     }
 
     setFirmaSeguroDraftProcess(result.data.process || null);
+    setFirmaSeguroPendingDraftId((pending) => pending === currentDraftId ? null : pending);
     return result.data;
   };
 
@@ -8702,6 +8731,7 @@ export default function CreditFactoryConsole({
       const process = result.data.process || null;
       const processUiState = resolveFirmaSeguroProcessUiState(process);
       setFirmaSeguroDraftProcess(process);
+      setFirmaSeguroPendingDraftId((pending) => pending === draftId ? null : pending);
 
       if (processUiState === "signed") {
         setWizardStep(5);
@@ -8903,6 +8933,9 @@ export default function CreditFactoryConsole({
               ? processResult.data.process || null
               : null
           );
+          if (processResult.ok && processResult.data?.ok) {
+            setFirmaSeguroPendingDraftId((pending) => pending === draftId ? null : pending);
+          }
           setFirmaSeguroImeiCorrectionValue(correctedImei);
           setFirmaSeguroImeiCorrectionReason("");
           correctionWasCommitted = true;
@@ -9963,6 +9996,7 @@ export default function CreditFactoryConsole({
   const applyDraftPayload = (draft: CreditDraftItem) => {
     cancelPendingDraftAutosave();
     updateDraftResumeHydration(true);
+    setFirmaSeguroPendingDraftId(draft.id);
     setDraftResumeLoadFailed(false);
     setVeriffRestoreFailure(null);
     const payload = draft.payload || {};
@@ -10326,6 +10360,7 @@ export default function CreditFactoryConsole({
         }
 
         applyDraftPayload(result.data.item);
+        const restoredDraftId = result.data.item.id;
         let firmaSeguroLoadIssue = "";
 
         try {
@@ -10341,6 +10376,9 @@ export default function CreditFactoryConsole({
           } else if (!cancelled) {
             const process = firmaSeguroResult.data.process || null;
             setFirmaSeguroDraftProcess(process);
+            setFirmaSeguroPendingDraftId((pending) =>
+              pending === restoredDraftId ? null : pending
+            );
 
             if (resolveFirmaSeguroProcessUiState(process) === "error") {
               firmaSeguroLoadIssue = formatFirmaSeguroProcessIssue(process);
@@ -14320,8 +14358,7 @@ export default function CreditFactoryConsole({
                           onChange={(event) => setPlazoMeses(event.target.value)}
                           disabled={
                             iphoneFactory &&
-                            Boolean(activeDataCreditoOffer) &&
-                            valorTotalEquipoNumero > 0 &&
+                            !iphoneFactoryTermsLocked &&
                             creditInstallmentOptions.length === 0
                           }
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50 disabled:text-slate-500"
@@ -14334,7 +14371,11 @@ export default function CreditFactoryConsole({
                             ))
                           ) : (
                             <option value={plazoMeses}>
-                              Sin plazo dentro del tope
+                              {iphoneFactoryRangeActive
+                                ? amortizationPlan
+                                  ? "Sin plazos dentro del rango"
+                                  : "Completa el precio y la inicial"
+                                : "Sin plazo dentro del tope"}
                             </option>
                           )}
                         </select>
@@ -14344,8 +14385,20 @@ export default function CreditFactoryConsole({
                             puedes superar el máximo autorizado por la política
                             DataCrédito.
                             {iphoneFactory && iphoneMaxInstallmentValue > 0
-                              ? " Solo se muestran los plazos permitidos por el tope de cuota de la política."
+                              ? iphoneFactoryRangeActive
+                                ? ` Solo se muestran plazos con cuotas entre ${currency(iphoneInstallmentLimit.minInstallment)} y ${currency(iphoneInstallmentLimit.maxInstallment)}.`
+                                : " Solo se muestran los plazos permitidos por el tope de cuota de la política."
                               : ""}
+                          </p>
+                        ) : null}
+                        {iphoneFactoryRangeActive && amortizationPlan && creditInstallmentOptions.length === 0 ? (
+                          <p role="alert" className="mt-2 text-sm font-medium text-red-600">
+                            No hay plazos disponibles para este precio e inicial dentro del rango de cuota y el máximo autorizado. Revisa las condiciones antes de continuar.
+                          </p>
+                        ) : null}
+                        {iphoneFactorySignaturePending ? (
+                          <p role="status" className="mt-2 text-sm text-slate-600">
+                            Verificando las condiciones del borrador para conservar su plazo. Si no se completa, vuelve a abrir la solicitud antes de continuar.
                           </p>
                         ) : null}
                       </div>
@@ -17101,8 +17154,12 @@ export default function CreditFactoryConsole({
                 <select
                   value={plazoMeses}
                   onChange={(event) => setPlazoMeses(event.target.value)}
+                  disabled={iphoneFactoryRangeActive && creditInstallmentOptions.length === 0}
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 >
+                  {iphoneFactoryRangeActive && creditInstallmentOptions.length === 0 ? (
+                    <option value={plazoMeses}>Sin plazos dentro del rango</option>
+                  ) : null}
                   {creditInstallmentOptions.map((option) => (
                     <option key={option} value={option}>
                       {option}
