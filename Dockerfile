@@ -64,6 +64,9 @@ COPY --from=builder /app/scripts/ensure-credit-approval-novelties-schema.mjs ./s
 COPY --from=builder /app/scripts/approval-shared-schema.mjs ./scripts/approval-shared-schema.mjs
 COPY --from=builder /app/scripts/ensure-approval-shared-schema.mjs ./scripts/ensure-approval-shared-schema.mjs
 
+COPY --from=builder /app/scripts/credit-approval-call-schema.mjs ./scripts/credit-approval-call-schema.mjs
+COPY --from=builder /app/scripts/ensure-credit-approval-call-schema.mjs ./scripts/ensure-credit-approval-call-schema.mjs
+
 EXPOSE 3000
 
 CMD ["node", "server.js"]

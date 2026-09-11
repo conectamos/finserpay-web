@@ -206,6 +206,7 @@ model Usuario {
   approvalSharedGrantsIssued CreditApprovalSharedGrant[] @relation("ApprovalSharedIssuer")
   approvalSharedGrantsRevoked CreditApprovalSharedGrant[] @relation("ApprovalSharedRevoker")
   approvalNoveltyEvents CreditApprovalNoveltyEvent[]
+  approvalCallRecordings CreditApprovalCallRecording[]
   aprobacionesCredito CreditApprovalReview[]
   eventosAprobacionCredito CreditApprovalEvent[]
   approvalAccessLink CreditApprovalAccessLink? @relation("ApprovalAccessLinkOwner")
@@ -371,6 +372,7 @@ model Credito {
   revisionesEvidencia          CreditApprovalEvidenceRevision[]
   aprobacionAnalista            CreditApprovalReview?
   novedadesAprobacion           CreditApprovalNovelty[]
+  grabacionesAprobacion         CreditApprovalCallRecording[]
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
 
@@ -417,6 +419,7 @@ model CreditApprovalSharedSession {
   evidenceRevisions CreditApprovalEvidenceRevision[]
   reissues CreditApprovalReissue[]
   noveltyEvents CreditApprovalNoveltyEvent[]
+  callRecordings CreditApprovalCallRecording[]
 
   @@unique([id, grantId], map: "CreditApprovalSharedSession_id_grant")
   @@index([grantId, expiresAt], map: "CreditApprovalSharedSession_grant_idx")
@@ -476,6 +479,32 @@ model CreditApprovalNoveltyEvent {
   @@index([noveltyId, createdAt, id], map: "CreditApprovalNoveltyEvent_case_created")
 }
 
+model CreditApprovalCallRecording {
+  id String @id @db.Uuid
+  creditoId Int
+  revision Int
+  reviewHash String @db.VarChar(64)
+  fileName String @db.VarChar(160)
+  mimeType String @db.VarChar(32)
+  sizeBytes Int
+  sha256 String @db.VarChar(64)
+  bytes Bytes @db.ByteA
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  actorUserId Int?
+  actorName String @db.VarChar(160)
+  actorKind String @db.VarChar(16)
+  actorGrantId String? @db.Uuid
+  actorSessionId String? @db.Uuid
+  idempotencyKey String @unique @db.Uuid
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actor Usuario? @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actorSharedSession CreditApprovalSharedSession? @relation(fields: [actorSessionId, actorGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalCallRecording_shared_actor_fkey")
+  reviews CreditApprovalReview[]
+  events CreditApprovalEvent[]
+
+  @@index([creditoId, revision, reviewHash, createdAt(sort: Desc), id(sort: Desc)], map: "CreditApprovalCallRecording_current_idx")
+}
+
 model CreditApprovalPolicy {
   id Int @id
   activatedAt DateTime @default(now()) @db.Timestamp(3)
@@ -494,6 +523,8 @@ model CreditApprovalReview {
   approvedBySharedSession CreditApprovalSharedSession? @relation(fields: [approvedBySessionId, approvedByGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalReview_shared_actor_fkey")
   approvedAt DateTime? @db.Timestamp(3)
   reviewHash String? @db.VarChar(64)
+  callRecordingId String? @db.Uuid
+  callRecording CreditApprovalCallRecording? @relation(fields: [callRecordingId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   createdAt DateTime @default(now()) @db.Timestamp(3)
   updatedAt DateTime @default(now()) @db.Timestamp(3)
   credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict)
@@ -581,6 +612,8 @@ model CreditApprovalEvent {
   actorSharedSession CreditApprovalSharedSession? @relation(fields: [actorSessionId, actorGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalEvent_shared_actor_fkey")
   reason String?
   reviewHash String? @db.VarChar(64)
+  callRecordingId String? @db.Uuid
+  callRecording CreditApprovalCallRecording? @relation(fields: [callRecordingId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   createdAt DateTime @default(now()) @db.Timestamp(3)
   review CreditApprovalReview @relation(fields: [creditoId], references: [creditoId], onDelete: Restrict)
   actor Usuario? @relation(fields: [actorUserId], references: [id], onDelete: Restrict)

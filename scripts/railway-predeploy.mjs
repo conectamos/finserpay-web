@@ -15,3 +15,4 @@ await import("./ensure-credit-approval-reissue-schema.mjs");
 await import("./ensure-credit-approval-actor-schema.mjs");
 await import("./ensure-credit-approval-novelties-schema.mjs");
 await import("./ensure-approval-shared-schema.mjs");
+await import("./ensure-credit-approval-call-schema.mjs");

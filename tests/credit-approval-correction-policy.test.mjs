@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { service, approvalFixture, approvalDatabase, plain, pdf } from "./credit-approval-test-loader.mjs";
+import { completeApprovalDetail, service, approvalFixture, approvalDatabase, plain, pdf } from "./credit-approval-test-loader.mjs";
 
 const idle = { available: true, blocked: false, operation: null };
 const blockedStatuses = ["PREPARING", "DISPATCHING", "AWAITING_SIGNATURE", "UNCERTAIN"];
 const actor = { id: 7, nombre: "Analista de prueba" };
-const details = (fixture, reissue = idle) => service.buildCreditApprovalDetail(
-  fixture.credit, fixture.review, fixture.assessment, fixture.document, reissue,
-);
+const details = (fixture, reissue = idle) => completeApprovalDetail(fixture, reissue);
 
 function reissueState(status, changes = {}) {
   const blocked = blockedStatuses.includes(status);

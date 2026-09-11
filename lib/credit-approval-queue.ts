@@ -1,4 +1,5 @@
 import { buildCreditApprovalRequiredSql } from "@/lib/credit-approval-policy";
+import { buildCurrentCreditApprovalSql } from "@/lib/credit-approval-actor";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import type { NoveltyDatabase } from "@/lib/credit-approval-novelty-core";
 
@@ -61,4 +62,44 @@ export async function listCreditApprovalQueue(db: NoveltyDatabase, input: Credit
       AND ($2::timestamp IS NULL OR (credit."createdAt",credit."id")>($2::timestamp,$3::integer))
     ORDER BY credit."createdAt",credit."id" LIMIT $4::integer`, input.documento || null, cursor?.createdAt || null, cursor?.id || null, limit + 1);
   return approvalQueuePage(rows, limit);
+}
+
+type ApprovedCursor = { view: "approved"; approvedAt: string; id: number };
+export function parseApprovedQueueCursor(value: string | null | undefined): ApprovedCursor | null {
+  if (!value) return null;
+  try {
+    if (value.length > 256 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new Error();
+    const cursor = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (!cursor || Object.keys(cursor).sort().join(",") !== "approvedAt,id,view" || cursor.view !== "approved" ||
+      !Number.isSafeInteger(cursor.id) || cursor.id < 1 || cursor.id > 2147483647 ||
+      typeof cursor.approvedAt !== "string" || new Date(cursor.approvedAt).toISOString() !== cursor.approvedAt) throw new Error();
+    return cursor;
+  } catch { throw new CreditApprovalError("INVALID_CURSOR", "Actualiza la bandeja para continuar."); }
+}
+export function approvedQueuePage<T extends { id: number; approvedAt: Date | string }>(rows: T[], limit: number) {
+  const items = rows.slice(0, limit);
+  const hasMore = rows.length > limit;
+  const last = items.at(-1);
+  return { items, hasMore, nextCursor: hasMore && last ? Buffer.from(JSON.stringify({ view: "approved", approvedAt: new Date(last.approvedAt).toISOString(), id: last.id })).toString("base64url") : null };
+}
+
+export async function listApprovedCreditQueue(db: NoveltyDatabase, input: CreditApprovalQueueInput = {}) {
+  const policy = await db.$queryRawUnsafe<Array<{ id: number }>>('SELECT "id" FROM "CreditApprovalPolicy" WHERE "id"=1');
+  if (!policy.length) throw new CreditApprovalError("APPROVAL_UNAVAILABLE", "La revisión de créditos no está disponible.", 503);
+  const cursor = parseApprovedQueueCursor(input.cursor);
+  const limit = approvalQueueLimit(input.limit);
+  const rows = await db.$queryRawUnsafe<Array<{ id: number; approvedAt: Date }>>(`SELECT credit."id",credit."folio",credit."clienteDocumento",credit."clienteNombre",
+    ally."nombre" AS "aliadoNombre",site."nombre" AS "sedeNombre",credit."fechaCredito",credit."createdAt",
+    true AS required,'APPROVED' AS status,review."revision",review."approvedAt",review."approvedByName",
+    EXISTS (SELECT 1 FROM "LiquidacionAliadoCredito" paid WHERE paid."creditoId"=credit."id") AS paid
+    FROM "Credito" credit JOIN "Sede" site ON site."id"=credit."sedeId" JOIN "Aliado" ally ON ally."id"=site."aliadoId"
+    JOIN "CreditApprovalReview" review ON review."creditoId"=credit."id"
+    WHERE ${buildCreditApprovalQueueScopeSql("credit")}
+      AND UPPER(BTRIM(COALESCE(ally."codigo",'')))<>'FINSERPAY'
+      AND UPPER(BTRIM(COALESCE(credit."estado",''))) NOT IN ('ANULADO','ANULADA','CANCELADO','CANCELADA')
+      AND ${buildCurrentCreditApprovalSql("credit", "review")}
+      AND ($1::text IS NULL OR credit."clienteDocumento"=$1)
+      AND ($2::timestamp IS NULL OR (review."approvedAt",credit."id")<($2::timestamp,$3::integer))
+    ORDER BY review."approvedAt" DESC,credit."id" DESC LIMIT $4::integer`, input.documento || null, cursor?.approvedAt || null, cursor?.id || null, limit + 1);
+  return approvedQueuePage(rows, limit);
 }

@@ -30,6 +30,7 @@ const documentCore = loadApprovalModule("lib/document-blacklist-core.ts");
 const paymentsCore = loadApprovalModule("lib/ally-payments-core.ts");
 const colombiaDate = loadApprovalModule("lib/colombia-date.ts");
 const creditFactory = loadApprovalModule("lib/credit-factory.ts", { "@/lib/colombia-date": colombiaDate });
+export const callState = loadApprovalModule("lib/credit-approval-call-state.ts");
 const reissueState = loadApprovalModule("lib/credit-approval-reissue-state.ts");
 export const approvalErrors = loadApprovalModule("lib/credit-approval-errors.ts");
 export const approvalActors = loadApprovalModule("lib/credit-approval-actor.ts");
@@ -41,6 +42,7 @@ export const noveltyState = loadApprovalModule("lib/credit-approval-novelty-stat
 });
 export const service = loadApprovalModule("lib/credit-approval.ts", {
   "@/lib/credit-factory": creditFactory,
+  "@/lib/credit-approval-call-state": callState,
   "@/lib/credit-approval-errors": approvalErrors,
   "@/lib/credit-approval-actor": approvalActors,
   "@/lib/credit-approval-novelty-state": noveltyState,
@@ -54,6 +56,19 @@ export const roles = loadApprovalModule("lib/roles.ts");
 export const plain = (value) => JSON.parse(JSON.stringify(value));
 export const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yFusAAAAASUVORK5CYII=";
 export const pdf = Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF").toString("base64");
+
+export const CALL_RECORDING_ID = "00000000-0000-4000-8000-000000000081";
+export function readyCallRecording(detail) {
+  return { id: CALL_RECORDING_ID, revision: detail.review.revision, reviewHash: detail.review.reviewHash,
+    fileName: "llamada-sintetica.wav", mimeType: "audio/wav", sizeBytes: 100, sha256: "b".repeat(64),
+    createdAt: "2026-09-11T15:00:00.000Z", actorName: "Analista de prueba", href: `/api/aprobaciones/${detail.id}/grabaciones/${CALL_RECORDING_ID}` };
+}
+export function completeApprovalDetail(fixture, reissue, novelties) {
+  const { credit, review, assessment, document } = fixture;
+  const before = service.buildCreditApprovalDetail(credit, review, assessment, document, reissue, novelties);
+  return service.buildCreditApprovalDetail(credit, review, assessment, document, reissue, novelties,
+    { available: true, recording: before.review.status === "APPROVED" && !review?.callRecordingId ? null : readyCallRecording(before) });
+}
 
 export function approvalFixture() {
   const credit = {
@@ -96,6 +111,14 @@ export function approvalDatabase(overrides = {}) {
           !(credit.equalityService === "IMPORTACION_MASIVA" && credit.contratoSnapshot?.origen?.tipo === "IMPORTACION_MASIVA");
         return inScope ? [{ id: credit.id }] : [];
       }
+      if (sql.includes('FROM "CreditApprovalCallRecording"')) {
+        if (state.callRecordingError) throw new Error("Audio schema unavailable");
+        if (state.callRecording === null) return [];
+        const recording = state.callRecording ?? { id: CALL_RECORDING_ID, revision: params[1], reviewHash: params[2],
+          fileName: "llamada-sintetica.wav", mimeType: "audio/wav", sizeBytes: 100, sha256: "b".repeat(64),
+          createdAt: new Date("2026-09-11T15:00:00Z"), actorName: "Analista de prueba" };
+        return (params[3] ? recording.id === params[3] : recording.revision === params[1] && recording.reviewHash === params[2]) ? [recording] : [];
+      }
       if (sql.includes('FROM "Credito" credit')) return state.credit ? [state.credit] : [];
       if (sql.includes('FROM "CreditApprovalReview"')) return state.review ? [state.review] : [];
       if (sql.includes('FROM "DataCreditoAssessment"')) {
@@ -123,7 +146,7 @@ export function approvalDatabase(overrides = {}) {
       } else if (sql.includes('UPDATE "CreditApprovalReview"')) {
         assert.equal(params[0], state.credit.id);
         assert.equal(params[4], state.review.revision);
-        Object.assign(state.review, { status: "APPROVED", approvedRevision: state.review.revision, approvedAt: new Date(), approvedByUserId: params[1], approvedByName: params[2], reviewHash: params[3], approvedByKind: params[5], approvedByGrantId: params[6], approvedBySessionId: params[7] });
+        Object.assign(state.review, { status: "APPROVED", approvedRevision: state.review.revision, approvedAt: new Date(), approvedByUserId: params[1], approvedByName: params[2], reviewHash: params[3], approvedByKind: params[5], approvedByGrantId: params[6], approvedBySessionId: params[7], callRecordingId: params[8] });
       } else if (sql.includes('INSERT INTO "CreditApprovalEvent"')) {
         state.events.push(params);
       } else if (sql.includes('UPDATE "CreditApprovalNovelty"')) {

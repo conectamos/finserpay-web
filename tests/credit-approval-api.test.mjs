@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadApprovalModule, service, roles, approvalActors, approvalFixture, plain, pdf } from "./credit-approval-test-loader.mjs";
+import { completeApprovalDetail, loadApprovalModule, service, roles, approvalActors, approvalFixture, plain, pdf } from "./credit-approval-test-loader.mjs";
 
 const centralAnalyst = { id: 7, nombre: "Analista de prueba", rolNombre: "ANALISTA_APROBACION", aliadoAccesoCodigo: "FINSERPAY", activo: true };
 const context = (id = "81") => ({ params: Promise.resolve({ id }) });
@@ -43,7 +43,7 @@ function apiHarness(user = centralAnalyst, methods = {}, transactionError = null
     "@/lib/prisma": { default: prisma },
     "@/lib/credit-approval": routedService,
     "@/lib/credit-approval-actor": approvalActors,
-    "@/lib/credit-approval-queue": { approvalQueueLimit: () => 50, listCreditApprovalQueue: async (...args) => { calls.push({ name: "listCreditApprovalQueue", args }); return methods.listCreditApprovalQueue(...args); } },
+    "@/lib/credit-approval-queue": { approvalQueueLimit: () => 50, listCreditApprovalQueue: async (...args) => { calls.push({ name: "listCreditApprovalQueue", args }); return methods.listCreditApprovalQueue(...args); }, listApprovedCreditQueue: async (...args) => { calls.push({ name: "listApprovedCreditQueue", args }); return methods.listApprovedCreditQueue(...args); } },
     "@/lib/credit-approval-evidence": {},
     "@/lib/credit-approval-http": http,
   })]));
@@ -73,6 +73,7 @@ test("todas las rutas niegan usuarios sin acceso antes de consultar o modificar 
     const api = apiHarness(user);
     const responses = [
       await api.routes.search.GET(makeRequest("/api/aprobaciones?documento=100000001")),
+      await api.routes.search.GET(makeRequest("/api/aprobaciones?view=approved")),
       await api.routes.detail.GET(makeRequest("/api/aprobaciones/81"), context()),
       await api.routes.detail.POST(makeRequest("/api/aprobaciones/81", "POST", { revision: 1, reviewHash: "a".repeat(64) }), context()),
       await api.routes.evidence.GET(makeRequest("/api/aprobaciones/81/evidencias?tipo=cedula-frente"), context()),
@@ -117,7 +118,7 @@ test("abre la cola general autorizada y rechaza identificadores inválidos", asy
 
 test("detalle autorizado usa un snapshot transaccional y no entrega datos con caché", async () => {
   const fixture = approvalFixture();
-  const detail = service.buildCreditApprovalDetail(fixture.credit, fixture.review, fixture.assessment, fixture.document);
+  const detail = completeApprovalDetail(fixture);
   const api = apiHarness({ ...centralAnalyst, rolNombre: "ADMIN" }, { getCreditApprovalDetail: async (_db, id) => {
     assert.equal(id, 81);
     return detail;
@@ -319,4 +320,26 @@ test("el lector corta un stream excesivo aunque no declare Content-Length", asyn
   const request = new Request("https://finserpay.test/api/aprobaciones/81", { method: "POST", body: stream, duplex: "half" });
   await assert.rejects(http.readApprovalRequest(request), /demasiado extensa/);
   assert.equal(cancelled, true);
+});
+
+test("la vista Aprobadas usa su consulta, fecha y estado de liquidación, incluso con filtro por documento", async () => {
+  const item = { id: 81, folio: "FNS-81", status: "APPROVED", required: true,
+    approvedAt: "2026-09-11T18:30:00.000Z", approvedByName: "Acceso compartido", paid: true };
+  const api = apiHarness(centralAnalyst, { listApprovedCreditQueue: async (_db, input) => {
+    assert.equal(input.documento, "100000001"); assert.equal(input.cursor, "approved-cursor");
+    return { items: [item], nextCursor: null, hasMore: false };
+  } });
+  const response = await api.routes.search.GET(makeRequest("/api/aprobaciones?view=approved&documento=100.000.001&cursor=approved-cursor"));
+  assert.equal(response.status, 200); privateResponse(response);
+  assert.deepEqual((await response.json()).items, [item]);
+  assert.deepEqual(api.calls.map(call => call.name), ["listApprovedCreditQueue"]);
+});
+
+test("view inválido no cae en búsqueda histórica ni abre consultas", async () => {
+  for (const view of ["", "history", "APPROVED", "paid", "pending OR 1=1"]) {
+    const api = apiHarness();
+    const response = await api.routes.search.GET(makeRequest("/api/aprobaciones?documento=100000001&view=" + encodeURIComponent(view)));
+    assert.equal(response.status, 400); privateResponse(response);
+    assert.equal(api.calls.length, 0); assert.equal(api.transactions.length, 0);
+  }
 });

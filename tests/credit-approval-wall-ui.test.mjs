@@ -7,8 +7,8 @@ import * as jsxRuntime from "react/jsx-runtime";
 import ts from "typescript";
 
 const placeholder = (name) => Object.defineProperty(() => null, "name", { value: name });
-const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "LoadingState", "MetricCard", "PageHeader", "StatusPill", "Select"].map((name) => [name, placeholder(name)]));
-const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalNoveltyPanel", "PendingItemEditor"].map((name) => [name, placeholder(name)]));
+const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "LoadingState", "MetricCard", "PageHeader", "StatusPill", "Select", "Tabs"].map((name) => [name, placeholder(name)]));
+const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalNoveltyPanel", "PendingItemEditor", "ApprovalCallRecording"].map((name) => [name, placeholder(name)]));
 const icons = new Proxy({}, { get: (_, key) => placeholder(String(key)) });
 
 function load(path, dependencies, globals = {}) {
@@ -18,7 +18,7 @@ function load(path, dependencies, globals = {}) {
   } });
   const loadedModule = { exports: {} };
   runInNewContext(outputText, { module: loadedModule, exports: loadedModule.exports, console, AbortController,
-    URLSearchParams, Response, Request, Intl, ...globals, require(name) {
+    URLSearchParams, Response, Request, Intl, crypto: globalThis.crypto, ...globals, require(name) {
       if (name === "react/jsx-runtime") return jsxRuntime;
       if (name === "lucide-react") return icons;
       assert.ok(name in dependencies, `Unexpected dependency ${name} from ${path}`);
@@ -33,7 +33,7 @@ const pendingClient = load("app/dashboard/pendientes/pending-client.ts", {});
 // Run the actual parent component's handlers and effects with controlled promises.
 // Child widgets stay opaque: their public callbacks drive the same parent state
 // transitions that the browser uses, without depending on private hook indexes.
-function mount(path, dependencies) {
+function mount(path, dependencies, props = {}) {
   const slots = [];
   const listeners = new Map();
   const intervals = new Map();
@@ -76,7 +76,7 @@ function mount(path, dependencies) {
     async flush() {
       for (let cycle = 0; cycle < 30; cycle++) {
         if (dirty) {
-          dirty = false; hookIndex = 0; effects = []; tree = Component();
+          dirty = false; hookIndex = 0; effects = []; tree = Component(props);
           for (const effect of effects) effect();
         }
         await setImmediate();
@@ -99,6 +99,7 @@ const detail = (id, revision = 1) => ({ ...row(id), score: 800, initialPaymentPe
   capabilities: { canCreateNovelty: true, canCorrectEvidence: true, canReissueSignature: true, correctionBlockedReason: null },
   reissue: { available: true, blocked: false, operation: null },
   novelties: { available: true, blocksApproval: false, blocksSettlement: false, pendingCount: 0, answeredCount: 0, novelty: null },
+  callRecording: { available: true, required: true, canUpload: true, blockedReason: null, recording: { id: "call-" + revision, revision, reviewHash: String(revision).repeat(64), fileName: "llamada.wav", createdAt: "2026-09-09T12:00:00Z", actorName: "Analista" } },
   canApprove: true, blockingReasons: [], evidence: [], document: { available: true, href: `/doc/${id}`, fileName: "QA.pdf", processUuid: "QA-process" },
 });
 const page = (items) => ({ items, hasMore: false, nextCursor: null });
@@ -111,6 +112,7 @@ function wall(api = {}) {
     "./last-pdf-page-preview": { default: parts.LastPdfPagePreview },
     "./approval-evidence-correction": { default: parts.ApprovalEvidenceCorrection },
     "./approval-signature-reissue": { default: parts.ApprovalSignatureReissue },
+    "./approval-call-recording": { default: parts.ApprovalCallRecording },
     "./approval-novelty-panel": { default: parts.ApprovalNoveltyPanel },
   });
 }
@@ -187,7 +189,7 @@ test("la corrección recibida exige revisar la nueva versión y un solo OK quita
   approveButton(h).props.onClick(); await h.flush();
   const approve = confirm(h).props.onConfirm; approve(); approve(); await h.flush();
   assert.equal(approvals.length, 1);
-  assert.deepEqual(approvals[0], [81, 2, "2".repeat(64)]);
+  assert.deepEqual(approvals[0], [81, 2, "2".repeat(64), "call-2"]);
   assert.equal(h.all((node) => node.props?.["aria-label"] === "Revisar crédito QA-81").length, 0);
   assert.equal(h.all((node) => node.type === parts.ApprovalNoveltyPanel).length, 0);
   h.unmount();
@@ -314,4 +316,114 @@ test("el primer pago conserva su día calendario UTC y rechaza fechas inexistent
       assert.equal(metricValues(h)["Fecha de primer pago"].value, expected, date);
     } finally { h.unmount(); }
   }
+});
+
+const tab = (h, view) => h.find((node) => node.props?.id === "approval-tab-" + view);
+const callCard = (h) => h.find((node) => node.type === parts.ApprovalCallRecording);
+
+test("sin grabación no permite confirmar aunque los demás documentos estén completos", async () => {
+  let fresh = detail(81); fresh.callRecording.recording = null;
+  const h = wall({ readApprovalCredit: async () => fresh });
+  try {
+    await h.flush(); select(h, 81); await h.flush();
+    assert.equal(approveButton(h).props.disabled, true);
+    approveButton(h).props.onClick(); await h.flush(); assert.equal(confirm(h).props.open, false);
+    fresh = detail(81); await callCard(h).props.onUpdated(); await h.flush();
+    assert.equal(approveButton(h).props.disabled, false);
+    assert.equal(confirm(h).props.open, false, "Cargar el audio no confirma por sí solo");
+  } finally { h.unmount(); }
+});
+
+test("una grabación en preparación bloquea pestañas, novedades y OK", async () => {
+  const h = wall();
+  try {
+    await h.flush(); select(h, 81); await h.flush();
+    callCard(h).props.onBusyChange(true); await h.flush();
+    assert.equal(tab(h, "approved").props.disabled, true);
+    assert.equal(current(h).disabled, true);
+    assert.equal(approveButton(h).props.disabled, true);
+    tab(h, "approved").props.onClick(); await h.flush();
+    assert.equal(tab(h, "pending").props["aria-selected"], true);
+    callCard(h).props.onBusyChange(false); await h.flush();
+    assert.equal(tab(h, "approved").props.disabled, false);
+  } finally { h.unmount(); }
+});
+
+test("Aprobadas abre un OK vigente en lectura, incluso anterior sin audio", async () => {
+  let approved = detail(81); approved.review = { ...approved.review, status: "APPROVED", approvedAt: "2026-09-09T12:00:00Z", approvedByName: "Analista QA" };
+  approved.callRecording = { ...approved.callRecording, recording: null, canUpload: false, required: false };
+  const queries = [];
+  const h = wall({ readApprovalQueue: async (cursor, signal, view) => { queries.push(view); return page(view === "approved" ? [{ ...row(81), status: "APPROVED", approvedAt: approved.review.approvedAt, paid: true }] : []); }, readApprovalCredit: async () => approved });
+  try {
+    await h.flush(); tab(h, "approved").props.onClick(); await h.flush();
+    assert.deepEqual(queries, ["pending", "approved"]);
+    h.find((node) => node.props?.["aria-label"] === "Ver crédito QA-81").props.onClick(); await h.flush();
+    assert.equal(callCard(h).props.readOnly, true);
+    assert.equal(callCard(h).props.detail.review.status, "APPROVED");
+    assert.equal(h.all((node) => [parts.ApprovalNoveltyPanel, parts.ApprovalEvidenceCorrection, parts.ApprovalSignatureReissue].includes(node.type)).length, 0);
+    assert.equal(h.all((node) => node.type === ui.Button && node.props.onClick?.name === "requestApproval").length, 0);
+    approved = detail(81); h.focus(); await h.flush();
+    assert.equal(h.all((node) => node.type === parts.ApprovalCallRecording).length, 0, "El OK invalidado deja Aprobadas");
+    assert.equal(h.all((node) => node.props?.["aria-label"] === "Ver crédito QA-81").length, 0, "Retira también la fila aunque el listado previo aún la incluyera");
+  } finally { h.unmount(); }
+});
+
+test("cambiar pestaña aborta una ficha pendiente y no mezcla respuestas atrasadas", async () => {
+  const stale = deferred(); let signal;
+  const h = wall({ readApprovalQueue: async (cursor, abort, view) => page(view === "approved" ? [] : [row(81)]),
+    readApprovalCredit: (id, abort) => { signal = abort; return stale.promise; } });
+  try {
+    await h.flush(); select(h, 81); await h.flush(); tab(h, "approved").props.onClick(); await h.flush();
+    assert.equal(signal.aborted, true);
+    stale.resolve(detail(81)); await h.flush();
+    assert.equal(tab(h, "approved").props["aria-selected"], true);
+    assert.equal(h.all((node) => node.type === parts.ApprovalCallRecording).length, 0);
+  } finally { h.unmount(); }
+});
+
+test("el formulario guarda audio por acción explícita y conserva la operación si la respuesta se pierde", async () => {
+  const calls = [], locks = []; let updates = 0, fail = true;
+  const h = mount("app/dashboard/aprobaciones/approval-call-recording.tsx", {
+    "./approval-client": { uploadApprovalCallRecording: async (id, data) => {
+      calls.push({ id, data }); if (fail) throw new Error("Respuesta perdida"); return { ok: true };
+    } },
+  }, { detail: detail(81), disabled: false, onUpdated: async () => { updates++; }, onBusyChange: (busy) => locks.push(busy) });
+  try {
+    await h.flush();
+    const file = new File(["audio"], "llamada.wav", { type: "audio/wav" });
+    h.find((node) => node.type === "input" && node.props.type === "file").props.onChange({ target: { files: [file] } }); await h.flush();
+    assert.equal(calls.length, 0); assert.equal(locks.at(-1), true);
+    const save = () => h.find((node) => node.type === ui.Button && node.props.children?.includes("Guardar grabación")).props.onClick();
+    save(); await h.flush();
+    assert.equal(updates, 1); assert.equal(calls.length, 1); assert.equal(locks.at(-1), true);
+    fail = false; save(); await h.flush();
+    assert.equal(calls[0].data.idempotencyKey, calls[1].data.idempotencyKey);
+    assert.equal(calls[0].data.file, file); assert.equal(updates, 2); assert.equal(locks.at(-1), false);
+  } finally { h.unmount(); }
+});
+
+test("si pierde permiso de carga durante un error conserva una salida para actualizar el expediente", async () => {
+  const observed = detail(81), locks = [];
+  const h = mount("app/dashboard/aprobaciones/approval-call-recording.tsx", {
+    "./approval-client": { uploadApprovalCallRecording: async () => { throw new Error("Firma en proceso"); } },
+  }, { detail: observed, disabled: false, onUpdated: async () => { observed.callRecording.canUpload = false; }, onBusyChange: (busy) => locks.push(busy) });
+  try {
+    await h.flush(); h.find((node) => node.type === "input" && node.props.type === "file").props.onChange({ target: { files: [new File(["audio"], "llamada.wav")] } });
+    await h.flush(); h.find((node) => node.type === ui.Button && node.props.children?.includes("Guardar grabación")).props.onClick(); await h.flush();
+    const cancel = h.find((node) => node.type === ui.Button && node.props.children === "Cancelar");
+    assert.equal(cancel.props.disabled, false); cancel.props.onClick(); await h.flush(); assert.equal(locks.at(-1), false);
+  } finally { h.unmount(); }
+});
+
+test("la grabación aprobada puede reintentarse tras un error sin modificar la aprobación", async () => {
+  const h = mount("app/dashboard/aprobaciones/approval-call-recording.tsx", { "./approval-client": {} },
+    { detail: detail(81), disabled: false, readOnly: true, onUpdated: async () => {}, onBusyChange: () => {} });
+  try {
+    await h.flush(); const audio = h.find((node) => node.type === "audio");
+    audio.props.onError(); await h.flush();
+    h.find((node) => node.type === ui.Button && node.props.children === "Reintentar reproducción").props.onClick(); await h.flush();
+    const retry = h.find((node) => node.type === "audio");
+    assert.notEqual(retry.key, audio.key); assert.equal(retry.props.src, audio.props.src);
+    assert.equal(h.all((node) => node.type === "input").length, 0);
+  } finally { h.unmount(); }
 });

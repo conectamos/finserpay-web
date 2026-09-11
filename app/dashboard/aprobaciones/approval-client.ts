@@ -1,3 +1,5 @@
+export type ApprovalView = "pending" | "approved";
+
 export type ApprovalStatus = "PENDING" | "APPROVED" | "NOT_REQUIRED";
 
 export type ApprovalListItem = {
@@ -13,6 +15,7 @@ export type ApprovalListItem = {
 
 export type ApprovalQueueItem = ApprovalListItem & {
   createdAt?: string; sedeNombre?: string; revision?: number;
+  approvedAt?: string; approvedByName?: string | null; paid?: boolean;
   novelty?: { id: string; status: "WAITING_ALLY" | "RESPONDED"; version: number; pendingCount: number; answeredCount: number } | null;
   reissue?: { blocked: boolean; status: string | null };
 };
@@ -29,6 +32,12 @@ export type ApprovalQueuePage = { items: ApprovalQueueItem[]; nextCursor: string
 export type ApprovalReissueState = {
   available: boolean; blocked: boolean;
   operation: null | { id: string; status: string; reason: string; requestedAt: string; lastCheckedAt: string | null; completedAt: string | null; canRefresh: boolean; message: string };
+};
+
+export type ApprovalCallRecordingState = {
+  available: boolean; required: boolean; canUpload: boolean; blockedReason: string | null;
+  recording: null | { id: string; revision: number; reviewHash: string; fileName: string; mimeType: string;
+    sizeBytes: number; createdAt: string; actorName: string; href: string; sha256: string };
 };
 
 export type ApprovalDetail = Omit<ApprovalListItem, "status" | "required"> & {
@@ -56,6 +65,7 @@ export type ApprovalDetail = Omit<ApprovalListItem, "status" | "required"> & {
   capabilities: { canCreateNovelty: boolean; canCorrectEvidence: boolean; canReissueSignature: boolean; correctionBlockedReason: string | null };
   reissue: ApprovalReissueState;
   novelties: ApprovalNoveltyState;
+  callRecording: ApprovalCallRecordingState;
   canApprove: boolean;
   blockingReasons: string[];
   evidence: Array<{ key: string; label: string; available: boolean; href: string }>;
@@ -100,11 +110,11 @@ export async function readApprovalCredit(id: number, signal?: AbortSignal) {
   return result.item;
 }
 
-export async function approveCreditReview(id: number, revision: number, reviewHash: string) {
+export async function approveCreditReview(id: number, revision: number, reviewHash: string, recordingId?: string | null) {
   const response = await fetch(`/api/aprobaciones/${id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ revision, reviewHash }),
+    body: JSON.stringify({ revision, reviewHash, ...(recordingId ? { recordingId } : {}) }),
   });
   const result = await readResult<{ ok?: boolean }>(response, "No fue posible confirmar la aprobación. Actualiza el expediente antes de intentarlo de nuevo.");
   if (result.ok !== true) throw new ApprovalRequestError("No se recibió confirmación de la aprobación. Actualiza el expediente antes de intentarlo de nuevo.", response.status);
@@ -127,12 +137,12 @@ export function refreshApprovalSignature(id: number, operationId: string) {
   return sendSignatureAction(id, { action: "REFRESH", operationId });
 }
 
-export async function readApprovalQueue(cursor?: string | null, signal?: AbortSignal) {
-  const query = new URLSearchParams({ view: "pending" });
+export async function readApprovalQueue(cursor?: string | null, signal?: AbortSignal, view: ApprovalView = "pending") {
+  const query = new URLSearchParams({ view });
   if (cursor) query.set("cursor", cursor);
   const response = await fetch(`/api/aprobaciones?${query}`, { cache: "no-store", signal });
-  const result = await readResult<ApprovalQueuePage>(response, "No fue posible cargar los créditos pendientes.");
-  if (!Array.isArray(result.items) || result.items.some((item) => !Number.isSafeInteger(item.id) || item.id <= 0 || item.status !== "PENDING" || item.required !== true) ||
+  const result = await readResult<ApprovalQueuePage>(response, "No fue posible cargar los créditos.");
+  if (!Array.isArray(result.items) || result.items.some((item) => !Number.isSafeInteger(item.id) || item.id <= 0 || item.status !== (view === "approved" ? "APPROVED" : "PENDING") || item.required !== true) ||
       !(result.nextCursor === null || typeof result.nextCursor === "string" && result.nextCursor.length > 0) ||
       typeof result.hasMore !== "boolean" || result.hasMore !== Boolean(result.nextCursor)) {
     throw new ApprovalRequestError("El muro no devolvió una respuesta válida. Actualiza antes de continuar.", response.status);
@@ -140,10 +150,10 @@ export async function readApprovalQueue(cursor?: string | null, signal?: AbortSi
   return result;
 }
 
-export function mergeApprovalQueuePage(current: ApprovalQueueItem[], incoming: ApprovalQueueItem[], append: boolean) {
+export function mergeApprovalQueuePage(current: ApprovalQueueItem[], incoming: ApprovalQueueItem[], append: boolean, view: ApprovalView = "pending") {
   const rows = new Map<number, ApprovalQueueItem>();
   for (const item of append ? [...current, ...incoming] : incoming) {
-    if (item.required && item.status === "PENDING") rows.set(item.id, item);
+    if (item.required && item.status === (view === "approved" ? "APPROVED" : "PENDING")) rows.set(item.id, item);
   }
   return [...rows.values()];
 }
@@ -154,5 +164,22 @@ export async function createApprovalNovelty(id: number, input: { keys: string[];
   });
   const result = await readResult<{ ok?: boolean }>(response, "No se pudo confirmar la novedad. Actualiza el expediente antes de volver a intentarlo.");
   if (result.ok !== true) throw new ApprovalRequestError("No se recibió confirmación de la novedad. Actualiza el expediente.", response.status);
+  return result;
+}
+
+export async function uploadApprovalCallRecording(id: number, input: {
+  file: File; revision: number; reviewHash: string; idempotencyKey: string;
+}) {
+  const response = await fetch(`/api/aprobaciones/${id}/grabaciones`, {
+    method: "POST", headers: {
+      "Content-Type": "application/octet-stream",
+      "x-recording-file-name": encodeURIComponent(input.file.name),
+      "x-review-revision": String(input.revision), "x-review-hash": input.reviewHash,
+      "idempotency-key": input.idempotencyKey,
+    }, body: input.file,
+  });
+  const result = await readResult<{ ok: boolean; state: ApprovalCallRecordingState; unchanged: boolean }>(response,
+    "No se pudo confirmar la carga de la grabación. Actualiza el expediente antes de reintentar.");
+  if (result.ok !== true || !result.state?.recording?.id) throw new ApprovalRequestError("No se recibió confirmación de la grabación. Actualiza el expediente.", response.status);
   return result;
 }

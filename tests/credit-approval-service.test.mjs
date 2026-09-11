@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { service, approvalFixture, approvalDatabase, plain, pdf, png } from "./credit-approval-test-loader.mjs";
+import { completeApprovalDetail, CALL_RECORDING_ID, service, approvalFixture, approvalDatabase, plain, pdf, png } from "./credit-approval-test-loader.mjs";
 
-const details = ({ credit, review, assessment, document }) => service.buildCreditApprovalDetail(credit, review, assessment, document);
+const details = (fixture) => completeApprovalDetail(fixture);
 const actor = { id: 7, nombre: "Analista de prueba" };
 
 test("el expediente expone cinco fotos, documento y valores financieros persistidos", () => {
@@ -154,7 +154,7 @@ test("un expediente modificado rechaza revisión obsoleta sin escribir aprobaci�
 test("el OK registra actor y revisión; repetirlo conserva el actor y no duplica eventos", async () => {
   const { db, state } = approvalDatabase();
   const before = await service.getCreditApprovalDetail(db, 81);
-  const input = { revision: before.review.revision, reviewHash: before.review.reviewHash };
+  const input = { revision: before.review.revision, reviewHash: before.review.reviewHash, recordingId: CALL_RECORDING_ID };
   const approved = await service.approveCredit(db, 81, input, actor);
   assert.equal(approved.unchanged, false);
   assert.equal(approved.item.review.status, "APPROVED");
@@ -174,7 +174,7 @@ test("el OK registra actor y revisión; repetirlo conserva el actor y no duplica
 test("aprobar expediente incompleto no crea filas de revisión", async () => {
   const { db, state } = approvalDatabase({ document: null });
   const item = await service.getCreditApprovalDetail(db, 81);
-  await assert.rejects(service.approveCredit(db, 81, { revision: item.review.revision, reviewHash: item.review.reviewHash }, actor), { code: "REVIEW_NOT_READY", status: 409 });
+  await assert.rejects(service.approveCredit(db, 81, { revision: item.review.revision, reviewHash: item.review.reviewHash, recordingId: CALL_RECORDING_ID }, actor), { code: "REVIEW_NOT_READY", status: 409 });
   assert.equal(state.writes.length, 0);
 });
 
@@ -189,7 +189,7 @@ test("el parser de medios rechaza contenido activo y firmas MIME falsas", () => 
 test("la retención de DataCrédito no revoca una revisión ya aprobada", () => {
   const fixture = approvalFixture();
   const before = details(fixture);
-  fixture.review = { status: "APPROVED", revision: 2, approvedRevision: 2, approvedAt: new Date(), approvedByName: actor.nombre, reviewHash: before.review.reviewHash };
+  fixture.review = { status: "APPROVED", revision: 2, approvedRevision: 2, approvedAt: new Date(), approvedByName: actor.nombre, reviewHash: before.review.reviewHash, recordingId: CALL_RECORDING_ID };
   fixture.assessment = null;
   const item = details(fixture);
   assert.equal(item.review.status, "APPROVED");
@@ -246,8 +246,8 @@ test("novedad abierta bloquea OK incluso con un intento repetido", async () => {
   const {db,state}=approvalDatabase({novelty:{id:"novelty-test",status:"WAITING_ALLY",version:1},noveltyItems:[{id:"photo-test",key:"foto-entrega",status:"OPEN",version:1,reason:"Foto borrosa",openedAt:new Date()}]});
   const item=await service.getCreditApprovalDetail(db,81);
   assert.equal(item.canApprove,false);
-  state.review={status:"APPROVED",revision:1,approvedRevision:1,reviewHash:item.review.reviewHash};
-  await assert.rejects(service.approveCredit(db,81,{revision:1,reviewHash:item.review.reviewHash},actor),{code:"NOVELTY_PENDING"});
+  state.review={status:"APPROVED",revision:1,approvedRevision:1,reviewHash:item.review.reviewHash,recordingId:CALL_RECORDING_ID};
+  await assert.rejects(service.approveCredit(db,81,{revision:1,reviewHash:item.review.reviewHash,recordingId:CALL_RECORDING_ID},actor),{code:"NOVELTY_PENDING"});
   assert.equal(state.writes.length,0);
 });
 
@@ -256,7 +256,7 @@ test("respuestas completas requieren OK y se resuelven antes de aprobar en la mi
   const item=await service.getCreditApprovalDetail(db,81);
   assert.equal(item.canApprove,true);
   assert.equal(item.novelties.blocksSettlement,true);
-  const result=await service.approveCredit(db,81,{revision:item.review.revision,reviewHash:item.review.reviewHash},actor);
+  const result=await service.approveCredit(db,81,{revision:item.review.revision,reviewHash:item.review.reviewHash,recordingId:CALL_RECORDING_ID},actor);
   assert.equal(result.item.review.status,"APPROVED");
   assert.equal(result.item.novelties.novelty.status,"RESOLVED");
   assert.equal(result.item.novelties.blocksSettlement,false);
@@ -271,7 +271,7 @@ test("una respuesta completa no se resuelve con revision obsoleta o documento in
     const fixture=approvalDatabase({novelty:{id:"novelty-test",status:"RESPONDED",version:2},noveltyItems:[{id:"photo-test",key:"foto-entrega",status:"RESPONDED",version:2,openedAt:new Date()}]});
     const item=await service.getCreditApprovalDetail(fixture.db,81);
     if(incomplete)fixture.state.document=null;
-    await assert.rejects(service.approveCredit(fixture.db,81,{revision:incomplete?item.review.revision:item.review.revision+1,reviewHash:item.review.reviewHash},actor));
+    await assert.rejects(service.approveCredit(fixture.db,81,{revision:incomplete?item.review.revision:item.review.revision+1,reviewHash:item.review.reviewHash,recordingId:CALL_RECORDING_ID},actor));
     assert.equal(fixture.state.novelty.status,"RESPONDED");
     assert.equal(fixture.state.writes.length,0);
   }
@@ -282,7 +282,7 @@ test("OK compartido registra grant y sesion sin usuario ficticio; revocado no es
   for(const active of [true,false]){
     const {db,state}=approvalDatabase({sharedAccess:active});
     const item=await service.getCreditApprovalDetail(db,81);
-    const result=service.approveCredit(db,81,{revision:item.review.revision,reviewHash:item.review.reviewHash},shared);
+    const result=service.approveCredit(db,81,{revision:item.review.revision,reviewHash:item.review.reviewHash,recordingId:CALL_RECORDING_ID},shared);
     if(!active){await assert.rejects(result,{status:401});assert.equal(state.writes.length,0);continue;}
     await result;
     assert.equal(state.review.approvedByUserId,null);
@@ -306,7 +306,7 @@ test("OK compartido revalida scope tras lock y rechaza historico/importado con R
     assert.equal(state.credit.required,true);
     assert.equal((await service.getCreditApprovalDetail(db,81)).review.reviewHash,item.review.reviewHash);
     state.queries.length=0;
-    await assert.rejects(service.approveCredit(db,81,{revision:7,reviewHash:item.review.reviewHash},shared),{code:"CREDIT_NOT_FOUND",status:404});
+    await assert.rejects(service.approveCredit(db,81,{revision:7,reviewHash:item.review.reviewHash,recordingId:CALL_RECORDING_ID},shared),{code:"CREDIT_NOT_FOUND",status:404});
     assert.equal(state.writes.length,0);assert.equal(state.events.length,0);assert.equal(state.noveltyEvents.length,0);
     const lock=state.queries.findIndex(query=>query.sql.includes('FOR UPDATE OF credit'));
     const scope=state.queries.findIndex(query=>query.sql.startsWith('SELECT credit."id" FROM "Credito" credit'));
