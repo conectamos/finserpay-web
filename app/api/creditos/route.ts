@@ -2031,6 +2031,7 @@ export async function POST(req: Request) {
     const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
       platform: plataformaDispositivo,
       valorCuota: amortizationPlan.cuotaTotal,
+      enforceFactoryRange: !signedTermsSnapshot,
       iphoneMaxInstallmentValue: dataCreditoFinancingTerms
         ? dataCreditoFinancingTerms.maxInstallmentAmount
         : creditSettings.iphoneTopeCuota,
@@ -2536,7 +2537,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!signedTermsSnapshot && iphoneInstallmentLimit.exceeded) {
+    if (!signedTermsSnapshot && iphoneInstallmentLimit.outsideRange) {
       return NextResponse.json(
         { error: iphoneInstallmentLimit.message },
         { status: 400 }

@@ -38,6 +38,7 @@ export const IPHONE_DEFAULT_CREDIT_INSTALLMENTS = 24;
 export const IPHONE_MAX_CREDIT_INSTALLMENTS = 48;
 export const IPHONE_MAX_FINANCED_AMOUNT = 3_500_000;
 export const IPHONE_MAX_INSTALLMENT_VALUE = 160_000;
+export const IPHONE_MIN_INSTALLMENT_VALUE = 90_000;
 export const MAX_VIDEO_DATA_URL_LENGTH = 64_000_000;
 export const MAX_VIDEO_UPLOAD_BYTES = 45 * 1024 * 1024;
 export const DEFAULT_LEGAL_RATE_REFERENCE =
@@ -946,31 +947,66 @@ export function getIphoneInstallmentLimitMessage(options: {
   return `La cuota iPhone queda en ${formatCopLimit(valorCuota)} y supera el tope configurado de ${formatCopLimit(maxInstallment)}. Aumenta la inicial o el plazo para continuar.`;
 }
 
+export function shouldPreserveIphoneFactoryInstallments(options: {
+  platform?: unknown;
+  isFactoryMode: boolean;
+  signatureLoading: boolean;
+  signatureState: string;
+}) {
+  return options.isFactoryMode && isIphoneCreditPlatform(options.platform) && (
+    options.signatureLoading ||
+    options.signatureState === "waiting" ||
+    options.signatureState === "signed"
+  );
+}
+
 export function validateIphoneInstallmentLimit(options: {
   platform?: unknown;
   valorCuota: number | null | undefined;
   iphoneMaxInstallmentValue?: number | null | undefined;
+  // Opt in only for new factory financing; simulations and signed terms keep
+  // their previous validation. Both limits use the exact installment amount.
+  enforceFactoryRange?: boolean;
 }) {
-  const maxInstallment = normalizeMoneyLimit(
+  const configuredMaxInstallment = normalizeMoneyLimit(
     options.iphoneMaxInstallmentValue,
     IPHONE_MAX_INSTALLMENT_VALUE
   );
+  const maxInstallment = options.enforceFactoryRange
+    ? Math.min(configuredMaxInstallment, IPHONE_MAX_INSTALLMENT_VALUE)
+    : configuredMaxInstallment;
+  const minInstallment = options.enforceFactoryRange
+    ? IPHONE_MIN_INSTALLMENT_VALUE
+    : 0;
   const valorCuota = Math.max(0, Number(options.valorCuota || 0));
+  const iphone = isIphoneCreditPlatform(options.platform);
+  const invalid = iphone && Boolean(options.enforceFactoryRange) &&
+    !Number.isFinite(valorCuota);
+  const belowMinimum = iphone && minInstallment > 0 && valorCuota < minInstallment;
   const exceeded =
-    isIphoneCreditPlatform(options.platform) &&
+    iphone &&
     maxInstallment > 0 &&
     valorCuota > maxInstallment;
 
   return {
     exceeded,
+    belowMinimum,
+    outsideRange: exceeded || belowMinimum || invalid,
+    minInstallment,
     maxInstallment,
     valorCuota,
-    message: exceeded
-      ? getIphoneInstallmentLimitMessage({
-          valorCuota,
-          iphoneMaxInstallmentValue: maxInstallment,
-        })
-      : "",
+    message: invalid
+      ? "No se pudo calcular una cuota iPhone válida. Revisa el precio, la inicial y el plazo."
+      : minInstallment > maxInstallment && iphone
+        ? `No hay un rango de cuota iPhone disponible: el tope de la política (${formatCopLimit(maxInstallment)}) es menor al mínimo de ${formatCopLimit(minInstallment)}.`
+        : belowMinimum
+          ? `La cuota iPhone debe ser de al menos ${formatCopLimit(minInstallment)}. Elige un plazo menor dentro del máximo de la política.`
+          : exceeded
+            ? getIphoneInstallmentLimitMessage({
+                valorCuota,
+                iphoneMaxInstallmentValue: maxInstallment,
+              })
+            : "",
   };
 }
 
