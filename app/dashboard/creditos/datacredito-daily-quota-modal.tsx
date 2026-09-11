@@ -5,14 +5,16 @@ import Link from "next/link";
 import { useEffect, useId, useRef, useSyncExternalStore } from "react";
 import type { KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { ArrowRight, ChartNoAxesColumnIncreasing, TriangleAlert, X } from "lucide-react";
-import { Badge, Button } from "@/app/_components/finser-ui";
+import { Calculator, X } from "lucide-react";
+import { Button } from "@/app/_components/finser-ui";
+import { formatQuotaRehabilitationDate } from "@/lib/datacredito/quota-rehabilitation-date";
 import styles from "./datacredito-daily-quota-modal.module.css";
 
 type DataCreditoDailyQuotaModalProps = {
   open: boolean;
   onClose: () => void;
   percentUsed: number;
+  resetsAt: string;
   approvedHref: string;
   simulatorHref: string;
   illustrationSrc: string;
@@ -29,6 +31,7 @@ export default function DataCreditoDailyQuotaModal({
   open,
   onClose,
   percentUsed,
+  resetsAt,
   approvedHref,
   simulatorHref,
   illustrationSrc,
@@ -43,6 +46,7 @@ export default function DataCreditoDailyQuotaModal({
   const titleRef = useRef<HTMLHeadingElement>(null);
   const titleId = useId();
   const descriptionId = useId();
+  const rehabilitationDate = formatQuotaRehabilitationDate(resetsAt);
 
   useEffect(() => {
     if (!open || !browserReady) return;
@@ -117,41 +121,38 @@ export default function DataCreditoDailyQuotaModal({
         >
           <X size={28} aria-hidden="true" />
         </Button>
+        <header className={styles.header} aria-label="FINSER PAY">
+          <svg className={styles.headerWave} viewBox="0 0 640 108" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M0 0H640V69C479 8 404 32 275 74C164 112 75 111 0 75Z" />
+          </svg>
+          <span className={styles.brand} aria-hidden="true"><span>FINSER</span> PAY</span>
+        </header>
         <div className={styles.illustration} aria-hidden="true">
           <div className={styles.artwork}>
             <Image
               src={illustrationSrc}
               alt=""
               fill
-              sizes="(max-width: 760px) 310px, 440px"
+              sizes="(max-width: 480px) 240px, 290px"
               className={styles.mascot}
             />
-            <div className={styles.indicator}>
-              <span>{percentUsed}<small> %</small></span>
-              <TriangleAlert className={styles.indicatorAlert} aria-hidden="true" />
-            </div>
-            <span className={styles.phoneBrand}>FINSER PAY<span /></span>
+            <span className={styles.indicator}>{percentUsed}<small> %</small></span>
           </div>
         </div>
         <div className={styles.content}>
-          <Badge tone="warning" className={styles.badge}>
-            <TriangleAlert size={23} aria-hidden="true" />
-            LÍMITE ALCANZADO
-          </Badge>
           <h2 ref={titleRef} id={titleId} tabIndex={-1} className={styles.title}>
-            Consultas disponibles nuevamente mañana
+            LÍMITE DIARIO ALCANZADO
           </h2>
-          <p id={descriptionId} className={styles.message}>
-            Estimado aliado, hoy alcanzó el {percentUsed} % de consultas permitidas.
-          </p>
-          <p className={styles.orientation}>
-            Puede seguir trabajando con las solicitudes que ya fueron aprobadas y convertirlas en ventas.
-          </p>
-          <div className={styles.simulatorNote}>
-            <span className={styles.simulatorIcon}>
-              <ChartNoAxesColumnIncreasing size={29} aria-hidden="true" />
-            </span>
-            <p>Para cotizaciones, utilice el <strong>simulador.</strong></p>
+          <div id={descriptionId}>
+            {rehabilitationDate ? (
+              <p className={styles.message}>
+                Las consultas estarán habilitadas el{" "}
+                <time dateTime={resetsAt}>{rehabilitationDate}.</time>
+              </p>
+            ) : null}
+            <p className={styles.orientation}>
+              Retome sus solicitudes aprobadas y conviértalas en ventas.
+            </p>
           </div>
           <div className={styles.actions}>
             <Link
@@ -160,16 +161,16 @@ export default function DataCreditoDailyQuotaModal({
               aria-disabled={false}
               onClick={onClose}
             >
-              <span>Retomar solicitudes aprobadas</span>
-              <ArrowRight size={25} aria-hidden="true" />
+              Ver aprobados
             </Link>
             <Link
               href={simulatorHref}
-              className={`fp-ui-button is-secondary ${styles.secondaryAction}`}
+              className={`fp-ui-button is-ghost ${styles.secondaryAction}`}
               aria-disabled={false}
               onClick={onClose}
             >
-              Ir al simulador
+              <Calculator size={27} aria-hidden="true" />
+              <span>Cotizar en el simulador</span>
             </Link>
           </div>
         </div>

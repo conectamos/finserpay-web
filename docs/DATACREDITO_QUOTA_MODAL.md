@@ -10,7 +10,8 @@ y `percentUsed: 100`. No se calcula el porcentaje en el navegador.
 El cierre conserva el formulario. Un nuevo intento consulta únicamente el GET
 existente `/api/creditos/datacredito/politica`; mientras siga agotado se reabre
 el aviso sin enviar otro POST. El botón de verificación, el regreso a la pestaña
-y el instante de reinicio comunicado por el servidor permiten refrescar el cupo.
+y una comprobación cada 30 segundos con la pestaña visible refrescan el cupo.
+No se usa el reloj del navegador para decidir si se rehabilitó.
 Una respuesta disponible habilita el formulario, pero nunca dispara una consulta
 pagada automáticamente. Si falla la lectura, se conserva el bloqueo y se informa
 el fallo de verificación sin presentar un rechazo crediticio.
@@ -45,23 +46,16 @@ el porcentaje y los enlaces son HTML accesible.
 
 ## Recurso visual
 
-Archivo: `public/assets/creditos/datacredito-daily-quota-mascot.webp`.
-Generado con la herramienta integrada de imágenes, usando la referencia del
-usuario, y optimizado a WebP (900 × 1125). No es una captura del modal.
-
-Prompt final: «Decorative illustration for the LEFT panel of a real FINSER PAY
-quota modal. Use the user's wide LÍMITE ALCANZADO modal as a style reference,
-not the tall APROBADO card. Only one happy anthropomorphic black smartphone on
-a matte almost-black backdrop, vertical 4:5, gentle green rim light, white
-gloved hands with a thumbs-up, friendly eyes and smile, understated green
-approved cards. Nearly front-facing, very subtle tilt. Lower half of screen
-completely blank: the website overlays its dynamic percentage ring. No numbers,
-percentages, letters, logo, amber rings, warning symbols, UI panels, buttons,
-checkerboard, watermark, heavy gradients, turquoise or blue.»
+El diseño horizontal inicial fue reemplazado por la referencia vertical y la
+mascota triste exacta entregada por el usuario. Archivo activo:
+`public/assets/creditos/datacredito-daily-quota-sad-mascot.png`, PNG RGBA real.
+El texto, porcentaje, fecha y acciones son componentes, no parte de la imagen.
+Ver [entrega vertical](DATACREDITO_QUOTA_VERTICAL.md) para extracción, cambios
+y verificaciones actuales. El recurso WebP anterior ya no se referencia.
 
 No requiere variables de entorno nuevas en producción ni migraciones.
 
-## Archivos de esta entrega
+## Archivos de la entrega inicial (PR #37)
 
 - `app/dashboard/creditos/datacredito-daily-quota-modal.tsx`
 - `app/dashboard/creditos/datacredito-daily-quota-modal.module.css`
@@ -78,7 +72,7 @@ No requiere variables de entorno nuevas en producción ni migraciones.
 - `package.json`
 - `docs/DATACREDITO_QUOTA_MODAL.md`
 
-## Resultados de verificación
+## Resultados de verificación de la entrega inicial (PR #37)
 
 - DataCrédito: 192 pruebas correctas, dos pruebas PostgreSQL opcionales omitidas
   en la suite habitual. La prueba nueva de cupo PostgreSQL se ejecutó además en
