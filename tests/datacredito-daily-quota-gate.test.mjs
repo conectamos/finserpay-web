@@ -42,6 +42,53 @@ function realDeclaration(name) {
   return `const ${name} = ${callback.getText(ast)};`;
 }
 
+function mountQuotaRecheckEffect(harness, clockTimestamp) {
+  let callback;
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" &&
+      node.arguments[0]?.getText(ast).includes("checkDailyQueryQuota()") &&
+      node.arguments[0]?.getText(ast).includes("daily-limit-reached")
+    ) callback = node.arguments[0];
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  assert.ok(callback, "Must exercise the actual quota recheck effect");
+  const intervals = new Map();
+  const clearedIntervals = [];
+  const windowListeners = new Map();
+  const documentListeners = new Map();
+  let clockReads = 0;
+  harness.context.Date = class extends Date {
+    static now() { clockReads++; return clockTimestamp; }
+  };
+  harness.context.window = {
+    ...harness.context.window,
+    setInterval(handler, duration) {
+      const id = intervals.size + 1;
+      intervals.set(id, { handler, duration });
+      return id;
+    },
+    clearInterval(id) { clearedIntervals.push(id); intervals.delete(id); },
+    addEventListener(name, handler) { windowListeners.set(name, handler); },
+    removeEventListener(name) { windowListeners.delete(name); },
+  };
+  harness.context.document = {
+    visibilityState: "visible",
+    addEventListener(name, handler) { documentListeners.set(name, handler); },
+    removeEventListener(name) { documentListeners.delete(name); },
+  };
+  harness.context.checkDailyQueryQuota = harness.functions.checkDailyQueryQuota;
+  const { outputText } = ts.transpileModule(`(${callback.getText(ast)})()`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  });
+  const cleanup = runInNewContext(outputText, harness.context, { timeout: 1000 });
+  return {
+    intervals, clearedIntervals, windowListeners, documentListeners, cleanup,
+    getClockReads: () => clockReads,
+  };
+}
+
 const helperNames = [
   "isRecord", "readString", "readNumber", "readPlatform", "readJson",
   "getCorrelationId", "getResponseCode", "normalizeDecision",
@@ -344,4 +391,75 @@ test("uses the existing approved filter and simulator without changing the facto
   assert.match(modal, /href=\{simulatorHref\}/);
   assert.match(modal, /Estimado aliado, hoy alcanzó el \{percentUsed\} % de consultas permitidas/);
   assert.doesNotMatch(modal, /percentUsed\s*=\s*100/);
+});
+
+test("automatic quota checks use a fixed visible-page interval regardless of the client's clock", async () => {
+  for (const localClock of ["1990-01-01T00:00:00.000Z", "2099-12-31T23:59:59.000Z"]) {
+    const harness = createGateHarness({
+      overrides: { view: "daily-limit-reached", dailyQueryLimitReached: exhausted },
+      responses: [{ body: policy }, { body: policy }, { body: { ...policy, dailyQuota: available } }],
+    });
+    const effect = mountQuotaRecheckEffect(harness, Date.parse(localClock));
+    assert.equal(effect.intervals.size, 1);
+    const interval = [...effect.intervals.values()][0];
+    assert.equal(interval.duration, 30_000);
+    interval.handler();
+    await new Promise(setImmediate);
+    assert.equal(harness.state.view, "daily-limit-reached", "An expired local date cannot release exhausted quota");
+    assert.equal(harness.requests.length, 1);
+
+    harness.context.document.visibilityState = "hidden";
+    interval.handler();
+    effect.windowListeners.get("focus")();
+    effect.documentListeners.get("visibilitychange")();
+    await new Promise(setImmediate);
+    assert.equal(harness.requests.length, 1, "No automatic requests while the page is hidden");
+
+    harness.context.document.visibilityState = "visible";
+    effect.documentListeners.get("visibilitychange")();
+    await new Promise(setImmediate);
+    assert.equal(harness.requests.length, 2);
+    assert.equal(harness.state.view, "daily-limit-reached");
+    effect.windowListeners.get("focus")();
+    await new Promise(setImmediate);
+    assert.equal(harness.state.view, "ready", "Only an available server snapshot releases the form");
+    assert.deepEqual(harness.requests.map(({ method }) => method), ["GET", "GET", "GET"]);
+    assert.equal(effect.getClockReads(), 0);
+    effect.cleanup();
+    assert.equal(effect.intervals.size, 0);
+    assert.equal(effect.clearedIntervals.length, 1);
+    assert.equal(effect.windowListeners.size, 0);
+    assert.equal(effect.documentListeners.size, 0);
+  }
+});
+
+test("automatic recheck cleanup aborts an outstanding read and cannot reopen the closed context", async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const harness = createGateHarness({
+    overrides: { view: "daily-limit-reached", dailyQueryLimitReached: exhausted },
+    responses: [() => pending],
+  });
+  const effect = mountQuotaRecheckEffect(harness, Date.parse("2099-12-31T23:59:59.000Z"));
+  const read = harness.functions.checkDailyQueryQuota(true);
+  const controller = harness.context.quotaRefreshAbortRef.current;
+  effect.cleanup();
+  assert.equal(controller.signal.aborted, true);
+  assert.equal(harness.context.quotaRefreshAbortRef.current, null);
+  assert.equal(effect.intervals.size, 0);
+  release(Response.json(policy));
+  await read;
+  assert.equal(harness.state.dailyQuotaModalOpen, false);
+  assert.deepEqual(harness.requests.map(({ method }) => method), ["GET"]);
+});
+
+test("approved and ready states never install the quota recheck interval", () => {
+  for (const view of ["approved", "ready", "bypassing"]) {
+    const harness = createGateHarness({ overrides: { view, dailyQueryLimitReached: exhausted } });
+    const effect = mountQuotaRecheckEffect(harness, Date.parse("2099-12-31T23:59:59.000Z"));
+    assert.equal(effect.intervals.size, 0);
+    assert.equal(effect.windowListeners.size, 0);
+    assert.equal(effect.documentListeners.size, 0);
+    assert.equal(harness.requests.length, 0);
+  }
 });

@@ -1000,16 +1000,19 @@ export default function DatacreditoPrequalificationGate({
 
   useEffect(() => {
     if (view !== "daily-limit-reached" || !dailyQueryLimitReached) return;
-    const recheck = () => { void checkDailyQueryQuota(); };
-    const delay = Date.parse(dailyQueryLimitReached.resetsAt) - Date.now();
-    // El reloj solo programa una lectura; únicamente el servidor libera el cupo.
-    const timer = delay > 0 && delay < 2_147_483_647
-      ? window.setTimeout(recheck, delay + 250)
-      : null;
+    const recheck = () => {
+      if (document.visibilityState !== "hidden") void checkDailyQueryQuota();
+    };
+    // No dependemos de la hora del dispositivo. Solo la lectura del servidor
+    // libera el cupo; una sesión visible se actualiza en un máximo de 30 s.
+    // Al volver a la pestaña se comprueba inmediatamente, sin consulta pagada.
+    const timer = window.setInterval(recheck, 30_000);
     window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
     return () => {
-      if (timer !== null) window.clearTimeout(timer);
+      window.clearInterval(timer);
       window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
       const controller = quotaRefreshAbortRef.current;
       quotaRefreshAbortRef.current = null;
       controller?.abort();

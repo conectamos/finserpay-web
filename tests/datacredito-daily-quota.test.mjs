@@ -161,7 +161,7 @@ function snapshotFor(database) {
 }
 
 const connectionString = process.env.DATACREDITO_QUOTA_TEST_DATABASE_URL;
-test("PostgreSQL: ultimo cupo concurrente, bloqueo adicional, aliados y reinicio Bogota", {
+test("PostgreSQL: ultimo cupo concurrente, aliados y reinicio Bogota en cambios de calendario", {
   skip: connectionString ? false : "Requiere DATACREDITO_QUOTA_TEST_DATABASE_URL de una base PostgreSQL local aislada.",
 }, async () => {
   const url = new URL(connectionString);
@@ -241,6 +241,51 @@ test("PostgreSQL: ultimo cupo concurrente, bloqueo adicional, aliados y reinicio
     assert.equal(newDay.businessDate, "2026-09-10");
     assert.equal(newDay.resetsAt.toISOString(), resetsAt.toISOString());
     assert.equal((await reserve(5, midnight)).allowed, false);
+
+    const calendarCases = [
+      [10, "fin de mes", "2026-09-30", "2026-10-01", "2026-10-02"],
+      [11, "fin de ano", "2026-12-31", "2027-01-01", "2027-01-02"],
+      [12, "febrero no bisiesto", "2027-02-28", "2027-03-01", "2027-03-02"],
+      [13, "entrada al dia bisiesto", "2028-02-28", "2028-02-29", "2028-03-01"],
+      [14, "salida del dia bisiesto", "2028-02-29", "2028-03-01", "2028-03-02"],
+    ];
+    for (const [allyId, label, oldDate, newDate, followingDate] of calendarCases) {
+      await admin.query('INSERT INTO "Aliado" VALUES ($1, 1)', [allyId]);
+      const beforeUtcMidnight = `${oldDate}T23:59:59.999Z`;
+      const utcMidnight = `${newDate}T00:00:00.000Z`;
+      const beforeBogotaMidnight = `${newDate}T04:59:59.999Z`;
+      const bogotaMidnight = `${newDate}T05:00:00.000Z`;
+      const nextReset = `${followingDate}T05:00:00.000Z`;
+      const firstReservation = await reserve(allyId, beforeUtcMidnight);
+      assert.equal(firstReservation.allowed, true, label);
+      assert.equal(firstReservation.businessDate, oldDate, label);
+      assert.equal(firstReservation.resetsAt.toISOString(), bogotaMidnight, label);
+      for (const instant of [utcMidnight, beforeBogotaMidnight]) {
+        assert.equal((await reserve(allyId, instant)).allowed, false,
+          `${label}: cambiar de fecha UTC no libera el cupo del dia colombiano`);
+        const blocked = await snapshot(allyId, instant);
+        assert.equal(blocked.exhausted, true, label);
+        assert.equal(blocked.used, 1, label);
+        assert.equal(blocked.resetsAt, bogotaMidnight, label);
+      }
+      const reopened = await snapshot(allyId, bogotaMidnight);
+      assert.equal(reopened.exhausted, false, `${label}: el GET refleja el cambio exacto a medianoche`);
+      assert.equal(reopened.used, 0, `${label}: leer no consume el cupo del nuevo dia`);
+      assert.equal(reopened.remaining, 1, label);
+      assert.equal(reopened.resetsAt, nextReset, label);
+      const nextReservation = await reserve(allyId, bogotaMidnight);
+      assert.equal(nextReservation.allowed, true, label);
+      assert.equal(nextReservation.businessDate, newDate, label);
+      assert.equal(nextReservation.resetsAt.toISOString(), nextReset, label);
+      assert.equal((await reserve(allyId, bogotaMidnight)).allowed, false,
+        `${label}: el dia nuevo mantiene el bloqueo despues de consumir su limite`);
+      const calendarUsage = await admin.query(`
+        SELECT "businessDate"::text AS "date", "usedCount" AS "used"
+        FROM "DataCreditoDailyQuotaUsage" WHERE "allyId" = $1 ORDER BY "businessDate"
+      `, [allyId]);
+      assert.deepEqual(calendarUsage.rows, [{ date: oldDate, used: 1 }, { date: newDate, used: 1 }],
+        `${label}: el reinicio conserva el contador del dia anterior`);
+    }
 
     await admin.query('UPDATE "Aliado" SET "dataCreditoDailyQueryLimit" = 3 WHERE "id" = 1');
     assert.equal((await snapshot(1)).exhausted, false, "La lectura reconoce ampliaciones administrativas");
