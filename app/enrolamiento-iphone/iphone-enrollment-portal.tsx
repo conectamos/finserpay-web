@@ -597,11 +597,11 @@ function EnrollmentSuccessDialog({
         aria-describedby="iphone-enrollment-success-description"
       >
         <header
-          className="fp-enrollment-success-header grid place-items-start justify-center pt-7 text-center text-white sm:pt-8"
+          className="fp-enrollment-success-header grid place-items-start justify-center pt-7 text-center text-white sm:pt-5"
           aria-label="FINSER PAY"
         >
           <span
-            className="relative z-10 text-[1.65rem] font-black tracking-[-0.035em] sm:text-[1.85rem]"
+            className="relative z-10 text-[1.65rem] font-black tracking-[-0.035em] sm:text-[1.6rem]"
             aria-hidden="true"
           >
             <span className="text-[var(--fp-lime)]">FINSER</span>{" "}
@@ -609,36 +609,36 @@ function EnrollmentSuccessDialog({
           </span>
         </header>
 
-        <div className="relative z-10 mx-auto flex w-full max-w-[560px] flex-col items-center px-5 pb-8 text-center sm:px-8 sm:pb-10">
+        <div className="relative z-10 mx-auto flex w-full max-w-[560px] flex-col items-center px-5 pb-8 text-center sm:px-8 sm:pb-5">
           <Image
             src="/assets/creditos/iphone-enrollment-success-mascot.png"
             alt=""
             width={1145}
             height={1374}
-            sizes="(max-width: 639px) 180px, 205px"
-            className="fp-enrollment-success-mascot mt-4 h-auto w-[180px] object-contain sm:mt-5 sm:w-[205px]"
+            sizes="(max-width: 639px) 180px, 150px"
+            className="fp-enrollment-success-mascot mt-4 h-auto w-[180px] object-contain sm:mt-2 sm:w-[150px]"
             aria-hidden="true"
             priority
           />
 
-          <p className="mt-3 inline-flex min-h-10 items-center rounded-full border border-[var(--fp-lime-strong)] bg-[var(--fp-lime-soft)] px-5 py-2 text-[0.78rem] font-black uppercase tracking-[0.025em] text-[#2f6f1d] sm:text-sm">
+          <p className="mt-3 inline-flex min-h-10 items-center rounded-full border border-[var(--fp-lime-strong)] bg-[var(--fp-lime-soft)] px-5 py-2 text-[0.78rem] font-black uppercase tracking-[0.025em] text-[#2f6f1d] sm:mt-1.5 sm:min-h-9 sm:py-1.5 sm:text-xs">
             ENROLADO CORRECTAMENTE
           </p>
           <h2
             id="iphone-enrollment-success-title"
-            className="mt-4 text-[clamp(1.9rem,8vw,2.55rem)] font-black leading-[1.03] tracking-[-0.045em] text-black"
+            className="mt-4 text-[clamp(1.9rem,8vw,2.55rem)] font-black leading-[1.03] tracking-[-0.045em] text-black sm:mt-2.5 sm:text-[2rem]"
           >
             Dispositivo protegido
           </h2>
           <p
             id="iphone-enrollment-success-description"
-            className="mt-3 max-w-[490px] text-[0.98rem] leading-6 text-[#6f7888] sm:text-[1.05rem] sm:leading-7"
+            className="mt-3 max-w-[490px] text-[0.98rem] leading-6 text-[#6f7888] sm:mt-1.5 sm:text-[0.95rem] sm:leading-[1.4rem]"
           >
             El iPhone quedó registrado correctamente y la fábrica del asesor fue
             actualizada.
           </p>
 
-          <div className="mt-7 grid w-full gap-4 text-left">
+          <div className="mt-7 grid w-full gap-4 text-left sm:mt-4 sm:gap-3">
             <EnrollmentSuccessCard
               id="iphone-enrollment-success-client"
               icon={
@@ -686,9 +686,9 @@ function EnrollmentSuccessDialog({
             </EnrollmentSuccessCard>
           </div>
 
-          <div className="mt-7 grid w-full gap-3 border-t border-[#d9dde2] pt-5">
+          <div className="mt-7 grid w-full gap-3 border-t border-[#d9dde2] pt-5 sm:mt-4 sm:gap-2 sm:pt-4">
             <Button
-              className="!min-h-14 w-full !rounded-[16px] !text-base !font-black"
+              className="!min-h-14 w-full !rounded-[16px] !text-base !font-black sm:!min-h-12"
               onClick={onFinish}
               data-enrollment-success-focus
             >
@@ -696,7 +696,7 @@ function EnrollmentSuccessDialog({
             </Button>
             <Button
               variant="secondary"
-              className="!min-h-14 w-full !rounded-[16px] !border-[#98a1af] !text-base !font-black"
+              className="!min-h-14 w-full !rounded-[16px] !border-[#98a1af] !text-base !font-black sm:!min-h-12"
               onClick={onNewCase}
             >
               Consultar otra solicitud
@@ -725,11 +725,11 @@ function EnrollmentSuccessCard({
       className="overflow-hidden rounded-[18px] border border-[#d8dde3] bg-white shadow-[0_8px_24px_rgba(17,21,25,0.035)]"
       aria-labelledby={id}
     >
-      <div className="flex min-h-16 items-center gap-4 px-4 py-3 sm:px-5">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#f1f2f3] text-[#5f6877]">
+      <div className="flex min-h-16 items-center gap-4 px-4 py-3 sm:min-h-[52px] sm:gap-3 sm:px-5 sm:py-2">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#f1f2f3] text-[#5f6877] sm:h-10 sm:w-10">
           {icon}
         </span>
-        <h3 id={id} className="text-xl font-black tracking-[-0.025em] text-black">
+        <h3 id={id} className="text-xl font-black tracking-[-0.025em] text-black sm:text-lg">
           {title}
         </h3>
       </div>
@@ -750,7 +750,7 @@ function EnrollmentSuccessRow({
   numeric?: boolean;
 }) {
   return (
-    <div className="grid min-h-[52px] grid-cols-[106px_minmax(0,1fr)] items-center gap-3 border-b border-[#e0e3e7] py-3 last:border-b-0 sm:grid-cols-[132px_minmax(0,1fr)]">
+    <div className="grid min-h-[52px] grid-cols-[106px_minmax(0,1fr)] items-center gap-3 border-b border-[#e0e3e7] py-3 last:border-b-0 sm:min-h-11 sm:grid-cols-[132px_minmax(0,1fr)] sm:py-2">
       <dt className="text-[0.7rem] font-bold uppercase tracking-[0.11em] text-[#778195] sm:text-xs">
         {label}
       </dt>

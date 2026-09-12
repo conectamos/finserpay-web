@@ -1231,6 +1231,12 @@ test("la aprobación confirmada abre un resumen modal accesible y responsive", (
     portalSource,
     /src="\/assets\/creditos\/iphone-enrollment-success-mascot\.png"/
   );
+  assert.match(portalSource, /sizes="\(max-width: 639px\) 180px, 150px"/);
+  assert.match(portalSource, /sm:!min-h-12/);
+  assert.match(
+    globalsSource,
+    /@media \(min-width: 640px\)[\s\S]*\.fp-enrollment-success-header[\s\S]*min-height: 92px/
+  );
   assert.doesNotMatch(
     portalSource.slice(
       portalSource.indexOf("function EnrollmentSuccessDialog"),

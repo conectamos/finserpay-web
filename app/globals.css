@@ -5423,6 +5423,14 @@ body {
   background: #111519;
 }
 
+@media (min-width: 640px) {
+  .fp-enrollment-success-header {
+    min-height: 92px;
+    border-bottom-right-radius: 50% 28px;
+    border-bottom-left-radius: 50% 28px;
+  }
+}
+
 .fp-enrollment-success-mascot {
   transform-origin: 50% 78%;
   filter: drop-shadow(0 14px 12px rgba(17, 21, 25, 0.16));
