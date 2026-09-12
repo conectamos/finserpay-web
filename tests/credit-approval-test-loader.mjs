@@ -73,7 +73,7 @@ export function completeApprovalDetail(fixture, reissue, novelties) {
 export function approvalFixture() {
   const credit = {
     id: 81, folio: "FNS-TEST-81", clienteNombre: "Cliente de prueba", clienteDocumento: "100000001",
-    clienteCorreo: "cliente@example.test", clienteTelefono: "3001234567",
+    clienteCorreo: "cliente@example.test", clienteTelefono: "3001234567", clienteDireccion: "Calle 10 # 20-30, Bogotá",
     plazoMeses: 12, frecuenciaPago: "QUINCENAL", valorCuota: 98765.43,
     cuotaComercialGuardada: null, fechaPrimerPago: new Date("2026-10-01T00:00:00.000Z"),
     fechaCredito: new Date("2026-09-10T15:00:00Z"), createdAt: new Date("2026-09-10T15:00:00Z"),
