@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { completeApprovalDetail, loadApprovalModule, service, roles, approvalActors, approvalFixture, plain, pdf } from "./credit-approval-test-loader.mjs";
 
+const queueValidation = loadApprovalModule("lib/credit-approval-queue.ts", {
+  "@/lib/credit-approval-policy": {}, "@/lib/credit-approval-actor": approvalActors,
+  "@/lib/credit-approval-errors": { CreditApprovalError: service.CreditApprovalError },
+});
 const centralAnalyst = { id: 7, nombre: "Analista de prueba", rolNombre: "ANALISTA_APROBACION", aliadoAccesoCodigo: "FINSERPAY", activo: true };
 const context = (id = "81") => ({ params: Promise.resolve({ id }) });
 const paths = {
@@ -43,7 +47,7 @@ function apiHarness(user = centralAnalyst, methods = {}, transactionError = null
     "@/lib/prisma": { default: prisma },
     "@/lib/credit-approval": routedService,
     "@/lib/credit-approval-actor": approvalActors,
-    "@/lib/credit-approval-queue": { approvalQueueLimit: () => 50, listCreditApprovalQueue: async (...args) => { calls.push({ name: "listCreditApprovalQueue", args }); return methods.listCreditApprovalQueue(...args); }, listApprovedCreditQueue: async (...args) => { calls.push({ name: "listApprovedCreditQueue", args }); return methods.listApprovedCreditQueue(...args); } },
+    "@/lib/credit-approval-queue": { approvalQueueSearch: queueValidation.approvalQueueSearch, countCreditApprovalQueues: async (...args) => { calls.push({ name: "countCreditApprovalQueues", args }); return methods.countCreditApprovalQueues(...args); }, approvalQueueLimit: () => 50, listCreditApprovalQueue: async (...args) => { calls.push({ name: "listCreditApprovalQueue", args }); return methods.listCreditApprovalQueue(...args); }, listApprovedCreditQueue: async (...args) => { calls.push({ name: "listApprovedCreditQueue", args }); return methods.listApprovedCreditQueue(...args); } },
     "@/lib/credit-approval-evidence": {},
     "@/lib/credit-approval-http": http,
   })]));
@@ -341,5 +345,41 @@ test("view inválido no cae en búsqueda histórica ni abre consultas", async ()
     const response = await api.routes.search.GET(makeRequest("/api/aprobaciones?documento=100000001&view=" + encodeURIComponent(view)));
     assert.equal(response.status, 400); privateResponse(response);
     assert.equal(api.calls.length, 0); assert.equal(api.transactions.length, 0);
+  }
+});
+
+test("búsqueda y contadores opcionales usan un snapshot sin limitar el total por cursor", async () => {
+  for (const view of ["pending", "approved"]) {
+    const listName = view === "pending" ? "listCreditApprovalQueue" : "listApprovedCreditQueue";
+    const api = apiHarness(centralAnalyst, {
+      [listName]: async (db, input) => {
+        assert.equal(db, api.database);
+        assert.deepEqual(plain(input), { documento: null, cursor: "page-2", limit: 50, q: "Nombre Cliente" });
+        return { items: [{ id: 81 }], hasMore: true, nextCursor: "page-3" };
+      },
+      countCreditApprovalQueues: async (db, input) => {
+        assert.equal(db, api.database); assert.deepEqual(plain(input), { documento: null, q: "Nombre Cliente" });
+        return { pending: 125, approved: 7 };
+      },
+    });
+    const response = await api.routes.search.GET(makeRequest(`/api/aprobaciones?view=${view}&q=%20Nombre%20Cliente%20&counts=1&cursor=page-2`));
+    assert.equal(response.status, 200); privateResponse(response);
+    assert.deepEqual((await response.json()).counts, { pending: 125, approved: 7 });
+    assert.deepEqual(plain(api.transactions), [{ isolationLevel: "RepeatableRead", timeout: 20000 }]);
+    assert.deepEqual(api.calls.map(call => call.name), [listName, "countCreditApprovalQueues"]);
+  }
+});
+test("búsqueda sin counts preserva forma y ruta administrativa, y rechaza texto excesivo", async () => {
+  const api = apiHarness(centralAnalyst, { listCreditApprovalQueue: async (_db, input) => {
+    assert.equal(input.q, "Aliado"); return { items: [], hasMore: false, nextCursor: null };
+  } });
+  const response = await api.routes.search.GET(makeRequest("/api/aprobaciones?q=Aliado"));
+  assert.equal(response.status, 200); assert.equal(Object.hasOwn(await response.json(), "counts"), false);
+  assert.equal(api.transactions.length, 0);
+  for (const q of ["x".repeat(101), "nombre\u0000"]) {
+    const invalid = apiHarness();
+    const rejected = await invalid.routes.search.GET(makeRequest("/api/aprobaciones?q=" + encodeURIComponent(q) + "&counts=1"));
+    assert.equal(rejected.status, 400); assert.equal((await rejected.json()).code, "INVALID_SEARCH");
+    assert.equal(invalid.calls.length, 0); assert.equal(invalid.transactions.length, 0);
   }
 });

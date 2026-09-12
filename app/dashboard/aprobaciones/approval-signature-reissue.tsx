@@ -9,6 +9,7 @@ import { requestApprovalSignature, refreshApprovalSignature, type ApprovalDetail
 type Props = {
   detail: ApprovalDetail;
   disabled?: boolean;
+  compact?: boolean;
   onUpdated: () => Promise<void>;
   onBusyChange: (busy: boolean) => void;
 };
@@ -18,7 +19,7 @@ const statusLabels: Record<string, string> = {
   FAILED_SAFE: "Reenvío no realizado", UNCERTAIN: "Envío pendiente de verificación",
 };
 
-export default function ApprovalSignatureReissue({ detail, disabled = false, onUpdated, onBusyChange }: Props) {
+export default function ApprovalSignatureReissue({ detail, disabled = false, compact = false, onUpdated, onBusyChange }: Props) {
   const [editing, setEditing] = useState(false);
   const [reason, setReason] = useState("");
   const [confirming, setConfirming] = useState(false);
@@ -72,8 +73,8 @@ export default function ApprovalSignatureReissue({ detail, disabled = false, onU
   if (!detail.review.required) return null;
   return (
     <Card role="region" aria-label="Reenviar folio a firma" className="min-w-0 p-4 sm:p-6">
-      <h2 className="flex items-center gap-2 text-lg font-semibold"><Send className="h-5 w-5 shrink-0" aria-hidden="true" />¿El folio quedó mal firmado?</h2>
-      <p className="mt-2 text-sm text-[var(--fp-muted)]">Solicita una nueva firma conservando el folio, sus condiciones y el documento anterior. El crédito necesitará un nuevo OK antes de liquidarse.</p>
+      <h2 className="flex items-center gap-2 text-lg font-semibold"><Send className="h-5 w-5 shrink-0" aria-hidden="true" />{compact ? "Firma del contrato" : "¿El folio quedó mal firmado?"}</h2>
+      {!compact ? <p className="mt-2 text-sm text-[var(--fp-muted)]">Solicita una nueva firma conservando el folio, sus condiciones y el documento anterior. El crédito necesitará un nuevo OK antes de liquidarse.</p> : !operation ? <div className="mt-3"><StatusPill tone={detail.document.available ? "positive" : "warning"}>{detail.document.available ? "Documento firmado disponible" : "Pendiente de firma"}</StatusPill></div> : null}
       {operation ? <div className="mt-4 space-y-2" role="status">
         <StatusPill tone={operation.status === "COMPLETED" ? "positive" : "warning"}>{statusLabels[operation.status] || "Reenvío en revisión"}</StatusPill>
         <p className="break-words text-sm text-[var(--fp-muted)]">{operation.message}</p>
@@ -86,13 +87,13 @@ export default function ApprovalSignatureReissue({ detail, disabled = false, onU
           onChange={(event) => setReason(event.target.value)} disabled={disabled || saving || confirming}
           className="w-full rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] p-3 text-sm focus-visible:outline-2 focus-visible:outline-[var(--fp-graphite)]"
           placeholder="Describe qué debe corregirse en la firma" aria-describedby="approval-reissue-help" />
-        <p id="approval-reissue-help" className="text-sm text-[var(--fp-muted)]">Entre 10 y 500 caracteres. Quedará registrado con tu usuario.</p>
+        <p id="approval-reissue-help" className="text-sm text-[var(--fp-muted)]">Entre 10 y 500 caracteres. {compact ? "Quedará registrado por este acceso." : "Quedará registrado con tu usuario."}</p>
         <div className="flex flex-wrap gap-3">
           <Button variant="secondary" onClick={close} disabled={saving || confirming}>Cancelar</Button>
           <Button onClick={() => setConfirming(true)} disabled={disabled || saving || confirming || reason.trim().length < 10}>Continuar</Button>
         </div>
       </div> : <div className="mt-4 flex flex-wrap gap-3">
-        {detail.capabilities.canReissueSignature ? <Button variant="secondary" onClick={open} disabled={disabled || saving}><Send className="h-4 w-4" aria-hidden="true" />Reenviar folio a firma</Button> : null}
+        {detail.capabilities.canReissueSignature ? <Button variant="secondary" onClick={open} disabled={disabled || saving}><Send className="h-4 w-4" aria-hidden="true" />{compact ? "Solicitar nueva firma" : "Reenviar folio a firma"}</Button> : null}
         {operation?.canRefresh ? <Button variant="secondary" onClick={() => void refresh()} disabled={disabled || saving}><RefreshCw className="h-4 w-4" aria-hidden="true" />{saving ? "Consultando..." : "Consultar nueva firma"}</Button> : null}
         {!detail.capabilities.canReissueSignature && detail.capabilities.correctionBlockedReason ? <p className="text-sm text-[var(--fp-muted)]">{detail.capabilities.correctionBlockedReason}</p> : null}
       </div>}

@@ -8,7 +8,7 @@ import { lastPageErrorMessage, renderLastPdfPage, loadLastPdfPage } from "./last
 
 type LastPage = Awaited<ReturnType<typeof loadLastPdfPage>>;
 
-export default function LastPdfPagePreview({ href, folio }: { href: string; folio: string }) {
+export default function LastPdfPagePreview({ href, folio, compact = false }: { href: string; folio: string; compact?: boolean }) {
   const [page, setPage] = useState<LastPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [rendering, setRendering] = useState(false);
@@ -98,7 +98,7 @@ export default function LastPdfPagePreview({ href, folio }: { href: string; foli
       {loading ? <LoadingState label="Cargando la última página del documento firmado..." /> : null}
       {error ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4"><p className="text-sm text-[var(--fp-danger)]" role="alert">{error}</p><Button variant="secondary" onClick={() => setRetry((value) => value + 1)}><RefreshCw className="h-4 w-4" aria-hidden="true" />Reintentar</Button></div> : null}
       {rendering && !loading ? <p className="text-sm text-[var(--fp-muted)]" role="status">Preparando la vista...</p> : null}
-      <div ref={container} className="min-w-0 max-w-full overflow-auto rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-2" style={{ maxHeight: "75vh" }} aria-busy={loading || rendering}>
+      <div ref={container} className="min-w-0 max-w-full overflow-auto rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-2" style={{ maxHeight: compact ? "min(60vh, 32rem)" : "75vh" }} aria-busy={loading || rendering}>
         <canvas ref={canvas} className={`mx-auto block ${!page || loading || error ? "hidden" : ""}`} role="img" aria-label={`Última página del documento firmado del crédito ${folio}`}>
           Última página del documento firmado del crédito {folio}.
         </canvas>

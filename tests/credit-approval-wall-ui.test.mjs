@@ -8,7 +8,7 @@ import ts from "typescript";
 
 const placeholder = (name) => Object.defineProperty(() => null, "name", { value: name });
 const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "LoadingState", "MetricCard", "PageHeader", "StatusPill", "Select", "Tabs"].map((name) => [name, placeholder(name)]));
-const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalNoveltyPanel", "PendingItemEditor", "ApprovalCallRecording"].map((name) => [name, placeholder(name)]));
+const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalNoveltyPanel", "PendingItemEditor", "ApprovalCallRecording", "SharedApprovalWorkspace"].map((name) => [name, placeholder(name)]));
 const icons = new Proxy({}, { get: (_, key) => placeholder(String(key)) });
 
 function load(path, dependencies, globals = {}) {
@@ -103,7 +103,7 @@ const detail = (id, revision = 1) => ({ ...row(id), score: 800, initialPaymentPe
   canApprove: true, blockingReasons: [], evidence: [], document: { available: true, href: `/doc/${id}`, fileName: "QA.pdf", processUuid: "QA-process" },
 });
 const page = (items) => ({ items, hasMore: false, nextCursor: null });
-function wall(api = {}) {
+function wall(api = {}, props = {}) {
   return mount("app/dashboard/aprobaciones/approval-console.tsx", {
     "@/lib/credit-factory": creditFactory,
     "./approval-client": { ...client, readApprovalQueue: async () => page([row(81), row(82)]), readApprovalCredit: async (id) => detail(id),
@@ -114,7 +114,8 @@ function wall(api = {}) {
     "./approval-signature-reissue": { default: parts.ApprovalSignatureReissue },
     "./approval-call-recording": { default: parts.ApprovalCallRecording },
     "./approval-novelty-panel": { default: parts.ApprovalNoveltyPanel },
-  });
+    "@/app/revision-creditos/shared-approval-workspace": { default: parts.SharedApprovalWorkspace },
+  }, props);
 }
 const select = (h, id) => h.find((node) => node.props?.["aria-label"] === `Revisar crédito QA-${id}`).props.onClick();
 const current = (h) => h.find((node) => node.type === parts.ApprovalNoveltyPanel).props;
@@ -426,4 +427,101 @@ test("la grabación aprobada puede reintentarse tras un error sin modificar la a
     assert.notEqual(retry.key, audio.key); assert.equal(retry.props.src, audio.props.src);
     assert.equal(h.all((node) => node.type === "input").length, 0);
   } finally { h.unmount(); }
+});
+const sharedProps = (h) => h.find(node => node.type === parts.SharedApprovalWorkspace).props;
+const countedPage = (items, extra = {}) => ({ ...page(items), counts: { pending: 3, approved: 2 }, ...extra });
+
+test("el muro compartido busca en servidor y conserva el filtro al seleccionar y cambiar de vista", async () => {
+  const calls = [];
+  const h = wall({ readApprovalQueue: async (cursor, signal, view, options) => { calls.push({ cursor, view, options }); return countedPage(view === "approved" ? [] : [row(81), row(82)]); } }, { shared: true });
+  await h.flush();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].options)), { query: "", counts: true });
+  sharedProps(h).onSearch("Aliado QA"); await h.flush();
+  assert.equal(calls.at(-1).options.query, "Aliado QA");
+  sharedProps(h).onSelect(82); await h.flush();
+  assert.equal(sharedProps(h).detail.id, 82);
+  assert.equal(sharedProps(h).query, "Aliado QA");
+  sharedProps(h).onView("approved"); await h.flush();
+  assert.equal(sharedProps(h).query, "Aliado QA"); assert.equal(sharedProps(h).selectedId, null);
+  assert.equal(calls.at(-1).view, "approved"); h.unmount();
+});
+
+test("una grabación o novedad pendiente impide cambiar selección, filtros y volver a la lista compartida", async () => {
+  const h = wall({ readApprovalQueue: async () => countedPage([row(81), row(82)]) }, { shared: true });
+  await h.flush(); sharedProps(h).onSelect(81); await h.flush();
+  for (const panel of ["callPanel", "noveltyPanel"]) {
+    sharedProps(h)[panel].props.onBusyChange(true); await h.flush();
+    assert.equal(sharedProps(h).busy, true);
+    sharedProps(h).onSelect(82); sharedProps(h).onView("approved"); sharedProps(h).onSearch("Otro"); sharedProps(h).onBack(); await h.flush();
+    assert.equal(sharedProps(h).selectedId, 81); assert.equal(sharedProps(h).view, "pending"); assert.equal(sharedProps(h).query, "");
+    sharedProps(h)[panel].props.onBusyChange(false); await h.flush();
+  }
+  h.unmount();
+});
+
+test("actualizar el muro compartido conserva páginas cargadas y expediente seleccionado", async () => {
+  const cursors = [];
+  const h = wall({ readApprovalQueue: async cursor => { cursors.push(cursor); return cursor ? countedPage([row(82)]) : countedPage([row(81)], { nextCursor: "next-page", hasMore: true }); } }, { shared: true });
+  await h.flush(); sharedProps(h).onMore(); await h.flush();
+  assert.deepEqual(Array.from(sharedProps(h).items, item => item.id), [81, 82]);
+  sharedProps(h).onSelect(82); await h.flush(); sharedProps(h).onRefresh(); await h.flush();
+  assert.equal(sharedProps(h).selectedId, 82); assert.equal(sharedProps(h).detail.id, 82);
+  assert.deepEqual(Array.from(sharedProps(h).items, item => item.id), [81, 82]);
+  assert.deepEqual(cursors, [null, "next-page", null, "next-page"]); h.unmount();
+});
+
+test("cambiar la búsqueda compartida aborta la ficha anterior y descarta su respuesta tardía", async () => {
+  const pending = deferred(); let signal;
+  const h = wall({ readApprovalQueue: async () => countedPage([row(81)]), readApprovalCredit: (id, incoming) => { signal = incoming; return pending.promise; } }, { shared: true });
+  await h.flush(); sharedProps(h).onSelect(81); await h.flush();
+  sharedProps(h).onSearch("Otro aliado"); await h.flush(); assert.equal(signal.aborted, true);
+  pending.resolve(detail(81)); await h.flush(); assert.equal(sharedProps(h).detail, null); assert.equal(sharedProps(h).selectedId, null); h.unmount();
+});
+
+function subtree(node) {
+  if (Array.isArray(node)) return node.flatMap(subtree);
+  if (!node || typeof node !== "object") return [];
+  return [node, ...subtree(node.props?.children)];
+}
+test("actualizar manualmente una nueva revisión compartida exige confirmar la relectura", async () => {
+  let currentDetail = detail(81);
+  const h = wall({ readApprovalQueue: async () => countedPage([row(81)]), readApprovalCredit: async () => currentDetail }, { shared: true });
+  await h.flush(); sharedProps(h).onSelect(81); await h.flush();
+  const ok = () => subtree(sharedProps(h).approvalPanel).find(node => node.type === ui.Button && node.props.onClick?.name === "requestApproval");
+  assert.equal(ok().props.disabled, false);
+  currentDetail = detail(81, 2); sharedProps(h).onRefresh(); await h.flush();
+  assert.equal(sharedProps(h).detail.review.revision, 2); assert.equal(ok().props.disabled, true);
+  const rereview = subtree(sharedProps(h).approvalPanel).find(node => node.type === "input" && node.props.type === "checkbox");
+  assert.ok(rereview); rereview.props.onChange({ target: { checked: true } }); await h.flush();
+  assert.equal(ok().props.disabled, false); h.unmount();
+});
+
+test("actualizar Aprobadas conserva la selección y actualiza la marca de liquidado", async () => {
+  let paid = false;
+  const approved = { ...detail(81), review: { ...detail(81).review, status: "APPROVED" } };
+  const h = wall({ readApprovalQueue: async (cursor, signal, view) => countedPage(view === "approved" ? [{ ...row(81), status: "APPROVED", paid }] : []), readApprovalCredit: async () => approved }, { shared: true });
+  await h.flush(); sharedProps(h).onView("approved"); await h.flush(); sharedProps(h).onSelect(81); await h.flush();
+  assert.equal(sharedProps(h).selectedItem.paid, false);
+  paid = true; sharedProps(h).onRefresh(); await h.flush();
+  assert.equal(sharedProps(h).selectedId, 81); assert.equal(sharedProps(h).selectedItem.paid, true); h.unmount();
+});
+
+test("una novedad compartida conserva el borrador y reintenta exactamente la operación incierta", async () => {
+  const calls = [], locks = []; let fail = true;
+  const observed = detail(81);
+  const h = mount("app/dashboard/aprobaciones/approval-novelty-panel.tsx", {
+    "./approval-client": { createApprovalNovelty: async (id, input) => { calls.push({ id, input }); if (fail) throw new Error("Respuesta perdida"); return { ok: true }; } },
+    "@/app/_components/finser-confirm-dialog": { default: parts.ConfirmDialog },
+  }, { detail: observed, compact: true, onBusyChange: busy => locks.push(busy), onUpdated: async () => { observed.review = { ...observed.review, revision: 2, reviewHash: "2".repeat(64) }; } });
+  await h.flush();
+  h.find(node => node.type === ui.Button && node.props.onClick?.name === "open").props.onClick(); await h.flush();
+  h.find(node => node.type === ui.Select).props.onChange({ target: { value: "GENERAL" } });
+  h.find(node => node.type === "textarea").props.onChange({ target: { value: "Confirmar información con el cliente" } }); await h.flush();
+  const submit = label => h.find(node => node.type === ui.Button && node.props.children === label).props.onClick();
+  submit("Registrar novedad"); await h.flush();
+  h.find(node => node.type === parts.ConfirmDialog).props.onConfirm(); await h.flush();
+  assert.equal(h.find(node => node.type === "textarea").props.value, "Confirmar información con el cliente");
+  assert.equal(h.find(node => node.type === "textarea").props.disabled, true); assert.equal(locks.at(-1), true); assert.equal(calls.length, 1);
+  fail = false; submit("Reintentar confirmación"); await h.flush(); h.find(node => node.type === parts.ConfirmDialog).props.onConfirm(); await h.flush();
+  assert.equal(calls.length, 2); assert.equal(calls[0].input, calls[1].input); assert.equal(calls[1].input.revision, 1); assert.equal(locks.at(-1), false); h.unmount();
 });

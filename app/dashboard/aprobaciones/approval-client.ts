@@ -27,7 +27,8 @@ export type ApprovalNoveltyState = {
   available: boolean; blocksApproval: boolean; blocksSettlement: boolean; pendingCount: number; answeredCount: number;
   novelty: null | { id: string; status: "WAITING_ALLY" | "RESPONDED" | "RESOLVED"; version: number; items: ApprovalNoveltyItem[] };
 };
-export type ApprovalQueuePage = { items: ApprovalQueueItem[]; nextCursor: string | null; hasMore: boolean };
+export type ApprovalQueueCounts = { pending: number; approved: number };
+export type ApprovalQueuePage = { items: ApprovalQueueItem[]; nextCursor: string | null; hasMore: boolean; counts?: ApprovalQueueCounts };
 
 export type ApprovalReissueState = {
   available: boolean; blocked: boolean;
@@ -137,8 +138,10 @@ export function refreshApprovalSignature(id: number, operationId: string) {
   return sendSignatureAction(id, { action: "REFRESH", operationId });
 }
 
-export async function readApprovalQueue(cursor?: string | null, signal?: AbortSignal, view: ApprovalView = "pending") {
+export async function readApprovalQueue(cursor?: string | null, signal?: AbortSignal, view: ApprovalView = "pending", options: { query?: string; counts?: boolean } = {}) {
   const query = new URLSearchParams({ view });
+  if (options.query?.trim()) query.set("q", options.query.trim());
+  if (options.counts) query.set("counts", "1");
   if (cursor) query.set("cursor", cursor);
   const response = await fetch(`/api/aprobaciones?${query}`, { cache: "no-store", signal });
   const result = await readResult<ApprovalQueuePage>(response, "No fue posible cargar los créditos.");
@@ -146,6 +149,9 @@ export async function readApprovalQueue(cursor?: string | null, signal?: AbortSi
       !(result.nextCursor === null || typeof result.nextCursor === "string" && result.nextCursor.length > 0) ||
       typeof result.hasMore !== "boolean" || result.hasMore !== Boolean(result.nextCursor)) {
     throw new ApprovalRequestError("El muro no devolvió una respuesta válida. Actualiza antes de continuar.", response.status);
+  }
+  if (options.counts && (!result.counts || !Number.isSafeInteger(result.counts.pending) || result.counts.pending < 0 || !Number.isSafeInteger(result.counts.approved) || result.counts.approved < 0)) {
+    throw new ApprovalRequestError("No fue posible verificar los contadores. Actualiza el muro.", response.status);
   }
   return result;
 }
@@ -182,4 +188,14 @@ export async function uploadApprovalCallRecording(id: number, input: {
     "No se pudo confirmar la carga de la grabación. Actualiza el expediente antes de reintentar.");
   if (result.ok !== true || !result.state?.recording?.id) throw new ApprovalRequestError("No se recibió confirmación de la grabación. Actualiza el expediente.", response.status);
   return result;
+}
+
+export type ApprovalNoveltyHistoryEvent = { id: string; type: string; actorKind: "USER" | "SHARED_LINK"; actorName: string; createdAt: string; payload: Record<string, unknown> };
+export async function readApprovalNoveltyHistory(id: number, signal?: AbortSignal) {
+  const response = await fetch(`/api/aprobaciones/${id}/novedades`, { cache: "no-store", signal });
+  const result = await readResult<{ history: ApprovalNoveltyHistoryEvent[] }>(response, "No fue posible consultar el historial de novedades.");
+  if (!Array.isArray(result.history) || result.history.some(event => !event || typeof event.id !== "string" || typeof event.type !== "string" || typeof event.actorName !== "string" || !["USER", "SHARED_LINK"].includes(event.actorKind) || !Number.isFinite(new Date(event.createdAt).getTime()) || !event.payload || typeof event.payload !== "object" || Array.isArray(event.payload))) {
+    throw new ApprovalRequestError("El historial no devolvió una respuesta válida.", response.status);
+  }
+  return result.history;
 }
