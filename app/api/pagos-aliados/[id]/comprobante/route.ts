@@ -102,6 +102,7 @@ export async function GET(
         creditId: item.creditoId,
         creditDate: item.fechaCredito,
         allyName: settlement.aliado.nombre,
+        siteName: item.sede.nombre,
         clientName: item.clienteNombre,
         clientDocument: item.clienteDocumento,
         equipment: item.equipo,

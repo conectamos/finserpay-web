@@ -67,6 +67,10 @@ type PaymentCreditItem = {
   estado?: string | null;
   estadoLiquidacion?: string | null;
   aliado?: AllyOption | null;
+  sede?: {
+    id?: number | null;
+    nombre?: string | null;
+  } | null;
 };
 
 type PaymentSummaryBucket = {
@@ -216,6 +220,10 @@ function itemDate(item: PaymentCreditItem) {
 
 function itemClient(item: PaymentCreditItem) {
   return item.clienteNombre || item.cliente || "Cliente sin nombre";
+}
+
+function itemSite(item: PaymentCreditItem) {
+  return item.sede?.nombre || "Sede sin nombre";
 }
 
 function itemStatus(item: PaymentCreditItem) {
@@ -619,6 +627,12 @@ function CreditItems({
               </div>
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
+                  Sede
+                </p>
+                <p className="mt-1 font-bold text-[var(--fp-graphite)]">{itemSite(item)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
                   Cliente
                 </p>
                 <p className="mt-1 font-bold text-[var(--fp-graphite)]">{itemClient(item)}</p>
@@ -681,12 +695,13 @@ function CreditItems({
       </div>
 
       <DataTable className="mt-3 hidden lg:block">
-        <table className="w-full min-w-[1640px] text-[13px]">
+        <table className="w-full min-w-[1760px] text-[13px]">
           <caption className="sr-only">Detalle de creditos incluidos en el pago a aliados</caption>
           <thead className="bg-[var(--fp-graphite)] text-white">
             <tr>
               <th className="px-3 py-3 text-left">Fecha</th>
               <th className="px-3 py-3 text-left">Aliado</th>
+              <th className="px-3 py-3 text-left">Sede</th>
               <th className="px-3 py-3 text-left">Cliente</th>
               <th className="px-3 py-3 text-left">Cédula</th>
               <th className="px-3 py-3 text-left">Equipo</th>
@@ -705,6 +720,7 @@ function CreditItems({
               <tr key={itemKey(item, index)} className="bg-white even:bg-[#fbfcfa]">
                 <td className="whitespace-nowrap px-3 py-3">{formatDate(itemDate(item))}</td>
                 <td className="max-w-44 break-words px-3 py-3">{item.aliado?.nombre || "-"}</td>
+                <td className="max-w-44 break-words px-3 py-3 font-semibold">{itemSite(item)}</td>
                 <td className="px-3 py-3 font-semibold">{itemClient(item)}</td>
                 <td className="whitespace-nowrap px-3 py-3 font-mono">{item.clienteDocumento || "-"}</td>
                 <td className="max-w-60 break-words px-3 py-3">

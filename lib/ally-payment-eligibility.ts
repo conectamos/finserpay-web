@@ -31,6 +31,7 @@ export function buildAllyPaymentEligibilityQuery(input: {
         credit."equipoModelo", credit."valorEquipoTotal", credit."cuotaInicial",
         credit."contratoSnapshot", ally."id" AS "aliadoId",
         ally."nombre" AS "aliadoNombre",
+        site."id" AS "sedeId", site."nombre" AS "sedeNombre",
         ally."redescuentoPorcentaje",
         ally."redescuentoAndroidPorcentaje",
         ally."redescuentoIphonePorcentaje"

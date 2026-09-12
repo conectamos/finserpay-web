@@ -47,6 +47,8 @@ type EligibleCreditRow = {
   contratoSnapshot: unknown;
   aliadoId: number;
   aliadoNombre: string;
+  sedeId: number;
+  sedeNombre: string;
   redescuentoPorcentaje: number;
   redescuentoAndroidPorcentaje: number;
   redescuentoIphonePorcentaje: number;
@@ -72,6 +74,10 @@ export type AllyPaymentLine = {
   valorPagar: number;
   estado: "PENDIENTE" | "PAGADO";
   aliado: {
+    id: number;
+    nombre: string;
+  };
+  sede: {
     id: number;
     nombre: string;
   };
@@ -284,6 +290,10 @@ function buildLine(row: EligibleCreditRow): AllyPaymentLine | null {
       id: row.aliadoId,
       nombre: row.aliadoNombre,
     },
+    sede: {
+      id: row.sedeId,
+      nombre: compactText(row.sedeNombre, "Sede sin nombre", 180),
+    },
   };
 }
 
@@ -322,6 +332,18 @@ const SETTLEMENT_INCLUDE = {
   },
   creditos: {
     orderBy: [{ fechaCredito: "asc" }, { id: "asc" }],
+    include: {
+      credito: {
+        select: {
+          sede: {
+            select: {
+              id: true,
+              nombre: true,
+            },
+          },
+        },
+      },
+    },
   },
 } satisfies Prisma.LiquidacionAliadoInclude;
 
@@ -350,6 +372,8 @@ function previewFingerprint(
       ...(line.approvalRevision == null ? {} : { approvalRevision: line.approvalRevision }),
       clienteDocumento: line.clienteDocumento,
       imei: line.imei,
+      sedeId: line.sede.id,
+      sedeNombre: line.sede.nombre,
       plataforma: line.plataforma,
       valorVenta: line.valorVenta,
       cuotaInicial: line.cuotaInicial,
@@ -402,6 +426,7 @@ function serializeStoredLine(
     valorPagar: Number(detail.valorPagar),
     estado: "PAGADO",
     aliado: ally,
+    sede: detail.credito.sede,
   };
 }
 

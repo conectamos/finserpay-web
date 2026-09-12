@@ -10,6 +10,7 @@ function sampleLine(index) {
     creditId: 1000 + index,
     creditDate: "2026-09-01",
     allyName: "JG COMPANY",
+    siteName: `Sede Norte ${index + 1}`,
     clientName: `Cliente de prueba con nombre largo ${index + 1}`,
     clientDocument: `10203040${String(index).padStart(2, "0")}`,
     equipment: `IPHONE MODELO DE PRUEBA ${index + 1} 256GB`,

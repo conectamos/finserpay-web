@@ -259,6 +259,10 @@ test("las consultas excluyen pagados y acotan aliado y periodo en base de datos"
   );
   assert.match(
     eligibleQuery,
+    /site\."id"\s+AS\s+"sedeId",\s*site\."nombre"\s+AS\s+"sedeNombre"/
+  );
+  assert.match(
+    eligibleQuery,
     /LEFT JOIN\s+"LiquidacionAliadoCredito"\s+paid[\s\S]*?WHERE\s+paid\."id"\s+IS NULL/
   );
   assert.match(
@@ -322,7 +326,7 @@ test("la interfaz recalcula y envia ajustes manuales por credito", () => {
   );
 });
 
-test("el detalle elimina folio y respeta el orden solicitado con cedula e IMEI", () => {
+test("el detalle muestra la sede real y respeta el orden solicitado con cedula e IMEI", () => {
   const creditItems = sectionBetween(
     consoleSource,
     "function CreditItems(",
@@ -339,6 +343,7 @@ test("el detalle elimina folio y respeta el orden solicitado con cedula e IMEI",
     [
       ">Fecha</th>",
       ">Aliado</th>",
+      ">Sede</th>",
       ">Cliente</th>",
       ">Cédula</th>",
       ">Equipo</th>",
@@ -356,6 +361,36 @@ test("el detalle elimina folio y respeta el orden solicitado con cedula e IMEI",
   assert.doesNotMatch(creditItems, />Folio<\/th>|Sin folio|item\.folio/);
   assert.match(creditItems, /item\.clienteDocumento/);
   assert.match(creditItems, /IMEI:\s*{item\.imei/);
+  assert.match(consoleSource, /function itemSite[\s\S]*?item\.sede\?\.nombre/);
+  assert.match(creditItems, />\s*Sede\s*</);
+});
+
+test("la sede viaja desde el credito real y tambien aparece en pagos historicos", () => {
+  const settlementInclude = sectionBetween(
+    storage,
+    "const SETTLEMENT_INCLUDE",
+    "type StoredSettlement"
+  );
+  const lineSerializer = sectionBetween(
+    storage,
+    "function serializeStoredLine",
+    "function serializeSettlement"
+  );
+  const previewFingerprint = sectionBetween(
+    storage,
+    "function previewFingerprint",
+    "function requestFingerprint"
+  );
+
+  assert.match(storage, /sede:\s*{\s*id:\s*row\.sedeId,\s*nombre:\s*compactText\(row\.sedeNombre/);
+  assert.match(
+    settlementInclude,
+    /credito:\s*{\s*select:\s*{\s*sede:\s*{\s*select:\s*{\s*id:\s*true,\s*nombre:\s*true/
+  );
+  assert.match(lineSerializer, /sede:\s*detail\.credito\.sede/);
+  assert.match(previewFingerprint, /sedeId:\s*line\.sede\.id/);
+  assert.match(previewFingerprint, /sedeNombre:\s*line\.sede\.nombre/);
+  assert.doesNotMatch(lineSerializer, /calculateAllyPaymentAmounts|resolveRedescuentoPercentageByPlatform/);
 });
 
 test("la creacion es serializable e idempotente bajo locks de mutacion y aliado", () => {
@@ -434,6 +469,7 @@ test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado"
   assert.match(pdfRouteSource, /buildAllyPaymentSettlementPdf\(\s*{/);
   assert.match(pdfRouteSource, /lines:\s*settlement\.items\.map/);
   assert.match(pdfRouteSource, /allyName:\s*settlement\.aliado\.nombre/);
+  assert.match(pdfRouteSource, /siteName:\s*item\.sede\.nombre/);
   assert.match(pdfRouteSource, /clientDocument:\s*item\.clienteDocumento/);
   assert.match(pdfRouteSource, /imei:\s*item\.imei/);
   assert.match(pdfRouteSource, /status:\s*item\.estado/);
@@ -453,6 +489,7 @@ test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado"
     [
       'key: "date"',
       'key: "ally"',
+      'key: "site"',
       'key: "client"',
       'key: "document"',
       'key: "equipment"',
@@ -468,6 +505,7 @@ test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado"
     "El orden de columnas del PDF"
   );
   assert.doesNotMatch(pdfColumns, /key:\s*"folio"|label:\s*"Folio"/);
+  assert.match(pdfBuilderSource, /site:\s*safeText\(line\.siteName/);
   assert.match(pdfBuilderSource, /IMEI \$\{safeText\(\s*line\.imei/);
   assert.doesNotMatch(pdfBuilderSource, /resolveRedescuentoPercentageByPlatform/);
   assert.match(consoleSource, /Ver \/ imprimir PDF/);

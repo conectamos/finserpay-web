@@ -4,6 +4,7 @@ export type AllyPaymentSettlementPdfLine = {
   creditId: number;
   creditDate: string;
   allyName: string;
+  siteName: string;
   clientName: string;
   clientDocument: string;
   equipment: string;
@@ -79,19 +80,20 @@ const numberFormatter = new Intl.NumberFormat("es-CO", {
 });
 
 const TABLE_COLUMNS = [
-  { key: "date", label: "Fecha", width: 46, align: "left" },
-  { key: "ally", label: "Aliado", width: 58, align: "left" },
-  { key: "client", label: "Cliente", width: 68, align: "left" },
-  { key: "document", label: "Cedula", width: 54, align: "left" },
-  { key: "equipment", label: "Equipo / IMEI", width: 100, align: "left" },
-  { key: "platform", label: "Plataforma", width: 44, align: "left" },
-  { key: "sale", label: "Valor venta", width: 58, align: "right" },
-  { key: "initial", label: "Inicial", width: 55, align: "right" },
-  { key: "credit", label: "Credito autorizado", width: 66, align: "right" },
-  { key: "percentage", label: "Intermediacion", width: 46, align: "right" },
-  { key: "intermediation", label: "Valor intermediacion", width: 66, align: "right" },
-  { key: "payable", label: "Valor a pagar", width: 70, align: "right" },
-  { key: "status", label: "Estado", width: 43, align: "left" },
+  { key: "date", label: "Fecha", width: 44, align: "left" },
+  { key: "ally", label: "Aliado", width: 45, align: "left" },
+  { key: "site", label: "Sede", width: 60, align: "left" },
+  { key: "client", label: "Cliente", width: 66, align: "left" },
+  { key: "document", label: "Cedula", width: 55, align: "left" },
+  { key: "equipment", label: "Equipo / IMEI", width: 95, align: "left" },
+  { key: "platform", label: "Plataforma", width: 42, align: "left" },
+  { key: "sale", label: "Valor venta", width: 53, align: "right" },
+  { key: "initial", label: "Inicial", width: 50, align: "right" },
+  { key: "credit", label: "Credito autorizado", width: 61, align: "right" },
+  { key: "percentage", label: "Intermediacion", width: 43, align: "right" },
+  { key: "intermediation", label: "Valor intermediacion", width: 58, align: "right" },
+  { key: "payable", label: "Valor a pagar", width: 64, align: "right" },
+  { key: "status", label: "Estado", width: 38, align: "left" },
 ] as const;
 
 function toBuffer(doc: PDFKit.PDFDocument) {
@@ -340,6 +342,7 @@ function lineValues(line: AllyPaymentSettlementPdfLine) {
   return {
     date: dateLabel(line.creditDate),
     ally: safeText(line.allyName, "Aliado", 28),
+    site: safeText(line.siteName, "Sede sin nombre", 34),
     client: safeText(line.clientName, "Cliente", 34),
     document: safeText(line.clientDocument, "Sin documento", 24),
     equipment: `${safeText(line.equipment, "Equipo", 36)}\nIMEI ${safeText(
