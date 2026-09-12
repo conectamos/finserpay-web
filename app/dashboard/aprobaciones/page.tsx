@@ -46,7 +46,7 @@ export default async function AprobacionesPage() {
         <SharedLogout returnTo="/dashboard/aprobaciones" />
       </Card>}
       {canManageApprovalAnalysts(user) && <SharedAccessControl />}
-      <ApprovalConsole />
+      <ApprovalConsole redesigned />
     </AppShell>
   );
 }

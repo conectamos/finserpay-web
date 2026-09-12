@@ -431,6 +431,33 @@ test("la grabación aprobada puede reintentarse tras un error sin modificar la a
 const sharedProps = (h) => h.find(node => node.type === parts.SharedApprovalWorkspace).props;
 const countedPage = (items, extra = {}) => ({ ...page(items), counts: { pending: 3, approved: 2 }, ...extra });
 
+test("el panel administrativo usa el muro rediseñado y conserva la autoría personal", async () => {
+  const calls = [];
+  const h = wall({ readApprovalQueue: async (cursor, signal, view, options) => {
+    calls.push({ cursor, view, options }); return countedPage([row(81)]);
+  } }, { redesigned: true });
+  await h.flush();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].options)), { query: "", counts: true });
+  sharedProps(h).onSelect(81); await h.flush();
+  assert.equal(sharedProps(h).signaturePanel.props.sharedAccess, false);
+  assert.equal(sharedProps(h).noveltyPanel.props.compact, true);
+  const ok = subtree(sharedProps(h).approvalPanel).find(node => node.type === ui.Button && node.props.onClick?.name === "requestApproval");
+  ok.props.onClick(); await h.flush();
+  assert.match(sharedProps(h).confirmationDialog.props.description, /registrado con tu usuario/);
+  assert.doesNotMatch(sharedProps(h).confirmationDialog.props.description, /registrado por este acceso/);
+  h.unmount();
+});
+
+test("el enlace compartido mantiene la autoría del acceso en el mismo diseño", async () => {
+  const h = wall({ readApprovalQueue: async () => countedPage([row(81)]) }, { shared: true });
+  await h.flush(); sharedProps(h).onSelect(81); await h.flush();
+  assert.equal(sharedProps(h).signaturePanel.props.sharedAccess, true);
+  const ok = subtree(sharedProps(h).approvalPanel).find(node => node.type === ui.Button && node.props.onClick?.name === "requestApproval");
+  ok.props.onClick(); await h.flush();
+  assert.match(sharedProps(h).confirmationDialog.props.description, /registrado por este acceso/);
+  h.unmount();
+});
+
 test("el muro compartido busca en servidor y conserva el filtro al seleccionar y cambiar de vista", async () => {
   const calls = [];
   const h = wall({ readApprovalQueue: async (cursor, signal, view, options) => { calls.push({ cursor, view, options }); return countedPage(view === "approved" ? [] : [row(81), row(82)]); } }, { shared: true });
@@ -518,7 +545,7 @@ test("una novedad compartida conserva el borrador y reintenta exactamente la ope
   h.find(node => node.type === ui.Select).props.onChange({ target: { value: "GENERAL" } });
   h.find(node => node.type === "textarea").props.onChange({ target: { value: "Confirmar información con el cliente" } }); await h.flush();
   const submit = label => h.find(node => node.type === ui.Button && node.props.children === label).props.onClick();
-  submit("Registrar novedad"); await h.flush();
+  submit("Guardar y enviar al aliado"); await h.flush();
   h.find(node => node.type === parts.ConfirmDialog).props.onConfirm(); await h.flush();
   assert.equal(h.find(node => node.type === "textarea").props.value, "Confirmar información con el cliente");
   assert.equal(h.find(node => node.type === "textarea").props.disabled, true); assert.equal(locks.at(-1), true); assert.equal(calls.length, 1);
