@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Expand, FileText, ImageOff, RefreshCw, ShieldCheck } from "lucide-react";
+import SharedApprovalWorkspace from "@/app/revision-creditos/shared-approval-workspace";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import { PAYMENT_FREQUENCY_OPTIONS } from "@/lib/credit-factory";
 import LastPdfPagePreview from "./last-pdf-page-preview";
@@ -68,7 +69,11 @@ function EvidencePhoto({ item, clientName }: { item: ApprovalDetail["evidence"][
 
 type Confirmation = { id: number; folio: string; clienteNombre: string; clienteDocumento: string | null; revision: number; reviewHash: string; recordingId: string };
 
-export default function ApprovalConsole() {
+export default function ApprovalConsole({ shared = false }: { shared?: boolean } = {}) {
+  const [query, setQuery] = useState("");
+  const [counts, setCounts] = useState<{ pending: number; approved: number } | null>(null);
+  const [selectedItem, setSelectedItem] = useState<ApprovalQueueItem | null>(null);
+  const loadedPages = useRef(1);
   const [view, setView] = useState<ApprovalView>("pending");
   const [callBusy, setCallBusy] = useState(false);
   const [items, setItems] = useState<ApprovalQueueItem[]>([]);
@@ -99,6 +104,13 @@ export default function ApprovalConsole() {
     detailController.current?.abort();
   }, []);
 
+  useEffect(() => {
+    if (!shared || !busy) return;
+    const preventLeaving = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", preventLeaving);
+    return () => window.removeEventListener("beforeunload", preventLeaving);
+  }, [shared, busy]);
+
   async function loadDetail(id: number) {
     detailController.current?.abort();
     const controller = new AbortController();
@@ -109,9 +121,13 @@ export default function ApprovalConsole() {
       const nextDetail = await readApprovalCredit(id, controller.signal);
       if (controller.signal.aborted) return;
       if (nextDetail.review.status !== (view === "approved" ? "APPROVED" : "PENDING")) {
-        setItems((current) => current.filter((item) => item.id !== id)); setSelectedId(null); setDetail(null);
+        setItems((current) => current.filter((item) => item.id !== id)); setSelectedId(null); setSelectedItem(null); setDetail(null);
         setNotice({ text: view === "pending" ? `Crédito ${nextDetail.folio} aprobado. Puedes consultarlo en Aprobadas.` : `El crédito ${nextDetail.folio} ya no tiene una aprobación vigente. Consulta Pendientes por aprobar.`, warning: view === "approved" });
         return nextDetail;
+      }
+      if (shared && detail?.id === nextDetail.id && (nextDetail.review.revision !== detail.review.revision || nextDetail.review.reviewHash !== detail.review.reviewHash)) {
+        setReviewChanged(true); setRereviewed(false);
+        setNotice({ text: "El expediente cambió. Revisa los documentos actualizados antes de confirmar el OK.", warning: true });
       }
       setDetail(nextDetail);
       setItems((current) => current.map((item) => item.id === id ? { ...item, status: nextDetail.review.status, required: nextDetail.review.required } : item));
@@ -128,7 +144,7 @@ export default function ApprovalConsole() {
     if (!detail) return;
     setConfirmation(null);
     const next = await loadDetail(detail.id);
-    await loadQueue();
+    await loadQueue(null, shared);
     if (next && (next.review.revision !== detail.review.revision || next.review.reviewHash !== detail.review.reviewHash)) {
       setReviewChanged(true);
       setRereviewed(false);
@@ -138,6 +154,9 @@ export default function ApprovalConsole() {
 
   function selectCredit(id: number) {
     if (busy || submitting.current) return;
+    const selected = items.find(item => item.id === id) || null;
+    if (shared && !selected) return;
+    setSelectedItem(selected);
     setSelectedId(id);
     setDetail(null);
     setConfirmation(null);
@@ -150,25 +169,38 @@ export default function ApprovalConsole() {
   function changeView(next: ApprovalView) {
     if (next === view || busy || submitting.current) return;
     searchController.current?.abort(); detailController.current?.abort();
-    setSelectedId(null); setDetail(null); setItems([]); setNextCursor(null);
+    setSelectedId(null); setSelectedItem(null); setDetail(null); setItems([]); setNextCursor(null);
+    loadedPages.current = 1;
     setHasExtraPages(false); setQueueLoaded(false); setLoadingDetail(false);
     setSearchError(""); setDetailError(""); setNotice(null); setConfirmation(null);
     setReviewChanged(false); setRereviewed(false); setView(next);
   }
 
-  const loadQueue = useCallback(async (cursor: string | null = null) => {
+  const loadQueue = useCallback(async (cursor: string | null = null, preservePages = false) => {
     searchController.current?.abort();
     const controller = new AbortController(); searchController.current = controller;
     setSearching(true); setSearchError("");
     try {
-      const page = await readApprovalQueue(cursor, controller.signal, view);
+      const options = shared ? { query, counts: true } : undefined;
+      const firstPage = await readApprovalQueue(cursor, controller.signal, view, options);
+      let page = firstPage, rows = page.items, pages = 1;
+      const targetPages = shared && preservePages && !cursor ? loadedPages.current : 1;
+      while (page.nextCursor && pages < targetPages && !controller.signal.aborted) {
+        page = await readApprovalQueue(page.nextCursor, controller.signal, view, options);
+        rows = mergeApprovalQueuePage(rows, page.items, true, view); pages += 1;
+      }
       if (controller.signal.aborted) return;
-      setItems((current) => mergeApprovalQueuePage(current, page.items, Boolean(cursor), view));
-      setNextCursor(page.nextCursor); setHasExtraPages(Boolean(cursor)); setQueueLoaded(true);
+      loadedPages.current = cursor ? loadedPages.current + 1 : pages;
+      setItems((current) => mergeApprovalQueuePage(current, rows, Boolean(cursor), view));
+      if (shared) {
+        setCounts(firstPage.counts || null);
+        setSelectedItem(current => current ? rows.find(item => item.id === current.id) || current : null);
+      }
+      setNextCursor(page.nextCursor); setHasExtraPages(loadedPages.current > 1); setQueueLoaded(true);
     } catch (error) {
       if (!controller.signal.aborted) setSearchError(error instanceof Error ? error.message : "No fue posible cargar el muro.");
     } finally { if (!controller.signal.aborted) setSearching(false); }
-  }, [view]);
+  }, [view, query, shared]);
 
   useEffect(() => {
     let cancelled = false;
@@ -186,13 +218,17 @@ export default function ApprovalConsole() {
       if (fetching || document.visibilityState === "hidden") return;
       fetching = true;
       try {
-        const page = await readApprovalQueue(null, controller.signal, view);
+        const page = await readApprovalQueue(null, controller.signal, view, shared ? { query, counts: true } : undefined);
         const updated = selectedId ? await readApprovalCredit(selectedId, controller.signal) : null;
         if (controller.signal.aborted) return;
         setItems(page.items); setNextCursor(page.nextCursor); setSearchError("");
+        if (shared) {
+          setCounts(page.counts || null);
+          setSelectedItem(current => current ? page.items.find(item => item.id === current.id) || current : null);
+        }
         if (updated) {
           if (updated.review.status !== (view === "approved" ? "APPROVED" : "PENDING")) {
-            setSelectedId(null); setDetail(null);
+            setSelectedId(null); setSelectedItem(null); setDetail(null);
             setItems((current) => current.filter((item) => item.id !== updated.id));
             setNotice({ text: view === "pending" ? `Crédito ${updated.folio} aprobado. Puedes consultarlo en Aprobadas.` : `El crédito ${updated.folio} ya no tiene una aprobación vigente. Consulta Pendientes por aprobar.`, warning: view === "approved" });
           } else {
@@ -211,8 +247,30 @@ export default function ApprovalConsole() {
     const focused = () => { void refresh(); };
     window.addEventListener("focus", focused);
     return () => { controller.abort(); window.clearInterval(interval); window.removeEventListener("focus", focused); };
-  }, [busy, searching, loadingDetail, queueLoaded, hasExtraPages, selectedId, detail, view]);
+  }, [busy, searching, loadingDetail, queueLoaded, hasExtraPages, selectedId, detail, view, query, shared]);
 
+  function searchShared(value: string) {
+    if (busy || submitting.current) return;
+    const next = value.trim();
+    if (next === query) { void loadQueue(null, true); return; }
+    searchController.current?.abort(); detailController.current?.abort();
+    loadedPages.current = 1;
+    setSelectedId(null); setSelectedItem(null); setDetail(null); setItems([]); setCounts(null);
+    setNextCursor(null); setHasExtraPages(false); setQueueLoaded(false); setLoadingDetail(false);
+    setSearchError(""); setDetailError(""); setNotice(null); setConfirmation(null);
+    setReviewChanged(false); setRereviewed(false); setQuery(next);
+  }
+  function refreshShared() {
+    if (busy || submitting.current) return;
+    void loadQueue(null, true);
+    if (selectedId) void loadDetail(selectedId);
+  }
+  function backToList() {
+    if (busy || submitting.current) return;
+    detailController.current?.abort();
+    setSelectedId(null); setSelectedItem(null); setDetail(null); setLoadingDetail(false); setDetailError("");
+    setReviewChanged(false); setRereviewed(false);
+  }
   const canConfirm = Boolean(view === "pending" && detail?.callRecording?.recording && detail?.review.required && detail.review.status === "PENDING" && detail.canApprove && !loadingDetail && !detailError && !searchError && !searching && !busy && (!reviewChanged || rereviewed));
 
   function requestApproval() {
@@ -230,7 +288,7 @@ export default function ApprovalConsole() {
       setConfirmation(null);
       setNotice({ text: `Crédito ${confirmation.folio} aprobado para liquidación al aliado. Puedes consultarlo en Aprobadas.`, warning: false });
       setItems((current) => current.filter((item) => item.id !== confirmation.id));
-      detailController.current?.abort(); setSelectedId(null); setDetail(null); setLoadingDetail(false);
+      detailController.current?.abort(); setSelectedId(null); setSelectedItem(null); setDetail(null); setLoadingDetail(false);
       setReviewChanged(false); setRereviewed(false);
       await loadQueue();
     } catch (error) {
@@ -248,6 +306,25 @@ export default function ApprovalConsole() {
       submitting.current = false;
       setSaving(false);
     }
+  }
+
+  if (shared) {
+    const actionError = loadingDetail ? "Espera a que termine de cargar el expediente." : detailError || searchError || (searching ? "Actualizando la información del muro." : busy ? "Termina o cancela la acción en curso." : reviewChanged && !rereviewed ? "Confirma que revisaste nuevamente los documentos actualizados." : "");
+    const correctionDisabled = saving || Boolean(confirmation) || signatureBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError);
+    return <SharedApprovalWorkspace view={view} counts={counts} query={query} items={items} selectedId={selectedId} selectedItem={selectedItem} detail={detail}
+      queueLoaded={queueLoaded} searching={searching} searchError={searchError} nextCursor={nextCursor} loadingDetail={loadingDetail} detailError={detailError} busy={busy} correctionDisabled={correctionDisabled} notice={notice}
+      onSelect={selectCredit} onView={changeView} onSearch={searchShared} onRefresh={refreshShared} onMore={() => { if (!busy && nextCursor) void loadQueue(nextCursor); }} onBack={backToList} onRetryDetail={() => { if (selectedId && !busy) void loadDetail(selectedId); }} onUpdated={reloadAfterCorrection} onCorrectionBusy={setCorrectionBusy}
+      callPanel={detail ? <ApprovalCallRecording key={detail.id} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} /> : null}
+      noveltyPanel={detail ? <ApprovalNoveltyPanel key={detail.id} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null}
+      signaturePanel={detail ? <ApprovalSignatureReissue key={detail.id} detail={detail} compact disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null}
+      approvalPanel={detail && detail.review.required && detail.review.status === "PENDING" ? <Card data-approval-decision="true">
+        <h2 className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} aria-hidden="true" />Dar OK para liquidación</h2>
+        {detail.blockingReasons.length ? <><p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.blockingReasons[0]}</p><details className="mt-3 text-sm"><summary className="min-h-10 cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-[var(--fp-graphite)]">Ver requisitos pendientes ({detail.blockingReasons.length})</summary><ul className="list-disc space-y-2 pb-2 pl-5 text-[var(--fp-danger)]">{detail.blockingReasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></details></> : <p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.canApprove ? "Confirma el OK después de revisar los datos, las evidencias, la firma y la llamada." : "Actualiza el expediente para verificar los requisitos de aprobación."}</p>}
+        {reviewChanged ? <label className="mt-3 flex min-h-10 items-start gap-2 text-sm"><input type="checkbox" checked={rereviewed} disabled={busy || loadingDetail || Boolean(detailError)} onChange={event => setRereviewed(event.target.checked)} className="mt-1 h-4 w-4 shrink-0 accent-[var(--fp-graphite)]" />Revisé de nuevo las fotografías y el documento actualizado.</label> : null}
+        {actionError ? <p className="mt-2 text-sm text-[var(--fp-muted)]">{actionError}</p> : null}
+        <div className="mt-4"><Button className="w-full" onClick={requestApproval} disabled={!canConfirm}><CheckCircle2 size={17} aria-hidden="true" />{saving ? "Confirmando..." : "OK para liquidación"}</Button></div>
+      </Card> : null}
+      confirmationDialog={<ConfirmDialog open={Boolean(confirmation)} title="Aprobar para liquidación" description={confirmation ? `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, folio ${confirmation.folio}. Confirma que realizaste la llamada, guardaste su grabación y verificaste las correcciones. El OK habilitará este crédito para la liquidación al aliado y quedará registrado por este acceso.` : ""} confirmLabel="Confirmar OK para liquidación" busy={saving} onCancel={() => { if (!saving && !submitting.current) setConfirmation(null); }} onConfirm={() => void confirmApproval()} />} />;
   }
 
   return (

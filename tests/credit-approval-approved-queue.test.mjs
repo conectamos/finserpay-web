@@ -53,6 +53,25 @@ test("el listado aprobado exige política y no usa auditoría, blobs ni escritur
   assert.throws(() => actors.buildCurrentCreditApprovalSql("credit; DROP TABLE", "review"), /Invalid approval SQL alias/);
 });
 
+test("búsqueda limitada y literal se aplica solo a cliente, folio y aliado", async () => {
+  assert.equal(queue.approvalQueueSearch("  Cliente  "), "Cliente");
+  for (const empty of [null, undefined, "", "   "]) assert.equal(queue.approvalQueueSearch(empty), null);
+  for (const invalid of [1, {}, "x".repeat(101), "x\u0000", "x\n"]) assert.throws(() => queue.approvalQueueSearch(invalid), { code: "INVALID_SEARCH" });
+  assert.equal(queue.approvalQueueSearch("x".repeat(100)).length, 100);
+  for (const method of ["listCreditApprovalQueue", "listApprovedCreditQueue", "countCreditApprovalQueues"]) {
+    const calls = [], value = "_%' OR 1=1 --";
+    await queue[method]({ $queryRawUnsafe: async (sql, ...params) => {
+      calls.push({ sql, params }); return calls.length === 1 ? [{ id: 1 }] : [];
+    } }, { q: value });
+    assert.equal(calls[1].params.at(-1), value); assert.ok(!calls[1].sql.includes(value));
+    assert.match(calls[1].sql, /strpos\(lower\(COALESCE\(credit\."clienteNombre"/);
+    assert.match(calls[1].sql, /strpos\(lower\(COALESCE\(credit\."folio"/);
+    assert.match(calls[1].sql, /strpos\(lower\(COALESCE\(ally\."nombre"/);
+    assert.doesNotMatch(calls[1].sql, /strpos\(lower\(COALESCE\(credit\."clienteDocumento"/);
+  }
+  await assert.rejects(queue.countCreditApprovalQueues({ $queryRawUnsafe: async () => [] }), { code: "APPROVAL_UNAVAILABLE" });
+});
+
 test("los GET de ficha, PDF y fotos usan el permiso de lectura, antes de leer cada archivo", async () => {
   const actor = { kind: "SHARED_LINK", id: null, nombre: "Acceso compartido", grantId: randomUUID(), sessionId: randomUUID() };
   for (const [path, operation] of [
@@ -201,6 +220,50 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
     await db.query('UPDATE "CreditApprovalReview" SET "status"=\'PENDING\',"approvedRevision"=NULL WHERE "creditoId"=$1', [id]);
     assert.deepEqual(await approvedIds("paid"), []);
     await assert.rejects(actors.assertApprovalActorCreditReadAccess(api, id, shared), { status: 404 });
+  });
+  await t.test("búsqueda real por nombre, folio y aliado mantiene filtros y caracteres literales", async () => {
+    const a = await create("searchDoc", { clienteNombre: "Persona Muro Qax", folio: "MRO-A%_1" });
+    const b = await create("searchDoc", { clienteNombre: "Persona Distinta", folio: "MRO-B" }); await approve(b);
+    for (const [q, pending, approved] of [["persona muro", [a], []], ["mro-b", [], [b]], ["aliado sintético", [a], [b]],
+      ["%_", [a], []], ["' OR 1=1 --", [], []], ["searchDoc", [], []]]) {
+      assert.deepEqual((await queue.listCreditApprovalQueue(api, { documento: "searchDoc", q })).items.map(row => row.id), pending);
+      assert.deepEqual((await queue.listApprovedCreditQueue(api, { documento: "searchDoc", q })).items.map(row => row.id), approved);
+      assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, { documento: "searchDoc", q })), { pending: pending.length, approved: approved.length });
+    }
+  });
+  await t.test("contadores reales superan el tamaño de página y preservan el orden con búsqueda", async () => {
+    await db.query(`INSERT INTO "Credito" ("clienteDocumento","clienteNombre","folio")
+      SELECT 'countPages','Muro Contador','COUNT-'||n FROM generate_series(1,105) n`);
+    const approved = await create("countPages", { clienteNombre: "Muro Contador" }); await approve(approved);
+    await db.query('INSERT INTO "LiquidacionAliadoCredito" VALUES ($1)', [approved]);
+    const filter = { documento: "countPages", q: "muro contador" };
+    const first = await queue.listCreditApprovalQueue(api, { ...filter, limit: 2 });
+    const next = await queue.listCreditApprovalQueue(api, { ...filter, limit: 2, cursor: first.nextCursor });
+    assert.equal(first.items.length, 2); assert.equal(next.items.length, 2); assert.ok(first.items[1].id < next.items[0].id);
+    assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, filter)), { pending: 105, approved: 1 });
+    const id = first.items[0].id;
+    await db.query('INSERT INTO "CreditApprovalReview" ("creditoId") VALUES ($1)', [id]); await approve(id);
+    assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, filter)), { pending: 104, approved: 2 });
+    assert.deepEqual((await queue.listApprovedCreditQueue(api, { ...filter, limit: 1 })).items.map(row => row.id), [approved]);
+  });
+  await t.test("contadores excluyen históricos, importados, central, cancelados y OK corruptos", async () => {
+    assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, { documento: "scope" })), { pending: 0, approved: 1 });
+    const invalidCounts = await queue.countCreditApprovalQueues(api, { documento: "invalid" });
+    assert.equal(invalidCounts.approved, 0);
+    assert.equal(invalidCounts.pending, (await pendingIds("invalid")).length);
+    assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, { documento: "inexistente" })), { pending: 0, approved: 0 });
+  });
+  await t.test("snapshot mantiene página y contadores coherentes ante un OK concurrente", async () => {
+    const id = await create("snapshotCounts"), second = new pg.Client({ connectionString }); await second.connect();
+    try {
+      await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+      assert.deepEqual((await queue.listCreditApprovalQueue(api, { documento: "snapshotCounts" })).items.map(row => row.id), [id]);
+      await second.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',"approvedRevision"=1,"approvedAt"=$2,
+        "approvedByName"='Analista sintético',"approvedByKind"='USER',"approvedByUserId"=7,"reviewHash"=$3 WHERE "creditoId"=$1`, [id, stamp, "a".repeat(64)]);
+      assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, { documento: "snapshotCounts" })), { pending: 1, approved: 0 });
+      await db.query("COMMIT");
+      assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, { documento: "snapshotCounts" })), { pending: 0, approved: 1 });
+    } finally { await db.query("ROLLBACK"); await second.end(); }
   });
   await t.test("El nuevo lector valida revocación, vencimiento y existencia antes del crédito", async () => {
     const id = await create("access"); await approve(id);
