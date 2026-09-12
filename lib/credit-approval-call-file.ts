@@ -63,7 +63,8 @@ export async function prepareApprovalCallFile(bytes: Buffer, fileName: string) {
   const extension = fileName.split(".").at(-1)?.toLowerCase();
   if (extension !== ({ "audio/wav": "wav", "audio/mp4": "m4a", "audio/mpeg": "mp3" }[mimeType])) throw invalid();
   try {
-    const { format } = await parseBuffer(bytes, { size: bytes.length }, { duration: true, skipCovers: true, skipPostHeaders: true });
+    // Use the verified container: phone M4A files may carry a 3GP brand.
+    const { format } = await parseBuffer(bytes, { mimeType, size: bytes.length }, { duration: true, skipCovers: true, skipPostHeaders: true });
     if (!(Number.isFinite(format.duration) && format.duration! > 0) ||
         !(format.sampleRate! > 0) || !(format.numberOfChannels! > 0) || format.hasVideo ||
         (mimeType === "audio/mpeg" && (format.container !== "MPEG" || !/Layer 3$/.test(format.codec || ""))) ||
