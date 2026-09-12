@@ -76,6 +76,7 @@ const [
   predeploySource,
   dockerfileSource,
   nextConfigSource,
+  globalsSource,
 ] = await Promise.all([
   readProjectFile("lib/iphone-enrollment-storage.ts"),
   readProjectFile("app/api/public/iphone-enrollment/access/route.ts"),
@@ -106,6 +107,7 @@ const [
   readProjectFile("scripts/railway-predeploy.mjs"),
   readProjectFile("Dockerfile"),
   readProjectFile("next.config.ts"),
+  readProjectFile("app/globals.css"),
 ]);
 const replacementStorageSource = await readProjectFile(
   "lib/credit-device-replacement-storage.ts"
@@ -1215,20 +1217,36 @@ test("la aprobación confirmada abre un resumen modal accesible y responsive", (
   assert.match(portalSource, /role="dialog"/);
   assert.match(portalSource, /aria-modal="true"/);
   assert.match(portalSource, /createPortal\(/);
-  assert.match(portalSource, /fp-ui-dialog-backdrop/);
+  assert.match(portalSource, /fixed inset-0 z-\[100\]/);
   assert.match(portalSource, /iphone-enrollment-success-title/);
   assert.match(portalSource, /iphone-enrollment-success-description/);
   assert.match(portalSource, /document\.body\.style\.overflow = "hidden"/);
   assert.match(portalSource, /event\.key === "Escape"/);
   assert.match(portalSource, /event\.key !== "Tab"/);
-  assert.match(portalSource, /backdrop-blur-sm/);
-  assert.match(portalSource, /max-w-\[560px\]/);
-  assert.match(portalSource, /max-h-\[calc\(100dvh-2\.5rem\)\]/);
+  assert.match(portalSource, /overflow-x-hidden/);
+  assert.match(portalSource, /min-h-dvh/);
   assert.match(portalSource, /overscroll-contain/);
-  assert.match(portalSource, /sm:grid-cols-2/);
+  assert.match(portalSource, /fp-enrollment-success-header/);
+  assert.match(
+    portalSource,
+    /src="\/assets\/creditos\/iphone-enrollment-success-mascot\.png"/
+  );
+  assert.doesNotMatch(
+    portalSource.slice(
+      portalSource.indexOf("function EnrollmentSuccessDialog"),
+      portalSource.indexOf("function EnrollmentSuccessCard")
+    ),
+    /iphone-choice(?:-light)?\.png/
+  );
   assert.match(portalSource, /ENROLADO CORRECTAMENTE/);
-  assert.match(portalSource, /¡Dispositivo protegido!/);
-  for (const label of ["Cliente", "Cédula", "IMEI", "Referencia", "Fecha y hora"]) {
+  assert.match(portalSource, />\s*Dispositivo protegido\s*</);
+  assert.match(
+    portalSource,
+    /El iPhone quedó registrado correctamente y la fábrica del asesor fue\s+actualizada\./
+  );
+  assert.match(portalSource, /title="Cliente"/);
+  assert.match(portalSource, /title="Equipo"/);
+  for (const label of ["Nombre", "Cédula", "IMEI", "Referencia", "Fecha y hora"]) {
     assert.match(portalSource, new RegExp(`label="${label}"`));
   }
   assert.match(portalSource, /value=\{item\.clienteNombre\}/);
@@ -1236,10 +1254,19 @@ test("la aprobación confirmada abre un resumen modal accesible y responsive", (
   assert.match(portalSource, /value=\{imeiValue\}/);
   assert.match(portalSource, /value=\{item\.equipo\}/);
   assert.match(portalSource, /formatDateTime\(review\.approvedAt\)/);
+  assert.match(portalSource, /<Button[\s\S]*data-enrollment-success-focus/);
+  assert.match(globalsSource, /\.fp-ui-button:focus-visible/);
   assert.match(portalSource, />\s*Finalizar\s*</);
   assert.match(portalSource, />\s*Consultar otra solicitud\s*</);
+  assert.match(portalSource, /onClick=\{onFinish\}/);
+  assert.match(portalSource, /onClick=\{onNewCase\}/);
   assert.match(portalSource, /setDocument\(""\)/);
   assert.match(portalSource, /setImei\(""\)/);
+  assert.match(globalsSource, /@keyframes fp-enrollment-mascot-float/);
+  assert.match(
+    globalsSource,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.fp-enrollment-success-mascot[\s\S]*animation: none/
+  );
 });
 
 test("el módulo no dispara una nueva consulta externa a DataCrédito", () => {

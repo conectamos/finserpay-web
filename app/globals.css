@@ -5414,7 +5414,47 @@ body {
   }
 }
 
+.fp-enrollment-success-header {
+  width: 112%;
+  min-height: 128px;
+  margin-left: -6%;
+  border-bottom-right-radius: 50% 34px;
+  border-bottom-left-radius: 50% 34px;
+  background: #111519;
+}
+
+.fp-enrollment-success-mascot {
+  transform-origin: 50% 78%;
+  filter: drop-shadow(0 14px 12px rgba(17, 21, 25, 0.16));
+  animation: fp-enrollment-mascot-float 3.8s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes fp-enrollment-mascot-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-0.4deg);
+  }
+  50% {
+    transform: translateY(-6px) rotate(0.4deg);
+  }
+}
+
+@media (max-width: 359px) {
+  .fp-enrollment-success-header {
+    min-height: 116px;
+  }
+
+  .fp-enrollment-success-mascot {
+    width: 164px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .fp-enrollment-success-mascot {
+    animation: none;
+  }
+
   .fp-credit-factory .fp-step3-documents-toggle > svg {
     transition: none;
   }

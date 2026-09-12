@@ -2,21 +2,18 @@
 
 import Image from "next/image";
 import {
-  CalendarDays,
   Check,
   CheckCircle2,
   Clock3,
-  IdCard,
   LockKeyhole,
   LogOut,
   Search,
   ShieldCheck,
   Smartphone,
-  Tag,
   UserRound,
   UserRoundCheck,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import FinserBrand from "@/app/_components/finser-brand";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
@@ -588,96 +585,123 @@ function EnrollmentSuccessDialog({
 
   return createPortal(
     <div
-      className="fp-ui-dialog-backdrop overflow-y-auto overscroll-contain backdrop-blur-sm"
+      className="fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden overscroll-contain bg-[#fbfaf6]"
       role="presentation"
     >
       <section
         ref={dialogRef}
-        className="w-full max-w-[560px] max-h-[calc(100dvh-2.5rem)] overflow-y-auto overscroll-contain rounded-[var(--fp-radius-lg)] border border-white/60 bg-[var(--fp-surface)] shadow-[var(--fp-shadow-md)]"
+        className="mx-auto min-h-dvh w-full max-w-[640px] overflow-hidden bg-[#fbfaf6] text-[var(--fp-graphite)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="iphone-enrollment-success-title"
         aria-describedby="iphone-enrollment-success-description"
       >
-        <div className="px-5 pb-6 pt-7 text-center sm:px-7 sm:pt-8">
-            <div className="relative mx-auto h-32 w-32 sm:h-36 sm:w-36">
-              <Image
-                src="/assets/creditos/iphone-choice-light.png"
-                alt=""
-                fill
-                sizes="144px"
-                className="object-contain"
-                aria-hidden="true"
-                priority
-              />
-              <span className="absolute bottom-1 right-0 grid h-12 w-12 place-items-center rounded-[var(--fp-radius-md)] border border-[var(--fp-lime-strong)] bg-[var(--fp-graphite)] text-[var(--fp-lime)] shadow-[var(--fp-shadow-sm)]">
-                <ShieldCheck className="h-7 w-7" aria-hidden="true" />
-              </span>
-            </div>
+        <header
+          className="fp-enrollment-success-header grid place-items-start justify-center pt-7 text-center text-white sm:pt-8"
+          aria-label="FINSER PAY"
+        >
+          <span
+            className="relative z-10 text-[1.65rem] font-black tracking-[-0.035em] sm:text-[1.85rem]"
+            aria-hidden="true"
+          >
+            <span className="text-[var(--fp-lime)]">FINSER</span>{" "}
+            <span>PAY</span>
+          </span>
+        </header>
 
-            <StatusPill tone="positive" className="mt-3">
-              ENROLADO CORRECTAMENTE
-            </StatusPill>
-            <h2
-              id="iphone-enrollment-success-title"
-              className="mt-4 text-2xl font-black tracking-tight sm:text-3xl"
-            >
-              ¡Dispositivo protegido!
-            </h2>
-            <p
-              id="iphone-enrollment-success-description"
-              className="mt-2 text-sm leading-6 text-[var(--fp-muted)]"
-            >
-              {item.operationType === "WARRANTY_REPLACEMENT"
-                ? "El iPhone de reemplazo quedó enrolado correctamente. El administrador central ya puede aplicar el nuevo IMEI al crédito."
-                : "El iPhone quedó registrado correctamente en FINSER PAY y la fábrica del asesor fue actualizada."}
-            </p>
+        <div className="relative z-10 mx-auto flex w-full max-w-[560px] flex-col items-center px-5 pb-8 text-center sm:px-8 sm:pb-10">
+          <Image
+            src="/assets/creditos/iphone-enrollment-success-mascot.png"
+            alt=""
+            width={1145}
+            height={1374}
+            sizes="(max-width: 639px) 180px, 205px"
+            className="fp-enrollment-success-mascot mt-4 h-auto w-[180px] object-contain sm:mt-5 sm:w-[205px]"
+            aria-hidden="true"
+            priority
+          />
 
-            <dl className="mt-6 overflow-hidden rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] text-left">
-              <EnrollmentSuccessDetail
-                icon={<UserRound className="h-4 w-4" aria-hidden="true" />}
-                label="Cliente"
+          <p className="mt-3 inline-flex min-h-10 items-center rounded-full border border-[var(--fp-lime-strong)] bg-[var(--fp-lime-soft)] px-5 py-2 text-[0.78rem] font-black uppercase tracking-[0.025em] text-[#2f6f1d] sm:text-sm">
+            ENROLADO CORRECTAMENTE
+          </p>
+          <h2
+            id="iphone-enrollment-success-title"
+            className="mt-4 text-[clamp(1.9rem,8vw,2.55rem)] font-black leading-[1.03] tracking-[-0.045em] text-black"
+          >
+            Dispositivo protegido
+          </h2>
+          <p
+            id="iphone-enrollment-success-description"
+            className="mt-3 max-w-[490px] text-[0.98rem] leading-6 text-[#6f7888] sm:text-[1.05rem] sm:leading-7"
+          >
+            El iPhone quedó registrado correctamente y la fábrica del asesor fue
+            actualizada.
+          </p>
+
+          <div className="mt-7 grid w-full gap-4 text-left">
+            <EnrollmentSuccessCard
+              id="iphone-enrollment-success-client"
+              icon={
+                <UserRound
+                  className="h-6 w-6"
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                />
+              }
+              title="Cliente"
+            >
+              <EnrollmentSuccessRow
+                label="Nombre"
                 value={item.clienteNombre}
+                strong
               />
-              <EnrollmentSuccessDetail
-                icon={<IdCard className="h-4 w-4" aria-hidden="true" />}
+              <EnrollmentSuccessRow
                 label="Cédula"
                 value={formatDocument(documentValue)}
               />
-              <EnrollmentSuccessDetail
-                icon={<Smartphone className="h-4 w-4" aria-hidden="true" />}
-                label="IMEI"
-                value={imeiValue}
-                mono
-              />
-              <EnrollmentSuccessDetail
-                icon={<Tag className="h-4 w-4" aria-hidden="true" />}
+            </EnrollmentSuccessCard>
+
+            <EnrollmentSuccessCard
+              id="iphone-enrollment-success-device"
+              icon={
+                <Smartphone
+                  className="h-6 w-6"
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                />
+              }
+              title="Equipo"
+            >
+              <EnrollmentSuccessRow
                 label="Referencia"
                 value={item.equipo}
+                strong
               />
-              <EnrollmentSuccessDetail
-                icon={<CalendarDays className="h-4 w-4" aria-hidden="true" />}
+              <EnrollmentSuccessRow label="IMEI" value={imeiValue} numeric />
+              <EnrollmentSuccessRow
                 label="Fecha y hora"
                 value={formatDateTime(review.approvedAt)}
+                numeric
               />
-            </dl>
+            </EnrollmentSuccessCard>
+          </div>
 
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              <Button
-                className="min-h-12 w-full"
-                onClick={onFinish}
-                data-enrollment-success-focus
-              >
-                Finalizar
-              </Button>
-              <Button
-                variant="secondary"
-                className="min-h-12 w-full"
-                onClick={onNewCase}
-              >
-                Consultar otra solicitud
-              </Button>
-            </div>
+          <div className="mt-7 grid w-full gap-3 border-t border-[#d9dde2] pt-5">
+            <Button
+              className="!min-h-14 w-full !rounded-[16px] !text-base !font-black"
+              onClick={onFinish}
+              data-enrollment-success-focus
+            >
+              Finalizar
+            </Button>
+            <Button
+              variant="secondary"
+              className="!min-h-14 w-full !rounded-[16px] !border-[#98a1af] !text-base !font-black"
+              onClick={onNewCase}
+            >
+              Consultar otra solicitud
+            </Button>
+          </div>
         </div>
       </section>
     </div>,
@@ -685,26 +709,56 @@ function EnrollmentSuccessDialog({
   );
 }
 
-function EnrollmentSuccessDetail({
+function EnrollmentSuccessCard({
+  id,
   icon,
-  label,
-  value,
-  mono = false,
+  title,
+  children,
 }: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  mono?: boolean;
+  id: string;
+  icon: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="grid min-h-12 grid-cols-[20px_86px_minmax(0,1fr)] items-center gap-3 border-b border-[var(--fp-border)] px-3 py-2.5 last:border-b-0 sm:grid-cols-[20px_110px_minmax(0,1fr)] sm:px-4">
-      <span className="text-[var(--fp-muted)]">{icon}</span>
-      <dt className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
+    <section
+      className="overflow-hidden rounded-[18px] border border-[#d8dde3] bg-white shadow-[0_8px_24px_rgba(17,21,25,0.035)]"
+      aria-labelledby={id}
+    >
+      <div className="flex min-h-16 items-center gap-4 px-4 py-3 sm:px-5">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#f1f2f3] text-[#5f6877]">
+          {icon}
+        </span>
+        <h3 id={id} className="text-xl font-black tracking-[-0.025em] text-black">
+          {title}
+        </h3>
+      </div>
+      <dl className="border-t border-[#e0e3e7] px-4 sm:px-5">{children}</dl>
+    </section>
+  );
+}
+
+function EnrollmentSuccessRow({
+  label,
+  value,
+  strong = false,
+  numeric = false,
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+  numeric?: boolean;
+}) {
+  return (
+    <div className="grid min-h-[52px] grid-cols-[106px_minmax(0,1fr)] items-center gap-3 border-b border-[#e0e3e7] py-3 last:border-b-0 sm:grid-cols-[132px_minmax(0,1fr)]">
+      <dt className="text-[0.7rem] font-bold uppercase tracking-[0.11em] text-[#778195] sm:text-xs">
         {label}
       </dt>
       <dd
-        className={`min-w-0 break-words text-sm font-bold text-[var(--fp-graphite)] ${
-          mono ? "font-mono" : ""
+        className={`min-w-0 break-words text-sm text-[#111519] sm:text-base ${
+          strong ? "font-black" : "font-semibold"
+        } ${
+          numeric ? "break-all font-mono tabular-nums tracking-[-0.02em]" : ""
         }`}
       >
         {value}
