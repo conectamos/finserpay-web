@@ -13,6 +13,27 @@ test("call recordings accept real MP3, M4A AAC and WAV PCM without rewriting the
     assert.ok(result.bytes.equals(bytes));
   }
 });
+test("M4A with a phone 3gp4 brand accepts AAC without rewriting the recording", async () => {
+  const bytes = Buffer.from(tone("m4a"));
+  assert.equal(bytes.subarray(4, 8).toString(), "ftyp");
+  bytes.write("3gp4", 8, "ascii");
+  const original = Buffer.from(bytes);
+  const result = await files.prepareApprovalCallFile(bytes, "llamada.m4a");
+  assert.equal(result.mimeType, "audio/mp4");
+  assert.equal(result.sizeBytes, original.length);
+  assert.equal(result.sha256, createHash("sha256").update(original).digest("hex"));
+  assert.ok(result.bytes.equals(original));
+});
+test("an MP4 parser hint still rejects a video track disguised as M4A", async () => {
+  const bytes = Buffer.from(tone("m4a"));
+  bytes.write("3gp4", 8, "ascii");
+  const handler = bytes.indexOf(Buffer.from("hdlr"));
+  assert.ok(handler > 0);
+  assert.equal(bytes.subarray(handler + 12, handler + 16).toString(), "soun");
+  bytes.write("vide", handler + 12, "ascii");
+  await assert.rejects(files.prepareApprovalCallFile(bytes, "llamada.m4a"),
+    (error) => error.code === "INVALID_CALL_RECORDING");
+});
 test("audio validates content, complete container and matching extension", async () => {
   for (const [bytes, name] of [
     [Buffer.from("<html><script>alert(1)</script></html>"), "x.mp3"],
