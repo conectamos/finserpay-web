@@ -53,21 +53,35 @@ test("el listado aprobado exige política y no usa auditoría, blobs ni escritur
   assert.throws(() => actors.buildCurrentCreditApprovalSql("credit; DROP TABLE", "review"), /Invalid approval SQL alias/);
 });
 
-test("búsqueda limitada y literal se aplica solo a cliente, folio y aliado", async () => {
+test("búsqueda limitada, literal y parametrizada se aplica a cliente, cédula, folio y aliado", async () => {
   assert.equal(queue.approvalQueueSearch("  Cliente  "), "Cliente");
   for (const empty of [null, undefined, "", "   "]) assert.equal(queue.approvalQueueSearch(empty), null);
   for (const invalid of [1, {}, "x".repeat(101), "x\u0000", "x\n"]) assert.throws(() => queue.approvalQueueSearch(invalid), { code: "INVALID_SEARCH" });
   assert.equal(queue.approvalQueueSearch("x".repeat(100)).length, 100);
-  for (const method of ["listCreditApprovalQueue", "listApprovedCreditQueue", "countCreditApprovalQueues"]) {
+  for (const [method, searchParameter, expectedParams] of [
+    ["listCreditApprovalQueue", 5, [null, null, null, 51]],
+    ["listApprovedCreditQueue", 5, [null, null, null, 51]],
+    ["countCreditApprovalQueues", 2, [null]],
+  ]) {
     const calls = [], value = "_%' OR 1=1 --";
     await queue[method]({ $queryRawUnsafe: async (sql, ...params) => {
       calls.push({ sql, params }); return calls.length === 1 ? [{ id: 1 }] : [];
     } }, { q: value });
-    assert.equal(calls[1].params.at(-1), value); assert.ok(!calls[1].sql.includes(value));
-    assert.match(calls[1].sql, /strpos\(lower\(COALESCE\(credit\."clienteNombre"/);
-    assert.match(calls[1].sql, /strpos\(lower\(COALESCE\(credit\."folio"/);
-    assert.match(calls[1].sql, /strpos\(lower\(COALESCE\(ally\."nombre"/);
-    assert.doesNotMatch(calls[1].sql, /strpos\(lower\(COALESCE\(credit\."clienteDocumento"/);
+    assert.deepEqual(plain(calls[1].params), [...expectedParams, value]);
+    assert.ok(!calls[1].sql.includes(value));
+    for (const field of [
+      'credit\\."clienteNombre"',
+      'credit\\."clienteDocumento"',
+      'credit\\."folio"',
+      'ally\\."nombre"',
+    ]) {
+      assert.match(calls[1].sql, new RegExp("strpos\\(lower\\(COALESCE\\(" + field + ",''\\)\\),lower\\(\\$" + searchParameter + "::text\\)\\)>0"));
+    }
+    assert.equal((calls[1].sql.match(new RegExp("lower\\(\\$" + searchParameter + "::text\\)", "g")) || []).length, 4);
+    assert.match(calls[1].sql, /credit\."createdAt">=\(SELECT "activatedAt"/);
+    assert.match(calls[1].sql, /credit\."equalityService"[\s\S]*IMPORTACION_MASIVA/);
+    assert.match(calls[1].sql, /ally\."codigo"[\s\S]*FINSERPAY/);
+    assert.match(calls[1].sql, /credit\."estado"[\s\S]*ANULADO[\s\S]*CANCELADA/);
   }
   await assert.rejects(queue.countCreditApprovalQueues({ $queryRawUnsafe: async () => [] }), { code: "APPROVAL_UNAVAILABLE" });
 });
@@ -153,6 +167,8 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
   };
   const approvedIds = async documento => (await queue.listApprovedCreditQueue(api, { documento, limit: 100 })).items.map(row => row.id);
   const pendingIds = async documento => (await queue.listCreditApprovalQueue(api, { documento, limit: 100 })).items.map(row => row.id);
+  const approvedQueryIds = async q => (await queue.listApprovedCreditQueue(api, { q, limit: 100 })).items.map(row => row.id);
+  const pendingQueryIds = async q => (await queue.listCreditApprovalQueue(api, { q, limit: 100 })).items.map(row => row.id);
 
   await t.test("Pendiente, OK, invalidación y nuevo OK muestran solo el estado actual", async () => {
     const id = await create("transition");
@@ -184,6 +200,27 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
     const valid = await create("scope"); await approve(valid);
     assert.deepEqual(await approvedIds("scope"), [valid]);
     for (const id of excluded) await assert.rejects(actors.assertApprovalActorCreditReadAccess(api, id, shared), { status: 404 });
+  });
+  await t.test("la búsqueda general por cédula filtra pendientes, aprobadas y contadores sin ampliar el alcance", async () => {
+    const cedula = "1192770334";
+    const pending = await create(cedula, { clienteNombre: "Cliente pendiente por documento", folio: "DOC-PENDING" });
+    const approved = await create(cedula, { clienteNombre: "Cliente aprobado por documento", folio: "DOC-APPROVED" });
+    await approve(approved);
+    for (const fields of [
+      { createdAt: "2020-01-01" },
+      { equalityService: "IMPORTACION_MASIVA", contratoSnapshot: { origen: { tipo: "IMPORTACION_MASIVA" } } },
+      { sedeId: 20 },
+      { estado: "CANCELADA" },
+    ]) {
+      await create(cedula, fields);
+      const excludedApproved = await create(cedula, fields); await approve(excludedApproved);
+    }
+    const paidWithoutApproval = await create(cedula);
+    await db.query('INSERT INTO "LiquidacionAliadoCredito" VALUES ($1)', [paidWithoutApproval]);
+
+    assert.deepEqual(await pendingQueryIds(cedula), [pending]);
+    assert.deepEqual(await approvedQueryIds(cedula), [approved]);
+    assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, { q: cedula })), { pending: 1, approved: 1 });
   });
   await t.test("Una revisión corrupta o una firma pendiente no se presentan como aprobadas", async () => {
     for (const bad of [{ approvedRevision: 2 }, { approvedAt: null }, { approvedByName: " " }, { reviewHash: "invalid" },
@@ -221,11 +258,11 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
     assert.deepEqual(await approvedIds("paid"), []);
     await assert.rejects(actors.assertApprovalActorCreditReadAccess(api, id, shared), { status: 404 });
   });
-  await t.test("búsqueda real por nombre, folio y aliado mantiene filtros y caracteres literales", async () => {
+  await t.test("búsqueda real por nombre, cédula, folio y aliado mantiene filtros y caracteres literales", async () => {
     const a = await create("searchDoc", { clienteNombre: "Persona Muro Qax", folio: "MRO-A%_1" });
     const b = await create("searchDoc", { clienteNombre: "Persona Distinta", folio: "MRO-B" }); await approve(b);
     for (const [q, pending, approved] of [["persona muro", [a], []], ["mro-b", [], [b]], ["aliado sintético", [a], [b]],
-      ["%_", [a], []], ["' OR 1=1 --", [], []], ["searchDoc", [], []]]) {
+      ["%_", [a], []], ["' OR 1=1 --", [], []], ["searchDoc", [a], [b]]]) {
       assert.deepEqual((await queue.listCreditApprovalQueue(api, { documento: "searchDoc", q })).items.map(row => row.id), pending);
       assert.deepEqual((await queue.listApprovedCreditQueue(api, { documento: "searchDoc", q })).items.map(row => row.id), approved);
       assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, { documento: "searchDoc", q })), { pending: pending.length, approved: approved.length });

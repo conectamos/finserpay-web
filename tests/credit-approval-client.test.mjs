@@ -149,15 +149,20 @@ test("la grabación se envía binaria y el OK queda asociado al audio revisado",
   assert.deepEqual(JSON.parse(requests[1].options.body), { revision: 2, reviewHash: "hash", recordingId: "audio-id" });
 });
 
-test("la búsqueda compartida envía filtro y solicita contadores completos", async (t) => {
+test("la búsqueda compartida envía cédula o texto literal y solicita contadores completos", async (t) => {
+  const queries = ["1192770334", "Cliente % literal"];
+  let request = 0;
   t.mock.method(globalThis, "fetch", async (url, options) => {
     const params = new URL(url, "https://finser.test").searchParams;
-    assert.equal(params.get("q"), "Cliente % literal"); assert.equal(params.get("counts"), "1");
+    assert.equal(params.get("q"), queries[request++]); assert.equal(params.get("counts"), "1");
     assert.equal(params.get("view"), "pending"); assert.equal(params.get("cursor"), "next"); assert.equal(options.cache, "no-store");
     return Response.json({ items: [{ id: 81, required: true, status: "PENDING" }], hasMore: false, nextCursor: null, counts: { pending: 105, approved: 8 } });
   });
-  const result = await readApprovalQueue("next", undefined, "pending", { query: "Cliente % literal", counts: true });
-  assert.deepEqual(result.counts, { pending: 105, approved: 8 });
+  for (const query of queries) {
+    const result = await readApprovalQueue("next", undefined, "pending", { query, counts: true });
+    assert.deepEqual(result.counts, { pending: 105, approved: 8 });
+  }
+  assert.equal(request, queries.length);
 });
 
 test("contadores ausentes o inválidos no se muestran como cero", async (t) => {

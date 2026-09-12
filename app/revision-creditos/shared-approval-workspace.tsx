@@ -70,8 +70,8 @@ export default function SharedApprovalWorkspace(props: Props) {
         }}>{tab === "pending" ? "Pendientes" : "Aprobadas"}<span className={styles.count}>{props.counts ? props.counts[tab].toLocaleString("es-CO") : "—"}</span></button>)}
       </Tabs>
       <form className={styles.search} onSubmit={event => { event.preventDefault(); if (!busy) props.onSearch(searchText.trim()); }}>
-        <label className="sr-only" htmlFor="shared-approval-search">Buscar por cliente, folio o aliado</label>
-        <Input id="shared-approval-search" type="search" placeholder="Cliente, folio o aliado" autoComplete="off" maxLength={100} value={searchText} disabled={busy} onChange={event => setSearchText(event.target.value)} />
+        <label className="sr-only" htmlFor="shared-approval-search">Buscar por cliente, cédula, folio o aliado</label>
+        <Input id="shared-approval-search" type="search" placeholder="Cliente, cédula, folio o aliado" autoComplete="off" maxLength={100} value={searchText} disabled={busy} onChange={event => setSearchText(event.target.value)} />
         <Button variant="secondary" type="submit" disabled={busy || props.searching} aria-label="Buscar expedientes"><Search size={18} aria-hidden="true" /></Button>
         {props.query ? <Button variant="ghost" disabled={busy} onClick={() => { setSearchText(""); props.onSearch(""); }}>Limpiar</Button> : null}
       </form>
@@ -84,7 +84,7 @@ export default function SharedApprovalWorkspace(props: Props) {
         <div className={styles.listScroll}>
           {props.searchError ? <div role="alert" className={styles.inlineError}>{props.searchError}<Button variant="ghost" disabled={busy || props.searching} onClick={props.onRefresh}>Reintentar</Button></div> : null}
           {props.searching ? <div className={styles.listLoading}><LoadingState label="Actualizando expedientes..." /></div> : null}
-          {!props.items.length && props.queueLoaded && !props.searching && !props.searchError ? <EmptyState title={props.query ? "Sin resultados" : view === "pending" ? "No hay pendientes" : "No hay aprobadas"} description={props.query ? "Prueba con otro cliente, folio o aliado." : view === "pending" ? "Los créditos que necesiten revisión aparecerán aquí." : "Aquí aparecerán los OK para liquidación vigentes."} /> : null}
+          {!props.items.length && props.queueLoaded && !props.searching && !props.searchError ? <EmptyState title={props.query ? "Sin resultados" : view === "pending" ? "No hay pendientes" : "No hay aprobadas"} description={props.query ? "Prueba con otro cliente, cédula, folio o aliado." : view === "pending" ? "Los créditos que necesiten revisión aparecerán aquí." : "Aquí aparecerán los OK para liquidación vigentes."} /> : null}
           <ul className={styles.list}>{props.items.map(item => <li key={item.id}><button type="button" aria-label={`Revisar crédito ${item.folio}`} aria-current={selectedId === item.id ? "true" : undefined} className={`${styles.row} ${selectedId === item.id ? styles.selected : ""}`} disabled={busy} onClick={() => props.onSelect(item.id)}>
             <strong>{item.clienteNombre}</strong><span className={styles.document}>Cédula: {item.clienteDocumento?.trim() || "No disponible"}</span><span className={styles.folio}>{item.folio}</span><span>{item.aliadoNombre}{item.sedeNombre ? ` · ${item.sedeNombre}` : ""}</span><span className={styles.rowDate}>{date(item.fechaCredito)}</span>
             <Badge tone={item.status === "APPROVED" ? "positive" : "warning"}>{statusLabel(item)}</Badge>

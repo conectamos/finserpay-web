@@ -460,18 +460,18 @@ test("el enlace compartido mantiene la autoría del acceso en el mismo diseño",
   h.unmount();
 });
 
-test("el muro compartido busca en servidor y conserva el filtro al seleccionar y cambiar de vista", async () => {
+test("el muro compartido busca una cédula en servidor y conserva el filtro al seleccionar y cambiar de vista", async () => {
   const calls = [];
   const h = wall({ readApprovalQueue: async (cursor, signal, view, options) => { calls.push({ cursor, view, options }); return countedPage(view === "approved" ? [] : [row(81), row(82)]); } }, { shared: true });
   await h.flush();
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0].options)), { query: "", counts: true });
-  sharedProps(h).onSearch("Aliado QA"); await h.flush();
-  assert.equal(calls.at(-1).options.query, "Aliado QA");
+  sharedProps(h).onSearch("1192770334"); await h.flush();
+  assert.equal(calls.at(-1).options.query, "1192770334");
   sharedProps(h).onSelect(82); await h.flush();
   assert.equal(sharedProps(h).detail.id, 82);
-  assert.equal(sharedProps(h).query, "Aliado QA");
+  assert.equal(sharedProps(h).query, "1192770334");
   sharedProps(h).onView("approved"); await h.flush();
-  assert.equal(sharedProps(h).query, "Aliado QA"); assert.equal(sharedProps(h).selectedId, null);
+  assert.equal(sharedProps(h).query, "1192770334"); assert.equal(sharedProps(h).selectedId, null);
   assert.equal(calls.at(-1).view, "approved"); h.unmount();
 });
 

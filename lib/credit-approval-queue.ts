@@ -8,13 +8,14 @@ export type CreditApprovalQueueInput = { cursor?: string | null; limit?: number;
 export function approvalQueueSearch(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "string" || value.length > 100 || /[\u0000-\u001f\u007f]/.test(value)) {
-    throw new CreditApprovalError("INVALID_SEARCH", "Busca por cliente, folio o aliado con hasta 100 caracteres.");
+    throw new CreditApprovalError("INVALID_SEARCH", "Busca por cliente, cédula, folio o aliado con hasta 100 caracteres.");
   }
   return value.trim() || null;
 }
 // strpos treats %, _ and SQL punctuation as literal text. The search value is always a parameter.
 function queueSearchSql(parameter: number) {
   return `(strpos(lower(COALESCE(credit."clienteNombre",'')),lower($${parameter}::text))>0
+    OR strpos(lower(COALESCE(credit."clienteDocumento",'')),lower($${parameter}::text))>0
     OR strpos(lower(COALESCE(credit."folio",'')),lower($${parameter}::text))>0
     OR strpos(lower(COALESCE(ally."nombre",'')),lower($${parameter}::text))>0)`;
 }
