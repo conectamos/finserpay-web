@@ -7,6 +7,8 @@ test("el resumen muestra contacto y condiciones guardadas sin alterar el crédit
   const fixture = approvalFixture();
   fixture.credit.clienteCorreo = "  cliente@example.test  ";
   fixture.credit.clienteTelefono = "  +57 300 1234567  ";
+  fixture.credit.clienteDepartamento = "  VALLE_DEL_CAUCA  ";
+  fixture.credit.clienteCiudad = "  Cali  ";
   fixture.credit.clienteDireccion = "  Calle 10 # 20-30, Bogotá  ";
   const before = plain(fixture);
   const item = detail(fixture);
@@ -14,6 +16,8 @@ test("el resumen muestra contacto y condiciones guardadas sin alterar el crédit
   assert.equal(item.clienteDocumento, fixture.credit.clienteDocumento);
   assert.equal(item.clienteCorreo, "cliente@example.test");
   assert.equal(item.clienteTelefono, "+57 300 1234567");
+  assert.equal(item.clienteDepartamento, "VALLE DEL CAUCA");
+  assert.equal(item.clienteCiudad, "Cali");
   assert.equal(item.clienteDireccion, "Calle 10 # 20-30, Bogotá");
   assert.equal(item.referenciaEquipo, "APPLE EQUIPO DE PRUEBA 256GB");
   assert.equal(item.score, 750);
@@ -94,9 +98,12 @@ test("primer pago conserva el día calendario UTC sin usar el próximo pago", ()
   }
 });
 
-test("contactos vacíos no se sustituyen por datos de otro cliente", () => {
+test("contactos y ubicación vacíos no se sustituyen por datos de otro cliente", () => {
   const fixture = approvalFixture();
-  fixture.credit.contratoSnapshot.cliente = { correo: "otro@example.test", telefono: "999999999", direccion: "Otra dirección" };
+  fixture.credit.contratoSnapshot.cliente = {
+    correo: "otro@example.test", telefono: "999999999", departamento: "ANTIOQUIA",
+    ciudad: "Medellín", direccion: "Otra dirección",
+  };
   for (const invalid of [null, undefined, "", "  ", 123]) {
     fixture.credit.clienteCorreo = invalid;
     fixture.credit.clienteTelefono = invalid;
@@ -104,6 +111,12 @@ test("contactos vacíos no se sustituyen por datos de otro cliente", () => {
     assert.equal(detail(fixture).clienteCorreo, null);
     assert.equal(detail(fixture).clienteTelefono, null);
     assert.equal(detail(fixture).clienteDireccion, null);
+  }
+  for (const invalid of [null, undefined, "", "  "]) {
+    fixture.credit.clienteDepartamento = invalid;
+    fixture.credit.clienteCiudad = invalid;
+    assert.equal(detail(fixture).clienteDepartamento, null);
+    assert.equal(detail(fixture).clienteCiudad, null);
   }
 });
 
@@ -119,9 +132,11 @@ test("exponer el resumen conserva aprobación y huella previamente guardadas", (
   assert.equal(item.review.reviewHash, before.review.reviewHash);
 });
 
-test("mostrar la dirección no altera la huella financiera de una revisión existente", () => {
+test("mostrar la ubicación no altera la huella financiera de una revisión existente", () => {
   const fixture = approvalFixture();
   const before = detail(fixture).review.reviewHash;
+  fixture.credit.clienteDepartamento = "ANTIOQUIA";
+  fixture.credit.clienteCiudad = "Medellín";
   fixture.credit.clienteDireccion = "Avenida 30 # 40-50";
   assert.equal(detail(fixture).review.reviewHash, before);
 });
@@ -134,6 +149,8 @@ test("la consulta del resumen es de lectura y conserva el bloqueo por crédito",
   assert.ok(query);
   assert.match(query.sql, /LEFT JOIN "CreditoAmortizacion" amortization ON amortization."creditoId" = credit."id"/);
   assert.match(query.sql, /credit\."referenciaEquipo"/);
+  assert.match(query.sql, /credit\."clienteDepartamento"/);
+  assert.match(query.sql, /credit\."clienteCiudad"/);
   assert.match(query.sql, /credit\."clienteDireccion"/);
   assert.equal(query.params[0], state.credit.id);
 });

@@ -30,6 +30,7 @@ const documentCore = loadApprovalModule("lib/document-blacklist-core.ts");
 const paymentsCore = loadApprovalModule("lib/ally-payments-core.ts");
 const colombiaDate = loadApprovalModule("lib/colombia-date.ts");
 const creditFactory = loadApprovalModule("lib/credit-factory.ts", { "@/lib/colombia-date": colombiaDate });
+const colombiaLocations = loadApprovalModule("lib/colombia-locations.ts");
 export const callState = loadApprovalModule("lib/credit-approval-call-state.ts");
 const reissueState = loadApprovalModule("lib/credit-approval-reissue-state.ts");
 export const approvalErrors = loadApprovalModule("lib/credit-approval-errors.ts");
@@ -42,6 +43,7 @@ export const noveltyState = loadApprovalModule("lib/credit-approval-novelty-stat
 });
 export const service = loadApprovalModule("lib/credit-approval.ts", {
   "@/lib/credit-factory": creditFactory,
+  "@/lib/colombia-locations": colombiaLocations,
   "@/lib/credit-approval-call-state": callState,
   "@/lib/credit-approval-errors": approvalErrors,
   "@/lib/credit-approval-actor": approvalActors,
@@ -73,7 +75,8 @@ export function completeApprovalDetail(fixture, reissue, novelties) {
 export function approvalFixture() {
   const credit = {
     id: 81, folio: "FNS-TEST-81", clienteNombre: "Cliente de prueba", clienteDocumento: "100000001",
-    clienteCorreo: "cliente@example.test", clienteTelefono: "3001234567", clienteDireccion: "Calle 10 # 20-30, Bogotá",
+    clienteCorreo: "cliente@example.test", clienteTelefono: "3001234567",
+    clienteDepartamento: "VALLE_DEL_CAUCA", clienteCiudad: "Cali", clienteDireccion: "Calle 10 # 20-30, Bogotá",
     plazoMeses: 12, frecuenciaPago: "QUINCENAL", valorCuota: 98765.43,
     cuotaComercialGuardada: null, fechaPrimerPago: new Date("2026-10-01T00:00:00.000Z"),
     fechaCredito: new Date("2026-09-10T15:00:00Z"), createdAt: new Date("2026-09-10T15:00:00Z"),

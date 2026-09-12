@@ -24,7 +24,8 @@ export async function prepareCallIntegrationFixture(client, connectionString) {
     INSERT INTO "Sede" VALUES (10,10),(20,20);
     CREATE TABLE "Credito" (
       "id" SERIAL PRIMARY KEY,"folio" TEXT DEFAULT 'TEST',"clienteNombre" TEXT DEFAULT 'Cliente sintético',
-      "clienteDocumento" TEXT DEFAULT '100000001',"clienteCorreo" TEXT,"clienteTelefono" TEXT,"clienteDireccion" TEXT,
+      "clienteDocumento" TEXT DEFAULT '100000001',"clienteCorreo" TEXT,"clienteTelefono" TEXT,
+      "clienteDepartamento" TEXT,"clienteCiudad" TEXT,"clienteDireccion" TEXT,
       "plazoMeses" INTEGER,"frecuenciaPago" TEXT,"valorCuota" FLOAT,"fechaPrimerPago" TIMESTAMP(3),
       "fechaCredito" TIMESTAMP DEFAULT '2026-09-10T12:00:00',
       "createdAt" TIMESTAMP(3) DEFAULT '2099-01-01T00:00:00',"updatedAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,

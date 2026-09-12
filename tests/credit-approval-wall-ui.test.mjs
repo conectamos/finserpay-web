@@ -255,15 +255,16 @@ const metricValues = (h) => Object.fromEntries(h.all((node) => node.type === ui.
 
 test("el resumen muestra contacto y valores del crédito sin cupo ni porcentaje de oferta", async () => {
   const summary = { ...detail(81), clienteNombre: "Cliente de prueba", clienteDocumento: "1030000001",
-    clienteCorreo: "cliente@example.test", clienteTelefono: "+57 300 000 0001", clienteDireccion: "Carrera 7 # 10-20", score: 720,
+    clienteCorreo: "cliente@example.test", clienteTelefono: "+57 300 000 0001",
+    clienteDepartamento: "VALLE DEL CAUCA", clienteCiudad: "Cali", clienteDireccion: "Carrera 7 # 10-20", score: 720,
     valorVenta: 1500000, cuotaInicial: 300000, creditoAutorizado: 1200000, approvedLimit: 6000000,
     numeroCuotas: 12, frecuenciaPago: "QUINCENAL", valorCuota: 137500, fechaPrimerPago: "2026-09-10" };
   const h = wall({ readApprovalCredit: async () => summary });
   try {
     await h.flush(); select(h, 81); await h.flush();
     assert.equal(h.find((node) => node.type === "h2" && node.props.children === "Cliente de prueba").props.children, summary.clienteNombre);
-    assert.deepEqual(h.all((node) => node.type === "dt").map((node) => node.props.children), ["Cédula", "Correo", "Teléfono", "Dirección"]);
-    assert.deepEqual(h.all((node) => node.type === "dd").map((node) => node.props.children), ["1030000001", "cliente@example.test", "+57 300 000 0001", "Carrera 7 # 10-20"]);
+    assert.deepEqual(h.all((node) => node.type === "dt").map((node) => node.props.children), ["Cédula", "Correo", "Teléfono", "Departamento", "Ciudad", "Dirección"]);
+    assert.deepEqual(h.all((node) => node.type === "dd").map((node) => node.props.children), ["1030000001", "cliente@example.test", "+57 300 000 0001", "VALLE DEL CAUCA", "Cali", "Carrera 7 # 10-20"]);
     const metrics = metricValues(h);
     assert.deepEqual(Object.keys(metrics), ["Score", "Valor de venta", "Inicial", "Crédito autorizado", "Plazo de financiación", "Valor de cuota", "Fecha de primer pago"]);
     assert.equal(metrics.Score.value, 720);
@@ -282,12 +283,13 @@ test("el resumen muestra contacto y valores del crédito sin cupo ni porcentaje 
 
 test("el resumen distingue datos ausentes y conserva una inicial de cero", async () => {
   const h = wall({ readApprovalCredit: async () => ({ ...detail(81), clienteNombre: " ", clienteDocumento: null,
-    clienteCorreo: "  ", clienteTelefono: null, clienteDireccion: " ", score: null, scoreLabel: null, valorVenta: null,
+    clienteCorreo: "  ", clienteTelefono: null, clienteDepartamento: null, clienteCiudad: " ",
+    clienteDireccion: " ", score: null, scoreLabel: null, valorVenta: null,
     cuotaInicial: 0, creditoAutorizado: null, numeroCuotas: null, frecuenciaPago: null, valorCuota: null, fechaPrimerPago: null }) });
   try {
     await h.flush(); select(h, 81); await h.flush();
     assert.ok(h.find((node) => node.type === "h2" && node.props.children === "No disponible"));
-    assert.deepEqual(h.all((node) => node.type === "dd").map((node) => node.props.children), Array(4).fill("No disponible"));
+    assert.deepEqual(h.all((node) => node.type === "dd").map((node) => node.props.children), Array(6).fill("No disponible"));
     const metrics = metricValues(h);
     for (const label of ["Score", "Valor de venta", "Crédito autorizado", "Plazo de financiación", "Valor de cuota", "Fecha de primer pago"]) {
       assert.equal(metrics[label].value, "No disponible", label);
