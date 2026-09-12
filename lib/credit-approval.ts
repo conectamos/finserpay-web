@@ -34,7 +34,7 @@ export type ApprovalCredit = Record<EvidenceField, string | null> & {
   fechaCredito: Date; createdAt: Date; estado: string; aliadoId: number;
   aliadoNombre: string; aliadoCodigo: string; valorEquipoTotal: number;
   cuotaInicial: number; saldoBaseFinanciado: number; contratoSnapshot: unknown;
-  imei: string; equipoMarca: string | null; equipoModelo: string | null;
+  imei: string; referenciaEquipo: string | null; equipoMarca: string | null; equipoModelo: string | null;
   required: boolean; paid: boolean;
 };
 export type ApprovalReview = {
@@ -153,7 +153,7 @@ async function readCredit(db: ApprovalDatabase, id: number, lock = false) {
       credit."clienteCorreo", credit."clienteTelefono", credit."plazoMeses", credit."frecuenciaPago",
       credit."valorCuota", credit."fechaPrimerPago", amortization."cuotaComercial"::text AS "cuotaComercialGuardada",
       credit."estado", credit."valorEquipoTotal", credit."cuotaInicial", credit."saldoBaseFinanciado",
-      credit."contratoSnapshot", credit."imei", credit."equipoMarca", credit."equipoModelo",
+      credit."contratoSnapshot", credit."imei", credit."referenciaEquipo", credit."equipoMarca", credit."equipoModelo",
       ${APPROVAL_EVIDENCE.map(({ field }) => `credit."${field}"`).join(", ")},
       ally."id" AS "aliadoId", ally."nombre" AS "aliadoNombre", ally."codigo" AS "aliadoCodigo",
       ${requiredSql} AS required,
@@ -218,6 +218,8 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
     ?? positiveAmount(record(financial).cuotaComercial) ?? positiveAmount(credit.valorCuota);
   const installments = positiveAmount(credit.plazoMeses);
   const frequency = contact(credit.frecuenciaPago)?.toUpperCase();
+  const equipmentFallback = [contact(credit.equipoMarca), contact(credit.equipoModelo)].filter(Boolean).join(" ");
+  const referenciaEquipo = contact(credit.referenciaEquipo) || equipmentFallback || null;
   const cancelled = ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(credit.estado.trim().toUpperCase());
   const correctionBlockedReason = !credit.required ? "Este crédito conserva las reglas anteriores a la activación."
     : credit.paid ? "Este crédito ya está incluido en una liquidación pagada."
@@ -248,7 +250,7 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
   return {
     id: credit.id, folio: credit.folio, clienteDocumento: credit.clienteDocumento,
     clienteNombre: credit.clienteNombre, aliadoNombre: credit.aliadoNombre, fechaCredito: iso(credit.fechaCredito),
-    clienteCorreo: contact(credit.clienteCorreo), clienteTelefono: contact(credit.clienteTelefono),
+    clienteCorreo: contact(credit.clienteCorreo), clienteTelefono: contact(credit.clienteTelefono), referenciaEquipo,
     numeroCuotas: installments !== null && Number.isSafeInteger(installments) ? installments : null,
     frecuenciaPago: frequency && PAYMENT_FREQUENCY_OPTIONS.some((option) => option.value === frequency) ? frequency : null,
     valorCuota, fechaPrimerPago: storedCalendarDate(credit.fechaPrimerPago),

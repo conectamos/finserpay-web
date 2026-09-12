@@ -44,6 +44,7 @@ export type ApprovalCallRecordingState = {
 export type ApprovalDetail = Omit<ApprovalListItem, "status" | "required"> & {
   clienteCorreo: string | null;
   clienteTelefono: string | null;
+  referenciaEquipo: string | null;
   numeroCuotas: number | null;
   frecuenciaPago: string | null;
   valorCuota: number | null;
