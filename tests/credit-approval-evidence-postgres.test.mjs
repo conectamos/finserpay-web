@@ -54,7 +54,8 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
     INSERT INTO "Sede" VALUES (10,10),(20,20);
     CREATE TABLE "Credito" (
       "id" SERIAL PRIMARY KEY,"folio" TEXT DEFAULT 'TEST',"clienteNombre" TEXT DEFAULT 'Cliente sintético',
-      "clienteDocumento" TEXT DEFAULT '100000001',"clienteCorreo" TEXT,"clienteTelefono" TEXT,"clienteDireccion" TEXT,
+      "clienteDocumento" TEXT DEFAULT '100000001',"clienteCorreo" TEXT,"clienteTelefono" TEXT,
+      "clienteDepartamento" TEXT,"clienteCiudad" TEXT,"clienteDireccion" TEXT,
       "plazoMeses" INTEGER,"frecuenciaPago" TEXT,"valorCuota" FLOAT,"fechaPrimerPago" TIMESTAMP(3),
       "fechaCredito" TIMESTAMP DEFAULT '2026-09-10T12:00:00',
       "createdAt" TIMESTAMP(3) DEFAULT '2099-01-01T00:00:00',"updatedAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
@@ -122,7 +123,8 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
       { stored: null, snapshot: null, expected: 229999.5 },
     ]) {
       const id = await createCredit({
-        clienteCorreo: "cliente@example.invalid", clienteTelefono: "3000000001", clienteDireccion: "Carrera 7 # 10-20",
+        clienteCorreo: "cliente@example.invalid", clienteTelefono: "3000000001",
+        clienteDepartamento: "VALLE_DEL_CAUCA", clienteCiudad: "  Cali  ", clienteDireccion: "Carrera 7 # 10-20",
         plazoMeses: 12, frecuenciaPago: "QUINCENAL", valorCuota: 229999.5,
         fechaPrimerPago: "2099-02-17T00:00:00.000Z",
         contratoSnapshot: { equipo: { plataforma: "ANDROID" }, financiero: { cuotaComercial: scenario.snapshot }, firma: { valor: "original" } },
@@ -137,6 +139,8 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
       }, id);
       assert.equal(current.clienteCorreo, "cliente@example.invalid");
       assert.equal(current.clienteTelefono, "3000000001");
+      assert.equal(current.clienteDepartamento, "VALLE DEL CAUCA");
+      assert.equal(current.clienteCiudad, "Cali");
       assert.equal(current.clienteDireccion, "Carrera 7 # 10-20");
       assert.equal(current.numeroCuotas, 12);
       assert.equal(current.frecuenciaPago, "QUINCENAL");

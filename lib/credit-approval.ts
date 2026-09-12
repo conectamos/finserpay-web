@@ -12,6 +12,7 @@ import { normalizeBlacklistedDocument } from "@/lib/document-blacklist-core";
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import { getCreditApprovalReissueState } from "@/lib/credit-approval-reissue-state";
 import { isFirmaSeguroCompletedStatus } from "@/lib/firmaseguro";
+import { getColombiaDepartmentLabel } from "@/lib/colombia-locations";
 
 export type ApprovalDatabase = Pick<Prisma.TransactionClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
 export type { ApprovalActor } from "@/lib/credit-approval-actor";
@@ -28,7 +29,8 @@ type EvidenceField = (typeof APPROVAL_EVIDENCE)[number]["field"];
 
 export type ApprovalCredit = Record<EvidenceField, string | null> & {
   id: number; folio: string; clienteNombre: string; clienteDocumento: string | null;
-  clienteCorreo: string | null; clienteTelefono: string | null; clienteDireccion: string | null;
+  clienteCorreo: string | null; clienteTelefono: string | null; clienteDepartamento: string | null;
+  clienteCiudad: string | null; clienteDireccion: string | null;
   plazoMeses: number | null; frecuenciaPago: string | null; valorCuota: number | null;
   cuotaComercialGuardada: string | null; fechaPrimerPago: Date | null;
   fechaCredito: Date; createdAt: Date; estado: string; aliadoId: number;
@@ -150,7 +152,8 @@ export async function listCreditApprovals(db: ApprovalDatabase, documento: strin
 async function readCredit(db: ApprovalDatabase, id: number, lock = false) {
   const rows = await db.$queryRawUnsafe<ApprovalCredit[]>(`SELECT credit."id", credit."folio",
       credit."clienteNombre", credit."clienteDocumento", credit."fechaCredito", credit."createdAt",
-      credit."clienteCorreo", credit."clienteTelefono", credit."clienteDireccion", credit."plazoMeses", credit."frecuenciaPago",
+      credit."clienteCorreo", credit."clienteTelefono", credit."clienteDepartamento", credit."clienteCiudad",
+      credit."clienteDireccion", credit."plazoMeses", credit."frecuenciaPago",
       credit."valorCuota", credit."fechaPrimerPago", amortization."cuotaComercial"::text AS "cuotaComercialGuardada",
       credit."estado", credit."valorEquipoTotal", credit."cuotaInicial", credit."saldoBaseFinanciado",
       credit."contratoSnapshot", credit."imei", credit."referenciaEquipo", credit."equipoMarca", credit."equipoModelo",
@@ -251,7 +254,8 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
     id: credit.id, folio: credit.folio, clienteDocumento: credit.clienteDocumento,
     clienteNombre: credit.clienteNombre, aliadoNombre: credit.aliadoNombre, fechaCredito: iso(credit.fechaCredito),
     clienteCorreo: contact(credit.clienteCorreo), clienteTelefono: contact(credit.clienteTelefono),
-    clienteDireccion: contact(credit.clienteDireccion), referenciaEquipo,
+    clienteDepartamento: contact(getColombiaDepartmentLabel(credit.clienteDepartamento)),
+    clienteCiudad: contact(credit.clienteCiudad), clienteDireccion: contact(credit.clienteDireccion), referenciaEquipo,
     numeroCuotas: installments !== null && Number.isSafeInteger(installments) ? installments : null,
     frecuenciaPago: frequency && PAYMENT_FREQUENCY_OPTIONS.some((option) => option.value === frequency) ? frequency : null,
     valorCuota, fechaPrimerPago: storedCalendarDate(credit.fechaPrimerPago),

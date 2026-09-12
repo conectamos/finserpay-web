@@ -30,10 +30,14 @@ test("la ficha muestra la referencia del equipo y contempla el dato ausente", ()
   assert.match(workspace, /detail\.referenciaEquipo\?\.trim\(\) \|\| "No disponible"/);
 });
 
-test("datos del cliente muestra la dirección completa en administrador y enlace", () => {
+test("datos del cliente muestra departamento, ciudad y dirección en el render compartido por administrador y enlace", () => {
   const workspace = read("app/revision-creditos/shared-approval-workspace.tsx");
-  assert.match(workspace, /\["Dirección", detail\.clienteDireccion\]/);
+  const console = read("app/dashboard/aprobaciones/approval-console.tsx");
+  const sharedPage = read("app/revision-creditos/page.tsx");
+  assert.match(workspace, /\["Departamento", detail\.clienteDepartamento\], \["Ciudad", detail\.clienteCiudad\], \["Dirección", detail\.clienteDireccion\]/);
   assert.match(workspace, /styles\.customerAddress/);
+  assert.match(console, /return <SharedApprovalWorkspace/);
+  assert.match(sharedPage, /<ApprovalConsole shared\s*\/>/);
 });
 
 test("el flujo compacto explica que guardar envía la novedad al aliado", () => {

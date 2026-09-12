@@ -396,7 +396,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false }: 
               <ReviewStatus status={detail.review.status} required={detail.review.required} />
             </div>
             <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
-              {[["Cédula", detail.clienteDocumento], ["Correo", detail.clienteCorreo], ["Teléfono", detail.clienteTelefono], ["Dirección", detail.clienteDireccion]].map(([label, value]) => (
+              {[["Cédula", detail.clienteDocumento], ["Correo", detail.clienteCorreo], ["Teléfono", detail.clienteTelefono], ["Departamento", detail.clienteDepartamento], ["Ciudad", detail.clienteCiudad], ["Dirección", detail.clienteDireccion]].map(([label, value]) => (
                 <div key={label} className={`min-w-0 ${label === "Dirección" ? "sm:col-span-2 xl:col-span-3" : ""}`}><dt className="text-[var(--fp-muted)]">{label}</dt><dd className="mt-1 break-words font-medium">{value?.trim() || "No disponible"}</dd></div>
               ))}
             </dl>

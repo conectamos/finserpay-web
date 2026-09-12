@@ -32,7 +32,8 @@ test("PostgreSQL aislado: reemisión persistente, conservación, callbacks y con
     INSERT INTO "Sede" VALUES (10,10);
     CREATE TABLE "Credito" (
       "id" INTEGER PRIMARY KEY,"folio" TEXT,"clienteNombre" TEXT,"clienteDocumento" TEXT,"clienteTelefono" TEXT,"clienteCorreo" TEXT,
-      "clienteDireccion" TEXT,"fechaCredito" TIMESTAMP DEFAULT '2099-01-01',"createdAt" TIMESTAMP(3),"updatedAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+      "clienteDepartamento" TEXT,"clienteCiudad" TEXT,"clienteDireccion" TEXT,
+      "fechaCredito" TIMESTAMP DEFAULT '2099-01-01',"createdAt" TIMESTAMP(3),"updatedAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
       "estado" TEXT,"sedeId" INTEGER,"imei" TEXT,"deviceUid" TEXT,"referenciaEquipo" TEXT,"equipoMarca" TEXT,"equipoModelo" TEXT,
       "valorEquipoTotal" FLOAT,"cuotaInicial" FLOAT,"saldoBaseFinanciado" FLOAT,"montoCredito" FLOAT,"valorCuota" FLOAT,
       "plazoMeses" INTEGER,"tasaInteresEa" FLOAT,"frecuenciaPago" TEXT,
