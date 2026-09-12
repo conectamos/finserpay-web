@@ -13,6 +13,7 @@ test("el resumen muestra contacto y condiciones guardadas sin alterar el crédit
   assert.equal(item.clienteDocumento, fixture.credit.clienteDocumento);
   assert.equal(item.clienteCorreo, "cliente@example.test");
   assert.equal(item.clienteTelefono, "+57 300 1234567");
+  assert.equal(item.referenciaEquipo, "APPLE EQUIPO DE PRUEBA 256GB");
   assert.equal(item.score, 750);
   assert.equal(item.valorVenta, 1000000);
   assert.equal(item.cuotaInicial, 200000);
@@ -22,6 +23,19 @@ test("el resumen muestra contacto y condiciones guardadas sin alterar el crédit
   assert.equal(item.valorCuota, 98765.43);
   assert.equal(item.fechaPrimerPago, "2026-10-01");
   assert.deepEqual(plain(fixture), before);
+});
+
+test("la referencia usa el valor guardado y marca más modelo solo como respaldo", () => {
+  const fixture = approvalFixture();
+  fixture.credit.referenciaEquipo = "  IPHONE 17 PRO MAX 256GB  ";
+  assert.equal(detail(fixture).referenciaEquipo, "IPHONE 17 PRO MAX 256GB");
+  fixture.credit.referenciaEquipo = null;
+  fixture.credit.equipoMarca = "  Apple  ";
+  fixture.credit.equipoModelo = "  iPhone 17 Pro Max 256GB  ";
+  assert.equal(detail(fixture).referenciaEquipo, "Apple iPhone 17 Pro Max 256GB");
+  fixture.credit.equipoMarca = null;
+  fixture.credit.equipoModelo = " ";
+  assert.equal(detail(fixture).referenciaEquipo, null);
 });
 
 test("la cuota comercial de amortización prevalece sobre contrato y cuota exacta", () => {
@@ -108,5 +122,6 @@ test("la consulta del resumen es de lectura y conserva el bloqueo por crédito",
   const query = state.queries.find(row => row.sql.includes('AS "cuotaComercialGuardada"'));
   assert.ok(query);
   assert.match(query.sql, /LEFT JOIN "CreditoAmortizacion" amortization ON amortization."creditoId" = credit."id"/);
+  assert.match(query.sql, /credit\."referenciaEquipo"/);
   assert.equal(query.params[0], state.credit.id);
 });

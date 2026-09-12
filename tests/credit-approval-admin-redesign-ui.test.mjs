@@ -24,6 +24,12 @@ test("cada fila muestra la cédula disponible y conserva un estado explícito cu
   assert.match(workspace, /item\.aliadoNombre/);
 });
 
+test("la ficha muestra la referencia del equipo y contempla el dato ausente", () => {
+  const workspace = read("app/revision-creditos/shared-approval-workspace.tsx");
+  assert.match(workspace, /Referencia del equipo/);
+  assert.match(workspace, /detail\.referenciaEquipo\?\.trim\(\) \|\| "No disponible"/);
+});
+
 test("el flujo compacto explica que guardar envía la novedad al aliado", () => {
   const panel = read("app/dashboard/aprobaciones/approval-novelty-panel.tsx");
   assert.match(panel, /Guardar y enviar al aliado/);

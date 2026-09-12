@@ -80,7 +80,7 @@ export function approvalFixture() {
     estado: "ACTIVO", aliadoId: 5, aliadoNombre: "Aliado de prueba", aliadoCodigo: "ALIADO_TEST",
     valorEquipoTotal: 1000000, cuotaInicial: 200000, saldoBaseFinanciado: 800000,
     contratoSnapshot: { equipo: { plataforma: "IPHONE" }, financiero: { dataCredito: { assessmentId: "assessment-81", resolvedMaxFinancedAmount: 900000 } } },
-    imei: "000000000000001", equipoMarca: "Apple", equipoModelo: "Equipo de prueba", required: true, paid: false,
+    imei: "000000000000001", referenciaEquipo: "APPLE EQUIPO DE PRUEBA 256GB", equipoMarca: "Apple", equipoModelo: "Equipo de prueba", required: true, paid: false,
     ...Object.fromEntries(service.APPROVAL_EVIDENCE.map(({ field }) => [field, png])),
   };
   const assessment = {
