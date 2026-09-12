@@ -10,6 +10,13 @@ test("la ruta administrativa activa el muro rediseñado sin convertir su sesión
   assert.doesNotMatch(page, /<ApprovalConsole shared\s*\/>/);
 });
 
+test("el muro administrativo y el enlace usan el scroll normal de la página", () => {
+  const styles = read("app/revision-creditos/shared-review.module.css");
+  assert.match(styles, /\.root \{ min-height: 100dvh; overflow: visible; \}/);
+  assert.match(styles, /\.listScroll \{ max-height: none; \}/);
+  assert.match(styles, /overscroll-behavior: auto/);
+});
+
 test("cada fila muestra la cédula disponible y conserva un estado explícito cuando falta", () => {
   const workspace = read("app/revision-creditos/shared-approval-workspace.tsx");
   assert.match(workspace, /Cédula:\s*\{item\.clienteDocumento\?\.trim\(\)\s*\|\|\s*"No disponible"\}/);
