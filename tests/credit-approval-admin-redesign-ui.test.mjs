@@ -30,6 +30,12 @@ test("la ficha muestra la referencia del equipo y contempla el dato ausente", ()
   assert.match(workspace, /detail\.referenciaEquipo\?\.trim\(\) \|\| "No disponible"/);
 });
 
+test("datos del cliente muestra la dirección completa en administrador y enlace", () => {
+  const workspace = read("app/revision-creditos/shared-approval-workspace.tsx");
+  assert.match(workspace, /\["Dirección", detail\.clienteDireccion\]/);
+  assert.match(workspace, /styles\.customerAddress/);
+});
+
 test("el flujo compacto explica que guardar envía la novedad al aliado", () => {
   const panel = read("app/dashboard/aprobaciones/approval-novelty-panel.tsx");
   assert.match(panel, /Guardar y enviar al aliado/);

@@ -396,8 +396,8 @@ export default function ApprovalConsole({ shared = false, redesigned = false }: 
               <ReviewStatus status={detail.review.status} required={detail.review.required} />
             </div>
             <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
-              {[["Cédula", detail.clienteDocumento], ["Correo", detail.clienteCorreo], ["Teléfono", detail.clienteTelefono]].map(([label, value]) => (
-                <div key={label} className="min-w-0"><dt className="text-[var(--fp-muted)]">{label}</dt><dd className="mt-1 break-words font-medium">{value?.trim() || "No disponible"}</dd></div>
+              {[["Cédula", detail.clienteDocumento], ["Correo", detail.clienteCorreo], ["Teléfono", detail.clienteTelefono], ["Dirección", detail.clienteDireccion]].map(([label, value]) => (
+                <div key={label} className={`min-w-0 ${label === "Dirección" ? "sm:col-span-2 xl:col-span-3" : ""}`}><dt className="text-[var(--fp-muted)]">{label}</dt><dd className="mt-1 break-words font-medium">{value?.trim() || "No disponible"}</dd></div>
               ))}
             </dl>
             {detail.review.status === "APPROVED" ? <p className="mt-4 flex items-center gap-2 text-sm"><CheckCircle2 className="h-4 w-4" aria-hidden="true" />Aprobado por {detail.review.approvedByName || "analista autorizado"} · {dateLabel(detail.review.approvedAt)}</p> : null}

@@ -24,12 +24,12 @@ export async function prepareCallIntegrationFixture(client, connectionString) {
     INSERT INTO "Sede" VALUES (10,10),(20,20);
     CREATE TABLE "Credito" (
       "id" SERIAL PRIMARY KEY,"folio" TEXT DEFAULT 'TEST',"clienteNombre" TEXT DEFAULT 'Cliente sintético',
-      "clienteDocumento" TEXT DEFAULT '100000001',"clienteCorreo" TEXT,"clienteTelefono" TEXT,
+      "clienteDocumento" TEXT DEFAULT '100000001',"clienteCorreo" TEXT,"clienteTelefono" TEXT,"clienteDireccion" TEXT,
       "plazoMeses" INTEGER,"frecuenciaPago" TEXT,"valorCuota" FLOAT,"fechaPrimerPago" TIMESTAMP(3),
       "fechaCredito" TIMESTAMP DEFAULT '2026-09-10T12:00:00',
       "createdAt" TIMESTAMP(3) DEFAULT '2099-01-01T00:00:00',"updatedAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
       "estado" TEXT DEFAULT 'ACTIVO',"sedeId" INTEGER DEFAULT 10,"imei" TEXT DEFAULT '000000000000001',
-      "equipoMarca" TEXT DEFAULT 'Samsung',"equipoModelo" TEXT DEFAULT 'Sintético',
+      "referenciaEquipo" TEXT DEFAULT 'Samsung Sintético',"equipoMarca" TEXT DEFAULT 'Samsung',"equipoModelo" TEXT DEFAULT 'Sintético',
       "valorEquipoTotal" FLOAT DEFAULT 1000000,"cuotaInicial" FLOAT DEFAULT 200000,
       "saldoBaseFinanciado" FLOAT DEFAULT 800000,"montoCredito" FLOAT DEFAULT 800000,"equalityService" TEXT,
       "contratoSnapshot" JSONB DEFAULT '{"equipo":{"plataforma":"ANDROID"},"financiero":{"condicion":"original"},"firma":{"valor":"original"}}',

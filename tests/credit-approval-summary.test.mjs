@@ -7,12 +7,14 @@ test("el resumen muestra contacto y condiciones guardadas sin alterar el crédit
   const fixture = approvalFixture();
   fixture.credit.clienteCorreo = "  cliente@example.test  ";
   fixture.credit.clienteTelefono = "  +57 300 1234567  ";
+  fixture.credit.clienteDireccion = "  Calle 10 # 20-30, Bogotá  ";
   const before = plain(fixture);
   const item = detail(fixture);
   assert.equal(item.clienteNombre, fixture.credit.clienteNombre);
   assert.equal(item.clienteDocumento, fixture.credit.clienteDocumento);
   assert.equal(item.clienteCorreo, "cliente@example.test");
   assert.equal(item.clienteTelefono, "+57 300 1234567");
+  assert.equal(item.clienteDireccion, "Calle 10 # 20-30, Bogotá");
   assert.equal(item.referenciaEquipo, "APPLE EQUIPO DE PRUEBA 256GB");
   assert.equal(item.score, 750);
   assert.equal(item.valorVenta, 1000000);
@@ -94,12 +96,14 @@ test("primer pago conserva el día calendario UTC sin usar el próximo pago", ()
 
 test("contactos vacíos no se sustituyen por datos de otro cliente", () => {
   const fixture = approvalFixture();
-  fixture.credit.contratoSnapshot.cliente = { correo: "otro@example.test", telefono: "999999999" };
+  fixture.credit.contratoSnapshot.cliente = { correo: "otro@example.test", telefono: "999999999", direccion: "Otra dirección" };
   for (const invalid of [null, undefined, "", "  ", 123]) {
     fixture.credit.clienteCorreo = invalid;
     fixture.credit.clienteTelefono = invalid;
+    fixture.credit.clienteDireccion = invalid;
     assert.equal(detail(fixture).clienteCorreo, null);
     assert.equal(detail(fixture).clienteTelefono, null);
+    assert.equal(detail(fixture).clienteDireccion, null);
   }
 });
 
@@ -115,6 +119,13 @@ test("exponer el resumen conserva aprobación y huella previamente guardadas", (
   assert.equal(item.review.reviewHash, before.review.reviewHash);
 });
 
+test("mostrar la dirección no altera la huella financiera de una revisión existente", () => {
+  const fixture = approvalFixture();
+  const before = detail(fixture).review.reviewHash;
+  fixture.credit.clienteDireccion = "Avenida 30 # 40-50";
+  assert.equal(detail(fixture).review.reviewHash, before);
+});
+
 test("la consulta del resumen es de lectura y conserva el bloqueo por crédito", async () => {
   const { db, state } = approvalDatabase();
   await service.getCreditApprovalDetail(db, state.credit.id);
@@ -123,5 +134,6 @@ test("la consulta del resumen es de lectura y conserva el bloqueo por crédito",
   assert.ok(query);
   assert.match(query.sql, /LEFT JOIN "CreditoAmortizacion" amortization ON amortization."creditoId" = credit."id"/);
   assert.match(query.sql, /credit\."referenciaEquipo"/);
+  assert.match(query.sql, /credit\."clienteDireccion"/);
   assert.equal(query.params[0], state.credit.id);
 });
