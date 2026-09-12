@@ -10,6 +10,7 @@ type Props = {
   detail: ApprovalDetail;
   disabled?: boolean;
   compact?: boolean;
+  sharedAccess?: boolean;
   onUpdated: () => Promise<void>;
   onBusyChange: (busy: boolean) => void;
 };
@@ -19,7 +20,7 @@ const statusLabels: Record<string, string> = {
   FAILED_SAFE: "Reenvío no realizado", UNCERTAIN: "Envío pendiente de verificación",
 };
 
-export default function ApprovalSignatureReissue({ detail, disabled = false, compact = false, onUpdated, onBusyChange }: Props) {
+export default function ApprovalSignatureReissue({ detail, disabled = false, compact = false, sharedAccess = false, onUpdated, onBusyChange }: Props) {
   const [editing, setEditing] = useState(false);
   const [reason, setReason] = useState("");
   const [confirming, setConfirming] = useState(false);
@@ -87,7 +88,7 @@ export default function ApprovalSignatureReissue({ detail, disabled = false, com
           onChange={(event) => setReason(event.target.value)} disabled={disabled || saving || confirming}
           className="w-full rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] p-3 text-sm focus-visible:outline-2 focus-visible:outline-[var(--fp-graphite)]"
           placeholder="Describe qué debe corregirse en la firma" aria-describedby="approval-reissue-help" />
-        <p id="approval-reissue-help" className="text-sm text-[var(--fp-muted)]">Entre 10 y 500 caracteres. {compact ? "Quedará registrado por este acceso." : "Quedará registrado con tu usuario."}</p>
+        <p id="approval-reissue-help" className="text-sm text-[var(--fp-muted)]">Entre 10 y 500 caracteres. {sharedAccess ? "Quedará registrado por este acceso." : "Quedará registrado con tu usuario."}</p>
         <div className="flex flex-wrap gap-3">
           <Button variant="secondary" onClick={close} disabled={saving || confirming}>Cancelar</Button>
           <Button onClick={() => setConfirming(true)} disabled={disabled || saving || confirming || reason.trim().length < 10}>Continuar</Button>
