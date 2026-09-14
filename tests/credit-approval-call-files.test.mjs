@@ -1,37 +1,46 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { files, http, tone, request, requestHeaders } from "./credit-approval-call-test-loader.mjs";
+import { errors, files, http, loadCallModule, tone, request, requestHeaders } from "./credit-approval-call-test-loader.mjs";
 
-test("call recordings accept real MP3, M4A AAC and WAV PCM without rewriting the bytes", async () => {
-  for (const [extension, mimeType] of [["mp3", "audio/mpeg"], ["m4a", "audio/mp4"], ["wav", "audio/wav"]]) {
-    const bytes = tone(extension);
-    const result = await files.prepareApprovalCallFile(bytes, `llamada.${extension}`);
+test("call recordings accept real MP3, M4A/MP4 AAC and WAV PCM without rewriting the bytes", async () => {
+  for (const [fixtureExtension, fileExtension, mimeType] of [
+    ["mp3", "mp3", "audio/mpeg"], ["m4a", "m4a", "audio/mp4"],
+    ["m4a", "mp4", "audio/mp4"], ["wav", "wav", "audio/wav"],
+  ]) {
+    const bytes = tone(fixtureExtension);
+    const result = await files.prepareApprovalCallFile(bytes, `llamada.${fileExtension}`);
+    assert.equal(result.fileName, `llamada.${fileExtension}`);
     assert.equal(result.mimeType, mimeType);
     assert.equal(result.sizeBytes, bytes.length);
     assert.equal(result.sha256, createHash("sha256").update(bytes).digest("hex"));
     assert.ok(result.bytes.equals(bytes));
   }
 });
-test("M4A with a phone 3gp4 brand accepts AAC without rewriting the recording", async () => {
+test("audio-only MP4 with a phone 3gp4 brand accepts AAC without rewriting the recording", async () => {
   const bytes = Buffer.from(tone("m4a"));
   assert.equal(bytes.subarray(4, 8).toString(), "ftyp");
   bytes.write("3gp4", 8, "ascii");
   const original = Buffer.from(bytes);
-  const result = await files.prepareApprovalCallFile(bytes, "llamada.m4a");
+  const result = await files.prepareApprovalCallFile(bytes, "llamada.mp4");
+  assert.equal(result.fileName, "llamada.mp4");
   assert.equal(result.mimeType, "audio/mp4");
   assert.equal(result.sizeBytes, original.length);
   assert.equal(result.sha256, createHash("sha256").update(original).digest("hex"));
   assert.ok(result.bytes.equals(original));
 });
-test("an MP4 parser hint still rejects a video track disguised as M4A", async () => {
-  const bytes = Buffer.from(tone("m4a"));
-  bytes.write("3gp4", 8, "ascii");
-  const handler = bytes.indexOf(Buffer.from("hdlr"));
-  assert.ok(handler > 0);
-  assert.equal(bytes.subarray(handler + 12, handler + 16).toString(), "soun");
-  bytes.write("vide", handler + 12, "ascii");
-  await assert.rejects(files.prepareApprovalCallFile(bytes, "llamada.m4a"),
+test("MP4 rejects hasVideo=true when every AAC audio field is otherwise valid", async () => {
+  const bytes = tone("m4a");
+  const loadWithVideoFlag = (hasVideo) => loadCallModule("lib/credit-approval-call-file.ts", {
+    "@/lib/credit-approval-errors": errors,
+    "music-metadata": { parseBuffer: async () => ({ format: {
+      duration: 0.5, sampleRate: 16000, numberOfChannels: 1,
+      hasVideo, container: "M4A", codec: "MPEG-4/AAC",
+    } }) },
+  });
+  const audioOnly = await loadWithVideoFlag(false).prepareApprovalCallFile(bytes, "llamada.mp4");
+  assert.equal(audioOnly.mimeType, "audio/mp4");
+  await assert.rejects(loadWithVideoFlag(true).prepareApprovalCallFile(bytes, "llamada.mp4"),
     (error) => error.code === "INVALID_CALL_RECORDING");
 });
 test("audio validates content, complete container and matching extension", async () => {
@@ -48,6 +57,7 @@ test("audio parser rejects header-only MPEG pretending to contain a recording", 
   await assert.rejects(files.prepareApprovalCallFile(invalid, "x.mp3"), (error) => error.code === "INVALID_CALL_RECORDING");
 });
 test("recording filename is bounded and strips paths and control/bidi characters", () => {
+  assert.equal(files.approvalCallFileName("llamada.mp4"), "llamada.mp4");
   assert.equal(files.approvalCallFileName(encodeURIComponent("..\\llamada\r\n/\u202ewav.wav")), ".._llamada____wav.wav");
   for (const value of ["%FF", "", encodeURIComponent("x".repeat(160) + ".wav"), "x.html"]) {
     assert.throws(() => files.approvalCallFileName(value), (error) => error.code === "INVALID_CALL_RECORDING");

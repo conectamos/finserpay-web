@@ -96,7 +96,7 @@ El flujo consiste en:
 
 La llamada la realiza el analista; el teléfono del cliente permite abrir la
 aplicación de llamadas disponible en su dispositivo. El sistema recibe una
-**grabación MP3, M4A o WAV de hasta 10 MiB**. La fecha mostrada es la de carga,
+**grabación MP3, M4A, MP4 de audio o WAV de hasta 10 MiB**. La fecha mostrada es la de carga,
 no una fecha de llamada inferida. El analista confirma que realizó la llamada
 al conceder el OK; no se integra un proveedor de telefonía ni se graba automáticamente.
 
