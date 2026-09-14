@@ -96,7 +96,7 @@ El flujo consiste en:
 
 La llamada la realiza el analista; el teléfono del cliente permite abrir la
 aplicación de llamadas disponible en su dispositivo. El sistema recibe una
-**grabación MP3, M4A, MP4 de audio o WAV de hasta 10 MiB**. La fecha mostrada es la de carga,
+**grabación MP3, M4A, MP4 de audio, OGG (Opus) o WAV de hasta 10 MiB**. La fecha mostrada es la de carga,
 no una fecha de llamada inferida. El analista confirma que realizó la llamada
 al conceder el OK; no se integra un proveedor de telefonía ni se graba automáticamente.
 
@@ -106,7 +106,9 @@ fecha, huella y revisión. Las cargas anteriores no se sobrescriben. Cambiar los
 documentos e invalidar la revisión exige adjuntar la grabación de la nueva revisión.
 
 El servidor valida contenido y contenedor, permisos, origen, revisión y huella;
-la extensión por sí sola no es suficiente. El envío es binario, con límite durante
+la extensión por sí sola no es suficiente. En OGG acepta únicamente un flujo Opus
+de audio, con páginas y sumas de verificación íntegras y sin video. El envío es
+binario, con límite durante
 la lectura e identificador de operación para reintentos. Reproducir el audio exige
 una sesión vigente, acceso al crédito y admite peticiones Range autenticadas.
 No se generan URL públicas para los archivos ni se entrega audio en los listados.

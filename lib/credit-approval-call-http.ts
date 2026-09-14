@@ -51,7 +51,7 @@ export async function readApprovalCallBytes(request: Request) {
 export function approvalCallAudioResponse(request: Request, recording: { bytes: Buffer; mimeType: string; fileName: string }) {
   const size = recording.bytes.length;
   const headers = { ...approvalPrivateHeaders, "Content-Type": recording.mimeType, "Accept-Ranges": "bytes",
-    "Content-Disposition": `inline; filename="grabacion.${recording.mimeType === "audio/mpeg" ? "mp3" : recording.mimeType === "audio/mp4" ? "m4a" : "wav"}"; filename*=UTF-8''${encodeURIComponent(recording.fileName).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)}` };
+    "Content-Disposition": `inline; filename="grabacion.${recording.mimeType === "audio/mpeg" ? "mp3" : recording.mimeType === "audio/mp4" ? "m4a" : recording.mimeType === "audio/ogg" ? "ogg" : "wav"}"; filename*=UTF-8''${encodeURIComponent(recording.fileName).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)}` };
   const range = request.headers.get("range");
   if (!range) return new Response(new Uint8Array(recording.bytes), { headers: { ...headers, "Content-Length": String(size) } });
   const match = /^bytes=(\d*)-(\d*)$/.exec(range);
