@@ -16,6 +16,7 @@ import {
   Menu,
   PieChart,
   Plug,
+  RefreshCcw,
   Settings,
   ShieldBan,
   ShieldCheck,
@@ -212,6 +213,11 @@ export default function AdminSidebar({
                 href: "/dashboard/datacredito",
                 icon: FileSearch,
                 label: "Historial DataCrédito",
+              },
+              {
+                href: "/dashboard/datacredito/liberaciones",
+                icon: RefreshCcw,
+                label: "Liberar consultas",
               },
               {
                 href: "/dashboard/equality",
