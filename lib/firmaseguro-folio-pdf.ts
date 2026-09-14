@@ -138,7 +138,12 @@ export function resolveFirmaSeguroFinancialDisclosure(
   const snapshot = asRecord(credito.contratoSnapshot);
   const financiero = asRecord(snapshot?.financiero);
   const snapshotRounding = asRecord(financiero?.redondeoComercial);
+  const isCommercialContract =
+    (credito.calculoVersion ?? financiero?.calculoVersion) === "ARES_FRANCES_V2";
   const cuotaExacta =
+    (isCommercialContract
+      ? finiteNumber(credito.cuotaTotalExacta) ?? finiteNumber(financiero?.cuotaTotalExacta)
+      : null) ??
     finiteNumber(credito.valorCuota) ??
     finiteNumber(financiero?.cuotaTotalExacta) ??
     0;
@@ -148,6 +153,11 @@ export function resolveFirmaSeguroFinancialDisclosure(
     cuotaExacta;
 
   return {
+    isCommercialContract,
+    cuotaPactada: finiteNumber(credito.valorCuota) ?? finiteNumber(financiero?.cuotaPactada) ?? cuotaComercial,
+    descuentoRedondeo: isCommercialContract
+      ? finiteNumber(credito.descuentoRedondeo) ?? finiteNumber(financiero?.descuentoRedondeo) ?? 0
+      : 0,
     cuotaExacta,
     cuotaComercial,
     tasaInteresEa:
@@ -803,7 +813,9 @@ export async function buildFirmaSeguroCreditPdf(
   );
   writeParagraph(
     doc,
-    `3. OBLIGACIONES. El arrendador entregara el equipo operativo y garantizara su funcionamiento, salvo danos por mal uso. El arrendatario pagara ${valueOrDash(
+    financialDisclosure.isCommercialContract
+      ? `3. OBLIGACIONES. El arrendador entregara el equipo operativo y garantizara su funcionamiento, salvo danos por mal uso. El arrendatario pagara ${valueOrDash(credito.plazoMeses)} cuotas iguales de ${formatCurrency(financialDisclosure.cuotaPactada)}, con frecuencia ${paymentFrequency.toLowerCase()}, redondeadas hacia abajo a multiplos de $50. El descuento total por redondeo de ${formatExactCurrency(financialDisclosure.descuentoRedondeo)} ya esta incluido en la obligacion y no se cobrara en la ultima cuota. El arrendatario conservara el equipo en buen estado y no lo subarrendara, no alterara su IMEI ni retirara los controles instalados.`
+      : `3. OBLIGACIONES. El arrendador entregara el equipo operativo y garantizara su funcionamiento, salvo danos por mal uso. El arrendatario pagara ${valueOrDash(
       credito.plazoMeses
     )} cuotas con valor exacto de referencia de ${formatExactCurrency(
       financialDisclosure.cuotaExacta

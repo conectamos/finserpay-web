@@ -1,0 +1,26 @@
+{
+  "source": "user-supplied ARES IPADLOCK configuration, 2026-09-14",
+  "format": "normalized mathematical specification; not the original JSON export",
+  "configuration": {
+    "annualEffectiveRatePercentage": 29.24,
+    "periodDays": 15,
+    "periodsPerYear": 24,
+    "periodicRateDecimals": 6,
+    "commercialRounding": { "mode": "floor", "multiple": 50 }
+  },
+  "nodes": [
+    { "name": "capital", "formula": "valor_venta - cuota_inicial" },
+    { "name": "cuota_capital", "amortizes": true, "capitalSource": "capital", "method": "French fixed installment" },
+    { "name": "valor_financiar", "formula": "capital" },
+    { "name": "aval", "input": 75 },
+    { "name": "cuota_aval", "formula": "(capital * aval) / (100 * plazo)" },
+    { "name": "seguro", "input": 0.6 },
+    { "name": "cuota_seguro", "formula": "((capital * seguro) / 1000) / 2" },
+    { "name": "total_cuota", "formula": "cuota_capital + cuota_aval + cuota_seguro" }
+  ],
+  "examples": [
+    { "sale": 2600000, "initial": 780000, "installments": 40, "commercialInstallment": 90850 },
+    { "sale": 1980000, "initial": 594000, "installments": 48, "commercialInstallment": 59150 },
+    { "sale": 2600000, "initial": 780000, "installments": 48, "commercialInstallment": 77700 }
+  ]
+}

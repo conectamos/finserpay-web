@@ -59,6 +59,10 @@ function evaluatePlan(overrides = {}) {
       saldoFinanciado: 2_000_000,
       plazoMesesNumero: 24,
       iphoneInstallmentLimitExceeded: false,
+      iphoneFactorySignaturePending: false,
+      iphoneFactoryRangeActive: false,
+      creditInstallmentOptions: ["24"],
+      plazoMeses: "24",
       equipoMarca: "IPHONE",
       equipoModelo: "IPHONE 13 PRO 256GB",
       simulatorMode: false,
@@ -211,6 +215,7 @@ function renderInstallment(overrides = {}) {
       exactCurrency: (value) => "COP " + value,
       canSeeInternalPricing: false,
       amortizationPlan: { cuotaTotal: 123_455.5 },
+      cuotaInternaLabel: "Cuota exacta para recaudo",
     }
   );
   return renderToStaticMarkup(element);

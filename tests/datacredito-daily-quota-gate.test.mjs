@@ -7,6 +7,8 @@ import * as jsxRuntime from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as icons from "lucide-react";
 import ts from "typescript";
+import { createJiti } from "jiti";
+import { fileURLToPath } from "node:url";
 import {
   DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT,
   DATACREDITO_MAX_INSTALLMENT_COUNT,
@@ -14,6 +16,9 @@ import {
 import { resolveMissingAssessmentGateView } from "../lib/datacredito/resume-gate.ts";
 import { normalizeSolicitudFilters, resolveSolicitudStage, SOLICITUD_STATE_LABELS } from "../lib/solicitudes.ts";
 import { formatQuotaRehabilitationDate } from "../lib/datacredito/quota-rehabilitation-date.ts";
+
+const jiti = createJiti(import.meta.url, { alias: { "@": fileURLToPath(new URL("..", import.meta.url)) } });
+const { hasCurrentCreditOriginationTerms } = jiti("../lib/credit-current-origination-terms.ts");
 
 const readSource = (path) => readFile(new URL(path, import.meta.url), "utf8");
 const [gate, factory, creditPage, wall, modal, sharedUi] = await Promise.all([
@@ -183,6 +188,7 @@ function createGateHarness({ responses = [], overrides = {}, callbacks = ["check
     platform: "IPHONE", initialSolicitudId: null, initialAssessmentId: null,
     normalizedInitialDocument: "123456789", normalizedInitialSurname: "PRUEBA",
     normalizedInitialErrorCode: "", identityMismatchRecovery: false, newQueryRetryRecovery: false,
+    financialTermsRecovery: false, financialReuseUnavailable: false, hasCurrentCreditOriginationTerms,
     quotaRefreshAbortRef: { current: null }, submissionInFlightRef: { current: false },
     expiredRequerySolicitudIdRef: { current: null },
     approvedAssessmentIdsRef: { current: new Set() },
@@ -209,7 +215,7 @@ function createGateHarness({ responses = [], overrides = {}, callbacks = ["check
     "view", "dailyQueryLimitReached", "dailyQuotaModalOpen", "correlationId",
     "conflictMessage", "retryMode", "formErrors", "consentAccepted", "consentText",
     "consumedCreditId", "approvedResult", "documentNumber", "firstSurname",
-    "checkingDailyQuota", "dailyQuotaCheckError",
+    "checkingDailyQuota", "dailyQuotaCheckError", "financialReuseUnavailable",
   ]) {
     context[`set${key[0].toUpperCase()}${key.slice(1)}`] = (value) => {
       state[key] = typeof value === "function" ? value(state[key]) : value;
@@ -224,6 +230,49 @@ function createGateHarness({ responses = [], overrides = {}, callbacks = ["check
   const functions = runInNewContext(outputText, context, { timeout: 1000 });
   return { state, requests, approvals, functions, context };
 }
+
+test("financial renewal submits reuse-only and accepts only current commercial terms", async () => {
+  const financialSettings = {
+    calculoVersion: "ARES_FRANCES_V2", tasaInteresEa: 29.24, fianzaTotalPorcentaje: 75,
+    seguroCuotaPorcentaje: 0.03, tasaPeriodoDecimales: 6,
+    redondeoComercial: { modo: "PISO", multiplo: 50 },
+  };
+  for (const current of [true, false]) {
+    const harness = createGateHarness({
+      responses: [{ body: {
+        ...approved,
+        assessment: { ...approved.assessment, offer: { ...approved.assessment.offer,
+          financialSettings: { ...financialSettings, tasaInteresEa: current ? 29.24 : 29.66 },
+        } },
+      } }],
+      overrides: { initialSolicitudId: 12, financialTermsRecovery: true },
+    });
+    await harness.functions.submitAssessment({ preventDefault() {} });
+    assert.equal(harness.requests.length, 1);
+    const submitted = JSON.parse(harness.requests[0].body);
+    assert.equal(submitted.solicitudId, 12);
+    assert.equal(submitted.reuseOnly, true);
+    assert.equal(submitted.refreshFinancialTerms, true);
+    assert.equal(submitted.consentAccepted, true);
+    assert.equal(harness.state.view, current ? "approved" : "unavailable");
+    assert.equal(harness.approvals.length, current ? 1 : 0);
+  }
+});
+
+test("financial renewal expiry prevents retries from becoming a new query", async () => {
+  const harness = createGateHarness({
+    responses: [{ status: 409, body: { ok: false, code: "ASSESSMENT_REUSE_NOT_FOUND" } }],
+    overrides: { initialSolicitudId: 12, financialTermsRecovery: true },
+  });
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  assert.equal(harness.state.view, "ready");
+  assert.equal(harness.state.financialReuseUnavailable, true);
+  assert.equal(harness.state.consentAccepted, false);
+  assert.equal(harness.approvals.length, 0);
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  assert.equal(harness.requests.length, 1);
+  assert.equal(JSON.parse(harness.requests[0].body).reuseOnly, true);
+});
 
 test("validates complete server snapshots without inventing exhausted or available quota", () => {
   const { functions } = createGateHarness({ callbacks: [] });

@@ -925,8 +925,8 @@ model CatalogoEquipoModelo {
 model CreditoConfiguracion {
   id                           Int      @id @default(autoincrement())
   nombre                       String   @unique
-  calculoVersion               String?  @default("ARES_FRANCES_V1")
-  tasaInteresEa                Float    @default(29.66)
+  calculoVersion               String?  @default("ARES_FRANCES_V2")
+  tasaInteresEa                Float    @default(29.24)
   fianzaPorcentaje             Float    @default(75)
   fianzaTotalPorcentaje        Float?   @default(75)
   fianzaCuotaPorcentaje        Float    @default(2.083333)

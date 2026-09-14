@@ -7,6 +7,7 @@ import {
 
 export const FRENCH_AMORTIZATION_VERSION = "FRANCES_V1";
 export const ARES_FRENCH_AMORTIZATION_VERSION = "ARES_FRANCES_V1";
+export const ARES_COMMERCIAL_AMORTIZATION_VERSION = "ARES_FRANCES_V2";
 export const DEFAULT_INSTALLMENT_SURETY_PERCENTAGE = 2.083333;
 export const DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE = 0.03;
 export const ARES_PERIODIC_RATE_DECIMALS = 6;
@@ -14,7 +15,8 @@ export const ARES_COMMERCIAL_INSTALLMENT_INCREMENT = 50;
 
 export type FrenchAmortizationVersion =
   | typeof FRENCH_AMORTIZATION_VERSION
-  | typeof ARES_FRENCH_AMORTIZATION_VERSION;
+  | typeof ARES_FRENCH_AMORTIZATION_VERSION
+  | typeof ARES_COMMERCIAL_AMORTIZATION_VERSION;
 
 export type CommercialInstallmentRounding = {
   modo: "REDONDEO" | "PISO";
@@ -67,10 +69,15 @@ export type FrenchAmortizationResult = {
   cuotaSeguro: number;
   cuotaTotal: number;
   cuotaComercial: number;
+  /** Cuota pactada para recaudo; V1 conserva su valor exacto historico. */
+  cuotaCobro: number;
   valorInteresTotal: number;
   valorFianzaTotal: number;
   valorSeguroTotal: number;
   montoTotal: number;
+  /** Total matematico antes del descuento comercial, sin alterar componentes. */
+  montoTotalExacto: number;
+  descuentoRedondeo: number;
   cuotas: FrenchAmortizationInstallment[];
 };
 
@@ -178,7 +185,24 @@ export function calculateFrenchAmortization(
   input: FrenchAmortizationInput
 ): FrenchAmortizationResult {
   const version = input.calculoVersion || ARES_FRENCH_AMORTIZATION_VERSION;
-  const aresCompatible = version === ARES_FRENCH_AMORTIZATION_VERSION;
+  const commercialContract = version === ARES_COMMERCIAL_AMORTIZATION_VERSION;
+  const aresCompatible =
+    version === ARES_FRENCH_AMORTIZATION_VERSION || commercialContract;
+
+  if (
+    commercialContract &&
+    ((input.tasaPeriodoDecimales !== undefined &&
+      input.tasaPeriodoDecimales !== ARES_PERIODIC_RATE_DECIMALS) ||
+      (input.redondeoComercial !== undefined &&
+        (input.redondeoComercial.modo !== "PISO" ||
+          input.redondeoComercial.multiplo !==
+            ARES_COMMERCIAL_INSTALLMENT_INCREMENT)))
+  ) {
+    throw new Error(
+      "ARES_FRANCES_V2 requiere tasa periodica a 6 decimales y redondeo PISO en multiplos de $50."
+    );
+  }
+
   const valorVenta = nonNegativeNumber(input.valorVenta, "valorVenta");
   const cuotaInicial = nonNegativeNumber(input.cuotaInicial, "cuotaInicial");
   const numeroCuotas = positiveInteger(input.numeroCuotas, "numeroCuotas");
@@ -271,15 +295,34 @@ export function calculateFrenchAmortization(
     };
   });
 
-  const montoTotal =
+  const montoTotalExacto =
     valorFinanciado + valorInteresTotal + valorFianzaTotal + valorSeguroTotal;
+  const montoTotal = commercialContract
+    ? cuotaComercial * numeroCuotas
+    : montoTotalExacto;
+
+  if (commercialContract && montoTotal < valorFinanciado) {
+    throw new Error(
+      "El redondeo de la cuota no puede reducir el cobro total por debajo del capital financiado."
+    );
+  }
+
+  // ARES V2 pacta el importe comercial en todas las cuotas, incluida la ultima.
+  // La diferencia es un descuento trazable, no capital pendiente ni un residual
+  // que deba recuperarse al terminar el calendario. Los componentes franceses
+  // exactos se conservan para auditar la tasa y conciliar el descuento.
+  const descuentoRedondeo = commercialContract
+    ? Math.max(0, montoTotalExacto - montoTotal)
+    : 0;
   const montoCobro = roundCurrency(montoTotal);
   let cobroAsignado = 0;
   const cuotas = cuotasExactas.map((cuota, index) => {
     const ultimaCuota = index === cuotasExactas.length - 1;
-    const cuotaCobro = ultimaCuota
-      ? roundCurrency(montoCobro - cobroAsignado)
-      : roundCurrency(cuota.cuotaTotal);
+    const cuotaCobro = commercialContract
+      ? cuotaComercial
+      : ultimaCuota
+        ? roundCurrency(montoCobro - cobroAsignado)
+        : roundCurrency(cuota.cuotaTotal);
     cobroAsignado = roundCurrency(cobroAsignado + cuotaCobro);
     return { ...cuota, cuotaCobro };
   });
@@ -302,10 +345,13 @@ export function calculateFrenchAmortization(
     cuotaSeguro,
     cuotaTotal,
     cuotaComercial,
+    cuotaCobro: commercialContract ? cuotaComercial : cuotaTotal,
     valorInteresTotal,
     valorFianzaTotal,
     valorSeguroTotal,
     montoTotal,
+    montoTotalExacto,
+    descuentoRedondeo,
     cuotas,
   };
 }

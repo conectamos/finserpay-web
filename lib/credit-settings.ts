@@ -168,7 +168,7 @@ function normalizeCalculationVersion(
     DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.calculoVersion
 ) {
   const normalized = String(value || "").trim().toUpperCase();
-  return normalized === "FRANCES_V1" || normalized === "ARES_FRANCES_V1"
+  return normalized === "FRANCES_V1" || normalized === "ARES_FRANCES_V1" || normalized === "ARES_FRANCES_V2"
     ? normalized
     : fallback;
 }
@@ -256,7 +256,7 @@ export function getPlatformCreditSettings(
 
 function toCreditSettings(row?: Record<string, unknown> | null): CreditSettings {
   const calculoVersion = normalizeCalculationVersion(row?.calculoVersion);
-  const aresCalculation = calculoVersion === "ARES_FRANCES_V1";
+  const aresCalculation = calculoVersion === "ARES_FRANCES_V1" || calculoVersion === "ARES_FRANCES_V2";
   const plazoMaximoCuotas = normalizeCreditInstallmentLimit(
     row?.plazoMaximoCuotas,
     DEFAULT_MAX_CREDIT_INSTALLMENTS
@@ -451,7 +451,7 @@ export async function ensureCreditSettingsTable() {
     CREATE TABLE IF NOT EXISTS "CreditoConfiguracion" (
       id SERIAL PRIMARY KEY,
       nombre TEXT NOT NULL UNIQUE,
-      "calculoVersion" TEXT DEFAULT 'ARES_FRANCES_V1',
+      "calculoVersion" TEXT DEFAULT 'ARES_FRANCES_V2',
       "tasaInteresEa" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.tasaInteresEa},
       "fianzaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.fianzaTotalPorcentaje},
       "fianzaTotalPorcentaje" DOUBLE PRECISION DEFAULT ${DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.fianzaTotalPorcentaje},
@@ -618,6 +618,8 @@ export async function ensureCreditSettingsTable() {
   // One-shot marker: only the pre-existing GLOBAL row with no calculation
   // version receives ARES defaults. Once marked, later administrator changes
   // are never overwritten by schema preparation.
+  // Keep this historical bootstrap on V1. Activating V2 on an existing GLOBAL
+  // requires the explicit ares-commercial-policy-upgrade operation.
   await prisma.$executeRawUnsafe(
     `UPDATE "CreditoConfiguracion"
      SET "calculoVersion" = $2,
@@ -632,8 +634,8 @@ export async function ensureCreditSettingsTable() {
      WHERE nombre = $1
        AND "calculoVersion" IS NULL`,
     CREDIT_SETTINGS_KEY,
-    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.calculoVersion,
-    DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.tasaInteresEa,
+    "ARES_FRANCES_V1",
+    29.66,
     DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.fianzaTotalPorcentaje,
     DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.seguroCuotaPorcentaje,
     DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.tasaPeriodoDecimales,
@@ -789,21 +791,21 @@ export async function updateCreditSettings(params: {
     current.seguroCuotaPorcentaje
   );
   const tasaPeriodoDecimales =
-    calculoVersion === "ARES_FRANCES_V1"
+    calculoVersion === "ARES_FRANCES_V1" || calculoVersion === "ARES_FRANCES_V2"
       ? 6
       : normalizeAresRateDecimals(
           params.tasaPeriodoDecimales,
           current.tasaPeriodoDecimales
         );
   const redondeoComercialModo =
-    calculoVersion === "ARES_FRANCES_V1"
+    calculoVersion === "ARES_FRANCES_V1" || calculoVersion === "ARES_FRANCES_V2"
       ? "PISO"
       : normalizeCommercialRoundingMode(
           params.redondeoComercialModo,
           current.redondeoComercialModo
         );
   const redondeoComercialMultiplo =
-    calculoVersion === "ARES_FRANCES_V1"
+    calculoVersion === "ARES_FRANCES_V1" || calculoVersion === "ARES_FRANCES_V2"
       ? 50
       : normalizeCommercialRoundingMultiple(
           params.redondeoComercialMultiplo,
@@ -948,7 +950,8 @@ export async function upsertCreditDocumentException(params: {
     params.calculoVersion
   );
   const aresCalculation =
-    (calculoVersion || globalSettings.calculoVersion) === "ARES_FRANCES_V1";
+    (calculoVersion || globalSettings.calculoVersion) === "ARES_FRANCES_V1" ||
+    (calculoVersion || globalSettings.calculoVersion) === "ARES_FRANCES_V2";
   const tasaPeriodoDecimales = calculoVersion
     ? aresCalculation
       ? 6

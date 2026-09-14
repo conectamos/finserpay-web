@@ -8,6 +8,7 @@ import {
   shouldLoadDataCreditoPolicy,
 } from "@/lib/datacredito/policy-access";
 import {
+  DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
   DATACREDITO_NO_INFORMATION_SCORE,
   DataCreditoPolicyValidationError,
   normalizeDataCreditoPlatform,
@@ -298,8 +299,8 @@ export async function PATCH(request: Request) {
     const financialSettings = parseDataCreditoPolicyFinancialSettings(
       body.financialSettings ??
         assigned.policy.financialSettings ?? {
-          calculoVersion: "ARES_FRANCES_V1",
-          tasaInteresEa: creditDefaults.tasaInteresEa,
+          calculoVersion: DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.calculoVersion,
+          tasaInteresEa: DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.tasaInteresEa,
           fianzaTotalPorcentaje: creditDefaults.fianzaTotalPorcentaje,
           seguroCuotaPorcentaje: creditDefaults.seguroCuotaPorcentaje,
           frecuenciaPago: creditDefaults.frecuenciaPago,

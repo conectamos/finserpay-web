@@ -200,7 +200,7 @@ test("un fallo posterior al inicio del proveedor deja el mismo resultado ambiguo
   const failureTracking = sourceBetween(
     route,
     "if (pendingAssessmentId) {",
-    "} else if (solicitudId) {"
+    "} else if (solicitudId && !financialTermsRefreshRequested) {"
   );
   const preDispatchCompensation = sourceBetween(
     failureTracking,

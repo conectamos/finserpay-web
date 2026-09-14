@@ -12,6 +12,7 @@ import {
 } from "@/lib/datacredito/storage";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import {
+  DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
   parseDataCreditoPolicyBands,
   parseDataCreditoPolicyFinancialSettings,
   parseDataCreditoPolicyPriorityRules,
@@ -731,8 +732,8 @@ export async function listDataCreditoPolicyCatalog() {
   return {
     defaultPolicyId: DEFAULT_DATACREDITO_POLICY_PROFILE_ID,
     financialDefaults: {
-      calculoVersion: "ARES_FRANCES_V1" as const,
-      tasaInteresEa: creditDefaults.tasaInteresEa,
+      calculoVersion: DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.calculoVersion,
+      tasaInteresEa: DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS.tasaInteresEa,
       fianzaTotalPorcentaje: creditDefaults.fianzaTotalPorcentaje,
       seguroCuotaPorcentaje: creditDefaults.seguroCuotaPorcentaje,
       frecuenciaPago: creditDefaults.frecuenciaPago,

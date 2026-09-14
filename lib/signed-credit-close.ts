@@ -41,7 +41,8 @@ export function resolveSignedCreditPolicyFinancialSettings(
   const calculoVersion = snapshot.calculoVersion;
   if (
     calculoVersion !== "FRANCES_V1" &&
-    calculoVersion !== "ARES_FRANCES_V1"
+    calculoVersion !== "ARES_FRANCES_V1" &&
+    calculoVersion !== "ARES_FRANCES_V2"
   ) {
     throw new Error("La version de calculo financiero firmada no es valida.");
   }

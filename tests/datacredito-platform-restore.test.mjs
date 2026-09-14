@@ -5,9 +5,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { createJiti } from "jiti";
 import { resolveMissingAssessmentGateView } from "../lib/datacredito/resume-gate.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
+const { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE } = jiti("../lib/credit-current-origination-terms.ts");
 const source = (file) => readFile(path.join(projectRoot, file), "utf8");
 
 const [storage, assessmentRoute, gate, factory] = await Promise.all([
@@ -131,6 +134,7 @@ async function bootstrapRestoredGate(overrides = {}, policyOverrides = {}) {
     readString: (value) => typeof value === "string" ? value : null,
     normalizeDailyQueryLimitReached: () => null,
     CONSENT_ATTESTATION: "Autorización del titular requerida",
+    CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE,
     resolveMissingAssessmentGateView,
     expiredRequerySolicitudIdRef: { current: null },
     quotaRefreshAbortRef: { current: null },
