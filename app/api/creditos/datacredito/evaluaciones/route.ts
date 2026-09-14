@@ -43,6 +43,7 @@ import {
   failDataCreditoAssessment,
   failDataCreditoAssessmentBeforeProviderDispatch,
   getAssignedDataCreditoPolicy,
+  getDataCreditoAssessmentById,
   hashDataCreditoRequestMetadata,
   isDataCreditoAuditConfigured,
   normalizeDataCreditoDocument,
@@ -54,7 +55,9 @@ import {
   type DataCreditoDailyQuotaReservation,
 } from "@/lib/datacredito/storage";
 import { canRecoverAssessmentIdentityMismatch } from "@/lib/datacredito/resume-gate";
-import { tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
+import { getLatestFirmaSeguroProcessByDraft, tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
+import { isFirmaSeguroFailedStatus } from "@/lib/firmaseguro-status";
+import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginationTerms } from "@/lib/credit-current-origination-terms";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import {
@@ -81,7 +84,37 @@ type EvaluationBody = {
   platform?: unknown;
   consentAccepted?: unknown;
   reuseOnly?: unknown;
+  refreshFinancialTerms?: unknown;
 };
+
+async function canRefreshFinancialTerms(input: {
+  requested: boolean;
+  reuseOnly: boolean;
+  context: Awaited<ReturnType<typeof getActiveSolicitudCreditContext>> | null;
+  documentNumber: string;
+  firstSurname: string;
+  platform: string;
+}) {
+  const context = input.context;
+  if (!input.requested || !input.reuseOnly || !context?.dataCreditoAssessmentId) return false;
+  if (normalizeDataCreditoDocument(context.clienteDocumento) !== input.documentNumber ||
+      normalizeDataCreditoSurname(context.clientePrimerApellido) !== input.firstSurname ||
+      normalizeDataCreditoPlatform(context.plataforma) !== input.platform) return false;
+  const assessment = await getDataCreditoAssessmentById(context.dataCreditoAssessmentId);
+  const identity = buildDataCreditoIdentityHashes(input);
+  if (!assessment || assessment.status !== "APROBADO" || assessment.consumedAt || assessment.creditId ||
+      assessment.claimTokenHash || assessment.documentHash !== identity.documentHash ||
+      assessment.surnameHash !== identity.surnameHash || assessment.platform !== input.platform ||
+      assessment.userId !== context.usuarioId || assessment.sellerId !== context.vendedorId ||
+      assessment.sedeId !== context.sedeId || assessment.aliadoId !== context.aliadoId ||
+      hasCurrentCreditOriginationTerms(assessment.offer?.financialSettings)) return false;
+  const signature = await getLatestFirmaSeguroProcessByDraft(context.id);
+  // A remote request may still complete after a timeout. Only a terminal failure
+  // without a signed document permits replacement of its unsigned offer.
+  if (signature && (signature.creditoId || signature.completedAt || signature.signedDocumentBase64 ||
+      !isFirmaSeguroFailedStatus(signature.status))) return false;
+  return true;
+}
 
 function technicalResponse(input: {
   correlationId: string;
@@ -195,6 +228,7 @@ export async function POST(request: Request) {
   let providerStartedAt: number | null = null;
   let dailyQuotaReservation: DataCreditoDailyQuotaReservation | null = null;
   let solicitudId: number | null = null;
+  let financialTermsRefreshRequested = false;
   let solicitudOperationLock: Awaited<
     ReturnType<typeof tryAcquireSolicitudOperationLock>
   > = null;
@@ -243,6 +277,11 @@ export async function POST(request: Request) {
     const documentNumber = normalizeDataCreditoDocument(rawDocumentNumber);
     const firstSurname = normalizeDataCreditoSurname(body.firstSurname);
     const reuseOnly = body.reuseOnly === true;
+    financialTermsRefreshRequested = body.refreshFinancialTerms === true;
+    if (financialTermsRefreshRequested && (!reuseOnly || !requestedSolicitudId)) {
+      return technicalResponse({ correlationId, code: "ASSESSMENT_RECOVERY_NOT_ALLOWED", status: 409,
+        error: "La renovación financiera exige una solicitud existente y reutilizar únicamente una consulta vigente" });
+    }
 
     if (!platform) {
       return technicalResponse({
@@ -367,7 +406,12 @@ export async function POST(request: Request) {
           errorCode: solicitudContext.dataCreditoErrorCode,
         })
       : false;
-    if (reuseOnly && !identityMismatchRecovery) {
+    const financialTermsRecovery = await canRefreshFinancialTerms({
+      requested: financialTermsRefreshRequested, reuseOnly, context: solicitudContext,
+      documentNumber, firstSurname, platform,
+    });
+    if ((financialTermsRefreshRequested && !financialTermsRecovery) ||
+        (reuseOnly && !identityMismatchRecovery && !financialTermsRecovery)) {
       return technicalResponse({
         correlationId,
         code: "ASSESSMENT_RECOVERY_NOT_ALLOWED",
@@ -435,6 +479,10 @@ export async function POST(request: Request) {
       });
     }
     const policy = assignedPolicy.policy;
+    if (financialTermsRecovery && !hasCurrentCreditOriginationTerms(policy.financialSettings)) {
+      return technicalResponse({ correlationId, code: CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, status: 409,
+        error: "El administrador debe actualizar la política del aliado antes de renovar la oferta. No se realizó una nueva consulta." });
+    }
 
     if (
       process.env.NODE_ENV === "production" &&
@@ -511,7 +559,12 @@ export async function POST(request: Request) {
         imei: lockedSolicitudContext.imei,
         errorCode: lockedSolicitudContext.dataCreditoErrorCode,
       });
-    if (reuseOnly && !lockedIdentityMismatchRecovery) {
+    const lockedFinancialTermsRecovery = await canRefreshFinancialTerms({
+      requested: financialTermsRefreshRequested, reuseOnly, context: lockedSolicitudContext,
+      documentNumber, firstSurname, platform,
+    });
+    if ((financialTermsRefreshRequested && !lockedFinancialTermsRecovery) ||
+        (reuseOnly && !lockedIdentityMismatchRecovery && !lockedFinancialTermsRecovery)) {
       return technicalResponse({
         correlationId,
         code: "ASSESSMENT_RECOVERY_NOT_ALLOWED",
@@ -564,6 +617,11 @@ export async function POST(request: Request) {
       providerEnvironment: provider.environment,
     });
     if (cached?.kind === "REUSED") {
+      if (lockedFinancialTermsRecovery && cached.assessment.status === "APROBADO" &&
+          !hasCurrentCreditOriginationTerms(cached.assessment.offer?.financialSettings)) {
+        return technicalResponse({ correlationId, code: CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, status: 409,
+          error: "La oferta reutilizada aún conserva condiciones anteriores. No se modificó la solicitud ni se hizo una consulta nueva." });
+      }
       await attachDataCreditoToSolicitud({
         solicitudId,
         assessmentId: cached.assessment.id,
@@ -576,6 +634,16 @@ export async function POST(request: Request) {
         reused: true,
         solicitudId,
         ...serializeDataCreditoAssessment(cached.assessment),
+      });
+    }
+    if (lockedFinancialTermsRecovery) {
+      // Preserve the existing assessment link and draft evidence on recovery
+      // failure. This branch always ends before any paid provider reservation.
+      return technicalResponse({
+        correlationId, code: cached ? `ASSESSMENT_${cached.kind}` : "ASSESSMENT_REUSE_NOT_FOUND", status: 409,
+        error: cached
+          ? "No fue posible reutilizar la consulta vigente. La solicitud se conserva y no se realizó una consulta nueva."
+          : "No hay una consulta reutilizable dentro de los 15 días. Se requiere autorización explícita antes de iniciar una consulta nueva; no se hizo ninguna consulta ni cobro.",
       });
     }
     if (cached?.kind === "ALREADY_CONSUMED") {
@@ -1080,7 +1148,7 @@ export async function POST(request: Request) {
           }).catch(() => undefined)
         );
       }
-    } else if (solicitudId) {
+    } else if (solicitudId && !financialTermsRefreshRequested) {
       await markSolicitudDataCreditoTechnicalError({
         solicitudId,
         errorCode: code,

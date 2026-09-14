@@ -35,7 +35,15 @@ import {
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import { validateCreditContactPhones } from "@/lib/credit-contact-phones";
-import { calculateFrenchAmortization } from "@/lib/credit-amortization";
+import {
+  ARES_COMMERCIAL_AMORTIZATION_VERSION,
+  calculateFrenchAmortization,
+} from "@/lib/credit-amortization";
+import {
+  CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE,
+  CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE,
+  hasCurrentCreditOriginationTerms,
+} from "@/lib/credit-current-origination-terms";
 import { validateCreditClientForm } from "@/lib/credit-client-validation";
 import {
   resolveCreditPolicyFinancialSettings,
@@ -1815,6 +1823,18 @@ export async function POST(req: Request) {
               : null,
             numeroCuotas: plazoMeses,
           });
+    if (
+      !signedTermsSnapshot &&
+      !hasCurrentCreditOriginationTerms(resolvedPolicyFinancialSettings)
+    ) {
+      return NextResponse.json(
+        {
+          code: CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE,
+          error: CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE,
+        },
+        { status: 409 }
+      );
+    }
     const frecuenciaPago = normalizePaymentFrequency(
       resolvedPolicyFinancialSettings.frecuenciaPago
     );
@@ -2017,7 +2037,7 @@ export async function POST(req: Request) {
     const financialPlan = {
       saldoBaseFinanciado: amortizationPlan.valorFinanciado,
       montoCreditoTotal: roundCurrency(amortizationPlan.montoTotal),
-      valorCuota: amortizationPlan.cuotaTotal,
+      valorCuota: amortizationPlan.cuotaCobro,
       cuotaComercial: amortizationPlan.cuotaComercial,
       tasaInteresEa: amortizationPlan.tasaInteresEa,
       valorInteres: roundCurrency(amortizationPlan.valorInteresTotal),
@@ -2030,7 +2050,7 @@ export async function POST(req: Request) {
     const valorCuota = financialPlan.valorCuota;
     const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
       platform: plataformaDispositivo,
-      valorCuota: amortizationPlan.cuotaTotal,
+      valorCuota: amortizationPlan.cuotaCobro,
       enforceFactoryRange: !signedTermsSnapshot,
       iphoneMaxInstallmentValue: dataCreditoFinancingTerms
         ? dataCreditoFinancingTerms.maxInstallmentAmount
@@ -3172,6 +3192,13 @@ export async function POST(req: Request) {
         cuotaSeguroExacta: amortizationPlan.cuotaSeguro,
         cuotaTotalExacta: amortizationPlan.cuotaTotal,
         cuotaComercial: amortizationPlan.cuotaComercial,
+        ...(amortizationPlan.version === ARES_COMMERCIAL_AMORTIZATION_VERSION
+          ? {
+              cuotaPactada: amortizationPlan.cuotaCobro,
+              totalPagarExacto: amortizationPlan.montoTotalExacto,
+              descuentoRedondeo: amortizationPlan.descuentoRedondeo,
+            }
+          : {}),
         valorSeguro: amortizationPlan.valorSeguroTotal,
         valorCuota,
         origenParametros: financialParameterOrigins,
@@ -3442,6 +3469,13 @@ export async function POST(req: Request) {
     const amortizationParametersSnapshot = {
       metodo: amortizationPlan.metodo,
       calculoVersion: amortizationPlan.version,
+      ...(amortizationPlan.version === ARES_COMMERCIAL_AMORTIZATION_VERSION
+        ? {
+            cuotaPactada: amortizationPlan.cuotaCobro,
+            totalPagarExacto: amortizationPlan.montoTotalExacto,
+            descuentoRedondeo: amortizationPlan.descuentoRedondeo,
+          }
+        : {}),
       origenFianza: resolvedPolicyFinancialSettings.fianzaModalidad,
       fuenteFianza: resolvedPolicyFinancialSettings.fianzaSource,
       fianzaTotalPorcentaje:

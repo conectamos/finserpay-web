@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
 import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
+import { resolveFirmaSeguroFinancialDisclosure } from "@/lib/firmaseguro-folio-pdf";
 
 export type CreditForFirmaSeguroPdf = {
   folio: string;
@@ -24,6 +25,9 @@ export type CreditForFirmaSeguroPdf = {
   cuotaInicial?: number | null;
   valorCuota?: number | null;
   valorCuotaComercial?: number | null;
+  calculoVersion?: string | null;
+  cuotaTotalExacta?: number | null;
+  descuentoRedondeo?: number | null;
   tasaInteresEa?: number | null;
   tasaPeriodo?: number | null;
   fianzaCuotaPorcentaje?: number | null;
@@ -833,6 +837,7 @@ function getPagareNumber(credito: CreditForFirmaSeguroPdf) {
 }
 
 export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf) {
+  const disclosure = resolveFirmaSeguroFinancialDisclosure(credito);
   const fonts = getPdfFonts();
   const doc = new PDFDocument({
     size: "A4",
@@ -980,16 +985,20 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
         value: formatExactCurrency(totalObligacion),
       },
       { label: "Numero de cuotas", value: `${credito.plazoMeses || "-"} cuotas` },
-      { label: "Cuota exacta", value: formatExactCurrency(credito.valorCuota) },
+      { label: disclosure.isCommercialContract ? "Cuota pactada" : "Cuota exacta", value: formatExactCurrency(credito.valorCuota) },
       {
         label:
-          credito.redondeoComercialModo === "PISO" &&
+          disclosure.isCommercialContract
+            ? "Descuento total por redondeo (incluido)"
+            : credito.redondeoComercialModo === "PISO" &&
           Number(credito.redondeoComercialMultiplo || 0) > 0
             ? `Cuota comercial (piso $${Number(
                 credito.redondeoComercialMultiplo
               ).toLocaleString("es-CO")})`
             : "Cuota comercial (referencia)",
-        value: formatCurrency(credito.valorCuotaComercial || credito.valorCuota),
+        value: disclosure.isCommercialContract
+          ? formatExactCurrency(disclosure.descuentoRedondeo)
+          : formatCurrency(credito.valorCuotaComercial || credito.valorCuota),
       },
       { label: "Frecuencia", value: getPaymentFrequencyLabel(credito.frecuenciaPago) },
       { label: "Primer vencimiento", value: formatDateOnly(credito.fechaPrimerPago) },
@@ -1022,7 +1031,9 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   );
   paragraph(
     doc,
-    "El CLIENTE se obliga a pagar en las fechas acordadas. La cuota comercial es informativa; el plan exacto y el ajuste de centavos de la ultima cuota determinan el recaudo.",
+    disclosure.isCommercialContract
+      ? "El CLIENTE se obliga a pagar en las fechas acordadas la cuota pactada, redondeada hacia abajo a multiplos de $50. El descuento por redondeo ya esta incluido en el total de la obligacion y no se cobrara en la ultima cuota."
+      : "El CLIENTE se obliga a pagar en las fechas acordadas. La cuota comercial es informativa; el plan exacto y el ajuste de centavos de la ultima cuota determinan el recaudo.",
     fonts
   );
   sectionTitle(doc, "Tercera - Mora", fonts);
@@ -1119,7 +1130,9 @@ export async function buildFirmaSeguroCreditPdf(credito: CreditForFirmaSeguroPdf
   sectionTitle(doc, "Primera - Forma de pago", fonts);
   paragraph(
     doc,
-    `La obligacion sera pagada en ${credito.plazoMeses || "-"} cuotas con valor exacto de referencia de ${formatExactCurrency(
+    disclosure.isCommercialContract
+      ? `La obligacion sera pagada en ${credito.plazoMeses || "-"} cuotas iguales de ${formatCurrency(disclosure.cuotaPactada)}, para un total de ${formatCurrency(totalObligacion)}. La ultima cuota conserva el mismo valor pactado, sin cobro adicional por redondeo.`
+      : `La obligacion sera pagada en ${credito.plazoMeses || "-"} cuotas con valor exacto de referencia de ${formatExactCurrency(
       credito.valorCuota
     )}, conforme al plan pactado. La ultima cuota podra ajustarse por centavos para que el saldo termine exactamente en cero.`,
     fonts

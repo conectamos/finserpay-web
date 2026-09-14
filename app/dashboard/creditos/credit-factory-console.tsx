@@ -121,6 +121,7 @@ import {
   getColombiaDepartmentLabel,
 } from "@/lib/colombia-locations";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
+import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginationTerms } from "@/lib/credit-current-origination-terms";
 import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
 import CreditEvidenceGallery from "@/app/dashboard/creditos/credit-evidence-gallery";
 import {
@@ -3176,15 +3177,17 @@ export default function CreditFactoryConsole({
     })
   );
   const veriffExpectedDraftId = createClientMode ? draftId : undefined;
+  const dataCreditoFinancialTermsRecovery =
+    dataCreditoResumeErrorCode === CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE;
   const dataCreditoFlowReady =
     !dataCreditoCreditCreationMode ||
-    dataCreditoBypassed ||
-    Boolean(dataCreditoApproval);
+    (!dataCreditoFinancialTermsRecovery && (dataCreditoBypassed || Boolean(dataCreditoApproval)));
   const dataCreditoGatePending =
     dataCreditoCreditCreationMode && !dataCreditoFlowReady;
   const showDataCreditoGate =
     dataCreditoGatePending &&
     (draftResumeHydrating ||
+      dataCreditoFinancialTermsRecovery ||
       !canAdminMoveFreelyInFactory ||
       wizardStep === 1);
   const dataCreditoDraftLoading =
@@ -3644,7 +3647,7 @@ export default function CreditFactoryConsole({
 
         return !validateIphoneInstallmentLimit({
           platform: "IPHONE",
-          valorCuota: candidatePlan.cuotaTotal,
+          valorCuota: candidatePlan.cuotaCobro,
           enforceFactoryRange: iphoneFactoryRangeActive,
           iphoneMaxInstallmentValue,
         }).outsideRange;
@@ -3718,7 +3721,9 @@ export default function CreditFactoryConsole({
   const financialPlan = {
     saldoBaseFinanciado,
     montoCreditoTotal: amortizationPlan?.montoTotal ?? 0,
-    valorCuota: amortizationPlan?.cuotaComercial ?? 0,
+    valorCuota: amortizationPlan?.version === "ARES_FRANCES_V2"
+      ? amortizationPlan.cuotaCobro
+      : amortizationPlan?.cuotaComercial ?? 0,
     tasaInteresEa: amortizationPlan?.tasaInteresEa ?? tasaInteresEaNumero,
     valorInteres: amortizationPlan?.valorInteresTotal ?? 0,
     fianzaPorcentaje: amortizationPlan
@@ -3728,9 +3733,13 @@ export default function CreditFactoryConsole({
   const saldoFinanciado = financialPlan.montoCreditoTotal;
   const valorCuota = financialPlan.valorCuota;
   const valorCuotaExacta = amortizationPlan?.cuotaTotal ?? valorCuota;
+  const comercialEsCuotaPactada = amortizationPlan?.version === "ARES_FRANCES_V2";
+  const valorCuotaPactada = amortizationPlan?.cuotaCobro ?? valorCuotaExacta;
+  const cuotaPactadaLabel = comercialEsCuotaPactada ? "Valor de cada cuota" : "Valor exacto por cuota";
+  const cuotaInternaLabel = comercialEsCuotaPactada ? "Referencia matemática (no se cobra)" : "Cuota exacta para recaudo";
   const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
     platform: currentDevicePlatform,
-    valorCuota: amortizationPlan?.cuotaTotal ?? valorCuota,
+    valorCuota: valorCuotaPactada,
     enforceFactoryRange: iphoneFactoryRangeActive,
     iphoneMaxInstallmentValue,
   });
@@ -4010,7 +4019,7 @@ export default function CreditFactoryConsole({
           <ul className="mt-2 list-disc space-y-1 pl-5">
             <li>Numero de cuotas: {plazoMesesNumero || "{{NUM_CUOTAS}}"}</li>
             <li>Frecuencia de pago: {frecuenciaPagoLabel}</li>
-            <li>Valor exacto por cuota: {exactCurrency(valorCuotaExacta)}</li>
+            <li>{cuotaPactadaLabel}: {exactCurrency(valorCuotaPactada)}</li>
             <li>Fecha de inicio: {fechaPrimerPagoLabel}</li>
           </ul>
         </div>
@@ -5598,10 +5607,10 @@ export default function CreditFactoryConsole({
           <div className="mt-5">
             <p className="font-black text-slate-950">PRIMERA – FORMA DE PAGO</p>
             <p className="mt-2">
-              La obligacion sera pagada en {plazoMesesNumero || "{{cuotas}}"} cuotas
-              con valor exacto de referencia de {exactCurrency(valorCuotaExacta)}, con
+              La obligacion sera pagada en {plazoMesesNumero || "{{cuotas}}"} cuotas{" "}
+              {comercialEsCuotaPactada ? "de" : "con valor exacto de referencia de"} {exactCurrency(valorCuotaPactada)}, con
               frecuencia {frecuenciaPagoLabel.toLowerCase()}, conforme al plan pactado.
-              La ultima cuota podra ajustarse por centavos.
+              {!comercialEsCuotaPactada ? " La ultima cuota podra ajustarse por centavos." : null}
             </p>
           </div>
           <div className="mt-5">
@@ -8682,6 +8691,9 @@ export default function CreditFactoryConsole({
     );
 
     if (!result.ok || !result.data?.ok) {
+      if (result.data?.code === CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE) {
+        handleDataCreditoFinancialTermsOutdated();
+      }
       throw new Error(
         formatFirmaSeguroApiFailure(
           result.data,
@@ -9146,6 +9158,10 @@ export default function CreditFactoryConsole({
       });
 
       if (!result.ok) {
+        if (result.data?.code === CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE) {
+          handleDataCreditoFinancialTermsOutdated();
+          return null;
+        }
         if (
           result.data?.code === "DATACREDITO_ASSESSMENT_INVALID" ||
           result.data?.code === "DATACREDITO_ASSESSMENT_REQUIRED"
@@ -10489,6 +10505,7 @@ export default function CreditFactoryConsole({
       !createClientMode ||
       simulatorMode ||
       deliveryMode ||
+      dataCreditoFinancialTermsRecovery ||
       draftResumeHydrating ||
       draftResumeLoadFailed ||
       !draftId ||
@@ -10619,6 +10636,7 @@ export default function CreditFactoryConsole({
     canAdminMoveFreelyInFactory,
     createClientMode,
     deliveryMode,
+    dataCreditoFinancialTermsRecovery,
     draftHasMeaningfulData,
     draftId,
     draftResumeLoadFailed,
@@ -10651,9 +10669,29 @@ export default function CreditFactoryConsole({
     setFianzaPorcentaje(String(creditSettings.fianzaPorcentaje));
   };
 
+  const handleDataCreditoFinancialTermsOutdated = () => {
+    const signatureState = resolveFirmaSeguroProcessUiState(firmaSeguroDraftProcess);
+    if (signatureState === "waiting" || signatureState === "signed") return false;
+    cancelPendingDraftAutosave();
+    setDataCreditoResumeErrorCode(CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE);
+    setDataCreditoBypassed(false);
+    updateDraftResumeHydration(false);
+    setWizardStep(1);
+    setNotice({
+      text: "La oferta conserva condiciones anteriores. Renueva la oferta con la consulta vigente, sin una nueva consulta ni cobro. Se conservan el equipo, la inicial y la validación facial.",
+      tone: "amber",
+    });
+    return true;
+  };
+
   const handleDataCreditoApproved = async (
     result: DataCreditoApprovedResult
   ) => {
+    const refreshingFinancialTerms = dataCreditoFinancialTermsRecovery;
+    if (refreshingFinancialTerms && !hasCurrentCreditOriginationTerms(result.offer.financialSettings)) {
+      setNotice({ text: "La política aún conserva condiciones anteriores. El administrador debe actualizarla antes de renovar la oferta. No se hizo una nueva consulta.", tone: "amber" });
+      return;
+    }
     const restoredDraftSnapshot = restoredDraftSnapshotRef.current;
     const restoredDraftId = result.solicitudId || draftId;
     const restoringDraftAssessment = Boolean(
@@ -10685,7 +10723,7 @@ export default function CreditFactoryConsole({
             restoredDraftSnapshot.plazoMeses,
             maxInstallmentCount
           )
-        : sameAssessment
+        : sameAssessment || refreshingFinancialTerms
           ? parseCreditInstallmentSelection(plazoMeses, maxInstallmentCount)
           : null;
     const installmentCount = restoredInstallmentCount ?? maxInstallmentCount;
@@ -10701,13 +10739,13 @@ export default function CreditFactoryConsole({
     const restoredFrequency =
       restoringDraftAssessment && restoredDraftSnapshot
         ? normalizePaymentFrequency(restoredDraftSnapshot.frecuenciaPago)
-        : sameAssessment
+        : sameAssessment || refreshingFinancialTerms
           ? normalizePaymentFrequency(frecuenciaPagoCredito)
           : policyFrequency;
     const firstPaymentDate =
       restoringDraftAssessment && restoredDraftSnapshot
         ? restoredDraftSnapshot.fechaPrimerPago
-        : sameAssessment && fechaPrimerPago
+        : (sameAssessment || refreshingFinancialTerms) && fechaPrimerPago
           ? fechaPrimerPago
           : getDefaultFirstPaymentDate(new Date(), restoredFrequency);
     const restoredSuretyNumber = Number(
@@ -10757,7 +10795,12 @@ export default function CreditFactoryConsole({
     setPlazoMeses(String(installmentCount));
     setFechaPrimerPago(firstPaymentDate);
 
-    if (restoringDraftAssessment && restoredDraftSnapshot) {
+    if (refreshingFinancialTerms) {
+      restoredDraftSnapshotRef.current = null;
+      updateDraftResumeHydration(false);
+      setWizardStep(2);
+      setNotice({ text: "Oferta renovada con la consulta vigente, sin nueva consulta ni cobro. Revisa la cuota antes de enviar nuevamente a firma; se conservaron el equipo, la inicial y la validación facial.", tone: "emerald" });
+    } else if (restoringDraftAssessment && restoredDraftSnapshot) {
       setWizardStep(restoredDraftSnapshot.wizardStep);
       try {
         if (restoredDraftSnapshot.veriffValidationId) {
@@ -10922,7 +10965,7 @@ export default function CreditFactoryConsole({
           <p className="mt-2">Total a pagar: {exactCurrency(saldoFinanciado)}</p>
           <p>Numero de cuotas: {plazoMesesNumero || "{{NUM_CUOTAS}}"}</p>
           <p>Frecuencia de pago: {frecuenciaPagoLabel}</p>
-          <p>Valor exacto por cuota: {exactCurrency(valorCuotaExacta)}</p>
+          <p>{cuotaPactadaLabel}: {exactCurrency(valorCuotaPactada)}</p>
           <p>Fecha primer pago: {fechaPrimerPagoLabel}</p>
           <p className="mt-2">El incumplimiento de una o mas cuotas dara lugar a:</p>
           <ul className="mt-2 list-disc space-y-1 pl-5">
@@ -13828,7 +13871,7 @@ export default function CreditFactoryConsole({
                             <p>Valor total a pagar: {exactCurrency(saldoFinanciado)}</p>
                             <p>Numero de cuotas: {plazoMesesNumero || "{{cuotas}}"}</p>
                             <p>
-                              Valor exacto por cuota: {exactCurrency(valorCuotaExacta)}
+                              {cuotaPactadaLabel}: {exactCurrency(valorCuotaPactada)}
                             </p>
                             <p className="mt-2">
                               El CLIENTE se obliga a pagar en las fechas acordadas.
@@ -14479,7 +14522,7 @@ export default function CreditFactoryConsole({
                           </p>
                           {financialPreviewReady && canSeeInternalPricing && amortizationPlan ? (
                             <p className="mt-3 border-t border-white/15 pt-3 text-xs text-slate-300">
-                              Cuota exacta {exactCurrency(amortizationPlan.cuotaTotal)}
+                              {cuotaInternaLabel}: {exactCurrency(amortizationPlan.cuotaTotal)}
                             </p>
                           ) : null}
                         </div>
@@ -16387,9 +16430,9 @@ export default function CreditFactoryConsole({
                         {canSeeInternalPricing ? (
                           <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
                         ) : null}
-                        <p><span className="font-semibold text-slate-950">Cuota comercial:</span> {currency(valorCuota)}</p>
+                        <p><span className="font-semibold text-slate-950">{comercialEsCuotaPactada ? "Cuota pactada:" : "Cuota comercial:"}</span> {currency(valorCuota)}</p>
                         {canSeeInternalPricing ? (
-                          <p><span className="font-semibold text-slate-950">Cuota exacta para recaudo:</span> {exactCurrency(valorCuotaExacta)}</p>
+                          <p><span className="font-semibold text-slate-950">{cuotaInternaLabel}:</span> {exactCurrency(valorCuotaExacta)}</p>
                         ) : null}
                       </div>
                     </div>
@@ -16526,9 +16569,9 @@ export default function CreditFactoryConsole({
                         {canSeeInternalPricing ? (
                           <p><span className="font-semibold text-slate-950">Total financiado:</span> {currency(saldoFinanciado)}</p>
                         ) : null}
-                        <p><span className="font-semibold text-slate-950">Cuota comercial:</span> {currency(valorCuota)}</p>
+                        <p><span className="font-semibold text-slate-950">{comercialEsCuotaPactada ? "Cuota pactada:" : "Cuota comercial:"}</span> {currency(valorCuota)}</p>
                         {canSeeInternalPricing ? (
-                          <p><span className="font-semibold text-slate-950">Cuota exacta para recaudo:</span> {exactCurrency(valorCuotaExacta)}</p>
+                          <p><span className="font-semibold text-slate-950">{cuotaInternaLabel}:</span> {exactCurrency(valorCuotaExacta)}</p>
                         ) : null}
                       </div>
                     </div>
@@ -16565,10 +16608,10 @@ export default function CreditFactoryConsole({
                         <div className="mt-5">
                           <p className="font-black text-slate-950">PRIMERA – FORMA DE PAGO</p>
                           <p className="mt-2">
-                            La obligacion sera pagada en {plazoMesesNumero || "{{cuotas}}"} cuotas
-                            con valor exacto de referencia de {exactCurrency(valorCuotaExacta)}, con
+                            La obligacion sera pagada en {plazoMesesNumero || "{{cuotas}}"} cuotas{" "}
+                            {comercialEsCuotaPactada ? "de" : "con valor exacto de referencia de"} {exactCurrency(valorCuotaPactada)}, con
                             frecuencia {frecuenciaPagoLabel.toLowerCase()}, conforme al plan pactado.
-                            La ultima cuota podra ajustarse por centavos.
+                            {!comercialEsCuotaPactada ? " La ultima cuota podra ajustarse por centavos." : null}
                           </p>
                         </div>
 
@@ -17208,14 +17251,14 @@ export default function CreditFactoryConsole({
 
               <div className="rounded-[22px] border border-[#e6dece] bg-[#fcfaf6] px-4 py-4">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Cuota comercial
+                  {comercialEsCuotaPactada ? "Cuota pactada" : "Cuota comercial"}
                 </p>
                 <p className="mt-2 text-2xl font-black text-slate-950">
                   {currency(valorCuota)}
                 </p>
                 {canSeeInternalPricing ? (
                   <p className="mt-1 text-xs font-semibold text-slate-500">
-                    Exacta para recaudo: {exactCurrency(valorCuotaExacta)}
+                    {cuotaInternaLabel}: {exactCurrency(valorCuotaExacta)}
                   </p>
                 ) : null}
                 {canSeeInternalPricing && iphoneFactory ? (
@@ -17374,7 +17417,7 @@ export default function CreditFactoryConsole({
                       <p>Interes estimado: {currency(financialPlan.valorInteres)}</p>
                       <p>Valor total a pagar: {exactCurrency(saldoFinanciado)}</p>
                       <p>Numero de cuotas: {plazoMesesNumero || "{{cuotas}}"}</p>
-                      <p>Valor exacto por cuota: {exactCurrency(valorCuotaExacta)}</p>
+                      <p>{cuotaPactadaLabel}: {exactCurrency(valorCuotaPactada)}</p>
                       <p className="mt-2">
                         El CLIENTE se obliga a pagar en las fechas acordadas.
                       </p>

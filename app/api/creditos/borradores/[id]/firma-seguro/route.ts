@@ -38,7 +38,15 @@ import {
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import { validateCreditContactPhones } from "@/lib/credit-contact-phones";
-import { calculateFrenchAmortization } from "@/lib/credit-amortization";
+import {
+  ARES_COMMERCIAL_AMORTIZATION_VERSION,
+  calculateFrenchAmortization,
+} from "@/lib/credit-amortization";
+import {
+  CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE,
+  CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE,
+  hasCurrentCreditOriginationTerms,
+} from "@/lib/credit-current-origination-terms";
 import { createFinancingTermsSeal } from "@/lib/credit-amortization-contract";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
@@ -552,6 +560,13 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
         dataCreditoOffer?.suretyPercentage ?? null,
       numeroCuotas: plazoMeses,
     });
+  if (!hasCurrentCreditOriginationTerms(resolvedPolicyFinancialSettings)) {
+    throw new CreditValidationError(
+      CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE,
+      409,
+      CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE
+    );
+  }
   const frecuenciaPago = normalizePaymentFrequency(
     resolvedPolicyFinancialSettings.frecuenciaPago
   );
@@ -588,7 +603,7 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
   const financialPlan = {
     montoCreditoTotal:
       Math.round(amortizationPlan.montoTotal * 100) / 100,
-    valorCuota: amortizationPlan.cuotaTotal,
+    valorCuota: amortizationPlan.cuotaCobro,
     cuotaComercial: amortizationPlan.cuotaComercial,
     valorFianza:
       Math.round(amortizationPlan.valorFianzaTotal * 100) / 100,
@@ -609,7 +624,7 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
   };
   const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
     platform: plataformaDispositivo,
-    valorCuota: amortizationPlan.cuotaTotal,
+    valorCuota: amortizationPlan.cuotaCobro,
     enforceFactoryRange: true,
     iphoneMaxInstallmentValue: dataCreditoOffer
       ? dataCreditoOffer.maxInstallmentAmount
@@ -629,6 +644,18 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
     contratoSnapshot: {
       borradorId: row.id,
       origen: "BORRADOR_FIRMASEGURO",
+      ...(amortizationPlan.version === ARES_COMMERCIAL_AMORTIZATION_VERSION
+        ? {
+            financiero: {
+              calculoVersion: amortizationPlan.version,
+              cuotaPactada: amortizationPlan.cuotaCobro,
+              cuotaTotalExacta: amortizationPlan.cuotaTotal,
+              cuotaComercial: amortizationPlan.cuotaComercial,
+              totalPagarExacto: amortizationPlan.montoTotalExacto,
+              descuentoRedondeo: amortizationPlan.descuentoRedondeo,
+            },
+          }
+        : {}),
       dataCredito: dataCreditoOffer
         ? {
             assessmentId: dataCreditoOffer.assessmentId,
@@ -684,6 +711,11 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
     cuotaInicial,
     valorCuota: financialPlan.valorCuota,
     valorCuotaComercial: financialPlan.cuotaComercial,
+    calculoVersion: amortizationPlan.version,
+    cuotaTotalExacta: amortizationPlan.cuotaTotal,
+    ...(amortizationPlan.version === ARES_COMMERCIAL_AMORTIZATION_VERSION
+      ? { descuentoRedondeo: amortizationPlan.descuentoRedondeo }
+      : {}),
     tasaInteresEa: amortizationPlan.tasaInteresEa,
     tasaPeriodo: amortizationPlan.tasaPeriodo,
     fianzaCuotaPorcentaje: amortizationPlan.fianzaCuotaPorcentaje,

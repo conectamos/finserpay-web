@@ -4,7 +4,7 @@ import {
 } from "@/lib/datacredito/policy";
 
 type CreditFinancialBase = {
-  calculoVersion?: "FRANCES_V1" | "ARES_FRANCES_V1" | null;
+  calculoVersion?: "FRANCES_V1" | "ARES_FRANCES_V1" | "ARES_FRANCES_V2" | null;
   tasaInteresEa: number;
   fianzaTotalPorcentaje?: number | null;
   fianzaCuotaPorcentaje: number;
@@ -16,7 +16,7 @@ type CreditFinancialBase = {
 };
 
 export type ResolvedCreditPolicyFinancialSettings = CreditFinancialBase & {
-  calculoVersion: "FRANCES_V1" | "ARES_FRANCES_V1";
+  calculoVersion: "FRANCES_V1" | "ARES_FRANCES_V1" | "ARES_FRANCES_V2";
   fianzaTotalPorcentaje: number | null;
   fianzaModalidad: "TOTAL_CREDITO" | "POR_CUOTA";
   tasaPeriodoDecimales: number;
@@ -66,8 +66,9 @@ export function resolveCreditPolicyFinancialSettings(input: {
     input.globalSettings.fianzaTotalPorcentaje
   );
   const globalCalculationVersion =
-    input.globalSettings.calculoVersion === "ARES_FRANCES_V1"
-      ? "ARES_FRANCES_V1"
+    input.globalSettings.calculoVersion === "ARES_FRANCES_V1" ||
+    input.globalSettings.calculoVersion === "ARES_FRANCES_V2"
+      ? input.globalSettings.calculoVersion
       : "FRANCES_V1";
   const calculationVersion =
     policy?.calculoVersion ||
@@ -80,7 +81,7 @@ export function resolveCreditPolicyFinancialSettings(input: {
   let fianzaSource: ResolvedCreditPolicyFinancialSettings["fianzaSource"] =
     "GLOBAL";
 
-  if (policy?.calculoVersion === "ARES_FRANCES_V1") {
+  if (policy?.calculoVersion === "ARES_FRANCES_V1" || policy?.calculoVersion === "ARES_FRANCES_V2") {
     fianzaTotalPorcentaje = policy.fianzaTotalPorcentaje;
     fianzaCuotaPorcentaje =
       policy.fianzaTotalPorcentaje / input.numeroCuotas;
@@ -95,7 +96,7 @@ export function resolveCreditPolicyFinancialSettings(input: {
     fianzaModalidad = "TOTAL_CREDITO";
     fianzaSource = "OFERTA_LEGACY_TOTAL";
   } else if (
-    globalCalculationVersion === "ARES_FRANCES_V1" &&
+    (globalCalculationVersion === "ARES_FRANCES_V1" || globalCalculationVersion === "ARES_FRANCES_V2") &&
     globalSuretyTotal !== null
   ) {
     fianzaTotalPorcentaje = globalSuretyTotal;
@@ -103,7 +104,7 @@ export function resolveCreditPolicyFinancialSettings(input: {
     fianzaModalidad = "TOTAL_CREDITO";
   }
 
-  const aresCalculation = calculationVersion === "ARES_FRANCES_V1";
+  const aresCalculation = calculationVersion === "ARES_FRANCES_V1" || calculationVersion === "ARES_FRANCES_V2";
 
   return {
     calculoVersion: calculationVersion,

@@ -3,6 +3,7 @@ export const DATACREDITO_DECISIONS = ["APROBADO", "RECHAZADO"] as const;
 export const DATACREDITO_FINANCIAL_CALCULATION_VERSIONS = [
   "FRANCES_V1",
   "ARES_FRANCES_V1",
+  "ARES_FRANCES_V2",
 ] as const;
 export const DATACREDITO_COMMERCIAL_ROUNDING_MODES = [
   "REDONDEO",
@@ -81,7 +82,7 @@ export type DataCreditoLegacyPolicyFinancialSettings =
 
 export type DataCreditoAresPolicyFinancialSettings =
   DataCreditoPolicyFinancialSettingsBase & {
-    calculoVersion: "ARES_FRANCES_V1";
+    calculoVersion: "ARES_FRANCES_V1" | "ARES_FRANCES_V2";
     fianzaTotalPorcentaje: number;
     tasaPeriodoDecimales: 6;
     redondeoComercial: {
@@ -95,8 +96,8 @@ export type DataCreditoPolicyFinancialSettings =
   | DataCreditoAresPolicyFinancialSettings;
 
 export const DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS = {
-  calculoVersion: "ARES_FRANCES_V1",
-  tasaInteresEa: 29.66,
+  calculoVersion: "ARES_FRANCES_V2",
+  tasaInteresEa: 29.24,
   fianzaTotalPorcentaje: 75,
   seguroCuotaPorcentaje: 0.03,
   frecuenciaPago: "QUINCENAL",
@@ -528,17 +529,17 @@ export function parseDataCreditoPolicyFinancialSettings(
     aresIssues.push("La fianza total ARES debe estar entre 0 y 100");
   }
   if (tasaPeriodoDecimales !== 6) {
-    aresIssues.push("ARES_FRANCES_V1 usa exactamente 6 decimales en la tasa periodica");
+    aresIssues.push(`${calculoVersion} usa exactamente 6 decimales en la tasa periodica`);
   }
   if (redondeoModo !== "PISO" || redondeoMultiplo !== 50) {
-    aresIssues.push("ARES_FRANCES_V1 usa redondeo comercial al piso en multiplos de 50");
+    aresIssues.push(`${calculoVersion} usa redondeo comercial al piso en multiplos de 50`);
   }
   if (aresIssues.length) {
     throw new DataCreditoPolicyValidationError(aresIssues);
   }
 
   return {
-    calculoVersion: "ARES_FRANCES_V1",
+    calculoVersion: calculoVersion as "ARES_FRANCES_V1" | "ARES_FRANCES_V2",
     ...base,
     fianzaTotalPorcentaje: precise(fianzaTotalPorcentaje!),
     tasaPeriodoDecimales: 6,
