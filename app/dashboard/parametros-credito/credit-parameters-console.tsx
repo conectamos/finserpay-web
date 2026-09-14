@@ -31,7 +31,7 @@ type SessionUser = {
 };
 
 type CreditSettings = {
-  calculoVersion: "FRANCES_V1" | "ARES_FRANCES_V1";
+  calculoVersion: "FRANCES_V1" | "ARES_FRANCES_V1" | "ARES_FRANCES_V2";
   tasaInteresEa: number;
   fianzaPorcentaje: number;
   fianzaTotalPorcentaje: number;
@@ -56,7 +56,7 @@ type CreditDocumentException = {
   id: number;
   documento: string;
   documentoNormalizado: string;
-  calculoVersion: "FRANCES_V1" | "ARES_FRANCES_V1" | null;
+  calculoVersion: "FRANCES_V1" | "ARES_FRANCES_V1" | "ARES_FRANCES_V2" | null;
   tasaInteresEa: number | null;
   fianzaPorcentaje: number | null;
   fianzaTotalPorcentaje: number | null;
@@ -418,7 +418,7 @@ export default function CreditParametersConsole() {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            calculoVersion: "ARES_FRANCES_V1",
+            calculoVersion: "ARES_FRANCES_V2",
             tasaInteresEa,
             fianzaPorcentaje,
             fianzaTotalPorcentaje,
@@ -472,7 +472,7 @@ export default function CreditParametersConsole() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             documento: exceptionDocumento,
-            calculoVersion: "ARES_FRANCES_V1",
+            calculoVersion: "ARES_FRANCES_V2",
             tasaInteresEa: exceptionTasaInteresEa || null,
             fianzaPorcentaje: exceptionFianzaPorcentaje || null,
             fianzaTotalPorcentaje:
@@ -673,7 +673,7 @@ export default function CreditParametersConsole() {
               </label>
 
               <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-lime-soft)] px-4 py-3 text-sm leading-6 text-[var(--fp-graphite)]">
-                <p className="font-black">Motor ARES_FRANCES_V1</p>
+                <p className="font-black">Motor ARES_FRANCES_V2 · cuota pactada</p>
                 <p>
                   Divide la fianza total entre el plazo, usa 6 decimales en la
                   tasa periódica y baja la cuota comercial al múltiplo de $50.

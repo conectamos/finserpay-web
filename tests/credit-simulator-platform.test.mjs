@@ -252,7 +252,7 @@ test("el simulador iPhone conserva el tope global configurado", () => {
 test("el desglose interno solo se muestra al administrador central", () => {
   assert.match(
     consoleSource,
-    /financialPreviewReady && canSeeInternalPricing && amortizationPlan[\s\S]{0,300}Cuota exacta/
+    /financialPreviewReady && canSeeInternalPricing && amortizationPlan[\s\S]{0,300}\{cuotaInternaLabel\}/
   );
   assert.match(
     consoleSource,

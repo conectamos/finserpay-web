@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import type { FrenchAmortizationResult } from "@/lib/credit-amortization";
+import {
+  ARES_COMMERCIAL_AMORTIZATION_VERSION,
+  type FrenchAmortizationResult,
+} from "@/lib/credit-amortization";
 
 export const FINANCING_TERMS_SEAL_VERSION = "FINANCIACION_FIRMADA_V2";
 
@@ -40,6 +43,10 @@ export type FinancingTermsSnapshot = {
   cuotaTotalExacta: string;
   cuotaComercial: string;
   totalPagar: string;
+  /** Solo V2: no incorporar estas llaves a snapshots historicos V1. */
+  cuotaPactada?: string;
+  totalPagarExacto?: string;
+  descuentoRedondeo?: string;
 };
 
 export type FinancingTermsSeal = {
@@ -160,6 +167,13 @@ export function createFinancingTermsSeal(input: {
     cuotaTotalExacta: money(plan.cuotaTotal),
     cuotaComercial: money(plan.cuotaComercial),
     totalPagar: money(plan.montoTotal),
+    ...(plan.version === ARES_COMMERCIAL_AMORTIZATION_VERSION
+      ? {
+          cuotaPactada: money(plan.cuotaCobro),
+          totalPagarExacto: money(plan.montoTotalExacto),
+          descuentoRedondeo: money(plan.descuentoRedondeo),
+        }
+      : {}),
   };
 
   return {

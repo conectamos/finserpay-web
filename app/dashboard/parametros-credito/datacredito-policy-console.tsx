@@ -363,7 +363,7 @@ function parseFinancialSettings(
   );
   const frecuenciaPago = String(value.frecuenciaPago || "").toUpperCase();
   if (
-    !["FRANCES_V1", "ARES_FRANCES_V1"].includes(calculoVersion) ||
+    !["FRANCES_V1", "ARES_FRANCES_V1", "ARES_FRANCES_V2"].includes(calculoVersion) ||
     tasaInteresEa === null ||
     tasaInteresEa < 0 ||
     tasaInteresEa > 100 ||
@@ -413,7 +413,7 @@ function parseFinancialSettings(
     throw new PolicyRequestError(`${label} no cumple la regla ARES.`);
   }
   return {
-    calculoVersion: "ARES_FRANCES_V1",
+    calculoVersion: calculoVersion as DataCreditoAresPolicyFinancialSettings["calculoVersion"],
     tasaInteresEa,
     fianzaTotalPorcentaje,
     seguroCuotaPorcentaje,
@@ -435,7 +435,7 @@ function toEditableFinancialSettings(
   return {
     tasaInteresEa: String(settings.tasaInteresEa),
     fianzaTotalPorcentaje: String(
-      settings.calculoVersion === "ARES_FRANCES_V1"
+      settings.calculoVersion !== "FRANCES_V1"
         ? settings.fianzaTotalPorcentaje
         : aresDefaults.fianzaTotalPorcentaje
     ),
@@ -478,7 +478,7 @@ function validateFinancialSettings(
     canonical:
       issues.length === 0
         ? {
-            calculoVersion: "ARES_FRANCES_V1",
+            calculoVersion: "ARES_FRANCES_V2",
             tasaInteresEa: tasaInteresEa!,
             fianzaTotalPorcentaje: fianzaTotalPorcentaje!,
             seguroCuotaPorcentaje: seguroCuotaPorcentaje!,
@@ -849,9 +849,9 @@ function parseCatalog(
     payload.financialDefaults,
     "La configuracion base"
   );
-  if (financialDefaults.calculoVersion !== "ARES_FRANCES_V1") {
+  if (financialDefaults.calculoVersion === "FRANCES_V1") {
     throw new PolicyRequestError(
-      "La configuracion base no usa ARES_FRANCES_V1."
+      "La configuracion base no usa el motor ARES."
     );
   }
 
@@ -3248,7 +3248,7 @@ export default function DatacreditoPolicyConsole() {
                       y ARES la divide entre el plazo antes de calcular la cuota.
                     </p>
                   </div>
-                  <Badge>ARES · ARES_FRANCES_V1</Badge>
+                  <Badge>ARES · cuota pactada</Badge>
                 </div>
                 <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <label className="grid gap-2 text-sm font-bold">
@@ -3448,11 +3448,11 @@ export default function DatacreditoPolicyConsole() {
                   </div>
                 </div>
 
-                {selectedProfile.financialSettings?.calculoVersion ===
-                "FRANCES_V1" ? (
+                {selectedProfile.financialSettings?.calculoVersion !==
+                "ARES_FRANCES_V2" ? (
                   <div className="mt-4 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm font-semibold text-[var(--fp-graphite)]">
                     La revisión publicada usa el cálculo legado. Al publicar,
-                    se creará una nueva revisión ARES sin modificar evaluaciones
+                    se creará una nueva revisión ARES de cuota pactada sin modificar evaluaciones
                     ni créditos anteriores.
                   </div>
                 ) : null}
@@ -3463,7 +3463,7 @@ export default function DatacreditoPolicyConsole() {
                       Motor de cálculo
                     </p>
                     <p className="mt-2 font-black">Cuota fija · francés</p>
-                    <Badge className="mt-2">ARES_FRANCES_V1</Badge>
+                    <Badge className="mt-2">ARES_FRANCES_V2</Badge>
                   </div>
                   <label className="grid gap-2 text-sm font-bold">
                     Interés E.A. (%)

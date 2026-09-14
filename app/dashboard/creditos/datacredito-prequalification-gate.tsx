@@ -38,6 +38,7 @@ import {
   DATACREDITO_MAX_INSTALLMENT_COUNT,
 } from "@/lib/datacredito/policy";
 import { resolveMissingAssessmentGateView } from "@/lib/datacredito/resume-gate";
+import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginationTerms } from "@/lib/credit-current-origination-terms";
 import DataCreditoDailyQuotaModal from "./datacredito-daily-quota-modal";
 
 export type DataCreditoPlatform = "ANDROID" | "IPHONE";
@@ -538,6 +539,7 @@ export default function DatacreditoPrequalificationGate({
       normalizedInitialDocument &&
       normalizedInitialErrorCode === "ASSESSMENT_IDENTITY_MISMATCH"
   );
+  const financialTermsRecovery = normalizedInitialErrorCode === CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE;
   const newQueryRetryRecovery = Boolean(
     initialSolicitudId &&
       !initialAssessmentId &&
@@ -562,6 +564,7 @@ export default function DatacreditoPrequalificationGate({
   }));
   const [consentText, setConsentText] = useState(CONSENT_ATTESTATION);
   const [consentAccepted, setConsentAccepted] = useState(false);
+  const [financialReuseUnavailable, setFinancialReuseUnavailable] = useState(false);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [correlationId, setCorrelationId] = useState<string | null>(null);
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
@@ -768,6 +771,10 @@ export default function DatacreditoPrequalificationGate({
         }
 
         if (policyPayload.enabled === false) {
+          if (financialTermsRecovery) {
+            setView("unavailable");
+            return;
+          }
           finishBypass();
           return;
         }
@@ -788,6 +795,19 @@ export default function DatacreditoPrequalificationGate({
           return;
         }
 
+        // Renovar nunca reacepta el GET de la evaluación anterior ni consulta al proveedor.
+        if (financialTermsRecovery) {
+          if (!initialSolicitudId || !normalizedInitialDocument || !normalizedInitialSurname) {
+            setView("unavailable");
+            return;
+          }
+          setApprovedResult(null);
+          setConsentAccepted(false);
+          setFormErrors({});
+          setRetryMode("form");
+          setView("ready");
+          return;
+        }
         if (!initialAssessmentId) {
           if (newQueryRetryRecovery && normalizedInitialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED") {
             const quota = normalizeDailyQueryLimitReached(policyPayload);
@@ -938,6 +958,7 @@ export default function DatacreditoPrequalificationGate({
       initialAssessmentId,
       initialSolicitudId,
       identityMismatchRecovery,
+      financialTermsRecovery,
       newQueryRetryRecovery,
       normalizedInitialDocument,
       normalizedInitialSurname,
@@ -1051,6 +1072,7 @@ export default function DatacreditoPrequalificationGate({
 
   const submitAssessment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (financialTermsRecovery && financialReuseUnavailable) return;
     if (view === "daily-limit-reached") {
       // Reabre la explicación mediante una lectura, nunca una consulta pagada.
       void checkDailyQueryQuota(true);
@@ -1084,13 +1106,20 @@ export default function DatacreditoPrequalificationGate({
             firstSurname: validation.firstSurname,
             platform,
             consentAccepted: true,
-            reuseOnly: identityMismatchRecovery,
+            reuseOnly: identityMismatchRecovery || financialTermsRecovery,
+            refreshFinancialTerms: financialTermsRecovery,
           }),
         }
       );
       const payload = await readJson(response);
 
       if (!response.ok || payload.ok === false) {
+        if (financialTermsRecovery && getResponseCode(payload) === "ASSESSMENT_REUSE_NOT_FOUND") {
+          setFinancialReuseUnavailable(true);
+          setConsentAccepted(false);
+          setView("ready");
+          return;
+        }
         const dailyQuota = normalizeDailyQueryLimitReached(payload);
         if (
           response.status === 429 &&
@@ -1150,6 +1179,10 @@ export default function DatacreditoPrequalificationGate({
         });
 
         if (result?.platform === platform) {
+          if (financialTermsRecovery && !hasCurrentCreditOriginationTerms(result.offer.financialSettings)) {
+            setView("unavailable");
+            return;
+          }
           showApproved(result);
           return;
         }
@@ -1566,7 +1599,7 @@ export default function DatacreditoPrequalificationGate({
             </Badge>
           </div>
           <h2 className="mt-5 text-3xl font-black leading-tight tracking-tight text-[var(--fp-graphite)] sm:text-4xl">
-            Consulta previa para {platformLabel(platform)}
+            {financialTermsRecovery ? "Renovar oferta para" : "Consulta previa para"} {platformLabel(platform)}
           </h2>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
             Ingresa únicamente la identificación solicitada. El resultado se usa
@@ -1576,6 +1609,13 @@ export default function DatacreditoPrequalificationGate({
       </div>
 
       <form className="p-5 sm:p-8" noValidate onSubmit={submitAssessment}>
+        {financialTermsRecovery ? (
+          <div className="mb-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm leading-6 text-[var(--fp-graphite)]" role="status">
+            {financialReuseUnavailable
+              ? "No hay una consulta reutilizable dentro de los 15 días. No se hizo una nueva consulta ni cobro. Solicita al administrador la autorización correspondiente antes de iniciar una consulta nueva; esta pantalla no la realizará automáticamente."
+              : "La oferta conserva condiciones financieras anteriores. Renueva únicamente la oferta usando la consulta vigente de 15 días, sin una nueva consulta a DataCrédito ni cobro. Se conservan los datos de la solicitud y la validación facial."}
+          </div>
+        ) : null}
         {dailyQuotaBlocked ? (
           <div className="mb-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] p-4 text-sm leading-6" role="status" id="datacredito-quota-status">
             <p className="font-bold">Límite diario de consultas alcanzado.</p>
@@ -1792,8 +1832,8 @@ export default function DatacreditoPrequalificationGate({
           <Button
             type="submit"
             id="datacredito-evaluate"
-            disabled={isSubmitting || checkingDailyQuota}
-            aria-disabled={isSubmitting || checkingDailyQuota || dailyQuotaBlocked}
+            disabled={isSubmitting || checkingDailyQuota || (financialTermsRecovery && financialReuseUnavailable)}
+            aria-disabled={isSubmitting || checkingDailyQuota || dailyQuotaBlocked || (financialTermsRecovery && financialReuseUnavailable)}
             aria-describedby={dailyQuotaBlocked ? "datacredito-quota-status" : undefined}
             className="min-h-12 px-6 text-base shadow-[var(--fp-shadow-md)] !border-[var(--fp-lime-strong)] !bg-[var(--fp-lime)] !text-[var(--fp-graphite)] hover:!bg-[var(--fp-graphite)] hover:!text-white aria-disabled:cursor-not-allowed aria-disabled:opacity-60 sm:min-w-56"
           >
@@ -1805,7 +1845,9 @@ export default function DatacreditoPrequalificationGate({
             ) : (
               <>
                 <ShieldCheck className="h-5 w-5" aria-hidden="true" />
-                {identityMismatchRecovery
+                {financialTermsRecovery
+                  ? "Renovar oferta sin nueva consulta"
+                  : identityMismatchRecovery
                   ? "Recuperar consulta vigente"
                   : "Evaluar solicitud"}
               </>

@@ -28,6 +28,10 @@ export function frozenReissueCredit(credit: Record<string, unknown>, process: {
   const creditSeal = readFinancingTermsSeal(financial.selloFinanciero);
   if (!draftSeal || !creditSeal || draftSeal.checksum !== creditSeal.checksum) throw new Error("FROZEN_TERMS_UNAVAILABLE");
   const terms = draftSeal.snapshot;
+  const commercialContract = terms.calculoVersion === "ARES_FRANCES_V2";
+  const cuotaPactada = requiredNumber(
+    commercialContract ? terms.cuotaPactada : terms.cuotaTotalExacta
+  );
   if (!terms.folio || terms.folio !== credit.folio || process.draftFolio !== terms.folio
     || text(terms.documento) !== text(credit.clienteDocumento)
     || text(terms.clienteNombre) !== text(credit.clienteNombre)
@@ -40,13 +44,20 @@ export function frozenReissueCredit(credit: Record<string, unknown>, process: {
   for (const [field, sealed] of [
     ["valorEquipoTotal", terms.valorVenta], ["cuotaInicial", terms.cuotaInicial],
     ["saldoBaseFinanciado", terms.valorFinanciado], ["montoCredito", terms.totalPagar],
-    ["valorCuota", terms.cuotaTotalExacta],
+    ["valorCuota", cuotaPactada],
     ["plazoMeses", terms.numeroCuotas], ["tasaInteresEa", terms.tasaInteresEa],
   ] as const) sameNumber(credit[field], sealed);
   for (const [field, sealed] of [
     ["cuotaComercial", terms.cuotaComercial], ["cuotaTotalExacta", terms.cuotaTotalExacta],
     ["fianzaCuotaPorcentaje", terms.fianzaCuotaPorcentaje], ["seguroCuotaPorcentaje", terms.seguroCuotaPorcentaje],
   ] as const) sameNumber(financial[field], sealed);
+  if (commercialContract) {
+    for (const [field, sealed] of [
+      ["cuotaPactada", terms.cuotaPactada],
+      ["totalPagarExacto", terms.totalPagarExacto],
+      ["descuentoRedondeo", terms.descuentoRedondeo],
+    ] as const) sameNumber(financial[field], sealed);
+  }
   for (const [field, sealed] of [
     ["clienteTelefono", terms.clienteTelefono], ["clienteCorreo", terms.clienteCorreo],
     ["clienteDireccion", terms.clienteDireccion], ["equipoMarca", terms.equipoMarca],
@@ -62,7 +73,9 @@ export function frozenReissueCredit(credit: Record<string, unknown>, process: {
     referenciaEquipo: terms.referenciaEquipo, equipoMarca: terms.equipoMarca, equipoModelo: terms.equipoModelo,
     imei: terms.imei, deviceUid: terms.imei, valorEquipoTotal: requiredNumber(terms.valorVenta),
     montoCredito: Math.round(requiredNumber(terms.totalPagar) * 100) / 100, cuotaInicial: requiredNumber(terms.cuotaInicial),
-    valorCuota: requiredNumber(terms.cuotaTotalExacta), valorCuotaComercial: requiredNumber(terms.cuotaComercial),
+    valorCuota: cuotaPactada, valorCuotaComercial: requiredNumber(terms.cuotaComercial),
+    calculoVersion: terms.calculoVersion, cuotaTotalExacta: requiredNumber(terms.cuotaTotalExacta),
+    ...(commercialContract ? { descuentoRedondeo: requiredNumber(terms.descuentoRedondeo) } : {}),
     tasaInteresEa: requiredNumber(terms.tasaInteresEa), tasaPeriodo: requiredNumber(terms.tasaPeriodo),
     fianzaCuotaPorcentaje: requiredNumber(terms.fianzaCuotaPorcentaje),
     fianzaTotalPorcentaje: requiredNumber(terms.fianzaTotalPorcentaje), fianzaModalidad: terms.fianzaModalidad,

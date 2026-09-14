@@ -31,6 +31,7 @@ export default function CreditAmortizationTable({
   plan: FrenchAmortizationResult;
 }) {
   if (!plan.cuotas.length) return null;
+  const comercialEsCuotaPactada = plan.version === "ARES_FRANCES_V2";
 
   return (
     <details
@@ -68,10 +69,17 @@ export default function CreditAmortizationTable({
             <strong className="tabular-nums text-slate-950">{money(plan.cuotaSeguro)}</strong>
           </p>
           <p>
-            <span className="block text-xs font-semibold text-slate-500">Cuota exacta</span>
-            <strong className="tabular-nums text-slate-950">{money(plan.cuotaTotal)}</strong>
+            <span className="block text-xs font-semibold text-slate-500">{comercialEsCuotaPactada ? "Cuota pactada" : "Cuota exacta"}</span>
+            <strong className="tabular-nums text-slate-950">{money(plan.cuotaCobro)}</strong>
           </p>
         </div>
+        {comercialEsCuotaPactada ? (
+          <p className="border-t border-slate-200 px-5 py-3 text-xs leading-5 text-slate-500">
+            Referencia matemática antes del redondeo: {money(plan.cuotaTotal)} por cuota.
+            {" "}Descuento total por redondeo: {money(plan.descuentoRedondeo)}.
+            {" "}Total pactado a pagar: {money(plan.montoTotal)}. No se agrega el descuento a la última cuota.
+          </p>
+        ) : null}
 
         <div className="overflow-x-auto">
           <table className="min-w-[1240px] w-full border-collapse text-sm">

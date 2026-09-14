@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 const source = readFileSync(
   new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url),
@@ -72,9 +73,26 @@ test("el flujo Veriff visible conserva los pasos internos 1, 2, 4 y 5", () => {
 test("la precalificacion bloquea el flujo normal pero no la inspeccion central", () => {
   assert.match(
     source,
-    /const showDataCreditoGate\s*=\s*dataCreditoGatePending\s*&&\s*\(draftResumeHydrating \|\|\s*!canAdminMoveFreelyInFactory \|\|\s*wizardStep === 1\)/
+    /const showDataCreditoGate\s*=\s*dataCreditoGatePending\s*&&\s*\(draftResumeHydrating \|\|\s*dataCreditoFinancialTermsRecovery \|\|\s*!canAdminMoveFreelyInFactory \|\|\s*wizardStep === 1\)/
   );
   assert.match(source, /\{showDataCreditoGate \? \(/);
+  const gateDeclaration = source.match(/const showDataCreditoGate\s*=[\s\S]*?;/)?.[0];
+  assert.ok(gateDeclaration);
+  for (const pending of [true, false]) {
+    for (const central of [true, false]) {
+      for (const recovery of [true, false]) {
+        for (const hydration of [true, false]) {
+          for (const step of [1, 2, 4, 5]) {
+            const actual = runInNewContext(`${gateDeclaration}\nshowDataCreditoGate`, {
+              dataCreditoGatePending: pending, canAdminMoveFreelyInFactory: central,
+              dataCreditoFinancialTermsRecovery: recovery, draftResumeHydrating: hydration, wizardStep: step,
+            });
+            assert.equal(actual, pending && (hydration || recovery || !central || step === 1));
+          }
+        }
+      }
+    }
+  }
 });
 
 test("una inspeccion administrativa no persiste un paso ficticio", () => {

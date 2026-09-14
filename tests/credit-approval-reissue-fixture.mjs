@@ -19,7 +19,9 @@ export function loadReissueModule(path, dependencies = {}, globals = {}) {
   }, { filename: path });
   return loadedModule.exports;
 }
-export const seals = loadReissueModule("lib/credit-amortization-contract.ts");
+export const seals = loadReissueModule("lib/credit-amortization-contract.ts", {
+  "@/lib/credit-amortization": { ARES_COMMERCIAL_AMORTIZATION_VERSION: "ARES_FRANCES_V2" },
+});
 export function createReissueFixture(id = 81) {
   const seal = seals.createFinancingTermsSeal({
     folio: "FNS-REISSUE-" + id, documento: "100000001",

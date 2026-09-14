@@ -658,7 +658,11 @@ test("central retoma y finaliza sin reemplazar al asesor propietario", async () 
   );
   assert.match(
     factory,
-    /setDataCreditoApproval\(approvedResult\)[\s\S]{0,400}setFianzaPorcentaje\(String\(restoredSuretyPercentage\)\)[\s\S]{0,400}setWizardStep\(restoredDraftSnapshot\.wizardStep\)/
+    /setDataCreditoApproval\(approvedResult\)[\s\S]{0,400}setFianzaPorcentaje\(String\(restoredSuretyPercentage\)\)/
+  );
+  assert.match(
+    factory,
+    /if \(restoringDraftAssessment && restoredDraftSnapshot\) \{\s*setWizardStep\(restoredDraftSnapshot\.wizardStep\)/
   );
   assert.match(
     factory,
