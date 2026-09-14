@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { errors, files, http, loadCallModule, tone, request, requestHeaders } from "./credit-approval-call-test-loader.mjs";
+import { errors, files, http, loadCallModule, tone, request, requestHeaders, oggPageOffsets, rawOggPage, rewriteOggPage } from "./credit-approval-call-test-loader.mjs";
 
-test("call recordings accept real MP3, M4A/MP4 AAC and WAV PCM without rewriting the bytes", async () => {
+test("call recordings accept real MP3, M4A/MP4 AAC, OGG/Opus and WAV PCM without rewriting the bytes", async () => {
   for (const [fixtureExtension, fileExtension, mimeType] of [
     ["mp3", "mp3", "audio/mpeg"], ["m4a", "m4a", "audio/mp4"],
-    ["m4a", "mp4", "audio/mp4"], ["wav", "wav", "audio/wav"],
+    ["m4a", "mp4", "audio/mp4"], ["ogg", "ogg", "audio/ogg"], ["wav", "wav", "audio/wav"],
   ]) {
     const bytes = tone(fixtureExtension);
     const result = await files.prepareApprovalCallFile(bytes, `llamada.${fileExtension}`);
@@ -58,8 +58,9 @@ test("audio parser rejects header-only MPEG pretending to contain a recording", 
 });
 test("recording filename is bounded and strips paths and control/bidi characters", () => {
   assert.equal(files.approvalCallFileName("llamada.mp4"), "llamada.mp4");
+  assert.equal(files.approvalCallFileName("WhatsApp Audio.ogg"), "WhatsApp Audio.ogg");
   assert.equal(files.approvalCallFileName(encodeURIComponent("..\\llamada\r\n/\u202ewav.wav")), ".._llamada____wav.wav");
-  for (const value of ["%FF", "", encodeURIComponent("x".repeat(160) + ".wav"), "x.html"]) {
+  for (const value of ["%FF", "", encodeURIComponent("x".repeat(160) + ".wav"), "x.html", "x.oga"]) {
     assert.throws(() => files.approvalCallFileName(value), (error) => error.code === "INVALID_CALL_RECORDING");
   }
 });
@@ -108,4 +109,75 @@ test("private player rejects invalid, multiple and out-of-bounds byte ranges", (
     assert.equal(response.status, 416); assert.equal(response.headers.get("content-range"), `bytes */${tone().length}`);
     assert.match(response.headers.get("cache-control"), /no-store/);
   }
+});
+
+test("OGG/Opus validates every page, logical stream and Opus identification packet", async () => {
+  const valid = tone("ogg");
+  const corruptCrcPages = oggPageOffsets(valid).map((page) => { const bytes = Buffer.from(valid); bytes[page.offset + 22] ^= 1; return bytes; });
+  const change = (pageIndex, mutate) => rewriteOggPage(valid, pageIndex, mutate);
+  const invalid = [
+    ...corruptCrcPages,
+    valid.subarray(0, valid.length - 1),
+    Buffer.concat([valid, Buffer.from([0])]),
+    change(0, (bytes, page) => { bytes[page.offset + 4] = 1; }),
+    change(1, (bytes, page) => { bytes[page.offset + 5] = 0x08; }),
+    change(1, (bytes, page) => { bytes[page.offset + 5] = 0x01; }),
+    change(0, (bytes, page) => { bytes.writeUInt32LE(1, page.offset + 18); }),
+    change(1, (bytes, page) => { bytes.writeUInt32LE(7, page.offset + 18); }),
+    change(1, (bytes, page) => { bytes.writeUInt32LE(0x12345678, page.offset + 14); }),
+    change(0, (bytes, page) => { const payload = page.offset + 27 + bytes[page.offset + 26]; bytes.write("Vorbis!!", payload, "ascii"); }),
+    change(0, (bytes, page) => { const payload = page.offset + 27 + bytes[page.offset + 26]; bytes[payload + 8] = 2; }),
+    change(0, (bytes, page) => { const payload = page.offset + 27 + bytes[page.offset + 26]; bytes[payload + 9] = 0; }),
+    change(0, (bytes, page) => { const payload = page.offset + 27 + bytes[page.offset + 26]; bytes[payload + 9] = 3; }),
+    change(0, (bytes, page) => { const payload = page.offset + 27 + bytes[page.offset + 26]; bytes[payload + 9] = 2; bytes[payload + 18] = 1; }),
+    change(1, (bytes, page) => { const payload = page.offset + 27 + bytes[page.offset + 26]; bytes.write("BadTags!", payload, "ascii"); }),
+  ];
+  const pageAfterEosSource = change(2, (bytes, page) => { bytes[page.offset + 5] = 0; bytes.writeUInt32LE(3, page.offset + 18); });
+  const afterEos = oggPageOffsets(pageAfterEosSource)[2];
+  const headerPages = valid.subarray(0, oggPageOffsets(valid)[2].offset);
+  const brokenContinuation = Buffer.concat([
+    headerPages,
+    rawOggPage({ flags: 0, granule: -1, sequence: 2, segments: [255], payload: Buffer.alloc(255, 0xf8) }),
+    rawOggPage({ flags: 0x01, granule: -1, sequence: 3, segments: [], payload: Buffer.alloc(0) }),
+    rawOggPage({ flags: 0x04, granule: 24_000, sequence: 4, segments: [3], payload: Buffer.from([0xf8, 0xff, 0xfe]) }),
+  ]);
+  invalid.push(Buffer.concat([valid, pageAfterEosSource.subarray(afterEos.offset, afterEos.end)]), brokenContinuation);
+  for (const bytes of invalid) {
+    await assert.rejects(files.prepareApprovalCallFile(bytes, "llamada.ogg"), (error) => error.code === "INVALID_CALL_RECORDING");
+  }
+  const withoutEos = change(2, (bytes, page) => { bytes[page.offset + 5] = 0; });
+  const accepted = await files.prepareApprovalCallFile(withoutEos, "llamada.ogg");
+  assert.ok(accepted.bytes.equals(withoutEos), "EOS is optional when the final packet is complete");
+});
+
+test("OGG accepts only audio Opus metadata", async () => {
+  const bytes = tone("ogg");
+  const base = { duration: 0.5, sampleRate: 16000, numberOfChannels: 1, hasAudio: true, hasVideo: false, container: "Ogg", codec: "Opus" };
+  const loadWith = (patch) => loadCallModule("lib/credit-approval-call-file.ts", {
+    "@/lib/credit-approval-errors": errors,
+    "music-metadata": { parseBuffer: async () => ({ format: { ...base, ...patch } }) },
+  });
+  assert.equal((await loadWith({}).prepareApprovalCallFile(bytes, "llamada.ogg")).mimeType, "audio/ogg");
+  for (const patch of [{ hasVideo: true }, { hasAudio: false }, { codec: "Vorbis" }, { container: "Matroska" },
+    { duration: 0 }, { sampleRate: 0 }, { numberOfChannels: 0 }]) {
+    await assert.rejects(loadWith(patch).prepareApprovalCallFile(bytes, "llamada.ogg"),
+      (error) => error.code === "INVALID_CALL_RECORDING");
+  }
+});
+
+test("private player preserves OGG headers, filename and byte ranges", async () => {
+  const bytes = tone("ogg");
+  const recording = { bytes, mimeType: "audio/ogg", fileName: "WhatsApp Audio 2026-09-14 at 3.06.15 PM (1).ogg" };
+  const full = http.approvalCallAudioResponse(new Request("https://finserpay.test/audio"), recording);
+  assert.equal(full.status, 200);
+  assert.equal(full.headers.get("content-type"), "audio/ogg");
+  assert.match(full.headers.get("content-disposition"), /filename="grabacion\.ogg"/);
+  assert.match(full.headers.get("content-disposition"), /filename\*=UTF-8''WhatsApp%20Audio%202026-09-14%20at%203.06.15%20PM%20%281%29\.ogg/);
+  assert.ok(Buffer.from(await full.arrayBuffer()).equals(bytes));
+  const ranged = http.approvalCallAudioResponse(new Request("https://finserpay.test/audio", { headers: { range: "bytes=7-31" } }), recording);
+  assert.equal(ranged.status, 206);
+  assert.equal(ranged.headers.get("content-type"), "audio/ogg");
+  assert.equal(ranged.headers.get("content-range"), "bytes 7-31/" + bytes.length);
+  assert.match(ranged.headers.get("content-disposition"), /filename="grabacion\.ogg"/);
+  assert.ok(Buffer.from(await ranged.arrayBuffer()).equals(bytes.subarray(7, 32)));
 });

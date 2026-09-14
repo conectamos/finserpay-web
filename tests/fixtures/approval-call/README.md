@@ -6,3 +6,7 @@ FFmpeg (`libmp3lame` and `aac`, respectively), with `-map_metadata -1`.
 The tone was generated with samples `round(sin(i * 2 * PI * 440 / 16000) * 2000)`.
 It is intentionally synthetic and may be freely reused as a test fixture.
 FFmpeg is only a local fixture-generation tool; it is not an app dependency.
+
+The OGG/Opus sample used by the tests is built deterministically in
+credit-approval-call-test-loader.mjs from Ogg pages with valid CRC values. It
+contains only synthetic Opus silence and is not copied from a client recording.

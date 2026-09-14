@@ -3,6 +3,18 @@ function constraint(table, name, definition) {
   return `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='${name}' AND conrelid='public."${table}"'::regclass)
     THEN ALTER TABLE public."${table}" ADD CONSTRAINT "${name}" ${definition}; END IF; END $$`;
 }
+function extensibleCheckConstraint(table, name, definition, requiredFragment) {
+  return `DO $$ DECLARE current_definition TEXT; BEGIN
+    SELECT pg_get_constraintdef(oid) INTO current_definition FROM pg_constraint
+      WHERE conname='${name}' AND conrelid='public."${table}"'::regclass AND contype='c';
+    IF current_definition IS NULL THEN
+      ALTER TABLE public."${table}" ADD CONSTRAINT "${name}" ${definition};
+    ELSIF POSITION('${requiredFragment}' IN LOWER(current_definition))=0 THEN
+      ALTER TABLE public."${table}" DROP CONSTRAINT "${name}";
+      ALTER TABLE public."${table}" ADD CONSTRAINT "${name}" ${definition};
+    END IF;
+  END $$`;
+}
 export const creditApprovalCallSchemaStatements = [
   `CREATE TABLE IF NOT EXISTS public."CreditApprovalCallRecording" (
     "id" UUID PRIMARY KEY,"creditoId" INTEGER NOT NULL,"revision" INTEGER NOT NULL,"reviewHash" VARCHAR(64) NOT NULL,
@@ -16,7 +28,7 @@ export const creditApprovalCallSchemaStatements = [
   constraint("CreditApprovalCallRecording", "CreditApprovalCallRecording_shared_actor_fkey", `FOREIGN KEY ("actorSessionId","actorGrantId") REFERENCES public."CreditApprovalSharedSession"("id","grantId") ON DELETE RESTRICT`),
   constraint("CreditApprovalCallRecording", "CreditApprovalCallRecording_revision_check", `CHECK ("revision">0)`),
   constraint("CreditApprovalCallRecording", "CreditApprovalCallRecording_hash_check", `CHECK ("reviewHash" ~ '^[a-f0-9]{64}$' AND "sha256" ~ '^[a-f0-9]{64}$')`),
-  constraint("CreditApprovalCallRecording", "CreditApprovalCallRecording_file_check", `CHECK (LENGTH(BTRIM("fileName")) BETWEEN 1 AND 160 AND "mimeType" IN ('audio/mpeg','audio/mp4','audio/wav'))`),
+  extensibleCheckConstraint("CreditApprovalCallRecording", "CreditApprovalCallRecording_file_check", `CHECK (LENGTH(BTRIM("fileName")) BETWEEN 1 AND 160 AND "mimeType" IN ('audio/mpeg','audio/mp4','audio/ogg','audio/wav'))`, "audio/ogg"),
   constraint("CreditApprovalCallRecording", "CreditApprovalCallRecording_bytes_check", `CHECK ("sizeBytes" BETWEEN 1 AND 10485760 AND octet_length("bytes")="sizeBytes" AND encode(sha256("bytes"),'hex')="sha256")`),
   constraint("CreditApprovalCallRecording", "CreditApprovalCallRecording_actor_check", `CHECK (LENGTH(BTRIM("actorName"))>0 AND (
     ("actorKind"='USER' AND "actorUserId" IS NOT NULL AND "actorUserId">0 AND "actorGrantId" IS NULL AND "actorSessionId" IS NULL)

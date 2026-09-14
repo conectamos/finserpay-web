@@ -39,8 +39,8 @@ export default function ApprovalCallRecording({ detail, disabled, readOnly = fal
     if (disabled || saving || submitting.current) return;
     setError("");
     if (!file) { clearSelection(); return; }
-    if (!file.size || file.size > MAX_BYTES || !/\.(mp3|m4a|mp4|wav)$/i.test(file.name)) {
-      setError("Selecciona una grabación MP3, M4A, MP4 de audio o WAV de hasta 10 MB.");
+    if (!file.size || file.size > MAX_BYTES || !/\.(mp3|m4a|mp4|ogg|wav)$/i.test(file.name)) {
+      setError("Selecciona una grabación MP3, M4A, MP4 de audio, OGG (Opus) o WAV de hasta 10 MB.");
       clearSelection(); return;
     }
     setPending({ file, revision: detail.review.revision, reviewHash: detail.review.reviewHash, idempotencyKey: crypto.randomUUID() });
@@ -89,8 +89,8 @@ export default function ApprovalCallRecording({ detail, disabled, readOnly = fal
       {!readOnly && !canUpload ? <p className="mt-3 text-sm text-[var(--fp-muted)]">{state?.blockedReason || "La carga de grabación no está disponible para este expediente."}</p> : null}
       {canUpload ? <div className="mt-4 space-y-3">
         <label className="block text-sm font-medium" htmlFor={"call-recording-" + detail.id}>{recording ? "Cargar otra grabación" : "Subir grabación"}</label>
-        <input ref={input} id={"call-recording-" + detail.id} type="file" accept=".mp3,.m4a,.mp4,.wav,audio/mpeg,audio/mp4,video/mp4,audio/wav" disabled={disabled || saving} onChange={(event) => select(event.target.files?.[0])} className="block min-h-10 w-full min-w-0 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] p-2 text-sm file:mr-2 file:rounded-[var(--fp-radius-sm)] file:border-0 file:bg-[var(--fp-bg)] file:p-2 file:text-[var(--fp-graphite)] disabled:opacity-50" />
-        <p className="text-sm text-[var(--fp-muted)]">MP3, M4A, MP4 de audio o WAV · Máximo 10 MB.{!compact ? " Guardar la grabación mantiene el crédito pendiente de aprobación." : ""}</p>
+        <input ref={input} id={"call-recording-" + detail.id} type="file" accept=".mp3,.m4a,.mp4,.ogg,.wav,audio/mpeg,audio/mp4,video/mp4,audio/ogg,application/ogg,audio/wav" disabled={disabled || saving} onChange={(event) => select(event.target.files?.[0])} className="block min-h-10 w-full min-w-0 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] p-2 text-sm file:mr-2 file:rounded-[var(--fp-radius-sm)] file:border-0 file:bg-[var(--fp-bg)] file:p-2 file:text-[var(--fp-graphite)] disabled:opacity-50" />
+        <p className="text-sm text-[var(--fp-muted)]">MP3, M4A, MP4 de audio, OGG (Opus) o WAV · Máximo 10 MB.{!compact ? " Guardar la grabación mantiene el crédito pendiente de aprobación." : ""}</p>
 
       </div> : null}
       {pending ? <div className="mt-3 flex flex-wrap gap-2">{canUpload ? <Button variant="secondary" disabled={disabled || saving} onClick={() => void save()}><Upload className="h-4 w-4" aria-hidden="true" />{saving ? "Guardando..." : "Guardar grabación"}</Button> : null}<Button variant="ghost" disabled={saving} onClick={clearSelection}>Cancelar</Button></div> : null}

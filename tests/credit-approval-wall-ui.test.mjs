@@ -407,6 +407,25 @@ test("el formulario guarda audio por acción explícita y conserva la operación
   } finally { h.unmount(); }
 });
 
+test("el formulario acepta OGG/Opus y conserva el archivo al enviarlo", async () => {
+  const calls = [], locks = [];
+  const h = mount("app/dashboard/aprobaciones/approval-call-recording.tsx", {
+    "./approval-client": { uploadApprovalCallRecording: async (id, data) => { calls.push({ id, data }); return { ok: true }; } },
+  }, { detail: detail(81), disabled: false, onUpdated: async () => {}, onBusyChange: (busy) => locks.push(busy) });
+  try {
+    await h.flush();
+    const input = h.find((node) => node.type === "input" && node.props.type === "file");
+    assert.match(input.props.accept, /\.ogg/); assert.match(input.props.accept, /audio\/ogg/);
+    assert.ok(h.all((node) => node.type === "p").some((node) => { const text = JSON.stringify(node.props.children); return /OGG/.test(text) && /10 MB/.test(text); }));
+    const file = new File(["OggS"], "WhatsApp Audio 2026-09-14 at 3.06.15 PM (1).ogg", { type: "audio/ogg" });
+    input.props.onChange({ target: { files: [file] } }); await h.flush();
+    assert.equal(locks.at(-1), true);
+    h.find((node) => node.type === ui.Button && node.props.children?.includes("Guardar grabación")).props.onClick(); await h.flush();
+    assert.equal(calls.length, 1); assert.equal(calls[0].id, 81); assert.equal(calls[0].data.file, file);
+    assert.equal(calls[0].data.revision, 1); assert.equal(locks.at(-1), false);
+  } finally { h.unmount(); }
+});
+
 test("si pierde permiso de carga durante un error conserva una salida para actualizar el expediente", async () => {
   const observed = detail(81), locks = [];
   const h = mount("app/dashboard/aprobaciones/approval-call-recording.tsx", {
