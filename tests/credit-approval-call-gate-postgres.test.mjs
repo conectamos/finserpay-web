@@ -87,6 +87,31 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
     await assert.rejects(db.query('UPDATE "CreditApprovalReview" SET "creditoId"=999999 WHERE "creditoId"=$1',[legacy]),{code:"23514"});
     assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM "CreditApprovalCallRecording"')).rows[0].count,0);
   });
+  await t.test("base nueva instala el CHECK con audio/ogg",async()=>{
+    const definition=(await db.query(`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+      WHERE conname='CreditApprovalCallRecording_file_check'
+        AND conrelid='public."CreditApprovalCallRecording"'::regclass AND contype='c'`)).rows[0]?.definition;
+    assert.match(definition,/audio\/ogg/);
+  });
+  await t.test("upgrade del CHECK viejo es repetible y preserva grabaciones",async()=>{
+    const id=await createCredit(),saved=await audio(id);
+    const stored=()=>db.query(`SELECT "id","creditoId","fileName","mimeType","sizeBytes","sha256",encode("bytes",'hex') AS bytes
+      FROM "CreditApprovalCallRecording" WHERE "id"=$1`,[saved.id]).then(result=>result.rows[0]);
+    const definition=()=>db.query(`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+      WHERE conname='CreditApprovalCallRecording_file_check'
+        AND conrelid='public."CreditApprovalCallRecording"'::regclass AND contype='c'`).then(result=>result.rows[0]?.definition);
+    const before=await stored();
+    await db.query('ALTER TABLE public."CreditApprovalCallRecording" DROP CONSTRAINT "CreditApprovalCallRecording_file_check"');
+    await db.query(`ALTER TABLE public."CreditApprovalCallRecording" ADD CONSTRAINT "CreditApprovalCallRecording_file_check"
+      CHECK (LENGTH(BTRIM("fileName")) BETWEEN 1 AND 160 AND "mimeType" IN ('audio/mpeg','audio/mp4','audio/wav'))`);
+    assert.doesNotMatch(await definition(),/audio\/ogg/);
+    await installCreditApprovalCallSchema(db);
+    assert.match(await definition(),/audio\/ogg/); assert.deepEqual(await stored(),before);
+    await installCreditApprovalCallSchema(db);
+    assert.match(await definition(),/audio\/ogg/); assert.deepEqual(await stored(),before);
+    const ogg=await audio(id,{fileName:"llamada.ogg",mimeType:"audio/ogg"});
+    assert.equal(ogg.utc,true);
+  });
   await t.test("SQL directo bloquea nuevo OK y liquidación sin grabación",async()=>{
     await assert.rejects(approve(pending,null),{code:"23514"}); assert.equal((await review(pending)).status,"PENDING");
     await assert.rejects(db.query('INSERT INTO "LiquidacionAliadoCredito" ("creditoId") VALUES ($1)',[pending]),{code:"23514"});
