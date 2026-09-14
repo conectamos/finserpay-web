@@ -58,10 +58,13 @@ originaciones se necesita una activación coordinada del código y de las polít
 6. Verificar el ejemplo de 40 cuotas en simulador, fábrica, contrato, muro y app.
 
 El script no está conectado al predeploy y no se ejecuta al importarlo. Es
-idempotente; el actor es obligatorio. No reescribe consultas, créditos, firmas
+idempotente; el actor es obligatorio. La aplicación exige una actualización
+completa por defecto: si alguna política o GLOBAL no son compatibles, se
+revierte toda la transacción. No reescribe consultas, créditos, firmas
 ni calendarios anteriores. Hay pruebas con PostgreSQL/WASM aislado de triggers,
-espejo, inmutabilidad, rollback e idempotencia; no simulan concurrencia real
-multicliente. La coordinación de escritura debe comprobarse en el entorno de ensayo.
+espejo, inmutabilidad, rollback e idempotencia. La prueba nativa multicliente
+con PostgreSQL 18.3 verifica el bloqueo EXCLUSIVE frente a ediciones de políticas
+y asignaciones concurrentes, sin impedir las lecturas normales.
 
 Una oferta antigua sin firma recibe `DATACREDITO_FINANCIAL_TERMS_OUTDATED`.
 El botón de renovación solicita `reuseOnly: true` y `refreshFinancialTerms: true`,
@@ -90,4 +93,5 @@ Permanece un fallo previo en `tests/solicitudes-canonical.test.mjs`, prueba de
 seguimiento de errores del proveedor: espera tres apariciones de
 `errorCode: trackedErrorCode`, pero el código base contiene cinco. Se adaptó
 solo el delimitador al nuevo guard de recuperación, sin debilitar esa aserción.
-No se ha ejecutado la activación ni publicado esta rama.
+Este documento no acredita un despliegue: comprobar el commit activo en Railway
+y el reporte de activación antes de anunciar el cambio en producción.

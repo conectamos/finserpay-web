@@ -56,9 +56,10 @@ function globalFinancialSettings(row) {
  * schedules, document exceptions, score bands or delinquency limits.
  *
  * Mock and isolated PostgreSQL/WASM tests cover planning, immutable revision and
- * mirror triggers, rollback and idempotency. Before production activation review
- * every skipped configuration and validate multi-client SAVE_REVISION/assignment
- * concurrency; the in-memory PostgreSQL test uses a single dedicated client.
+ * mirror triggers, rollback and idempotency. The opt-in native PostgreSQL test
+ * additionally covers concurrent revision saves and assignment with independent
+ * clients in a fresh local cluster. Review every skipped configuration before
+ * production activation; the script is not part of automatic predeploy.
  */
 export async function upgradeAresCommercialPolicies(client, options = {}) {
   if (typeof client?.query !== "function") throw new Error("Se requiere un pg Client conectado y dedicado.");
