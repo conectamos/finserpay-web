@@ -393,8 +393,10 @@ test("el formulario guarda audio por acción explícita y conserva la operación
   }, { detail: detail(81), disabled: false, onUpdated: async () => { updates++; }, onBusyChange: (busy) => locks.push(busy) });
   try {
     await h.flush();
-    const file = new File(["audio"], "llamada.wav", { type: "audio/wav" });
-    h.find((node) => node.type === "input" && node.props.type === "file").props.onChange({ target: { files: [file] } }); await h.flush();
+    const input = h.find((node) => node.type === "input" && node.props.type === "file");
+    assert.match(input.props.accept, /\.mp4/); assert.match(input.props.accept, /video\/mp4/);
+    const file = new File(["audio"], "llamada.mp4", { type: "video/mp4" });
+    input.props.onChange({ target: { files: [file] } }); await h.flush();
     assert.equal(calls.length, 0); assert.equal(locks.at(-1), true);
     const save = () => h.find((node) => node.type === ui.Button && node.props.children?.includes("Guardar grabación")).props.onClick();
     save(); await h.flush();

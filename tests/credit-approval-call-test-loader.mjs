@@ -14,9 +14,9 @@ export function loadCallModule(path, dependencies = {}) {
     require(name) {
       if (name === "server-only") return {};
       if (name === "node:crypto") return crypto;
+      if (name in dependencies) return dependencies[name];
       if (name === "music-metadata") return musicMetadata;
-      assert.ok(name in dependencies, `Unexpected call dependency: ${name}`);
-      return dependencies[name];
+      assert.fail(`Unexpected call dependency: ${name}`);
     }, Buffer, Uint8Array, console, URL, URLSearchParams, Date, Request, Response, TextDecoder,
   }, { filename: path });
   return loaded.exports;

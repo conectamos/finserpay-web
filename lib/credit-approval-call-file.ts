@@ -5,7 +5,7 @@ import { CreditApprovalError } from "@/lib/credit-approval-errors";
 
 export const APPROVAL_CALL_MAX_BYTES = 10 * 1024 * 1024;
 export const APPROVAL_CALL_MIME_TYPES = ["audio/mpeg", "audio/mp4", "audio/wav"] as const;
-const invalid = () => new CreditApprovalError("INVALID_CALL_RECORDING", "Selecciona una grabación válida en MP3, M4A (AAC) o WAV (PCM).", 415);
+const invalid = () => new CreditApprovalError("INVALID_CALL_RECORDING", "Selecciona una grabación válida en MP3, M4A, MP4 de audio (AAC) o WAV (PCM).", 415);
 
 function audioContainer(bytes: Buffer) {
   if (bytes.length < 16) throw invalid();
@@ -52,7 +52,7 @@ export function approvalCallFileName(encoded: string | null) {
   let name: string;
   try { name = decodeURIComponent(encoded || ""); } catch { throw invalid(); }
   name = name.normalize("NFC").replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069/\\]/g, "_").trim();
-  if (!name || name.length > 160 || !/\.(mp3|m4a|wav)$/i.test(name)) throw invalid();
+  if (!name || name.length > 160 || !/\.(mp3|m4a|mp4|wav)$/i.test(name)) throw invalid();
   return name;
 }
 
@@ -61,7 +61,10 @@ export async function prepareApprovalCallFile(bytes: Buffer, fileName: string) {
   if (bytes.length > APPROVAL_CALL_MAX_BYTES) throw new CreditApprovalError("CALL_RECORDING_TOO_LARGE", "La grabación debe pesar como máximo 10 MB.", 413);
   const mimeType = audioContainer(bytes);
   const extension = fileName.split(".").at(-1)?.toLowerCase();
-  if (extension !== ({ "audio/wav": "wav", "audio/mp4": "m4a", "audio/mpeg": "mp3" }[mimeType])) throw invalid();
+  const validExtension = mimeType === "audio/mp4"
+    ? extension === "m4a" || extension === "mp4"
+    : extension === ({ "audio/wav": "wav", "audio/mpeg": "mp3" }[mimeType]);
+  if (!validExtension) throw invalid();
   try {
     // Use the verified container: phone M4A files may carry a 3GP brand.
     const { format } = await parseBuffer(bytes, { mimeType, size: bytes.length }, { duration: true, skipCovers: true, skipPostHeaders: true });
