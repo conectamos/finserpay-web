@@ -329,7 +329,7 @@ async function loadCandidate(
         END AS "draftPlatformMatches",
         app_user."nombre" AS "userName", seller."nombre" AS "sellerName",
         ally."nombre" AS "aliadoName", site."nombre" AS "sedeName",
-        authorization."authorizedAt", CURRENT_TIMESTAMP AS "databaseNow"
+        retry_authorization."authorizedAt", CURRENT_TIMESTAMP AS "databaseNow"
       FROM "DataCreditoAssessment" assessment
       LEFT JOIN LATERAL (
         SELECT linked.*
@@ -354,7 +354,7 @@ async function loadCandidate(
         WHERE audit."assessmentId" = assessment."id"
           AND audit."action" = '${RETRY_ACTION}'
           AND audit."outcome" = '${RETRY_OUTCOME}'
-      ) authorization ON TRUE
+      ) retry_authorization ON TRUE
       WHERE assessment."documentHash" = $1
         AND assessment."providerEnvironment" = $2
         AND ($3::uuid IS NULL OR assessment."id" = $3::uuid)

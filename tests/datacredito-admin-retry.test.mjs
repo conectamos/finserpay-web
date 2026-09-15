@@ -98,6 +98,23 @@ test("valida JSON, cédula, apellido e idempotency key antes de autorizar", () =
   assert.doesNotMatch(`${authorizeRoute}\n${storage}`, /forceReentry/i);
 });
 
+test("loadCandidate evita el alias SQL reservado authorization", () => {
+  const start = storage.indexOf("async function loadCandidate(");
+  const end = storage.indexOf(
+    "\nexport async function findDataCreditoAdminRetryCandidate",
+    start
+  );
+  assert.ok(start >= 0 && end > start, "No se encontró loadCandidate");
+  const loadCandidate = storage.slice(start, end);
+  assert.doesNotMatch(loadCandidate, /\)\s+authorization\s+ON\s+TRUE\b/i);
+  assert.doesNotMatch(loadCandidate, /\bauthorization\."authorizedAt"/i);
+  assert.match(
+    loadCandidate,
+    /\)\s+retry_authorization\s+ON\s+TRUE\b/i
+  );
+  assert.match(loadCandidate, /\bretry_authorization\."authorizedAt"/i);
+});
+
 test("storage usa una allowlist positiva y jamás libera un RECHAZADO", () => {
   const authorize = exportedFunction(
     storage,
