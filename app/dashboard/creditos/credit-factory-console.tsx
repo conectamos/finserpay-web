@@ -124,6 +124,7 @@ import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financ
 import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginationTerms } from "@/lib/credit-current-origination-terms";
 import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
 import CreditEvidenceGallery from "@/app/dashboard/creditos/credit-evidence-gallery";
+import CreditRemissionNote from "@/app/dashboard/creditos/credit-remission-note";
 import {
   findCreditCreatedAfterConnectionLoss,
   isCreditCreationNetworkError,
@@ -15902,6 +15903,24 @@ export default function CreditFactoryConsole({
                       </details>
                     </div>
                   </section>
+
+                  <CreditRemissionNote
+                    clienteNombre={clienteNombre}
+                    clienteDocumento={clienteDocumento}
+                    referenciaEquipo={referenciaEquipo}
+                    valorVenta={valorTotalEquipoNumero}
+                    valorInicial={cuotaInicialNumero}
+                    numeroCuotas={amortizationPlan?.numeroCuotas ?? plazoMesesNumero}
+                    valorCuota={valorCuotaPactada}
+                    fechaPrimerPago={fechaPrimerPago}
+                    frecuenciaPago={frecuenciaPagoCredito}
+                    ready={
+                      stepClienteReady &&
+                      stepEquipoReady &&
+                      financialPreviewReady &&
+                      Boolean(amortizationPlan)
+                    }
+                  />
 
                   {canSeeInternalPricing &&
                   iphoneFactory &&
