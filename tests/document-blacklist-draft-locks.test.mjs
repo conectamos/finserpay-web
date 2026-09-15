@@ -108,6 +108,7 @@ function fixture({ preliminary = baseRow, row = baseRow, blocked = false, synchr
     },
     lockSolicitudOperationMutation: (tx, id) => acquire(tx, `operation:${id}`),
     lockIdentity: (tx, kind, value) => acquire(tx, `${kind}:${value}`),
+    supersedeLowerPrioritySameOwnerDrafts: async () => 0,
     resolveSolicitudDraftCanonicalIdentity: canonical.resolveSolicitudDraftCanonicalIdentity,
     findActiveByIdentity: async (tx) => { await acquire(tx, `row:${row.id}`); return row; },
     firmaSeguroTermsAreLocked: () => false,

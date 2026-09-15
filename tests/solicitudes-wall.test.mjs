@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   canSeeSensitiveSolicitudData,
   canViewSolicitud,
+  compareActiveSolicitudDraftPriority,
   getSolicitudActions,
   isSolicitudIdentityReleased,
   isSolicitudExpired,
@@ -287,12 +288,20 @@ test("expira exactamente al cumplir 15 dias calendario", () => {
   assert.equal(isSolicitudExpired("fecha-invalida", new Date()), false);
 });
 
-test("solo desistimiento o vencimiento liberan la cedula canonica", () => {
+test("desistimiento, vencimiento o conciliacion liberan la cedula canonica", () => {
   assert.equal(
     isSolicitudIdentityReleased({
       source: "DRAFT",
       draftState: "CERRADO",
       closedReason: "DESISTIDA",
+    }),
+    true
+  );
+  assert.equal(
+    isSolicitudIdentityReleased({
+      source: "DRAFT",
+      draftState: "CERRADO",
+      closedReason: "DUPLICADA",
     }),
     true
   );
@@ -312,6 +321,30 @@ test("solo desistimiento o vencimiento liberan la cedula canonica", () => {
   ]) {
     assert.equal(isSolicitudIdentityReleased(input), false);
   }
+});
+
+test("el muro prioriza el borrador abierto mas avanzado antes que el mas reciente", () => {
+  const advanced = {
+    source: "DRAFT",
+    entityId: 1347,
+    clienteDocumento: "1.105.616.341",
+    currentStep: 3,
+    createdAt: "2026-09-15T14:00:00.000Z",
+    rawState: "ABIERTO",
+  };
+  const recent = {
+    source: "DRAFT",
+    entityId: 1348,
+    clienteDocumento: "1105616341",
+    currentStep: 2,
+    createdAt: "2026-09-15T15:00:00.000Z",
+    rawState: "ABIERTO",
+  };
+
+  assert.ok(compareActiveSolicitudDraftPriority(advanced, recent) > 0);
+  assert.deepEqual(selectCanonicalSolicitudesByDocument([advanced, recent]), [
+    advanced,
+  ]);
 });
 
 test("el muro elige una sola solicitud reciente por cedula sin agrupar documentos vacios", () => {

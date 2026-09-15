@@ -152,6 +152,7 @@ const SOLICITUD_RELEASE_REASONS = new Set([
   "DESISTIDO",
   "EXPIRADA_15_DIAS",
   "EXPIRADA",
+  "DUPLICADA",
 ]);
 
 export function isSolicitudIdentityReleased(input: {
@@ -169,6 +170,7 @@ export type SolicitudCanonicalCandidate = {
   source: "DRAFT" | "CREDIT";
   entityId: number;
   clienteDocumento?: string | null;
+  currentStep?: number | null;
   createdAt?: Date | string | null;
   rawState?: string | null;
   closedReason?: string | null;
@@ -178,6 +180,21 @@ function canonicalCandidateTimestamp(value: Date | string | null | undefined) {
   if (!value) return Number.NEGATIVE_INFINITY;
   const timestamp = value instanceof Date ? value.getTime() : new Date(value).getTime();
   return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+export function compareActiveSolicitudDraftPriority(
+  left: SolicitudCanonicalCandidate,
+  right: SolicitudCanonicalCandidate
+) {
+  const leftStep = Math.max(1, Number(left.currentStep) || 1);
+  const rightStep = Math.max(1, Number(right.currentStep) || 1);
+  if (leftStep !== rightStep) return leftStep - rightStep;
+
+  const timestampDifference =
+    canonicalCandidateTimestamp(left.createdAt) -
+    canonicalCandidateTimestamp(right.createdAt);
+  if (timestampDifference !== 0) return timestampDifference;
+  return left.entityId - right.entityId;
 }
 
 function isNewerCanonicalCandidate(
@@ -205,6 +222,18 @@ function isNewerCanonicalCandidate(
         ? 1
         : 2;
   if (candidateRank !== currentRank) return candidateRank > currentRank;
+  if (
+    candidate.source === "DRAFT" &&
+    current.source === "DRAFT" &&
+    normalized(candidate.rawState) === "ABIERTO" &&
+    normalized(current.rawState) === "ABIERTO"
+  ) {
+    const priorityDifference = compareActiveSolicitudDraftPriority(
+      candidate,
+      current
+    );
+    if (priorityDifference !== 0) return priorityDifference > 0;
+  }
   const timestampDifference =
     canonicalCandidateTimestamp(candidate.createdAt) -
     canonicalCandidateTimestamp(current.createdAt);
@@ -400,7 +429,13 @@ export function resolveSolicitudStage(signals: SolicitudSignals): SolicitudState
 
   if (
     draftState === "CERRADO" &&
-    ["DESISTIDA", "DESISTIDO", "EXPIRADA_15_DIAS", "EXPIRADA"].includes(closedReason)
+    [
+      "DESISTIDA",
+      "DESISTIDO",
+      "EXPIRADA_15_DIAS",
+      "EXPIRADA",
+      "DUPLICADA",
+    ].includes(closedReason)
   ) {
     return "CANCELADA";
   }

@@ -60,6 +60,90 @@ test("la propiedad canonica exige el mismo asesor y la misma sede", async () => 
   );
 });
 
+test("la conciliacion limita propietario, aliado, prioridad y evidencia", async () => {
+  const source = await readProjectFile("lib/solicitudes-storage.ts");
+  const reconciliation = sourceBetween(
+    source,
+    "async function supersedeLowerPrioritySameOwnerDrafts",
+    "type FirmaSeguroDraftTermsRow"
+  );
+
+  assert.match(reconciliation, /"closedReason" = 'DUPLICADA'/);
+  assert.match(reconciliation, /'supersededBySolicitudId'/);
+  assert.match(reconciliation, /'supersededByUserId'/);
+  assert.match(reconciliation, /'supersededBySellerId'/);
+  assert.match(
+    reconciliation,
+    /duplicate_sede\."aliadoId" = target_sede\."aliadoId"/
+  );
+  assert.match(
+    reconciliation,
+    /duplicate_draft\."vendedorId" = target_draft\."vendedorId"[\s\S]*duplicate_draft\."usuarioId" = target_draft\."usuarioId"[\s\S]*duplicate_draft\."sedeId" = target_draft\."sedeId"/
+  );
+  assert.match(
+    reconciliation,
+    /duplicate_draft\."currentStep"[\s\S]*target_draft\."currentStep"[\s\S]*duplicate_draft\."createdAt" < target_draft\."createdAt"[\s\S]*duplicate_draft\."id" < target_draft\."id"/
+  );
+  assert.match(reconciliation, /target_draft\."dataCreditoAssessmentId" IS NOT NULL/);
+  assert.match(reconciliation, /duplicate_draft\."dataCreditoAssessmentId" IS NOT NULL/);
+  assert.match(reconciliation, /FROM "VeriffIdentityValidation"/);
+  assert.match(reconciliation, /FROM "FirmaSeguroProcess"/);
+  assert.doesNotMatch(reconciliation, /process\."supersededAt" IS NULL/);
+});
+
+test("la conciliacion se ejecuta solo en autosave y respeta locks operativos", async () => {
+  const source = await readProjectFile("lib/solicitudes-storage.ts");
+  const reconciliation = sourceBetween(
+    source,
+    "async function supersedeLowerPrioritySameOwnerDrafts",
+    "type FirmaSeguroDraftTermsRow"
+  );
+  const reservation = sourceBetween(
+    source,
+    "export async function reserveSolicitudForIdentity",
+    "export async function saveSolicitudDraft"
+  );
+  const autosave = sourceBetween(
+    source,
+    "export async function saveSolicitudDraft",
+    "export class SolicitudDataCreditoLinkError"
+  );
+
+  assert.match(reconciliation, /ORDER BY duplicate_draft\."id" ASC/);
+  assert.match(reconciliation, /pg_try_advisory_xact_lock/);
+  assert.match(reconciliation, /SOLICITUD_OPERATION_LOCK_NAMESPACE/);
+  assert.ok(
+    reconciliation.indexOf("pg_try_advisory_xact_lock") <
+      reconciliation.indexOf('UPDATE "CreditoBorrador" duplicate_draft')
+  );
+  assert.doesNotMatch(reservation, /supersedeLowerPrioritySameOwnerDrafts/);
+
+  const operationLock = autosave.indexOf("await lockSolicitudOperationMutation");
+  const targetSelect = autosave.indexOf("LIMIT 1 FOR UPDATE", operationLock);
+  const ownerRecheck = autosave.indexOf(
+    "!rows[0] || !sameOwner(rows[0], input)",
+    targetSelect
+  );
+  const autosaveReconcile = autosave.indexOf(
+    "await supersedeLowerPrioritySameOwnerDrafts",
+    ownerRecheck
+  );
+  const autosaveConflictCheck = autosave.indexOf(
+    "const conflicting = await findActiveByIdentity",
+    autosaveReconcile
+  );
+  assert.equal(
+    (autosave.match(/await supersedeLowerPrioritySameOwnerDrafts/g) || []).length,
+    1
+  );
+  assert.ok(operationLock >= 0);
+  assert.ok(targetSelect > operationLock);
+  assert.ok(ownerRecheck > targetSelect);
+  assert.ok(autosaveReconcile > ownerRecheck);
+  assert.ok(autosaveConflictCheck > autosaveReconcile);
+  assert.match(autosave, /findActiveByIdentity\(\s*transaction,\s*documentToLock,/);
+});
+
 test("los fantasmas historicos sin DataCredito no bloquean una identidad", async () => {
   const source = await readProjectFile("lib/solicitudes-storage.ts");
   const finder = sourceBetween(
