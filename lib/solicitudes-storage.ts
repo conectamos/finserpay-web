@@ -464,6 +464,28 @@ async function supersedeLowerPrioritySameOwnerDrafts(
       SELECT 1
       FROM "VeriffIdentityValidation" validation
       WHERE validation."draftId" = duplicate_draft."id"
+        AND (
+          COALESCE(UPPER(BTRIM(validation."status")), '') NOT IN (
+            'ERROR',
+            'ABANDONED',
+            'EXPIRED',
+            'PENDING'
+          )
+          OR validation."creditoId" IS NOT NULL
+          OR NULLIF(BTRIM(validation."veriffSessionId"), '') IS NOT NULL
+          OR NULLIF(BTRIM(validation."attemptId"), '') IS NOT NULL
+          OR validation."createPayload" IS NOT NULL
+          OR validation."mediaPayload" IS NOT NULL
+          OR validation."submitPayload" IS NOT NULL
+          OR validation."decisionPayload" IS NOT NULL
+          OR validation."webhookPayload" IS NOT NULL
+          OR validation."submittedAt" IS NOT NULL
+          OR validation."decidedAt" IS NOT NULL
+          OR NULLIF(BTRIM(validation."decision"), '') IS NOT NULL
+          OR NULLIF(BTRIM(validation."code"), '') IS NOT NULL
+          OR NULLIF(BTRIM(validation."reason"), '') IS NOT NULL
+          OR NULLIF(BTRIM(validation."reasonCode"), '') IS NOT NULL
+        )
     )
     AND NOT EXISTS (
       SELECT 1
