@@ -128,6 +128,10 @@ function normalizeDigits(value: unknown) {
   return String(value || "").replace(/\D/g, "").slice(0, 40);
 }
 
+function isCompleteImei(value: unknown) {
+  return /^\d{15}$/.test(normalizeDigits(value));
+}
+
 function normalizePlatform(value: unknown) {
   const platform = String(value || "").trim().toUpperCase();
   return platform === "ANDROID" || platform === "IPHONE" ? platform : null;
@@ -831,7 +835,7 @@ export async function reserveSolicitudForIdentity(input: {
       }
       const storedImei = normalizeDigits(selected[0].imei);
       const storedPlatform = normalizePlatform(selected[0].plataforma);
-      if (imei && storedImei && storedImei !== imei) {
+      if (imei && isCompleteImei(storedImei) && storedImei !== imei) {
         throw new ActiveSolicitudConflictError(
           "El IMEI no corresponde a la solicitud que estás retomando."
         );
@@ -936,6 +940,16 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
   await Promise.all([ensureSolicitudSchema(), ensureFirmaSeguroSchema()]);
   const document = normalizeDigits(input.clienteDocumento);
   const imei = normalizeDigits(input.imei);
+  const requestImeis = [
+    imei,
+    normalizeDigits(input.payload.imei),
+    normalizeDigits(input.payload.deviceUid),
+  ].filter(Boolean);
+  if (new Set(requestImeis).size > 1) {
+    throw new SolicitudCanonicalMutationError("SOLICITUD_IMEI_INMUTABLE");
+  }
+  const identityImei =
+    requestImeis.find((candidate) => isCompleteImei(candidate)) || "";
   const assessmentId = isUuid(input.dataCreditoAssessmentId)
     ? String(input.dataCreditoAssessmentId)
     : null;
@@ -981,11 +995,11 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     if (documentToLock) {
       await lockIdentity(transaction, "document", documentToLock);
     }
-    if (imei) await lockIdentity(transaction, "imei", imei);
+    if (identityImei) await lockIdentity(transaction, "imei", identityImei);
     await expireStaleWith(transaction);
 
     let targetRow: ActiveDraftOwnerRow | null = null;
-    let mustCheckIdentity = Boolean(document || imei);
+    let mustCheckIdentity = Boolean(document || identityImei);
     if (targetId) {
       const rows = await transaction.$queryRawUnsafe<ActiveDraftOwnerRow[]>(
         `
@@ -1022,7 +1036,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       }
       mustCheckIdentity = Boolean(
         (document && document !== normalizeDigits(rows[0].clienteDocumento)) ||
-          (imei && imei !== normalizeDigits(rows[0].imei))
+          (identityImei && identityImei !== normalizeDigits(rows[0].imei))
       );
     }
 
@@ -1030,12 +1044,21 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       const conflicting = await findActiveByIdentity(
         transaction,
         documentToLock,
-        imei,
+        identityImei,
         targetId
       );
       if (conflicting) {
         const targetDocument = normalizeDigits(targetRow?.clienteDocumento);
         const conflictingDocument = normalizeDigits(conflicting.clienteDocumento);
+        if (
+          conflictingDocument !== documentToLock &&
+          identityImei &&
+          normalizeDigits(conflicting.imei) === identityImei
+        ) {
+          throw new ActiveSolicitudConflictError(
+            "Este IMEI está reservado en otra solicitud activa. Verifica el IMEI del equipo o solicita su liberación al administrador."
+          );
+        }
         const canResumeConflict = Boolean(
           targetId &&
             targetRow &&
@@ -1166,14 +1189,20 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     const incomingStep = normalizeDraftStep(input.currentStep);
     const persistedStep = Math.max(storedStep, storedPayloadStep, incomingStep);
     const storedImei = normalizeDigits(targetRow?.imei);
+    const storedIdentityImei = isCompleteImei(storedImei) ? storedImei : "";
     const payloadImei = normalizeDigits(canonicalPayload.imei);
     const payloadDeviceUid = normalizeDigits(canonicalPayload.deviceUid);
     const incomingImeis = [imei, payloadImei, payloadDeviceUid].filter(Boolean);
+    const incomingCompleteImei =
+      incomingImeis.find((candidate) => isCompleteImei(candidate)) || "";
     if (
       new Set(incomingImeis).size > 1 ||
       (storedStep >= 3 &&
-        storedImei &&
-        incomingImeis.some((candidate) => candidate !== storedImei))
+        storedIdentityImei &&
+        incomingImeis.some(
+          (candidate) =>
+            isCompleteImei(candidate) && candidate !== storedIdentityImei
+        ))
     ) {
       throw new SolicitudCanonicalMutationError("SOLICITUD_IMEI_INMUTABLE");
     }
@@ -1199,11 +1228,9 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       normalizePlatform(targetRow?.plataforma) ||
       normalizePlatform(input.plataforma);
     const canonicalImei =
-      (storedStep >= 3 ? storedImei : "") ||
-      imei ||
-      payloadImei ||
-      payloadDeviceUid ||
-      storedImei;
+      (storedStep >= 3 ? storedIdentityImei : "") ||
+      incomingCompleteImei ||
+      storedIdentityImei;
     if (canonicalImei) {
       if (canonicalImei !== imei) {
         await lockIdentity(transaction, "imei", canonicalImei);
@@ -1239,7 +1266,12 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
                 NULLIF($4::text, ''), "clienteDocumento"
               ),
               "clienteTelefono" = $5,
-              "imei" = COALESCE(NULLIF($6::text, ''), "imei"),
+              "imei" = CASE
+                WHEN NULLIF($6::text, '') IS NOT NULL THEN $6::text
+                WHEN regexp_replace(COALESCE("imei", ''), '[^0-9]', '', 'g')
+                  ~ '^[0-9]{15}$' THEN "imei"
+                ELSE NULL
+              END,
               "plataforma" = COALESCE("plataforma", $7),
               "dataCreditoAssessmentId" = COALESCE($8::uuid, "dataCreditoAssessmentId"),
               "payload" = $9::jsonb,
