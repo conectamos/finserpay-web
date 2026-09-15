@@ -19,13 +19,21 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
   assert.equal(url.pathname, "/approval_gate_test");
   const db = new pg.Client({ connectionString }); await db.connect(); t.after(() => db.end());
   const tables = ["CreditApprovalCallContinuation","CreditApprovalNoveltyEvent","CreditApprovalNoveltyItem","CreditApprovalNovelty","CreditApprovalEvent","CreditApprovalReview","CreditApprovalCallRecording","CreditApprovalSharedSession",
-    "CreditApprovalSharedGrant","CreditApprovalPolicy","CreditApprovalReissue","LiquidacionAliadoCredito","Credito","Sede","Aliado","Usuario"];
+    "CreditApprovalSharedGrant","CreditApprovalPolicy","CreditApprovalReissue","LiquidacionAliadoCredito","Credito","Sede","Aliado","Usuario","Rol"];
   const existing = await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(existing.rows.every(({ tablename }) => tables.includes(tablename)), "No reiniciar tablas ajenas");
   for (const table of tables) await db.query(`DROP TABLE IF EXISTS public."${table}" CASCADE`);
-  await db.query(`CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY); INSERT INTO "Usuario" VALUES (1),(2);
-    CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY,"codigo" TEXT); INSERT INTO "Aliado" VALUES (10,'ALLY'),(20,'FINSERPAY');
-    CREATE TABLE "Sede" ("id" INTEGER PRIMARY KEY,"aliadoId" INTEGER); INSERT INTO "Sede" VALUES (10,10),(20,20);
+  await db.query(`CREATE TABLE "Rol" ("id" INTEGER PRIMARY KEY,"nombre" TEXT NOT NULL);
+    INSERT INTO "Rol" VALUES (1,'ANALISTA_APROBACION'),(2,'ADMIN');
+    CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY,"codigo" TEXT,"activo" BOOLEAN NOT NULL);
+    INSERT INTO "Aliado" VALUES (10,'ALLY',TRUE),(20,'FINSERPAY',TRUE),(30,'FINSERPAY',FALSE);
+    CREATE TABLE "Sede" ("id" INTEGER PRIMARY KEY,"aliadoId" INTEGER,"activa" BOOLEAN NOT NULL);
+    INSERT INTO "Sede" VALUES (10,10,TRUE),(20,20,TRUE),(21,20,FALSE),(30,30,TRUE);
+    CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY,"nombre" TEXT NOT NULL,"activo" BOOLEAN NOT NULL,"rolId" INTEGER NOT NULL,"sedeId" INTEGER NOT NULL);
+    INSERT INTO "Usuario" VALUES
+      (1,'Analista QA',TRUE,1,10),(2,'Emisor QA',TRUE,1,10),(3,'Admin central',TRUE,2,20),
+      (4,'Analista central',TRUE,1,20),(5,'Admin aliado',TRUE,2,10),(6,'Admin central inactivo',FALSE,2,20),
+      (7,'Admin sede inactiva',TRUE,2,21),(8,'Admin aliado inactivo',TRUE,2,30);
     CREATE TABLE "Credito" (
       "id" SERIAL PRIMARY KEY,"createdAt" TIMESTAMP(3) DEFAULT '2099-01-01',"estado" TEXT DEFAULT 'ACTIVO',
       "clienteNombre" TEXT DEFAULT 'Cliente sintético',"clienteDocumento" TEXT DEFAULT '12345',
@@ -42,12 +50,17 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
   await installCreditApprovalNoveltiesSchema(db);
   const createCredit = async () => (await db.query('INSERT INTO "Credito" DEFAULT VALUES RETURNING "id"')).rows[0].id;
   const review = async id => (await db.query('SELECT to_jsonb(r) AS row FROM "CreditApprovalReview" r WHERE "creditoId"=$1',[id])).rows[0].row;
-  const approve = (id, recordingId, client=db, reviewHash=hash) => client.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',
-    "approvedRevision"="revision","approvedByKind"='USER',"approvedByUserId"=1,"approvedByName"='Analista QA',
-    "approvedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC',"reviewHash"=$2,"callRecordingId"=$3::uuid WHERE "creditoId"=$1`,[id,reviewHash,recordingId]);
-  const event = (id, recordingId) => db.query(`INSERT INTO "CreditApprovalEvent"
-    ("creditoId","eventType","revision","actorUserId","actorName","reviewHash","callRecordingId")
-    SELECT "creditoId",'APPROVED',"revision",1,'Analista QA',"reviewHash",$2::uuid FROM "CreditApprovalReview" WHERE "creditoId"=$1`,[id,recordingId]);
+  const defaultActor={kind:"USER",userId:1,name:"Analista QA",grantId:null,sessionId:null};
+  const approve = (id, recordingId, client=db, reviewHash=hash, actor=defaultActor) => client.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',
+    "approvedRevision"="revision","approvedByKind"=$4,"approvedByUserId"=$5,"approvedByName"=$6,
+    "approvedByGrantId"=$7::uuid,"approvedBySessionId"=$8::uuid,
+    "approvedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC',"reviewHash"=$2,"callRecordingId"=$3::uuid WHERE "creditoId"=$1`,
+    [id,reviewHash,recordingId,actor.kind,actor.userId,actor.name,actor.grantId,actor.sessionId]);
+  const event = (id, recordingId, actor=defaultActor) => db.query(`INSERT INTO "CreditApprovalEvent"
+    ("creditoId","eventType","revision","actorUserId","actorName","actorKind","actorGrantId","actorSessionId","reviewHash","callRecordingId")
+    SELECT "creditoId",'APPROVED',"revision",$3,$4,$5,$6::uuid,$7::uuid,"reviewHash",$2::uuid
+    FROM "CreditApprovalReview" WHERE "creditoId"=$1`,
+    [id,recordingId,actor.userId,actor.name,actor.kind,actor.grantId,actor.sessionId]);
   const audio = async (id, overrides={}, client=db) => {
     const row={id:randomUUID(),creditoId:id,revision:1,reviewHash:hash,fileName:"llamada.wav",mimeType:"audio/wav",sizeBytes:bytes.length,sha256,bytes,
       actorKind:"USER",actorUserId:1,actorName:"Analista QA",actorGrantId:null,actorSessionId:null,idempotencyKey:randomUUID(),...overrides};
@@ -117,6 +130,48 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
   await t.test("SQL directo bloquea nuevo OK y liquidación sin grabación",async()=>{
     await assert.rejects(approve(pending,null),{code:"23514"}); assert.equal((await review(pending)).status,"PENDING");
     await assert.rejects(db.query('INSERT INTO "LiquidacionAliadoCredito" ("creditoId") VALUES ($1)',[pending]),{code:"23514"});
+  });
+  await t.test("solo el ADMIN central activo puede aprobar y auditar sin audio",async()=>{
+    const central={kind:"USER",userId:3,name:"Admin central",grantId:null,sessionId:null};
+    const centralAnalyst={kind:"USER",userId:4,name:"Analista central",grantId:null,sessionId:null};
+    const externalAdmin={kind:"USER",userId:5,name:"Admin aliado",grantId:null,sessionId:null};
+    const inactiveUser={kind:"USER",userId:6,name:"Admin central inactivo",grantId:null,sessionId:null};
+    const inactiveSite={kind:"USER",userId:7,name:"Admin sede inactiva",grantId:null,sessionId:null};
+    const inactiveAlly={kind:"USER",userId:8,name:"Admin aliado inactivo",grantId:null,sessionId:null};
+    const canSkip=async(kind,userId)=>(await db.query(
+      "SELECT public.credit_approval_actor_can_skip_call_recording($1,$2) AS allowed",[kind,userId])).rows[0].allowed;
+    assert.equal(await canSkip("USER",central.userId),true);
+    for(const [kind,userId] of [["USER",centralAnalyst.userId],["USER",externalAdmin.userId],
+      ["USER",inactiveUser.userId],["USER",inactiveSite.userId],["USER",inactiveAlly.userId],
+      ["SHARED_LINK",central.userId],["USER",null]]) assert.equal(await canSkip(kind,userId),false);
+
+    const grant=randomUUID(),session=randomUUID();
+    await db.query('INSERT INTO "CreditApprovalSharedGrant" ("id","issuedByUserId") VALUES ($1,1)',[grant]);
+    await db.query(`INSERT INTO "CreditApprovalSharedSession" ("id","grantId","expiresAt")
+      VALUES ($1,$2,(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')+INTERVAL '1 hour')`,[session,grant]);
+    const shared={kind:"SHARED_LINK",userId:null,name:"Analista por enlace",grantId:grant,sessionId:session};
+    for(const actor of [defaultActor,centralAnalyst,externalAdmin,inactiveUser,inactiveSite,inactiveAlly,shared]) {
+      const id=await createCredit();
+      await assert.rejects(approve(id,null,db,hash,actor),{code:"23514"});
+      assert.equal((await review(id)).status,"PENDING");
+    }
+
+    const id=await createCredit();
+    await approve(id,null,db,hash,central);
+    assert.equal((await review(id)).callRecordingId,null);
+    await assert.rejects(event(id,null,{...central,name:"Nombre falsificado"}),{code:"23514"});
+    await db.query('UPDATE "Usuario" SET "activo"=FALSE WHERE "id"=$1',[central.userId]);
+    await assert.rejects(event(id,null,central),{code:"23514"});
+    await db.query('UPDATE "Usuario" SET "activo"=TRUE WHERE "id"=$1',[central.userId]);
+    await event(id,null,central);
+
+    const withAudio=await createCredit(),older=await audio(withAudio),latest=await audio(withAudio);
+    await assert.rejects(approve(withAudio,null,db,hash,central),{code:"23514"});
+    await assert.rejects(approve(withAudio,older.id,db,hash,central),{code:"23514"});
+    assert.equal((await review(withAudio)).status,"PENDING");
+    await approve(withAudio,latest.id,db,hash,central);
+    await assert.rejects(event(withAudio,older.id,central),{code:"23514"});
+    await event(withAudio,latest.id,central);
   });
   await t.test("Prisma-first instala checksum, tamaño, MIME, actor y archivo inmutable",async()=>{
     const id=await createCredit();

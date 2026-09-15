@@ -16,6 +16,21 @@ export function approvalActorAudit(actor: ApprovalActor) {
     : { actorKind: "USER" as const, actorUserId: actor.id, actorName: actor.nombre,
         actorGrantId: null, actorSessionId: null };
 }
+
+/**
+ * Shared access and analyst accounts always require a call. Resolve this
+ * capability from the current database identity so request data, stale session
+ * claims or a display name can never grant the central-admin exception.
+ */
+export async function canApprovalActorSkipCall(db: Pick<Prisma.TransactionClient, "$queryRawUnsafe">, actor: ApprovalActor) {
+  if (actor.kind === "SHARED_LINK") return false;
+  const rows = await db.$queryRawUnsafe<Array<{ allowed: boolean }>>(
+    `SELECT public.credit_approval_actor_can_skip_call_recording('USER',$1) AS allowed`,
+    actor.id,
+  );
+  return rows[0]?.allowed === true;
+}
+
 /** Acquire before Credit/Review locks. Grant rotation or logout waits for this mutation. */
 export async function assertApprovalActorActive(db: Pick<Prisma.TransactionClient, "$queryRawUnsafe">, actor: ApprovalActor) {
   if (actor.kind !== "SHARED_LINK") return;

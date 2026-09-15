@@ -67,7 +67,12 @@ function EvidencePhoto({ item, clientName }: { item: ApprovalDetail["evidence"][
   );
 }
 
-type Confirmation = { id: number; folio: string; clienteNombre: string; clienteDocumento: string | null; revision: number; reviewHash: string; recordingId: string };
+type Confirmation = { id: number; folio: string; clienteNombre: string; clienteDocumento: string | null; revision: number; reviewHash: string; recordingId: string | null; recordingRequired: boolean };
+
+function confirmationDescription(confirmation: Confirmation, shared: boolean) {
+  const recordingConfirmation = confirmation.recordingRequired ? " Confirma que realizaste la llamada y guardaste su grabación." : "";
+  return `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, folio ${confirmation.folio}, y verificaste las correcciones.${recordingConfirmation} El OK habilitará este crédito para la liquidación al aliado y ${shared ? "quedará registrado por este acceso" : "quedará registrado con tu usuario"}.`;
+}
 
 export default function ApprovalConsole({ shared = false, redesigned = false }: { shared?: boolean; redesigned?: boolean } = {}) {
   const modern = shared || redesigned;
@@ -272,16 +277,20 @@ export default function ApprovalConsole({ shared = false, redesigned = false }: 
     setSelectedId(null); setSelectedItem(null); setDetail(null); setLoadingDetail(false); setDetailError("");
     setReviewChanged(false); setRereviewed(false);
   }
-  const canConfirm = Boolean(view === "pending" && detail?.callRecording?.recording && detail?.review.required && detail.review.status === "PENDING" && detail.canApprove && !loadingDetail && !detailError && !searchError && !searching && !busy && (!reviewChanged || rereviewed));
+  const recordingRequired = detail?.callRecording?.required !== false;
+  const recordingId = detail?.callRecording?.recording?.id ?? null;
+  const canConfirm = Boolean(view === "pending" && (!recordingRequired || recordingId) && detail?.review.required && detail.review.status === "PENDING" && detail.canApprove && !loadingDetail && !detailError && !searchError && !searching && !busy && (!reviewChanged || rereviewed));
 
   function requestApproval() {
-    if (!detail || !detail.callRecording?.recording || !canConfirm || submitting.current) return;
+    if (!detail || !canConfirm || submitting.current || recordingRequired && !recordingId) return;
     setNotice(null);
-    setConfirmation({ id: detail.id, folio: detail.folio, clienteNombre: detail.clienteNombre, clienteDocumento: detail.clienteDocumento, revision: detail.review.revision, reviewHash: detail.review.reviewHash, recordingId: detail.callRecording.recording.id });
+    setConfirmation({ id: detail.id, folio: detail.folio, clienteNombre: detail.clienteNombre, clienteDocumento: detail.clienteDocumento, revision: detail.review.revision, reviewHash: detail.review.reviewHash, recordingId, recordingRequired });
   }
 
   async function confirmApproval() {
-    if (!confirmation || submitting.current || !detail || detail.id !== confirmation.id || detail.review.revision !== confirmation.revision || detail.review.reviewHash !== confirmation.reviewHash || detail.callRecording?.recording?.id !== confirmation.recordingId) return;
+    const currentRecordingRequired = detail?.callRecording?.required !== false;
+    const currentRecordingId = detail?.callRecording?.recording?.id ?? null;
+    if (!confirmation || submitting.current || !detail || detail.id !== confirmation.id || detail.review.revision !== confirmation.revision || detail.review.reviewHash !== confirmation.reviewHash || currentRecordingRequired !== confirmation.recordingRequired || currentRecordingId !== confirmation.recordingId || currentRecordingRequired && !currentRecordingId) return;
     submitting.current = true;
     setSaving(true);
     try {
@@ -320,12 +329,12 @@ export default function ApprovalConsole({ shared = false, redesigned = false }: 
       signaturePanel={detail ? <ApprovalSignatureReissue key={detail.id} detail={detail} compact sharedAccess={shared} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null}
       approvalPanel={detail && detail.review.required && detail.review.status === "PENDING" ? <Card data-approval-decision="true">
         <h2 className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} aria-hidden="true" />Dar OK para liquidación</h2>
-        {detail.blockingReasons.length ? <><p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.blockingReasons[0]}</p><details className="mt-3 text-sm"><summary className="min-h-10 cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-[var(--fp-graphite)]">Ver requisitos pendientes ({detail.blockingReasons.length})</summary><ul className="list-disc space-y-2 pb-2 pl-5 text-[var(--fp-danger)]">{detail.blockingReasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></details></> : <p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.canApprove ? "Confirma el OK después de revisar los datos, las evidencias, la firma y la llamada." : "Actualiza el expediente para verificar los requisitos de aprobación."}</p>}
+        {detail.blockingReasons.length ? <><p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.blockingReasons[0]}</p><details className="mt-3 text-sm"><summary className="min-h-10 cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-[var(--fp-graphite)]">Ver requisitos pendientes ({detail.blockingReasons.length})</summary><ul className="list-disc space-y-2 pb-2 pl-5 text-[var(--fp-danger)]">{detail.blockingReasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></details></> : <p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.canApprove ? recordingRequired ? "Confirma el OK después de revisar los datos, las evidencias, la firma y la llamada." : "Confirma el OK después de revisar los datos, las evidencias y la firma." : "Actualiza el expediente para verificar los requisitos de aprobación."}</p>}
         {reviewChanged ? <label className="mt-3 flex min-h-10 items-start gap-2 text-sm"><input type="checkbox" checked={rereviewed} disabled={busy || loadingDetail || Boolean(detailError)} onChange={event => setRereviewed(event.target.checked)} className="mt-1 h-4 w-4 shrink-0 accent-[var(--fp-graphite)]" />Revisé de nuevo las fotografías y el documento actualizado.</label> : null}
         {actionError ? <p className="mt-2 text-sm text-[var(--fp-muted)]">{actionError}</p> : null}
         <div className="mt-4"><Button className="w-full" onClick={requestApproval} disabled={!canConfirm}><CheckCircle2 size={17} aria-hidden="true" />{saving ? "Confirmando..." : "OK para liquidación"}</Button></div>
       </Card> : null}
-      confirmationDialog={<ConfirmDialog open={Boolean(confirmation)} title="Aprobar para liquidación" description={confirmation ? `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, folio ${confirmation.folio}. Confirma que realizaste la llamada, guardaste su grabación y verificaste las correcciones. El OK habilitará este crédito para la liquidación al aliado y ${shared ? "quedará registrado por este acceso" : "quedará registrado con tu usuario"}.` : ""} confirmLabel="Confirmar OK para liquidación" busy={saving} onCancel={() => { if (!saving && !submitting.current) setConfirmation(null); }} onConfirm={() => void confirmApproval()} />} />;
+      confirmationDialog={<ConfirmDialog open={Boolean(confirmation)} title="Aprobar para liquidación" description={confirmation ? confirmationDescription(confirmation, shared) : ""} confirmLabel="Confirmar OK para liquidación" busy={saving} onCancel={() => { if (!saving && !submitting.current) setConfirmation(null); }} onConfirm={() => void confirmApproval()} />} />;
   }
 
   return (
@@ -437,7 +446,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false }: 
           {view === "pending" && detail.review.required && detail.review.status === "PENDING" ? (
             <Card className="p-4 sm:p-6">
               <h2 className="flex items-center gap-2 text-lg font-semibold"><ShieldCheck className="h-5 w-5" aria-hidden="true" />OK para liquidación</h2>
-              <p className="mt-2 text-sm text-[var(--fp-muted)]">Confirma después de revisar los datos financieros, las fotografías, el documento firmado y la llamada al cliente. La grabación debe estar guardada y las novedades resueltas.</p>
+              <p className="mt-2 text-sm text-[var(--fp-muted)]">{recordingRequired ? "Confirma después de revisar los datos financieros, las fotografías, el documento firmado y la llamada al cliente. La grabación debe estar guardada y las novedades resueltas." : "Confirma después de revisar los datos financieros, las fotografías y el documento firmado. Las novedades deben estar resueltas."}</p>
               {detail.blockingReasons.length ? <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-[var(--fp-danger)]">{detail.blockingReasons.map((reason, index) => <li key={`${index}:${reason}`}>{reason}</li>)}</ul> : null}
               {!detail.canApprove && !detail.blockingReasons.length ? <p className="mt-4 text-sm text-[var(--fp-muted)]">Este crédito todavía no está disponible para aprobación. Actualiza el expediente para consultar su estado.</p> : null}
               {reviewChanged ? <label className="mt-4 flex min-h-10 items-center gap-3 text-sm"><input type="checkbox" checked={rereviewed} disabled={busy || loadingDetail || Boolean(detailError)} onChange={(event) => setRereviewed(event.target.checked)} className="h-5 w-5 accent-[var(--fp-graphite)]" />Revisé de nuevo las fotografías y el documento actualizado.</label> : null}
@@ -449,7 +458,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false }: 
 
       </div>
 
-      <ConfirmDialog open={Boolean(confirmation)} title="Aprobar para liquidación" description={confirmation ? `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, folio ${confirmation.folio}. Confirma que realizaste la llamada, guardaste su grabación y verificaste las correcciones. Tu aprobación habilitará este crédito para la liquidación al aliado y quedará registrada.` : ""} confirmLabel="Confirmar OK para liquidación" busy={saving} onCancel={() => { if (!saving && !submitting.current) setConfirmation(null); }} onConfirm={() => void confirmApproval()} />
+      <ConfirmDialog open={Boolean(confirmation)} title="Aprobar para liquidación" description={confirmation ? confirmationDescription(confirmation, false) : ""} confirmLabel="Confirmar OK para liquidación" busy={saving} onCancel={() => { if (!saving && !submitting.current) setConfirmation(null); }} onConfirm={() => void confirmApproval()} />
     </main>
   );
 }

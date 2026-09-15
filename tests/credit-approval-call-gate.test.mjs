@@ -3,6 +3,9 @@ import test from "node:test";
 import { loadApprovalModule, service, approvalFixture, approvalDatabase, CALL_RECORDING_ID, readyCallRecording, plain } from "./credit-approval-test-loader.mjs";
 
 const actor = { id: 7, nombre: "Analista de prueba" };
+const centralActor = { id: 70, nombre: "Administrador central" };
+const sharedActor = { kind: "SHARED_LINK", id: null, nombre: "Acceso compartido",
+  grantId: "00000000-0000-4000-8000-000000000071", sessionId: "00000000-0000-4000-8000-000000000072" };
 const anotherId = "00000000-0000-4000-8000-000000000082";
 const inputFor = (detail, recordingId = CALL_RECORDING_ID) => ({ revision: detail.review.revision, reviewHash: detail.review.reviewHash, recordingId });
 const pureDetail = (fixture, state) => service.buildCreditApprovalDetail(fixture.credit, fixture.review, fixture.assessment, fixture.document, undefined, undefined, state);
@@ -48,6 +51,77 @@ test("falta o fallo de almacenamiento de audio bloquea pending antes de escribir
     await assert.rejects(service.approveCredit(db, 81, inputFor(detail), actor), { code, status });
     assert.equal(state.writes.length, 0);
   }
+});
+
+test("solo el administrador central activo puede aprobar sin una grabación", async () => {
+  const { db, state } = approvalDatabase({ callRecording: null, centralAdminUserIds: [centralActor.id] });
+  const detail = await service.getCreditApprovalDetail(db, 81, centralActor);
+  assert.equal(detail.callRecording.required, false);
+  assert.equal(detail.callRecording.canUpload, false);
+  assert.equal(detail.canApprove, true);
+
+  const result = await service.approveCredit(db, 81,
+    { revision: detail.review.revision, reviewHash: detail.review.reviewHash }, centralActor);
+  assert.equal(result.item.review.status, "APPROVED");
+  assert.equal(state.review.callRecordingId, null);
+  assert.equal(state.events[0][9], null);
+  assert.match(state.events[0][10], /administrador central/);
+
+  const identityChecks = state.queries.filter(({ sql }) => sql.includes("credit_approval_actor_can_skip_call_recording"));
+  assert.equal(identityChecks.length, 2);
+  assert.ok(identityChecks.every(({ params }) => params[0] === centralActor.id));
+});
+
+test("analista, administrador externo y enlace compartido siguen requiriendo audio", async () => {
+  for (const currentActor of [actor, { id: 80, nombre: "Administrador externo" }, sharedActor]) {
+    const { db, state } = approvalDatabase({ callRecording: null, centralAdminUserIds: [centralActor.id] });
+    const detail = await service.getCreditApprovalDetail(db, 81, currentActor);
+    assert.equal(detail.callRecording.required, true);
+    assert.equal(detail.canApprove, false);
+    await assert.rejects(service.approveCredit(db, 81,
+      { revision: detail.review.revision, reviewHash: detail.review.reviewHash }, currentActor),
+      { code: "CALL_RECORDING_REQUIRED", status: 409 });
+    assert.equal(state.writes.length, 0);
+  }
+});
+
+test("el administrador central sin audio no depende del almacenamiento de grabaciones", async () => {
+  const { db, state } = approvalDatabase({ callRecordingError: true, centralAdminUserIds: [centralActor.id] });
+  const detail = await service.getCreditApprovalDetail(db, 81, centralActor);
+  assert.equal(detail.callRecording.available, false);
+  assert.equal(detail.callRecording.required, false);
+  assert.equal(detail.canApprove, true);
+  await service.approveCredit(db, 81,
+    { revision: detail.review.revision, reviewHash: detail.review.reviewHash }, centralActor);
+  assert.equal(state.review.callRecordingId, null);
+});
+
+test("si existe audio vigente el administrador central debe confirmar ese identificador", async () => {
+  const { db, state } = approvalDatabase({ centralAdminUserIds: [centralActor.id] });
+  const detail = await service.getCreditApprovalDetail(db, 81, centralActor);
+  assert.equal(detail.callRecording.required, false);
+  assert.equal(detail.callRecording.recording.id, CALL_RECORDING_ID);
+  await assert.rejects(service.approveCredit(db, 81,
+    { revision: detail.review.revision, reviewHash: detail.review.reviewHash }, centralActor),
+    { code: "CALL_RECORDING_CHANGED", status: 409 });
+  await assert.rejects(service.approveCredit(db, 81,
+    inputFor(detail, anotherId), centralActor), { code: "CALL_RECORDING_CHANGED", status: 409 });
+  assert.equal(state.writes.length, 0);
+  await service.approveCredit(db, 81, inputFor(detail), centralActor);
+  assert.equal(state.review.callRecordingId, CALL_RECORDING_ID);
+});
+
+test("la excepción central no omite novedades ni documentos del expediente", async () => {
+  const { db, state } = approvalDatabase({ callRecording: null, centralAdminUserIds: [centralActor.id],
+    novelty: { id: "novelty-test", status: "WAITING_ALLY", version: 1 },
+    noveltyItems: [{ id: "photo-test", key: "foto-entrega", status: "OPEN", version: 1, reason: "Foto borrosa", openedAt: new Date() }] });
+  const detail = await service.getCreditApprovalDetail(db, 81, centralActor);
+  assert.equal(detail.callRecording.required, false);
+  assert.equal(detail.canApprove, false);
+  await assert.rejects(service.approveCredit(db, 81,
+    { revision: detail.review.revision, reviewHash: detail.review.reviewHash }, centralActor),
+    { code: "NOVELTY_PENDING", status: 409 });
+  assert.equal(state.writes.length, 0);
 });
 
 test("sin identificador explícito o con un audio sustituido no se registra OK", async () => {

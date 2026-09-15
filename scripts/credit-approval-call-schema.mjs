@@ -217,6 +217,25 @@ export const creditApprovalCallSchemaStatements = [
     FOR EACH ROW EXECUTE FUNCTION public.credit_approval_reject_history_mutation()`,
   `CREATE OR REPLACE TRIGGER "CreditApprovalCallRecording_no_truncate" BEFORE TRUNCATE ON public."CreditApprovalCallRecording"
     FOR EACH STATEMENT EXECUTE FUNCTION public.credit_approval_reject_history_mutation()`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_actor_can_skip_call_recording(
+      actor_kind TEXT, actor_user_id INTEGER)
+    RETURNS BOOLEAN LANGUAGE plpgsql VOLATILE AS $$
+    BEGIN
+      IF actor_kind IS DISTINCT FROM 'USER' OR actor_user_id IS NULL THEN RETURN FALSE; END IF;
+      PERFORM 1
+      FROM public."Usuario" account
+      JOIN public."Rol" user_role ON user_role."id"=account."rolId"
+      JOIN public."Sede" site ON site."id"=account."sedeId"
+      JOIN public."Aliado" ally ON ally."id"=site."aliadoId"
+      WHERE account."id"=actor_user_id
+        AND account."activo" IS TRUE
+        AND site."activa" IS TRUE
+        AND ally."activo" IS TRUE
+        AND UPPER(BTRIM(user_role."nombre"))='ADMIN'
+        AND UPPER(BTRIM(ally."codigo"))='FINSERPAY'
+      FOR SHARE OF account,user_role,site,ally;
+      RETURN FOUND;
+    END $$`,
   `CREATE OR REPLACE FUNCTION public.credit_approval_require_call_recording() RETURNS trigger LANGUAGE plpgsql AS $$
     DECLARE latest_id UUID;
     BEGIN
@@ -230,18 +249,38 @@ export const creditApprovalCallSchemaStatements = [
           OLD."approvedByKind",OLD."approvedByGrantId",OLD."approvedBySessionId",OLD."callRecordingId") THEN RETURN NEW; END IF;
       SELECT public.credit_approval_effective_call_recording(
         NEW."creditoId",NEW."revision",NEW."reviewHash") INTO latest_id;
-      IF NEW."callRecordingId" IS NULL OR latest_id IS NULL OR NEW."callRecordingId"<>latest_id
-        THEN RAISE EXCEPTION 'CALL_RECORDING_REQUIRED' USING ERRCODE='23514'; END IF;
+      IF latest_id IS NOT NULL THEN
+        IF NEW."callRecordingId" IS NULL OR NEW."callRecordingId"<>latest_id
+          THEN RAISE EXCEPTION 'CALL_RECORDING_REQUIRED' USING ERRCODE='23514'; END IF;
+      ELSIF NEW."callRecordingId" IS NOT NULL
+        OR NOT public.credit_approval_actor_can_skip_call_recording(
+          NEW."approvedByKind",NEW."approvedByUserId") THEN
+        RAISE EXCEPTION 'CALL_RECORDING_REQUIRED' USING ERRCODE='23514';
+      END IF;
       RETURN NEW;
     END $$`,
   `CREATE OR REPLACE TRIGGER "CreditApprovalReview_call_required" BEFORE INSERT OR UPDATE ON public."CreditApprovalReview"
     FOR EACH ROW EXECUTE FUNCTION public.credit_approval_require_call_recording()`,
-  `CREATE OR REPLACE FUNCTION public.credit_approval_call_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_event() RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE current_review public."CreditApprovalReview"%ROWTYPE;
+    BEGIN
     IF NEW."eventType"='APPROVED' THEN
-      IF NEW."callRecordingId" IS NULL OR NOT EXISTS (SELECT 1 FROM public."CreditApprovalReview"
+      SELECT * INTO current_review FROM public."CreditApprovalReview"
         WHERE "creditoId"=NEW."creditoId" AND "status"='APPROVED' AND "revision"=NEW."revision"
-          AND "reviewHash"=NEW."reviewHash" AND "callRecordingId"=NEW."callRecordingId")
+          AND "reviewHash"=NEW."reviewHash" FOR SHARE;
+      IF NOT FOUND
         THEN RAISE EXCEPTION 'CALL_RECORDING_EVENT_REQUIRED' USING ERRCODE='23514'; END IF;
+      IF NEW."callRecordingId" IS NULL THEN
+        IF current_review."callRecordingId" IS NOT NULL
+          OR NOT public.credit_approval_actor_can_skip_call_recording(
+            current_review."approvedByKind",current_review."approvedByUserId")
+          OR ROW(NEW."actorKind",NEW."actorUserId",NEW."actorName",NEW."actorGrantId",NEW."actorSessionId") IS DISTINCT FROM
+            ROW(current_review."approvedByKind",current_review."approvedByUserId",current_review."approvedByName",
+              current_review."approvedByGrantId",current_review."approvedBySessionId")
+          THEN RAISE EXCEPTION 'CALL_RECORDING_EVENT_REQUIRED' USING ERRCODE='23514'; END IF;
+      ELSIF current_review."callRecordingId" IS DISTINCT FROM NEW."callRecordingId" THEN
+        RAISE EXCEPTION 'CALL_RECORDING_EVENT_REQUIRED' USING ERRCODE='23514';
+      END IF;
     ELSIF NEW."callRecordingId" IS NOT NULL THEN
       RAISE EXCEPTION 'CALL_RECORDING_EVENT_INVALID' USING ERRCODE='23514';
     END IF;
