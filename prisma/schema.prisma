@@ -373,6 +373,7 @@ model Credito {
   aprobacionAnalista            CreditApprovalReview?
   novedadesAprobacion           CreditApprovalNovelty[]
   grabacionesAprobacion         CreditApprovalCallRecording[]
+  continuidadesGrabacionAprobacion CreditApprovalCallContinuation[]
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
 
@@ -436,6 +437,7 @@ model CreditApprovalNovelty {
   credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   items CreditApprovalNoveltyItem[]
   events CreditApprovalNoveltyEvent[]
+  callContinuations CreditApprovalCallContinuation[]
 
   @@index([creditoId, createdAt(sort: Desc)], map: "CreditApprovalNovelty_credit_created")
 }
@@ -475,6 +477,7 @@ model CreditApprovalNoveltyEvent {
   item CreditApprovalNoveltyItem? @relation(fields: [itemId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   actor Usuario? @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   actorSharedSession CreditApprovalSharedSession? @relation(fields: [actorSessionId, actorGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalNoveltyEvent_shared_actor_fkey")
+  callContinuation CreditApprovalCallContinuation?
 
   @@index([noveltyId, createdAt, id], map: "CreditApprovalNoveltyEvent_case_created")
 }
@@ -501,8 +504,29 @@ model CreditApprovalCallRecording {
   actorSharedSession CreditApprovalSharedSession? @relation(fields: [actorSessionId, actorGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalCallRecording_shared_actor_fkey")
   reviews CreditApprovalReview[]
   events CreditApprovalEvent[]
+  continuations CreditApprovalCallContinuation[]
 
   @@index([creditoId, revision, reviewHash, createdAt(sort: Desc), id(sort: Desc)], map: "CreditApprovalCallRecording_current_idx")
+}
+
+model CreditApprovalCallContinuation {
+  id String @id @default(uuid()) @db.Uuid
+  creditoId Int
+  recordingId String @db.Uuid
+  noveltyId String @db.Uuid
+  noveltyEventId String @unique(map: "CreditApprovalCallContinuation_noveltyEvent_key") @db.Uuid
+  sourceRevision Int
+  sourceReviewHash String @db.VarChar(64)
+  targetRevision Int
+  targetReviewHash String @db.VarChar(64)
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  recording CreditApprovalCallRecording @relation(fields: [recordingId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  novelty CreditApprovalNovelty @relation(fields: [noveltyId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  noveltyEvent CreditApprovalNoveltyEvent @relation(fields: [noveltyEventId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([creditoId, targetRevision, targetReviewHash], map: "CreditApprovalCallContinuation_target_key")
+  @@index([recordingId], map: "CreditApprovalCallContinuation_recording_idx")
 }
 
 model CreditApprovalPolicy {
@@ -619,6 +643,7 @@ model CreditApprovalEvent {
   actor Usuario? @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
 
   @@index([creditoId, createdAt])
+  @@index([creditoId, eventType, revision], map: "CreditApprovalEvent_credit_type_revision_idx")
 }
 
 model LiquidacionAliado {

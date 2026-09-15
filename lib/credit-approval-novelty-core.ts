@@ -43,9 +43,11 @@ export async function appendNoveltyEvent(db: NoveltyDatabase, input: {
   requestKey?: string | null; requestHash?: string | null;
 }) {
   const actor = approvalActorAudit(input.actor);
+  const id = randomUUID();
   await db.$executeRawUnsafe(`INSERT INTO "CreditApprovalNoveltyEvent"
     ("id","noveltyId","itemId","type","actorKind","actorUserId","actorName","actorGrantId","actorSessionId","payload","requestKey","requestHash","createdAt")
     VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8::uuid,$9::uuid,$10::jsonb,$11::uuid,$12,CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`,
-    randomUUID(), input.noveltyId, input.itemId || null, input.type, actor.actorKind, actor.actorUserId,
+    id, input.noveltyId, input.itemId || null, input.type, actor.actorKind, actor.actorUserId,
     actor.actorName, actor.actorGrantId, actor.actorSessionId, JSON.stringify(input.payload), input.requestKey || null, input.requestHash || null);
+  return id;
 }

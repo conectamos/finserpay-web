@@ -1,6 +1,7 @@
 import "server-only";
 import { assertApprovalActorActive, assertApprovalActorCreditAccess } from "@/lib/credit-approval-actor";
 import { markNoveltyPhotoCorrected } from "@/lib/credit-approval-novelty-state";
+import { captureCreditApprovalCallContinuity, continueCreditApprovalCall } from "@/lib/credit-approval-call-continuity";
 import { APPROVAL_EVIDENCE, CreditApprovalError, getCreditApprovalDetail, parseCreditApproval, type ApprovalActor, type ApprovalDatabase } from "@/lib/credit-approval";
 import { sanitizeIphoneDeliveryEvidenceDataUrl } from "@/lib/iphone-delivery-evidence";
 import { archiveEvidenceRevision, correctedEvidenceSnapshot, evidenceSha256 } from "@/lib/credit-approval-evidence-history";
@@ -40,6 +41,7 @@ export async function replaceApprovalEvidence(db: ApprovalDatabase, id: number,
   if (item.review.revision !== input.revision || item.review.reviewHash !== input.reviewHash) {
     throw new CreditApprovalError("REVIEW_CHANGED", "El expediente cambió. Revisa la fotografía actual antes de reemplazarla.", 409);
   }
+  const callContinuity = captureCreditApprovalCallContinuity(item);
   const config = APPROVAL_EVIDENCE.find(({ key }) => key === input.key);
   if (!config) throw new CreditApprovalError("INVALID_EVIDENCE", "Fotografía no válida.");
   const credit = rows[0];
@@ -61,6 +63,8 @@ export async function replaceApprovalEvidence(db: ApprovalDatabase, id: number,
   });
   await db.$executeRawUnsafe(`UPDATE "Credito" SET "${config.field}" = $2, "contratoSnapshot" = $3::jsonb,
     "updatedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC' WHERE "id" = $1`, id, input.dataUrl, JSON.stringify(snapshot));
-  await markNoveltyPhotoCorrected(db, id, input.key, nextSha256, actor);
-  return { item: await getCreditApprovalDetail(db, id), unchanged: false };
+  const continuityEvent = await markNoveltyPhotoCorrected(db, id, input.key, nextSha256, actor);
+  const currentItem = await getCreditApprovalDetail(db, id);
+  if (continuityEvent) await continueCreditApprovalCall(db, id, callContinuity, continuityEvent, currentItem);
+  return { item: currentItem, unchanged: false };
 }

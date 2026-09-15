@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { service, approvalFixture, approvalDatabase, CALL_RECORDING_ID, readyCallRecording, plain } from "./credit-approval-test-loader.mjs";
+import { loadApprovalModule, service, approvalFixture, approvalDatabase, CALL_RECORDING_ID, readyCallRecording, plain } from "./credit-approval-test-loader.mjs";
 
 const actor = { id: 7, nombre: "Analista de prueba" };
 const anotherId = "00000000-0000-4000-8000-000000000082";
 const inputFor = (detail, recordingId = CALL_RECORDING_ID) => ({ revision: detail.review.revision, reviewHash: detail.review.reviewHash, recordingId });
 const pureDetail = (fixture, state) => service.buildCreditApprovalDetail(fixture.credit, fixture.review, fixture.assessment, fixture.document, undefined, undefined, state);
+const continuity = loadApprovalModule("lib/credit-approval-call-continuity.ts", {
+  "@/lib/credit-approval": { getCreditApprovalDetail: async () => { throw new Error("El test suministra el detalle final"); } },
+});
 
 test("el nuevo OK exige recordingId UUID válido; la forma previa solo queda disponible para retry histórico", () => {
   const body = { revision: 1, reviewHash: "a".repeat(64) };
@@ -103,4 +106,61 @@ test("aprobación histórica sin audio se conserva y no depende del nuevo almace
   assert.equal((await service.approveCredit(db, 81, input, actor)).unchanged, true);
   assert.deepEqual(plain(state.review), before);
   assert.equal(state.writes.length, 0);
+});
+
+test("un audio continuado conserva su tupla física y solo habilita la tupla efectiva declarada", () => {
+  const fixture = approvalFixture();
+  const original = pureDetail(fixture, { available: true, recording: null });
+  const recording = readyCallRecording(original);
+  fixture.review = {
+    status: "PENDING", revision: 3, approvedRevision: null, approvedAt: null,
+    approvedByName: null, reviewHash: null,
+  };
+  const pending = pureDetail(fixture, { available: true, recording: null });
+  const continued = pureDetail(fixture, {
+    available: true,
+    recording,
+    validFor: { revision: pending.review.revision, reviewHash: pending.review.reviewHash },
+  });
+  assert.equal(continued.canApprove, true);
+  assert.equal(continued.callRecording.recording.id, recording.id);
+  assert.equal(continued.callRecording.recording.revision, 1, "no reescribe la revisión física del audio");
+  assert.equal(continued.callRecording.recording.reviewHash, original.review.reviewHash, "no falsifica la huella original");
+  const wrongTarget = pureDetail(fixture, {
+    available: true,
+    recording,
+    validFor: { revision: pending.review.revision, reviewHash: "b".repeat(64) },
+  });
+  assert.equal(wrongTarget.canApprove, false);
+  assert.equal(wrongTarget.callRecording.recording, null);
+});
+
+test("la continuidad enlaza metadatos auditables sin copiar bytes y no actúa cuando falta audio", async () => {
+  const sourceDetail = {
+    id: 81, review: { revision: 4, reviewHash: "a".repeat(64), status: "PENDING" },
+    callRecording: { available: true, recording: { id: CALL_RECORDING_ID } },
+  };
+  const source = continuity.captureCreditApprovalCallContinuity(sourceDetail);
+  assert.deepEqual(plain(source), { recordingId: CALL_RECORDING_ID, revision: 4, reviewHash: "a".repeat(64) });
+
+  const writes = [];
+  const db = { async $executeRawUnsafe(sql, ...params) { writes.push({ sql, params }); return 1; } };
+  const event = {
+    noveltyId: "00000000-0000-4000-8000-000000000091",
+    noveltyEventId: "00000000-0000-4000-8000-000000000092",
+  };
+  const target = {
+    id: 81, review: { revision: 5, reviewHash: "a".repeat(64), status: "PENDING" },
+    callRecording: { available: true, recording: { id: CALL_RECORDING_ID } },
+  };
+  assert.equal(await continuity.continueCreditApprovalCall(db, 81, source, event, target), true);
+  assert.equal(writes.length, 1);
+  assert.match(writes[0].sql, /^INSERT INTO "CreditApprovalCallContinuation"/);
+  assert.doesNotMatch(writes[0].sql, /"bytes"/);
+  assert.deepEqual(plain(writes[0].params.slice(1)), [
+    81, CALL_RECORDING_ID, event.noveltyId, event.noveltyEventId,
+    4, "a".repeat(64), 5, "a".repeat(64),
+  ]);
+  assert.equal(await continuity.continueCreditApprovalCall(db, 81, null, event, target), false);
+  assert.equal(writes.length, 1);
 });

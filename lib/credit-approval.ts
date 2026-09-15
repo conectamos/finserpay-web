@@ -230,8 +230,10 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
     : reissue.blocked ? "Resuelve el reenvío de firma en curso antes de corregir o aprobar este expediente."
     : !reissue.available ? "No se pudo verificar el estado de la firma. Actualiza el expediente." : null;
   const recordingRequired = credit.required && !approved;
+  const recordingValidity = callState.validFor || (callState.recording
+    ? { revision: callState.recording.revision, reviewHash: callState.recording.reviewHash } : null);
   const currentRecording = callState.recording && (!recordingRequired || (
-    callState.recording.revision === (review?.revision || 1) && callState.recording.reviewHash === reviewHash
+    recordingValidity?.revision === (review?.revision || 1) && recordingValidity.reviewHash === reviewHash
   )) ? callState.recording : null;
   const recordingBlockedReason = recordingRequired && (!callState.available || !currentRecording)
     ? !callState.available ? "No se pudo verificar la grabación de la llamada. Actualiza el expediente."

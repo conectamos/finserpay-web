@@ -1,4 +1,12 @@
-import { markNoveltyPhotoCorrected } from "@/lib/credit-approval-novelty-state";
+import { getCreditApprovalDetail } from "@/lib/credit-approval";
+import {
+  captureCreditApprovalCallContinuity,
+  continueCreditApprovalCall,
+} from "@/lib/credit-approval-call-continuity";
+import {
+  getCreditApprovalNoveltyState,
+  markNoveltyPhotoCorrected,
+} from "@/lib/credit-approval-novelty-state";
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { archiveEvidenceRevision, evidenceSha256 } from "@/lib/credit-approval-evidence-history";
@@ -627,6 +635,20 @@ export async function PATCH(
         });
       }
 
+      const noveltyState = await getCreditApprovalNoveltyState(tx, credit.id);
+      const requestedByNovelty = Boolean(
+        noveltyState.novelty &&
+          noveltyState.novelty.status !== "RESOLVED" &&
+          noveltyState.novelty.items.some(
+            (item) => item.key === correction.key && item.status === "OPEN"
+          )
+      );
+      const callContinuitySource = requestedByNovelty
+        ? captureCreditApprovalCallContinuity(
+            await getCreditApprovalDetail(tx, credit.id)
+          )
+        : null;
+
       const correctedAt = new Date().toISOString();
       const contratoSnapshot = correctedContractSnapshot(
         credit.contratoSnapshot,
@@ -663,7 +685,21 @@ export async function PATCH(
         },
       });
 
-      await markNoveltyPhotoCorrected(tx, credit.id, correction.key, nextSha256, { id: user.id, nombre: user.nombre });
+      const noveltyEvent = await markNoveltyPhotoCorrected(
+        tx,
+        credit.id,
+        correction.key,
+        nextSha256,
+        { id: user.id, nombre: user.nombre }
+      );
+      if (noveltyEvent) {
+        await continueCreditApprovalCall(
+          tx,
+          credit.id,
+          callContinuitySource,
+          noveltyEvent
+        );
+      }
       return NextResponse.json({
         ok: true,
         unchanged: false,

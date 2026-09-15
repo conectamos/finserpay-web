@@ -49,7 +49,7 @@ export async function markNoveltyPhotoCorrected(db: NoveltyDatabase, creditId: n
   if (!items[0] || key === "GENERAL") return false;
   await db.$executeRawUnsafe(`UPDATE "CreditApprovalNoveltyItem" SET "status"='RESPONDED',"responsePhotoHash"=$2,
     "responseText"='Fotografía actualizada durante revisión',"respondedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC' WHERE "id"=$1::uuid`, items[0].id, sha256);
-  await appendNoveltyEvent(db, { noveltyId: cases[0].id, itemId: items[0].id, type: "PHOTO_RESPONDED", actor,
+  const noveltyEventId = await appendNoveltyEvent(db, { noveltyId: cases[0].id, itemId: items[0].id, type: "PHOTO_RESPONDED", actor,
     payload: { key, nextSha256: sha256, text: "Fotografía actualizada durante revisión" } });
-  return true;
+  return { noveltyId: cases[0].id, noveltyEventId };
 }

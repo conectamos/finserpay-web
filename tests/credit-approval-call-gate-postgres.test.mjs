@@ -5,6 +5,7 @@ import pg from "pg";
 import { installCreditApprovalSchema } from "../scripts/credit-approval-schema.mjs";
 import { installCreditApprovalActorSchema } from "../scripts/credit-approval-actor-schema.mjs";
 import { installApprovalSharedSchema } from "../scripts/approval-shared-schema.mjs";
+import { installCreditApprovalNoveltiesSchema } from "../scripts/credit-approval-novelties-schema.mjs";
 import { installCreditApprovalCallSchema } from "../scripts/credit-approval-call-schema.mjs";
 const connectionString = process.env.CREDIT_APPROVAL_CALL_GATE_TEST_DATABASE_URL;
 const hash = "a".repeat(64), bytes = Buffer.from("fixture SQL sin voz");
@@ -17,7 +18,7 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
   assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname));
   assert.equal(url.pathname, "/approval_gate_test");
   const db = new pg.Client({ connectionString }); await db.connect(); t.after(() => db.end());
-  const tables = ["CreditApprovalEvent","CreditApprovalReview","CreditApprovalCallRecording","CreditApprovalSharedSession",
+  const tables = ["CreditApprovalCallContinuation","CreditApprovalNoveltyEvent","CreditApprovalNoveltyItem","CreditApprovalNovelty","CreditApprovalEvent","CreditApprovalReview","CreditApprovalCallRecording","CreditApprovalSharedSession",
     "CreditApprovalSharedGrant","CreditApprovalPolicy","CreditApprovalReissue","LiquidacionAliadoCredito","Credito","Sede","Aliado","Usuario"];
   const existing = await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(existing.rows.every(({ tablename }) => tables.includes(tablename)), "No reiniciar tablas ajenas");
@@ -38,6 +39,7 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
     CREATE TABLE "LiquidacionAliadoCredito" ("id" SERIAL PRIMARY KEY,"creditoId" INTEGER UNIQUE REFERENCES "Credito"("id"),"snapshot" TEXT DEFAULT 'pago original');
     CREATE TABLE "CreditApprovalReissue" ("creditoId" INTEGER,"status" TEXT);`);
   await installCreditApprovalSchema(db); await installCreditApprovalActorSchema(db); await installApprovalSharedSchema(db);
+  await installCreditApprovalNoveltiesSchema(db);
   const createCredit = async () => (await db.query('INSERT INTO "Credito" DEFAULT VALUES RETURNING "id"')).rows[0].id;
   const review = async id => (await db.query('SELECT to_jsonb(r) AS row FROM "CreditApprovalReview" r WHERE "creditoId"=$1',[id])).rows[0].row;
   const approve = (id, recordingId, client=db, reviewHash=hash) => client.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',

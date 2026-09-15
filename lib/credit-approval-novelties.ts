@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { getCreditApprovalDetail, approvalImage } from "@/lib/credit-approval";
+import { captureCreditApprovalCallContinuity, continueCreditApprovalCall } from "@/lib/credit-approval-call-continuity";
 import { assertApprovalActorActive, assertApprovalActorCreditAccess, approvalActorAudit, type ApprovalActor } from "@/lib/credit-approval-actor";
 import { sanitizeIphoneDeliveryEvidenceDataUrl } from "@/lib/iphone-delivery-evidence";
 import { correctedEvidenceSnapshot, evidenceSha256 } from "@/lib/credit-approval-evidence-history";
@@ -102,6 +103,7 @@ export async function createCreditApprovalNovelty(db: NoveltyDatabase, creditId:
   const detail = await getCreditApprovalDetail(db, creditId);
   if (!detail.capabilities.canCorrectEvidence) noveltyError(detail.capabilities.correctionBlockedReason || "No se permiten novedades en este crédito.", "NOVELTY_NOT_ALLOWED");
   if (input.revision !== detail.review.revision || input.reviewHash !== detail.review.reviewHash) noveltyError("El expediente cambió. Actualízalo antes de registrar la novedad.", "REVIEW_CHANGED");
+  const callContinuity = captureCreditApprovalCallContinuity(detail);
   const cases = await db.$queryRawUnsafe<Array<{ id: string }>>('SELECT "id"::text FROM "CreditApprovalNovelty" WHERE "creditoId"=$1 AND "status"<>\'RESOLVED\' FOR UPDATE', creditId);
   const noveltyId = cases[0]?.id || randomUUID();
   if (!cases[0]) await db.$executeRawUnsafe('INSERT INTO "CreditApprovalNovelty" ("id","creditoId") VALUES ($1::uuid,$2)', noveltyId, creditId);
@@ -117,7 +119,8 @@ export async function createCreditApprovalNovelty(db: NoveltyDatabase, creditId:
     changes.push({ itemId, key, reason: input.reason, previousReason: previous?.reason || null, previousStatus: previous?.status || null,
       previousResponse: previous?.responseText || null, previousPhotoHash: previous?.responsePhotoHash || null });
   }
-  await appendNoveltyEvent(db, { noveltyId, type: "REPORTED", actor, payload: { changes, reviewRevision: input.revision }, requestKey: input.idempotencyKey, requestHash: hash });
+  const noveltyEventId = await appendNoveltyEvent(db, { noveltyId, type: "REPORTED", actor, payload: { changes, reviewRevision: input.revision }, requestKey: input.idempotencyKey, requestHash: hash });
+  await continueCreditApprovalCall(db, creditId, callContinuity, { noveltyId, noveltyEventId });
   return { unchanged: false };
 }
 export async function getCreditApprovalNoveltyHistory(db: NoveltyDatabase, creditId: number) {
@@ -201,10 +204,12 @@ export async function respondCreditApprovalNovelty(db: NoveltyDatabase, creditId
   const item = items[0];
   if (!item || item.status !== "OPEN" || item.version !== input.expectedVersion) noveltyError("La novedad cambió. Revisa su estado antes de responder.");
   if ((item.key === "GENERAL") !== (input.action === "GENERAL")) noveltyError("Solo puedes responder la fotografía o novedad señalada.", "NOVELTY_NOT_ALLOWED");
+  const callContinuity = captureCreditApprovalCallContinuity(await getCreditApprovalDetail(db, creditId));
+  let noveltyEventId: string;
   if (input.action === "GENERAL") {
     await db.$executeRawUnsafe(`UPDATE "CreditApprovalNoveltyItem" SET "status"='RESPONDED',"responseText"=$2,
       "respondedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC' WHERE "id"=$1::uuid`, item.id, input.text);
-    await appendNoveltyEvent(db, { noveltyId: input.noveltyId, itemId: item.id, type: "GENERAL_RESPONDED", actor,
+    noveltyEventId = await appendNoveltyEvent(db, { noveltyId: input.noveltyId, itemId: item.id, type: "GENERAL_RESPONDED", actor,
       payload: { key: "GENERAL", text: input.text, itemVersion: item.version }, requestKey: input.idempotencyKey, requestHash: hash });
   } else {
     const config = NOVELTY_PHOTOS.find(photo => photo.key === item.key);
@@ -224,8 +229,9 @@ export async function respondCreditApprovalNovelty(db: NoveltyDatabase, creditId
     await db.$executeRawUnsafe(`UPDATE "Credito" SET "${config.field}"=$2,"contratoSnapshot"=$3::jsonb,"updatedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC' WHERE "id"=$1`, creditId, input.dataUrl, JSON.stringify(snapshot));
     await db.$executeRawUnsafe(`UPDATE "CreditApprovalNoveltyItem" SET "status"='RESPONDED',"responsePhotoHash"=$2,
       "respondedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC' WHERE "id"=$1::uuid`, item.id, nextSha256);
-    await appendNoveltyEvent(db, { noveltyId: input.noveltyId, itemId: item.id, type: "PHOTO_RESPONDED", actor,
+    noveltyEventId = await appendNoveltyEvent(db, { noveltyId: input.noveltyId, itemId: item.id, type: "PHOTO_RESPONDED", actor,
       payload: { key: item.key, previousDataUrl, previousSha256, nextSha256, itemVersion: item.version }, requestKey: input.idempotencyKey, requestHash: hash });
   }
+  await continueCreditApprovalCall(db, creditId, callContinuity, { noveltyId: input.noveltyId, noveltyEventId });
   return { unchanged: false };
 }
