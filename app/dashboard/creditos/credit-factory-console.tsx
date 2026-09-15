@@ -3692,32 +3692,55 @@ export default function CreditFactoryConsole({
     valorTotalEquipoNumero,
     cuotaInicialNumero
   );
-  const amortizationPlan =
-    simulationPolicyReady &&
-    valorTotalEquipoNumero > 0 &&
-    cuotaInicialNumero >= 0 &&
-    cuotaInicialNumero < valorTotalEquipoNumero
-      ? calculateFrenchAmortization({
-          calculoVersion: resolvedPolicyFinancialSettings.calculoVersion,
-          tasaPeriodoDecimales:
-            resolvedPolicyFinancialSettings.tasaPeriodoDecimales,
-          redondeoComercial:
-            resolvedPolicyFinancialSettings.redondeoComercial,
-          valorVenta: valorTotalEquipoNumero,
-          cuotaInicial: cuotaInicialNumero,
-          numeroCuotas: plazoMesesNumero,
-          tasaInteresEa: tasaInteresEaNumero,
-          fianzaCuotaPorcentaje: Math.max(0, effectiveFianzaCuotaPorcentaje),
-          seguroCuotaPorcentaje: Math.max(
-            0,
-            Number(
-              resolvedPolicyFinancialSettings.seguroCuotaPorcentaje
-            )
-          ),
-          frecuenciaPago: frecuenciaPagoCredito,
-          fechaPrimerPago,
-        })
-      : null;
+  const amortizationPlan = useMemo(() => {
+    if (
+      !simulationPolicyReady ||
+      valorTotalEquipoNumero <= 0 ||
+      cuotaInicialNumero < 0 ||
+      cuotaInicialNumero >= valorTotalEquipoNumero ||
+      !fechaPrimerPago
+    ) {
+      return null;
+    }
+
+    try {
+      return calculateFrenchAmortization({
+        calculoVersion: resolvedPolicyFinancialSettings.calculoVersion,
+        tasaPeriodoDecimales:
+          resolvedPolicyFinancialSettings.tasaPeriodoDecimales,
+        redondeoComercial:
+          resolvedPolicyFinancialSettings.redondeoComercial,
+        valorVenta: valorTotalEquipoNumero,
+        cuotaInicial: cuotaInicialNumero,
+        numeroCuotas: plazoMesesNumero,
+        tasaInteresEa: tasaInteresEaNumero,
+        fianzaCuotaPorcentaje: Math.max(0, effectiveFianzaCuotaPorcentaje),
+        seguroCuotaPorcentaje: Math.max(
+          0,
+          Number(resolvedPolicyFinancialSettings.seguroCuotaPorcentaje)
+        ),
+        frecuenciaPago: frecuenciaPagoCredito,
+        fechaPrimerPago,
+      });
+    } catch {
+      // Al editar hay importes transitorios que no admiten una cuota válida.
+      // Sin plan no se habilita el avance; el motor conserva sus validaciones.
+      return null;
+    }
+  }, [
+    simulationPolicyReady,
+    valorTotalEquipoNumero,
+    cuotaInicialNumero,
+    plazoMesesNumero,
+    tasaInteresEaNumero,
+    effectiveFianzaCuotaPorcentaje,
+    frecuenciaPagoCredito,
+    fechaPrimerPago,
+    resolvedPolicyFinancialSettings.calculoVersion,
+    resolvedPolicyFinancialSettings.tasaPeriodoDecimales,
+    resolvedPolicyFinancialSettings.redondeoComercial,
+    resolvedPolicyFinancialSettings.seguroCuotaPorcentaje,
+  ]);
   const financialPlan = {
     saldoBaseFinanciado,
     montoCreditoTotal: amortizationPlan?.montoTotal ?? 0,
