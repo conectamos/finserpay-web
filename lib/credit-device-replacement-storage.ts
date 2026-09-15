@@ -177,7 +177,6 @@ export class CreditDeviceReplacementError extends Error {
     | "SCHEMA_NOT_READY"
     | "CREDIT_NOT_FOUND"
     | "CREDIT_NOT_ELIGIBLE"
-    | "WARRANTY_EXPIRED"
     | "IPHONE_REQUIRED"
     | "IMEI_INVALID"
     | "IMEI_UNCHANGED"
@@ -269,14 +268,6 @@ function normalizedPlatform(row: CreditContextRow) {
 function isCreditCancelled(value: unknown) {
   return CANCELLED_CREDIT_STATES.has(cleanText(value, 30).toUpperCase());
 }
-function warrantyIsActive(value: Date | string | null, now = new Date()) {
-  if (!value) return false;
-  const warrantyUntil = value instanceof Date ? value : new Date(value);
-  return (
-    !Number.isNaN(warrantyUntil.getTime()) &&
-    warrantyUntil.getTime() >= now.getTime()
-  );
-}
 function normalizeReason(value: unknown) {
   const reason = cleanText(value, 500);
   if (reason.length < 5 || reason.length > 500) {
@@ -299,10 +290,8 @@ function normalizeImei(value: unknown) {
   }
   return imei;
 }
-function assertEligibleCredit(
-  row: CreditContextRow,
-  options: { requireActiveWarranty?: boolean } = {}
-) {
+function assertEligibleCredit(row: CreditContextRow) {
+  // Los cambios de equipo por garantía no tienen un plazo de vencimiento.
   if (
     isCreditCancelled(row.estado) ||
     !row.solicitudId ||
@@ -318,12 +307,6 @@ function assertEligibleCredit(
     throw new CreditDeviceReplacementError(
       "IPHONE_REQUIRED",
       "El cambio con enrolamiento especializado solo está disponible para iPhone."
-    );
-  }
-  if (options.requireActiveWarranty !== false && !warrantyIsActive(row.warrantyUntil)) {
-    throw new CreditDeviceReplacementError(
-      "WARRANTY_EXPIRED",
-      "La garantía de este crédito no está vigente."
     );
   }
 }
@@ -959,7 +942,7 @@ export async function completeCreditDeviceReplacement(input: {
       "credit-device-replacement:replacement:" + row.id,
     ]);
     await lockSolicitudIdentityMutation(transaction, "imei", row.newImei);
-    assertEligibleCredit(row, { requireActiveWarranty: false });
+    assertEligibleCredit(row);
     if (row.status !== "ENROLLMENT_APPROVED") {
       throw new CreditDeviceReplacementError(
         "ENROLLMENT_REQUIRED",
@@ -1147,7 +1130,7 @@ export async function findCreditDeviceReplacementEnrollmentCase(input: {
     );
   }
   const row = rows[0];
-  assertEligibleCredit(row, { requireActiveWarranty: false });
+  assertEligibleCredit(row);
   const review = replacementReviewFromContext(row);
   if (
     (row.status === "ENROLLMENT_APPROVED" && !review) ||
@@ -1272,7 +1255,7 @@ async function approveReplacementWith(
     "credit-device-replacement:imei:" + row.newImei,
   ]);
   await lockSolicitudIdentityMutation(transaction, "imei", row.newImei);
-  assertEligibleCredit(row, { requireActiveWarranty: false });
+  assertEligibleCredit(row);
   const document = normalizedDigits(row.clienteDocumento);
   if (
     row.solicitudId !== input.solicitudId ||

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -67,8 +68,62 @@ test("la creación bloquea crédito e IMEI y revisa todos los conflictos operati
     storage,
     /FROM "CreditDeviceReplacement" active[\s\S]*'PENDING_ENROLLMENT'[\s\S]*'ENROLLMENT_APPROVED'/
   );
-  assert.match(storage, /warrantyIsActive\(row\.warrantyUntil\)/);
+  assert.match(storage, /assertEligibleCredit\(credit\)/);
   assert.match(storage, /normalizedPlatform\(row\) !== "IPHONE"/);
+});
+
+const eligibilitySource = storage
+  .slice(
+    storage.indexOf("export class CreditDeviceReplacementError"),
+    storage.indexOf("function replacementReviewFromContext")
+  )
+  .replace("export class", "class");
+const assertEligibleCredit = new Function(
+  stripTypeScriptTypes(eligibilitySource) + "; return assertEligibleCredit;"
+)();
+const eligibleCredit = {
+  estado: "INSCRITO",
+  solicitudId: 433,
+  draftEstado: "CERRADO",
+  draftClosedReason: "FINALIZADA",
+  plataforma: "IPHONE",
+  referenciaEquipo: "IPHONE 14 PRO 128GB",
+};
+
+test("el cambio por garantía no depende de una fecha de vencimiento", () => {
+  for (const warrantyUntil of [
+    "2026-09-14T03:24:58.000Z",
+    new Date("2000-01-01T00:00:00.000Z"),
+    "2099-01-01T00:00:00.000Z",
+    null,
+    undefined,
+    "fecha inválida",
+  ]) {
+    assert.doesNotThrow(() => assertEligibleCredit({ ...eligibleCredit, warrantyUntil }));
+  }
+});
+
+test("sin plazo de garantía se siguen rechazando créditos anulados o sin finalizar", () => {
+  for (const overrides of [
+    { estado: "ANULADO" },
+    { estado: "CANCELADO" },
+    { solicitudId: null },
+    { draftEstado: "ABIERTO" },
+    { draftClosedReason: "DESISTIDA" },
+  ]) {
+    assert.throws(
+      () => assertEligibleCredit({ ...eligibleCredit, warrantyUntil: null, ...overrides }),
+      { code: "CREDIT_NOT_ELIGIBLE" }
+    );
+  }
+  assert.throws(
+    () => assertEligibleCredit({
+      ...eligibleCredit,
+      plataforma: "ANDROID",
+      referenciaEquipo: "SAMSUNG A07",
+    }),
+    { code: "IPHONE_REQUIRED" }
+  );
 });
 
 test("la venta normal y el reemplazo comparten el bloqueo final del IMEI", () => {
