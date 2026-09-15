@@ -113,7 +113,7 @@ test("IMEI, deviceUid y plataforma quedan ligados a la solicitud antes de integr
   );
   assert.match(
     solicitudStorageSource,
-    /storedImei && storedImei !== imei/
+    /isCompleteImei\(storedImei\) && storedImei !== imei/
   );
   assert.match(
     solicitudStorageSource,

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -322,9 +323,147 @@ test("central, vendedor o supervisor pueden consultar y la plataforma retomada n
   assert.doesNotMatch(storage, /"plataforma" = COALESCE\(\$[23], "plataforma"\)/);
 });
 
-test("el autoguardado vacio conserva el IMEI canonico", async () => {
+test("un IMEI solo queda completo cuando contiene exactamente 15 digitos", async () => {
   const storage = await readProjectFile("lib/solicitudes-storage.ts");
+  const helperSource = storage.slice(
+    storage.indexOf("function normalizeDigits"),
+    storage.indexOf("function normalizePlatform")
+  );
+  const isCompleteImei = new Function(
+    stripTypeScriptTypes(helperSource) + "; return isCompleteImei;"
+  )();
 
+  assert.equal(isCompleteImei("355122335594126"), true);
+  assert.equal(isCompleteImei("355 122 335 594 126"), true);
+  assert.equal(isCompleteImei("35512233"), false);
+  assert.equal(isCompleteImei("35512233559412"), false);
+  assert.equal(isCompleteImei("3551223355941267"), false);
+  assert.equal(isCompleteImei(""), false);
+});
+
+test("deviceUid solo alimenta el mismo candidato bloqueado y candidatos distintos se rechazan", async () => {
+  const storage = await readProjectFile("lib/solicitudes-storage.ts");
+  const helperSource = storage.slice(
+    storage.indexOf("function normalizeDigits"),
+    storage.indexOf("function normalizePlatform")
+  );
+  const normalizeDigits = new Function(
+    stripTypeScriptTypes(helperSource) + "; return normalizeDigits;"
+  )();
+  const isCompleteImei = new Function(
+    stripTypeScriptTypes(helperSource) + "; return isCompleteImei;"
+  )();
+  const requestIdentityStart = storage.indexOf("const requestImeis =");
+  const requestIdentityEnd = storage.indexOf(
+    "const assessmentId =",
+    requestIdentityStart
+  );
+  assert.ok(requestIdentityStart >= 0);
+  assert.ok(requestIdentityEnd > requestIdentityStart);
+  const requestIdentitySource = storage.slice(
+    requestIdentityStart,
+    requestIdentityEnd
+  );
+  const resolveRequestIdentity = new Function(
+    "normalizeDigits",
+    "isCompleteImei",
+    "SolicitudCanonicalMutationError",
+    "imei",
+    "input",
+    stripTypeScriptTypes(requestIdentitySource) + "; return identityImei;"
+  );
+  const resolve = (imei, payload) =>
+    resolveRequestIdentity(
+      normalizeDigits,
+      isCompleteImei,
+      Error,
+      normalizeDigits(imei),
+      { payload }
+    );
+  const first = "355122335594126";
+  const second = "351111111111111";
+
+  assert.equal(resolve("", { deviceUid: first }), first);
+  assert.equal(resolve(first, { imei: first, deviceUid: first }), first);
+  assert.equal(resolve("35512233", { imei: "35512233" }), "");
+  assert.throws(
+    () => resolve(first, { imei: first, deviceUid: second }),
+    /SOLICITUD_IMEI_INMUTABLE/
+  );
+  assert.throws(
+    () => resolve("", { imei: first, deviceUid: second }),
+    /SOLICITUD_IMEI_INMUTABLE/
+  );
+});
+
+test("la reserva recupera un prefijo historico pero conserva inmutable un IMEI completo", async () => {
+  const storage = await readProjectFile("lib/solicitudes-storage.ts");
+  const reservation = storage.slice(
+    storage.indexOf("export async function reserveSolicitudForIdentity"),
+    storage.indexOf("export async function saveSolicitudDraft")
+  );
+
+  assert.match(
+    reservation,
+    /const storedImei = normalizeDigits\(selected\[0\]\.imei\)[\s\S]{0,180}if \(imei && isCompleteImei\(storedImei\) && storedImei !== imei\)/
+  );
+
+  const immutableGuard = reservation.indexOf(
+    "if (imei && isCompleteImei(storedImei) && storedImei !== imei)"
+  );
+  const blockerCheck = reservation.indexOf(
+    "const imeiBlocker = await findActiveByIdentity",
+    immutableGuard
+  );
+  const update = reservation.indexOf('UPDATE "CreditoBorrador"', blockerCheck);
+  assert.ok(immutableGuard >= 0);
+  assert.ok(
+    blockerCheck > immutableGuard,
+    "el IMEI completo recuperado debe comprobar colisiones antes de persistirse"
+  );
+  assert.ok(update > blockerCheck);
+  assert.match(
+    reservation,
+    /findActiveByIdentity\(\s*transaction,\s*"",\s*imei,\s*selected\[0\]\.id\s*\)/
+  );
+});
+
+test("el autoguardado persiste y bloquea identidades solo con IMEI completo", async () => {
+  const storage = await readProjectFile("lib/solicitudes-storage.ts");
+  const autosave = storage.slice(
+    storage.indexOf("export async function saveSolicitudDraft"),
+    storage.indexOf("export class SolicitudDataCreditoLinkError")
+  );
+
+  assert.match(
+    autosave,
+    /const requestImeis =[\s\S]{0,180}normalizeDigits\(input\.payload\.imei\)[\s\S]{0,180}normalizeDigits\(input\.payload\.deviceUid\)[\s\S]{0,240}const identityImei =[\s\S]{0,120}requestImeis\.find\(\(candidate\) => isCompleteImei\(candidate\)\) \|\| ""/
+  );
+  assert.ok(
+    autosave.indexOf("const requestImeis =") <
+      autosave.indexOf("return prisma.$transaction"),
+    "el candidato del request debe quedar validado antes de cualquier lock"
+  );
+  assert.match(
+    autosave,
+    /lockIdentity\(transaction, "imei", identityImei\)/
+  );
+  assert.match(
+    autosave,
+    /let mustCheckIdentity = Boolean\(document \|\| identityImei\)/
+  );
+  assert.match(
+    autosave,
+    /identityImei &&\s*identityImei !== normalizeDigits\(rows\[0\]\.imei\)/
+  );
+  assert.match(
+    autosave,
+    /findActiveByIdentity\(\s*transaction,\s*documentToLock,\s*identityImei,\s*targetId\s*\)/
+  );
+  assert.doesNotMatch(
+    autosave,
+    /lockIdentity\(transaction, "imei", imei\)/
+  );
   assert.match(storage, /const payloadImei = normalizeDigits\(canonicalPayload\.imei\)/);
   assert.match(
     storage,
@@ -333,19 +472,47 @@ test("el autoguardado vacio conserva el IMEI canonico", async () => {
   assert.match(storage, /new Set\(incomingImeis\)\.size > 1/);
   assert.match(
     storage,
-    /incomingImeis\.some\(\(candidate\) => candidate !== storedImei\)/
+    /const storedIdentityImei = isCompleteImei\(storedImei\) \? storedImei : ""/
   );
   assert.match(
     storage,
-    /const canonicalImei =[\s\S]{0,180}\(storedStep >= 3 \? storedImei : ""\)[\s\S]{0,180}payloadDeviceUid[\s\S]{0,100}storedImei/
+    /const incomingCompleteImei =[\s\S]{0,120}incomingImeis\.find\(\(candidate\) => isCompleteImei\(candidate\)\) \|\| ""/
   );
+  assert.match(
+    storage,
+    /storedStep >= 3 &&[\s\S]{0,100}storedIdentityImei[\s\S]{0,180}isCompleteImei\(candidate\) && candidate !== storedIdentityImei/
+  );
+  const canonicalImei = storage.slice(
+    storage.indexOf("const canonicalImei ="),
+    storage.indexOf("if (canonicalImei)", storage.indexOf("const canonicalImei ="))
+  );
+  assert.match(
+    canonicalImei,
+    /\(storedStep >= 3 \? storedIdentityImei : ""\)[\s\S]*incomingCompleteImei[\s\S]*storedIdentityImei/
+  );
+  assert.doesNotMatch(canonicalImei, /\bstoredImei\b/);
+  assert.doesNotMatch(canonicalImei, /\bimei\b/);
+  assert.doesNotMatch(canonicalImei, /\bpayloadImei\b/);
+  assert.doesNotMatch(canonicalImei, /\bpayloadDeviceUid\b/);
   assert.match(
     storage,
     /\{ imei: canonicalImei, deviceUid: canonicalImei \}/
   );
   assert.match(
-    storage,
+    autosave,
+    /"imei" = CASE[\s\S]{0,180}WHEN NULLIF\(\$6::text, ''\) IS NOT NULL THEN \$6::text[\s\S]{0,220}~ '\^\[0-9\]\{15\}\$' THEN "imei"[\s\S]{0,80}ELSE NULL[\s\S]{0,40}END/
+  );
+  assert.doesNotMatch(
+    autosave,
     /"imei" = COALESCE\(NULLIF\(\$6::text, ''\), "imei"\)/
+  );
+  const updateArguments = autosave.slice(
+    autosave.indexOf('RETURNING "id"', autosave.indexOf('"imei" = CASE')),
+    autosave.indexOf("if (!updated[0])")
+  );
+  assert.match(
+    updateArguments,
+    /canonicalImei,\s*normalizePlatform\(input\.plataforma\)/
   );
 });
 
