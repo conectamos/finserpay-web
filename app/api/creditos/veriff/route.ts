@@ -33,6 +33,7 @@ import {
 } from "@/lib/veriff";
 import { buildVeriffCompletionUrl } from "@/lib/veriff-callback";
 import { getVeriffRetryPolicy } from "@/lib/veriff-retry-policy";
+import { isRecoverableVeriffSessionReservation } from "@/lib/veriff-session-recovery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -177,7 +178,10 @@ function buildVendorData(params: {
   return `FINSERPAY-${params.sedeId}-${draftPart}-${suffix}`;
 }
 
-function veriffErrorResponse(error: unknown) {
+function veriffErrorResponse(
+  error: unknown,
+  extra: Record<string, unknown> = {}
+) {
   if (error instanceof VeriffApiError) {
     return NextResponse.json(
       {
@@ -185,6 +189,7 @@ function veriffErrorResponse(error: unknown) {
         error: error.message,
         remoteStatus: error.status,
         remotePayload: redactVeriffPayload(error.payload),
+        ...extra,
       },
       { status: error.status >= 500 ? 502 : error.status }
     );
@@ -195,7 +200,16 @@ function veriffErrorResponse(error: unknown) {
       ? error.message
       : "No se pudo procesar la validacion con Veriff";
 
-  return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  return NextResponse.json(
+    { ok: false, error: message, ...extra },
+    { status: 500 }
+  );
+}
+
+function veriffSessionCreationFailureAuditMessage(error: unknown) {
+  return error instanceof VeriffApiError
+    ? `Veriff session creation failed (${error.status})`
+    : "Veriff session creation failed";
 }
 
 export async function GET() {
@@ -384,6 +398,35 @@ export async function POST(request: Request) {
         `,
         draftId
       );
+      const latestValidationId = Number(latestRows[0]?.id || 0);
+      const latestValidation =
+        latestValidationId === expectedValidation?.id
+          ? expectedValidation
+          : latestValidationId
+            ? await getVeriffValidationById(latestValidationId)
+            : null;
+      const recoverableReservation = isRecoverableVeriffSessionReservation({
+        draft: {
+          aliadoId: draft.aliadoId,
+          documentNumber: clienteDocumento,
+          id: draft.id,
+          sedeId: draft.sedeId,
+        },
+        validation: latestValidation
+          ? {
+              aliadoId: latestValidation.aliadoId,
+              creditoId: latestValidation.creditoId,
+              decidedAt: latestValidation.decidedAt,
+              documentNumber: latestValidation.clienteDocumento,
+              draftId: latestValidation.draftId,
+              sedeId: latestValidation.sedeId,
+              sessionId: latestValidation.veriffSessionId,
+              status: serializeVeriffValidation(latestValidation)?.status,
+            }
+          : null,
+      })
+        ? latestValidation
+        : null;
       const expectedSerialized = serializeVeriffValidation(expectedValidation);
 
       if (
@@ -391,7 +434,7 @@ export async function POST(request: Request) {
         expectedValidation.draftId !== draftId ||
         expectedValidation.creditoId ||
         expectedDocument !== clienteDocumento ||
-        Number(latestRows[0]?.id || 0) !== currentValidationId ||
+        (latestValidationId !== currentValidationId && !recoverableReservation) ||
         (reusableValidation && reusableValidation.id !== currentValidationId)
       ) {
         return NextResponse.json(
@@ -400,6 +443,8 @@ export async function POST(request: Request) {
             code: "VERIFF_REGENERATION_STALE",
             error:
               "La validación cambió. Actualiza el estado antes de regenerar el código QR.",
+            validation: serializeVeriffValidation(latestValidation),
+            retryPolicy,
           },
           { status: 409 }
         );
@@ -419,6 +464,17 @@ export async function POST(request: Request) {
           },
           { status: 409 }
         );
+      }
+
+      if (recoverableReservation) {
+        await updateVeriffValidation(recoverableReservation.id, {
+          decidedAt: new Date(),
+          decision: "ABANDONED",
+          lastError: null,
+          reason: "Reserva sin sesión reemplazada al regenerar QR",
+          reasonCode: "ORPHANED_SESSION_RESERVATION",
+          status: "ABANDONED",
+        });
       }
 
       if (reusableValidation) {
@@ -506,26 +562,53 @@ export async function POST(request: Request) {
       );
     }
 
-    const createPayload = await veriffCreateSession({
-      callbackUrl: buildVeriffCompletionUrl(request),
-      documentNumber: clienteDocumento,
-      documentType: sanitizeText(body.clienteTipoDocumento),
-      endUserId,
-      firstName: clientePrimerNombre,
-      lastName: clientePrimerApellido,
-      vendorData,
-    });
+    let createPayload: Record<string, unknown>;
+    try {
+      createPayload = await veriffCreateSession({
+        callbackUrl: buildVeriffCompletionUrl(request),
+        documentNumber: clienteDocumento,
+        documentType: sanitizeText(body.clienteTipoDocumento),
+        endUserId,
+        firstName: clientePrimerNombre,
+        lastName: clientePrimerApellido,
+        vendorData,
+      });
+    } catch (error) {
+      let failedValidation = validation;
+      try {
+        failedValidation =
+          (await updateVeriffValidation(validation.id, {
+            lastError: veriffSessionCreationFailureAuditMessage(error),
+            status: "ERROR",
+          })) || validation;
+      } catch {
+        // Preserve the provider failure when the audit update is unavailable.
+      }
+
+      return veriffErrorResponse(error, {
+        retryPolicy,
+        validation: serializeVeriffValidation(failedValidation),
+        veriff: getVeriffPublicSummary(),
+      });
+    }
     const sessionId = extractVeriffSessionId(createPayload);
     const sessionUrl = extractVeriffSessionUrl(createPayload);
 
     if (!sessionId || !sessionUrl) {
-      await updateVeriffValidation(validation.id, {
-        createPayload,
-        lastError: "Veriff no retorno session id o URL",
-        status: "ERROR",
-      });
+      const failedValidation =
+        (await updateVeriffValidation(validation.id, {
+          createPayload,
+          lastError: "Veriff no retorno session id o URL",
+          status: "ERROR",
+        })) || validation;
       return NextResponse.json(
-        { ok: false, error: "Veriff no retorno session id o URL" },
+        {
+          ok: false,
+          error: "Veriff no retorno session id o URL",
+          retryPolicy,
+          validation: serializeVeriffValidation(failedValidation),
+          veriff: getVeriffPublicSummary(),
+        },
         { status: 502 }
       );
     }

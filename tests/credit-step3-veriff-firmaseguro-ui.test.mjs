@@ -47,6 +47,9 @@ test("el modal QR es accesible, conserva foco y confirma la regeneracion", async
   assert.match(source, /title="Regenerar código QR"/);
   assert.match(source, /currentValidationId: options\.expectedValidationId \|\| null/);
   assert.match(source, /regenerate: options\.regenerate === true/);
+  assert.match(source, /const responseValidation = result\.data\?\.validation \|\| null/);
+  assert.match(source, /if \(!result\.ok && responseValidation\.id && currentDraftId\)/);
+  assert.match(source, /veriffValidationId: responseValidation\.id/);
 });
 
 test("FirmaSeguro permanece oculto hasta la aprobacion real de Veriff", async () => {

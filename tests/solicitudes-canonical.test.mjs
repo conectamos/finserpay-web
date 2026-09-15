@@ -91,6 +91,68 @@ test("la conciliacion limita propietario, aliado, prioridad y evidencia", async 
   assert.doesNotMatch(reconciliation, /process\."supersededAt" IS NULL/);
 });
 
+test("la conciliacion descarta solo reservas Veriff tecnicas sin evidencia remota", async () => {
+  const source = await readProjectFile("lib/solicitudes-storage.ts");
+  const reconciliation = sourceBetween(
+    source,
+    "async function supersedeLowerPrioritySameOwnerDrafts",
+    "type FirmaSeguroDraftTermsRow"
+  );
+  const veriffGuard = sourceBetween(
+    reconciliation,
+    'FROM "VeriffIdentityValidation" validation',
+    'FROM "FirmaSeguroProcess" process'
+  );
+
+  assert.match(
+    veriffGuard,
+    /COALESCE\(UPPER\(BTRIM\(validation\."status"\)\), ''\) NOT IN \(\s*'ERROR',\s*'ABANDONED',\s*'EXPIRED',\s*'PENDING'\s*\)/
+  );
+  const evidenceColumns = [
+    'validation."creditoId" IS NOT NULL',
+    'NULLIF(BTRIM(validation."veriffSessionId"), \'\') IS NOT NULL',
+    'NULLIF(BTRIM(validation."attemptId"), \'\') IS NOT NULL',
+    'validation."createPayload" IS NOT NULL',
+    'validation."mediaPayload" IS NOT NULL',
+    'validation."submitPayload" IS NOT NULL',
+    'validation."decisionPayload" IS NOT NULL',
+    'validation."webhookPayload" IS NOT NULL',
+    'validation."submittedAt" IS NOT NULL',
+    'validation."decidedAt" IS NOT NULL',
+    'NULLIF(BTRIM(validation."decision"), \'\') IS NOT NULL',
+    'NULLIF(BTRIM(validation."code"), \'\') IS NOT NULL',
+    'NULLIF(BTRIM(validation."reason"), \'\') IS NOT NULL',
+    'NULLIF(BTRIM(validation."reasonCode"), \'\') IS NOT NULL',
+  ];
+  for (const evidenceColumn of evidenceColumns) {
+    assert.ok(
+      veriffGuard.includes(`OR ${evidenceColumn}`),
+      `La evidencia ${evidenceColumn} debe conservar la solicitud`
+    );
+  }
+  assert.doesNotMatch(
+    veriffGuard,
+    /NOT IN \([\s\S]*'(?:APPROVED|DECLINED|REVIEW|RESUBMISSION)'/
+  );
+  assert.doesNotMatch(veriffGuard, /UPDATE "VeriffIdentityValidation"/);
+});
+
+test("la conciliacion conserva cualquier proceso de FirmaSeguro", async () => {
+  const source = await readProjectFile("lib/solicitudes-storage.ts");
+  const reconciliation = sourceBetween(
+    source,
+    "async function supersedeLowerPrioritySameOwnerDrafts",
+    "type FirmaSeguroDraftTermsRow"
+  );
+
+  assert.match(
+    reconciliation,
+    /AND NOT EXISTS \(\s*SELECT 1\s*FROM "FirmaSeguroProcess" process\s*WHERE process\."draftId" = duplicate_draft\."id"\s*\)/
+  );
+  assert.doesNotMatch(reconciliation, /process\."status"/);
+  assert.doesNotMatch(reconciliation, /process\."supersededAt"/);
+});
+
 test("la conciliacion se ejecuta solo en autosave y respeta locks operativos", async () => {
   const source = await readProjectFile("lib/solicitudes-storage.ts");
   const reconciliation = sourceBetween(
