@@ -100,13 +100,19 @@ export type SolicitudListItem = ReturnType<typeof serializeSolicitudRow>;
 export class ActiveSolicitudConflictError extends Error {
   readonly code = "SOLICITUD_ACTIVA_EXISTENTE";
   readonly status = 409;
+  readonly resumeSolicitudId: number | null;
 
   constructor(
     message =
-      "Ya existe una solicitud en proceso. El asesor titular debe retomarla o desistirla antes de iniciar otra."
+      "Ya existe una solicitud en proceso. El asesor titular debe retomarla o desistirla antes de iniciar otra.",
+    resumeSolicitudId: number | null = null
   ) {
     super(message);
     this.name = "ActiveSolicitudConflictError";
+    this.resumeSolicitudId =
+      Number.isSafeInteger(resumeSolicitudId) && Number(resumeSolicitudId) > 0
+        ? Number(resumeSolicitudId)
+        : null;
   }
 }
 
@@ -376,6 +382,7 @@ type ActiveDraftOwnerRow = {
   vendedorId: number | null;
   sedeId: number;
   currentStep?: number | null;
+  createdAt?: Date | string | null;
   clienteDocumento: string | null;
   imei: string | null;
   plataforma?: string | null;
@@ -383,6 +390,23 @@ type ActiveDraftOwnerRow = {
   payload?: Record<string, unknown> | null;
   materialized?: boolean;
 };
+
+function compareActiveSolicitudDraftPriority(
+  left: ActiveDraftOwnerRow,
+  right: ActiveDraftOwnerRow
+) {
+  const leftStep = Math.max(1, Math.trunc(Number(left.currentStep) || 1));
+  const rightStep = Math.max(1, Math.trunc(Number(right.currentStep) || 1));
+  if (leftStep !== rightStep) return leftStep - rightStep;
+
+  const leftCreatedAt = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+  const rightCreatedAt = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+  const leftTime = Number.isFinite(leftCreatedAt) ? leftCreatedAt : 0;
+  const rightTime = Number.isFinite(rightCreatedAt) ? rightCreatedAt : 0;
+  if (leftTime !== rightTime) return leftTime - rightTime;
+
+  return left.id - right.id;
+}
 
 async function supersedeLowerPrioritySameOwnerDrafts(
   database: Database,
@@ -722,7 +746,7 @@ async function findActiveByIdentity(
 ) {
   const rows = await database.$queryRawUnsafe<ActiveDraftOwnerRow[]>(
     `
-      SELECT "id", "usuarioId", "vendedorId", "sedeId",
+      SELECT "id", "usuarioId", "vendedorId", "sedeId", "currentStep", "createdAt",
         "clienteDocumento", "imei",
         "dataCreditoAssessmentId"::text AS "dataCreditoAssessmentId",
         "payload",
@@ -746,7 +770,9 @@ async function findActiveByIdentity(
           ($1 <> '' AND regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $1)
           OR ($2 <> '' AND regexp_replace(COALESCE("imei", ''), '[^0-9]', '', 'g') = $2)
         )
-      ORDER BY "createdAt" DESC, "id" DESC
+      ORDER BY GREATEST(1, COALESCE("currentStep", 1)) DESC,
+        "createdAt" DESC,
+        "id" DESC
       LIMIT 1
       FOR UPDATE
     `,
@@ -963,7 +989,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     if (targetId) {
       const rows = await transaction.$queryRawUnsafe<ActiveDraftOwnerRow[]>(
         `
-          SELECT "id", "usuarioId", "vendedorId", "sedeId", "currentStep",
+          SELECT "id", "usuarioId", "vendedorId", "sedeId", "currentStep", "createdAt",
             "clienteDocumento", "imei", "plataforma",
             "dataCreditoAssessmentId"::text AS "dataCreditoAssessmentId",
             "payload",
@@ -1008,8 +1034,22 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         targetId
       );
       if (conflicting) {
+        const targetDocument = normalizeDigits(targetRow?.clienteDocumento);
+        const conflictingDocument = normalizeDigits(conflicting.clienteDocumento);
+        const canResumeConflict = Boolean(
+          targetId &&
+            targetRow &&
+            documentToLock &&
+            targetDocument === documentToLock &&
+            conflictingDocument === documentToLock &&
+            sameOwner(conflicting, input) &&
+            compareActiveSolicitudDraftPriority(conflicting, targetRow) > 0
+        );
         if (!sameOwner(conflicting, input) || targetId) {
-          throw new ActiveSolicitudConflictError();
+          throw new ActiveSolicitudConflictError(
+            undefined,
+            canResumeConflict ? conflicting.id : null
+          );
         }
         targetId = conflicting.id;
         targetRow = conflicting;

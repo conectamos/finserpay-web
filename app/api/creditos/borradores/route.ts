@@ -442,7 +442,14 @@ export async function POST(req: Request) {
       error instanceof SolicitudCanonicalMutationError
     ) {
       return NextResponse.json(
-        { error: error.message, code: error.code },
+        {
+          error: error.message,
+          code: error.code,
+          ...(error instanceof ActiveSolicitudConflictError &&
+          error.resumeSolicitudId
+            ? { resumeSolicitudId: error.resumeSolicitudId }
+            : {}),
+        },
         { status: error.status }
       );
     }

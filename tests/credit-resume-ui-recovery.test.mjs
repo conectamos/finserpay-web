@@ -200,3 +200,92 @@ test("la evidencia Veriff solo se consulta para admin central y tras un estado f
   assert.match(mediaRefresh, /!veriffHasFinalDecision/);
   assert.match(mediaRefresh, /void refreshVeriffMedia\(veriffValidation\)/);
 });
+
+test("el conflicto canónico recarga una sola vez la solicitud indicada por el servidor", async () => {
+  const factory = await readProjectFile(
+    "app/dashboard/creditos/credit-factory-console.tsx"
+  );
+  const redirect = sourceBlock(
+    factory,
+    "const resumeActiveSolicitudFromConflict = useCallback(",
+    "const clienteTipoDocumentoLabel ="
+  );
+
+  assert.match(redirect, /result\.status !== 409/);
+  assert.match(
+    redirect,
+    /result\.data\?\.code !== ACTIVE_SOLICITUD_CONFLICT_CODE/
+  );
+  assert.match(redirect, /!Number\.isSafeInteger\(resumeSolicitudId\)/);
+  assert.match(redirect, /resumeSolicitudId <= 0/);
+  assert.match(redirect, /resumeSolicitudId === attemptedId/);
+  assert.match(
+    redirect,
+    /if \(activeSolicitudRedirectingRef\.current\) return true;[\s\S]*activeSolicitudRedirectingRef\.current = true;/
+  );
+  assert.match(redirect, /cancelPendingDraftAutosave\(\)/);
+  assert.match(redirect, /params\.set\("draft", String\(resumeSolicitudId\)\)/);
+  assert.match(redirect, /window\.location\.replace\(/);
+  assert.equal(
+    (redirect.match(/window\.location\.replace\(/g) || []).length,
+    1,
+    "el helper debe ordenar una sola navegación aunque coincidan varios guardados"
+  );
+});
+
+test("los tres POST de borrador entregan el conflicto al redirect canónico", async () => {
+  const factory = await readProjectFile(
+    "app/dashboard/creditos/credit-factory-console.tsx"
+  );
+  const veriffSave = sourceBlock(
+    factory,
+    "const saveDraftPayloadForVeriff = async (",
+    "const refreshVeriffValidation = ("
+  );
+  const currentSave = sourceBlock(
+    factory,
+    "const saveCurrentDraft = async (",
+    "const submitFirmaSeguroDraft = async ("
+  );
+  const autosave = sourceBlock(
+    factory,
+    "const saveDraft = async () => {",
+    "const handleDataCreditoBypass ="
+  );
+  const expectedCalls = [
+    [veriffSave, "currentDraftId"],
+    [currentSave, "draftId"],
+    [autosave, "canonicalDraftId"],
+  ];
+
+  for (const [flow, attemptedId] of expectedCalls) {
+    assert.equal(
+      (flow.match(/resumeActiveSolicitudFromConflict\(/g) || []).length,
+      1,
+      `el flujo ${attemptedId} debe evaluar el redirect exactamente una vez`
+    );
+    assert.match(flow, /method:\s*"POST"/);
+    assert.match(
+      flow,
+      new RegExp(
+        `resumeActiveSolicitudFromConflict\\(result, ${attemptedId}\\)`
+      )
+    );
+    assert.ok(
+      flow.indexOf("resumeActiveSolicitudFromConflict(result") <
+        flow.indexOf("if (!result.ok || !result.data?.item)"),
+      `el flujo ${attemptedId} debe redirigir antes de convertir el 409 en error genérico`
+    );
+  }
+
+  assert.equal(
+    (factory.match(/if \(resumeActiveSolicitudFromConflict\(result,/g) || [])
+      .length,
+    3,
+    "solo los tres POST de guardado deben iniciar la retoma canónica"
+  );
+  assert.match(
+    autosave,
+    /resumeActiveSolicitudFromConflict\(result, canonicalDraftId\)[\s\S]{0,80}return;/
+  );
+});

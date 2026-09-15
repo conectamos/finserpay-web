@@ -664,6 +664,7 @@ type CreditDraftSingleResponse = {
   item?: CreditDraftItem | null;
   code?: string;
   error?: string;
+  resumeSolicitudId?: number | null;
 };
 
 type EquipmentCatalogItem = {
@@ -1271,6 +1272,9 @@ const REQUEST_JSON_UPLOAD_TIMEOUT_MS = 180_000;
 const VERIFF_REQUEST_TIMEOUT_MS = 15_000;
 const DRAFT_REQUIRES_DATACREDITO_CODE =
   "SOLICITUD_REQUIERE_CONSULTA_DATACREDITO";
+const ACTIVE_SOLICITUD_CONFLICT_CODE = "SOLICITUD_ACTIVA_EXISTENTE";
+const ACTIVE_SOLICITUD_RESUME_MESSAGE =
+  "Retomando la solicitud activa del cliente...";
 const VERIFF_POLL_BACKOFF_MS = [4_000, 6_000, 10_000, 15_000, 30_000] as const;
 const VERIFF_POLL_MAX_ATTEMPTS = 12;
 
@@ -3127,6 +3131,7 @@ export default function CreditFactoryConsole({
   const draftSaveTimerRef = useRef<number | null>(null);
   const draftSaveGenerationRef = useRef(0);
   const draftSaveAbortControllerRef = useRef<AbortController | null>(null);
+  const activeSolicitudRedirectingRef = useRef(false);
   const pendingDraftFinancialTermsRef = useRef<{
     documento: string;
     plazoMeses: string;
@@ -3994,6 +3999,49 @@ export default function CreditFactoryConsole({
       `${window.location.pathname}${query ? `?${query}` : ""}`
     );
   };
+  const resumeActiveSolicitudFromConflict = useCallback(
+    (
+      result: {
+        status: number;
+        data: CreditDraftSingleResponse | null;
+      },
+      attemptedDraftId: number | null
+    ) => {
+      const resumeSolicitudId = Math.trunc(
+        Number(result.data?.resumeSolicitudId || 0)
+      );
+      const attemptedId = Math.trunc(Number(attemptedDraftId || 0));
+      if (
+        typeof window === "undefined" ||
+        result.status !== 409 ||
+        result.data?.code !== ACTIVE_SOLICITUD_CONFLICT_CODE ||
+        !Number.isSafeInteger(resumeSolicitudId) ||
+        resumeSolicitudId <= 0 ||
+        resumeSolicitudId === attemptedId
+      ) {
+        return false;
+      }
+      if (activeSolicitudRedirectingRef.current) return true;
+
+      activeSolicitudRedirectingRef.current = true;
+      cancelPendingDraftAutosave();
+      setDraftStatus("loading");
+      setDraftErrorMessage("");
+      setNotice({
+        text: ACTIVE_SOLICITUD_RESUME_MESSAGE,
+        tone: "slate",
+      });
+
+      const params = new URLSearchParams(window.location.search);
+      params.set("draft", String(resumeSolicitudId));
+      const query = params.toString();
+      window.location.replace(
+        `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`
+      );
+      return true;
+    },
+    [cancelPendingDraftAutosave]
+  );
   const clienteTipoDocumentoLabel =
     DOCUMENT_TYPE_OPTIONS.find((option) => option.value === clienteTipoDocumento)?.label ||
     clienteTipoDocumento ||
@@ -7359,6 +7407,9 @@ export default function CreditFactoryConsole({
       }
     );
 
+    if (resumeActiveSolicitudFromConflict(result, currentDraftId)) {
+      throw new Error(ACTIVE_SOLICITUD_RESUME_MESSAGE);
+    }
     if (!result.ok || !result.data?.item) {
       throw new Error(result.data?.error || "No se pudo guardar el borrador");
     }
@@ -8713,6 +8764,9 @@ export default function CreditFactoryConsole({
       }
     );
 
+    if (resumeActiveSolicitudFromConflict(result, draftId)) {
+      throw new Error(ACTIVE_SOLICITUD_RESUME_MESSAGE);
+    }
     if (!result.ok || !result.data?.item) {
       throw new Error(result.data?.error || "No se pudo guardar el borrador");
     }
@@ -10611,6 +10665,10 @@ export default function CreditFactoryConsole({
             return;
           }
 
+          if (resumeActiveSolicitudFromConflict(result, canonicalDraftId)) {
+            return;
+          }
+
           if (
             result.status === 409 &&
             result.data?.code === DRAFT_REQUIRES_DATACREDITO_CODE
@@ -10687,6 +10745,7 @@ export default function CreditFactoryConsole({
     firmaSeguroProcessSigned,
     currentIphoneClosureFingerprint,
     nextFactoryStep.id,
+    resumeActiveSolicitudFromConflict,
     simulatorMode,
     wizardStep,
   ]);
