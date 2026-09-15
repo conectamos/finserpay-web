@@ -60,6 +60,60 @@ test("la propiedad canonica exige el mismo asesor y la misma sede", async () => 
   );
 });
 
+test("la retoma canonica solo expone un conflicto propio, del mismo documento y de mayor prioridad", async () => {
+  const source = await readProjectFile("lib/solicitudes-storage.ts");
+  const autosave = sourceBetween(
+    source,
+    "export async function saveSolicitudDraft",
+    "export async function attachDataCreditoToSolicitud"
+  );
+  const identityConflict = sourceBetween(
+    autosave,
+    "if (mustCheckIdentity) {",
+    "const incomingAssessmentId ="
+  );
+  const resumeGuard = sourceBetween(
+    identityConflict,
+    "const canResumeConflict = Boolean(",
+    ");"
+  );
+
+  assert.match(resumeGuard, /targetId\s*&&\s*targetRow\s*&&\s*documentToLock/);
+  assert.match(resumeGuard, /targetDocument === documentToLock/);
+  assert.match(resumeGuard, /conflictingDocument === documentToLock/);
+  assert.match(resumeGuard, /sameOwner\(conflicting, input\)/);
+  assert.match(
+    resumeGuard,
+    /compareActiveSolicitudDraftPriority\(conflicting, targetRow\) > 0/
+  );
+  assert.doesNotMatch(resumeGuard, /imei/);
+  assert.match(
+    identityConflict,
+    /new ActiveSolicitudConflictError\(\s*undefined,\s*canResumeConflict \? conflicting\.id : null\s*\)/
+  );
+  assert.equal(
+    (identityConflict.match(/canResumeConflict \? conflicting\.id : null/g) || [])
+      .length,
+    1,
+    "el id canónico no debe exponerse por una ruta alternativa"
+  );
+});
+
+test("el id de retoma solo acepta identificadores positivos y seguros", async () => {
+  const source = await readProjectFile("lib/solicitudes-storage.ts");
+  const conflictError = sourceBetween(
+    source,
+    "export class ActiveSolicitudConflictError",
+    "let solicitudSchemaPromise"
+  );
+
+  assert.match(conflictError, /readonly resumeSolicitudId: number \| null/);
+  assert.match(conflictError, /resumeSolicitudId: number \| null = null/);
+  assert.match(conflictError, /Number\.isSafeInteger\(resumeSolicitudId\)/);
+  assert.match(conflictError, /Number\(resumeSolicitudId\) > 0/);
+  assert.match(conflictError, /:\s*null/);
+});
+
 test("la conciliacion limita propietario, aliado, prioridad y evidencia", async () => {
   const source = await readProjectFile("lib/solicitudes-storage.ts");
   const reconciliation = sourceBetween(
@@ -701,11 +755,32 @@ test("la API devuelve 409 y codigo ante una mutacion de identidad canonica", asy
 
   assert.match(route, /import \{ SolicitudCanonicalMutationError \} from "@\/lib\/solicitudes"/);
   assert.match(errorHandling, /error instanceof SolicitudCanonicalMutationError/);
-  assert.match(errorHandling, /\{ error: error\.message, code: error\.code \}/);
+  assert.match(errorHandling, /error: error\.message/);
+  assert.match(errorHandling, /code: error\.code/);
   assert.match(errorHandling, /\{ status: error\.status \}/);
   assert.ok(
     post.indexOf("SolicitudCanonicalMutationError") <
       post.indexOf("const forbidden")
+  );
+});
+
+test("la API serializa resumeSolicitudId solo para un conflicto activo autorizado", async () => {
+  const route = await readProjectFile("app/api/creditos/borradores/route.ts");
+  const post = sourceBetween(route, "export async function POST", "export async function PATCH");
+  const errorHandling = sourceBetween(post, "} catch (error) {", "const forbidden");
+
+  assert.match(
+    errorHandling,
+    /\.\.\.\(error instanceof ActiveSolicitudConflictError\s*&&\s*error\.resumeSolicitudId\s*\?\s*\{ resumeSolicitudId: error\.resumeSolicitudId \}\s*:\s*\{\}\)/
+  );
+  assert.equal(
+    (errorHandling.match(/\{ resumeSolicitudId: error\.resumeSolicitudId \}/g) || [])
+      .length,
+    1
+  );
+  assert.doesNotMatch(
+    errorHandling,
+    /error instanceof SolicitudCanonicalMutationError[\s\S]{0,120}\?\s*\{ resumeSolicitudId:/
   );
 });
 
