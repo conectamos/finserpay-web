@@ -384,6 +384,148 @@ type ActiveDraftOwnerRow = {
   materialized?: boolean;
 };
 
+async function supersedeLowerPrioritySameOwnerDrafts(
+  database: Database,
+  targetId: number,
+  document: string
+) {
+  if (!document) return 0;
+
+  const eligibility = `
+    target_draft."id" = $1
+    AND target_draft."estado" = 'ABIERTO'
+    AND target_draft."creditoId" IS NULL
+    AND COALESCE(
+      target_draft."expiresAt",
+      target_draft."createdAt" + INTERVAL '15 days'
+    ) > CURRENT_TIMESTAMP
+    AND regexp_replace(
+      COALESCE(target_draft."clienteDocumento", ''),
+      '[^0-9]',
+      '',
+      'g'
+    ) = $2::text
+    AND (
+      target_draft."dataCreditoAssessmentId" IS NOT NULL
+      OR UPPER(COALESCE(target_draft."payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+      OR NULLIF(target_draft."payload"->>'dataCreditoStatus', '') IS NOT NULL
+      OR NULLIF(target_draft."payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+    )
+    AND duplicate_draft."id" <> target_draft."id"
+    AND duplicate_draft."estado" = 'ABIERTO'
+    AND duplicate_draft."creditoId" IS NULL
+    AND COALESCE(
+      duplicate_draft."expiresAt",
+      duplicate_draft."createdAt" + INTERVAL '15 days'
+    ) > CURRENT_TIMESTAMP
+    AND regexp_replace(
+      COALESCE(duplicate_draft."clienteDocumento", ''),
+      '[^0-9]',
+      '',
+      'g'
+    ) = $2::text
+    AND duplicate_sede."id" = duplicate_draft."sedeId"
+    AND target_sede."id" = target_draft."sedeId"
+    AND duplicate_sede."aliadoId" = target_sede."aliadoId"
+    AND (
+      (
+        target_draft."vendedorId" IS NOT NULL
+        AND duplicate_draft."vendedorId" = target_draft."vendedorId"
+      )
+      OR (
+        target_draft."vendedorId" IS NULL
+        AND duplicate_draft."vendedorId" IS NULL
+        AND duplicate_draft."usuarioId" = target_draft."usuarioId"
+        AND duplicate_draft."sedeId" = target_draft."sedeId"
+      )
+    )
+    AND (
+      GREATEST(1, COALESCE(duplicate_draft."currentStep", 1))
+        < GREATEST(1, COALESCE(target_draft."currentStep", 1))
+      OR (
+        GREATEST(1, COALESCE(duplicate_draft."currentStep", 1))
+          = GREATEST(1, COALESCE(target_draft."currentStep", 1))
+        AND (
+          duplicate_draft."createdAt" < target_draft."createdAt"
+          OR (
+            duplicate_draft."createdAt" = target_draft."createdAt"
+            AND duplicate_draft."id" < target_draft."id"
+          )
+        )
+      )
+    )
+    AND (
+      duplicate_draft."dataCreditoAssessmentId" IS NOT NULL
+      OR UPPER(COALESCE(duplicate_draft."payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+      OR NULLIF(duplicate_draft."payload"->>'dataCreditoStatus', '') IS NOT NULL
+      OR NULLIF(duplicate_draft."payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM "VeriffIdentityValidation" validation
+      WHERE validation."draftId" = duplicate_draft."id"
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM "FirmaSeguroProcess" process
+      WHERE process."draftId" = duplicate_draft."id"
+    )
+  `;
+  const candidates = await database.$queryRawUnsafe<Array<{ id: number }>>(
+    `
+      SELECT duplicate_draft."id"
+      FROM "CreditoBorrador" duplicate_draft,
+        "CreditoBorrador" target_draft,
+        "Sede" duplicate_sede,
+        "Sede" target_sede
+      WHERE ${eligibility}
+      ORDER BY duplicate_draft."id" ASC
+    `,
+    targetId,
+    document
+  );
+
+  let superseded = 0;
+  for (const candidate of candidates) {
+    const lock = await database.$queryRawUnsafe<Array<{ locked: boolean }>>(
+      `SELECT pg_try_advisory_xact_lock($1::integer, $2::integer) AS "locked"`,
+      SOLICITUD_OPERATION_LOCK_NAMESPACE,
+      candidate.id
+    );
+    if (lock[0]?.locked !== true) continue;
+
+    const rows = await database.$queryRawUnsafe<Array<{ id: number }>>(
+      `
+        UPDATE "CreditoBorrador" duplicate_draft
+        SET "estado" = 'CERRADO',
+            "closedReason" = 'DUPLICADA',
+            "closedAt" = CURRENT_TIMESTAMP,
+            "payload" = COALESCE(duplicate_draft."payload", '{}'::jsonb)
+              || jsonb_build_object(
+                'supersededBySolicitudId', target_draft."id",
+                'supersededByUserId', target_draft."usuarioId",
+                'supersededBySellerId', target_draft."vendedorId",
+                'supersededReason', 'SAME_OWNER_LOWER_PRIORITY',
+                'supersededAt', CURRENT_TIMESTAMP
+              ),
+            "updatedAt" = CURRENT_TIMESTAMP
+        FROM "CreditoBorrador" target_draft,
+          "Sede" duplicate_sede,
+          "Sede" target_sede
+        WHERE duplicate_draft."id" = $3::integer
+          AND ${eligibility}
+        RETURNING duplicate_draft."id"
+      `,
+      targetId,
+      document,
+      candidate.id
+    );
+    superseded += rows.length;
+  }
+
+  return superseded;
+}
+
 type FirmaSeguroDraftTermsRow = {
   completedAt: Date | string | null;
   draftPayload: Record<string, unknown> | null;
@@ -519,7 +661,7 @@ async function findBlockingSolicitudByDocument(
           AND NOT (
             draft."estado" = 'CERRADO'
             AND COALESCE(draft."closedReason", '') IN (
-              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA'
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'DUPLICADA'
             )
           )
         UNION ALL
@@ -785,8 +927,12 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     for (const blacklistDocument of lockedBlacklistDocuments) {
       await assertDocumentNotBlacklisted(blacklistDocument, transaction);
     }
+    const storedDocument = normalizeDigits(preliminary?.clienteDocumento);
+    const documentToLock = document || storedDocument;
     if (targetId) await lockSolicitudOperationMutation(transaction, targetId);
-    if (document) await lockIdentity(transaction, "document", document);
+    if (documentToLock) {
+      await lockIdentity(transaction, "document", documentToLock);
+    }
     if (imei) await lockIdentity(transaction, "imei", imei);
     await expireStaleWith(transaction);
 
@@ -814,6 +960,18 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       );
       if (!rows[0] || !sameOwner(rows[0], input)) throw new Error("SOLICITUD_NO_AUTORIZADA");
       targetRow = rows[0];
+      const targetDocument = normalizeDigits(rows[0].clienteDocumento);
+      if (
+        targetDocument &&
+        targetDocument === documentToLock &&
+        (!document || document === targetDocument)
+      ) {
+        await supersedeLowerPrioritySameOwnerDrafts(
+          transaction,
+          rows[0].id,
+          targetDocument
+        );
+      }
       mustCheckIdentity = Boolean(
         (document && document !== normalizeDigits(rows[0].clienteDocumento)) ||
           (imei && imei !== normalizeDigits(rows[0].imei))
@@ -823,7 +981,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     if (mustCheckIdentity) {
       const conflicting = await findActiveByIdentity(
         transaction,
-        document,
+        documentToLock,
         imei,
         targetId
       );
@@ -1226,7 +1384,7 @@ export async function desistSolicitud(input: {
           AND NOT (
             draft."estado" = 'CERRADO'
             AND COALESCE(draft."closedReason", '') IN (
-              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'DUPLICADA', 'FINALIZADA'
             )
           )
         LIMIT 1
@@ -1261,7 +1419,7 @@ export async function desistSolicitud(input: {
           AND NOT (
             draft."estado" = 'CERRADO'
             AND COALESCE(draft."closedReason", '') IN (
-              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'DUPLICADA', 'FINALIZADA'
             )
           )
         ORDER BY draft."id" ASC
@@ -1298,7 +1456,7 @@ export async function desistSolicitud(input: {
               AND NOT (
                 selected."estado" = 'CERRADO'
                 AND COALESCE(selected."closedReason", '') IN (
-                  'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+                  'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'DUPLICADA', 'FINALIZADA'
                 )
               )
           )
@@ -1315,7 +1473,7 @@ export async function desistSolicitud(input: {
           AND NOT (
             draft."estado" = 'CERRADO'
             AND COALESCE(draft."closedReason", '') IN (
-              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'DUPLICADA', 'FINALIZADA'
             )
           )
         RETURNING "id"
@@ -1358,7 +1516,7 @@ export async function desistSolicitudAsCentralAdmin(input: {
           AND NOT (
             "estado" = 'CERRADO'
             AND COALESCE("closedReason", '') IN (
-              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'DUPLICADA', 'FINALIZADA'
             )
           )
         LIMIT 1
@@ -1388,7 +1546,7 @@ export async function desistSolicitudAsCentralAdmin(input: {
           AND NOT (
             "estado" = 'CERRADO'
             AND COALESCE("closedReason", '') IN (
-              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'DUPLICADA', 'FINALIZADA'
             )
           )
         ORDER BY "id" ASC
@@ -1416,7 +1574,7 @@ export async function desistSolicitudAsCentralAdmin(input: {
               AND NOT (
                 selected."estado" = 'CERRADO'
                 AND COALESCE(selected."closedReason", '') IN (
-                  'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+                  'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'DUPLICADA', 'FINALIZADA'
                 )
               )
           )
@@ -1433,7 +1591,7 @@ export async function desistSolicitudAsCentralAdmin(input: {
           AND NOT (
             "estado" = 'CERRADO'
             AND COALESCE("closedReason", '') IN (
-              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'FINALIZADA'
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'DUPLICADA', 'FINALIZADA'
             )
           )
         RETURNING "id"
