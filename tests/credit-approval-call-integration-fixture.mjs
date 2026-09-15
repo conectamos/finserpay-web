@@ -11,17 +11,19 @@ export async function prepareCallIntegrationFixture(client, connectionString) {
   const url=new URL(connectionString);
   assert.ok(["localhost","127.0.0.1","[::1]"].includes(url.hostname));
   assert.equal(url.pathname,"/approval_call_test");
-  const tables=["CreditApprovalCallRecording","CreditApprovalNoveltyEvent","CreditApprovalNoveltyItem","CreditApprovalNovelty","CreditApprovalSharedSession","CreditApprovalSharedGrant","CreditApprovalReissueEvent","CreditApprovalReissue","CreditApprovalEvent","CreditApprovalReview","CreditApprovalPolicy","FirmaSeguroProcess","DataCreditoAssessment","LiquidacionAliadoCredito","CreditoAmortizacion","Credito","Usuario","Sede","Aliado"];
+  const tables=["CreditApprovalCallContinuation","CreditApprovalCallRecording","CreditApprovalNoveltyEvent","CreditApprovalNoveltyItem","CreditApprovalNovelty","CreditApprovalSharedSession","CreditApprovalSharedGrant","CreditApprovalReissueEvent","CreditApprovalReissue","CreditApprovalEvent","CreditApprovalReview","CreditApprovalPolicy","FirmaSeguroProcess","DataCreditoAssessment","LiquidacionAliadoCredito","CreditoAmortizacion","Credito","Usuario","Rol","Sede","Aliado"];
   const existing=await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(existing.rows.every(({tablename})=>tables.includes(tablename)),"No se reinician bases con tablas ajenas");
   for(const table of tables)await client.query('DROP TABLE IF EXISTS public."'+table+'" CASCADE');
   await client.query(`
-    CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY);
-    INSERT INTO "Usuario" VALUES (7);
-    CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY,"codigo" TEXT,"nombre" TEXT);
-    INSERT INTO "Aliado" VALUES (10,'ALLY','Aliado sintético'),(20,'FINSERPAY','Central');
-    CREATE TABLE "Sede" ("id" INTEGER PRIMARY KEY,"aliadoId" INTEGER);
-    INSERT INTO "Sede" VALUES (10,10),(20,20);
+    CREATE TABLE "Rol" ("id" INTEGER PRIMARY KEY,"nombre" TEXT);
+    INSERT INTO "Rol" VALUES (1,'ADMIN');
+    CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY,"codigo" TEXT,"nombre" TEXT,"activo" BOOLEAN DEFAULT true);
+    INSERT INTO "Aliado" VALUES (10,'ALLY','Aliado sintético',true),(20,'FINSERPAY','Central',true);
+    CREATE TABLE "Sede" ("id" INTEGER PRIMARY KEY,"aliadoId" INTEGER,"nombre" TEXT DEFAULT 'Sede sintética',"activa" BOOLEAN DEFAULT true);
+    INSERT INTO "Sede" ("id","aliadoId") VALUES (10,10),(20,20);
+    CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY,"sedeId" INTEGER,"rolId" INTEGER,"activo" BOOLEAN DEFAULT true);
+    INSERT INTO "Usuario" ("id","sedeId","rolId") VALUES (7,20,1),(8,10,1);
     CREATE TABLE "Credito" (
       "id" SERIAL PRIMARY KEY,"folio" TEXT DEFAULT 'TEST',"clienteNombre" TEXT DEFAULT 'Cliente sintético',
       "clienteDocumento" TEXT DEFAULT '100000001',"clienteCorreo" TEXT,"clienteTelefono" TEXT,

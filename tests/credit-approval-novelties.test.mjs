@@ -15,7 +15,7 @@ const approvalStub = {
   async getCreditApprovalDetail(db,id) {
     const rows=await db.$queryRawUnsafe('SELECT "revision" FROM "CreditApprovalReview" WHERE "creditoId"=$1',id);
     const credit=(await db.$queryRawUnsafe('SELECT "estado" FROM "Credito" WHERE "id"=$1',id))[0];
-    return {capabilities:{canCorrectEvidence:!['ANULADO','CANCELADO'].includes(credit.estado)},review:{revision:rows[0].revision,reviewHash:'a'.repeat(64)}};
+    return {capabilities:{canCorrectEvidence:!['ANULADO','CANCELADO'].includes(credit.estado)},review:{revision:rows[0].revision,reviewHash:'a'.repeat(64)},callRecording:{available:true,recording:null}};
   },
   approvalImage(value) { if(!value?.startsWith('data:image/png;base64,')) return null; return {bytes:Buffer.from(value.split(',')[1],'base64'),mime:'image/png'}; },
 };
@@ -158,7 +158,7 @@ test('PostgreSQL aislado: novedades, permisos, respuestas independientes e histo
   });
   await t.test('corrección del analista responde solo la foto OPEN y no otorga OK',async()=>{
     const id=await create();await report(id,['foto-entrega','foto-remision']);
-    await transaction(async tx=>{await tx.$queryRawUnsafe('SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE',id);await tx.$executeRawUnsafe('UPDATE "Credito" SET "fotoEntregaDataUrl"=$2 WHERE "id"=$1',id,blue);assert.equal(await state.markNoveltyPhotoCorrected(tx,id,'foto-entrega',history.evidenceSha256(blue),actor),true);});
+    await transaction(async tx=>{await tx.$queryRawUnsafe('SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE',id);await tx.$executeRawUnsafe('UPDATE "Credito" SET "fotoEntregaDataUrl"=$2 WHERE "id"=$1',id,blue);assert.ok(await state.markNoveltyPhotoCorrected(tx,id,'foto-entrega',history.evidenceSha256(blue),actor));});
     assert.equal((await detail(id)).novelty.pendingCount,1);assert.equal((await review(id)).status,'PENDING');assert.equal(await transaction(tx=>state.markNoveltyPhotoCorrected(tx,id,'foto-entrega',history.evidenceSha256(blue),actor)),false);
   });
   await t.test('scope normal por aliado y rol: no históricas, pagadas, canceladas ni otro aliado',async()=>{

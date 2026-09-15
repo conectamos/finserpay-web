@@ -25,6 +25,7 @@ export default function ApprovalCallRecording({ detail, disabled, readOnly = fal
   const phone = detail.clienteTelefono?.replace(/[^+0-9]/g, "") || "";
   const phoneHref = /^\+?\d{7,15}$/.test(phone) ? "tel:" + phone : null;
   const canUpload = !readOnly && state?.canUpload === true;
+  const required = state?.required !== false;
 
   useEffect(() => { setPlaybackError(false); }, [recording?.id]);
   useEffect(() => () => onBusyChange(false), [onBusyChange]);
@@ -74,10 +75,10 @@ export default function ApprovalCallRecording({ detail, disabled, readOnly = fal
     <Card role="region" aria-label="Llamada al cliente" className="min-w-0 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-lg font-semibold"><Phone className="h-5 w-5" aria-hidden="true" />Llamada al cliente</h2>
-        {!readOnly ? <Badge tone={error ? "danger" : compact && pending ? "warning" : recording ? "positive" : "warning"}>{compact ? saving ? "Cargando" : error ? "Error" : pending ? "Por guardar" : recording ? "Guardada" : "Pendiente" : recording ? "Grabación cargada" : "Obligatoria"}</Badge> : null}
+        {!readOnly ? <Badge tone={error ? "danger" : compact && pending ? "warning" : recording ? "positive" : required ? "warning" : "neutral"}>{compact ? saving ? "Cargando" : error ? "Error" : pending ? "Por guardar" : recording ? "Guardada" : required ? "Pendiente" : "No requerida" : recording ? "Grabación cargada" : required ? "Obligatoria" : "No requerida"}</Badge> : null}
       </div>
       {!readOnly ? <>
-        <p className="mt-3 text-sm text-[var(--fp-muted)]">Llama al cliente y guarda la grabación antes de dar el OK para liquidación.</p>
+        <p className="mt-3 text-sm text-[var(--fp-muted)]">{required ? "Llama al cliente y guarda la grabación antes de dar el OK para liquidación." : "La grabación no es requerida para dar el OK a este expediente."}</p>
         <div className="mt-3 text-sm">Teléfono: {phoneHref ? <a href={phoneHref} className="inline-flex min-h-10 items-center break-all font-semibold underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-graphite)]">{detail.clienteTelefono}</a> : <span>{detail.clienteTelefono || "No disponible"}</span>}</div>
       </> : null}
       {recording ? <div className="mt-4 space-y-2">
@@ -85,8 +86,8 @@ export default function ApprovalCallRecording({ detail, disabled, readOnly = fal
         <audio key={recording.id + ":" + playbackRetry} aria-label="Grabación de la llamada" controls preload="none" src={recording.href} onError={() => setPlaybackError(true)} className="w-full min-w-0" />
         {playbackError ? <div className="space-y-2"><p role="alert" className="text-sm text-[var(--fp-danger)]">No se pudo reproducir la grabación.</p><Button variant="secondary" onClick={() => { setPlaybackError(false); setPlaybackRetry((value) => value + 1); }}>Reintentar reproducción</Button></div> : null}
         <p className="text-sm text-[var(--fp-muted)]">Cargada por {recording.actorName} · {dates.format(new Date(recording.createdAt))}</p>
-      </div> : <p className="mt-3 text-sm text-[var(--fp-muted)]">{!state?.available ? "No se pudo consultar la grabación. Actualiza el expediente." : readOnly ? "Esta aprobación anterior no tiene grabación registrada." : "Falta la grabación de esta revisión."}</p>}
-      {!readOnly && !canUpload ? <p className="mt-3 text-sm text-[var(--fp-muted)]">{state?.blockedReason || "La carga de grabación no está disponible para este expediente."}</p> : null}
+      </div> : <p className="mt-3 text-sm text-[var(--fp-muted)]">{readOnly ? "Esta aprobación anterior no tiene grabación registrada." : !required ? "No hay una grabación adjunta." : !state?.available ? "No se pudo consultar la grabación. Actualiza el expediente." : "Falta la grabación de esta revisión."}</p>}
+      {!readOnly && !canUpload && required ? <p className="mt-3 text-sm text-[var(--fp-muted)]">{state?.blockedReason || "La carga de grabación no está disponible para este expediente."}</p> : null}
       {canUpload ? <div className="mt-4 space-y-3">
         <label className="block text-sm font-medium" htmlFor={"call-recording-" + detail.id}>{recording ? "Cargar otra grabación" : "Subir grabación"}</label>
         <input ref={input} id={"call-recording-" + detail.id} type="file" accept=".mp3,.m4a,.mp4,.ogg,.wav,audio/mpeg,audio/mp4,video/mp4,audio/ogg,application/ogg,audio/wav" disabled={disabled || saving} onChange={(event) => select(event.target.files?.[0])} className="block min-h-10 w-full min-w-0 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] p-2 text-sm file:mr-2 file:rounded-[var(--fp-radius-sm)] file:border-0 file:bg-[var(--fp-bg)] file:p-2 file:text-[var(--fp-graphite)] disabled:opacity-50" />

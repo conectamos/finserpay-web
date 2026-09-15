@@ -2,11 +2,41 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { setTimeout as pause } from "node:timers/promises";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
+import sharp from "sharp";
 import pg from "pg";
 import { prepareCallIntegrationFixture } from "./credit-approval-call-integration-fixture.mjs";
 import { service as core, approvalFixture, approvalErrors, approvalActors } from "./credit-approval-test-loader.mjs";
 import { loadCallModule, files, stateModule, tone } from "./credit-approval-call-test-loader.mjs";
 
+const requireFromTest = createRequire(import.meta.url);
+const integrationModules = new Map();
+function loadIntegrationModule(path) {
+  if (integrationModules.has(path)) return integrationModules.get(path);
+  const source = readFileSync(new URL("../" + path, import.meta.url), "utf8");
+  const output = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+  }).outputText;
+  const loaded = { exports: {} };
+  integrationModules.set(path, loaded.exports);
+  runInNewContext(output, {
+    module: loaded, exports: loaded.exports, Buffer, Uint8Array, Date, URL, URLSearchParams,
+    Request, Response, TextDecoder, structuredClone, console,
+    require(name) {
+      if (name === "server-only") return {};
+      if (name === "@/lib/credit-approval") return core;
+      if (name.startsWith("@/lib/")) return loadIntegrationModule(name.slice(2) + ".ts");
+      if (name.startsWith("./")) return loadIntegrationModule("lib/" + name.slice(2) + ".ts");
+      return requireFromTest(name);
+    },
+  }, { filename: path });
+  integrationModules.set(path, loaded.exports);
+  return loaded.exports;
+}
+const noveltyService = loadIntegrationModule("lib/credit-approval-novelties.ts");
 pg.types.setTypeParser(1114, value => new Date(value.replace(" ", "T") + "Z"));
 const connectionString = process.env.CREDIT_APPROVAL_CALL_TEST_DATABASE_URL;
 const adapter = client => ({
@@ -51,6 +81,27 @@ test("real call schema, storage and approval integrate under concurrent actions"
     revision: detail.review.revision, reviewHash: detail.review.reviewHash, idempotencyKey: randomUUID() });
   const upload = (id, input, target = client) => transaction(target, tx => store.saveCreditApprovalCall(tx, id, input, actor));
   const approve = (id, input, target = client) => transaction(target, tx => core.approveCredit(tx, id, input, actor));
+  const allyActor = { id: 8, nombre: "Admin aliado sintético", aliadoId: 10 };
+  const reportNovelty = async (id, keys = []) => {
+    const current = await read(id);
+    const input = noveltyService.parseCreateNovelty({
+      keys, reason: "Requiere corrección para liquidación", revision: current.review.revision,
+      reviewHash: current.review.reviewHash, idempotencyKey: randomUUID(),
+    });
+    return { input, result: await transaction(client, tx => noveltyService.createCreditApprovalNovelty(tx, id, input, actor)) };
+  };
+  const respondNovelty = async (id, item, noveltyId, extra, photo = false) => {
+    const input = await noveltyService.prepareNoveltyResponse({
+      noveltyId, itemId: item.id, expectedVersion: item.version,
+      idempotencyKey: randomUUID(), ...extra,
+    }, photo);
+    return { input, result: await transaction(client, tx => noveltyService.respondCreditApprovalNovelty(tx, id, input, allyActor)) };
+  };
+  const activeNovelty = id => noveltyService.getPendingAllyCredit(db, id, allyActor);
+  const physicalRecording = async recordingId => (await client.query(
+    'SELECT * FROM "CreditApprovalCallRecording" WHERE "id"=$1::uuid', [recordingId])).rows[0];
+  const continuationCount = async id => (await client.query(
+    'SELECT COUNT(*)::integer AS count FROM "CreditApprovalCallContinuation" WHERE "creditoId"=$1', [id])).rows[0].count;
   const snapshot = async id => {
     const credit = (await client.query('SELECT * FROM "Credito" WHERE "id"=$1', [id])).rows[0];
     const signature = (await client.query('SELECT * FROM "FirmaSeguroProcess" WHERE "creditoId"=$1', [id])).rows[0];
@@ -135,5 +186,159 @@ test("real call schema, storage and approval integrate under concurrent actions"
       await core.approveCredit(db, id, observed, actor); await client.query("COMMIT"); await pending;
       assert.equal((await read(id)).callRecording.recording.id, observed.recordingId);
     } finally { await client.query("ROLLBACK"); await other.end(); }
+  });
+  await t.test("el audio persiste al reportar y responder una novedad general, sin aprobar automáticamente", async () => {
+    const id = await createCredit();
+    const uploaded = await upload(id, await fileInput(await read(id)));
+    const recordingId = uploaded.state.recording.id;
+    const originalRow = await physicalRecording(recordingId);
+
+    await reportNovelty(id);
+    const waiting = await read(id);
+    assert.equal(waiting.review.status, "PENDING");
+    assert.equal(waiting.callRecording.recording.id, recordingId);
+    assert.equal(waiting.canApprove, false, "la novedad abierta sigue bloqueando el OK");
+
+    const pending = await activeNovelty(id);
+    const item = pending.novelty.items.find(candidate => candidate.key === "GENERAL");
+    const answered = await respondNovelty(id, item, pending.novelty.id, { text: "Información validada con el cliente" });
+    const ready = await read(id);
+    assert.equal(ready.review.status, "PENDING", "responder no equivale a aprobar");
+    assert.equal(ready.callRecording.recording.id, recordingId);
+    assert.equal(ready.canApprove, true);
+    assert.equal(await continuationCount(id), 2);
+
+    const beforeRetry = await continuationCount(id);
+    const retry = await transaction(client, tx => noveltyService.respondCreditApprovalNovelty(tx, id, answered.input, allyActor));
+    assert.equal(retry.unchanged, true);
+    assert.equal(await continuationCount(id), beforeRetry, "el retry no duplica continuidad");
+
+    const approved = await approve(id, approvalInput(ready));
+    assert.equal(approved.item.review.status, "APPROVED");
+    assert.equal((await client.query('SELECT COUNT(*)::integer AS count FROM "CreditApprovalCallRecording" WHERE "creditoId"=$1', [id])).rows[0].count, 1);
+    assert.deepEqual(await physicalRecording(recordingId), originalRow, "el BLOB y su auditoría física permanecen intactos");
+
+    await assert.rejects(client.query('UPDATE "CreditApprovalCallContinuation" SET "targetRevision"="targetRevision" WHERE "creditoId"=$1', [id]), { code: "23514" });
+    await assert.rejects(client.query('DELETE FROM "CreditApprovalCallContinuation" WHERE "creditoId"=$1', [id]), { code: "23514" });
+    await assert.rejects(client.query('TRUNCATE "CreditApprovalCallContinuation"'), { code: "23514" });
+  });
+
+  await t.test("una foto corregida conserva el audio, cambia la huella y exige un OK explícito", async () => {
+    const id = await createCredit();
+    const uploaded = await upload(id, await fileInput(await read(id)));
+    const recordingId = uploaded.state.recording.id;
+    const originalRow = await physicalRecording(recordingId);
+
+    await reportNovelty(id, ["foto-entrega"]);
+    const afterReport = await read(id);
+    assert.equal(afterReport.callRecording.recording.id, recordingId);
+    const pending = await activeNovelty(id);
+    const item = pending.novelty.items.find(candidate => candidate.key === "foto-entrega");
+    const replacement = "data:image/png;base64," + (await sharp({
+      create: { width: 3, height: 3, channels: 3, background: "black" },
+    }).png().toBuffer()).toString("base64");
+
+    await respondNovelty(id, item, pending.novelty.id, {
+      dataUrl: replacement, expectedPhotoHash: item.evidence.sha256,
+    }, true);
+    const corrected = await read(id);
+    assert.equal(corrected.review.status, "PENDING");
+    assert.equal(corrected.review.revision, afterReport.review.revision + 2);
+    assert.notEqual(corrected.review.reviewHash, afterReport.review.reviewHash);
+    assert.equal(corrected.callRecording.recording.id, recordingId);
+    assert.equal(corrected.canApprove, true);
+    assert.equal(await continuationCount(id), 2);
+    assert.deepEqual(await physicalRecording(recordingId), originalRow);
+
+    const approved = await approve(id, approvalInput(corrected));
+    assert.equal(approved.item.review.status, "APPROVED");
+    assert.equal((await client.query('SELECT "callRecordingId"::text FROM "CreditApprovalReview" WHERE "creditoId"=$1', [id])).rows[0].callRecordingId, recordingId);
+  });
+
+  await t.test("una grabación nueva gana sobre la heredada y continúa en la respuesta posterior", async () => {
+    const id = await createCredit();
+    const first = await upload(id, await fileInput(await read(id)));
+    await reportNovelty(id);
+    const afterReport = await read(id);
+    assert.equal(afterReport.callRecording.recording.id, first.state.recording.id);
+
+    const second = await upload(id, await fileInput(afterReport, "mp3"));
+    assert.notEqual(second.state.recording.id, first.state.recording.id);
+    assert.equal((await read(id)).callRecording.recording.id, second.state.recording.id);
+
+    const pending = await activeNovelty(id);
+    const item = pending.novelty.items.find(candidate => candidate.key === "GENERAL");
+    await respondNovelty(id, item, pending.novelty.id, { text: "Corrección revisada" });
+    assert.equal((await read(id)).callRecording.recording.id, second.state.recording.id);
+    const linkSql = 'SELECT "recordingId"::text FROM "CreditApprovalCallContinuation" ' +
+      'WHERE "creditoId"=$1 ORDER BY "targetRevision"';
+    const links = (await client.query(linkSql, [id])).rows.map(row => row.recordingId);
+    assert.deepEqual(links, [first.state.recording.id, second.state.recording.id]);
+    assert.ok((await store.readCreditApprovalCallBytes(db, id, first.state.recording.id)).bytes.equals(tone()));
+    assert.ok((await store.readCreditApprovalCallBytes(db, id, second.state.recording.id)).bytes.equals(tone("mp3")));
+  });
+
+  await t.test("un cambio externo corta la continuidad y la respuesta no resucita el audio anterior", async () => {
+    const id = await createCredit();
+    const first = await upload(id, await fileInput(await read(id)));
+    await reportNovelty(id);
+    const pending = await activeNovelty(id);
+    const item = pending.novelty.items.find(candidate => candidate.key === "GENERAL");
+
+    await client.query('UPDATE "Credito" SET "imei"=$2 WHERE "id"=$1', [id, "000000000000099"]);
+    const changed = await read(id);
+    assert.equal(changed.callRecording.recording, null);
+    await respondNovelty(id, item, pending.novelty.id, { text: "Respuesta posterior al cambio externo" });
+    const answered = await read(id);
+    assert.equal(answered.review.status, "PENDING");
+    assert.equal(answered.callRecording.recording, null);
+    assert.equal(answered.canApprove, false);
+    assert.equal(await continuationCount(id), 1, "solo permanece el vínculo previo al cambio externo");
+    await assert.rejects(approve(id, approvalInput(answered)), error => error.code === "CALL_RECORDING_REQUIRED");
+    assert.ok((await store.readCreditApprovalCallBytes(db, id, first.state.recording.id)).bytes.equals(tone()));
+  });
+  await t.test("un audio legado recuperado, aprobado y vuelto a novedad conserva una fuente válida", async () => {
+    const id = await createCredit();
+    const uploaded = await upload(id, await fileInput(await read(id)));
+    const recordingId = uploaded.state.recording.id;
+    const withoutContinuity = work => transaction(client, tx => work({
+      ...tx,
+      $executeRawUnsafe: async (sql, ...values) => sql.startsWith('INSERT INTO "CreditApprovalCallContinuation"')
+        ? 0
+        : tx.$executeRawUnsafe(sql, ...values),
+    }));
+
+    const initial = await read(id);
+    const legacyReport = noveltyService.parseCreateNovelty({
+      keys: [], reason: "Novedad general previa al despliegue", revision: initial.review.revision,
+      reviewHash: initial.review.reviewHash, idempotencyKey: randomUUID(),
+    });
+    await withoutContinuity(tx => noveltyService.createCreditApprovalNovelty(tx, id, legacyReport, actor));
+    const pending = await activeNovelty(id);
+    const item = pending.novelty.items.find(candidate => candidate.key === "GENERAL");
+    const legacyResponse = await noveltyService.prepareNoveltyResponse({
+      noveltyId: pending.novelty.id, itemId: item.id, expectedVersion: item.version,
+      idempotencyKey: randomUUID(), text: "Respuesta guardada antes del despliegue",
+    }, false);
+    await withoutContinuity(tx => noveltyService.respondCreditApprovalNovelty(tx, id, legacyResponse, allyActor));
+
+    assert.equal(await continuationCount(id), 0);
+    const recovered = await read(id);
+    assert.equal(recovered.callRecording.recording.id, recordingId, "el fallback recupera el audio legado");
+    const approved = await approve(id, approvalInput(recovered));
+    assert.equal(approved.item.review.status, "APPROVED");
+    const approvedRevision = approved.item.review.revision;
+
+    await reportNovelty(id);
+    const reopened = await read(id);
+    assert.equal(reopened.review.status, "PENDING");
+    assert.equal(reopened.callRecording.recording.id, recordingId);
+    const link = (await client.query(
+      'SELECT "recordingId"::text,"sourceRevision","targetRevision" FROM "CreditApprovalCallContinuation" WHERE "creditoId"=$1',
+      [id],
+    )).rows[0];
+    assert.equal(link.recordingId, recordingId);
+    assert.equal(link.sourceRevision, approvedRevision);
+    assert.ok(link.targetRevision > approvedRevision);
   });
 });

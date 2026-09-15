@@ -29,7 +29,18 @@ test("call storage queries against isolated PostgreSQL TEMP tables", { skip: !co
       INSERT INTO "Credito" VALUES (81,1,'{"signed":"original","principal":800000}'),(82,1,'{"signed":"other"}');
       INSERT INTO "CreditApprovalReview" VALUES (81,1,'PENDING'),(82,1,'PENDING');`);
     const db = {
-      $queryRawUnsafe: async (sql, ...values) => (await client.query(sql, values)).rows,
+      $queryRawUnsafe: async (sql, ...values) => {
+        // This TEMP-only storage test intentionally does not install public deployment functions.
+        // Mirror the direct-recording branch while the full integration suite exercises continuity.
+        if (sql.includes("credit_approval_effective_call_recording")) {
+          const directSql = 'SELECT "id"::text,"revision","reviewHash","fileName","mimeType","sizeBytes","sha256","createdAt","actorName" ' +
+            'FROM "CreditApprovalCallRecording" WHERE "creditoId"=$1 ' +
+            'AND (($4::uuid IS NOT NULL AND "id"=$4::uuid) OR ($4::uuid IS NULL AND "revision"=$2 AND "reviewHash"=$3)) ' +
+            'ORDER BY "createdAt" DESC,"id" DESC LIMIT 1';
+          return (await client.query(directSql, values)).rows;
+        }
+        return (await client.query(sql, values)).rows;
+      },
       $executeRawUnsafe: async (sql, ...values) => (await client.query(sql, values)).rowCount,
     };
     const detail = { review: { revision: 1, reviewHash: "a".repeat(64), required: true, status: "PENDING" },

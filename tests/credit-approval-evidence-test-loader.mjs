@@ -8,6 +8,7 @@ export const sanitizer = loadApprovalModule("lib/iphone-delivery-evidence.ts", {
 export const evidence = loadApprovalModule("lib/credit-approval-evidence.ts", {
   "@/lib/credit-approval-actor": actorModule,
   "@/lib/credit-approval-novelty-state": { markNoveltyPhotoCorrected: async () => false },
+  "@/lib/credit-approval-call-continuity": { captureCreditApprovalCallContinuity: () => null, continueCreditApprovalCall: async () => false },
   "@/lib/credit-approval": service,
   "@/lib/iphone-delivery-evidence": sanitizer,
   "@/lib/credit-approval-evidence-history": history,

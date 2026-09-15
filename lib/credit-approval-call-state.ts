@@ -7,7 +7,11 @@ export type ApprovalCallRecording = {
   sizeBytes: number; sha256: string; createdAt: string; actorName: string; href: string;
 };
 type RecordingRow = Omit<ApprovalCallRecording, "createdAt" | "href"> & { createdAt: Date | string };
-export type ApprovalCallState = { available: boolean; recording: ApprovalCallRecording | null };
+export type ApprovalCallState = {
+  available: boolean;
+  recording: ApprovalCallRecording | null;
+  validFor?: { revision: number; reviewHash: string };
+};
 
 export function approvalCallMetadata(creditId: number, row: RecordingRow): ApprovalCallRecording {
   return { id: row.id, revision: row.revision, reviewHash: row.reviewHash, fileName: row.fileName,
@@ -16,7 +20,7 @@ export function approvalCallMetadata(creditId: number, row: RecordingRow): Appro
     href: `/api/aprobaciones/${creditId}/grabaciones/${row.id}` };
 }
 
-/** null is an existing approval without audio; undefined is a pending review. */
+/** null is an existing approval without audio; undefined resolves the current effective recording. */
 export async function readCreditApprovalCallState(db: CallDatabase, creditId: number,
   revision: number, reviewHash: string, approvedRecordingId?: string | null): Promise<ApprovalCallState> {
   if (approvedRecordingId === null) return { available: true, recording: null };
@@ -24,10 +28,11 @@ export async function readCreditApprovalCallState(db: CallDatabase, creditId: nu
     const rows = await db.$queryRawUnsafe<RecordingRow[]>(`SELECT "id"::text,"revision","reviewHash",
       "fileName","mimeType","sizeBytes","sha256","createdAt","actorName"
       FROM "CreditApprovalCallRecording" WHERE "creditoId"=$1
-        AND (($4::uuid IS NOT NULL AND "id"=$4::uuid)
-          OR ($4::uuid IS NULL AND "revision"=$2 AND "reviewHash"=$3))
-      ORDER BY "createdAt" DESC,"id" DESC LIMIT 1`, creditId, revision, reviewHash, approvedRecordingId ?? null);
-    return { available: true, recording: rows[0] ? approvalCallMetadata(creditId, rows[0]) : null };
+        AND "id"=COALESCE($4::uuid,public.credit_approval_effective_call_recording($1,$2,$3))
+      LIMIT 1`, creditId, revision, reviewHash, approvedRecordingId ?? null);
+    const recording = rows[0] ? approvalCallMetadata(creditId, rows[0]) : null;
+    return { available: true, recording, ...(recording && approvedRecordingId === undefined
+      ? { validFor: { revision, reviewHash } } : {}) };
   } catch {
     return { available: false, recording: null };
   }

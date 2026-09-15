@@ -80,10 +80,15 @@ test("la misma foto es idempotente y fotos de identidad repetidas se rechazan", 
   assert.equal(state.archives.length, 0);
 });
 
-function adminHarness(blocked) {
+function adminHarness(blocked, { requestedByNovelty = false } = {}) {
   const trace = [];
   const credit = { id: 81, folio: "TEST-81", estado: "ACTIVO", contratoSnapshot: {},
     ...Object.fromEntries(service.APPROVAL_EVIDENCE.map(({ field }, i) => [field, photos[i]])) };
+  const continuitySource = { recordingId: "00000000-0000-4000-8000-000000000081", revision: 2, reviewHash: "a".repeat(64) };
+  const continuityEvent = {
+    noveltyId: "00000000-0000-4000-8000-000000000091",
+    noveltyEventId: "00000000-0000-4000-8000-000000000092",
+  };
   const tx = {
     credito: {
       async findFirst(options) { trace.push(options.select.contratoSnapshot ? "snapshot" : "lookup"); return structuredClone(credit); },
@@ -101,7 +106,29 @@ function adminHarness(blocked) {
     "@/lib/credit-route-lookup": { parseCreditRouteLookup: (id) => ({ id: Number(id) }), buildCreditLookupWhere: (lookup) => lookup },
     "@/lib/iphone-delivery-evidence": sanitizer,
     "@/lib/credit-approval-evidence-history": history,
-    "@/lib/credit-approval-novelty-state": { markNoveltyPhotoCorrected: async () => false },
+    "@/lib/credit-approval": {
+      getCreditApprovalDetail: async () => {
+        if (!requestedByNovelty) throw new Error("No debe leer detalle sin una novedad solicitada");
+        trace.push("detail");
+        return { id: 81, review: { revision: 2, reviewHash: "a".repeat(64), status: "PENDING" },
+          callRecording: { available: true, recording: { id: continuitySource.recordingId } } };
+      },
+    },
+    "@/lib/credit-approval-call-continuity": {
+      captureCreditApprovalCallContinuity: () => { trace.push("capture"); return continuitySource; },
+      continueCreditApprovalCall: async (_tx, id, source, event) => {
+        trace.push("continue"); assert.equal(id, 81); assert.deepEqual(source, continuitySource); assert.deepEqual(event, continuityEvent); return true;
+      },
+    },
+    "@/lib/credit-approval-novelty-state": {
+      getCreditApprovalNoveltyState: async () => ({ novelty: requestedByNovelty
+        ? { id: continuityEvent.noveltyId, status: "WAITING_ALLY", items: [{ key: "foto-entrega", status: "OPEN" }] }
+        : null }),
+      markNoveltyPhotoCorrected: async () => {
+        if (!requestedByNovelty) return false;
+        trace.push("mark"); return continuityEvent;
+      },
+    },
     "@/lib/credit-approval-reissue-state": { getCreditApprovalReissueState: async () => ({ blocked, operation: blocked ? { message: "Firma en curso" } : null }) },
   });
   return { route, trace };
@@ -119,4 +146,16 @@ test("la corrección admin archiva antes de actualizar y lee el snapshot despué
   const result = await route.PATCH(new Request("https://finser.test/api/creditos/81/evidencias", { method: "PATCH", body: JSON.stringify({ key: "foto-entrega", dataUrl: photos[5] }) }), { params: Promise.resolve({ id: "81" }) });
   assert.equal(result.status, 200);
   assert.deepEqual(trace, ["lookup", "lock-credit", "lock-review", "snapshot", "archive", "update"]);
+});
+
+test("la corrección admin de una foto OPEN captura el audio antes del cambio y enlaza el evento después", async () => {
+  const { route, trace } = adminHarness(false, { requestedByNovelty: true });
+  const result = await route.PATCH(new Request("https://finser.test/api/creditos/81/evidencias", {
+    method: "PATCH", body: JSON.stringify({ key: "foto-entrega", dataUrl: photos[5] }),
+  }), { params: Promise.resolve({ id: "81" }) });
+  assert.equal(result.status, 200);
+  assert.deepEqual(trace, [
+    "lookup", "lock-credit", "lock-review", "snapshot", "detail", "capture",
+    "archive", "update", "mark", "continue",
+  ]);
 });

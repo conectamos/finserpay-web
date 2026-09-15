@@ -98,11 +98,15 @@ export function approvalFixture() {
 }
 
 export function approvalDatabase(overrides = {}) {
-  const state = { ...approvalFixture(), policy: true, activatedAt: new Date("2026-09-09T00:00:00Z"), events: [], noveltyEvents: [], sharedAccess: true, queries: [], writes: [], ...overrides };
+  const state = { ...approvalFixture(), policy: true, activatedAt: new Date("2026-09-09T00:00:00Z"), events: [], noveltyEvents: [],
+    sharedAccess: true, centralAdminUserIds: [], queries: [], writes: [], ...overrides };
   const db = {
     async $queryRawUnsafe(sql, ...params) {
       state.queries.push({ sql, params });
       if (/^SELECT "id" FROM "CreditApprovalPolicy"/.test(sql)) return state.policy ? [{ id: 1 }] : [];
+      if (sql.includes("credit_approval_actor_can_skip_call_recording")) {
+        return [{ allowed: state.centralAdminUserIds.includes(params[0]) }];
+      }
       if (sql.startsWith('SELECT credit."id" FROM "Credito" credit')) {
         assert.match(sql, /credit\."createdAt">=policy\."activatedAt"/);
         assert.match(sql, /IMPORTACION_MASIVA/);

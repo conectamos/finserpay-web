@@ -337,6 +337,21 @@ test("sin grabación no permite confirmar aunque los demás documentos estén co
   } finally { h.unmount(); }
 });
 
+test("el panel de llamada informa cuando la grabación no es requerida", async () => {
+  const exempt = detail(81);
+  exempt.callRecording = { ...exempt.callRecording, required: false, canUpload: false, recording: null };
+  const h = mount("app/dashboard/aprobaciones/approval-call-recording.tsx", { "./approval-client": {} },
+    { detail: exempt, disabled: false, onUpdated: async () => {}, onBusyChange: () => {} });
+  try {
+    await h.flush();
+    assert.equal(h.find((node) => node.type === ui.Badge).props.children, "No requerida");
+    const copy = h.all((node) => node.type === "p").map((node) => String(node.props.children)).join(" ");
+    assert.match(copy, /no es requerida/i);
+    assert.doesNotMatch(copy, /Llama al cliente|Falta la grabación/i);
+    assert.equal(h.all((node) => node.type === "input" && node.props.type === "file").length, 0);
+  } finally { h.unmount(); }
+});
+
 test("una grabación en preparación bloquea pestañas, novedades y OK", async () => {
   const h = wall();
   try {
@@ -471,6 +486,28 @@ test("el panel administrativo usa el muro rediseñado y conserva la autoría per
   h.unmount();
 });
 
+test("el panel administrativo permite confirmar cuando el DTO exime la grabación", async () => {
+  const approvals = [];
+  const exempt = detail(81);
+  exempt.callRecording = { ...exempt.callRecording, required: false, canUpload: false, recording: null };
+  const h = wall({
+    readApprovalQueue: async () => countedPage([row(81)]),
+    readApprovalCredit: async () => exempt,
+    approveCreditReview: async (...args) => { approvals.push(args); return { ok: true }; },
+  }, { redesigned: true });
+  try {
+    await h.flush(); sharedProps(h).onSelect(81); await h.flush();
+    const ok = subtree(sharedProps(h).approvalPanel).find(node => node.type === ui.Button && node.props.onClick?.name === "requestApproval");
+    assert.equal(ok.props.disabled, false);
+    ok.props.onClick(); await h.flush();
+    const dialog = sharedProps(h).confirmationDialog;
+    assert.equal(dialog.props.open, true);
+    assert.doesNotMatch(dialog.props.description, /llamada|grabación/i);
+    dialog.props.onConfirm(); await h.flush();
+    assert.deepEqual(Array.from(approvals[0]), [81, 1, "1".repeat(64), null]);
+  } finally { h.unmount(); }
+});
+
 test("el enlace compartido mantiene la autoría del acceso en el mismo diseño", async () => {
   const h = wall({ readApprovalQueue: async () => countedPage([row(81)]) }, { shared: true });
   await h.flush(); sharedProps(h).onSelect(81); await h.flush();
@@ -478,6 +515,8 @@ test("el enlace compartido mantiene la autoría del acceso en el mismo diseño",
   const ok = subtree(sharedProps(h).approvalPanel).find(node => node.type === ui.Button && node.props.onClick?.name === "requestApproval");
   ok.props.onClick(); await h.flush();
   assert.match(sharedProps(h).confirmationDialog.props.description, /registrado por este acceso/);
+  assert.match(sharedProps(h).confirmationDialog.props.description, /llamada/i);
+  assert.match(sharedProps(h).confirmationDialog.props.description, /grabación/i);
   h.unmount();
 });
 

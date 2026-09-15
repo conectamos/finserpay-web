@@ -41,7 +41,7 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
   const client = new pg.Client({ connectionString });
   await client.connect();
   t.after(() => client.end());
-  const tables = ["CreditApprovalCallRecording", "CreditApprovalNoveltyEvent", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalEvidenceRevision", "CreditApprovalReissueEvent", "CreditApprovalReissue", "CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy", "FirmaSeguroProcess", "DataCreditoAssessment", "LiquidacionAliadoCredito", "CreditoAmortizacion", "Credito", "Usuario", "Sede", "Aliado"];
+  const tables = ["CreditApprovalCallContinuation", "CreditApprovalCallRecording", "CreditApprovalNoveltyEvent", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalEvidenceRevision", "CreditApprovalReissueEvent", "CreditApprovalReissue", "CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy", "FirmaSeguroProcess", "DataCreditoAssessment", "LiquidacionAliadoCredito", "CreditoAmortizacion", "Credito", "Usuario", "Sede", "Aliado"];
   const existing = await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(existing.rows.every(({ tablename }) => tables.includes(tablename)), "No se reinicia una base con tablas ajenas");
   for (const table of tables) await client.query(`DROP TABLE IF EXISTS public."${table}" CASCADE`);
