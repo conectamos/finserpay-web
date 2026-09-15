@@ -202,13 +202,26 @@ test("un fallo posterior al inicio del proveedor deja el mismo resultado ambiguo
     "if (pendingAssessmentId) {",
     "} else if (solicitudId && !financialTermsRefreshRequested) {"
   );
+  const preDispatchCompensation = sourceBetween(
+    failureTracking,
+    "if (providerStartedAt === null && dailyQuotaReservation) {",
+    "} else {"
+  );
+  const postDispatchMarker = "} else {";
+  const postDispatchStart = failureTracking.indexOf(postDispatchMarker);
+  assert.notEqual(postDispatchStart, -1, `No se encontro ${postDispatchMarker}`);
+  const postDispatchFailureTracking = failureTracking.slice(postDispatchStart);
 
   assert.match(
     failureTracking,
     /const trackedErrorCode = providerStartedAt[\s\S]*?"PROVIDER_OUTCOME_AMBIGUOUS"/
   );
   assert.equal(
-    (failureTracking.match(/errorCode: trackedErrorCode/g) || []).length,
+    (preDispatchCompensation.match(/errorCode: trackedErrorCode/g) || []).length,
+    2
+  );
+  assert.equal(
+    (postDispatchFailureTracking.match(/errorCode: trackedErrorCode/g) || []).length,
     3
   );
   assert.doesNotMatch(failureTracking, /errorCode: code/);
