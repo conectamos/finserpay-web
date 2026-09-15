@@ -7642,6 +7642,25 @@ export default function CreditFactoryConsole({
         setVeriffRetryPolicy(result.data.retryPolicy);
       }
 
+      const responseValidation = result.data?.validation || null;
+      if (responseValidation) {
+        setVeriffValidation(responseValidation);
+        if (!result.ok && responseValidation.id && currentDraftId) {
+          try {
+            await saveDraftPayloadForVeriff(
+              {
+                ...factoryDraftPayload,
+                veriffValidationId: responseValidation.id,
+              },
+              wizardStep,
+              currentDraftId
+            );
+          } catch {
+            // Keep the provider response visible even if this best-effort save fails.
+          }
+        }
+      }
+
       if (!result.ok) {
         const remotePayload = result.data?.remotePayload;
         const remoteMessage =
@@ -7662,8 +7681,7 @@ export default function CreditFactoryConsole({
         setVeriffConfig(result.data.veriff);
       }
 
-      const validation = result.data.validation || null;
-      setVeriffValidation(validation);
+      const validation = responseValidation;
       if (validation?.id && currentDraftId) {
         await saveDraftPayloadForVeriff(
           {

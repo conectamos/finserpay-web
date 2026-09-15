@@ -193,6 +193,7 @@ test("la regeneracion QR exige la sesion vigente y abandona la anterior una sola
   const latestLookup = route.indexOf('FROM "VeriffIdentityValidation" validation');
   const staleGuard = route.indexOf("VERIFF_REGENERATION_STALE");
   const approvedGuard = route.indexOf("VERIFF_ALREADY_APPROVED");
+  const orphanAbandon = route.indexOf('reasonCode: "ORPHANED_SESSION_RESERVATION"');
   const abandon = route.indexOf('reasonCode: "QR_REGENERATED"');
   const provider = route.indexOf("await veriffCreateSession({");
 
@@ -202,15 +203,42 @@ test("la regeneracion QR exige la sesion vigente y abandona la anterior una sola
   assert.ok(latestLookup > expectedLookup);
   assert.ok(staleGuard > latestLookup);
   assert.ok(approvedGuard > staleGuard);
+  assert.ok(orphanAbandon > approvedGuard);
   assert.ok(abandon > approvedGuard);
   assert.ok(provider > abandon);
   assert.match(route, /currentValidationId\?: number \| string \| null/);
   assert.match(route, /expectedValidation\.draftId !== draftId/);
   assert.match(route, /expectedDocument !== clienteDocumento/);
-  assert.match(route, /Number\(latestRows\[0\]\?\.id \|\| 0\) !== currentValidationId/);
+  assert.match(route, /latestValidationId !== currentValidationId && !recoverableReservation/);
   assert.match(route, /status: "ABANDONED"/);
+  assert.match(route, /sessionId: latestValidation\.veriffSessionId/);
+  assert.match(route, /decidedAt: latestValidation\.decidedAt/);
+  assert.match(route, /validation: serializeVeriffValidation\(latestValidation\)/);
   assert.match(route, /technicalRetryStatus !== "conflict"/);
   assert.match(route, /technicalRetryStatus !== "missing"/);
+});
+
+test("un fallo al crear la sesion cierra la reserva y devuelve el intento recuperable", async () => {
+  const route = await readProjectFile("app/api/creditos/veriff/route.ts");
+  const providerCall = route.indexOf("createPayload = await veriffCreateSession({");
+  const markError = route.indexOf(
+    "lastError: veriffSessionCreationFailureAuditMessage(error)",
+    providerCall
+  );
+  const errorResponse = route.indexOf("return veriffErrorResponse(error, {", markError);
+
+  assert.ok(providerCall >= 0);
+  assert.ok(markError > providerCall);
+  assert.ok(errorResponse > markError);
+  assert.match(route.slice(markError, errorResponse + 400), /status: "ERROR"/);
+  assert.match(
+    route.slice(errorResponse, errorResponse + 400),
+    /validation: serializeVeriffValidation\(failedValidation\)/
+  );
+  assert.match(
+    route,
+    /Veriff no retorno session id o URL[\s\S]*?validation: serializeVeriffValidation\(failedValidation\)/
+  );
 });
 
 test("el estado Veriff exige solicitud activa al titular y la biometria queda solo para central", async () => {
