@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
+import FinserBrand from "@/app/_components/finser-brand";
 import { Button } from "@/app/_components/finser-ui";
 import {
   formatCreditRemissionCurrency,
@@ -387,15 +388,14 @@ export default function CreditRemissionNote({
         aria-describedby={downloadDialogDescriptionId}
       >
         <header className={styles.dialogHeader}>
-          <Image
-            src={BRAND_LOGO_PATH}
-            alt="FINSER PAY"
-            width={1280}
-            height={1280}
-            preload
-            unoptimized
-            className={styles.dialogBrand}
-          />
+          <div className={styles.dialogBrand} aria-label="FINSER PAY">
+            <FinserBrand
+              accentFinser
+              dark
+              showTagline={false}
+              wordmarkOnly
+            />
+          </div>
           <button
             type="button"
             className={styles.dialogClose}

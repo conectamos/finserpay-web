@@ -1,21 +1,29 @@
 type FinserBrandProps = {
+  accentFinser?: boolean;
   accentPay?: boolean;
   compact?: boolean;
   dark?: boolean;
   mini?: boolean;
   plainMark?: boolean;
   showTagline?: boolean;
+  wordmarkOnly?: boolean;
 };
 
 export default function FinserBrand({
+  accentFinser = false,
   accentPay = false,
   compact = false,
   dark = false,
   mini = false,
   plainMark = false,
   showTagline = true,
+  wordmarkOnly = false,
 }: FinserBrandProps) {
-  const titleClass = dark ? "text-white" : "text-slate-950";
+  const titleClass = accentFinser
+    ? "text-[var(--fp-lime)]"
+    : dark
+      ? "text-white"
+      : "text-slate-950";
   const subtitleClass = dark ? "text-slate-300" : "text-slate-500";
   const iconShell = dark
     ? "border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.16)_0%,rgba(255,255,255,0.05)_100%)] shadow-[0_18px_45px_rgba(15,23,42,0.22)]"
@@ -28,42 +36,44 @@ export default function FinserBrand({
         mini ? "gap-2" : compact ? "gap-3" : "gap-4",
       ].join(" ")}
     >
-      <div
-        className={[
-          "relative flex shrink-0 items-center justify-center overflow-hidden rounded-[24px] border",
-          mini ? "h-10 w-10 rounded-[15px]" : compact ? "h-14 w-14" : "h-16 w-16",
-          plainMark ? "border-transparent bg-transparent shadow-none" : iconShell,
-        ].join(" ")}
-      >
-        {!plainMark ? (
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.48),transparent_45%)]" />
-        ) : null}
-        <svg
-          viewBox="0 0 88 96"
-          className={mini ? "h-7 w-7" : compact ? "h-10 w-10" : "h-12 w-12"}
-          aria-hidden="true"
+      {!wordmarkOnly ? (
+        <div
+          className={[
+            "relative flex shrink-0 items-center justify-center overflow-hidden rounded-[24px] border",
+            mini ? "h-10 w-10 rounded-[15px]" : compact ? "h-14 w-14" : "h-16 w-16",
+            plainMark ? "border-transparent bg-transparent shadow-none" : iconShell,
+          ].join(" ")}
         >
-          <path
-            d="M44 6 L72 18 V45 C72 62 60 77 44 89 C28 77 16 62 16 45 V18 Z"
-            fill="none"
-            stroke="#D9E0E8"
-            strokeWidth="5"
-            strokeLinejoin="round"
-          />
-          <path
-            d="M33 31 V24.5 C33 17.8 37.9 13 44 13 C50.1 13 55 17.8 55 24.5 V31"
-            fill="none"
-            stroke="#E9EEF4"
-            strokeWidth="5"
-            strokeLinecap="round"
-          />
-          <path
-            d="M25 30 H60 L55 38 H40 V72 H31 V38 H25 Z"
-            fill="#F2F6FA"
-          />
-          <path d="M40 46 H55 L50 54 H40 Z" fill="#DCE4EC" />
-        </svg>
-      </div>
+          {!plainMark ? (
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.48),transparent_45%)]" />
+          ) : null}
+          <svg
+            viewBox="0 0 88 96"
+            className={mini ? "h-7 w-7" : compact ? "h-10 w-10" : "h-12 w-12"}
+            aria-hidden="true"
+          >
+            <path
+              d="M44 6 L72 18 V45 C72 62 60 77 44 89 C28 77 16 62 16 45 V18 Z"
+              fill="none"
+              stroke="#D9E0E8"
+              strokeWidth="5"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M33 31 V24.5 C33 17.8 37.9 13 44 13 C50.1 13 55 17.8 55 24.5 V31"
+              fill="none"
+              stroke="#E9EEF4"
+              strokeWidth="5"
+              strokeLinecap="round"
+            />
+            <path
+              d="M25 30 H60 L55 38 H40 V72 H31 V38 H25 Z"
+              fill="#F2F6FA"
+            />
+            <path d="M40 46 H55 L50 54 H40 Z" fill="#DCE4EC" />
+          </svg>
+        </div>
+      ) : null}
 
       <div>
         <p
@@ -76,7 +86,17 @@ export default function FinserBrand({
           style={{ fontFamily: '"Arial Black", "Trebuchet MS", sans-serif' }}
         >
           FINSER{" "}
-          <span className={accentPay ? "text-[var(--fp-lime)]" : undefined}>
+          <span
+            className={
+              accentFinser
+                ? dark
+                  ? "text-white"
+                  : "text-slate-950"
+                : accentPay
+                  ? "text-[var(--fp-lime)]"
+                  : undefined
+            }
+          >
             PAY
           </span>
         </p>

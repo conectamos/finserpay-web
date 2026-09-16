@@ -161,6 +161,10 @@ test("abre un diálogo accesible para descargar la remisión al llegar al paso 4
   assert.match(source, /Se habilitará después de descargar la remisión\./);
   assert.match(source, /disabled=\{!printInvoked\}/);
   assert.match(source, /step-four-remission-phone\.png/);
+  assert.match(
+    source,
+    /<FinserBrand[\s\S]*accentFinser[\s\S]*showTagline=\{false\}[\s\S]*wordmarkOnly/,
+  );
   assert.match(source, /setPrintInvoked\(true\)[\s\S]*window\.print\(\)/);
   assert.doesNotMatch(source, /onMouseDown=\{\(\) => setDownloadDialogOpen\(false\)\}/);
   assert.doesNotMatch(
@@ -186,5 +190,7 @@ test("la impresión aísla una hoja A4 y conserva colores y bloques completos", 
   assert.match(css, /border-radius:\s*14px/);
   assert.match(css, /background:\s*#fffaf2/);
   assert.match(css, /background:\s*#359523/);
+  assert.match(css, /\.dialogBrand p\s*{[\s\S]*font-size:\s*1\.85rem/);
+  assert.match(css, /\.dialogWave\s*{[\s\S]*bottom:\s*-1\.8rem/);
   assert.match(css, /prefers-reduced-motion:\s*reduce/);
 });
