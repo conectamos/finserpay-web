@@ -1401,12 +1401,13 @@ test("cierra y vincula el borrador dentro de la transaccion del credito", async 
   assert.match(storage, /"creditoId" = \$7/);
 });
 
-test("Railway prepara el esquema y produccion solo lo verifica", async () => {
-  const [storage, predeploy, dockerfile, schemaScript] = await Promise.all([
+test("Railway prepara el esquema e indices del muro y produccion solo lo verifica", async () => {
+  const [storage, predeploy, dockerfile, schemaScript, veriffStorage] = await Promise.all([
     readProjectFile("lib/solicitudes-storage.ts"),
     readProjectFile("scripts/railway-predeploy.mjs"),
     readProjectFile("Dockerfile"),
     readProjectFile("scripts/ensure-solicitudes-schema.mjs"),
+    readProjectFile("lib/veriff-storage.ts"),
   ]);
 
   assert.match(
@@ -1420,6 +1421,17 @@ test("Railway prepara el esquema y produccion solo lo verifica", async () => {
   assert.match(
     schemaScript,
     /WHERE "estado" = 'ABIERTO' AND "expiresAt" IS NULL/
+  );
+  assert.match(schemaScript, /ADD COLUMN IF NOT EXISTS "dataCreditoStatus" TEXT/);
+  assert.match(schemaScript, /ADD COLUMN IF NOT EXISTS "dataCreditoErrorCode" TEXT/);
+  assert.match(
+    schemaScript,
+    /"dataCreditoAssessmentId" = COALESCE\([\s\S]*?\("payload"->>'dataCreditoAssessmentId'\)::uuid/
+  );
+  assert.match(schemaScript, /VeriffIdentityValidation_draft_idx/);
+  assert.match(
+    veriffStorage,
+    /VeriffIdentityValidation_draft_idx[\s\S]*?\("draftId", "id" DESC\)[\s\S]*?INCLUDE \("status", "updatedAt"\)/
   );
   assert.match(schemaScript, /COMMIT/);
 });

@@ -511,6 +511,7 @@ const REQUIRED_ASSESSMENT_INDEXES = [
   "DataCreditoAssessment_reuse_global_idx",
   "DataCreditoAssessment_reuse_environment_global_idx",
   "DataCreditoAssessment_rate_idx",
+  "DataCreditoAssessment_credit_updated_idx",
   "DataCreditoAssessment_retention_idx",
   "DataCreditoAssessment_admin_created_idx",
   "DataCreditoAssessment_admin_document_idx",
@@ -1288,6 +1289,9 @@ async function verifyDataCreditoSchema() {
   const reuseEnvironmentGlobalIndex = assessmentIndex(
     "DataCreditoAssessment_reuse_environment_global_idx"
   );
+  const creditUpdatedIndex = assessmentIndex(
+    "DataCreditoAssessment_credit_updated_idx"
+  );
   const secureKeyNonceIndex = securePayloadIndex(
     "DataCreditoSecurePayload_key_nonce_key"
   );
@@ -1378,6 +1382,11 @@ async function verifyDataCreditoSchema() {
         { column: "expiresAt" },
         { column: "createdAt" },
       ],
+      predicate: null,
+      unique: false,
+    }) ||
+    !matchesDataCreditoSchemaIndex(creditUpdatedIndex, {
+      keys: [{ column: "creditId" }, { column: "updatedAt" }],
       predicate: null,
       unique: false,
     }) ||

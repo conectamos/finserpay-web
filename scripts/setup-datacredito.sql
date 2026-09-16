@@ -962,6 +962,9 @@ CREATE INDEX "DataCreditoAssessment_reuse_environment_global_idx"
 CREATE INDEX IF NOT EXISTS "DataCreditoAssessment_rate_idx"
   ON "DataCreditoAssessment" ("userId", "sellerId", "sedeId", "createdAt" DESC);
 
+CREATE INDEX IF NOT EXISTS "DataCreditoAssessment_credit_updated_idx"
+  ON "DataCreditoAssessment" ("creditId", "updatedAt" DESC);
+
 CREATE INDEX IF NOT EXISTS "DataCreditoAssessment_retention_idx"
   ON "DataCreditoAssessment" ("retainedUntil");
 
