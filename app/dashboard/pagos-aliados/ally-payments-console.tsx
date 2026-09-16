@@ -33,6 +33,7 @@ import {
   ALLY_PAYMENTS_AVAILABLE_FROM,
   ALLY_PAYMENTS_AVAILABLE_FROM_LABEL,
   calculateAllyPaymentAmounts,
+  calculateAllySettlementBalance,
   summarizeAllyPayments,
   type AllyPaymentIntermediationAdjustment,
 } from "@/lib/ally-payments-core";
@@ -73,6 +74,21 @@ type PaymentCreditItem = {
   } | null;
 };
 
+type PaymentCollectionItem = {
+  id?: number | string;
+  abonoId?: number | string;
+  creditoId?: number | string;
+  sedeId?: number | string;
+  fechaAbono?: string | null;
+  folio?: string | null;
+  clienteNombre?: string | null;
+  clienteDocumento?: string | null;
+  sedeNombre?: string | null;
+  metodoPago?: string | null;
+  valor?: number | null;
+  estado?: string | null;
+};
+
 type PaymentSummaryBucket = {
   plataforma?: string | null;
   numeroCreditos?: number | null;
@@ -81,6 +97,13 @@ type PaymentSummaryBucket = {
   totalCuotaInicial?: number | null;
   totalIntermediacion?: number | null;
   totalPagar?: number | null;
+  totalPagarCreditos?: number | null;
+  totalRecaudosAliado?: number | null;
+  saldoNeto?: number | null;
+  direccionSaldo?: string | null;
+  valorPagarAliado?: number | null;
+  valorConsignarAliado?: number | null;
+  numeroRecaudos?: number | null;
   porcentajeIntermediacion?: number | null;
   valorVenta?: number | null;
   creditoAutorizado?: number | null;
@@ -108,6 +131,13 @@ type Settlement = {
   totalCuotaInicial?: number | null;
   totalIntermediacion?: number | null;
   totalPagar?: number | null;
+  totalPagarCreditos?: number | null;
+  totalRecaudosAliado?: number | null;
+  saldoNeto?: number | null;
+  direccionSaldo?: string | null;
+  valorPagarAliado?: number | null;
+  valorConsignarAliado?: number | null;
+  numeroRecaudos?: number | null;
   numeroAprobacionBancaria?: string | null;
   pagadoAt?: string | null;
   createdAt?: string | null;
@@ -118,6 +148,7 @@ type Settlement = {
   items?: PaymentCreditItem[] | null;
   creditos?: PaymentCreditItem[] | null;
   detalles?: PaymentCreditItem[] | null;
+  recaudos?: PaymentCollectionItem[] | null;
 };
 
 type PaymentPreview = {
@@ -130,6 +161,13 @@ type PaymentPreview = {
   resumen?: PaymentSummary | null;
   items?: PaymentCreditItem[] | null;
   creditos?: PaymentCreditItem[] | null;
+  recaudos?: PaymentCollectionItem[] | null;
+  totalPagarCreditos?: number | null;
+  totalRecaudosAliado?: number | null;
+  saldoNeto?: number | null;
+  direccionSaldo?: string | null;
+  valorPagarAliado?: number | null;
+  valorConsignarAliado?: number | null;
 };
 
 type AllyPaymentsResponse = {
@@ -142,6 +180,11 @@ type AllyPaymentsResponse = {
   pending?: {
     items?: PaymentCreditItem[];
     summary?: PaymentSummary | null;
+    recaudos?: PaymentCollectionItem[];
+    totalPagarCreditos?: number | null;
+    totalRecaudosAliado?: number | null;
+    saldoNeto?: number | null;
+    direccionSaldo?: string | null;
   } | null;
   preview?: PaymentPreview | null;
   error?: string;
@@ -366,6 +409,10 @@ function summaryValue(
 function previewItems(preview: PaymentPreview | null) {
   if (Array.isArray(preview?.items)) return preview.items;
   return Array.isArray(preview?.creditos) ? preview.creditos : [];
+}
+
+function collectionItems(source: { recaudos?: PaymentCollectionItem[] | null } | null) {
+  return Array.isArray(source?.recaudos) ? source.recaudos : [];
 }
 
 function settlementSummary(settlement: Settlement | null) {
@@ -764,11 +811,107 @@ function CreditItems({
   );
 }
 
+function CollectionItems({
+  items,
+  emptyDescription,
+}: {
+  items: PaymentCollectionItem[];
+  emptyDescription: string;
+}) {
+  if (!items.length) {
+    return (
+      <EmptyState
+        className="mt-4"
+        title="No hay recaudos del aliado en este periodo"
+        description={emptyDescription}
+      />
+    );
+  }
+
+  return (
+    <section className="mt-4" aria-label="Recaudos recibidos por el aliado">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-lg font-black text-[var(--fp-graphite)]">Recaudos recibidos por el aliado</h2>
+        <Badge tone="warning">{formatNumber(items.length)} recaudos</Badge>
+      </div>
+      <p className="mt-1 text-sm text-[var(--fp-muted)]">
+        Estos valores fueron recibidos en sedes del aliado y se descuentan del pago de la liquidacion.
+      </p>
+      <DataTable className="mt-3">
+        <table className="w-full min-w-[1040px] text-sm">
+          <caption className="sr-only">Relacion de recaudos descontados en la liquidacion</caption>
+          <thead className="bg-[var(--fp-graphite)] text-white">
+            <tr>
+              <th className="px-4 py-3 text-left">Fecha</th>
+              <th className="px-4 py-3 text-left">Folio</th>
+              <th className="px-4 py-3 text-left">Cliente</th>
+              <th className="px-4 py-3 text-left">Cedula</th>
+              <th className="px-4 py-3 text-left">Sede que recaudo</th>
+              <th className="px-4 py-3 text-left">Metodo</th>
+              <th className="px-4 py-3 text-right">Valor recaudado</th>
+              <th className="px-4 py-3 text-left">Estado</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--fp-border)]">
+            {items.map((item, index) => (
+              <tr key={String(item.id ?? item.abonoId ?? index)} className="bg-white even:bg-[#fbfcfa]">
+                <td className="whitespace-nowrap px-4 py-3">{formatDateTime(item.fechaAbono)}</td>
+                <td className="px-4 py-3 font-bold">{item.folio || "-"}</td>
+                <td className="px-4 py-3 font-semibold">{item.clienteNombre || "-"}</td>
+                <td className="whitespace-nowrap px-4 py-3 font-mono">{item.clienteDocumento || "-"}</td>
+                <td className="px-4 py-3 font-semibold">{item.sedeNombre || "-"}</td>
+                <td className="px-4 py-3">{item.metodoPago || "-"}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-right font-black tabular-nums">{formatMoney(item.valor)}</td>
+                <td className="px-4 py-3"><StatusPill tone={statusTone(item.estado)}>{item.estado || "PENDIENTE"}</StatusPill></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </DataTable>
+    </section>
+  );
+}
+
+function ReconciliationCard({
+  totalPagarCreditos,
+  totalRecaudosAliado,
+}: {
+  totalPagarCreditos: number;
+  totalRecaudosAliado: number;
+}) {
+  const balance = calculateAllySettlementBalance(totalPagarCreditos, totalRecaudosAliado);
+  const consignacion = balance.direccionSaldo === "CONSIGNACION_ALIADO";
+  const cero = balance.direccionSaldo === "SALDO_CERO";
+  return (
+    <Card className="mt-4 !rounded-lg !border-[#b9d873] !bg-[#fbfdf5] !p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.12em] text-[#5c7a13]">Conciliacion del periodo</p>
+          <dl className="mt-3 grid gap-4 sm:grid-cols-2">
+            <div><dt className="text-xs text-[var(--fp-muted)]">Valor por creditos</dt><dd className="mt-1 font-black tabular-nums">{formatMoney(balance.totalPagarCreditos)}</dd></div>
+            <div><dt className="text-xs text-[var(--fp-muted)]">Menos recaudos del aliado</dt><dd className="mt-1 font-black tabular-nums">- {formatMoney(balance.totalRecaudosAliado)}</dd></div>
+          </dl>
+        </div>
+        <div className="rounded-lg bg-white px-5 py-4 text-right shadow-sm">
+          <p className="flex items-center justify-end gap-2 text-xs font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
+            <WalletCards className="h-4 w-4" />
+            {cero ? "Saldo conciliado" : consignacion ? "El aliado debe consignar" : "FINSER PAY paga al aliado"}
+          </p>
+          <strong className="mt-1 block text-2xl tabular-nums text-[var(--fp-graphite)]">
+            {formatMoney(Math.abs(balance.saldoNeto))}
+          </strong>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function settlementAllyName(settlement: Settlement) {
   return settlement.aliado?.nombre || settlement.aliadoNombre || "Aliado";
 }
 
 function settlementTotal(settlement: Settlement) {
+  if (settlement.saldoNeto != null) return numberValue(settlement.saldoNeto);
   return (
     settlement.totalPagar ??
     settlementSummary(settlement)?.total?.totalPagar ??
@@ -841,8 +984,8 @@ function SettlementsList({
                   <dd className="mt-1 font-bold">{formatNumber(settlement.numeroCreditos)}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-[var(--fp-muted)]">Total pagado</dt>
-                  <dd className="mt-1 font-black tabular-nums">{formatMoney(settlementTotal(settlement))}</dd>
+                   <dt className="text-xs text-[var(--fp-muted)]">Resultado neto</dt>
+                   <dd className="mt-1 font-black tabular-nums">{settlementTotal(settlement) < 0 ? "Consigna " : "Pago "}{formatMoney(Math.abs(settlementTotal(settlement)))}</dd>
                 </div>
                 <div className="col-span-2">
                   <dt className="text-xs text-[var(--fp-muted)]">Aprobacion bancaria</dt>
@@ -880,7 +1023,8 @@ function SettlementsList({
               <th className="px-4 py-3 text-right">Credito autorizado</th>
               <th className="px-4 py-3 text-right">Inicial</th>
               <th className="px-4 py-3 text-right">Intermediacion</th>
-              <th className="px-4 py-3 text-right">Total pagado</th>
+              <th className="px-4 py-3 text-right">Recaudos</th>
+              <th className="px-4 py-3 text-right">Resultado neto</th>
               <th className="px-4 py-3 text-left">Aprobacion</th>
               <th className="px-4 py-3 text-left">Registro</th>
               <th className="px-4 py-3 text-right">Detalle</th>
@@ -906,7 +1050,10 @@ function SettlementsList({
                     {formatMoney(settlement.totalIntermediacion)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right font-black tabular-nums">
-                    {formatMoney(settlementTotal(settlement))}
+                    {formatMoney(settlement.totalRecaudosAliado)}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right font-black tabular-nums">
+                    {settlementTotal(settlement) < 0 ? "Consigna " : "Pago "}{formatMoney(Math.abs(settlementTotal(settlement)))}
                   </td>
                   <td className="max-w-44 break-all px-4 py-3 font-semibold">
                     {settlement.numeroAprobacionBancaria || "-"}
@@ -1020,6 +1167,11 @@ export default function AllyPaymentsConsole({
   const adjustedPreviewSummary = useMemo(
     () => (preview ? summarizePreviewItems(adjustedPreviewItems) : null),
     [adjustedPreviewItems, preview]
+  );
+  const previewCollections = useMemo(() => collectionItems(preview), [preview]);
+  const previewCollectionsTotal = useMemo(
+    () => previewCollections.reduce((total, item) => total + numberValue(item.valor), 0),
+    [previewCollections]
   );
   const updateIntermediation = useCallback((creditId: number, value: string) => {
     setIntermediationValues((current) => ({ ...current, [String(creditId)]: value }));
@@ -1181,7 +1333,7 @@ export default function AllyPaymentsConsole({
       return;
     }
     if (!approvalNumber.trim()) {
-      setNotice({ tone: "error", text: "El numero de aprobacion bancaria es obligatorio." });
+      setNotice({ tone: "error", text: "El numero de soporte bancario es obligatorio." });
       return;
     }
 
@@ -1241,10 +1393,10 @@ export default function AllyPaymentsConsole({
       setNotice({
         tone: refreshed ? "success" : "neutral",
         text: refreshed
-          ? responseMessage(raw, "Pago registrado correctamente.")
+          ? responseMessage(raw, "Liquidacion registrada correctamente.")
           : `${responseMessage(
               raw,
-              "Pago registrado correctamente."
+              "Liquidacion registrada correctamente."
             )} No fue posible actualizar el listado; vuelve a intentarlo.`,
       });
     } catch (error) {
@@ -1285,19 +1437,34 @@ export default function AllyPaymentsConsole({
     }
   };
 
-  const previewTotal = summaryValue(
+  const previewGrossTotal = summaryValue(
     adjustedPreviewSummary?.total,
     "totalPagar",
     "valorPagar"
   );
+  const previewBalance = calculateAllySettlementBalance(
+    previewGrossTotal,
+    previewCollectionsTotal
+  );
+  const previewTotal = Math.abs(previewBalance.saldoNeto);
+  const previewIsConsignment =
+    previewBalance.direccionSaldo === "CONSIGNACION_ALIADO";
+  const previewIsZero = previewBalance.direccionSaldo === "SALDO_CERO";
+  const supportLabel = previewIsConsignment
+    ? "Numero de consignacion del aliado"
+    : previewIsZero
+      ? "Numero de soporte bancario"
+      : "Numero de aprobacion bancaria";
   const effectiveAllyName =
     selectedAlly?.nombre ||
     preview?.aliado?.nombre ||
     (accessAllyId ? allies.find((ally) => ally.id === accessAllyId)?.nombre : null) ||
     "tu aliado";
   const pendingItems = Array.isArray(pending.items) ? pending.items : [];
+  const pendingCollections = collectionItems(pending);
   const hasPendingData =
     pendingItems.length > 0 ||
+    pendingCollections.length > 0 ||
     numberValue(pending.summary?.total?.numeroCreditos) > 0;
   const refreshBusy = loading || previewLoading || submitting || Boolean(detailLoadingId);
 
@@ -1438,10 +1605,10 @@ export default function AllyPaymentsConsole({
               </Button>
             </div>
             <p className="mt-3 text-xs leading-5 text-[var(--fp-muted)]">
-              La informacion esta disponible desde el {ALLY_PAYMENTS_AVAILABLE_FROM_LABEL}. El periodo usa fechas de Colombia y solo muestra creditos finalizados, elegibles y no incluidos en pagos anteriores.
+              La informacion esta disponible desde el {ALLY_PAYMENTS_AVAILABLE_FROM_LABEL}. El periodo usa fechas de Colombia y muestra creditos elegibles y recaudos recibidos en sedes del aliado que no hayan sido conciliados antes.
             </p>
             <p className="mt-1 text-xs leading-5 text-[var(--fp-muted)]">
-              Credito autorizado = valor venta - inicial. La intermediacion se calcula sobre ese credito; valor a pagar = credito autorizado - intermediacion.
+              Valor por creditos = credito autorizado - intermediacion. Saldo neto = valor por creditos - recaudos del aliado. Si el resultado es negativo, el aliado debe consignar la diferencia.
             </p>
             <p className="mt-1 text-xs font-semibold leading-5 text-[#5c7a13]">
               En la previsualización puedes ajustar el porcentaje de cada venta; la fila y el total se recalculan antes de confirmar. Al registrar el pago, Finser y el aliado consultarán exactamente los mismos valores guardados.
@@ -1496,10 +1663,18 @@ export default function AllyPaymentsConsole({
               </Card>
 
               <SummaryGrid summary={adjustedPreviewSummary} title="Resumen de la liquidacion" />
+              <ReconciliationCard
+                totalPagarCreditos={previewGrossTotal}
+                totalRecaudosAliado={previewCollectionsTotal}
+              />
               <CreditItems
                 items={adjustedPreviewItems}
                 intermediationEditor={intermediationEditor}
                 emptyDescription="La previsualizacion no contiene detalle de creditos."
+              />
+              <CollectionItems
+                items={previewCollections}
+                emptyDescription="No se encontraron recaudos recibidos por sedes de este aliado dentro del periodo."
               />
 
               {Object.keys(adjustmentState.errors).length > 0 ? (
@@ -1512,7 +1687,7 @@ export default function AllyPaymentsConsole({
                 <div className="grid gap-4 lg:grid-cols-[minmax(280px,1fr)_minmax(260px,.8fr)] lg:items-end">
                   <label>
                     <span className="mb-2 block text-sm font-black text-[var(--fp-graphite)]">
-                      Numero de aprobacion bancaria
+                      {supportLabel}
                     </span>
                     <Input
                       value={approvalNumber}
@@ -1524,7 +1699,7 @@ export default function AllyPaymentsConsole({
                       required
                       maxLength={120}
                       autoComplete="off"
-                      placeholder="Ingresa el numero entregado por el banco"
+                      placeholder={previewIsConsignment ? "Ingresa el numero de la consignacion recibida" : "Ingresa el numero entregado por el banco"}
                       disabled={submitting}
                     />
                     <span className="mt-2 block text-xs text-[var(--fp-muted)]">
@@ -1543,7 +1718,11 @@ export default function AllyPaymentsConsole({
                     }
                   >
                     <WalletCards className="h-4 w-4" aria-hidden="true" />
-                    Registrar pago por {formatMoney(previewTotal)}
+                    {previewIsConsignment
+                      ? `Registrar consignacion por ${formatMoney(previewTotal)}`
+                      : previewIsZero
+                        ? "Registrar conciliacion en cero"
+                        : `Registrar pago por ${formatMoney(previewTotal)}`}
                   </Button>
                 </div>
                 {!(preview.previewToken || preview.token) ? (
@@ -1558,8 +1737,8 @@ export default function AllyPaymentsConsole({
           {!previewLoading && previewRequested && !preview ? (
             <EmptyState
               className="mt-4"
-              title="No hay creditos elegibles en este periodo"
-              description="Amplia el periodo o selecciona otro aliado. Los creditos posteriores permaneceran pendientes automaticamente."
+               title="No hay movimientos para conciliar en este periodo"
+               description="Amplia el periodo o selecciona otro aliado. Los creditos y recaudos posteriores permaneceran pendientes automaticamente."
             />
           ) : null}
         </div>
@@ -1642,9 +1821,17 @@ export default function AllyPaymentsConsole({
               </Card>
 
               <SummaryGrid summary={settlementSummary(selectedSettlement)} title="Android, iPhone y total" />
+              <ReconciliationCard
+                totalPagarCreditos={numberValue(selectedSettlement.totalPagarCreditos ?? selectedSettlement.totalPagar)}
+                totalRecaudosAliado={numberValue(selectedSettlement.totalRecaudosAliado)}
+              />
               <CreditItems
                 items={settlementItems(selectedSettlement)}
                 emptyDescription="El servidor no entrego el detalle de creditos de este periodo."
+              />
+              <CollectionItems
+                items={collectionItems(selectedSettlement)}
+                emptyDescription="Esta liquidacion historica no tiene recaudos del aliado asociados."
               />
             </section>
           ) : null}
@@ -1662,9 +1849,9 @@ export default function AllyPaymentsConsole({
               <Clock3 className="h-5 w-5" aria-hidden="true" />
             </span>
             <div>
-              <h2 className="font-black text-[var(--fp-graphite)]">Creditos pendientes de pago</h2>
+              <h2 className="font-black text-[var(--fp-graphite)]">Movimientos pendientes de liquidar</h2>
               <p className="mt-1 text-sm leading-5 text-[var(--fp-muted)]">
-                Incluye creditos elegibles que todavia no forman parte de una liquidacion pagada.
+                Incluye creditos elegibles y recaudos recibidos por el aliado que todavia no forman parte de una liquidacion.
               </p>
             </div>
           </Card>
@@ -1676,6 +1863,10 @@ export default function AllyPaymentsConsole({
               <CreditItems
                 items={pendingItems}
                 emptyDescription="El servidor no entrego el detalle de los creditos pendientes."
+              />
+              <CollectionItems
+                items={pendingCollections}
+                emptyDescription="No existen recaudos del aliado pendientes de conciliar."
               />
             </>
           ) : (
@@ -1690,12 +1881,10 @@ export default function AllyPaymentsConsole({
 
       <ConfirmDialog
         open={confirmOpen}
-        title="Confirmar pago al aliado"
-        description={`Se registrara un pago a ${effectiveAllyName} por ${formatMoney(
-          previewTotal
-        )}, correspondiente al periodo ${formatDate(fechaInicio)} al ${formatDate(
+        title={previewIsConsignment ? "Confirmar consignacion del aliado" : "Confirmar liquidacion"}
+        description={`Se registrara ${previewIsConsignment ? "una consignacion de" : previewIsZero ? "una conciliacion en cero para" : "un pago a"} ${effectiveAllyName}${previewIsZero ? "" : ` por ${formatMoney(previewTotal)}`}, correspondiente al periodo ${formatDate(fechaInicio)} al ${formatDate(
           fechaFin
-        )}. Aprobacion bancaria: ${approvalNumber.trim() || "-"}. ${
+        )}. ${supportLabel}: ${approvalNumber.trim() || "-"}. Se conciliaron ${formatMoney(previewGrossTotal)} por creditos menos ${formatMoney(previewCollectionsTotal)} en recaudos. ${
           adjustmentState.adjustments.length
             ? `${adjustmentState.adjustments.length} venta(s) con intermediacion ajustada.`
             : "Sin ajustes manuales de intermediacion."

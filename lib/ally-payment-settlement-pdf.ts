@@ -25,6 +25,17 @@ export type AllyPaymentSettlementPdfBucket = {
   payableValue: number;
 };
 
+export type AllyPaymentSettlementPdfCollection = {
+  paymentDate: string;
+  folio: string;
+  clientName: string;
+  clientDocument: string;
+  siteName: string;
+  paymentMethod: string;
+  value: number;
+  status: string;
+};
+
 export type AllyPaymentSettlementPdfInput = {
   settlementId: number;
   allyName: string;
@@ -40,11 +51,15 @@ export type AllyPaymentSettlementPdfInput = {
   totalAuthorizedCredit: number;
   totalIntermediation: number;
   totalPayable: number;
+  totalAllyCollections: number;
+  netBalance: number;
+  balanceDirection: string;
   platformSummary: {
     ANDROID: AllyPaymentSettlementPdfBucket;
     IPHONE: AllyPaymentSettlementPdfBucket;
   };
   lines: AllyPaymentSettlementPdfLine[];
+  collections: AllyPaymentSettlementPdfCollection[];
 };
 
 const PAGE_WIDTH = 842;
@@ -94,6 +109,17 @@ const TABLE_COLUMNS = [
   { key: "intermediation", label: "Valor intermediacion", width: 58, align: "right" },
   { key: "payable", label: "Valor a pagar", width: 64, align: "right" },
   { key: "status", label: "Estado", width: 38, align: "left" },
+] as const;
+
+const COLLECTION_COLUMNS = [
+  { key: "date", label: "Fecha", width: 82, align: "left" },
+  { key: "folio", label: "Folio", width: 80, align: "left" },
+  { key: "client", label: "Cliente", width: 120, align: "left" },
+  { key: "document", label: "Cedula", width: 85, align: "left" },
+  { key: "site", label: "Sede que recaudo", width: 130, align: "left" },
+  { key: "method", label: "Metodo", width: 85, align: "left" },
+  { key: "value", label: "Valor", width: 100, align: "right" },
+  { key: "status", label: "Estado", width: 92, align: "left" },
 ] as const;
 
 function toBuffer(doc: PDFKit.PDFDocument) {
@@ -248,7 +274,9 @@ function drawFirstPageOverview(
     ["Inicial", money(input.totalInitialPayment)],
     ["Credito autorizado", money(input.totalAuthorizedCredit)],
     ["Intermediacion", money(input.totalIntermediation)],
-    ["Total pagado", money(input.totalPayable)],
+    ["Valor por creditos", money(input.totalPayable)],
+    ["Recaudos aliado", money(input.totalAllyCollections)],
+    [input.netBalance < 0 ? "Aliado consigna" : input.netBalance > 0 ? "FINSER paga" : "Saldo neto", money(Math.abs(input.netBalance))],
   ] as const;
   const metricWidth = CONTENT_WIDTH / metrics.length;
   metrics.forEach(([label, value], index) => {
@@ -311,7 +339,7 @@ function drawFirstPageOverview(
     .fontSize(7)
     .fillColor(COLORS.muted)
     .text(
-      `Registrado por ${safeText(input.registeredBy, "Administrador FINSER PAY", 70)}. Credito autorizado = venta - inicial; valor a pagar = credito autorizado - intermediacion.`,
+      `Registrado por ${safeText(input.registeredBy, "Administrador FINSER PAY", 70)}. Saldo neto = valor por creditos - recaudos recibidos por el aliado.`,
       PAGE_MARGIN,
       336,
       { width: CONTENT_WIDTH }
@@ -395,6 +423,46 @@ function drawTableRow(
   return y + ROW_HEIGHT;
 }
 
+function drawCollectionHeader(doc: PDFKit.PDFDocument, y: number) {
+  doc.rect(PAGE_MARGIN, y, CONTENT_WIDTH, TABLE_HEADER_HEIGHT).fill(COLORS.graphiteSoft);
+  let x = PAGE_MARGIN;
+  COLLECTION_COLUMNS.forEach((column) => {
+    doc.font("Helvetica-Bold").fontSize(6.5).fillColor(COLORS.white).text(
+      column.label, x + 4, y + 9, { width: column.width - 8, align: column.align }
+    );
+    x += column.width;
+  });
+  return y + TABLE_HEADER_HEIGHT;
+}
+
+function drawCollectionRow(
+  doc: PDFKit.PDFDocument,
+  item: AllyPaymentSettlementPdfCollection,
+  y: number,
+  index: number
+) {
+  doc.rect(PAGE_MARGIN, y, CONTENT_WIDTH, ROW_HEIGHT).fill(index % 2 === 0 ? COLORS.white : COLORS.soft);
+  const values = {
+    date: dateTimeLabel(new Date(item.paymentDate)),
+    folio: safeText(item.folio, "-", 30),
+    client: safeText(item.clientName, "Cliente", 42),
+    document: safeText(item.clientDocument, "-", 24),
+    site: safeText(item.siteName, "Sede", 44),
+    method: safeText(item.paymentMethod, "-", 24),
+    value: money(item.value),
+    status: safeText(item.status, "DESCONTADO", 18),
+  };
+  let x = PAGE_MARGIN;
+  COLLECTION_COLUMNS.forEach((column) => {
+    doc.font(column.key === "value" ? "Helvetica-Bold" : "Helvetica")
+      .fontSize(6.4).fillColor(COLORS.ink).text(values[column.key], x + 4, y + 8, {
+        width: column.width - 8, height: 18, align: column.align, ellipsis: true,
+      });
+    x += column.width;
+  });
+  return y + ROW_HEIGHT;
+}
+
 function drawFooter(doc: PDFKit.PDFDocument, page: number, totalPages: number) {
   doc
     .font("Helvetica")
@@ -464,6 +532,26 @@ export async function buildAllyPaymentSettlementPdf(
     }
     y = drawTableRow(doc, line, y, index);
   });
+
+  if (input.collections.length) {
+    doc.addPage();
+    drawHeader(doc, input, true);
+    doc.font("Helvetica-Bold").fontSize(10).fillColor(COLORS.ink)
+      .text(`Recaudos recibidos por el aliado (${input.collections.length})`, PAGE_MARGIN, 94);
+    doc.font("Helvetica").fontSize(7).fillColor(COLORS.muted)
+      .text(`Total descontado: ${money(input.totalAllyCollections)}`, PAGE_MARGIN, 110);
+    y = drawCollectionHeader(doc, 126);
+    input.collections.forEach((item, index) => {
+      if (y + ROW_HEIGHT > FOOTER_Y - 8) {
+        doc.addPage();
+        drawHeader(doc, input, true);
+        doc.font("Helvetica-Bold").fontSize(9.5).fillColor(COLORS.ink)
+          .text("Recaudos del aliado - continuacion", PAGE_MARGIN, 94);
+        y = drawCollectionHeader(doc, 109);
+      }
+      y = drawCollectionRow(doc, item, y, index);
+    });
+  }
 
   const pages = doc.bufferedPageRange();
   for (let index = pages.start; index < pages.start + pages.count; index += 1) {

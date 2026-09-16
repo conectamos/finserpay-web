@@ -46,6 +46,9 @@ test("genera un comprobante PDF multipagina desde el snapshot pagado", async () 
     totalAuthorizedCredit: total("authorizedCredit"),
     totalIntermediation: total("intermediationValue"),
     totalPayable: total("payableValue"),
+    totalAllyCollections: 350_000,
+    netBalance: total("payableValue") - 350_000,
+    balanceDirection: "PAGO_ALIADO",
     platformSummary: {
       ANDROID: {
         creditCount: android.length,
@@ -59,6 +62,18 @@ test("genera un comprobante PDF multipagina desde el snapshot pagado", async () 
       },
     },
     lines,
+    collections: [
+      {
+        paymentDate: "2026-09-12T15:00:00.000Z",
+        folio: "CR-1001",
+        clientName: "Cliente recaudo",
+        clientDocument: "1010202030",
+        siteName: "Sede Norte",
+        paymentMethod: "EFECTIVO",
+        value: 350_000,
+        status: "DESCONTADO",
+      },
+    ],
   });
 
   assert.equal(pdf.subarray(0, 5).toString("ascii"), "%PDF-");

@@ -196,7 +196,10 @@ export async function GET(request: Request) {
         : Promise.resolve(null),
     ]);
     const preview =
-      previewResult && previewResult.items.length > 0 ? previewResult : null;
+      previewResult &&
+      (previewResult.items.length > 0 || previewResult.recaudos.length > 0)
+        ? previewResult
+        : null;
 
     return response({
       ok: true,
@@ -265,8 +268,8 @@ export async function POST(request: Request) {
         settlement: result,
         idempotent: result.idempotent,
         message: result.idempotent
-          ? "El pago ya habia sido registrado con esta operacion."
-          : "Pago registrado correctamente.",
+          ? "La liquidacion ya habia sido registrada con esta operacion."
+          : "Liquidacion registrada correctamente.",
         correlationId,
       },
       { status: result.idempotent ? 200 : 201 }

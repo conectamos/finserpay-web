@@ -52,6 +52,20 @@ export type AllyPaymentSummary = {
   total: AllyPaymentSummaryBucket;
 };
 
+export type AllySettlementDirection =
+  | "PAGO_ALIADO"
+  | "CONSIGNACION_ALIADO"
+  | "SALDO_CERO";
+
+export type AllySettlementBalance = {
+  totalPagarCreditos: number;
+  totalRecaudosAliado: number;
+  saldoNeto: number;
+  direccionSaldo: AllySettlementDirection;
+  valorPagarAliado: number;
+  valorConsignarAliado: number;
+};
+
 export type AllyPaymentIntermediationAdjustment = {
   creditoId: number;
   porcentajeIntermediacion: number;
@@ -106,6 +120,30 @@ function finiteNumber(value: unknown) {
 export function roundAllyPaymentMoney(value: unknown) {
   const numeric = finiteNumber(value);
   return Math.round((numeric + Number.EPSILON) * 100) / 100;
+}
+
+export function calculateAllySettlementBalance(
+  totalPagarCreditos: unknown,
+  totalRecaudosAliado: unknown
+): AllySettlementBalance {
+  const creditos = Math.max(0, roundAllyPaymentMoney(totalPagarCreditos));
+  const recaudos = Math.max(0, roundAllyPaymentMoney(totalRecaudosAliado));
+  const saldoNeto = roundAllyPaymentMoney(creditos - recaudos);
+  const direccionSaldo: AllySettlementDirection =
+    saldoNeto > 0
+      ? "PAGO_ALIADO"
+      : saldoNeto < 0
+        ? "CONSIGNACION_ALIADO"
+        : "SALDO_CERO";
+
+  return {
+    totalPagarCreditos: creditos,
+    totalRecaudosAliado: recaudos,
+    saldoNeto,
+    direccionSaldo,
+    valorPagarAliado: Math.max(saldoNeto, 0),
+    valorConsignarAliado: Math.max(-saldoNeto, 0),
+  };
 }
 
 export function normalizeAllyIntermediationPercentage(value: unknown) {

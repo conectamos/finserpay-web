@@ -330,7 +330,7 @@ test("el detalle muestra la sede real y respeta el orden solicitado con cedula e
   const creditItems = sectionBetween(
     consoleSource,
     "function CreditItems(",
-    "function settlementAllyName"
+    "function CollectionItems"
   );
   const desktopTable = sectionBetween(
     creditItems,
@@ -456,7 +456,7 @@ test("la creacion es serializable e idempotente bajo locks de mutacion y aliado"
     assert.match(requestHash, new RegExp("\\b" + field + ":"));
   }
   assert.match(create, /requestHash,/);
-  assert.match(storage, /ALLY_INTERMEDIATION_V3/);
+  assert.match(storage, /ALLY_INTERMEDIATION_COLLECTIONS_V1/);
 });
 
 test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado", () => {
@@ -473,7 +473,15 @@ test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado"
   assert.match(pdfRouteSource, /clientDocument:\s*item\.clienteDocumento/);
   assert.match(pdfRouteSource, /imei:\s*item\.imei/);
   assert.match(pdfRouteSource, /status:\s*item\.estado/);
-  assert.doesNotMatch(pdfRouteSource, /folio:\s*item\.folio/);
+  const creditPdfLines = sectionBetween(
+    pdfRouteSource,
+    "lines: settlement.items.map",
+    "collections: settlement.recaudos.map"
+  );
+  assert.doesNotMatch(creditPdfLines, /folio:\s*item\.folio/);
+  assert.match(pdfRouteSource, /collections:\s*settlement\.recaudos\.map/);
+  assert.match(pdfRouteSource, /folio:\s*item\.folio/);
+  assert.match(pdfRouteSource, /siteName:\s*item\.sedeNombre/);
   assert.match(pdfRouteSource, /searchParams\.get\("download"\)\s*===\s*"1"/);
   assert.match(pdfRouteSource, /"Content-Type":\s*"application\/pdf"/);
   assert.match(pdfRouteSource, /download\s*\?\s*"attachment"\s*:\s*"inline"/);
@@ -515,6 +523,7 @@ test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado"
 test("aprobacion, mutationId y credito tienen defensa duplicada en app y base", () => {
   const header = modelBlock("LiquidacionAliado");
   const credit = modelBlock("LiquidacionAliadoCredito");
+  const collection = modelBlock("LiquidacionAliadoRecaudo");
   const create = sectionFrom(storage, "export async function createAllyPayment");
 
   assert.match(fieldLine(header, "mutationId"), /\bString\b.*@unique.*@db\.Uuid/);
@@ -523,6 +532,7 @@ test("aprobacion, mutationId y credito tienen defensa duplicada en app y base", 
     /\bString\b.*@unique/
   );
   assert.match(fieldLine(credit, "creditoId"), /\bInt\b.*@unique/);
+  assert.match(fieldLine(collection, "abonoId"), /\bInt\b.*@unique/);
 
   assert.match(
     create,
@@ -541,6 +551,7 @@ test("aprobacion, mutationId y credito tienen defensa duplicada en app y base", 
     "LiquidacionAliado_mutationId_key",
     "LiquidacionAliado_numeroAprobacionNormalizado_key",
     "LiquidacionAliadoCredito_creditoId_key",
+    "LiquidacionAliadoRecaudo_abonoId_key",
   ]) {
     assert.match(
       preflight,
@@ -549,6 +560,25 @@ test("aprobacion, mutationId y credito tienen defensa duplicada en app y base", 
       )
     );
   }
+});
+
+test("los recaudos del aliado se filtran por sede, periodo y uso previo", () => {
+  const loader = sectionBetween(
+    storage,
+    "async function loadEligibleCollections",
+    "function totalCollections"
+  );
+  assert.match(loader, /site\."aliadoId"\s*=\s*\$\$\{values\.length\}/);
+  assert.match(loader, /payment\."fechaAbono"\s*>=/);
+  assert.match(loader, /payment\."fechaAbono"\s*</);
+  assert.match(loader, /snapshot\."id"\s+IS NULL/);
+  assert.match(loader, /FOR UPDATE OF payment/);
+  assert.match(storage, /previewFingerprint\(allyId, period, items, recaudos\)/);
+  assert.match(storage, /if \(!items\.length && !recaudos\.length\)/);
+  assert.match(storage, /totalRecaudosAliado:\s*moneyForDatabase/);
+  assert.match(storage, /saldoNeto:\s*moneyForDatabase/);
+  assert.match(storage, /create:\s*recaudos\.map/);
+  assert.match(preflight, /LiquidacionAliadoRecaudo_immutable/);
 });
 
 test("persiste y devuelve snapshots historicos sin recalcular el detalle", () => {

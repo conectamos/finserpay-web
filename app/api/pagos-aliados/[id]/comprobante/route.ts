@@ -84,6 +84,9 @@ export async function GET(
       totalAuthorizedCredit: settlement.totalCreditoAutorizado,
       totalIntermediation: settlement.totalIntermediacion,
       totalPayable: settlement.totalPagar,
+      totalAllyCollections: settlement.totalRecaudosAliado,
+      netBalance: settlement.saldoNeto,
+      balanceDirection: settlement.direccionSaldo,
       platformSummary: {
         ANDROID: {
           creditCount: settlement.summary.ANDROID.numeroCreditos,
@@ -114,6 +117,16 @@ export async function GET(
         intermediationPercentage: item.porcentajeIntermediacion,
         intermediationValue: item.valorIntermediacion,
         payableValue: item.valorPagar,
+        status: item.estado,
+      })),
+      collections: settlement.recaudos.map((item) => ({
+        paymentDate: item.fechaAbono,
+        folio: item.folio,
+        clientName: item.clienteNombre,
+        clientDocument: item.clienteDocumento,
+        siteName: item.sedeNombre,
+        paymentMethod: item.metodoPago,
+        value: item.valor,
         status: item.estado,
       })),
     });

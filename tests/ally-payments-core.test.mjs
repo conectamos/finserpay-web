@@ -5,6 +5,7 @@ import {
   ALLY_PAYMENTS_AVAILABLE_FROM_LABEL,
   applyAllyPaymentIntermediationAdjustments,
   calculateAllyPaymentAmounts,
+  calculateAllySettlementBalance,
   isAnnulledCreditState,
   normalizeBankApprovalNumber,
   normalizeAllyPaymentIntermediationAdjustments,
@@ -43,6 +44,29 @@ test("calcula el pago al aliado con la formula financiera confirmada", () => {
       valorIntermediacion: 250_000,
       valorPagar: 2_250_000,
     }
+  );
+});
+
+test("concilia creditos menos recaudos y define quien debe transferir", () => {
+  assert.deepEqual(calculateAllySettlementBalance(2_250_000, 600_000), {
+    totalPagarCreditos: 2_250_000,
+    totalRecaudosAliado: 600_000,
+    saldoNeto: 1_650_000,
+    direccionSaldo: "PAGO_ALIADO",
+    valorPagarAliado: 1_650_000,
+    valorConsignarAliado: 0,
+  });
+  assert.deepEqual(calculateAllySettlementBalance(800_000, 1_100_000), {
+    totalPagarCreditos: 800_000,
+    totalRecaudosAliado: 1_100_000,
+    saldoNeto: -300_000,
+    direccionSaldo: "CONSIGNACION_ALIADO",
+    valorPagarAliado: 0,
+    valorConsignarAliado: 300_000,
+  });
+  assert.equal(
+    calculateAllySettlementBalance(900_000, 900_000).direccionSaldo,
+    "SALDO_CERO"
   );
 });
 

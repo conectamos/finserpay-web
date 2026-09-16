@@ -7,6 +7,7 @@ import {
   ALLY_PAYMENTS_AVAILABLE_FROM,
   applyAllyPaymentIntermediationAdjustments,
   calculateAllyPaymentAmounts,
+  calculateAllySettlementBalance,
   normalizeAllyPaymentIntermediationAdjustments,
   normalizeBankApprovalNumber,
   resolveAllyPaymentPlatform,
@@ -22,7 +23,7 @@ import { buildAllyPaymentEligibilityQuery } from "@/lib/ally-payment-eligibility
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import prisma from "@/lib/prisma";
 
-const PAYMENT_CALCULATION_VERSION = "ALLY_INTERMEDIATION_V3";
+const PAYMENT_CALCULATION_VERSION = "ALLY_INTERMEDIATION_COLLECTIONS_V1";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH_PATTERN = /^[0-9a-f]{64}$/i;
@@ -54,6 +55,19 @@ type EligibleCreditRow = {
   redescuentoIphonePorcentaje: number;
 };
 
+type EligibleCollectionRow = {
+  id: number;
+  creditoId: number;
+  sedeId: number;
+  fechaAbono: Date;
+  folio: string;
+  clienteNombre: string;
+  clienteDocumento: string | null;
+  sedeNombre: string;
+  metodoPago: string;
+  valor: number;
+};
+
 export type AllyPaymentLine = {
   id?: number;
   creditoId: number;
@@ -81,6 +95,21 @@ export type AllyPaymentLine = {
     id: number;
     nombre: string;
   };
+};
+
+export type AllyPaymentCollectionLine = {
+  id?: number;
+  abonoId: number;
+  creditoId: number;
+  sedeId: number;
+  fechaAbono: string;
+  folio: string;
+  clienteNombre: string;
+  clienteDocumento: string;
+  sedeNombre: string;
+  metodoPago: string;
+  valor: number;
+  estado: "PENDIENTE_DESCUENTO" | "DESCONTADO";
 };
 
 export type AllyPaymentSummaryPayload = {
@@ -155,7 +184,7 @@ function parseApproval(value: unknown) {
 
   if (!normalized || normalized.length > 120) {
     throw new AllyPaymentValidationError([
-      "El numero de aprobacion bancaria es obligatorio y admite hasta 120 caracteres.",
+      "El numero de soporte bancario es obligatorio y admite hasta 120 caracteres.",
     ]);
   }
 
@@ -323,6 +352,79 @@ async function loadEligibleLines(
   return rows.map(buildLine).filter((item): item is AllyPaymentLine => Boolean(item));
 }
 
+async function loadEligibleCollections(
+  db: DbClient,
+  input: {
+    allyId: number | null;
+    start?: Date;
+    endExclusive?: Date;
+    lock?: boolean;
+  }
+): Promise<AllyPaymentCollectionLine[]> {
+  const values: unknown[] = [ALIADO_FINSER_PAY.codigo];
+  const conditions = [
+    `UPPER(BTRIM(COALESCE(payment."estado", ''))) NOT IN ('ANULADO', 'ANULADA', 'CANCELADO', 'CANCELADA')`,
+    `payment."anuladoAt" IS NULL`,
+    `payment."valor" > 0`,
+    `snapshot."id" IS NULL`,
+    `site."aliadoId" IS NOT NULL`,
+    `UPPER(BTRIM(COALESCE(ally."codigo", ''))) <> UPPER(BTRIM($1))`,
+  ];
+  if (input.allyId !== null) {
+    values.push(input.allyId);
+    conditions.push(`site."aliadoId" = $${values.length}`);
+  }
+  if (input.start) {
+    values.push(input.start);
+    conditions.push(`payment."fechaAbono" >= $${values.length}`);
+  }
+  if (input.endExclusive) {
+    values.push(input.endExclusive);
+    conditions.push(`payment."fechaAbono" < $${values.length}`);
+  }
+
+  const query = `
+    SELECT
+      payment."id",
+      payment."creditoId",
+      payment."sedeId",
+      payment."fechaAbono",
+      credit."folio",
+      credit."clienteNombre",
+      credit."clienteDocumento",
+      site."nombre" AS "sedeNombre",
+      payment."metodoPago",
+      payment."valor"
+    FROM public."CreditoAbono" payment
+    INNER JOIN public."Credito" credit ON credit."id" = payment."creditoId"
+    INNER JOIN public."Sede" site ON site."id" = payment."sedeId"
+    INNER JOIN public."Aliado" ally ON ally."id" = site."aliadoId"
+    LEFT JOIN public."LiquidacionAliadoRecaudo" snapshot
+      ON snapshot."abonoId" = payment."id"
+    WHERE ${conditions.join("\n      AND ")}
+    ORDER BY payment."fechaAbono" ASC, payment."id" ASC
+    ${input.lock ? 'FOR UPDATE OF payment' : ''}
+  `;
+  const rows = await db.$queryRawUnsafe<EligibleCollectionRow[]>(query, ...values);
+  return rows.map((row) => ({
+    abonoId: row.id,
+    creditoId: row.creditoId,
+    sedeId: row.sedeId,
+    fechaAbono: new Date(row.fechaAbono).toISOString(),
+    folio: compactText(row.folio, "Credito " + row.creditoId, 80),
+    clienteNombre: compactText(row.clienteNombre, "Cliente", 180),
+    clienteDocumento: compactText(row.clienteDocumento, "Sin documento", 80),
+    sedeNombre: compactText(row.sedeNombre, "Sede sin nombre", 180),
+    metodoPago: compactText(row.metodoPago, "EFECTIVO", 40),
+    valor: Math.max(0, Number(Number(row.valor).toFixed(2))),
+    estado: "PENDIENTE_DESCUENTO",
+  }));
+}
+
+function totalCollections(items: readonly AllyPaymentCollectionLine[]) {
+  return items.reduce((total, item) => Number((total + item.valor).toFixed(2)), 0);
+}
+
 const SETTLEMENT_INCLUDE = {
   aliado: {
     select: {
@@ -345,6 +447,9 @@ const SETTLEMENT_INCLUDE = {
       },
     },
   },
+  recaudos: {
+    orderBy: [{ fechaAbono: "asc" }, { id: "asc" }],
+  },
 } satisfies Prisma.LiquidacionAliadoInclude;
 
 type StoredSettlement = Prisma.LiquidacionAliadoGetPayload<{
@@ -358,7 +463,8 @@ function sha256(value: unknown) {
 function previewFingerprint(
   allyId: number,
   period: ReturnType<typeof resolveColombiaPaymentPeriod>,
-  lines: readonly AllyPaymentLine[]
+  lines: readonly AllyPaymentLine[],
+  collections: readonly AllyPaymentCollectionLine[]
 ) {
   return sha256({
     version: PAYMENT_CALCULATION_VERSION,
@@ -381,6 +487,14 @@ function previewFingerprint(
       porcentajeIntermediacion: line.porcentajeIntermediacion,
       valorIntermediacion: line.valorIntermediacion,
       valorPagar: line.valorPagar,
+    })),
+    recaudos: collections.map((item) => ({
+      abonoId: item.abonoId,
+      creditoId: item.creditoId,
+      sedeId: item.sedeId,
+      fechaAbono: item.fechaAbono,
+      metodoPago: item.metodoPago,
+      valor: item.valor,
     })),
   });
 }
@@ -430,10 +544,42 @@ function serializeStoredLine(
   };
 }
 
+function serializeStoredCollection(
+  detail: StoredSettlement["recaudos"][number]
+): AllyPaymentCollectionLine {
+  return {
+    id: detail.id,
+    abonoId: detail.abonoId,
+    creditoId: detail.creditoId,
+    sedeId: detail.sedeId,
+    fechaAbono: detail.fechaAbono.toISOString(),
+    folio: detail.folio,
+    clienteNombre: detail.clienteNombre,
+    clienteDocumento: detail.clienteDocumento,
+    sedeNombre: detail.sedeNombre,
+    metodoPago: detail.metodoPago,
+    valor: Number(detail.valor),
+    estado: "DESCONTADO",
+  };
+}
+
 function serializeSettlement(settlement: StoredSettlement) {
   const items = settlement.creditos.map((detail) =>
     serializeStoredLine(detail, settlement.aliado)
   );
+  const recaudos = settlement.recaudos.map(serializeStoredCollection);
+  const totalPagarCreditos = Number(settlement.totalPagar);
+  const totalRecaudosAliado = settlement.totalRecaudosAliado == null
+    ? 0
+    : Number(settlement.totalRecaudosAliado);
+  const balance = calculateAllySettlementBalance(
+    totalPagarCreditos,
+    totalRecaudosAliado
+  );
+  const saldoNeto = settlement.saldoNeto == null
+    ? balance.saldoNeto
+    : Number(settlement.saldoNeto);
+  const direccionSaldo = settlement.direccionSaldo || balance.direccionSaldo;
 
   return {
     id: settlement.id,
@@ -449,11 +595,19 @@ function serializeSettlement(settlement: StoredSettlement) {
     totalCuotaInicial: Number(settlement.totalCuotaInicial),
     totalIntermediacion: Number(settlement.totalIntermediacion),
     totalPagar: Number(settlement.totalPagar),
+    totalPagarCreditos,
+    totalRecaudosAliado,
+    saldoNeto,
+    direccionSaldo,
+    valorPagarAliado: Math.max(saldoNeto, 0),
+    valorConsignarAliado: Math.max(-saldoNeto, 0),
+    numeroRecaudos: recaudos.length,
     registradoPorNombre: settlement.registradoPorNombre,
     pagadoAt: settlement.pagadoAt.toISOString(),
     createdAt: settlement.createdAt.toISOString(),
     summary: serializeSummary(summarizeAllyPayments(items)),
     items,
+    recaudos,
   };
 }
 
@@ -517,11 +671,21 @@ export async function listAllyPaymentPending(input: {
   allyId: number | null;
 }) {
   const allyId = input.allyId === null ? null : positiveId(input.allyId, "El aliado");
-  const items = await loadEligibleLines(prisma, { allyId });
+  const [items, recaudos] = await Promise.all([
+    loadEligibleLines(prisma, { allyId }),
+    loadEligibleCollections(prisma, { allyId }),
+  ]);
+  const summary = serializeSummary(summarizeAllyPayments(items));
+  const balance = calculateAllySettlementBalance(
+    summary.total.totalPagar,
+    totalCollections(recaudos)
+  );
 
   return {
     items,
-    summary: serializeSummary(summarizeAllyPayments(items)),
+    recaudos,
+    summary,
+    ...balance,
   };
 }
 
@@ -533,14 +697,26 @@ export async function getAllyPaymentPreview(input: {
   const allyId = positiveId(input.allyId, "El aliado");
   const period = parsePaymentPeriod(input.startDate, input.endDate);
   const ally = await requirePayableAlly(prisma, allyId);
-  const items = await loadEligibleLines(prisma, {
-    allyId,
-    start: period.start,
-    endExclusive: period.endExclusive,
-  });
+  const [items, recaudos] = await Promise.all([
+    loadEligibleLines(prisma, {
+      allyId,
+      start: period.start,
+      endExclusive: period.endExclusive,
+    }),
+    loadEligibleCollections(prisma, {
+      allyId,
+      start: period.start,
+      endExclusive: period.endExclusive,
+    }),
+  ]);
+  const summary = serializeSummary(summarizeAllyPayments(items));
+  const balance = calculateAllySettlementBalance(
+    summary.total.totalPagar,
+    totalCollections(recaudos)
+  );
 
   return {
-    token: previewFingerprint(allyId, period, items),
+    token: previewFingerprint(allyId, period, items, recaudos),
     aliado: {
       id: ally.id,
       nombre: ally.nombre,
@@ -548,7 +724,9 @@ export async function getAllyPaymentPreview(input: {
     periodoInicio: period.startDate,
     periodoFin: period.endDate,
     items,
-    summary: serializeSummary(summarizeAllyPayments(items)),
+    recaudos,
+    summary,
+    ...balance,
   };
 }
 
@@ -705,7 +883,7 @@ export async function createAllyPayment(input: {
         if (approvalAlreadyUsed) {
           throw new AllyPaymentConflictError(
             "ALLY_PAYMENT_DUPLICATE",
-            "El numero de aprobacion bancaria ya fue registrado."
+            "El numero de soporte bancario ya fue registrado."
           );
         }
 
@@ -715,24 +893,34 @@ export async function createAllyPayment(input: {
           endExclusive: period.endExclusive,
           lock: true,
         });
+        const recaudos = await loadEligibleCollections(tx, {
+          allyId,
+          start: period.start,
+          endExclusive: period.endExclusive,
+          lock: true,
+        });
 
-        if (!items.length) {
+        if (!items.length && !recaudos.length) {
           throw new AllyPaymentConflictError(
             "ALLY_PAYMENT_EMPTY",
-            "Ya no hay creditos pendientes para el aliado y periodo seleccionados."
+            "Ya no hay creditos ni recaudos pendientes para el aliado y periodo seleccionados."
           );
         }
 
-        const currentPreviewToken = previewFingerprint(allyId, period, items);
+        const currentPreviewToken = previewFingerprint(allyId, period, items, recaudos);
         if (currentPreviewToken !== previewToken) {
           throw new AllyPaymentConflictError(
             "ALLY_PAYMENT_PREVIEW_CHANGED",
-            "Los creditos o porcentajes cambiaron. Actualiza la previsualizacion antes de pagar."
+            "Los creditos, recaudos o porcentajes cambiaron. Actualiza la previsualizacion antes de registrar."
           );
         }
 
         const payableItems = applyIntermediationAdjustments(items, adjustments);
         const summary = summarizeAllyPayments(payableItems);
+        const balance = calculateAllySettlementBalance(
+          summary.total.valorPagar,
+          totalCollections(recaudos)
+        );
         const created = await tx.liquidacionAliado.create({
           data: {
             mutationId,
@@ -752,10 +940,13 @@ export async function createAllyPayment(input: {
               summary.total.valorIntermediacion
             ),
             totalPagar: moneyForDatabase(summary.total.valorPagar),
+            totalRecaudosAliado: moneyForDatabase(balance.totalRecaudosAliado),
+            saldoNeto: moneyForDatabase(balance.saldoNeto),
+            direccionSaldo: balance.direccionSaldo,
             registradoPorNombre: actorName,
             aliado: { connect: { id: ally.id } },
             registradoPor: { connect: { id: actorUserId } },
-            creditos: {
+            ...(payableItems.length ? { creditos: {
               create: payableItems.map((item) => ({
                 fechaCredito: creditDateForDatabase(item.fechaCredito),
                 folio: item.folio,
@@ -777,7 +968,22 @@ export async function createAllyPayment(input: {
                 estado: "PAGADO",
                 credito: { connect: { id: item.creditoId } },
               })),
-            },
+            } } : {}),
+            ...(recaudos.length ? { recaudos: {
+              create: recaudos.map((item) => ({
+                abonoId: item.abonoId,
+                creditoId: item.creditoId,
+                sedeId: item.sedeId,
+                fechaAbono: new Date(item.fechaAbono),
+                folio: item.folio,
+                clienteNombre: item.clienteNombre,
+                clienteDocumento: item.clienteDocumento,
+                sedeNombre: item.sedeNombre,
+                metodoPago: item.metodoPago,
+                valor: moneyForDatabase(item.valor),
+                estado: "DESCONTADO",
+              })),
+            } } : {}),
           },
           include: SETTLEMENT_INCLUDE,
         });
@@ -804,7 +1010,7 @@ export async function createAllyPayment(input: {
     if (isDataCreditoUniqueViolation(error)) {
       throw new AllyPaymentConflictError(
         "ALLY_PAYMENT_DUPLICATE",
-        "El pago, la aprobacion bancaria o alguno de sus creditos ya fue registrado."
+        "La liquidacion, el soporte, alguno de sus creditos o recaudos ya fue registrado."
       );
     }
 

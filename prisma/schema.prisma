@@ -662,6 +662,9 @@ model LiquidacionAliado {
   totalCuotaInicial           Decimal                     @db.Decimal(20, 2)
   totalIntermediacion         Decimal                     @db.Decimal(20, 2)
   totalPagar                  Decimal                     @db.Decimal(20, 2)
+  totalRecaudosAliado         Decimal?                    @db.Decimal(20, 2)
+  saldoNeto                   Decimal?                    @db.Decimal(20, 2)
+  direccionSaldo              String?                     @db.VarChar(32)
   registradoPorUsuarioId      Int
   registradoPorNombre         String                      @db.VarChar(160)
   pagadoAt                    DateTime                    @default(now())
@@ -670,11 +673,34 @@ model LiquidacionAliado {
   aliado                      Aliado                      @relation(fields: [aliadoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   registradoPor               Usuario                     @relation(fields: [registradoPorUsuarioId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   creditos                    LiquidacionAliadoCredito[]
+  recaudos                    LiquidacionAliadoRecaudo[]
 
   @@index([aliadoId, pagadoAt])
   @@index([periodoInicio, periodoFin])
   @@index([estado, pagadoAt])
   @@index([registradoPorUsuarioId, pagadoAt])
+}
+
+model LiquidacionAliadoRecaudo {
+  id               Int                @id @default(autoincrement())
+  liquidacionId    Int
+  abonoId          Int                @unique
+  creditoId        Int
+  sedeId           Int
+  fechaAbono       DateTime
+  folio            String             @db.VarChar(80)
+  clienteNombre    String             @db.VarChar(180)
+  clienteDocumento String             @db.VarChar(80)
+  sedeNombre       String             @db.VarChar(180)
+  metodoPago       String             @db.VarChar(40)
+  valor            Decimal            @db.Decimal(20, 2)
+  estado           String             @default("DESCONTADO") @db.VarChar(16)
+  createdAt        DateTime           @default(now())
+  liquidacion      LiquidacionAliado  @relation(fields: [liquidacionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([liquidacionId, fechaAbono])
+  @@index([sedeId, fechaAbono])
+  @@index([estado, createdAt])
 }
 
 model LiquidacionAliadoCredito {

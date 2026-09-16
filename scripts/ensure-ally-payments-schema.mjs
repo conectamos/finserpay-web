@@ -33,11 +33,38 @@ const statements = [
       "totalCuotaInicial" NUMERIC(20,2) NOT NULL,
       "totalIntermediacion" NUMERIC(20,2) NOT NULL,
       "totalPagar" NUMERIC(20,2) NOT NULL,
+      "totalRecaudosAliado" NUMERIC(20,2),
+      "saldoNeto" NUMERIC(20,2),
+      "direccionSaldo" VARCHAR(32),
       "registradoPorUsuarioId" INTEGER NOT NULL,
       "registradoPorNombre" VARCHAR(160) NOT NULL,
       "pagadoAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `,
+  `
+    ALTER TABLE public."LiquidacionAliado"
+      ADD COLUMN IF NOT EXISTS "totalRecaudosAliado" NUMERIC(20,2),
+      ADD COLUMN IF NOT EXISTS "saldoNeto" NUMERIC(20,2),
+      ADD COLUMN IF NOT EXISTS "direccionSaldo" VARCHAR(32)
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS public."LiquidacionAliadoRecaudo" (
+      "id" SERIAL PRIMARY KEY,
+      "liquidacionId" INTEGER NOT NULL,
+      "abonoId" INTEGER NOT NULL,
+      "creditoId" INTEGER NOT NULL,
+      "sedeId" INTEGER NOT NULL,
+      "fechaAbono" TIMESTAMP(3) NOT NULL,
+      "folio" VARCHAR(80) NOT NULL,
+      "clienteNombre" VARCHAR(180) NOT NULL,
+      "clienteDocumento" VARCHAR(80) NOT NULL,
+      "sedeNombre" VARCHAR(180) NOT NULL,
+      "metodoPago" VARCHAR(40) NOT NULL,
+      "valor" NUMERIC(20,2) NOT NULL,
+      "estado" VARCHAR(16) NOT NULL DEFAULT 'DESCONTADO',
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `,
   `
@@ -272,18 +299,79 @@ const statements = [
     END $$;
   `,
   `
+    ALTER TABLE public."LiquidacionAliado"
+      DROP CONSTRAINT IF EXISTS "LiquidacionAliado_numeroCreditos_check";
+    ALTER TABLE public."LiquidacionAliado"
+      ADD CONSTRAINT "LiquidacionAliado_numeroCreditos_check"
+      CHECK ("numeroCreditos" >= 0);
+  `,
+  `
     DO $$
     BEGIN
       IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
-        WHERE conname = 'LiquidacionAliado_numeroCreditos_check'
+        WHERE conname = 'LiquidacionAliado_balance_check'
           AND conrelid = 'public."LiquidacionAliado"'::regclass
       ) THEN
         ALTER TABLE public."LiquidacionAliado"
-          ADD CONSTRAINT "LiquidacionAliado_numeroCreditos_check"
-          CHECK ("numeroCreditos" > 0);
+          ADD CONSTRAINT "LiquidacionAliado_balance_check"
+          CHECK (
+            ("totalRecaudosAliado" IS NULL AND "saldoNeto" IS NULL AND "direccionSaldo" IS NULL)
+            OR (
+              "totalRecaudosAliado" >= 0
+              AND "saldoNeto" = "totalPagar" - "totalRecaudosAliado"
+              AND "direccionSaldo" = CASE
+                WHEN "saldoNeto" > 0 THEN 'PAGO_ALIADO'
+                WHEN "saldoNeto" < 0 THEN 'CONSIGNACION_ALIADO'
+                ELSE 'SALDO_CERO'
+              END
+            )
+          );
       END IF;
     END $$;
+  `,
+  `
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'LiquidacionAliadoRecaudo_liquidacionId_fkey'
+          AND conrelid = 'public."LiquidacionAliadoRecaudo"'::regclass
+      ) THEN
+        ALTER TABLE public."LiquidacionAliadoRecaudo"
+          ADD CONSTRAINT "LiquidacionAliadoRecaudo_liquidacionId_fkey"
+          FOREIGN KEY ("liquidacionId") REFERENCES public."LiquidacionAliado"("id")
+          ON DELETE RESTRICT ON UPDATE CASCADE;
+      END IF;
+    END $$;
+  `,
+  `
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'LiquidacionAliadoRecaudo_valor_check'
+          AND conrelid = 'public."LiquidacionAliadoRecaudo"'::regclass
+      ) THEN
+        ALTER TABLE public."LiquidacionAliadoRecaudo"
+          ADD CONSTRAINT "LiquidacionAliadoRecaudo_valor_check"
+          CHECK ("valor" > 0 AND "estado" = 'DESCONTADO');
+      END IF;
+    END $$;
+  `,
+  `
+    CREATE OR REPLACE FUNCTION public."prevent_liquidacion_aliado_recaudo_mutation"()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      RAISE EXCEPTION 'LiquidacionAliadoRecaudo is append-only';
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS "LiquidacionAliadoRecaudo_immutable"
+      ON public."LiquidacionAliadoRecaudo";
+    CREATE TRIGGER "LiquidacionAliadoRecaudo_immutable"
+      BEFORE UPDATE OR DELETE ON public."LiquidacionAliadoRecaudo"
+      FOR EACH ROW EXECUTE FUNCTION public."prevent_liquidacion_aliado_recaudo_mutation"();
   `,
   `
     DO $$
@@ -394,6 +482,10 @@ const statements = [
   'CREATE INDEX IF NOT EXISTS "LiquidacionAliadoCredito_liquidacionId_plataforma_idx" ON public."LiquidacionAliadoCredito" ("liquidacionId", "plataforma")',
   'CREATE INDEX IF NOT EXISTS "LiquidacionAliadoCredito_plataforma_fechaCredito_idx" ON public."LiquidacionAliadoCredito" ("plataforma", "fechaCredito")',
   'CREATE INDEX IF NOT EXISTS "LiquidacionAliadoCredito_estado_createdAt_idx" ON public."LiquidacionAliadoCredito" ("estado", "createdAt")',
+  'CREATE UNIQUE INDEX IF NOT EXISTS "LiquidacionAliadoRecaudo_abonoId_key" ON public."LiquidacionAliadoRecaudo" ("abonoId")',
+  'CREATE INDEX IF NOT EXISTS "LiquidacionAliadoRecaudo_liquidacionId_fechaAbono_idx" ON public."LiquidacionAliadoRecaudo" ("liquidacionId", "fechaAbono")',
+  'CREATE INDEX IF NOT EXISTS "LiquidacionAliadoRecaudo_sedeId_fechaAbono_idx" ON public."LiquidacionAliadoRecaudo" ("sedeId", "fechaAbono")',
+  'CREATE INDEX IF NOT EXISTS "LiquidacionAliadoRecaudo_estado_createdAt_idx" ON public."LiquidacionAliadoRecaudo" ("estado", "createdAt")',
 ];
 
 const expectedColumns = [
@@ -412,6 +504,9 @@ const expectedColumns = [
   ["LiquidacionAliado", "totalCuotaInicial", "numeric", "NO", null, 20, 2],
   ["LiquidacionAliado", "totalIntermediacion", "numeric", "NO", null, 20, 2],
   ["LiquidacionAliado", "totalPagar", "numeric", "NO", null, 20, 2],
+  ["LiquidacionAliado", "totalRecaudosAliado", "numeric", "YES", null, 20, 2],
+  ["LiquidacionAliado", "saldoNeto", "numeric", "YES", null, 20, 2],
+  ["LiquidacionAliado", "direccionSaldo", "character varying", "YES", 32],
   ["LiquidacionAliado", "registradoPorUsuarioId", "integer", "NO"],
   ["LiquidacionAliado", "registradoPorNombre", "character varying", "NO", 160],
   ["LiquidacionAliado", "pagadoAt", "timestamp without time zone", "NO"],
@@ -435,6 +530,20 @@ const expectedColumns = [
   ["LiquidacionAliadoCredito", "valorPagar", "numeric", "NO", null, 20, 2],
   ["LiquidacionAliadoCredito", "estado", "character varying", "NO", 16],
   ["LiquidacionAliadoCredito", "createdAt", "timestamp without time zone", "NO"],
+  ["LiquidacionAliadoRecaudo", "id", "integer", "NO"],
+  ["LiquidacionAliadoRecaudo", "liquidacionId", "integer", "NO"],
+  ["LiquidacionAliadoRecaudo", "abonoId", "integer", "NO"],
+  ["LiquidacionAliadoRecaudo", "creditoId", "integer", "NO"],
+  ["LiquidacionAliadoRecaudo", "sedeId", "integer", "NO"],
+  ["LiquidacionAliadoRecaudo", "fechaAbono", "timestamp without time zone", "NO"],
+  ["LiquidacionAliadoRecaudo", "folio", "character varying", "NO", 80],
+  ["LiquidacionAliadoRecaudo", "clienteNombre", "character varying", "NO", 180],
+  ["LiquidacionAliadoRecaudo", "clienteDocumento", "character varying", "NO", 80],
+  ["LiquidacionAliadoRecaudo", "sedeNombre", "character varying", "NO", 180],
+  ["LiquidacionAliadoRecaudo", "metodoPago", "character varying", "NO", 40],
+  ["LiquidacionAliadoRecaudo", "valor", "numeric", "NO", null, 20, 2],
+  ["LiquidacionAliadoRecaudo", "estado", "character varying", "NO", 16],
+  ["LiquidacionAliadoRecaudo", "createdAt", "timestamp without time zone", "NO"],
 ];
 
 const expectedIndexes = [
@@ -493,6 +602,10 @@ const expectedIndexes = [
     false,
     ["estado", "createdAt"],
   ],
+  ["LiquidacionAliadoRecaudo", "LiquidacionAliadoRecaudo_abonoId_key", true, ["abonoId"]],
+  ["LiquidacionAliadoRecaudo", "LiquidacionAliadoRecaudo_liquidacionId_fechaAbono_idx", false, ["liquidacionId", "fechaAbono"]],
+  ["LiquidacionAliadoRecaudo", "LiquidacionAliadoRecaudo_sedeId_fechaAbono_idx", false, ["sedeId", "fechaAbono"]],
+  ["LiquidacionAliadoRecaudo", "LiquidacionAliadoRecaudo_estado_createdAt_idx", false, ["estado", "createdAt"]],
 ];
 
 const expectedConstraints = [
@@ -519,6 +632,7 @@ const expectedConstraints = [
   ["LiquidacionAliado", "LiquidacionAliado_numeroCreditos_check", "c"],
   ["LiquidacionAliado", "LiquidacionAliado_totales_check", "c"],
   ["LiquidacionAliado", "LiquidacionAliado_formula_check", "c"],
+  ["LiquidacionAliado", "LiquidacionAliado_balance_check", "c"],
   ["LiquidacionAliado", "LiquidacionAliado_registradoPorNombre_check", "c"],
   [
     "LiquidacionAliadoCredito",
@@ -545,6 +659,8 @@ const expectedConstraints = [
     "LiquidacionAliadoCredito_estado_check",
     "c",
   ],
+  ["LiquidacionAliadoRecaudo", "LiquidacionAliadoRecaudo_liquidacionId_fkey", "f"],
+  ["LiquidacionAliadoRecaudo", "LiquidacionAliadoRecaudo_valor_check", "c"],
 ];
 
 async function assertCompatibleColumns() {
@@ -556,7 +672,7 @@ async function assertCompatibleColumns() {
       WHERE table_schema = 'public'
         AND table_name = ANY($1::text[])
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo"]]
   );
   const columns = new Map(
     result.rows.map((row) => [
@@ -616,7 +732,7 @@ async function assertCompatibleIndexes() {
       GROUP BY table_class.relname, index_class.relname,
         index_definition.indisunique
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo"]]
   );
   const indexes = new Map(
     result.rows.map((row) => [
@@ -661,7 +777,7 @@ async function assertCompatibleConstraints() {
       WHERE namespace.nspname = 'public'
         AND table_class.relname = ANY($1::text[])
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo"]]
   );
   const constraints = new Map(
     result.rows.map((row) => [
