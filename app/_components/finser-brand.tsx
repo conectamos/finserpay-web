@@ -83,7 +83,11 @@ export default function FinserBrand({
             mini ? "text-[19px]" : compact ? "text-lg" : "text-2xl",
             titleClass,
           ].join(" ")}
-          style={{ fontFamily: '"Arial Black", "Trebuchet MS", sans-serif' }}
+          style={
+            wordmarkOnly
+              ? undefined
+              : { fontFamily: '"Arial Black", "Trebuchet MS", sans-serif' }
+          }
         >
           FINSER{" "}
           <span

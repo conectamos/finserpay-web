@@ -190,7 +190,10 @@ test("la impresión aísla una hoja A4 y conserva colores y bloques completos", 
   assert.match(css, /border-radius:\s*14px/);
   assert.match(css, /background:\s*#fffaf2/);
   assert.match(css, /background:\s*#359523/);
-  assert.match(css, /\.dialogBrand p\s*{[\s\S]*font-size:\s*1\.85rem/);
+  assert.match(
+    css,
+    /\.dialogBrand p\s*{[\s\S]*font-family:\s*Arial, Helvetica, sans-serif !important;[\s\S]*font-size:\s*1\.8rem[\s\S]*font-weight:\s*800 !important/,
+  );
   assert.match(css, /\.dialogWave\s*{[\s\S]*bottom:\s*-1\.8rem/);
   assert.match(css, /prefers-reduced-motion:\s*reduce/);
 });

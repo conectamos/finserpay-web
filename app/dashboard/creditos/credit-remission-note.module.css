@@ -139,8 +139,10 @@
 }
 
 .dialogBrand p {
-  font-size: 1.85rem;
-  letter-spacing: 0.035em;
+  font-family: Arial, Helvetica, sans-serif !important;
+  font-size: 1.8rem;
+  font-weight: 800 !important;
+  letter-spacing: -0.015em;
   line-height: 1;
 }
 
@@ -522,7 +524,7 @@
   }
 
   .dialogBrand p {
-    font-size: 1.55rem;
+    font-size: 1.5rem;
   }
 
   .dialogBody {
