@@ -348,3 +348,29 @@ test("el CSS del paso 2 responde sin overflow horizontal y respeta reduced motio
   );
   assert.doesNotMatch(styles, /overflow-x:\s*(?:auto|scroll)/);
 });
+
+test("el alcance visual fp-step2 tambien se activa en el simulador", async () => {
+  const { factory } = await stepTwoSources();
+  const appShell = sourceWindow(
+    factory,
+    '"fp-shell text-slate-950"',
+    1_000
+  );
+  const styles = await stylesPromise;
+
+  assert.match(
+    styles,
+    /\.fp-credit-factory \.fp-step2 \{/,
+    "Los estilos del rediseno estan anclados a fp-credit-factory"
+  );
+  assert.match(
+    appShell,
+    /createClientMode\s*\|\|\s*simulatorMode\s*\?\s*"fp-credit-factory"\s*:\s*""/,
+    "El simulador debe recibir el contenedor fp-credit-factory que habilita los estilos fp-step2"
+  );
+  assert.doesNotMatch(
+    appShell,
+    /createClientMode\s*\?\s*"fp-credit-factory"\s*:\s*""/,
+    "No se debe limitar el alcance de fp-step2 unicamente al flujo de Fabrica"
+  );
+});

@@ -11500,7 +11500,7 @@ export default function CreditFactoryConsole({
               simulatorMode ? "fp-simulator-app" : "",
               embeddedClientLookup ? "fp-client-lookup-embedded" : "min-h-screen px-4 py-6",
               clientLookupMode ? "fp-client-lookup" : "fp-seller-app",
-              createClientMode ? "fp-credit-factory" : "",
+              createClientMode || simulatorMode ? "fp-credit-factory" : "",
             ].join(" ")
       }
     >
