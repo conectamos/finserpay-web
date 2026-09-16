@@ -292,7 +292,7 @@ test("los fantasmas historicos sin DataCredito no bloquean una identidad", async
   assert.ok(identityPredicate > materializedPredicate);
 });
 
-test("el muro muestra solo solicitudes materializadas por DataCredito, incluso ante error tecnico", async () => {
+test("el muro usa columnas livianas de DataCredito y no abre el payload de cada borrador", async () => {
   const source = await readProjectFile("lib/solicitudes-storage.ts");
   const draftQuery = sourceBetween(
     source,
@@ -302,16 +302,29 @@ test("el muro muestra solo solicitudes materializadas por DataCredito, incluso a
 
   assert.match(
     draftQuery,
-    /COALESCE\(dc\."status", NULLIF\(d\."payload"->>'dataCreditoStatus', ''\)\) IS NOT NULL/
+    /d\."dataCreditoAssessmentId" IS NOT NULL[\s\S]*?OR NULLIF\(d\."dataCreditoStatus", ''\) IS NOT NULL/
   );
   assert.match(
     draftQuery,
-    /COALESCE\(dc\."errorCode", NULLIF\(d\."payload"->>'dataCreditoErrorCode', ''\)\)/
+    /COALESCE\(dc\."status", NULLIF\(d\."dataCreditoStatus", ''\)\) AS "dataCreditoStatus"/
   );
-  assert.doesNotMatch(draftQuery, /dc\."status" IS NOT NULL/);
+  assert.match(
+    draftQuery,
+    /COALESCE\(dc\."errorCode", NULLIF\(d\."dataCreditoErrorCode", ''\)\) AS "dataCreditoErrorCode"/
+  );
+  assert.match(
+    draftQuery,
+    /WHERE assessment\."id" = d\."dataCreditoAssessmentId"/
+  );
+  assert.doesNotMatch(draftQuery, /assessment\."id"::text/);
+  assert.doesNotMatch(draftQuery, /d\."payload"/);
   assert.match(source, /solicitudOrigen: "DATACREDITO"/);
   assert.match(source, /dataCreditoStatus: "PENDING"/);
   assert.match(source, /markSolicitudDataCreditoTechnicalError/);
+  assert.match(
+    source,
+    /markSolicitudDataCreditoTechnicalError[\s\S]*?"dataCreditoStatus" = 'NO_EVALUADO'[\s\S]*?"dataCreditoErrorCode" = \$3::text/
+  );
 });
 
 test("las salidas tecnicas posteriores a la reserva permanecen visibles y gestionables", async () => {

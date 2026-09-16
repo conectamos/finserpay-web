@@ -234,6 +234,25 @@ test("incluye preflight idempotente antes de habilitar la integracion", () => {
   assert.match(storage, /verifyDataCreditoDailyQuotaSchema/);
 });
 
+test("indexa y verifica la consulta del ultimo assessment asociado al credito", () => {
+  assert.match(
+    setupSql,
+    /CREATE INDEX IF NOT EXISTS "DataCreditoAssessment_credit_updated_idx"\s+ON "DataCreditoAssessment" \("creditId", "updatedAt" DESC\);/
+  );
+  assert.match(
+    storage,
+    /const REQUIRED_ASSESSMENT_INDEXES = \[[\s\S]*"DataCreditoAssessment_credit_updated_idx"[\s\S]*\] as const;/
+  );
+  assert.match(
+    storage,
+    /const creditUpdatedIndex = assessmentIndex\(\s*"DataCreditoAssessment_credit_updated_idx"\s*\);/
+  );
+  assert.match(
+    storage,
+    /matchesDataCreditoSchemaIndex\(creditUpdatedIndex, \{\s*keys: \[\{ column: "creditId" \}, \{ column: "updatedAt" \}\],\s*predicate: null,\s*unique: false,\s*\}\)/
+  );
+});
+
 test("migra STALE_PENDING historicos al bloqueo ambiguo antes del TTL global", () => {
   const legacyBackfill = setupSql.search(
     /UPDATE "DataCreditoAssessment"\r?\nSET "errorCode" = 'PROVIDER_OUTCOME_AMBIGUOUS',[\s\S]*?WHERE "status" = 'NO_EVALUADO'\r?\n  AND "errorCode" = 'STALE_PENDING';/

@@ -187,6 +187,8 @@ export async function ensureSolicitudSchema() {
           "imei",
           "plataforma",
           "dataCreditoAssessmentId",
+          "dataCreditoStatus",
+          "dataCreditoErrorCode",
           "creditoId",
           "closedReason",
           "payload",
@@ -217,6 +219,8 @@ export async function ensureSolicitudSchema() {
           "imei" TEXT,
           "plataforma" TEXT,
           "dataCreditoAssessmentId" UUID,
+          "dataCreditoStatus" TEXT,
+          "dataCreditoErrorCode" TEXT,
           "creditoId" INTEGER,
           "closedReason" TEXT,
           "payload" JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -232,6 +236,8 @@ export async function ensureSolicitudSchema() {
         ALTER TABLE "CreditoBorrador"
           ADD COLUMN IF NOT EXISTS "plataforma" TEXT,
           ADD COLUMN IF NOT EXISTS "dataCreditoAssessmentId" UUID,
+          ADD COLUMN IF NOT EXISTS "dataCreditoStatus" TEXT,
+          ADD COLUMN IF NOT EXISTS "dataCreditoErrorCode" TEXT,
           ADD COLUMN IF NOT EXISTS "creditoId" INTEGER,
           ADD COLUMN IF NOT EXISTS "closedReason" TEXT,
           ADD COLUMN IF NOT EXISTS "expiresAt" TIMESTAMPTZ,
@@ -242,6 +248,49 @@ export async function ensureSolicitudSchema() {
         UPDATE "CreditoBorrador"
         SET "expiresAt" = "createdAt" + INTERVAL '15 days'
         WHERE "estado" = 'ABIERTO' AND "expiresAt" IS NULL
+      `);
+      await prisma.$executeRawUnsafe(`
+        UPDATE "CreditoBorrador"
+        SET "dataCreditoAssessmentId" = COALESCE(
+              "dataCreditoAssessmentId",
+              CASE
+                WHEN COALESCE("payload"->>'dataCreditoAssessmentId', '')
+                  ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                THEN ("payload"->>'dataCreditoAssessmentId')::uuid
+                ELSE NULL::uuid
+              END
+            ),
+            "dataCreditoStatus" = COALESCE(
+              NULLIF("dataCreditoStatus", ''),
+              NULLIF("payload"->>'dataCreditoStatus', ''),
+              CASE
+                WHEN UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+                  OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+                THEN 'PENDING'
+                ELSE NULL
+              END
+            ),
+            "dataCreditoErrorCode" = COALESCE(
+              NULLIF("dataCreditoErrorCode", ''),
+              NULLIF("payload"->>'dataCreditoErrorCode', '')
+            )
+        WHERE (
+            "dataCreditoAssessmentId" IS NULL
+            AND COALESCE("payload"->>'dataCreditoAssessmentId', '')
+              ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          )
+          OR (
+            NULLIF("dataCreditoStatus", '') IS NULL
+            AND (
+              NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+              OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+              OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+            )
+          )
+          OR (
+            NULLIF("dataCreditoErrorCode", '') IS NULL
+            AND NULLIF("payload"->>'dataCreditoErrorCode', '') IS NOT NULL
+          )
       `);
       await prisma.$executeRawUnsafe(
         `CREATE INDEX IF NOT EXISTS "CreditoBorrador_expiresAt_idx" ON "CreditoBorrador" ("expiresAt")`
@@ -870,6 +919,10 @@ export async function reserveSolicitudForIdentity(input: {
           UPDATE "CreditoBorrador"
           SET "plataforma" = $2,
               "imei" = COALESCE(NULLIF($3::text, ''), "imei"),
+              "dataCreditoStatus" = COALESCE(
+                NULLIF("dataCreditoStatus", ''),
+                'PENDING'
+              ),
               "payload" = COALESCE("payload", '{}'::jsonb)
                 || jsonb_build_object('plataformaDispositivo', $2::text)
                 || CASE
@@ -906,9 +959,10 @@ export async function reserveSolicitudForIdentity(input: {
       `
         INSERT INTO "CreditoBorrador" (
           "usuarioId", "vendedorId", "sedeId", "currentStep",
-          "clienteDocumento", "imei", "plataforma", "payload", "expiresAt", "updatedAt"
+          "clienteDocumento", "imei", "plataforma", "dataCreditoStatus",
+          "payload", "expiresAt", "updatedAt"
         )
-        VALUES ($1, $2, $3, 1, $4, NULLIF($5::text, ''), $6, $7::jsonb, CURRENT_TIMESTAMP + INTERVAL '15 days', CURRENT_TIMESTAMP)
+        VALUES ($1, $2, $3, 1, $4, NULLIF($5::text, ''), $6, 'PENDING', $7::jsonb, CURRENT_TIMESTAMP + INTERVAL '15 days', CURRENT_TIMESTAMP)
         RETURNING "id"
       `,
       input.usuarioId,
@@ -1338,6 +1392,8 @@ export async function attachDataCreditoToSolicitud(input: {
       UPDATE "CreditoBorrador"
       SET "dataCreditoAssessmentId" = $2::uuid,
           "plataforma" = COALESCE("plataforma", $3),
+          "dataCreditoStatus" = $5::text,
+          "dataCreditoErrorCode" = $6::text,
           "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
             'solicitudOrigen', 'DATACREDITO',
             'dataCreditoAssessmentId', $2::text,
@@ -1390,6 +1446,8 @@ export async function markSolicitudDataCreditoTechnicalError(input: {
     `
       UPDATE "CreditoBorrador"
       SET "plataforma" = COALESCE("plataforma", $2),
+          "dataCreditoStatus" = 'NO_EVALUADO',
+          "dataCreditoErrorCode" = $3::text,
           "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
             'solicitudOrigen', 'DATACREDITO',
             'dataCreditoStatus', 'NO_EVALUADO',
@@ -1426,6 +1484,8 @@ export async function markSolicitudDataCreditoRecoverablePending(input: {
     `
       UPDATE "CreditoBorrador"
       SET "plataforma" = COALESCE("plataforma", $2),
+          "dataCreditoStatus" = 'PENDING',
+          "dataCreditoErrorCode" = $3::text,
           "payload" = COALESCE("payload", '{}'::jsonb) || jsonb_build_object(
             'solicitudOrigen', 'DATACREDITO',
             'dataCreditoStatus', 'PENDING',
@@ -1906,7 +1966,7 @@ function buildCommonWhere(input: {
 }
 
 async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters) {
-  const platform = `COALESCE(NULLIF(d."plataforma", ''), NULLIF(d."payload"->>'plataformaDispositivo', ''), dc."platform")`;
+  const platform = `COALESCE(NULLIF(d."plataforma", ''), dc."platform")`;
   const where = buildCommonWhere({
     alias: "d",
     source: "DRAFT",
@@ -1920,9 +1980,7 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
     d."creditoId" IS NULL
     AND (
       d."dataCreditoAssessmentId" IS NOT NULL
-      OR UPPER(COALESCE(d."payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
-      OR COALESCE(dc."status", NULLIF(d."payload"->>'dataCreditoStatus', '')) IS NOT NULL
-      OR NULLIF(d."payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+      OR NULLIF(d."dataCreditoStatus", '') IS NOT NULL
     )
     AND (
       d."estado" = 'ABIERTO'
@@ -1943,8 +2001,8 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
         d."updatedAt", d."closedAt", d."expiresAt",
         u."nombre" AS "usuarioNombre", v."nombre" AS "vendedorNombre",
         s."nombre" AS "sedeNombre", a."nombre" AS "aliadoNombre",
-        COALESCE(dc."status", NULLIF(d."payload"->>'dataCreditoStatus', '')) AS "dataCreditoStatus",
-        COALESCE(dc."errorCode", NULLIF(d."payload"->>'dataCreditoErrorCode', '')) AS "dataCreditoErrorCode",
+        COALESCE(dc."status", NULLIF(d."dataCreditoStatus", '')) AS "dataCreditoStatus",
+        COALESCE(dc."errorCode", NULLIF(d."dataCreditoErrorCode", '')) AS "dataCreditoErrorCode",
         COALESCE(dc."updatedAt", d."updatedAt") AS "dataCreditoUpdatedAt",
         veriff."status" AS "veriffStatus", veriff."updatedAt" AS "veriffUpdatedAt",
         firma."status" AS "firmaStatus", firma."lastError" AS "firmaLastError",
@@ -1958,10 +2016,7 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
       LEFT JOIN LATERAL (
         SELECT assessment."status", assessment."errorCode", assessment."platform", assessment."updatedAt"
         FROM "DataCreditoAssessment" assessment
-        WHERE assessment."id"::text = COALESCE(
-          d."dataCreditoAssessmentId"::text,
-          NULLIF(d."payload"->>'dataCreditoAssessmentId', '')
-        )
+        WHERE assessment."id" = d."dataCreditoAssessmentId"
         ORDER BY assessment."updatedAt" DESC LIMIT 1
       ) dc ON TRUE
       LEFT JOIN LATERAL (

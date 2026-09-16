@@ -246,6 +246,12 @@ async function runVeriffSchemaSetup() {
   `);
 
   await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "VeriffIdentityValidation_draft_idx"
+      ON "VeriffIdentityValidation" ("draftId", "id" DESC)
+      INCLUDE ("status", "updatedAt")
+  `);
+
+  await prisma.$executeRawUnsafe(`
     CREATE INDEX IF NOT EXISTS "VeriffIdentityValidation_scope_idx"
       ON "VeriffIdentityValidation" ("sedeId", "status", "createdAt" DESC)
   `);

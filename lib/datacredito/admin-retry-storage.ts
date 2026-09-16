@@ -646,6 +646,8 @@ export async function authorizeDataCreditoAdminRetry(input: {
         `
           UPDATE "CreditoBorrador" draft
           SET "dataCreditoAssessmentId" = NULL,
+              "dataCreditoStatus" = 'PENDING',
+              "dataCreditoErrorCode" = 'ASSESSMENT_RETRY_AUTHORIZED',
               "payload" = (COALESCE(draft."payload", '{}'::jsonb) - 'dataCreditoAssessmentId')
                 || jsonb_build_object(
                   'clientePrimerApellido', $3::text,

@@ -30,6 +30,8 @@ const statements = [
       "imei" TEXT,
       "plataforma" TEXT,
       "dataCreditoAssessmentId" UUID,
+      "dataCreditoStatus" TEXT,
+      "dataCreditoErrorCode" TEXT,
       "creditoId" INTEGER,
       "closedReason" TEXT,
       "payload" JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -45,6 +47,8 @@ const statements = [
     ALTER TABLE public."CreditoBorrador"
       ADD COLUMN IF NOT EXISTS "plataforma" TEXT,
       ADD COLUMN IF NOT EXISTS "dataCreditoAssessmentId" UUID,
+      ADD COLUMN IF NOT EXISTS "dataCreditoStatus" TEXT,
+      ADD COLUMN IF NOT EXISTS "dataCreditoErrorCode" TEXT,
       ADD COLUMN IF NOT EXISTS "creditoId" INTEGER,
       ADD COLUMN IF NOT EXISTS "closedReason" TEXT,
       ADD COLUMN IF NOT EXISTS "expiresAt" TIMESTAMPTZ,
@@ -59,6 +63,49 @@ const statements = [
     UPDATE public."CreditoBorrador"
     SET "expiresAt" = "createdAt" + INTERVAL '15 days'
     WHERE "estado" = 'ABIERTO' AND "expiresAt" IS NULL
+  `,
+  `
+    UPDATE public."CreditoBorrador"
+    SET "dataCreditoAssessmentId" = COALESCE(
+          "dataCreditoAssessmentId",
+          CASE
+            WHEN COALESCE("payload"->>'dataCreditoAssessmentId', '')
+              ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN ("payload"->>'dataCreditoAssessmentId')::uuid
+            ELSE NULL::uuid
+          END
+        ),
+        "dataCreditoStatus" = COALESCE(
+          NULLIF("dataCreditoStatus", ''),
+          NULLIF("payload"->>'dataCreditoStatus', ''),
+          CASE
+            WHEN UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+              OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+            THEN 'PENDING'
+            ELSE NULL
+          END
+        ),
+        "dataCreditoErrorCode" = COALESCE(
+          NULLIF("dataCreditoErrorCode", ''),
+          NULLIF("payload"->>'dataCreditoErrorCode', '')
+        )
+    WHERE (
+        "dataCreditoAssessmentId" IS NULL
+        AND COALESCE("payload"->>'dataCreditoAssessmentId', '')
+          ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      )
+      OR (
+        NULLIF("dataCreditoStatus", '') IS NULL
+        AND (
+          NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+          OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+          OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+        )
+      )
+      OR (
+        NULLIF("dataCreditoErrorCode", '') IS NULL
+        AND NULLIF("payload"->>'dataCreditoErrorCode', '') IS NOT NULL
+      )
   `,
   `CREATE INDEX IF NOT EXISTS "CreditoBorrador_expiresAt_idx" ON public."CreditoBorrador" ("expiresAt")`,
   `CREATE INDEX IF NOT EXISTS "CreditoBorrador_assessment_idx" ON public."CreditoBorrador" ("dataCreditoAssessmentId")`,
@@ -81,11 +128,24 @@ const statements = [
     ON public."CreditoBorrador" ((regexp_replace(COALESCE("imei", ''), '[^0-9]', '', 'g')))
     WHERE "estado" = 'ABIERTO'
   `,
+  `
+    DO $$
+    BEGIN
+      IF to_regclass('public."VeriffIdentityValidation"') IS NOT NULL THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS "VeriffIdentityValidation_draft_idx"
+          ON public."VeriffIdentityValidation" ("draftId", "id" DESC)
+          INCLUDE ("status", "updatedAt")';
+      END IF;
+    END
+    $$
+  `,
 ];
 
 const expectedColumns = new Map([
   ["plataforma", "text"],
   ["dataCreditoAssessmentId", "uuid"],
+  ["dataCreditoStatus", "text"],
+  ["dataCreditoErrorCode", "text"],
   ["creditoId", "integer"],
   ["closedReason", "text"],
   ["expiresAt", "timestamp with time zone"],
@@ -148,6 +208,29 @@ async function assertCompatibleSchema() {
   for (const index of expectedCreditIndexes) {
     if (!actualCreditIndexes.has(index)) {
       throw new Error(`Indice faltante para solicitudes: ${index}.`);
+    }
+  }
+
+  const veriffTable = await client.query(
+    `SELECT to_regclass('public."VeriffIdentityValidation"') AS "tableName"`
+  );
+  if (veriffTable.rows[0]?.tableName) {
+    const veriffIndexes = await client.query(
+      `
+        SELECT indexname
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'VeriffIdentityValidation'
+      `
+    );
+    if (
+      !veriffIndexes.rows.some(
+        (row) => row.indexname === "VeriffIdentityValidation_draft_idx"
+      )
+    ) {
+      throw new Error(
+        "Indice faltante para solicitudes: VeriffIdentityValidation_draft_idx."
+      );
     }
   }
 }
