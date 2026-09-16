@@ -1,3 +1,11 @@
+@font-face {
+  font-family: "Finser Remission Wordmark";
+  src: url("/pdf-fonts/Geist-Regular.ttf") format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
 .launcher {
   margin-top: 1rem;
   display: flex;
@@ -139,11 +147,16 @@
 }
 
 .dialogBrand p {
-  font-family: Arial, Helvetica, sans-serif !important;
-  font-size: 1.8rem;
-  font-weight: 800 !important;
-  letter-spacing: -0.015em;
+  color: #359523 !important;
+  font-family: "Finser Remission Wordmark", Arial, sans-serif !important;
+  font-size: 1.75rem;
+  font-weight: 700 !important;
+  letter-spacing: 0.015em;
   line-height: 1;
+}
+
+.dialogBrand p span {
+  color: #ffffff !important;
 }
 
 .dialogClose {
@@ -524,7 +537,7 @@
   }
 
   .dialogBrand p {
-    font-size: 1.5rem;
+    font-size: 1.48rem;
   }
 
   .dialogBody {
