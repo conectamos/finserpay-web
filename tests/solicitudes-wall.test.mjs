@@ -674,6 +674,43 @@ test("el muro muestra y ordena por la fecha de creación original", async () => 
   assert.match(storage, /at: toIso\(row\.finalizedAt \|\| row\.createdAt\)/);
 });
 
+test("alinea las acciones de escritorio en dos carriles y conserva el flujo movil", async () => {
+  const ui = await readProjectFile(
+    "app/dashboard/solicitudes/solicitudes-wall-client.tsx"
+  );
+  const desktop = sourceBlock(
+    ui,
+    '<div className="hidden lg:block">',
+    '<div className="grid gap-3 lg:hidden">'
+  );
+  const mobile = sourceBlock(
+    ui,
+    '<div className="grid gap-3 lg:hidden">',
+    'aria-labelledby="solicitud-detail-title"'
+  );
+
+  assert.match(
+    desktop,
+    /grid grid-cols-\[184px_112px\] justify-end gap-2/
+  );
+  assert.equal(
+    (desktop.match(/w-full justify-center whitespace-nowrap/g) || []).length,
+    4,
+    "cada variante de accion debe ocupar por completo su carril"
+  );
+  assert.equal(
+    (
+      desktop.match(
+        /col-start-2 w-full justify-center whitespace-nowrap/g
+      ) || []
+    ).length,
+    2,
+    "Continuar y Ver deben permanecer en el segundo carril"
+  );
+  assert.doesNotMatch(desktop, /flex justify-end gap-2/);
+  assert.match(mobile, /flex flex-wrap justify-end gap-2/);
+});
+
 test("central retoma y finaliza sin reemplazar al asesor propietario", async () => {
   const [draftRoute, creditRoute, storage, factory, assessmentRoute, gate] =
     await Promise.all([
