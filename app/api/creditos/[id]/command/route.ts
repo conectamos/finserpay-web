@@ -31,6 +31,7 @@ import {
   unlockEqualityDevice,
 } from "@/lib/equality-zero-touch";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { extractCreditFactorySnapshotDetails } from "@/lib/credit-factory-snapshot";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import { hasCreditAmortization } from "@/lib/credit-amortization-storage";
@@ -148,7 +149,11 @@ function extractFamilyReferences(snapshot: unknown) {
     );
 }
 
-function serializeCredit(item: SerializedCreditSource, payment?: PaymentSummary) {
+function serializeCredit(
+  item: SerializedCreditSource,
+  payment?: PaymentSummary,
+  canViewSensitive = false
+) {
   const summary = resolveCreditPaymentSummary({
     montoCredito: item.montoCredito,
     cuotaInicial: item.cuotaInicial,
@@ -165,6 +170,9 @@ function serializeCredit(item: SerializedCreditSource, payment?: PaymentSummary)
     abonos: summary.totalAbonado > 0 ? [{ valor: summary.totalAbonado }] : [],
     settled: Boolean(item.pazYSalvoEmitidoAt),
   });
+  const factorySnapshotDetails = extractCreditFactorySnapshotDetails(
+    item.contratoSnapshot
+  );
 
   return {
     id: item.id,
@@ -182,11 +190,22 @@ function serializeCredit(item: SerializedCreditSource, payment?: PaymentSummary)
     clienteDepartamento: item.clienteDepartamento,
     clienteCiudad: item.clienteCiudad,
     clienteGenero: item.clienteGenero,
+    clienteEstadoCivil: canViewSensitive
+      ? factorySnapshotDetails.clienteEstadoCivil
+      : null,
+    clienteEstrato: canViewSensitive
+      ? factorySnapshotDetails.clienteEstrato
+      : null,
     imei: item.imei,
     deviceUid: item.deviceUid,
     referenciaEquipo: item.referenciaEquipo,
     equipoMarca: item.equipoMarca,
     equipoModelo: item.equipoModelo,
+    plataformaDispositivo:
+      factorySnapshotDetails.paso2.plataformaDispositivo,
+    resumenFabrica: {
+      paso2: factorySnapshotDetails.paso2,
+    },
     valorEquipoTotal: item.valorEquipoTotal,
     saldoBaseFinanciado: item.saldoBaseFinanciado,
     montoCredito: item.montoCredito,
@@ -594,7 +613,7 @@ export async function POST(
         return NextResponse.json({
           ok: true,
           message: `Plan actualizado a ${nextInstallments} cuotas ${getPaymentFrequencyLabel(nextFrequency).toLowerCase()}`,
-          item: serializeCredit(updated, paymentSummary),
+          item: serializeCredit(updated, paymentSummary, admin),
           remote: null,
         });
       }
@@ -690,7 +709,7 @@ export async function POST(
         return NextResponse.json({
           ok: true,
           message: "Credito anulado correctamente",
-          item: serializeCredit(updated, paymentSummary),
+          item: serializeCredit(updated, paymentSummary, admin),
           remote: null,
         });
       }
@@ -807,7 +826,7 @@ export async function POST(
     return NextResponse.json({
       ok: true,
       message: adminMessage,
-      item: serializeCredit(updated, paymentSummary),
+      item: serializeCredit(updated, paymentSummary, admin),
       remote: payloadSource
         ? {
             payload: payloadSource,

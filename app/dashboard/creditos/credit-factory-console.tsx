@@ -197,6 +197,31 @@ type FamilyReference = {
   telefono: string;
 };
 
+type CreditFactoryStepTwoSummary = {
+  origen: "CONTRATO" | "ACTUAL";
+  plataformaDispositivo: string | null;
+  equipoMarca: string | null;
+  equipoModelo: string | null;
+  equipoReferencia: string | null;
+  imei: string | null;
+  valorEquipoTotal: number | null;
+  cuotaInicial: number | null;
+  saldoBaseFinanciado: number | null;
+  montoCredito: number | null;
+  tasaInteresEa: number | null;
+  valorInteres: number | null;
+  fianzaPorcentaje: number | null;
+  valorFianza: number | null;
+  valorCuota: number | null;
+  valorCuotaComercial: number | null;
+  numeroCuotas: number | null;
+  frecuenciaPago: string | null;
+  fechaPrimerPago: string | null;
+  seguroCuotaPorcentaje: number | null;
+  valorSeguro: number | null;
+  cargosIncorporados: number | null;
+};
+
 type EvidenceAudit = {
   capturedAt: string;
   source: "camera" | "upload";
@@ -541,11 +566,17 @@ type CreditItem = {
   clienteDepartamento?: string | null;
   clienteCiudad?: string | null;
   clienteGenero?: string | null;
+  clienteEstadoCivil?: string | null;
+  clienteEstrato?: string | null;
   imei: string;
   deviceUid: string;
   referenciaEquipo: string | null;
   equipoMarca: string | null;
   equipoModelo: string | null;
+  plataformaDispositivo?: string | null;
+  resumenFabrica?: {
+    paso2: CreditFactoryStepTwoSummary;
+  } | null;
   valorEquipoTotal: number;
   saldoBaseFinanciado: number;
   montoCredito: number;
@@ -1108,6 +1139,102 @@ function humanizeConstant(value: unknown) {
 function formatPercent(value: number | null | undefined) {
   const numeric = Number(value || 0);
   return `${Math.max(0, Math.min(100, Math.round(numeric)))}%`;
+}
+
+function dossierText(value: unknown) {
+  const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
+  return normalized || "No registrado";
+}
+
+function dossierOptionLabel(
+  options: ReadonlyArray<{ value: string; label: string }>,
+  value: unknown
+) {
+  const normalized = String(value ?? "").trim();
+
+  if (!normalized) {
+    return "No registrado";
+  }
+
+  return (
+    options.find((option) => option.value === normalized)?.label ||
+    humanizeConstant(normalized)
+  );
+}
+
+function dossierDate(value: string | null | undefined) {
+  const calendarKey = dateOnly(value);
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(calendarKey)) {
+    return "No registrado";
+  }
+
+  const parsed = parseColombiaDate(calendarKey);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return "No registrado";
+  }
+
+  return parsed.toLocaleDateString("es-CO", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: COLOMBIA_TIME_ZONE,
+  });
+}
+
+function dossierPercentage(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "No registrado";
+  }
+
+  return `${new Intl.NumberFormat("es-CO", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(Number(value))}%`;
+}
+
+function dossierCurrency(value: number | null | undefined) {
+  return value === null || value === undefined || !Number.isFinite(Number(value))
+    ? "No registrado"
+    : currency(Number(value));
+}
+
+function dossierAmountWithPercentage(
+  amount: number | null | undefined,
+  percentage: number | null | undefined
+) {
+  if (amount === null || amount === undefined || !Number.isFinite(Number(amount))) {
+    return "No registrado";
+  }
+
+  const percentageLabel = dossierPercentage(percentage);
+  return percentageLabel === "No registrado"
+    ? dossierCurrency(amount)
+    : dossierCurrency(amount) + " · " + percentageLabel;
+}
+
+function DossierInfoField({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`min-w-0 border-b border-[var(--fp-border)] py-3 ${className}`.trim()}
+    >
+      <dt className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
+        {label}
+      </dt>
+      <dd className="mt-1 break-words text-sm font-bold leading-5 text-[var(--fp-graphite)]">
+        {value}
+      </dd>
+    </div>
+  );
 }
 
 function paymentMethodLabel(value: string) {
@@ -3305,11 +3432,123 @@ export default function CreditFactoryConsole({
         : initialSeller
           ? `Sede ${initialSeller.sedeNombre}`
           : `Sede ${initialSession.sedeNombre}`;
+  const selectedCreditDocumentTypeLabel = selectedCredit
+    ? dossierOptionLabel(
+        DOCUMENT_TYPE_OPTIONS,
+        selectedCredit.clienteTipoDocumento
+      )
+    : "-";
   const selectedCreditDocumentLabel = selectedCredit
     ? `${humanizeConstant(selectedCredit.clienteTipoDocumento || "CC")} ${
         selectedCredit.clienteDocumento || "Sin documento"
       }`
     : "-";
+  const selectedCreditGenderLabel = selectedCredit
+    ? dossierOptionLabel(GENDER_OPTIONS, selectedCredit.clienteGenero)
+    : "No registrado";
+  const selectedCreditMaritalStatusLabel = selectedCredit
+    ? dossierOptionLabel(
+        MARITAL_STATUS_OPTIONS,
+        selectedCredit.clienteEstadoCivil
+      )
+    : "No registrado";
+  const selectedCreditDepartmentLabel = selectedCredit
+    ? dossierText(
+        getColombiaDepartmentLabel(selectedCredit.clienteDepartamento)
+      )
+    : "No registrado";
+  const selectedCreditFactoryStepTwo = selectedCredit?.resumenFabrica?.paso2;
+  const selectedFactoryUsesContractSnapshot =
+    selectedCreditFactoryStepTwo?.origen === "CONTRATO";
+  const selectedFactoryPlatform =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.plataformaDispositivo ?? null
+      : selectedCredit?.plataformaDispositivo ?? null;
+  const selectedFactoryEquipmentBrand =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.equipoMarca ?? null
+      : selectedCredit?.equipoMarca ?? null;
+  const selectedFactoryEquipmentModel =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.equipoModelo ?? null
+      : selectedCredit?.equipoModelo ?? null;
+  const selectedFactoryImei =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.imei ?? null
+      : selectedCredit?.imei ?? selectedCredit?.deviceUid ?? null;
+  const selectedFactoryEquipmentReference =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.equipoReferencia ?? null
+      : selectedCredit?.referenciaEquipo ||
+        [selectedCredit?.equipoMarca, selectedCredit?.equipoModelo]
+          .filter(Boolean)
+          .join(" ") ||
+        null;
+  const selectedFactoryEquipmentValue =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.valorEquipoTotal ?? null
+      : selectedCredit?.valorEquipoTotal ?? null;
+  const selectedFactoryInitialPayment =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.cuotaInicial ?? null
+      : selectedCredit?.cuotaInicial ?? null;
+  const selectedFactoryFinancedBalance =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.saldoBaseFinanciado ?? null
+      : selectedCredit?.saldoBaseFinanciado ?? null;
+  const selectedFactoryTotalObligation =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.montoCredito ?? null
+      : selectedCredit?.montoCredito ?? null;
+  const selectedFactoryInterestRate =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.tasaInteresEa ?? null
+      : selectedCredit?.tasaInteresEa ?? null;
+  const selectedFactoryInterestValue =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.valorInteres ?? null
+      : selectedCredit?.valorInteres ?? null;
+  const selectedFactorySuretyPercentage =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.fianzaPorcentaje ?? null
+      : selectedCredit?.fianzaPorcentaje ?? null;
+  const selectedFactorySuretyValue =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.valorFianza ?? null
+      : selectedCredit?.valorFianza ?? null;
+  const selectedFactoryInstallmentCount =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.numeroCuotas ?? null
+      : selectedCredit?.plazoMeses ?? null;
+  const selectedFactoryPaymentFrequency =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.frecuenciaPago ?? null
+      : selectedCredit?.frecuenciaPago ?? null;
+  const selectedFactoryInstallmentValue =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.valorCuotaComercial ??
+        selectedCreditFactoryStepTwo?.valorCuota ??
+        null
+      : selectedCreditCommercialInstallment;
+  const selectedFactoryFirstPaymentDate =
+    selectedFactoryUsesContractSnapshot
+      ? selectedCreditFactoryStepTwo?.fechaPrimerPago ?? null
+      : selectedCredit?.fechaPrimerPago ?? null;
+  const selectedFactoryInsurancePercentage = selectedFactoryUsesContractSnapshot
+    ? selectedCreditFactoryStepTwo?.seguroCuotaPorcentaje ?? null
+    : null;
+  const selectedFactoryInsuranceValue = selectedFactoryUsesContractSnapshot
+    ? selectedCreditFactoryStepTwo?.valorSeguro ?? null
+    : null;
+  const selectedFactoryLegacyCharges = selectedFactoryUsesContractSnapshot
+    ? selectedCreditFactoryStepTwo?.cargosIncorporados ?? null
+    : null;
+  const selectedFactoryInitialPaymentPercentage =
+    Number(selectedFactoryEquipmentValue) > 0
+      ? (Number(selectedFactoryInitialPayment) /
+          Number(selectedFactoryEquipmentValue)) *
+        100
+      : null;
   const selectedCreditLocationLine = selectedCredit
     ? [
         selectedCredit.clienteDireccion,
@@ -18285,6 +18524,148 @@ export default function CreditFactoryConsole({
                               <FileText className="h-4 w-4" strokeWidth={1.8} />
                               Documentos
                             </button>
+                          </div>
+
+                          <div
+                            data-client-factory-summary
+                            className="mt-6 border-t border-[var(--fp-border)] pt-6"
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div>
+                                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#5c7a13]">
+                                  Información consolidada
+                                </p>
+                                <h5 className="mt-1 text-lg font-black text-[var(--fp-graphite)]">
+                                  Resumen de Fábrica
+                                </h5>
+                                <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
+                                  Datos registrados en este crédito durante los pasos 1 y 2. Esta sección es únicamente informativa.
+                                </p>
+                              </div>
+                              <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#c9df91] bg-[var(--fp-lime-soft)] px-3 py-1.5 text-xs font-black text-[#4f6f0c]">
+                                <Info className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
+                                Solo lectura
+                              </span>
+                            </div>
+
+                            <section
+                              data-factory-step="1"
+                              aria-labelledby="client-factory-step-one-title"
+                              className="mt-6"
+                            >
+                              <div className="flex items-start gap-3">
+                                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--fp-lime-soft)] text-[#5c7a13]">
+                                  <UserRound className="h-5 w-5" strokeWidth={1.9} aria-hidden="true" />
+                                </span>
+                                <div>
+                                  <h6 id="client-factory-step-one-title" className="text-base font-black text-[var(--fp-graphite)]">
+                                    Paso 1 · Cliente
+                                  </h6>
+                                  <p className="mt-1 text-sm text-[var(--fp-muted)]">
+                                    Identificación, contacto, residencia y referencias registradas.
+                                  </p>
+                                </div>
+                              </div>
+
+                              <dl className="mt-4 grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
+                                <DossierInfoField label="Nombre completo" value={dossierText(selectedCredit.clienteNombre)} />
+                                <DossierInfoField label="Primer nombre" value={dossierText(selectedCredit.clientePrimerNombre)} />
+                                <DossierInfoField label="Primer apellido" value={dossierText(selectedCredit.clientePrimerApellido)} />
+                                <DossierInfoField label="Tipo de documento" value={selectedCreditDocumentTypeLabel} />
+                                <DossierInfoField label="Número de documento" value={dossierText(selectedCredit.clienteDocumento)} />
+                                <DossierInfoField label="Fecha de expedición" value={dossierDate(selectedCredit.clienteFechaExpedicion)} />
+                                <DossierInfoField label="Fecha de nacimiento" value={dossierDate(selectedCredit.clienteFechaNacimiento)} />
+                                <DossierInfoField label="Género" value={selectedCreditGenderLabel} />
+                                <DossierInfoField label="Estado civil" value={selectedCreditMaritalStatusLabel} />
+                                <DossierInfoField label="Estrato" value={selectedCredit.clienteEstrato ? `Estrato ${selectedCredit.clienteEstrato}` : "No registrado"} />
+                                <DossierInfoField label="Celular / WhatsApp" value={selectedCredit.clienteTelefono ? `+57 ${selectedCredit.clienteTelefono}` : "No registrado"} />
+                                <DossierInfoField label="Correo electrónico" value={dossierText(selectedCredit.clienteCorreo)} />
+                                <DossierInfoField label="Departamento de residencia" value={selectedCreditDepartmentLabel} />
+                                <DossierInfoField label="Ciudad de residencia" value={dossierText(selectedCredit.clienteCiudad)} />
+                                <DossierInfoField label="Dirección completa" value={dossierText(selectedCredit.clienteDireccion)} className="sm:col-span-2 lg:col-span-3" />
+                              </dl>
+
+                              <div className="mt-5">
+                                <div className="flex items-center gap-2">
+                                  <IdCard className="h-5 w-5 text-[#5c7a13]" strokeWidth={1.8} aria-hidden="true" />
+                                  <h6 className="text-sm font-black text-[var(--fp-graphite)]">
+                                    Referencias familiares
+                                  </h6>
+                                </div>
+                                {selectedCredit.referenciasFamiliares.length > 0 ? (
+                                  <div role="list" className="mt-3 grid gap-5 md:grid-cols-2">
+                                    {selectedCredit.referenciasFamiliares.map((reference, index) => (
+                                      <div
+                                        role="listitem"
+                                        key={`${reference.nombre}-${reference.telefono}-${index}`}
+                                        className="border-l-2 border-[#a6d51f] pl-4"
+                                      >
+                                        <p className="text-xs font-black uppercase tracking-[0.1em] text-[var(--fp-muted)]">
+                                          Referencia {index + 1}
+                                        </p>
+                                        <dl className="mt-1 grid gap-x-4 sm:grid-cols-2">
+                                          <DossierInfoField label="Nombre" value={dossierText(reference.nombre)} className="sm:col-span-2" />
+                                          <DossierInfoField label="Parentesco" value={dossierText(reference.parentesco)} />
+                                          <DossierInfoField label="Teléfono" value={reference.telefono ? `+57 ${reference.telefono}` : "No registrado"} />
+                                        </dl>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="mt-3 rounded-lg border border-dashed border-[var(--fp-border)] px-4 py-3 text-sm text-[var(--fp-muted)]">
+                                    No hay referencias registradas en este crédito.
+                                  </p>
+                                )}
+                              </div>
+                            </section>
+
+                            <section
+                              data-factory-step="2"
+                              aria-labelledby="client-factory-step-two-title"
+                              className="mt-7 border-t border-[var(--fp-border)] pt-6"
+                            >
+                              <div className="flex items-start gap-3">
+                                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--fp-lime-soft)] text-[#5c7a13]">
+                                  <Smartphone className="h-5 w-5" strokeWidth={1.9} aria-hidden="true" />
+                                </span>
+                                <div>
+                                  <h6 id="client-factory-step-two-title" className="text-base font-black text-[var(--fp-graphite)]">
+                                    Paso 2 · Equipo y financiación
+                                  </h6>
+                                  <p className="mt-1 text-sm text-[var(--fp-muted)]">
+                                    {selectedFactoryUsesContractSnapshot
+                                      ? "Equipo y condiciones originales aceptadas al crear este crédito."
+                                      : "Expediente legado sin resumen contractual: se muestran los datos operativos disponibles."}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <dl className="mt-4 grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
+                                <DossierInfoField label="Plataforma" value={selectedFactoryPlatform ? humanizeConstant(selectedFactoryPlatform) : "No registrado"} />
+                                <DossierInfoField label="Marca" value={dossierText(selectedFactoryEquipmentBrand)} />
+                                <DossierInfoField label="Modelo" value={dossierText(selectedFactoryEquipmentModel)} />
+                                <DossierInfoField label="Referencia del equipo" value={dossierText(selectedFactoryEquipmentReference)} />
+                                <DossierInfoField label="IMEI / deviceUid" value={dossierText(selectedFactoryImei)} className="sm:col-span-2" />
+                                <DossierInfoField label="Precio de venta acordado" value={dossierCurrency(selectedFactoryEquipmentValue)} />
+                                <DossierInfoField label="Cuota inicial" value={dossierAmountWithPercentage(selectedFactoryInitialPayment, selectedFactoryInitialPaymentPercentage)} />
+                                <DossierInfoField label="Saldo base financiado" value={dossierCurrency(selectedFactoryFinancedBalance)} />
+                                <DossierInfoField label="Intereses" value={dossierCurrency(selectedFactoryInterestValue)} />
+                                <DossierInfoField label="Tasa de interés E.A." value={dossierPercentage(selectedFactoryInterestRate)} />
+                                <DossierInfoField label="Fianza" value={dossierAmountWithPercentage(selectedFactorySuretyValue, selectedFactorySuretyPercentage)} />
+                                <DossierInfoField label="Seguro" value={dossierAmountWithPercentage(selectedFactoryInsuranceValue, selectedFactoryInsurancePercentage)} />
+                                {selectedFactoryLegacyCharges !== null ? (
+                                  <DossierInfoField label="Cargos incorporados (legado)" value={dossierCurrency(selectedFactoryLegacyCharges)} />
+                                ) : null}
+                                <DossierInfoField label="Obligación total" value={dossierCurrency(selectedFactoryTotalObligation)} />
+                                <DossierInfoField label="Número de cuotas" value={selectedFactoryInstallmentCount ? `${selectedFactoryInstallmentCount} cuotas` : "No registrado"} />
+                                <DossierInfoField label="Frecuencia" value={selectedFactoryPaymentFrequency ? getPaymentFrequencyLabel(selectedFactoryPaymentFrequency) : "No registrado"} />
+                                <DossierInfoField label="Valor de la cuota" value={dossierCurrency(selectedFactoryInstallmentValue)} />
+                                <DossierInfoField label="Primer pago" value={dossierDate(selectedFactoryFirstPaymentDate)} />
+                                <DossierInfoField label="Asesor" value={dossierText(selectedCreditAdvisorLabel)} />
+                                <DossierInfoField label="Sede" value={dossierText(selectedCredit.sede.nombre)} />
+                                <DossierInfoField label="Fecha de creación" value={dateTime(selectedCredit.createdAt)} className="sm:col-span-2 lg:col-span-3" />
+                              </dl>
+                            </section>
                           </div>
                         </section>
 

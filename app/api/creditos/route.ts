@@ -35,6 +35,7 @@ import {
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import { validateCreditContactPhones } from "@/lib/credit-contact-phones";
+import { extractCreditFactorySnapshotDetails } from "@/lib/credit-factory-snapshot";
 import {
   ARES_COMMERCIAL_AMORTIZATION_VERSION,
   calculateFrenchAmortization,
@@ -578,6 +579,9 @@ function serializeCredit(
     abonos: payment.totalAbonado > 0 ? [{ valor: payment.totalAbonado }] : [],
   });
   const valorCuotaComercial = resolveCommercialInstallment(item);
+  const factorySnapshotDetails = extractCreditFactorySnapshotDetails(
+    item.contratoSnapshot
+  );
 
   return {
     id: item.id,
@@ -595,11 +599,18 @@ function serializeCredit(
     clienteDepartamento: item.clienteDepartamento,
     clienteCiudad: item.clienteCiudad,
     clienteGenero: item.clienteGenero,
+    clienteEstadoCivil: factorySnapshotDetails.clienteEstadoCivil,
+    clienteEstrato: factorySnapshotDetails.clienteEstrato,
     imei: item.imei,
     deviceUid: item.deviceUid,
     referenciaEquipo: item.referenciaEquipo,
     equipoMarca: item.equipoMarca,
     equipoModelo: item.equipoModelo,
+    plataformaDispositivo:
+      factorySnapshotDetails.paso2.plataformaDispositivo,
+    resumenFabrica: {
+      paso2: factorySnapshotDetails.paso2,
+    },
     valorEquipoTotal: item.valorEquipoTotal,
     saldoBaseFinanciado: item.saldoBaseFinanciado,
     montoCredito: item.montoCredito,
@@ -697,6 +708,8 @@ function redactCreditForNonAdmin(item: ReturnType<typeof serializeCredit>) {
     clienteFechaExpedicion: null,
     clienteCorreo: null,
     clienteGenero: null,
+    clienteEstadoCivil: null,
+    clienteEstrato: null,
     equalityPayload: null,
     observacionAdmin: null,
     contratoIp: null,
