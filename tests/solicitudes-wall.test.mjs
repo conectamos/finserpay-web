@@ -10,6 +10,7 @@ import {
   getSolicitudActions,
   isSolicitudIdentityReleased,
   isSolicitudExpired,
+  isSolicitudVisibleOnWall,
   normalizeSolicitudFilters,
   resolveSolicitudDeliveryStage,
   resolveSolicitudProcessStage,
@@ -219,6 +220,34 @@ test("deriva etapas usando los estados reales de los subsistemas", () => {
 
   for (const [signals, expected] of cases) {
     assert.equal(resolveSolicitudStage(signals), expected);
+  }
+});
+
+test("el muro oculta canceladas y desistidas sin borrar su clasificación histórica", () => {
+  const desistida = resolveSolicitudStage({
+    source: "DRAFT",
+    draftState: "CERRADO",
+    closedReason: "DESISTIDA",
+  });
+  const cancelada = resolveSolicitudStage({
+    source: "CREDIT",
+    creditState: "CANCELADO",
+  });
+
+  assert.equal(desistida, "CANCELADA");
+  assert.equal(cancelada, "CANCELADA");
+  assert.equal(isSolicitudVisibleOnWall(desistida), false);
+  assert.equal(isSolicitudVisibleOnWall(cancelada), false);
+  assert.equal(isSolicitudVisibleOnWall(desistida, "CANCELADA"), true);
+  assert.equal(isSolicitudVisibleOnWall(cancelada, "CANCELADA"), true);
+  for (const state of [
+    "PROCESO",
+    "APROBADA",
+    "RECHAZADA",
+    "ERROR_TECNICO",
+    "VALIDACION_FACIAL",
+  ]) {
+    assert.equal(isSolicitudVisibleOnWall(state), true);
   }
 });
 
@@ -1323,6 +1352,16 @@ test("consolida duplicados antes de filtrar, ajusta la pagina y retira la nueva 
   assert.match(list, /readCreditRows\(input\.viewer, scopeFilters\)/);
   assert.match(list, /const rawRows = \[\.\.\.drafts, \.\.\.credits\]/);
   assert.match(list, /selectCanonicalSolicitudesByDocument\(rawRows\)/);
+  assert.match(
+    list,
+    /isSolicitudVisibleOnWall\(item\.estado, input\.filters\.estado\)/
+  );
+  assert.ok(
+    list.indexOf(
+      "isSolicitudVisibleOnWall(item.estado, input.filters.estado)"
+    ) <
+      list.indexOf("matchesOperationalFilters")
+  );
   assert.ok(
     list.indexOf("selectCanonicalSolicitudesByDocument") <
       list.indexOf("matchesOperationalFilters")
