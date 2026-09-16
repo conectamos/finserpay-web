@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -26,6 +27,13 @@ const { getDefaultFirstPaymentDate } = await jiti.import(
 );
 const { resolveSelectedPaymentAmount } = await jiti.import(
   "../lib/manual-payment-amount.ts"
+);
+const creditFactoryConsoleSource = readFileSync(
+  path.join(
+    projectRoot,
+    "app/dashboard/creditos/credit-factory-console.tsx"
+  ),
+  "utf8"
 );
 
 test("un timestamp UTC se muestra en el dia real de Colombia", () => {
@@ -188,6 +196,47 @@ test("el corte de la primera cuota usa la hora de Colombia", () => {
   assert.equal(
     getDefaultFirstPaymentDate("2026-08-06T05:00:00.000Z", "QUINCENAL"),
     "2026-09-02"
+  );
+});
+
+test("el paso 2 muestra el primer pago como fecha civil sin retroceder un dia", () => {
+  const firstPaymentLabel = creditFactoryConsoleSource.match(
+    /const parsedFechaPrimerPago = fechaPrimerPago[\s\S]{0,760}: "{{FECHA_PRIMER_PAGO}}";/
+  )?.[0];
+  const firstPaymentBlock = creditFactoryConsoleSource.match(
+    /<small>Primer pago<\/small>[\s\S]{0,420}<\/strong>/
+  )?.[0];
+
+  assert.ok(firstPaymentLabel, "debe existir una etiqueta compartida de primer pago");
+  assert.ok(firstPaymentBlock, "debe existir la tarjeta Primer pago del paso 2");
+  assert.doesNotMatch(
+    firstPaymentLabel,
+    /new Date\(fechaPrimerPago\)\.toLocaleDateString/,
+    "una fecha YYYY-MM-DD no debe convertirse como instante UTC"
+  );
+  assert.match(
+    firstPaymentLabel,
+    /parseColombiaDate\(fechaPrimerPago\)/,
+    "debe usar el helper date-only que conserva el dia calendario"
+  );
+  assert.match(
+    firstPaymentLabel,
+    /parsedFechaPrimerPago\.toLocaleDateString\(\s*"es-CO"\s*,\s*\{/,
+    "debe formatear la fecha civil parseada con opciones explicitas"
+  );
+  assert.match(firstPaymentLabel, /timeZone:\s*COLOMBIA_TIME_ZONE/);
+  assert.match(firstPaymentLabel, /day:\s*"2-digit"/);
+  assert.match(firstPaymentLabel, /month:\s*"2-digit"/);
+  assert.match(firstPaymentLabel, /year:\s*"numeric"/);
+  assert.match(
+    firstPaymentBlock,
+    /fechaPrimerPago\s*\?\s*fechaPrimerPagoLabel\s*:\s*"[^"]*"/,
+    "la tarjeta del paso 2 debe reutilizar la misma etiqueta segura"
+  );
+  assert.match(
+    creditFactoryConsoleSource,
+    /Fecha de inicio:\s*\{fechaPrimerPagoLabel\}/,
+    "la segunda visualizacion debe reutilizar la misma etiqueta segura"
   );
 });
 

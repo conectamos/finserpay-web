@@ -121,6 +121,10 @@ import {
   getColombiaCityOptions,
   getColombiaDepartmentLabel,
 } from "@/lib/colombia-locations";
+import {
+  COLOMBIA_TIME_ZONE,
+  parseColombiaDate,
+} from "@/lib/colombia-date";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
 import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginationTerms } from "@/lib/credit-current-origination-terms";
 import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
@@ -4064,9 +4068,18 @@ export default function CreditFactoryConsole({
     DOCUMENT_TYPE_OPTIONS.find((option) => option.value === clienteTipoDocumento)?.label ||
     clienteTipoDocumento ||
     "{{TIPO_DOCUMENTO}}";
-  const fechaPrimerPagoLabel = fechaPrimerPago
-    ? new Date(fechaPrimerPago).toLocaleDateString("es-CO")
-    : "{{FECHA_PRIMER_PAGO}}";
+  const parsedFechaPrimerPago = fechaPrimerPago
+    ? parseColombiaDate(fechaPrimerPago)
+    : null;
+  const fechaPrimerPagoLabel =
+    parsedFechaPrimerPago && !Number.isNaN(parsedFechaPrimerPago.getTime())
+      ? parsedFechaPrimerPago.toLocaleDateString("es-CO", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          timeZone: COLOMBIA_TIME_ZONE,
+        })
+      : "{{FECHA_PRIMER_PAGO}}";
   const pagarePreviewNumber = generatePagareNumber(
     `${clienteDocumento || "CLIENTE"}${imei || referenciaEquipo || "PREVIO"}`
   );
@@ -14962,11 +14975,7 @@ export default function CreditFactoryConsole({
                             <span>
                               <small>Primer pago</small>
                               <strong>
-                                {fechaPrimerPago
-                                  ? new Date(fechaPrimerPago).toLocaleDateString(
-                                      "es-CO"
-                                    )
-                                  : "—"}
+                                {fechaPrimerPago ? fechaPrimerPagoLabel : "—"}
                               </strong>
                             </span>
                           </div>
