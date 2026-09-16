@@ -266,6 +266,15 @@ test("respuestas completas requieren OK y se resuelven antes de aprobar en la mi
   assert.ok(resolved>=0 && approved>resolved);
 });
 
+test("el OK final admite novedades respondidas y verificadas, y solo entonces las resuelve",async()=>{
+  const {db,state}=approvalDatabase({novelty:{id:"novelty-test",status:"RESPONDED",version:3},noveltyItems:[
+    {id:"general-test",key:"GENERAL",status:"VERIFIED",version:2,reason:"Validar soporte",openedAt:new Date(),respondedAt:new Date(),responseText:"Validación realizada, ya quedó OK"},
+    {id:"photo-test",key:"foto-entrega",status:"RESPONDED",version:2,reason:"Foto borrosa",openedAt:new Date(),respondedAt:new Date(),responsePhotoHash:"a".repeat(64)},
+  ]});
+  const item=await service.getCreditApprovalDetail(db,81);assert.equal(item.canApprove,true);assert.equal(item.novelties.blocksSettlement,true);
+  const result=await service.approveCredit(db,81,{revision:item.review.revision,reviewHash:item.review.reviewHash,recordingId:CALL_RECORDING_ID},actor);
+  assert.equal(result.item.review.status,"APPROVED");assert.equal(state.novelty.status,"RESOLVED");assert.equal(state.noveltyEvents.length,1);
+});
 test("una respuesta completa no se resuelve con revision obsoleta o documento incompleto",async()=>{
   for(const incomplete of [false,true]){
     const fixture=approvalDatabase({novelty:{id:"novelty-test",status:"RESPONDED",version:2},noveltyItems:[{id:"photo-test",key:"foto-entrega",status:"RESPONDED",version:2,openedAt:new Date()}]});

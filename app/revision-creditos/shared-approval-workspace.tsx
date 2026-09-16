@@ -24,7 +24,7 @@ function statusLabel(item: ApprovalQueueItem) {
   if (item.status === "APPROVED") return "Aprobado";
   if (item.reissue?.blocked) return "Firma pendiente";
   if (item.novelty?.status === "WAITING_ALLY") return "Novedad al aliado";
-  if (item.novelty?.status === "RESPONDED") return "Corrección por revisar";
+  if (item.novelty?.status === "RESPONDED") return "Novedades atendidas";
   return "Pendiente de revisión";
 }
 

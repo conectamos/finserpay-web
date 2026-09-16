@@ -30,7 +30,7 @@ export async function resolveCreditApprovalNoveltyForApproval(db: NoveltyDatabas
   const current = cases[0];
   const items = await db.$queryRawUnsafe<Array<{ id: string; status: string }>>(
     'SELECT "id"::text,"status" FROM "CreditApprovalNoveltyItem" WHERE "noveltyId"=$1::uuid ORDER BY "id" FOR UPDATE', current.id);
-  if (current.status !== "RESPONDED" || !items.length || items.some(item => item.status !== "RESPONDED")) {
+  if (current.status !== "RESPONDED" || !items.length || items.some(item => !["RESPONDED", "VERIFIED"].includes(item.status))) {
     throw new CreditApprovalError("NOVELTY_PENDING", "Aún hay novedades sin responder. Revisa cada fotografía o respuesta pendiente antes del OK.", 409);
   }
   await db.$executeRawUnsafe(`UPDATE "CreditApprovalNovelty" SET "status"='RESOLVED',"resolvedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC',

@@ -148,6 +148,18 @@ test("una foto respondida queda de solo lectura aunque otra del crédito siga ab
   assert.equal(client.canRespondToPendingIssue(sample, { ...photo, id: "issue-2" }), true);
 });
 
+test("una novedad verificada por el analista queda de solo lectura con nota y fecha", () => {
+  const verified = { ...photo, status: "VERIFIED", responseText: "Validé la información y ya quedó OK.", respondedAt: "2026-09-16T13:00:00Z" };
+  const html = renderEditor(verified);
+  assert.match(html, /Solucionada por el analista/);
+  assert.match(html, /Confirmación del analista/);
+  assert.match(html, /Validé la información y ya quedó OK/);
+  assert.match(html, /Verificada:/);
+  assert.match(html, /ya no requiere una corrección del aliado/);
+  assert.doesNotMatch(html, /type="file"|<textarea|Guardar fotografía|Guardar respuesta/);
+  assert.equal(client.canRespondToPendingIssue(sample, verified), false);
+});
+
 test("la capacidad denegada quita correcciones y muestra el bloqueo sin abrir otras fotos", () => {
   const html = renderEditor(photo, { ...sample, canRespond: false, blockedReason: "La firma está en proceso." });
   assert.match(html, /La firma está en proceso/);

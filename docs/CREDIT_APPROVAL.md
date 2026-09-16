@@ -142,11 +142,19 @@ no existe otro botón para enviarla a revisión. Subir la misma foto no cuenta c
 corrección. Una respuesta parcial vuelve a estar disponible al analista, pero
 las demás fotos abiertas siguen bloqueando el OK y la liquidación.
 
-El caso pasa de WAITING_ALLY a RESPONDED cuando todos sus elementos tienen
-respuesta. Permanece en PENDIENTES con el estado de revisión, sin permitir
-sustituir una foto ya respondida. El analista puede volver a señalar el problema,
-conservando el historial. El OK cierra las novedades respondidas (RESOLVED) y
-aprueba en una sola transacción; entonces desaparece de ambas vistas.
+El analista también puede marcar como solucionado un elemento todavía abierto
+cuando verifica que ya quedó correcto. Debe registrar una nota de 5 a 1000
+caracteres. El elemento pasa a VERIFIED, desaparece de las correcciones que el
+aliado puede editar y conserva tanto el motivo original como la confirmación y
+el actor en el historial. Esta acción no aprueba el crédito.
+
+El caso pasa de WAITING_ALLY a RESPONDED cuando todos sus elementos tienen una
+respuesta del aliado o una verificación del analista. Si queda otro elemento
+OPEN, continúa bloqueado y visible para el aliado. Cuando ya no hay elementos
+abiertos, permanece pendiente del OK para liquidación. El analista puede volver
+a señalar el problema, conservando el historial. El OK cierra los elementos
+atendidos (RESOLVED) y aprueba en una sola transacción; entonces desaparece de
+ambas vistas.
 
 Los eventos registran motivo, actor, fechas y huellas. Las respuestas comparan la
 versión del elemento y de la foto para evitar sobrescribir correcciones ajenas.
@@ -324,7 +332,7 @@ las fotografías y el PDF, usan `Cache-Control: private, no-store` y
 | Método y ruta | Uso |
 | --- | --- |
 | `GET /api/aprobaciones?view=pending&cursor=...` | Muro paginado: `items`, `nextCursor`, `hasMore`. La búsqueda exacta anterior solo se conserva para sesiones individuales compatibles. |
-| `GET/POST /api/aprobaciones/[id]/novedades` | Consulta estado/historial o registra fotografías y motivo con revisión e idempotencia. |
+| `GET/POST/PATCH /api/aprobaciones/[id]/novedades` | Consulta estado/historial, registra una novedad o marca un elemento abierto como solucionado, siempre con revisión e idempotencia. |
 | `GET /api/pendientes` y `GET /api/pendientes/[id]` | Lista y detalle de novedades del propio aliado. |
 | `POST /api/pendientes/[id]/evidencias` o `/respuesta` | Responde el elemento solicitado, con versión e idempotencia. |
 | `GET/POST/DELETE /api/aprobaciones/enlace-comun` | Administración central del enlace común. |

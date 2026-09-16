@@ -8,7 +8,7 @@ import { listPendingCredits, readPendingCredit, type PendingCredit, type Pending
 
 function NoveltyStatus({ item }: { item: PendingCredit }) {
   return <StatusPill tone={item.novelty.status === "WAITING_ALLY" ? "warning" : "neutral"}>
-    {item.novelty.status === "WAITING_ALLY" ? "Por corregir" : "Pendiente revisión analista"}
+    {item.novelty.status === "WAITING_ALLY" ? "Por corregir" : "Novedades atendidas"}
   </StatusPill>;
 }
 
@@ -107,7 +107,7 @@ export default function PendingConsole() {
         <div><h2 className="text-base font-bold">Créditos con novedades</h2><p className="mt-1 text-sm text-[var(--fp-muted)]">Los créditos aprobados dejan de aparecer aquí.</p></div>
         <label className="flex min-w-0 flex-col gap-2 text-sm">Estado
           <Select aria-label="Filtrar pendientes por estado" value={filter} disabled={busy} onChange={(event) => changeFilter(event.target.value as PendingStatus | "ALL")}>
-            <option value="ALL">Todas las novedades</option><option value="WAITING_ALLY">Por corregir</option><option value="RESPONDED">Pendiente revisión analista</option>
+            <option value="ALL">Todas las novedades</option><option value="WAITING_ALLY">Por corregir</option><option value="RESPONDED">Atendidas</option>
           </Select>
         </label>
       </div>
@@ -123,7 +123,7 @@ export default function PendingConsole() {
           </tr></thead>
           <tbody>{items.map((item) => <tr key={item.id} className={`border-b border-[var(--fp-border)] last:border-0 ${selectedId === item.id ? "bg-[var(--fp-lime-soft)]" : ""}`}>
             <td className="px-4 py-4 font-semibold">{item.folio}</td><td className="px-4 py-4"><span className="block font-semibold">{item.clienteNombre}</span><span className="text-[var(--fp-muted)]">{item.clienteDocumento || "Sin documento"}</span></td>
-            <td className="px-4 py-4">{item.sedeNombre}</td><td className="px-4 py-4"><span className="block">{item.novelty.pendingCount} por corregir</span><span className="text-[var(--fp-muted)]">{item.novelty.answeredCount} en revisión</span></td>
+            <td className="px-4 py-4">{item.sedeNombre}</td><td className="px-4 py-4"><span className="block">{item.novelty.pendingCount} por corregir</span><span className="text-[var(--fp-muted)]">{item.novelty.answeredCount} {item.novelty.answeredCount === 1 ? "atendida" : "atendidas"}</span></td>
             <td className="px-4 py-4"><NoveltyStatus item={item} /></td><td className="px-4 py-4"><Button variant="secondary" disabled={busy} aria-label={`Ver novedades del crédito ${item.folio}`} onClick={() => selectCredit(item.id)}>Ver novedades<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button></td>
           </tr>)}</tbody>
         </table></DataTable>
@@ -142,7 +142,7 @@ export default function PendingConsole() {
       {detailError ? <div className="mb-5 space-y-3"><p role="alert" className="text-sm text-[var(--fp-danger)]">{detailError} Actualiza el crédito antes de corregir otra novedad.</p><Button variant="secondary" disabled={Boolean(editingId) || loadingDetail} onClick={() => { void loadDetail(selectedId); }}>Actualizar crédito</Button></div> : null}
       {loadingDetail ? <LoadingState label="Actualizando novedades del crédito..." /> : null}
       {detail ? <>
-        <div className="mb-5 flex flex-wrap items-center gap-2"><Badge tone="warning">{detail.novelty.pendingCount} por corregir</Badge><Badge>{detail.novelty.answeredCount} en revisión</Badge></div>
+        <div className="mb-5 flex flex-wrap items-center gap-2"><Badge tone="warning">{detail.novelty.pendingCount} por corregir</Badge><Badge>{detail.novelty.answeredCount} {detail.novelty.answeredCount === 1 ? "atendida" : "atendidas"}</Badge></div>
         {!detail.canRespond && detail.blockedReason ? <p className="mb-5 text-sm text-[var(--fp-muted)]">{detail.blockedReason}</p> : null}
         <div>{detail.novelty.items.map((issue) => <PendingItemEditor key={`${detail.novelty.id}:${issue.id}:${issue.version}:${issue.status}`}
           detail={detail} issue={issue} disabled={Boolean(detailError) || loadingDetail || loadingList || (Boolean(editingId) && editingId !== issue.id)}

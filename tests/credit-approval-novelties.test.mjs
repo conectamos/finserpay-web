@@ -48,6 +48,9 @@ test('validación exacta de novedades, respuesta y paginación',async()=>{
   for(const bad of [createInput(['GENERAL']),createInput(['foto-entrega','foto-entrega']),{...createInput(),montoCredito:1},{...createInput(),reason:'abcd'},{...createInput(),revision:0}]) assert.throws(()=>service.parseCreateNovelty(bad));
   const input={noveltyId:randomUUID(),itemId:randomUUID(),expectedVersion:1,idempotencyKey:randomUUID(),text:'Resuelto con soporte'};
   assert.equal(service.parseNoveltyResponse(input,false).text,input.text);
+  const verification={noveltyId:input.noveltyId,itemId:input.itemId,expectedVersion:1,revision:2,reviewHash:hash,note:'Validación realizada, ya quedó OK',idempotencyKey:randomUUID()};
+  assert.equal(service.parseVerifyNovelty(verification).note,verification.note);
+  for(const bad of [{...verification,note:'OK'},{...verification,note:'x'.repeat(1001)},{...verification,revision:0},{...verification,reviewHash:'bad'},{...verification,extra:true}]) assert.throws(()=>service.parseVerifyNovelty(bad));
   assert.throws(()=>service.parseNoveltyResponse({...input,key:'GENERAL'},false));
   assert.throws(()=>service.parseNoveltyResponse({...input,text:'x'.repeat(2001)},false));
   await assert.rejects(queue.listCreditApprovalQueue({$queryRawUnsafe:async()=>[]}),error=>error.code==='APPROVAL_UNAVAILABLE');
@@ -59,6 +62,52 @@ test('validación exacta de novedades, respuesta y paginación',async()=>{
   await assert.rejects(service.prepareNoveltyResponse({...input,text:undefined,dataUrl:'data:image/svg+xml;base64,AAAA',expectedPhotoHash:null},true));
 });
 
+test('verificación del analista exige ítem OPEN vigente y registra actor, nota e idempotencia',async()=>{
+  const noveltyId=randomUUID(),itemId=randomUUID(),requestKey=randomUUID(),writes=[];let savedEvent=null;
+  const db={
+    async $queryRawUnsafe(sql){
+      if(sql.includes('SELECT "id" FROM "CreditApprovalPolicy"')) return [{id:1}];
+      if(sql.includes('SELECT "id" FROM "Credito"')&&sql.includes('FOR UPDATE')) return [{id:81}];
+      if(sql.includes('SELECT "revision" FROM "CreditApprovalReview"')) return [{revision:3}];
+      if(sql.includes('SELECT "estado" FROM "Credito"')) return [{estado:'INSCRITO'}];
+      if(sql.includes('FROM "Credito" credit JOIN "Sede"')) return [{id:81,folio:'FC-81',clienteNombre:'Cliente',clienteDocumento:'100',aliadoNombre:'Aliado',sedeNombre:'Sede',fechaCredito:new Date(),createdAt:new Date(),required:true,paid:false,estado:'INSCRITO'}];
+      if(sql.includes('FROM "CreditApprovalNoveltyEvent"')) return savedEvent?[savedEvent]:[];
+      if(sql.includes('FROM "CreditApprovalReissue"')) return [];
+      if(sql.includes('FROM "CreditApprovalNovelty"')) return [{id:noveltyId,status:'WAITING_ALLY'}];
+      if(sql.includes('FROM "CreditApprovalNoveltyItem"')) return [{id:itemId,noveltyId,key:'GENERAL',status:'OPEN',version:4,reason:'Validar soporte',openedAt:new Date(),respondedAt:null,responseText:null,responsePhotoHash:null}];
+      throw new Error('Consulta inesperada: '+sql);
+    },
+    async $executeRawUnsafe(sql,...params){writes.push({sql,params});if(sql.includes('INSERT INTO "CreditApprovalNoveltyEvent"'))savedEvent={creditoId:81,requestHash:params[11],actorKind:params[4],actorUserId:params[5],actorGrantId:params[7],actorSessionId:params[8]};return 1;},
+  };
+  const input=service.parseVerifyNovelty({noveltyId,itemId,expectedVersion:4,revision:3,reviewHash:hash,note:'Validación realizada, ya quedó OK',idempotencyKey:requestKey});
+  await assert.rejects(service.verifyCreditApprovalNovelty(db,81,{...input,reviewHash:'b'.repeat(64)},actor),error=>error.code==='REVIEW_CHANGED');assert.equal(writes.length,0);
+  await assert.rejects(service.verifyCreditApprovalNovelty(db,81,{...input,expectedVersion:5},actor),error=>error.code==='NOVELTY_CHANGED');assert.equal(writes.length,0);
+  assert.deepEqual(plain(await service.verifyCreditApprovalNovelty(db,81,input,actor)),{unchanged:false});
+  const update=writes.find(entry=>entry.sql.includes('SET "status"=\'VERIFIED\''));assert.ok(update);assert.equal(update.params[1],input.note);assert.equal(update.params[2],null);
+  const event=writes.find(entry=>entry.sql.includes('INSERT INTO "CreditApprovalNoveltyEvent"'));assert.ok(event);assert.equal(event.params[3],'ANALYST_VERIFIED');
+  assert.deepEqual(JSON.parse(event.params[9]),{key:'GENERAL',note:input.note,itemVersion:4,reviewRevision:3,reviewHash:hash});
+  assert.equal(event.params[10],requestKey);assert.equal(event.params[4],'USER');assert.equal(event.params[5],actor.id);
+  const writeCount=writes.length;assert.equal((await service.verifyCreditApprovalNovelty(db,81,input,actor)).unchanged,true);assert.equal(writes.length,writeCount);
+});
+test('VERIFIED cuenta como atendida, pero otra OPEN conserva los bloqueos',async()=>{
+  const noveltyId=randomUUID();
+  const rows=[
+    {id:randomUUID(),key:'GENERAL',status:'VERIFIED',version:2,reason:'Validar soporte',openedAt:new Date(),respondedAt:new Date(),responseText:'Ya quedó OK',responsePhotoHash:null},
+    {id:randomUUID(),key:'foto-entrega',status:'OPEN',version:1,reason:'Foto borrosa',openedAt:new Date(),respondedAt:null,responseText:null,responsePhotoHash:null},
+  ];
+  const partial=await state.getCreditApprovalNoveltyState({$queryRawUnsafe:async sql=>sql.includes('CreditApprovalNoveltyItem')?rows:[{id:noveltyId,status:'WAITING_ALLY',version:3}]},81);
+  assert.equal(partial.pendingCount,1);assert.equal(partial.answeredCount,1);assert.equal(partial.blocksApproval,true);assert.equal(partial.blocksSettlement,true);
+  const ready=await state.getCreditApprovalNoveltyState({$queryRawUnsafe:async sql=>sql.includes('CreditApprovalNoveltyItem')?rows.map(item=>({...item,status:item.status==='OPEN'?'RESPONDED':item.status,respondedAt:new Date()})):[{id:noveltyId,status:'RESPONDED',version:4}]},81);
+  assert.equal(ready.pendingCount,0);assert.equal(ready.answeredCount,2);assert.equal(ready.blocksApproval,false);assert.equal(ready.blocksSettlement,true);
+});
+
+test('un enlace compartido revocado no puede verificar ni iniciar escrituras',async()=>{
+  let writes=0;
+  const db={$queryRawUnsafe:async sql=>sql.includes('CreditApprovalSharedGrant')?[]:(()=>{throw new Error('No debe leer el crédito');})(),$executeRawUnsafe:async()=>{writes++;}};
+  const shared={kind:'SHARED_LINK',id:null,nombre:'Acceso compartido',grantId:randomUUID(),sessionId:randomUUID()};
+  const input=service.parseVerifyNovelty({noveltyId:randomUUID(),itemId:randomUUID(),expectedVersion:1,revision:1,reviewHash:hash,note:'Validación realizada, ya quedó OK',idempotencyKey:randomUUID()});
+  await assert.rejects(service.verifyCreditApprovalNovelty(db,81,input,shared),error=>error.code==='SHARED_ACCESS_REVOKED');assert.equal(writes,0);
+});
 // PostgreSQL naive timestamps use the same UTC convention as Prisma.
 pg.types.setTypeParser(1114,value=>new Date(value.replace(' ','T')+'Z'));
 const connectionString=process.env.CREDIT_NOVELTIES_TEST_DATABASE_URL;
@@ -156,6 +205,17 @@ test('PostgreSQL aislado: novedades, permisos, respuestas independientes e histo
     await assert.rejects(db.query('DELETE FROM "CreditApprovalNoveltyItem" WHERE "id"=$1',[first.id]),/HISTORY_IMMUTABLE/);
     await assert.rejects(transaction(tx=>state.resolveCreditApprovalNoveltyForApproval(tx,id,actor)),/sin responder/);
   });
+  await t.test('analista verifica una novedad general sin aprobar ni habilitar liquidación',async()=>{
+    const id=await create();await report(id);let item=await detail(id);const issue=item.novelty.items[0];const currentReview=await review(id);
+    const input=service.parseVerifyNovelty({noveltyId:item.novelty.id,itemId:issue.id,expectedVersion:issue.version,revision:currentReview.revision,reviewHash:hash,note:'Validación realizada, ya quedó OK',idempotencyKey:randomUUID()});
+    assert.equal((await transaction(tx=>service.verifyCreditApprovalNovelty(tx,id,input,actor))).unchanged,false);
+    assert.equal((await transaction(tx=>service.verifyCreditApprovalNovelty(tx,id,input,actor))).unchanged,true);
+    item=await detail(id);assert.equal(item.novelty.status,'RESPONDED');assert.equal(item.novelty.pendingCount,0);assert.equal(item.novelty.answeredCount,1);assert.equal(item.novelty.items[0].status,'VERIFIED');assert.equal(item.novelty.items[0].responseText,input.note);
+    const event=(await db.query('SELECT * FROM "CreditApprovalNoveltyEvent" WHERE "requestKey"=$1',[input.idempotencyKey])).rows[0];assert.equal(event.type,'ANALYST_VERIFIED');assert.deepEqual(event.payload,{key:'GENERAL',note:input.note,itemVersion:issue.version,reviewRevision:input.revision,reviewHash:input.reviewHash});
+    await assert.rejects(approve(id),/NOVELTY_PENDING/);await assert.rejects(db.query('INSERT INTO "LiquidacionAliadoCredito" ("creditoId") VALUES ($1)',[id]),/CREDIT_APPROVAL_REQUIRED|NOVELTY_PENDING/);
+    await transaction(async tx=>{await tx.$queryRawUnsafe('SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE',id);await state.resolveCreditApprovalNoveltyForApproval(tx,id,actor);await approve(id,db);});
+    assert.equal((await state.getCreditApprovalNoveltyState(api,id)).novelty.status,'RESOLVED');await db.query('INSERT INTO "LiquidacionAliadoCredito" ("creditoId") VALUES ($1)',[id]);
+  });
   await t.test('corrección del analista responde solo la foto OPEN y no otorga OK',async()=>{
     const id=await create();await report(id,['foto-entrega','foto-remision']);
     await transaction(async tx=>{await tx.$queryRawUnsafe('SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE',id);await tx.$executeRawUnsafe('UPDATE "Credito" SET "fotoEntregaDataUrl"=$2 WHERE "id"=$1',id,blue);assert.ok(await state.markNoveltyPhotoCorrected(tx,id,'foto-entrega',history.evidenceSha256(blue),actor));});
@@ -225,6 +285,17 @@ test('PostgreSQL aislado: novedades, permisos, respuestas independientes e histo
       await new Promise(resolve=>setTimeout(resolve,40));assert.equal(settled,false);await db.query('COMMIT');
       await assert.rejects(payment,/CREDIT_APPROVAL_REQUIRED|NOVELTY_PENDING/);assert.equal((await review(id)).status,'PENDING');
     }finally{await db.query('ROLLBACK');await peer.end();}
+  });
+  await t.test('respuesta del aliado y verificación simultáneas consumen una sola transición OPEN',async()=>{
+    const id=await create();await report(id);const item=await detail(id);const issue=item.novelty.items[0];const currentReview=await review(id);
+    const allyInput=await service.prepareNoveltyResponse(responseInput(issue,item.novelty.id,{text:'El aliado solucionó la novedad'}),false);
+    const analystInput=service.parseVerifyNovelty({noveltyId:item.novelty.id,itemId:issue.id,expectedVersion:issue.version,revision:currentReview.revision,reviewHash:hash,note:'El analista verificó que ya quedó OK',idempotencyKey:randomUUID()});
+    const peer=new pg.Client({connectionString});await peer.connect();try{
+      const outcomes=await Promise.allSettled([transaction(tx=>service.verifyCreditApprovalNovelty(tx,id,analystInput,actor)),transaction(tx=>service.respondCreditApprovalNovelty(tx,id,allyInput,ally),peer)]);
+      assert.equal(outcomes.filter(result=>result.status==='fulfilled').length,1);assert.equal(outcomes.filter(result=>result.status==='rejected').length,1);
+    }finally{await peer.end();}
+    const final=await detail(id);assert.ok(['RESPONDED','VERIFIED'].includes(final.novelty.items[0].status));
+    const events=await db.query(`SELECT COUNT(*)::int AS n FROM "CreditApprovalNoveltyEvent" WHERE "requestKey" IN ($1,$2)`,[analystInput.idempotencyKey,allyInput.idempotencyKey]);assert.equal(events.rows[0].n,1);
   });
   await t.test('esquema impide respuestas incompletas y no permite más de una novedad activa',async()=>{
     const id=await create();await report(id);const item=await detail(id);

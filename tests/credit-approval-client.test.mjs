@@ -11,6 +11,7 @@ import {
   refreshApprovalSignature,
   readApprovalCredit,
   searchApprovalCredits,
+  verifyApprovalNovelty,
 } from "../app/dashboard/aprobaciones/approval-client.ts";
 
 test("busca únicamente la cédula indicada y evita caché del expediente", async (t) => {
@@ -49,6 +50,41 @@ test("un OK envía la revisión y huella que vio el analista, sin modificar el e
     revision: 3,
     reviewHash: "review-of-signed-evidence",
   });
+});
+
+test("marcar una novedad solucionada envía exactamente la versión observada por PATCH", async (t) => {
+  const calls = [];
+  const input = {
+    noveltyId: "11111111-1111-4111-8111-111111111111",
+    itemId: "22222222-2222-4222-8222-222222222222",
+    expectedVersion: 3,
+    revision: 5,
+    reviewHash: "a".repeat(64),
+    note: "Validé la información y ya quedó OK.",
+    idempotencyKey: "33333333-3333-4333-8333-333333333333",
+  };
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({ ok: true, unchanged: false });
+  });
+
+  assert.deepEqual(await verifyApprovalNovelty(81, input), { ok: true, unchanged: false });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "/api/aprobaciones/81/novedades");
+  assert.equal(calls[0].options.method, "PATCH");
+  assert.equal(calls[0].options.headers["Content-Type"], "application/json");
+  assert.deepEqual(JSON.parse(calls[0].options.body), input);
+});
+
+test("una confirmación incompleta de novedad solucionada no se presenta como éxito ni se reintenta", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => { calls += 1; return Response.json({ ok: true }); });
+  await assert.rejects(verifyApprovalNovelty(81, {
+    noveltyId: "11111111-1111-4111-8111-111111111111", itemId: "22222222-2222-4222-8222-222222222222",
+    expectedVersion: 1, revision: 1, reviewHash: "a".repeat(64), note: "Ya quedó OK",
+    idempotencyKey: "33333333-3333-4333-8333-333333333333",
+  }), /No se recibió confirmación/);
+  assert.equal(calls, 1);
 });
 
 test("un expediente cambiado produce conflicto y nunca reintenta aprobar automáticamente", async (t) => {
