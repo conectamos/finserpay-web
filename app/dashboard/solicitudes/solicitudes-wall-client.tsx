@@ -736,7 +736,7 @@ export default function SolicitudesWallClient({
                       <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Responsable</th>
                       <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Equipo</th>
                       <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Fecha de creación</th>
-                      <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Acciones</th>
+                      <th className="w-[21rem] px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--fp-border)]">
@@ -763,10 +763,14 @@ export default function SolicitudesWallClient({
                         <td className="px-4 py-4 text-xs text-[var(--fp-muted)]">
                           <span className="block">{displayDate(item.createdAt || item.fechaCreacion)}</span>
                         </td>
-                        <td className="px-4 py-4">
-                          <div className="flex justify-end gap-2">
+                        <td className="w-[21rem] px-4 py-4">
+                          <div className="grid grid-cols-[184px_112px] justify-end gap-2">
                             {item.actions.includes("DESISTIR") ? (
-                              <Button variant="danger" onClick={() => setDesistTarget(item)}>
+                              <Button
+                                variant="danger"
+                                className="w-full justify-center whitespace-nowrap"
+                                onClick={() => setDesistTarget(item)}
+                              >
                                 <Ban className="h-4 w-4" aria-hidden="true" />
                                 Desistir
                               </Button>
@@ -774,7 +778,7 @@ export default function SolicitudesWallClient({
                             {item.actions.includes("CAMBIO_GARANTIA") ? (
                               <Link
                                 href={replacementHref(item, wallReturnHref)}
-                                className="fp-ui-button is-secondary whitespace-nowrap"
+                                className="fp-ui-button is-secondary w-full justify-center whitespace-nowrap"
                               >
                                 <ArrowRightLeft className="h-4 w-4" aria-hidden="true" />
                                 Cambio garantía
@@ -783,7 +787,7 @@ export default function SolicitudesWallClient({
                             {item.actions.includes("ABRIR_FABRICA") ? (
                               <Link
                                 href={factoryHref(item, viewerRole, wallReturnHref)}
-                                className="fp-ui-button is-secondary whitespace-nowrap"
+                                className="fp-ui-button is-secondary col-start-2 w-full justify-center whitespace-nowrap"
                               >
                                 {item.source === "DRAFT" ? (
                                   <PlayCircle className="h-4 w-4" aria-hidden="true" />
@@ -793,7 +797,11 @@ export default function SolicitudesWallClient({
                                 {item.source === "DRAFT" ? "Continuar" : "Ver"}
                               </Link>
                             ) : item.actions.includes("VER_DETALLE") ? (
-                              <Button variant="secondary" onClick={() => openDetail(item)}>
+                              <Button
+                                variant="secondary"
+                                className="col-start-2 w-full justify-center whitespace-nowrap"
+                                onClick={() => openDetail(item)}
+                              >
                                 <Eye className="h-4 w-4" aria-hidden="true" />
                                 Ver
                               </Button>
