@@ -32,6 +32,7 @@ const [
   manualCreditLimitLookupRoute,
   factoryConsole,
   prequalificationGate,
+  prequalificationCss,
   policyConsole,
   setupSql,
   railwayCron,
@@ -56,6 +57,9 @@ const [
     readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
     readProjectFile(
       "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
+    ),
+    readProjectFile(
+      "app/dashboard/creditos/datacredito-prequalification-gate.module.css"
     ),
     readProjectFile(
       "app/dashboard/parametros-credito/datacredito-policy-console.tsx"
@@ -1130,10 +1134,11 @@ test("orienta al selector cuando falta la sesion del asesor", () => {
 test("reserva espacio para los iconos de identificacion en la precalificacion", () => {
   const inputsWithLeadingIcon =
     prequalificationGate.match(
-      /className="min-h-14 border-\[var\(--fp-lime-strong\)\] !pl-12 text-base/g
+      /className=\{styles\.input\}/g
     ) || [];
 
   assert.equal(inputsWithLeadingIcon.length, 2);
+  assert.match(prequalificationCss, /\.input\s*{[^}]*padding-left:\s*52px !important/);
 });
 
 test("oculta visualmente la fianza DataCredito para todos los perfiles", () => {

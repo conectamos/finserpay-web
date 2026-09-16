@@ -192,13 +192,10 @@ test("la impresión aísla una hoja A4 y conserva colores y bloques completos", 
   assert.match(css, /background:\s*#359523/);
   assert.match(
     css,
-    /@font-face\s*{[\s\S]*Finser Remission Wordmark[\s\S]*Geist-Regular\.ttf/,
+    /\.dialogBrand p\s*{[^}]*font-family:\s*Arial, Helvetica, sans-serif !important[^}]*font-size:\s*1\.8rem[^}]*font-weight:\s*800 !important/,
   );
-  assert.match(
-    css,
-    /\.dialogBrand p\s*{[\s\S]*color:\s*#359523 !important[\s\S]*Finser Remission Wordmark[\s\S]*font-size:\s*1\.75rem[\s\S]*font-weight:\s*700 !important/,
-  );
-  assert.match(css, /\.dialogBrand p span\s*{[\s\S]*color:\s*#ffffff !important/);
-  assert.match(css, /\.dialogWave\s*{[\s\S]*bottom:\s*-1\.8rem/);
+  assert.doesNotMatch(css, /\.dialogBrand p\s*{[^}]*color:\s*#359523 !important/);
+  assert.match(css, /\.dialogHeader\s*{[^}]*min-height:\s*6\.4rem/);
+  assert.match(css, /\.dialogWave\s*{[^}]*bottom:\s*-3rem/);
   assert.match(css, /prefers-reduced-motion:\s*reduce/);
 });

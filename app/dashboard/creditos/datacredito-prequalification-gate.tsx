@@ -40,6 +40,7 @@ import {
 import { resolveMissingAssessmentGateView } from "@/lib/datacredito/resume-gate";
 import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginationTerms } from "@/lib/credit-current-origination-terms";
 import DataCreditoDailyQuotaModal from "./datacredito-daily-quota-modal";
+import styles from "./datacredito-prequalification-gate.module.css";
 
 export type DataCreditoPlatform = "ANDROID" | "IPHONE";
 
@@ -400,10 +401,6 @@ function isRecoverableInitialAssessmentFailure(
     code === "ASSESSMENT_EXPIRED" &&
     [409, 410, 422].includes(response.status)
   );
-}
-
-function platformLabel(platform: DataCreditoPlatform) {
-  return platform === "ANDROID" ? "Android" : "iPhone";
 }
 
 function formatPercentage(value: number) {
@@ -1556,305 +1553,251 @@ export default function DatacreditoPrequalificationGate({
 
   const isSubmitting = view === "submitting";
   const dailyQuotaBlocked = view === "daily-limit-reached" && dailyQueryLimitReached?.exhausted === true;
-  const platformArtwork =
-    platform === "ANDROID"
-      ? "/assets/creditos/platform-android.png"
-      : "/assets/creditos/platform-iphone.png";
 
   return (
     <Card
-      className="overflow-hidden shadow-[var(--fp-shadow-md)]"
+      className={styles.gateCard}
       aria-busy={isSubmitting}
     >
-      <div className="relative isolate overflow-hidden border-b border-[var(--fp-border)] bg-[var(--fp-surface)] px-5 py-7 sm:px-8 sm:py-8 md:min-h-[224px] md:pr-[38%]">
-        <div
-          className="pointer-events-none absolute inset-y-0 right-0 z-0 hidden w-[47%] bg-[radial-gradient(circle_at_70%_52%,var(--fp-lime-soft)_0%,rgba(242,249,223,0.78)_34%,rgba(255,255,255,0)_72%)] md:block"
-          aria-hidden="true"
-        />
-        <div
-          className="pointer-events-none absolute -right-8 top-1/2 z-0 hidden h-56 w-56 -translate-y-1/2 rounded-full border border-[var(--fp-lime)]/30 md:block"
-          aria-hidden="true"
-        />
-        <Image
-          src={platformArtwork}
-          alt=""
-          aria-hidden="true"
-          width={platform === "ANDROID" ? 1609 : 1653}
-          height={platform === "ANDROID" ? 977 : 951}
-          preload
-          sizes="(max-width: 767px) 0px, (max-width: 1024px) 340px, 390px"
-          className="pointer-events-none absolute bottom-0 right-0 z-0 hidden h-full w-[41%] object-contain object-right-bottom md:block"
-        />
-
-        <div className="relative z-10 max-w-2xl">
-          <div className="flex items-center gap-3">
-            <span
-              className="grid h-12 w-12 shrink-0 place-items-center rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] text-[var(--fp-graphite)] shadow-[var(--fp-shadow-sm)]"
-              aria-hidden="true"
-            >
-              <Smartphone className="h-6 w-6" />
-            </span>
-            <Badge tone="positive" className="px-4 py-2 text-xs sm:text-sm">
-              Precalificación
-            </Badge>
-          </div>
-          <h2 className="mt-5 text-3xl font-black leading-tight tracking-tight text-[var(--fp-graphite)] sm:text-4xl">
-            {financialTermsRecovery ? "Renovar oferta para" : "Consulta previa para"} {platformLabel(platform)}
-          </h2>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
-            Ingresa únicamente la identificación solicitada. El resultado se usa
-            para decidir si el flujo puede continuar.
-          </p>
-        </div>
-      </div>
-
-      <form className="p-5 sm:p-8" noValidate onSubmit={submitAssessment}>
-        {financialTermsRecovery ? (
-          <div className="mb-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm leading-6 text-[var(--fp-graphite)]" role="status">
-            {financialReuseUnavailable
-              ? "No hay una consulta reutilizable dentro de los 15 días. No se hizo una nueva consulta ni cobro. Solicita al administrador la autorización correspondiente antes de iniciar una consulta nueva; esta pantalla no la realizará automáticamente."
-              : "La oferta conserva condiciones financieras anteriores. Renueva únicamente la oferta usando la consulta vigente de 15 días, sin una nueva consulta a DataCrédito ni cobro. Se conservan los datos de la solicitud y la validación facial."}
-          </div>
-        ) : null}
-        {dailyQuotaBlocked ? (
-          <div className="mb-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] p-4 text-sm leading-6" role="status" id="datacredito-quota-status">
-            <p className="font-bold">Límite diario de consultas alcanzado.</p>
-            <p>El cupo se restablece {formatDailyQueryLimitReset(dailyQueryLimitReached.resetsAt)} (hora de Bogotá). Las solicitudes existentes y el simulador siguen disponibles.</p>
-            <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-              <Button variant="secondary" onClick={() => void checkDailyQueryQuota()} disabled={checkingDailyQuota} aria-disabled={checkingDailyQuota}>
-                {checkingDailyQuota ? "Verificando cupo..." : "Verificar cupo disponible"}
-              </Button>
-              <Link className="fp-ui-button is-secondary" href="/dashboard/solicitudes?estado=PROCESO">Retomar solicitudes aprobadas</Link>
-              <Link className="fp-ui-button is-secondary" href="/dashboard/creditos?mode=simulator">Ir al simulador</Link>
-            </div>
-            {dailyQuotaCheckError ? <p className="mt-3" role="alert">{dailyQuotaCheckError}</p> : null}
-          </div>
-        ) : null}
-        {identityMismatchRecovery ? (
-          <div
-            className="mb-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm leading-6 text-[var(--fp-graphite)]"
-            role="status"
-          >
-            Esta cédula ya tiene una consulta vigente. Corrige únicamente el
-            primer apellido para recuperarla; esta acción no realiza una nueva
-            consulta a DataCrédito.
-          </div>
-        ) : null}
-        <div className="grid gap-6 md:grid-cols-2">
-          <div>
-            <label
-              htmlFor="datacredito-document-number"
-              className="mb-2 block text-base font-extrabold text-[var(--fp-graphite)]"
-            >
-              Número de cédula
-            </label>
-            <div className="relative">
-              <IdCard
-                className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--fp-lime-strong)]"
-                aria-hidden="true"
-              />
-              <Input
-                id="datacredito-document-number"
-                name="documentNumber"
-                value={documentNumber}
-                onChange={(event) => {
-                  setDocumentNumber(
-                    event.target.value.replace(/\D/g, "").slice(0, 13)
-                  );
-                  setFormErrors((current) => ({
-                    ...current,
-                    documentNumber: undefined,
-                  }));
-                }}
-                inputMode="numeric"
-                autoComplete="off"
-                minLength={3}
-                maxLength={13}
-                pattern="[0-9]{3,13}"
-                required
-                disabled={
-                  isSubmitting ||
-                  Boolean(initialSolicitudId && normalizedInitialDocument)
-                }
-                className="min-h-14 border-[var(--fp-lime-strong)] !pl-12 text-base shadow-[var(--fp-shadow-sm)] disabled:bg-[var(--fp-bg)]"
-                aria-invalid={Boolean(formErrors.documentNumber)}
-                aria-describedby={
-                  formErrors.documentNumber
-                    ? "datacredito-document-number-error"
-                    : "datacredito-document-number-help"
-                }
-              />
-            </div>
-            <p
-              id="datacredito-document-number-help"
-              className="mt-2 text-sm text-[var(--fp-muted)]"
-            >
-              Entre 3 y 13 dígitos, sin puntos ni espacios.
-            </p>
-            {formErrors.documentNumber ? (
-              <p
-                id="datacredito-document-number-error"
-                className="mt-2 text-sm font-semibold text-[var(--fp-danger)]"
-                role="alert"
-              >
-                {formErrors.documentNumber}
-              </p>
-            ) : null}
-          </div>
-
-          <div>
-            <label
-              htmlFor="datacredito-first-surname"
-              className="mb-2 block text-base font-extrabold text-[var(--fp-graphite)]"
-            >
-              Primer apellido
-            </label>
-            <div className="relative">
-              <UserRound
-                className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--fp-lime-strong)]"
-                aria-hidden="true"
-              />
-              <Input
-                id="datacredito-first-surname"
-                name="firstSurname"
-                value={firstSurname}
-                onChange={(event) => {
-                  setFirstSurname(event.target.value.slice(0, 80));
-                  setFormErrors((current) => ({
-                    ...current,
-                    firstSurname: undefined,
-                  }));
-                }}
-                autoComplete="family-name"
-                maxLength={80}
-                required
-                disabled={
-                  isSubmitting ||
-                  (Boolean(initialSolicitudId && normalizedInitialSurname) &&
-                    !identityMismatchRecovery)
-                }
-                className="min-h-14 border-[var(--fp-lime-strong)] !pl-12 text-base shadow-[var(--fp-shadow-sm)] disabled:bg-[var(--fp-bg)]"
-                aria-invalid={Boolean(formErrors.firstSurname)}
-                aria-describedby={
-                  formErrors.firstSurname
-                    ? "datacredito-first-surname-error"
-                    : undefined
-                }
-              />
-            </div>
-            {formErrors.firstSurname ? (
-              <p
-                id="datacredito-first-surname-error"
-                className="mt-2 text-sm font-semibold text-[var(--fp-danger)]"
-                role="alert"
-              >
-                {formErrors.firstSurname}
-              </p>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="mt-7 rounded-[var(--fp-radius-lg)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4 shadow-[var(--fp-shadow-sm)] sm:p-5">
-          <label className="grid min-h-11 cursor-pointer grid-cols-[auto_1fr] items-start gap-3 text-sm leading-6 text-[var(--fp-graphite)] sm:grid-cols-[auto_auto_1fr] sm:gap-5 sm:text-base">
-            <input
-              type="checkbox"
-              checked={consentAccepted}
-              onChange={(event) => {
-                setConsentAccepted(event.target.checked);
-                setFormErrors((current) => ({
-                  ...current,
-                  consent: undefined,
-                }));
-              }}
-              disabled={isSubmitting}
-              className="mt-1 h-6 w-6 shrink-0 accent-[var(--fp-lime-strong)] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
-              aria-invalid={Boolean(formErrors.consent)}
-              aria-describedby={
-                formErrors.consent ? "datacredito-consent-error" : undefined
-              }
+      <div className={styles.gateLayout}>
+        <aside className={styles.mascotPanel} aria-hidden="true">
+          <div className={styles.mascotEntry}>
+            <Image
+              src="/assets/creditos/datacredito-client-check-mascot.png"
+              alt=""
+              width={1199}
+              height={1312}
+              preload
+              sizes="(max-width: 959px) 260px, 390px"
+              className={styles.mascot}
             />
-            <span
-              className="hidden h-12 w-12 place-items-center rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] text-[var(--fp-lime-strong)] sm:grid"
-              aria-hidden="true"
-            >
-              <FileCheck2 className="h-6 w-6" />
+          </div>
+          <span className={styles.mascotFloor} />
+        </aside>
+
+        <form className={styles.formPanel} noValidate onSubmit={submitAssessment}>
+          <header className={styles.formHeader}>
+            <div>
+              <p className={styles.kicker}>Paso 1 · Datos básicos</p>
+              <h2>Validemos al cliente</h2>
+              <p className={styles.description}>
+                Ingresa la cédula y el primer apellido para continuar.
+              </p>
+            </div>
+            <span className={styles.requiredBadge}>
+              <span aria-hidden="true" />
+              2 datos requeridos
             </span>
-            <span className="font-medium">
-              {consentText}{" "}
-              <Link
-                href="/politica-privacidad"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-bold text-[var(--fp-lime-strong)] underline decoration-2 underline-offset-4 focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
-              >
-                Consultar política de privacidad
-                <span className="sr-only"> (abre en una pestaña nueva)</span>
-              </Link>
-              .
-            </span>
-          </label>
-          {formErrors.consent ? (
-            <p
-              id="datacredito-consent-error"
-              className="mt-3 text-sm font-semibold text-[var(--fp-danger)] sm:pl-[5.25rem]"
-              role="alert"
-            >
-              {formErrors.consent}
-            </p>
+          </header>
+
+          {financialTermsRecovery ? (
+            <div className={styles.statusNotice} role="status">
+              {financialReuseUnavailable
+                ? "No hay una consulta reutilizable dentro de los 15 días. No se hizo una nueva consulta ni cobro. Solicita al administrador la autorización correspondiente antes de iniciar una consulta nueva; esta pantalla no la realizará automáticamente."
+                : "La oferta conserva condiciones financieras anteriores. Renueva únicamente la oferta usando la consulta vigente de 15 días, sin una nueva consulta a DataCrédito ni cobro. Se conservan los datos de la solicitud y la validación facial."}
+            </div>
           ) : null}
-        </div>
+          {dailyQuotaBlocked ? (
+            <div className={styles.statusNotice} role="status" id="datacredito-quota-status">
+              <p className="font-bold">Límite diario de consultas alcanzado.</p>
+              <p>El cupo se restablece {formatDailyQueryLimitReset(dailyQueryLimitReached.resetsAt)} (hora de Bogotá). Las solicitudes existentes y el simulador siguen disponibles.</p>
+              <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                <Button variant="secondary" onClick={() => void checkDailyQueryQuota()} disabled={checkingDailyQuota} aria-disabled={checkingDailyQuota}>
+                  {checkingDailyQuota ? "Verificando cupo..." : "Verificar cupo disponible"}
+                </Button>
+                <Link className="fp-ui-button is-secondary" href="/dashboard/solicitudes?estado=PROCESO">Retomar solicitudes aprobadas</Link>
+                <Link className="fp-ui-button is-secondary" href="/dashboard/creditos?mode=simulator">Ir al simulador</Link>
+              </div>
+              {dailyQuotaCheckError ? <p className="mt-3" role="alert">{dailyQuotaCheckError}</p> : null}
+            </div>
+          ) : null}
+          {identityMismatchRecovery ? (
+            <div className={styles.statusNotice} role="status">
+              Esta cédula ya tiene una consulta vigente. Corrige únicamente el
+              primer apellido para recuperarla; esta acción no realiza una nueva
+              consulta a DataCrédito.
+            </div>
+          ) : null}
 
-        <div
-          className="mt-5 flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] px-4 py-3 text-sm leading-5 text-[var(--fp-muted)]"
-          role="note"
-        >
-          <ShieldCheck
-            className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-lime-strong)]"
-            aria-hidden="true"
-          />
-          <p>
-            FINSER PAY no muestra el puntaje al asesor. Los errores técnicos se
-            informan por separado y nunca se presentan como un rechazo.
-          </p>
-        </div>
+          <div className={styles.fieldsGrid}>
+            <div className={styles.field}>
+              <label htmlFor="datacredito-document-number">Número de cédula</label>
+              <div className={styles.inputWrap}>
+                <IdCard className={styles.inputIcon} aria-hidden="true" />
+                <Input
+                  id="datacredito-document-number"
+                  name="documentNumber"
+                  value={documentNumber}
+                  onChange={(event) => {
+                    setDocumentNumber(
+                      event.target.value.replace(/\D/g, "").slice(0, 13)
+                    );
+                    setFormErrors((current) => ({
+                      ...current,
+                      documentNumber: undefined,
+                    }));
+                  }}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  minLength={3}
+                  maxLength={13}
+                  pattern="[0-9]{3,13}"
+                  required
+                  placeholder="Ingresa el número de cédula"
+                  disabled={
+                    isSubmitting ||
+                    Boolean(initialSolicitudId && normalizedInitialDocument)
+                  }
+                  className={styles.input}
+                  aria-invalid={Boolean(formErrors.documentNumber)}
+                  aria-describedby={
+                    formErrors.documentNumber
+                      ? "datacredito-document-number-error"
+                      : "datacredito-document-number-help"
+                  }
+                />
+              </div>
+              <p id="datacredito-document-number-help" className={styles.helpText}>
+                Entre 3 y 13 dígitos, sin puntos ni espacios.
+              </p>
+              {formErrors.documentNumber ? (
+                <p
+                  id="datacredito-document-number-error"
+                  className={styles.fieldError}
+                  role="alert"
+                >
+                  {formErrors.documentNumber}
+                </p>
+              ) : null}
+            </div>
 
-        <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <Link
-            href="/dashboard/creditos?mode=create-client"
-            className="fp-ui-button is-ghost justify-start px-2 text-base !text-[var(--fp-graphite)] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
-          >
-            <ArrowLeft
-              className="h-5 w-5 text-[var(--fp-lime-strong)]"
-              aria-hidden="true"
-            />
-            Volver
-          </Link>
-          <Button
-            type="submit"
-            id="datacredito-evaluate"
-            disabled={isSubmitting || checkingDailyQuota || (financialTermsRecovery && financialReuseUnavailable)}
-            aria-disabled={isSubmitting || checkingDailyQuota || dailyQuotaBlocked || (financialTermsRecovery && financialReuseUnavailable)}
-            aria-describedby={dailyQuotaBlocked ? "datacredito-quota-status" : undefined}
-            className="min-h-12 px-6 text-base shadow-[var(--fp-shadow-md)] !border-[var(--fp-lime-strong)] !bg-[var(--fp-lime)] !text-[var(--fp-graphite)] hover:!bg-[var(--fp-graphite)] hover:!text-white aria-disabled:cursor-not-allowed aria-disabled:opacity-60 sm:min-w-56"
-          >
-            {isSubmitting ? (
-              <>
-                <RotateCw className="h-5 w-5 animate-spin" aria-hidden="true" />
-                Evaluando...
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="h-5 w-5" aria-hidden="true" />
-                {financialTermsRecovery
-                  ? "Renovar oferta sin nueva consulta"
-                  : identityMismatchRecovery
-                  ? "Recuperar consulta vigente"
-                  : "Evaluar solicitud"}
-              </>
-            )}
-          </Button>
-        </div>
-      </form>
+            <div className={styles.field}>
+              <label htmlFor="datacredito-first-surname">Primer apellido</label>
+              <div className={styles.inputWrap}>
+                <UserRound className={styles.inputIcon} aria-hidden="true" />
+                <Input
+                  id="datacredito-first-surname"
+                  name="firstSurname"
+                  value={firstSurname}
+                  onChange={(event) => {
+                    setFirstSurname(event.target.value.slice(0, 80));
+                    setFormErrors((current) => ({
+                      ...current,
+                      firstSurname: undefined,
+                    }));
+                  }}
+                  autoComplete="family-name"
+                  maxLength={80}
+                  required
+                  placeholder="Ingresa el primer apellido"
+                  disabled={
+                    isSubmitting ||
+                    (Boolean(initialSolicitudId && normalizedInitialSurname) &&
+                      !identityMismatchRecovery)
+                  }
+                  className={styles.input}
+                  aria-invalid={Boolean(formErrors.firstSurname)}
+                  aria-describedby={
+                    formErrors.firstSurname
+                      ? "datacredito-first-surname-error"
+                      : undefined
+                  }
+                />
+              </div>
+              {formErrors.firstSurname ? (
+                <p
+                  id="datacredito-first-surname-error"
+                  className={styles.fieldError}
+                  role="alert"
+                >
+                  {formErrors.firstSurname}
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className={styles.consentBox}>
+            <label className={styles.consentLabel}>
+              <input
+                type="checkbox"
+                checked={consentAccepted}
+                onChange={(event) => {
+                  setConsentAccepted(event.target.checked);
+                  setFormErrors((current) => ({
+                    ...current,
+                    consent: undefined,
+                  }));
+                }}
+                disabled={isSubmitting}
+                className={styles.checkbox}
+                aria-invalid={Boolean(formErrors.consent)}
+                aria-describedby={
+                  formErrors.consent ? "datacredito-consent-error" : undefined
+                }
+              />
+              <span className={styles.consentIcon} aria-hidden="true">
+                <FileCheck2 className="h-6 w-6" />
+              </span>
+              <span className={styles.consentText}>
+                {consentText}{" "}
+                <Link
+                  href="/politica-privacidad"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.privacyLink}
+                >
+                  Consultar política de privacidad
+                  <span className="sr-only"> (abre en una pestaña nueva)</span>
+                </Link>
+                .
+              </span>
+            </label>
+            {formErrors.consent ? (
+              <p
+                id="datacredito-consent-error"
+                className={styles.consentError}
+                role="alert"
+              >
+                {formErrors.consent}
+              </p>
+            ) : null}
+          </div>
+
+          <div className={styles.actions}>
+            <Link
+              href="/dashboard/creditos?mode=create-client"
+              className={styles.backLink}
+            >
+              <ArrowLeft aria-hidden="true" />
+              Volver
+            </Link>
+            <Button
+              type="submit"
+              id="datacredito-evaluate"
+              disabled={isSubmitting || checkingDailyQuota || (financialTermsRecovery && financialReuseUnavailable)}
+              aria-disabled={isSubmitting || checkingDailyQuota || dailyQuotaBlocked || (financialTermsRecovery && financialReuseUnavailable)}
+              aria-describedby={dailyQuotaBlocked ? "datacredito-quota-status" : undefined}
+              className={styles.submitButton}
+            >
+              {isSubmitting ? (
+                <>
+                  <RotateCw className="h-5 w-5 animate-spin" aria-hidden="true" />
+                  Evaluando...
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+                  {financialTermsRecovery
+                    ? "Renovar oferta sin nueva consulta"
+                    : identityMismatchRecovery
+                    ? "Recuperar consulta vigente"
+                    : "Evaluar solicitud"}
+                </>
+              )}
+            </Button>
+          </div>
+        </form>
+      </div>
       {dailyQuotaBlocked && dailyQueryLimitReached.percentUsed !== null ? (
         <DataCreditoDailyQuotaModal
           open={dailyQuotaModalOpen}

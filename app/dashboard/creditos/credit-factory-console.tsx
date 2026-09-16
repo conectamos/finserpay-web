@@ -14,6 +14,7 @@ import {
   CalendarDays,
   Camera,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleHelp,
   CircleDollarSign,
@@ -25,6 +26,7 @@ import {
   Info,
   LoaderCircle,
   LockKeyhole,
+  Menu,
   MoreHorizontal,
   QrCode,
   ReceiptText,
@@ -11456,38 +11458,18 @@ export default function CreditFactoryConsole({
           >
             {createClientMode ? (
               <div className="fp-new-sale-header-inner">
-                <div className="fp-new-sale-brand">
-                  <FinserBrand compact dark showTagline={false} />
-                  <span className="fp-new-sale-divider" aria-hidden="true" />
-                  <strong>Nueva venta</strong>
-                  <span className="fp-platform-badge">
-                    {iphoneFactory ? "IPHONE" : "ANDROID"}
-                  </span>
-                </div>
+                <Link
+                  href="/dashboard"
+                  className="fp-new-sale-wordmark"
+                  aria-label="FINSER PAY, ir al panel"
+                >
+                  <span>FINSER</span> <span>PAY</span>
+                </Link>
 
-                <nav className="fp-new-sale-nav" aria-label="Navegacion de la venta">
-                  <Link href="/dashboard">Dashboard</Link>
-                  {canViewSavedCredits ? (
-                    <Link href="/dashboard/abonos">Abonos</Link>
-                  ) : null}
-                  {adminFactoryAssistAvailable ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAdminAssist((value) => !value);
-                        if (showAdminAssist) {
-                          setDraftSearchResults([]);
-                          setCredits([]);
-                          setActiveSearch("");
-                          setSelectedId(null);
-                        }
-                      }}
-                      aria-expanded={showAdminAssist}
-                    >
-                      Asistencia
-                    </button>
-                  ) : null}
-                  <span className="fp-new-sale-profile">
+                <h1 className="fp-new-sale-title">Nueva venta</h1>
+
+                <div className="fp-new-sale-controls">
+                  <span className="fp-new-sale-profile" aria-label={`Perfil: ${initialSeller?.nombre || initialSession.nombre}, ${initialSession.rolNombre}`}>
                     <span aria-hidden="true">
                       {String(initialSeller?.nombre || initialSession.nombre || "FP")
                         .trim()
@@ -11500,8 +11482,38 @@ export default function CreditFactoryConsole({
                       <strong>{initialSeller?.nombre || initialSession.nombre}</strong>
                       <small>{initialSession.rolNombre}</small>
                     </span>
+                    <ChevronDown aria-hidden="true" />
                   </span>
-                </nav>
+
+                  <details className="fp-new-sale-menu">
+                    <summary aria-label="Abrir menú de Nueva venta">
+                      <Menu aria-hidden="true" />
+                    </summary>
+                    <nav aria-label="Menú de Nueva venta">
+                      <Link href="/dashboard">Dashboard</Link>
+                      {canViewSavedCredits ? (
+                        <Link href="/dashboard/abonos">Abonos</Link>
+                      ) : null}
+                      {adminFactoryAssistAvailable ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAdminAssist((value) => !value);
+                            if (showAdminAssist) {
+                              setDraftSearchResults([]);
+                              setCredits([]);
+                              setActiveSearch("");
+                              setSelectedId(null);
+                            }
+                          }}
+                          aria-expanded={showAdminAssist}
+                        >
+                          {showAdminAssist ? "Cerrar asistencia" : "Asistencia"}
+                        </button>
+                      ) : null}
+                    </nav>
+                  </details>
+                </div>
               </div>
             ) : simulatorMode || deliveryMode ? (
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -12045,7 +12057,7 @@ export default function CreditFactoryConsole({
             <div
               className={[
                 "fp-flow-header fp-seller-flow-intro relative overflow-hidden rounded-[24px] border border-[#cfe5e2] bg-white/72 p-4 sm:p-5",
-                createClientMode ? "fp-sale-summary" : "",
+                createClientMode ? "fp-sale-summary hidden" : "",
                 simulatorMode ? "hidden" : "",
               ].join(" ")}
             >
@@ -12118,6 +12130,7 @@ export default function CreditFactoryConsole({
                 aria-label="Pasos de la nueva venta"
                 className={[
                   "fp-step-rail fp-stepper-horizontal rounded-[22px] border border-[#d8e6e5] bg-white/88 p-2.5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]",
+                  createClientMode ? "fp-new-sale-stepper" : "",
                   simulatorMode ? "hidden" : "",
                 ].join(" ")}
               >
@@ -12253,10 +12266,11 @@ export default function CreditFactoryConsole({
                 "fp-step-stage fp-form-redesign fp-seller-form-card rounded-[24px] border border-[#d6e4e1] bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]",
                 simulatorMode ? "fp-simulator-stage" : "",
                 createClientMode && wizardStep === 1 ? "fp-identity-workspace" : "",
+                showDataCreditoGate ? "fp-prequalification-stage" : "",
               ].join(" ")}
             >
               {showDataCreditoGate ? (
-                <div className="mx-auto w-full max-w-6xl py-2">
+                <div className="mx-auto w-full max-w-none py-0">
                   {dataCreditoDraftLoadFailed ? (
                     <div
                       className="rounded-[var(--fp-radius-lg)] border border-red-200 bg-red-50 p-6 text-slate-900 shadow-[var(--fp-shadow-sm)]"
