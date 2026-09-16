@@ -666,12 +666,14 @@ test("la oferta activa conserva su plazo y nunca cae al tope global en pantalla"
     factoryConsole,
     /preservedTerms\.policyControlled\s*\?\s*MAX_CREDIT_INSTALLMENTS/
   );
-
-  const withinApprovedLimitMessages =
-    factoryConsole.match(
-      /El saldo proyectado está dentro del cupo aprobado\./g
-    ) || [];
-  assert.equal(withinApprovedLimitMessages.length, 2);
+  assert.match(
+    factoryConsole,
+    /const dataCreditoEffectiveMaxFinancedAmount\s*=\s*simulatorIphoneRulesActive\s*\? iphoneMaxFinancedAmount\s*:\s*dataCreditoMaxFinancedAmount/
+  );
+  assert.match(
+    factoryConsole,
+    /Cupo aprobado[\s\S]{0,100}currency\(dataCreditoEffectiveMaxFinancedAmount\)/
+  );
 });
 
 test("la vigencia contractual es exactamente 15 dias y no admite override historico", () => {

@@ -131,7 +131,7 @@ test("el simulador permite consultar inicial del 20 o 30 por ciento", () => {
   );
   assert.match(
     consoleSource,
-    /SIMULATOR_INITIAL_PAYMENT_PERCENTAGES\.map\(\(percentage\)/
+    /SIMULATOR_INITIAL_PAYMENT_PERCENTAGES\.map\(\s*\(percentage\)/
   );
   assert.match(consoleSource, /type="radio"/);
   assert.doesNotMatch(consoleSource, /readOnly=\{simulatorMode\}/);
@@ -217,14 +217,12 @@ test("el simulador oculta la política DataCrédito y sus términos internos", (
   );
   assert.match(
     consoleSource,
-    /\{!simulatorMode \? \([\s\S]*?\{creditSettingsScopeLabel\}/
+    /\{stepTwoPolicyAvailable && !simulatorMode \? \(/
   );
-  assert.match(consoleSource, /\{activeDataCreditoOffer && !simulatorMode \? \(/);
-  assert.match(consoleSource, /Oferta DataCrédito aprobada/);
   assert.match(consoleSource, /Inicial mínima \{formatPercent\(initialPaymentPercentage\)\}/);
   assert.match(
     consoleSource,
-    /Cupo aprobado \{currency\(dataCreditoEffectiveMaxFinancedAmount\)\}/
+    /Cupo aprobado[\s\S]{0,100}currency\(dataCreditoEffectiveMaxFinancedAmount\)/
   );
   assert.match(consoleSource, /Hasta \{plazoMaximoCuotas\} cuotas/);
 });
@@ -240,7 +238,7 @@ test("el simulador iPhone conserva el tope global configurado", () => {
   );
   assert.match(
     consoleSource,
-    /Cupo aprobado \{currency\(dataCreditoEffectiveMaxFinancedAmount\)\}/
+    /Cupo aprobado[\s\S]{0,100}currency\(dataCreditoEffectiveMaxFinancedAmount\)/
   );
   assert.match(
     consoleSource,
@@ -252,11 +250,11 @@ test("el simulador iPhone conserva el tope global configurado", () => {
 test("el desglose interno solo se muestra al administrador central", () => {
   assert.match(
     consoleSource,
-    /financialPreviewReady && canSeeInternalPricing && amortizationPlan[\s\S]{0,300}\{cuotaInternaLabel\}/
+    /const stepTwoProposalReady =[\s\S]{0,180}financialPreviewReady/
   );
   assert.match(
     consoleSource,
-    /\{canSeeInternalPricing && iphoneFactory \? \([\s\S]{0,500}Tope iPhone/
+    /stepTwoProposalReady \? currency\(valorCuota\) : "—"/
   );
   assert.match(
     consoleSource,

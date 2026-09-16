@@ -2993,6 +2993,8 @@ export default function CreditFactoryConsole({
   const [imei, setImei] = useState("");
   const [valorEquipoTotal, setValorEquipoTotal] = useState("");
   const [cuotaInicial, setCuotaInicial] = useState("");
+  const [stepTwoClearConfirmOpen, setStepTwoClearConfirmOpen] = useState(false);
+  const [stepTwoContinuing, setStepTwoContinuing] = useState(false);
   const [simulatorInitialPaymentPercentage, setSimulatorInitialPaymentPercentage] =
     useState<SimulatorInitialPaymentPercentage>(
       DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE
@@ -3146,6 +3148,7 @@ export default function CreditFactoryConsole({
   const draftSaveTimerRef = useRef<number | null>(null);
   const draftSaveGenerationRef = useRef(0);
   const draftSaveAbortControllerRef = useRef<AbortController | null>(null);
+  const stepTwoContinueInFlightRef = useRef(false);
   const activeSolicitudRedirectingRef = useRef(false);
   const pendingDraftFinancialTermsRef = useRef<{
     documento: string;
@@ -5073,6 +5076,55 @@ export default function CreditFactoryConsole({
     Boolean(equipoMarca.trim()) &&
     Boolean(equipoModelo.trim()) &&
     (simulatorMode || imeiValido);
+  const stepTwoEquipmentFieldChecks = [
+    Boolean(equipoMarca.trim()),
+    Boolean(equipoModelo.trim()),
+    simulatorMode || imeiValido,
+    valorTotalEquipoNumero > 0,
+  ];
+  const stepTwoEquipmentValidCount = stepTwoEquipmentFieldChecks.filter(Boolean).length;
+  const stepTwoEquipmentReady = stepTwoEquipmentValidCount === 4;
+  const stepTwoPolicyAvailable = simulatorMode
+    ? simulationPolicyReady
+    : !dataCreditoCreditCreationMode ||
+      dataCreditoBypassed ||
+      Boolean(activeDataCreditoOffer);
+  const stepTwoPlanLocked = !stepTwoEquipmentReady || !stepTwoPolicyAvailable;
+  const stepTwoInitialMinimum = Math.max(
+    0,
+    Math.round(cuotaInicialMinimaNumero)
+  );
+  const stepTwoInitialMaximum = Math.max(
+    0,
+    Math.round(valorTotalEquipoNumero)
+  );
+  const stepTwoInitialRangeValue =
+    stepTwoInitialMinimum <= stepTwoInitialMaximum
+      ? Math.min(
+          stepTwoInitialMaximum,
+          Math.max(stepTwoInitialMinimum, Math.round(cuotaInicialNumero))
+        )
+      : stepTwoInitialMaximum;
+  const stepTwoPlanSelectionValid =
+    creditInstallmentOptions.length > 0 &&
+    creditInstallmentOptions.includes(plazoMeses);
+  const stepTwoComplete =
+    stepEquipoReady &&
+    stepTwoPolicyAvailable &&
+    stepTwoPlanSelectionValid &&
+    Boolean(fechaPrimerPago) &&
+    Boolean(frecuenciaPagoCredito);
+  const stepTwoOperationPending =
+    creating ||
+    firmaSeguroSubmitting ||
+    iphoneFactorySignaturePending ||
+    draftStatus === "loading" ||
+    draftStatus === "saving" ||
+    stepTwoContinuing;
+  const stepTwoContinueDisabled =
+    !stepTwoComplete || stepTwoOperationPending;
+  const stepTwoProposalReady =
+    stepTwoEquipmentReady && stepTwoPolicyAvailable && financialPreviewReady;
   const contratoListo = stepClienteReady && stepContratoReady && stepEquipoReady;
   const firmaSeguroDocumentItems = [
     {
@@ -5589,6 +5641,16 @@ export default function CreditFactoryConsole({
       : draftStatus === "error"
         ? draftErrorMessage || "No se pudo guardar"
         : "Completa los pasos para finalizar la venta";
+  const stepTwoDraftStatusLabel =
+    draftStatus === "saved"
+      ? "Borrador guardado"
+      : draftStatus === "saving"
+        ? "Guardando borrador…"
+        : draftStatus === "loading"
+          ? "Cargando borrador…"
+          : draftStatus === "error"
+            ? draftErrorMessage || "No se pudo guardar el borrador"
+            : "Cambios pendientes";
   const nextFactoryStep =
     visibleFactorySteps.find((step) => !step.ready) ||
     visibleFactorySteps[visibleFactorySteps.length - 1];
@@ -6465,6 +6527,7 @@ export default function CreditFactoryConsole({
 
   useEffect(() => {
     if (
+      !stepTwoEquipmentReady ||
       !iphoneFactory ||
       iphoneFactoryTermsLocked ||
       creditInstallmentOptions.length === 0 ||
@@ -6481,6 +6544,7 @@ export default function CreditFactoryConsole({
     iphoneFactory,
     iphoneFactoryTermsLocked,
     plazoMeses,
+    stepTwoEquipmentReady,
   ]);
 
   useEffect(() => {
@@ -6583,14 +6647,18 @@ export default function CreditFactoryConsole({
   }, [clientePrimerNombre, clientePrimerApellido]);
 
   useEffect(() => {
-    setCuotaInicial((currentValue) =>
-      resolveInitialPaymentAfterMinimumRefresh({
+    setCuotaInicial((currentValue) => {
+      if (!valorTotalEquipoNumero && currentValue) {
+        return currentValue;
+      }
+
+      return resolveInitialPaymentAfterMinimumRefresh({
         currentValue,
         totalValue: valorEquipoTotal,
         minimumValue: cuotaInicialMinimaNumero,
         preserveCurrent: draftResumeHydrating || firmaSeguroProcessExists,
-      })
-    );
+      });
+    });
   }, [
     cuotaInicialMinimaNumero,
     draftResumeHydrating,
@@ -8343,6 +8411,25 @@ export default function CreditFactoryConsole({
     setWizardStep(nextStep);
   };
 
+  const handleStepTwoContinue = async () => {
+    if (
+      stepTwoContinueInFlightRef.current ||
+      stepTwoContinueDisabled
+    ) {
+      return;
+    }
+
+    stepTwoContinueInFlightRef.current = true;
+    setStepTwoContinuing(true);
+
+    try {
+      await advanceToStep(nextVisibleWizardStep(wizardStep));
+    } finally {
+      stepTwoContinueInFlightRef.current = false;
+      setStepTwoContinuing(false);
+    }
+  };
+
   const createWhatsAppOtp = async () => {
     if (!clienteTelefonoValido) {
       setNotice({
@@ -8652,6 +8739,35 @@ export default function CreditFactoryConsole({
     wizardStep,
   ]);
 
+  const clearStepTwoFields = () => {
+    if (firmaSeguroProcessExists) {
+      setStepTwoClearConfirmOpen(false);
+      setNotice({
+        text: "El equipo está protegido porque el contrato ya fue enviado a firma.",
+        tone: "amber",
+      });
+      return;
+    }
+
+    setRestoredEquipmentCatalogId(null);
+    setEquipoMarca("");
+    setEquipoModelo("");
+    setImei("");
+    setValorEquipoTotal("");
+    setCuotaInicial("");
+    setPlazoMeses("");
+    setSimulatorInitialPaymentPercentage(
+      DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE
+    );
+    setStepTwoClearConfirmOpen(false);
+    setDraftStatus("idle");
+    setDraftErrorMessage("");
+    setNotice({
+      text: "Se limpiaron únicamente los datos editables de equipo y plan.",
+      tone: "emerald",
+    });
+  };
+
   const resetForm = () => {
     cancelPendingDraftAutosave();
     applyingDraftRef.current = false;
@@ -8823,6 +8939,28 @@ export default function CreditFactoryConsole({
     setPersistedIphoneClosureFingerprint(closureFingerprintAtSave);
 
     return result.data.item.id;
+  };
+
+  const retryStepTwoDraftSave = async () => {
+    if (!draftId || draftStatus === "saving") {
+      return;
+    }
+
+    cancelPendingDraftAutosave();
+    setDraftStatus("saving");
+    setDraftErrorMessage("");
+
+    try {
+      await saveCurrentDraft(2);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "No se pudo guardar el borrador";
+      setDraftStatus("error");
+      setDraftErrorMessage(message);
+      setNotice({ text: message, tone: "red" });
+    }
   };
 
   const submitFirmaSeguroDraft = async (currentDraftId: number) => {
@@ -10669,6 +10807,8 @@ export default function CreditFactoryConsole({
     }
 
     cancelPendingDraftAutosave();
+    setDraftStatus("idle");
+    setDraftErrorMessage("");
     const saveGeneration = draftSaveGenerationRef.current;
     const closureFingerprintAtSchedule = currentIphoneClosureFingerprint;
     let requestController: AbortController | null = null;
@@ -12317,6 +12457,7 @@ export default function CreditFactoryConsole({
                 "fp-step-stage fp-form-redesign fp-seller-form-card rounded-[24px] border border-[#d6e4e1] bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]",
                 simulatorMode ? "fp-simulator-stage" : "",
                 createClientMode && wizardStep === 1 ? "fp-identity-workspace" : "",
+                createClientMode && wizardStep === 2 ? "fp-step2-stage" : "",
                 showDataCreditoGate ? "fp-prequalification-stage" : "",
               ].join(" ")}
             >
@@ -14255,522 +14396,661 @@ export default function CreditFactoryConsole({
               )}
 
               {wizardStep === 2 && (
-                <div>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="fp-step2">
+                  <header className="fp-step2-heading">
                     <div>
-                      <div className="inline-flex rounded-full border border-[#e6d6bd] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8a5a21]">
-                        {simulatorMode ? "Simulador" : "Paso 2"}
-                      </div>
-                      <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        {simulatorMode ? "Configura la financiación" : "Equipo y plan financiero"}
-                      </h3>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                      <p>{simulatorMode ? "Simulador" : "Paso 2 · Equipo y plan"}</p>
+                      <h3>
                         {simulatorMode
-                          ? "Elige el equipo y compara la cuota estimada con 20 % o 30 % de inicial."
-                          : "Captura el equipo, define la inicial y confirma la cuota que vera el cliente."}
-                      </p>
-                      {!simulatorMode ? (
-                        <div
-                          className={[
-                            "mt-3 inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]",
-                            activeDataCreditoOffer
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                              : "border-slate-200 bg-slate-50 text-slate-500",
-                          ].join(" ")}
-                        >
-                          {creditSettingsScopeLabel}
-                        </div>
-                      ) : null}
+                          ? "Configura la financiación"
+                          : "Arma el plan del cliente"}
+                      </h3>
+                      <span>
+                        {simulatorMode
+                          ? "Elige el equipo y compara la cuota estimada."
+                          : "Configura el equipo y revisa la propuesta antes de continuar."}
+                      </span>
                     </div>
                     <div
-                        className={[
-                          "inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
-                          simulatorMode
-                          ? "border-slate-200 bg-slate-50 text-slate-600"
-                          : stepEquipoReady
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border-amber-200 bg-amber-50 text-amber-700",
+                      className={[
+                        "fp-step2-status",
+                        stepTwoComplete ? "is-complete" : "is-pending",
                       ].join(" ")}
-                    >
-                      {simulatorMode
-                        ? "Solo consulta"
-                        : stepEquipoReady
-                          ? "Equipo listo"
-                          : "Falta informacion"}
-                    </div>
-                  </div>
-
-                  {simulatorMode &&
-                  dataCreditoSimulationStatus === "loading" ? (
-                    <div
-                      className="mt-5 rounded-[20px] border border-[var(--fp-border)] bg-[var(--fp-bg)] px-4 py-4"
                       role="status"
                       aria-live="polite"
                     >
+                      {stepTwoComplete ? (
+                        <Check aria-hidden="true" />
+                      ) : (
+                        <AlertCircle aria-hidden="true" />
+                      )}
+                      {simulatorMode
+                        ? "Solo consulta"
+                        : stepTwoComplete
+                          ? "Plan listo"
+                          : "Falta información"}
+                    </div>
+                  </header>
+
+                  {simulatorMode &&
+                  dataCreditoSimulationStatus === "loading" ? (
+                    <div className="fp-step2-inline-status" role="status" aria-live="polite">
                       <LoadingState label="Cargando configuración del simulador..." />
                     </div>
                   ) : null}
 
-                  {simulatorMode &&
+                 {simulatorMode &&
                   dataCreditoSimulationStatus !== "idle" &&
                   dataCreditoSimulationStatus !== "loading" &&
                   dataCreditoSimulationStatus !== "ready" ? (
-                    <div
-                      className="mt-5 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-900"
-                      role="alert"
-                    >
-                      <p className="font-black">Simulación no disponible</p>
-                      <p className="mt-1">
+                    <div className="fp-step2-inline-alert" role="alert">
+                      <strong>Simulación no disponible</strong>
+                      <span>
                         {dataCreditoSimulationMessage ||
                           "La configuración actual no autoriza una simulación para esta plataforma."}
-                      </p>
+                      </span>
                     </div>
                   ) : null}
 
-                  {activeDataCreditoOffer && !simulatorMode ? (
-                    <div className="mt-5 flex flex-col gap-4 rounded-lg border border-slate-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[#f1f7df] text-[#6f9414]" aria-hidden="true">
-                          <ShieldCheck className="h-6 w-6" strokeWidth={1.8} />
+                  <div className="fp-step2-card">
+                    <section
+                      className="fp-step2-pane fp-step2-equipment"
+                      aria-labelledby="fp-step2-equipment-title"
+                    >
+                      <div className="fp-step2-section-heading">
+                        <span className="fp-step2-section-number" aria-hidden="true">
+                          {stepTwoEquipmentReady ? (
+                            <Check strokeWidth={2.5} />
+                          ) : (
+                            "1"
+                          )}
                         </span>
-                        <strong className="text-base text-slate-950">
-                          Oferta DataCrédito aprobada
-                        </strong>
-                      </div>
-                      <div className="flex flex-wrap gap-2 text-xs font-semibold text-[#55710f]">
-                        <span className="rounded-md bg-[#f1f7df] px-3 py-2">
-                          Inicial mínima {formatPercent(initialPaymentPercentage)}
-                        </span>
-                        <span className="rounded-md bg-[#f1f7df] px-3 py-2">
-                          Cupo aprobado {currency(dataCreditoEffectiveMaxFinancedAmount)}
-                        </span>
-                        {activeDataCreditoManualCreditLimit ? (
-                          <span className="rounded-md bg-[#f1f7df] px-3 py-2">
-                            Cupo manual · CC ***{activeDataCreditoManualCreditLimit.documentLast4}
-                          </span>
-                        ) : null}
-                        <span className="rounded-md bg-[#f1f7df] px-3 py-2">
-                          Hasta {plazoMaximoCuotas} cuotas
-                        </span>
-                        {canSeeInternalPricing && policySummaryMaxInstallmentValue > 0 ? (
-                          <span className="rounded-md bg-[#f1f7df] px-3 py-2">
-                            Tope por cuota {currency(policySummaryMaxInstallmentValue)}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div className="fp-simulator-layout mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.85fr)_minmax(320px,1fr)]">
-                    <div className="fp-simulator-form space-y-4">
-                      <section className="grid gap-4 rounded-lg border border-slate-200 bg-white p-5 md:grid-cols-2">
-                        <div className="md:col-span-2">
-                          <h4 className="text-lg font-black text-slate-950">1. Selección del equipo</h4>
+                        <div>
+                          <h4 id="fp-step2-equipment-title">Equipo</h4>
+                          <p>Selecciona la marca y el modelo, e ingresa el IMEI y el precio.</p>
                         </div>
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Marca
-                        </label>
-                        {activeEquipmentCatalog.length ? (
-                          <select
-                            value={equipoMarca}
-                            onChange={(event) => {
-                              setRestoredEquipmentCatalogId(null);
-                              setEquipoMarca(event.target.value);
-                              setEquipoModelo("");
-                            }}
-                            disabled={!equipmentBrandOptions.length}
-                            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50 disabled:text-slate-400"
-                          >
-                            <option value="">
-                              {equipmentBrandOptions.length
-                                ? "Selecciona marca"
-                                : iphoneFactory
-                                  ? "No hay marcas IPHONE en catalogo"
-                                  : "No hay marcas Android en catalogo"}
-                            </option>
-                            {equipmentBrandOptions.map((brand) => (
-                              <option key={equipmentCatalogKey(brand)} value={brand}>
-                                {brand}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <input
-                            value={equipoMarca}
-                            onChange={(event) => {
-                              setRestoredEquipmentCatalogId(null);
-                              setEquipoMarca(event.target.value);
-                            }}
-                            placeholder="Primero carga el catalogo"
-                            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                          />
-                        )}
+                        <span
+                          className={[
+                            "fp-step2-counter",
+                            stepTwoEquipmentReady ? "is-complete" : "",
+                          ].join(" ")}
+                          aria-label={
+                            stepTwoEquipmentValidCount +
+                            " de 4 datos del equipo válidos"
+                          }
+                        >
+                          {stepTwoEquipmentValidCount} de 4
+                        </span>
                       </div>
 
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Modelo
-                        </label>
-                        {activeEquipmentCatalog.length ? (
-                          <select
-                            value={selectedEquipmentCatalogItem?.id || ""}
-                            onChange={(event) => {
-                              const selected = equipmentModelOptions.find(
-                                (item) => item.id === Number(event.target.value)
-                              );
-
-                              if (selected) {
-                                applyEquipmentCatalogItem(selected);
-                              } else {
+                      <div className="fp-step2-equipment-fields">
+                       <label htmlFor="step-two-brand">
+                          <span>Marca</span>
+                          {activeEquipmentCatalog.length ? (
+                            <select
+                              id="step-two-brand"
+                              value={equipoMarca}
+                              onChange={(event) => {
                                 setRestoredEquipmentCatalogId(null);
+                                setEquipoMarca(event.target.value);
                                 setEquipoModelo("");
-                              }
-                            }}
-                            disabled={!equipoMarca || !equipmentModelOptions.length}
-                            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50 disabled:text-slate-400"
-                          >
-                            <option value="">
-                              {equipoMarca
-                                ? equipmentModelOptions.length
-                                  ? "Selecciona modelo"
-                                  : "No hay modelos para esta marca"
-                                : "Elige una marca"}
-                            </option>
-                            {equipmentModelOptions.map((item) => (
-                              <option key={item.id} value={item.id}>
-                                {canSeeInternalPricing
-                                  ? `${item.modelo} - base ${currency(item.precioBaseVenta)}`
-                                  : item.modelo}
+                              }}
+                              disabled={!equipmentBrandOptions.length}
+                              aria-invalid={Boolean(
+                                !equipoMarca.trim() &&
+                                  (equipoModelo.trim() ||
+                                    imeiDigits.length ||
+                                    valorTotalEquipoNumero > 0)
+                              )}
+                              className="fp-step2-control"
+                            >
+                              <option value="">
+                                {equipmentBrandOptions.length
+                                  ? "Selecciona marca"
+                                  : iphoneFactory
+                                    ? "No hay marcas IPHONE en catálogo"
+                                    : "No hay marcas Android en catálogo"}
                               </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <input
-                            value={equipoModelo}
-                            onChange={(event) => {
-                              setRestoredEquipmentCatalogId(null);
-                              setEquipoModelo(event.target.value);
-                            }}
-                            placeholder="Modelo comercial"
-                            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                          />
-                        )}
-                      </div>
-
-                      <div className={simulatorMode ? "hidden" : ""}>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          IMEI / deviceUid
-                        </label>
-                        <input
-                          value={imei}
-                          onChange={(event) =>
-                            setImei(event.target.value.replace(/\D/g, "").slice(0, 15))
-                          }
-                          inputMode="numeric"
-                          maxLength={15}
-                          placeholder="15 numeros del IMEI"
-                          disabled={firmaSeguroProcessExists}
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
-                        />
-                        <p
-                          className={[
-                            "mt-2 text-xs font-medium",
-                            imeiDigits.length > 0 && !imeiValido
-                              ? "text-red-600"
-                              : "text-slate-500",
-                          ].join(" ")}
-                        >
-                          {firmaSeguroProcessExists
-                            ? canSeeInternalPricing
-                              ? "El IMEI está protegido por el proceso de firma. Usa la corrección controlada para cambiarlo."
-                              : "El IMEI está protegido porque el contrato ya fue enviado a firma."
-                            : imeiDigits.length > 0
-                            ? `${imeiDigits.length}/15 digitos`
-                            : "Debe tener exactamente 15 numeros."}
-                        </p>
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Precio Equipo
-                        </label>
-                        <input
-                          value={currencyInputValue(valorEquipoTotal)}
-                          onChange={(event) =>
-                            setValorEquipoTotal(event.target.value.replace(/\D/g, ""))
-                          }
-                          inputMode="numeric"
-                          placeholder="$ 850.000"
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                        />
-                        {canSeeInternalPricing ? (
-                          <p className="mt-2 text-xs font-medium text-slate-500">
-                            {simulatorMode
-                              ? `Inicial base: ${initialPaymentPercentage}%.`
-                              : activeDataCreditoOffer
-                              ? `Cupo aprobado DataCrédito: ${currency(dataCreditoMaxFinancedAmount)}. ${dataCreditoFinancingExcess > 0 ? `Ajuste adicional por cupo: ${currency(dataCreditoFinancingExcess)}.` : "El saldo proyectado está dentro del cupo aprobado."}`
-                              : iphoneFactory
-                                ? `Tope financiado iPhone: ${currency(iphoneMaxFinancedAmount)}. La inicial solo se ajusta si el saldo supera el tope.`
-                                : precioBaseVentaCatalogo > 0
-                                  ? `Base del modelo: ${currency(precioBaseVentaCatalogo)}. El valor que supere esta base se cobra en la inicial: ${currency(excedentePrecioBase)}.`
-                                  : `Base máxima sin catálogo: ${currency(MAX_DEVICE_FINANCING_BASE)}.`}
-                            {!simulatorMode
-                              ? ` Inicial base: ${initialPaymentPercentage}%.`
-                              : null}
-                          </p>
-                        ) : (
-                          <p className="mt-2 text-xs font-medium text-slate-500">
-                            Ingresa manualmente el valor de venta acordado con el cliente.
-                          </p>
-                        )}
-                      </div>
-                      </section>
-
-                      <section className="grid gap-4 rounded-lg border border-slate-200 bg-white p-5 md:grid-cols-2">
-                        <div className="md:col-span-2">
-                          <h4 className="text-lg font-black text-slate-950">2. Configuración del plan</h4>
-                        </div>
-                      {simulatorMode ? (
-                        <fieldset className="md:col-span-2">
-                          <legend className="mb-2 block text-sm font-semibold text-slate-700">
-                            Porcentaje de cuota inicial
-                          </legend>
-                          <div className="grid max-w-md grid-cols-2 gap-1 rounded-lg border border-[var(--fp-border)] bg-[var(--fp-bg)] p-1">
-                            {SIMULATOR_INITIAL_PAYMENT_PERCENTAGES.map((percentage) => {
-                              const selected =
-                                simulatorInitialPaymentPercentage === percentage;
-
-                              return (
-                                <label key={percentage} className="cursor-pointer">
-                                  <input
-                                    type="radio"
-                                    name="simulator-initial-payment-percentage"
-                                    value={percentage}
-                                    checked={selected}
-                                    onChange={() =>
-                                      handleSimulatorInitialPaymentPercentageChange(
-                                        percentage
-                                      )
-                                    }
-                                    className="peer sr-only"
-                                  />
-                                  <span
-                                    className={[
-                                      "flex min-h-11 items-center justify-center rounded-md border px-4 py-2.5 text-sm font-bold transition peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--fp-lime)] peer-focus-visible:ring-offset-2",
-                                      selected
-                                        ? "border-[#161a1b] bg-[#161a1b] text-white"
-                                        : "border-transparent bg-white text-slate-700 hover:border-slate-300",
-                                    ].join(" ")}
-                                  >
-                                    {percentage} % de inicial
-                                  </span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                          <p className="mt-2 text-xs font-medium text-slate-500">
-                            Cambia el porcentaje para comparar inmediatamente el valor financiado y la cuota.
-                          </p>
-                        </fieldset>
-                      ) : null}
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Cuota inicial
-                        </label>
-                        <input
-                          value={currencyInputValue(cuotaInicial)}
-                          onChange={(event) =>
-                            setCuotaInicial(event.target.value.replace(/\D/g, ""))
-                          }
-                          onBlur={handleCuotaInicialBlur}
-                          inputMode="numeric"
-                          placeholder="$ 0"
-                          className={[
-                            "w-full rounded-2xl border bg-white px-4 py-3 text-base font-semibold text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200",
-                            cuotaInicial || !valorTotalEquipoNumero
-                              ? cuotaInicialValida || !valorTotalEquipoNumero
-                                ? "border-slate-300"
-                                : "border-red-300"
-                              : "border-slate-300",
-                          ].join(" ")}
-                        />
-                        <p
-                          className={[
-                            "mt-2 text-xs font-medium",
-                            cuotaInicial && !cuotaInicialValida
-                              ? "text-red-600"
-                              : "text-slate-500",
-                          ].join(" ")}
-                        >
-                          {simulatorMode ? (
-                            <>
-                              Mínimo con {initialPaymentPercentage} % de inicial: {currency(cuotaInicialMinimaNumero)}. Puedes aumentarla para comparar una cuota menor.
-                              {platformInitialPaymentAdjustment > 0
-                                ? ` El tope de financiación requiere ${currency(platformInitialPaymentAdjustment)} adicionales.`
-                                : ""}
-                            </>
+                              {equipmentBrandOptions.map((brand) => (
+                                <option key={equipmentCatalogKey(brand)} value={brand}>
+                                  {brand}
+                                </option>
+                              ))}
+                            </select>
                           ) : (
-                            <>
-                              Minimo: {currency(cuotaInicialMinimaNumero)}. Puedes subirla si el cliente da mas.
-                              {dataCreditoFinancingExcess > 0
-                                ? ` Ajuste adicional por cupo aprobado: ${currency(dataCreditoFinancingExcess)}.`
-                                : platformInitialPaymentAdjustment > 0
-                                  ? ` Ajuste adicional por tope del equipo: ${currency(platformInitialPaymentAdjustment)}.`
-                                  : ""}
-                            </>
+                            <input
+                              id="step-two-brand"
+                              value={equipoMarca}
+                              onChange={(event) => {
+                                setRestoredEquipmentCatalogId(null);
+                                setEquipoMarca(event.target.value);
+                              }}
+                              placeholder="Ingresa la marca"
+                              aria-invalid={Boolean(
+                                !equipoMarca.trim() &&
+                                  (equipoModelo.trim() ||
+                                    imeiDigits.length ||
+                                    valorTotalEquipoNumero > 0)
+                              )}
+                              className="fp-step2-control"
+                            />
                           )}
-                        </p>
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Numero de cuotas
+                          {!equipoMarca.trim() &&
+                          (equipoModelo.trim() ||
+                            imeiDigits.length ||
+                            valorTotalEquipoNumero > 0) ? (
+                            <small className="is-error">
+                              Selecciona una marca.
+                            </small>
+                          ) : null}
                         </label>
-                        <select
-                          value={plazoMeses}
-                          onChange={(event) => setPlazoMeses(event.target.value)}
-                          disabled={
-                            iphoneFactory &&
-                            !iphoneFactoryTermsLocked &&
-                            creditInstallmentOptions.length === 0
-                          }
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50 disabled:text-slate-500"
-                        >
-                          {creditInstallmentOptions.length > 0 ? (
-                            creditInstallmentOptions.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
+
+                        <label htmlFor="step-two-model">
+                          <span>Modelo</span>
+                          {activeEquipmentCatalog.length ? (
+                            <select
+                             id="step-two-model"
+                              value={selectedEquipmentCatalogItem?.id || ""}
+                              onChange={(event) => {
+                                const selected = equipmentModelOptions.find(
+                                  (item) => item.id === Number(event.target.value)
+                                );
+
+                                if (selected) {
+                                  applyEquipmentCatalogItem(selected);
+                                } else {
+                                  setRestoredEquipmentCatalogId(null);
+                                  setEquipoModelo("");
+                                }
+                              }}
+                              disabled={!equipoMarca || !equipmentModelOptions.length}
+                              aria-invalid={Boolean(
+                                equipoMarca.trim() && !equipoModelo.trim()
+                              )}
+                              className="fp-step2-control"
+                            >
+                              <option value="">
+                                {equipoMarca
+                                  ? equipmentModelOptions.length
+                                    ? "Selecciona un modelo"
+                                    : "No hay modelos para esta marca"
+                                  : "Selecciona primero una marca"}
                               </option>
-                            ))
+                              {equipmentModelOptions.map((item) => (
+                                <option key={item.id} value={item.id}>
+                                  {canSeeInternalPricing
+                                    ? item.modelo +
+                                      " · base " +
+                                      currency(item.precioBaseVenta)
+                                    : item.modelo}
+                                </option>
+                              ))}
+                            </select>
                           ) : (
-                            <option value={plazoMeses}>
-                              {iphoneFactoryRangeActive
-                                ? amortizationPlan
-                                  ? "Sin plazos dentro del rango"
-                                  : "Completa el precio y la inicial"
-                                : "Sin plazo dentro del tope"}
-                            </option>
+                            <input
+                              id="step-two-model"
+                              value={equipoModelo}
+                              onChange={(event) => {
+                                setRestoredEquipmentCatalogId(null);
+                                setEquipoModelo(event.target.value);
+                              }}
+                              placeholder="Ingresa el modelo"
+                              aria-invalid={Boolean(
+                                equipoMarca.trim() && !equipoModelo.trim()
+                              )}
+                              className="fp-step2-control"
+                            />
                           )}
-                        </select>
-                        {!simulatorMode && dataCreditoInstallmentCount ? (
-                          <p className="mt-2 text-xs font-medium text-slate-500">
-                            Puedes elegir hasta {plazoMaximoCuotas} cuotas. No
-                            puedes superar el máximo autorizado por la política
-                            DataCrédito.
-                            {iphoneFactory && iphoneMaxInstallmentValue > 0
-                              ? iphoneFactoryRangeActive
-                                ? ` Solo se muestran plazos con cuotas entre ${currency(iphoneInstallmentLimit.minInstallment)} y ${currency(iphoneInstallmentLimit.maxInstallment)}.`
-                                : " Solo se muestran los plazos permitidos por el tope de cuota de la política."
-                              : ""}
-                          </p>
-                        ) : null}
-                        {iphoneFactoryRangeActive && amortizationPlan && creditInstallmentOptions.length === 0 ? (
-                          <p role="alert" className="mt-2 text-sm font-medium text-red-600">
-                            No hay plazos disponibles para este precio e inicial dentro del rango de cuota y el máximo autorizado. Revisa las condiciones antes de continuar.
-                          </p>
-                        ) : null}
-                        {iphoneFactorySignaturePending ? (
-                          <p role="status" className="mt-2 text-sm text-slate-600">
-                            Verificando las condiciones del borrador para conservar su plazo. Si no se completa, vuelve a abrir la solicitud antes de continuar.
-                          </p>
-                        ) : null}
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Frecuencia
+                          {equipoMarca.trim() && !equipoModelo.trim() ? (
+                            <small className="is-error">
+                              Selecciona un modelo.
+                            </small>
+                          ) : null}
                         </label>
-                        <div className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-900">
-                          {frecuenciaPagoLabel}
-                        </div>
                       </div>
 
-                      <div className="md:col-span-2">
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Primer pago
-                        </label>
-                        <input
-                          type="date"
-                          value={fechaPrimerPago}
-                          readOnly
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                        />
-                        <p className="mt-2 text-xs font-medium text-slate-500">
-                          Se calcula automáticamente según la fecha del crédito y
-                          la frecuencia {frecuenciaPagoLabel.toLowerCase()}{" "}
-                          {simulatorMode
-                            ? "configurada para el simulador."
-                            : "definida por la política."}
-                        </p>
-                      </div>
-                      </section>
-                    </div>
-
-                    <div className="space-y-4 xl:sticky xl:top-24 xl:self-start">
-                      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
-                        <h4 className="text-lg font-black text-slate-950">Resumen del crédito</h4>
-                        <div className="mt-5 flex items-center gap-4 border-b border-slate-200 pb-5">
-                          <span className="inline-flex h-20 w-14 shrink-0 items-center justify-center rounded-md bg-[#f2f3ef] text-slate-800" aria-hidden="true">
-                            <Smartphone className="h-8 w-8" strokeWidth={1.6} />
-                          </span>
-                          <div className="min-w-0">
-                            <strong className="block truncate text-base text-slate-950">{referenciaEquipo || "Equipo sin seleccionar"}</strong>
-                            <span className="mt-1 block text-xs font-semibold uppercase text-slate-500">{equipoMarca || "Pendiente"}</span>
+                      <div className="fp-step2-equipment-lower">
+                        <div className="fp-step2-device-preview" aria-live="polite">
+                          <div className="fp-step2-device-illustration" aria-hidden="true">
+                            <Smartphone strokeWidth={1.55} />
+                            <span />
                           </div>
-                        </div>
-
-                        <dl className="mt-5 space-y-3 text-sm">
-                          {[
-                            ["Valor del equipo", currency(valorTotalEquipoNumero)],
-                            [
-                              simulatorMode
-                                ? `Inicial (${formatPercent(initialPaymentPercentage)})`
-                                : "Inicial",
-                              currency(cuotaInicialNumero),
-                            ],
-                            ["Valor financiado", currency(saldoBaseFinanciado)],
-                            ["Plazo", `${plazoMesesNumero || 0} cuotas`],
-                            ["Frecuencia", frecuenciaPagoLabel],
-                            ...(canSeeInternalPricing ? [["Total a pagar", currency(saldoFinanciado)]] : []),
-                          ].map(([label, value]) => (
-                            <div key={label} className="flex items-start justify-between gap-4 border-b border-slate-100 pb-3 last:border-0">
-                              <dt className="text-slate-500">{label}</dt>
-                              <dd className="text-right font-semibold text-slate-950">{value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-
-                        <div className="mt-5 rounded-lg bg-[#161a1b] p-5 text-white">
-                          <p className="text-xs font-semibold text-slate-300">Cuota {frecuenciaPagoLabel.toLowerCase()}</p>
-                          <strong className="mt-2 block text-3xl font-black">
-                            {financialPreviewReady ? currency(valorCuota) : "-"}
+                          <strong>
+                            {referenciaEquipo || "Sin equipo seleccionado"}
                           </strong>
-                          <p className="mt-2 text-xs leading-5 text-slate-300">
-                            {financialPreviewReady
-                              ? "Cálculo actualizado con los datos actuales del plan."
-                              : "Completa los datos financieros para calcular"}
+                          <p>
+                            {referenciaEquipo
+                              ? "Equipo seleccionado para esta propuesta."
+                              : "Selecciona una marca y modelo para ver los detalles del equipo."}
                           </p>
-                          {financialPreviewReady && canSeeInternalPricing && amortizationPlan ? (
-                            <p className="mt-3 border-t border-white/15 pt-3 text-xs text-slate-300">
-                              {cuotaInternaLabel}: {exactCurrency(amortizationPlan.cuotaTotal)}
+                        </div>
+
+                        <div className="fp-step2-equipment-details">
+                          <label
+                            htmlFor="step-two-imei"
+                            className={simulatorMode ? "hidden" : ""}
+                          >
+                            <span>IMEI / deviceUId</span>
+                            <input
+                              id="step-two-imei"
+                              value={imei}
+                              onChange={(event) =>
+                                setImei(
+                                  event.target.value.replace(/\D/g, "").slice(0, 15)
+                                )
+                              }
+                              inputMode="numeric"
+                              maxLength={15}
+                              placeholder="15 números del IMEI"
+                              disabled={firmaSeguroProcessExists}
+                              aria-invalid={Boolean(
+                                imeiDigits.length > 0 && !imeiValido
+                              )}
+                              aria-describedby="step-two-imei-help"
+                              className="fp-step2-control"
+                            />
+                            <small
+                             id="step-two-imei-help"
+                              className={
+                                imeiDigits.length > 0 && !imeiValido
+                                  ? "is-error"
+                                  : ""
+                              }
+                            >
+                              {firmaSeguroProcessExists
+                                ? "El IMEI está protegido porque el contrato ya fue enviado a firma."
+                                : imeiDigits.length > 0
+                                  ? imeiDigits.length + "/15 dígitos"
+                                  : "El IMEI debe tener 15 números."}
+                            </small>
+                          </label>
+
+                          <label htmlFor="step-two-price">
+                            <span>Precio del equipo</span>
+                            <input
+                              id="step-two-price"
+                              value={currencyInputValue(valorEquipoTotal)}
+                              onChange={(event) =>
+                                setValorEquipoTotal(
+                                  event.target.value.replace(/\D/g, "")
+                                )
+                              }
+                              inputMode="numeric"
+                              placeholder="$ 0"
+                              aria-invalid={Boolean(
+                                valorEquipoTotal && valorTotalEquipoNumero <= 0
+                              )}
+                              className="fp-step2-control"
+                            />
+                            <small
+                              className={
+                                valorEquipoTotal && valorTotalEquipoNumero <= 0
+                                  ? "is-error"
+                                  : ""
+                              }
+                            >
+                              {valorEquipoTotal && valorTotalEquipoNumero <= 0
+                                ? "El precio debe ser mayor que cero."
+                                : canSeeInternalPricing &&
+                              precioBaseVentaCatalogo > 0
+                                ? "Base del modelo: " +
+                                  currency(precioBaseVentaCatalogo) +
+                                  "." +
+                                  (excedentePrecioBase > 0
+                                    ? " Ajuste sobre base: " +
+                                      currency(excedentePrecioBase) +
+                                      "."
+                                    : "")
+                                : "Ingresa el valor de venta acordado con el cliente."}
+                            </small>
+                          </label>
+                        </div>
+                      </div>
+                    </section>
+
+                   <section
+                      className={[
+                        "fp-step2-pane fp-step2-plan",
+                        stepTwoPlanLocked ? "is-locked" : "",
+                      ].join(" ")}
+                      aria-labelledby="fp-step2-plan-title"
+                    >
+                      <div className="fp-step2-section-heading">
+                        <span className="fp-step2-section-number" aria-hidden="true">
+                          {stepTwoComplete ? (
+                            <Check strokeWidth={2.5} />
+                          ) : (
+                            "2"
+                          )}
+                        </span>
+                        <div>
+                          <h4 id="fp-step2-plan-title">Plan</h4>
+                          <p>Define la cuota inicial, el plazo y revisa la propuesta.</p>
+                        </div>
+                      </div>
+
+                      <div
+                        id="step-two-plan-availability"
+                        className={[
+                          "fp-step2-plan-availability",
+                          !stepTwoPolicyAvailable
+                            ? "is-unavailable"
+                            : stepTwoPlanLocked
+                              ? "is-locked"
+                              : "is-ready",
+                        ].join(" ")}
+                        role="status"
+                        aria-live="polite"
+                      >
+                        {!stepTwoPolicyAvailable ? (
+                          <AlertCircle aria-hidden="true" />
+                        ) : stepTwoPlanLocked ? (
+                          <LockKeyhole aria-hidden="true" />
+                        ) : (
+                          <Check aria-hidden="true" />
+                        )}
+                        <span>
+                          {!stepTwoPolicyAvailable
+                            ? "Política no disponible"
+                           : stepTwoPlanLocked
+                              ? "Disponible al completar el equipo."
+                              : "Equipo completo. Configura el plan."}
+                        </span>
+                      </div>
+
+                      {stepTwoPolicyAvailable && !simulatorMode ? (
+                        <div className="fp-step2-policy-note">
+                          <strong>
+                            {activeDataCreditoManualCreditLimit ? (
+                              <>
+                                Cupo manual · CC ***
+                                {activeDataCreditoManualCreditLimit.documentLast4}
+                              </>
+                            ) : activeDataCreditoOffer ? (
+                              creditSettingsScopeLabel
+                            ) : (
+                              "Política general"
+                            )}
+                          </strong>
+                          {activeDataCreditoOffer ? (
+                            <span>
+                              Inicial mínima {formatPercent(initialPaymentPercentage)}
+                              {" · "}Cupo aprobado{" "}
+                              {currency(dataCreditoEffectiveMaxFinancedAmount)}
+                              {" · "}Hasta {plazoMaximoCuotas} cuotas
+                              {policySummaryMaxInstallmentValue > 0
+                                ? " · Tope por cuota " +
+                                  currency(policySummaryMaxInstallmentValue)
+                                : ""}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      <fieldset
+                        disabled={stepTwoPlanLocked}
+                        aria-describedby="step-two-plan-availability"
+                        className="fp-step2-plan-fields"
+                      >
+                        {simulatorMode ? (
+                          <div className="fp-step2-percentage">
+                            <span>Porcentaje de cuota inicial</span>
+                            <div role="radiogroup" aria-label="Porcentaje de cuota inicial">
+                              {SIMULATOR_INITIAL_PAYMENT_PERCENTAGES.map(
+                                (percentage) => {
+                                  const selected =
+                                    simulatorInitialPaymentPercentage === percentage;
+                                  return (
+                                    <label key={percentage}>
+                                      <input
+                                        type="radio"
+                                        name="simulator-initial-payment-percentage"
+                                        value={percentage}
+                                        checked={selected}
+                                        onChange={() =>
+                                          handleSimulatorInitialPaymentPercentageChange(
+                                            percentage
+                                         )
+                                        }
+                                      />
+                                      <span>{percentage} %</span>
+                                    </label>
+                                  );
+                                }
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="fp-step2-initial">
+                          <label htmlFor="step-two-initial">
+                            <span>Cuota inicial</span>
+                            <input
+                              id="step-two-initial"
+                              value={currencyInputValue(cuotaInicial)}
+                              onChange={(event) =>
+                                setCuotaInicial(
+                                  event.target.value.replace(/\D/g, "")
+                                )
+                              }
+                              onBlur={handleCuotaInicialBlur}
+                              inputMode="numeric"
+                              placeholder="$ 0"
+                              aria-invalid={Boolean(
+                                cuotaInicial && !cuotaInicialValida
+                              )}
+                              className="fp-step2-control"
+                            />
+                          </label>
+                          <input
+                            className="fp-step2-range"
+                            type="range"
+                            min={stepTwoInitialMinimum}
+                            max={stepTwoInitialMaximum}
+                            value={stepTwoInitialRangeValue}
+                            onChange={(event) =>
+                              setCuotaInicial(event.target.value)
+                            }
+                            disabled={
+                              stepTwoPlanLocked ||
+                              stepTwoInitialMaximum <= 0 ||
+                              stepTwoInitialMinimum > stepTwoInitialMaximum
+                           }
+                            aria-label="Ajustar cuota inicial"
+                            aria-valuetext={currency(stepTwoInitialRangeValue)}
+                          />
+                          <div className="fp-step2-range-limits" aria-hidden="true">
+                            <span>
+                              Mínimo: {currency(stepTwoInitialMinimum)}
+                            </span>
+                            <span>
+                              Máximo: {currency(stepTwoInitialMaximum)}
+                            </span>
+                          </div>
+                          <p className="fp-step2-field-note">
+                            Puedes aumentarla para comparar una cuota menor.
+                          </p>
+                          {cuotaInicial && !cuotaInicialValida ? (
+                            <p className="fp-step2-field-error" role="alert">
+                              La inicial debe estar entre el mínimo autorizado y
+                              el valor del equipo.
                             </p>
                           ) : null}
                         </div>
-                      </section>
-                      {iphoneInstallmentLimitExceeded ? (
-                        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-700">
-                          {visibleIphoneInstallmentLimitMessage}
+
+                        <div className="fp-step2-installments">
+                          <span>Número de cuotas</span>
+                          {creditInstallmentOptions.length > 0 ? (
+                            creditInstallmentOptions.length <= 6 ? (
+                              <div
+                                className="fp-step2-installment-chips"
+                                role="radiogroup"
+                                aria-label="Número de cuotas"
+                              >
+                                {creditInstallmentOptions.map((option) => (
+                                  <label key={option}>
+                                    <input
+                                      type="radio"
+                                      name="step-two-installments"
+                                      value={option}
+                                      checked={plazoMeses === option}
+                                      onChange={(event) =>
+                                        setPlazoMeses(event.target.value)
+                                      }
+                                    />
+                                    <span>{option} cuotas</span>
+                                  </label>
+                                ))}
+                              </div>
+                            ) : (
+                             <select
+                                id="step-two-installments"
+                                value={plazoMeses}
+                                onChange={(event) =>
+                                  setPlazoMeses(event.target.value)
+                                }
+                                className="fp-step2-control"
+                                aria-label="Número de cuotas"
+                              >
+                                <option value="">Selecciona el plazo</option>
+                                {creditInstallmentOptions.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option} cuotas
+                                  </option>
+                                ))}
+                              </select>
+                            )
+                          ) : (
+                            <div className="fp-step2-empty-options" role="status">
+                              {iphoneFactoryRangeActive && amortizationPlan
+                                ? "No hay plazos dentro del rango autorizado."
+                                : "Completa los datos para consultar los plazos autorizados."}
+                            </div>
+                          )}
+                          {!simulatorMode && dataCreditoInstallmentCount ? (
+                            <small>
+                              Puedes elegir hasta {plazoMaximoCuotas} cuotas. No
+                              puedes superar el máximo autorizado por la política
+                              DataCrédito.
+                            </small>
+                          ) : null}
+                          {iphoneFactoryRangeActive &&
+                          amortizationPlan &&
+                          creditInstallmentOptions.length === 0 ? (
+                            <p className="fp-step2-field-error" role="alert">
+                              No hay plazos disponibles para este precio e inicial
+                              dentro del rango autorizado.
+                            </p>
+                          ) : null}
+                          {iphoneFactorySignaturePending ? (
+                            <p className="fp-step2-field-note" role="status">
+                              Verificando las condiciones guardadas del borrador.
+                            </p>
+                          ) : null}
                         </div>
-                      ) : null}
-                    </div>
+
+                        <div className="fp-step2-plan-meta">
+                         <div>
+                            <CalendarDays aria-hidden="true" />
+                            <span>
+                              <small>Frecuencia</small>
+                              <strong>{frecuenciaPagoLabel}</strong>
+                            </span>
+                          </div>
+                          <div>
+                            <CalendarDays aria-hidden="true" />
+                            <span>
+                              <small>Primer pago</small>
+                              <strong>
+                                {fechaPrimerPago
+                                  ? new Date(fechaPrimerPago).toLocaleDateString(
+                                      "es-CO"
+                                    )
+                                  : "—"}
+                              </strong>
+                            </span>
+                          </div>
+                        </div>
+                      </fieldset>
+                    </section>
                   </div>
+
+                  <section
+                    className="fp-step2-proposal"
+                    aria-labelledby="fp-step2-proposal-title"
+                    aria-live="polite"
+                  >
+                    <div className="fp-step2-proposal-intro">
+                      <h4 id="fp-step2-proposal-title">Tu propuesta</h4>
+                      <p>Se actualizará automáticamente con los datos que ingreses.</p>
+                    </div>
+                    <dl className="fp-step2-proposal-metrics">
+                      <div>
+                        <dt>Equipo</dt>
+                        <dd>
+                          {equipoMarca.trim() && equipoModelo.trim()
+                            ? referenciaEquipo
+                            : "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Valor</dt>
+                       <dd>
+                          {valorTotalEquipoNumero > 0
+                            ? currency(valorTotalEquipoNumero)
+                            : "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Inicial</dt>
+                        <dd>
+                          {cuotaInicialValida
+                            ? currency(cuotaInicialNumero)
+                            : "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Financiado</dt>
+                        <dd>
+                          {cuotaInicialValida && saldoBaseFinanciado > 0
+                            ? currency(saldoBaseFinanciado)
+                            : "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Plazo</dt>
+                        <dd>
+                          {stepTwoEquipmentReady && stepTwoPlanSelectionValid
+                            ? plazoMesesNumero + " cuotas"
+                            : "—"}
+                        </dd>
+                      </div>
+                      <div className="fp-step2-proposal-installment">
+                        <dt>Cuota {frecuenciaPagoLabel.toLowerCase()}</dt>
+                        <dd>
+                          {stepTwoProposalReady ? currency(valorCuota) : "—"}
+                        </dd>
+                        <span>
+                          {stepTwoProposalReady
+                            ? "Cálculo actualizado"
+                            : "Completa los datos para calcular."}
+                        </span>
+                      </div>
+                    </dl>
+                  </section>
+
+                  {iphoneInstallmentLimitExceeded ? (
+                    <div className="fp-step2-inline-alert" role="alert">
+                      <AlertCircle aria-hidden="true" />
+                      <span>{visibleIphoneInstallmentLimitMessage}</span>
+                    </div>
+                  ) : null}
+
                   {canSeeInternalPricing && amortizationPlan ? (
                     <CreditAmortizationTable plan={amortizationPlan} />
                   ) : null}
                 </div>
               )}
-
               {!hideIdentityWizardStep && wizardStep === 3 && (
                 <div>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -16955,6 +17235,7 @@ export default function CreditFactoryConsole({
                 className={[
                   "fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white/95 px-4 py-4 shadow-[0_10px_28px_rgba(15,23,42,0.09)] backdrop-blur",
                   createClientMode && wizardStep === 1 ? "fp-identity-actions" : "",
+                  createClientMode && wizardStep === 2 ? "fp-step2-actions" : "",
                 ].join(" ")}
               >
                 {createClientMode && wizardStep === 1 ? (
@@ -16999,6 +17280,80 @@ export default function CreditFactoryConsole({
                       >
                         Continuar
                         <ArrowRight className="h-4 w-4" strokeWidth={2} />
+                      </button>
+                    </div>
+                  </>
+                ) : wizardStep === 2 ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setWizardStep((current) =>
+                          previousVisibleWizardStep(current)
+                        )
+                      }
+                      className="fp-step2-back"
+                    >
+                      <ArrowLeft aria-hidden="true" />
+                      Anterior
+                    </button>
+
+                    <div
+                      className={[
+                        "fp-step2-save-status",
+                        draftStatus === "saved" ? "is-saved" : "",
+                        draftStatus === "error" ? "is-error" : "",
+                        draftStatus === "saving" || draftStatus === "loading"
+                          ? "is-pending"
+                          : "",
+                      ].join(" ")}
+                      role="status"
+                      aria-live="polite"
+                    >
+                      {draftStatus === "saving" || draftStatus === "loading" ? (
+                        <LoaderCircle className="is-spinning" aria-hidden="true" />
+                      ) : draftStatus === "error" ? (
+                        <AlertCircle aria-hidden="true" />
+                      ) : (
+                        <Save aria-hidden="true" />
+                      )}
+                      <span>{stepTwoDraftStatusLabel}</span>
+                      {draftStatus === "error" && draftId ? (
+                        <button
+                          type="button"
+                          onClick={() => void retryStepTwoDraftSave()}
+                        >
+                          Reintentar
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <div className="fp-step2-action-buttons">
+                      <button
+                        type="button"
+                        onClick={() => setStepTwoClearConfirmOpen(true)}
+                        disabled={stepTwoOperationPending || firmaSeguroProcessExists}
+                        className="fp-step2-clear"
+                      >
+                        <RotateCcw aria-hidden="true" />
+                        Limpiar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleStepTwoContinue()}
+                        disabled={stepTwoContinueDisabled}
+                        aria-disabled={stepTwoContinueDisabled}
+                        aria-busy={
+                          stepTwoContinuing || draftStatus === "saving"
+                        }
+                        className="fp-step2-continue"
+                      >
+                        {draftStatus === "saving"
+                          ? "Guardando…"
+                          : stepTwoContinuing
+                            ? "Continuando…"
+                            : "Continuar"}
+                        <ArrowRight aria-hidden="true" />
                       </button>
                     </div>
                   </>
@@ -20286,6 +20641,14 @@ export default function CreditFactoryConsole({
             </div>
           )}
         </section>
+        <ConfirmDialog
+          open={stepTwoClearConfirmOpen}
+          title="Limpiar equipo y plan"
+          description="Se borrarán únicamente la marca, el modelo, el IMEI, el precio, la inicial y el plazo de este paso. Los datos del cliente, la oferta y los demás pasos se conservarán."
+          confirmLabel="Limpiar paso 2"
+          onCancel={() => setStepTwoClearConfirmOpen(false)}
+          onConfirm={clearStepTwoFields}
+        />
         <ConfirmDialog
           open={veriffRegenerationConfirmOpen}
           title="Regenerar código QR"
