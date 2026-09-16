@@ -59,6 +59,7 @@ test("la tarjeta usa la mascota aislada y respeta movimiento reducido", async ()
   assert.match(css, /grid-template-columns:\s*minmax\(290px, 0\.78fr\) minmax\(0, 2fr\)/);
   assert.match(css, /@keyframes mascotEnter/);
   assert.match(css, /@keyframes mascotFloat/);
+  assert.match(css, /\.mascot\s*\{[^}]*border:\s*0 !important/);
   assert.match(css, /translateY\(-6px\)/);
   assert.match(css, /prefers-reduced-motion:\s*reduce/);
   assert.match(css, /@media \(max-width:\s*860px\)/);
