@@ -5553,6 +5553,455 @@ body {
   }
 }
 
+/* Credit factory: approved step 3 visual reference */
+.fp-identity-modal-backdrop {
+  background: rgba(8, 12, 16, 0.64);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  animation: fp-identity-backdrop-in 180ms ease-out both;
+}
+
+.fp-identity-modal {
+  width: min(620px, 100%);
+  max-height: min(800px, calc(100dvh - 32px));
+  border: 1px solid rgba(255, 255, 255, 0.66);
+  border-radius: 14px;
+  box-shadow: 0 28px 72px rgba(4, 8, 12, 0.32);
+  animation: fp-identity-dialog-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.fp-identity-modal-content.is-validation,
+.fp-identity-modal-content.is-approved-transition {
+  padding: 28px 34px 24px;
+}
+
+.fp-identity-modal-content.is-approved-transition {
+  animation: fp-identity-approved-in 260ms ease-out both;
+}
+
+.fp-identity-modal-content.is-validation .fp-identity-modal-shield,
+.fp-identity-modal-content.is-approved-transition .fp-identity-modal-shield {
+  width: 46px;
+  height: 46px;
+  margin-bottom: 2px;
+}
+
+.fp-identity-modal-content.is-validation .fp-identity-modal-kicker,
+.fp-identity-modal-content.is-approved-transition .fp-identity-modal-kicker {
+  margin: 0;
+  color: var(--fp-lime-strong);
+  font-size: 0.76rem;
+  letter-spacing: 0;
+}
+
+.fp-identity-modal-content.is-validation h2,
+.fp-identity-modal-content.is-approved-transition h2 {
+  margin-top: 10px;
+  font-size: clamp(1.65rem, 4vw, 2rem);
+  line-height: 1.12;
+}
+
+.fp-identity-modal-content.is-validation .fp-identity-modal-lead,
+.fp-identity-modal-content.is-approved-transition .fp-identity-modal-lead {
+  max-width: 510px;
+  font-size: 0.94rem;
+}
+
+.fp-identity-modal-content.is-validation .fp-identity-modal-qr {
+  width: 220px;
+  margin-top: 20px;
+  border-color: #ebe7df;
+  border-radius: 12px;
+  background: #f7f4ee;
+}
+
+.fp-identity-modal-content.is-validation .fp-identity-modal-qr img {
+  border: 0;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.fp-identity-modal-content.is-validation .fp-identity-modal-waiting {
+  margin-top: 12px;
+}
+
+.fp-identity-modal-waiting > span {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--fp-amber);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--fp-amber) 13%, transparent);
+}
+
+.fp-identity-modal-helper {
+  margin: 14px auto 0;
+  max-width: 500px;
+  color: var(--fp-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.fp-identity-modal-error {
+  display: flex;
+  max-width: 500px;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px auto 0;
+  border: 1px solid #f0b8b2;
+  border-radius: 8px;
+  background: var(--fp-danger-soft);
+  padding: 10px 12px;
+  color: var(--fp-danger);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.fp-identity-modal-error svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.fp-identity-modal-content.is-validation .fp-identity-modal-primary {
+  min-height: 58px;
+  margin-top: 18px;
+  border-color: #161a1b;
+  border-radius: 9px;
+  background: #161a1b;
+  color: #ffffff;
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+}
+
+.fp-identity-modal-content.is-validation .fp-identity-modal-primary svg {
+  color: var(--fp-lime);
+}
+
+.fp-identity-modal-content.is-validation .fp-identity-modal-primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.fp-identity-modal-progress {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 22px;
+}
+
+.fp-identity-modal-progress > div {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: 7px;
+  color: #8a939d;
+  text-align: center;
+}
+
+.fp-identity-modal-progress > div:not(:last-child)::after {
+  position: absolute;
+  z-index: 0;
+  top: 17px;
+  left: calc(50% + 25px);
+  width: calc(100% - 32px);
+  height: 1px;
+  background: #cfd5da;
+  content: "";
+}
+
+.fp-identity-modal-progress span {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #cbd2d8;
+  border-radius: 50%;
+  background: #ffffff;
+  color: inherit;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.fp-identity-modal-progress strong {
+  color: inherit;
+  font-size: 0.76rem;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.fp-identity-modal-progress > .is-active {
+  color: var(--fp-ink);
+}
+
+.fp-identity-modal-progress > .is-active span,
+.fp-identity-modal-progress > .is-complete span {
+  border-color: var(--fp-lime-strong);
+  background: var(--fp-lime-strong);
+  color: #ffffff;
+}
+
+.fp-identity-modal-progress > .is-complete {
+  color: var(--fp-ink);
+}
+
+.fp-identity-modal-cancel {
+  min-height: 40px;
+  margin-top: 18px;
+  border-radius: 6px;
+  padding: 6px 12px;
+  color: var(--fp-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.fp-identity-modal-cancel:hover {
+  color: var(--fp-ink);
+}
+
+.fp-identity-modal-cancel:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--fp-lime) 70%, transparent);
+  outline-offset: 2px;
+}
+
+.fp-credit-factory .fp-firma-stage {
+  animation: fp-step3-approved-in 260ms ease-out both;
+}
+
+.fp-credit-factory .fp-step3-header-status.is-success {
+  border-color: #b8d277 !important;
+  background: var(--fp-lime-soft) !important;
+  color: #4e7410 !important;
+}
+
+.fp-credit-factory .fp-step3-identity-approved {
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px 16px;
+  border-color: var(--fp-border);
+  border-radius: 12px;
+  background: var(--fp-surface);
+  padding: 26px 30px 24px;
+  box-shadow: var(--fp-shadow-sm);
+}
+
+.fp-credit-factory .fp-step3-identity-approved > span {
+  width: 52px;
+  height: 52px;
+  border: 0;
+  background: var(--fp-lime-strong);
+  color: #ffffff;
+}
+
+.fp-credit-factory .fp-step3-identity-approved h4 {
+  font-size: 1.2rem;
+}
+
+.fp-credit-factory .fp-step3-identity-approved p {
+  font-size: 0.9rem;
+}
+
+.fp-credit-factory .fp-step3-veriff-complete {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  margin-top: 8px;
+  padding: 0 8%;
+}
+
+.fp-credit-factory .fp-step3-veriff-complete > div {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: var(--fp-muted);
+}
+
+.fp-credit-factory .fp-step3-veriff-complete > div:not(:last-child)::after {
+  position: absolute;
+  top: 19px;
+  left: calc(38px + 100%);
+  width: 24px;
+  height: 1px;
+  background: #cfd5da;
+  content: "";
+  transform: translateX(-12px);
+}
+
+.fp-credit-factory .fp-step3-veriff-complete span {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--fp-lime-strong);
+  color: #ffffff;
+}
+
+.fp-credit-factory .fp-step3-veriff-complete strong {
+  min-width: 0;
+  font-size: 0.82rem;
+  font-weight: 780;
+}
+
+.fp-credit-factory .fp-step3-progress-item.is-complete > span {
+  border-color: var(--fp-lime-strong);
+  background: var(--fp-lime-strong);
+  color: #ffffff;
+}
+
+.fp-credit-factory .fp-step3-firma {
+  margin-top: 24px;
+  padding-top: 22px;
+}
+
+.fp-credit-factory .fp-step3-firma-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.fp-credit-factory .fp-step3-firma-heading-actions {
+  flex: 0 0 auto;
+}
+
+.fp-credit-factory .fp-step3-firma-primary {
+  width: min(100%, 390px);
+  min-height: 50px;
+  flex: 0 1 390px;
+  border-radius: 7px;
+  padding-inline: 22px;
+  font-size: 0.84rem;
+}
+
+.fp-credit-factory .fp-step3-firma-message {
+  width: max-content;
+  max-width: 100%;
+  margin-top: 12px;
+}
+
+@keyframes fp-identity-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fp-identity-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes fp-identity-approved-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 760px) {
+  .fp-identity-modal {
+    width: min(560px, 100%);
+  }
+
+  .fp-identity-modal-content.is-validation,
+  .fp-identity-modal-content.is-approved-transition {
+    padding: 26px 20px 20px;
+  }
+
+  .fp-credit-factory .fp-step3-veriff-complete {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 0;
+  }
+
+  .fp-credit-factory
+    .fp-step3-veriff-complete
+    > div:not(:last-child)::after {
+    display: none;
+  }
+
+  .fp-credit-factory .fp-step3-firma-compact {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .fp-credit-factory .fp-step3-firma-heading-actions {
+    justify-content: space-between;
+  }
+
+  .fp-credit-factory .fp-step3-firma-primary {
+    width: 100%;
+    flex-basis: auto;
+  }
+}
+
+@media (max-width: 480px) {
+  .fp-identity-modal-backdrop {
+    align-items: flex-start;
+    padding: max(10px, env(safe-area-inset-top)) 10px
+      max(10px, env(safe-area-inset-bottom));
+  }
+
+  .fp-identity-modal {
+    max-height: calc(100dvh - 20px);
+  }
+
+  .fp-identity-modal-content.is-validation .fp-identity-modal-qr {
+    width: min(188px, 58vw);
+  }
+
+  .fp-identity-modal-progress {
+    gap: 8px;
+  }
+
+  .fp-identity-modal-progress > div:not(:last-child)::after {
+    left: calc(50% + 20px);
+    width: calc(100% - 24px);
+  }
+
+  .fp-identity-modal-progress strong {
+    font-size: 0.7rem;
+  }
+
+  .fp-credit-factory .fp-step3-identity-approved {
+    padding: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fp-identity-modal-backdrop,
+  .fp-identity-modal,
+  .fp-identity-modal-content.is-approved-transition,
+  .fp-credit-factory .fp-firma-stage {
+    animation: none;
+  }
+}
+
 .fp-enrollment-success-header {
   width: 112%;
   min-height: 128px;

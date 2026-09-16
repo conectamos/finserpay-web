@@ -35,7 +35,6 @@ import {
   ScanFace,
   Search,
   Save,
-  Send,
   ShieldCheck,
   ShoppingCart,
   Smartphone,
@@ -142,7 +141,6 @@ import {
   compareStrictIdentityDocuments,
   veriffIdentityMatchesExpectedDocument,
 } from "@/lib/veriff-identity";
-import { maskDocument, maskImei } from "@/lib/solicitudes";
 import {
   formatFirmaSeguroApiFailure,
   formatFirmaSeguroProcessIssue,
@@ -2630,10 +2628,12 @@ function esAliadoFinserPay(codigo: string | null | undefined) {
 function IdentityValidationDialog({
   open,
   onClose,
+  dismissible = true,
   children,
 }: {
   open: boolean;
   onClose: () => void;
+  dismissible?: boolean;
   children: ReactNode;
 }) {
   const dialogRef = useRef<HTMLElement | null>(null);
@@ -2668,13 +2668,19 @@ function IdentityValidationDialog({
     });
     document.body.style.overflow = "hidden";
     const focusFrame = window.requestAnimationFrame(() => {
-      closeButtonRef.current?.focus();
+      if (dismissible) {
+        closeButtonRef.current?.focus();
+        return;
+      }
+      dialogRef.current?.focus();
     });
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onCloseRef.current();
+        if (dismissible) {
+          onCloseRef.current();
+        }
         return;
       }
 
@@ -2695,6 +2701,11 @@ function IdentityValidationDialog({
 
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
+      if (document.activeElement === dialogRef.current) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+        return;
+      }
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
@@ -2721,7 +2732,7 @@ function IdentityValidationDialog({
       });
       previousActiveElement?.focus();
     };
-  }, [open]);
+  }, [dismissible, open]);
 
   if (!open || typeof document === "undefined") {
     return null;
@@ -2733,7 +2744,7 @@ function IdentityValidationDialog({
       className="fp-identity-modal-backdrop"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
+        if (dismissible && event.target === event.currentTarget) {
           onClose();
         }
       }}
@@ -2745,19 +2756,22 @@ function IdentityValidationDialog({
         aria-modal="true"
         aria-labelledby="fp-identity-modal-title"
         aria-describedby="fp-identity-modal-description"
+        tabIndex={-1}
       >
         <p id="fp-identity-modal-description" className="sr-only">
           Validación segura de identidad del cliente mediante Veriff.
         </p>
-        <button
-          ref={closeButtonRef}
-          type="button"
-          className="fp-identity-modal-close"
-          onClick={onClose}
-          aria-label="Cerrar ventana de validacion"
-        >
-          <X className="h-5 w-5" strokeWidth={1.8} aria-hidden="true" />
-        </button>
+        {dismissible ? (
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="fp-identity-modal-close"
+            onClick={onClose}
+            aria-label="Cerrar ventana de validacion"
+          >
+            <X className="h-5 w-5" strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        ) : null}
         {children}
       </section>
     </div>,
@@ -3094,8 +3108,6 @@ export default function CreditFactoryConsole({
     useState<number | null>(null);
   const [identityClientDetailsOpen, setIdentityClientDetailsOpen] =
     useState(false);
-  const [firmaSeguroDocumentsOpen, setFirmaSeguroDocumentsOpen] =
-    useState(true);
   const [veriffQrDataUrl, setVeriffQrDataUrl] = useState("");
   const [veriffInlineMessage, setVeriffInlineMessage] = useState("");
   const [veriffRestoreFailure, setVeriffRestoreFailure] = useState<{
@@ -3116,6 +3128,7 @@ export default function CreditFactoryConsole({
   const veriffClientFormUnlockedRef = useRef(false);
   const veriffAutoSessionRef = useRef(false);
   const veriffRequestInFlightRef = useRef(false);
+  const firmaSeguroRequestInFlightRef = useRef(false);
   const veriffRefreshGenerationRef = useRef(0);
   const firmaSeguroRefreshGenerationRef = useRef(0);
   const veriffRefreshFlightRef = useRef<{
@@ -4979,6 +4992,17 @@ export default function CreditFactoryConsole({
       !dataCreditoVeriffDocumentRejected &&
       !veriffRetryPolicy.applicationRejected
   );
+  const veriffQrGenerated = Boolean(veriffValidation?.sessionUrl);
+  const veriffClientValidated = Boolean(
+    veriffValidation?.submittedAt ||
+      veriffValidation?.decidedAt ||
+      veriffValidation?.status === "REVIEW" ||
+      veriffValidation?.status === "RESUBMISSION" ||
+      veriffValidation?.status === "APPROVED" ||
+      veriffValidation?.status === "DECLINED"
+  );
+  const identityValidationLocked =
+    wizardStep === 4 && !veriffApproved && !veriffHasFinalDecision;
   const veriffQrValidityLabel = veriffValidation?.createdAt
     ? `Generado ${dateTime(veriffValidation.createdAt)}. La vigencia se actualiza con el estado de Veriff.`
     : "La vigencia del codigo se controla con el estado real de Veriff.";
@@ -5001,16 +5025,40 @@ export default function CreditFactoryConsole({
 
   useEffect(() => {
     if (veriffApproved) {
-      setIdentityValidationModalOpen(false);
       setVeriffRegenerationConfirmOpen(false);
       setVeriffRegenerationValidationId(null);
-      setFirmaSeguroDocumentsOpen(true);
-      return;
+      const reduceMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches;
+      const closeTimer = window.setTimeout(
+        () => setIdentityValidationModalOpen(false),
+        reduceMotion ? 0 : 420
+      );
+      return () => window.clearTimeout(closeTimer);
     }
 
     setIdentityClientDetailsOpen(false);
-    setFirmaSeguroDocumentsOpen(false);
   }, [veriffApproved]);
+
+  useEffect(() => {
+    if (
+      wizardStep !== 4 ||
+      veriffApproved ||
+      veriffRegenerationConfirmOpen ||
+      draftResumeHydrating ||
+      !veriffConfigLoaded
+    ) {
+      return;
+    }
+
+    setIdentityValidationModalOpen(true);
+  }, [
+    draftResumeHydrating,
+    veriffApproved,
+    veriffConfigLoaded,
+    veriffRegenerationConfirmOpen,
+    wizardStep,
+  ]);
 
   const financialPreviewReady =
     simulationPolicyReady &&
@@ -5048,11 +5096,9 @@ export default function CreditFactoryConsole({
       available: veriffApproved,
     },
   ];
-  const firmaSeguroAvailableDocuments = firmaSeguroDocumentItems.filter(
+  const firmaSeguroDocumentsReady = firmaSeguroDocumentItems.every(
     (document) => document.available
   );
-  const firmaSeguroDocumentsReady =
-    firmaSeguroAvailableDocuments.length === firmaSeguroDocumentItems.length;
   const firmaSeguroProcessExists = Boolean(
     firmaSeguroDraftProcess?.processUuid
   );
@@ -5063,7 +5109,6 @@ export default function CreditFactoryConsole({
   const firmaSeguroProcessIssue = firmaSeguroProcessFailed
     ? formatFirmaSeguroProcessIssue(firmaSeguroDraftProcess)
     : "";
-  const firmaSeguroDraftFolio = firmaSeguroDraftProcess?.draftFolio || "";
   const stepDocumentosReady =
     firmaSeguroProcessSigned ||
     (contratoAceptado &&
@@ -9363,6 +9408,10 @@ export default function CreditFactoryConsole({
   };
 
   const handleFirmaSeguroStepReady = async () => {
+    if (firmaSeguroRequestInFlightRef.current || firmaSeguroProcessSent) {
+      return;
+    }
+
     if (iphoneInstallmentLimitExceeded) {
       setNotice({
         text: visibleIphoneInstallmentLimitMessage,
@@ -9390,6 +9439,7 @@ export default function CreditFactoryConsole({
     }
 
     try {
+      firmaSeguroRequestInFlightRef.current = true;
       setFirmaSeguroSubmitting(true);
       setNotice(null);
 
@@ -9437,6 +9487,7 @@ export default function CreditFactoryConsole({
         tone: "red",
       });
     } finally {
+      firmaSeguroRequestInFlightRef.current = false;
       setFirmaSeguroSubmitting(false);
     }
   };
@@ -12516,13 +12567,7 @@ export default function CreditFactoryConsole({
                         <button
                           type="button"
                           className="fp-identity-open-modal"
-                          onClick={() => {
-                            setIdentityValidationModalOpen(true);
-                            if (!veriffValidation && !veriffSubmitting) {
-                              veriffAutoSessionRef.current = true;
-                              void validateIdentityWithVeriff();
-                            }
-                          }}
+                          onClick={() => setIdentityValidationModalOpen(true)}
                           disabled={!veriffConfig.configured}
                           aria-haspopup="dialog"
                           aria-busy={veriffSubmitting}
@@ -12573,18 +12618,43 @@ export default function CreditFactoryConsole({
                   <IdentityValidationDialog
                     open={identityValidationModalOpen}
                     onClose={() => setIdentityValidationModalOpen(false)}
+                    dismissible={!identityValidationLocked}
                   >
                     {veriffApproved ? (
-                      <div className="fp-identity-modal-content is-loading">
-                        <BadgeCheck
-                          className="h-11 w-11"
-                          strokeWidth={1.7}
-                          aria-hidden="true"
-                        />
-                        <h2 id="fp-identity-modal-title">Identidad validada</h2>
-                        <p className="fp-identity-modal-lead">
-                          Actualizando el expediente para continuar con la firma.
+                      <div className="fp-identity-modal-content is-approved-transition">
+                        <div className="fp-identity-modal-shield" aria-hidden="true">
+                          <BadgeCheck className="h-10 w-10" strokeWidth={1.7} />
+                        </div>
+                        <p className="fp-identity-modal-kicker">
+                          VALIDACIÓN DE IDENTIDAD
                         </p>
+                        <h2 id="fp-identity-modal-title">Identidad aprobada</h2>
+                        <p className="fp-identity-modal-lead">
+                          El cliente completó correctamente la validación.
+                        </p>
+                        <div
+                          className="fp-identity-modal-progress"
+                          role="list"
+                          aria-label="Validación de identidad completada"
+                        >
+                          {["QR generado", "Cliente valida", "Aprobación"].map(
+                            (label) => (
+                              <div
+                                key={label}
+                                className="is-complete"
+                                role="listitem"
+                              >
+                                <span aria-hidden="true">
+                                  <Check
+                                    className="h-4 w-4"
+                                    strokeWidth={2.4}
+                                  />
+                                </span>
+                                <strong>{label}</strong>
+                              </div>
+                            )
+                          )}
+                        </div>
                       </div>
                     ) : veriffTechnicalRetryRequired ? (
                       <div className="fp-identity-modal-content is-result">
@@ -12689,20 +12759,6 @@ export default function CreditFactoryConsole({
                           Cerrar
                         </button>
                       </div>
-                    ) : veriffSubmitting ? (
-                      <div className="fp-identity-modal-content is-loading">
-                        <LoaderCircle
-                          className="h-11 w-11 animate-spin"
-                          strokeWidth={1.7}
-                          aria-hidden="true"
-                        />
-                        <h2 id="fp-identity-modal-title">
-                          Generando codigo QR
-                        </h2>
-                        <p className="fp-identity-modal-lead">
-                          Estamos preparando una sesion segura para el cliente.
-                        </p>
-                      </div>
                     ) : veriffValidation?.status === "DECLINED" ? (
                       <div className="fp-identity-modal-content is-result">
                         <p className="fp-identity-modal-kicker is-rejected">
@@ -12790,98 +12846,158 @@ export default function CreditFactoryConsole({
                         </button>
                       </div>
                     ) : (
-                      <div className="fp-identity-modal-content">
+                      <div className="fp-identity-modal-content is-validation">
                         <div className="fp-identity-modal-shield" aria-hidden="true">
                           <ShieldCheck className="h-10 w-10" strokeWidth={1.5} />
                         </div>
+                        <p className="fp-identity-modal-kicker">
+                          VALIDACIÓN DE IDENTIDAD
+                        </p>
                         <h2 id="fp-identity-modal-title">
-                          Validar identidad
+                          Valida la identidad del cliente
                         </h2>
                         <p className="fp-identity-modal-lead">
-                          Solicite al cliente escanear este código desde su celular.
+                          Genera el código QR y solicita al cliente escanearlo desde
+                          su celular.
                         </p>
 
-                        <div
-                          className="fp-identity-modal-qr"
-                          aria-live="polite"
-                          aria-busy={veriffRefreshing}
-                        >
-                          {veriffQrDataUrl ? (
-                            <img
-                              src={veriffQrDataUrl}
-                              alt="QR para validar la identidad del cliente"
-                            />
-                          ) : (
-                            <span>
-                              {veriffRefreshing ? (
+                        {veriffSubmitting || veriffQrDataUrl ? (
+                          <div
+                            className="fp-identity-modal-qr"
+                            aria-live="polite"
+                            aria-busy={veriffSubmitting || veriffRefreshing}
+                          >
+                            {veriffQrDataUrl ? (
+                              <img
+                                src={veriffQrDataUrl}
+                                alt="QR para validar la identidad del cliente"
+                              />
+                            ) : (
+                              <span>
                                 <LoaderCircle
                                   className="h-10 w-10 animate-spin"
                                   strokeWidth={1.6}
                                 />
-                              ) : (
-                                <QrCode className="h-12 w-12" strokeWidth={1.5} />
-                              )}
-                              El codigo QR aparecera aqui
-                            </span>
-                          )}
-                        </div>
+                                Generando QR…
+                              </span>
+                            )}
+                          </div>
+                        ) : null}
 
                         {veriffValidation?.sessionUrl ? (
-                          <>
-                            <p className="fp-identity-modal-waiting">
-                              <LoaderCircle
-                                className="h-5 w-5 animate-spin"
-                                strokeWidth={2}
-                                aria-hidden="true"
-                              />
-                              Esperando validación
-                            </p>
-                            <p
-                              id="fp-veriff-wait-note"
-                              className="fp-identity-modal-caption"
-                            >
-                              La aprobación puede tardar unos segundos.
-                            </p>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            className="fp-identity-modal-primary is-lime"
-                            disabled={!veriffCanGenerateNewQr}
-                            onClick={() => {
-                              veriffAutoSessionRef.current = true;
-                              void validateIdentityWithVeriff();
-                            }}
-                          >
+                          <p className="fp-identity-modal-waiting">
+                            <span aria-hidden="true" />
+                            Esperando validación
+                          </p>
+                        ) : null}
+
+                        {veriffInlineMessage ? (
+                          <p className="fp-identity-modal-error" role="alert">
+                            <AlertCircle
+                              className="h-4 w-4"
+                              strokeWidth={2}
+                              aria-hidden="true"
+                            />
+                            {veriffInlineMessage}
+                          </p>
+                        ) : null}
+
+                        <p className="fp-identity-modal-helper">
+                          La firma del contrato se habilitará cuando la identidad
+                          sea aprobada.
+                        </p>
+
+                        <button
+                          type="button"
+                          className="fp-identity-modal-primary"
+                          disabled={!veriffCanGenerateNewQr || veriffQrGenerated}
+                          aria-busy={veriffSubmitting}
+                          onClick={() => {
+                            veriffAutoSessionRef.current = true;
+                            void validateIdentityWithVeriff();
+                          }}
+                        >
+                          {veriffSubmitting ? (
+                            <LoaderCircle
+                              className="h-5 w-5 animate-spin"
+                              strokeWidth={1.9}
+                              aria-hidden="true"
+                            />
+                          ) : (
                             <QrCode
                               className="h-5 w-5"
                               strokeWidth={1.9}
                               aria-hidden="true"
                             />
-                            Generar codigo QR
-                          </button>
-                        )}
+                          )}
+                          {veriffSubmitting
+                            ? "Generando QR…"
+                            : "GENERAR CÓDIGO QR"}
+                        </button>
 
-                        <div className="fp-identity-modal-actions">
-                          <button
-                            type="button"
-                            onClick={() => setIdentityValidationModalOpen(false)}
-                          >
-                            Cerrar
-                          </button>
-                          <button
-                            type="button"
-                            disabled={!veriffCanRegenerateQr}
-                            onClick={requestVeriffQrRegeneration}
-                          >
-                            <RefreshCw
-                              className="h-4 w-4"
-                              strokeWidth={1.9}
-                              aria-hidden="true"
-                            />
-                            Regenerar QR
-                          </button>
+                        <div
+                          className="fp-identity-modal-progress"
+                          role="list"
+                          aria-label="Progreso de la validación de identidad"
+                        >
+                          {[
+                            {
+                              label: "QR generado",
+                              complete: veriffQrGenerated,
+                              active: !veriffQrGenerated,
+                            },
+                            {
+                              label: "Cliente valida",
+                              complete: veriffClientValidated,
+                              active:
+                                veriffQrGenerated && !veriffClientValidated,
+                            },
+                            {
+                              label: "Aprobación",
+                              complete: veriffApproved,
+                              active:
+                                veriffClientValidated && !veriffApproved,
+                            },
+                          ].map((stage, index) => (
+                            <div
+                              key={stage.label}
+                              className={
+                                stage.complete
+                                  ? "is-complete"
+                                  : stage.active
+                                    ? "is-active"
+                                    : "is-pending"
+                              }
+                              role="listitem"
+                              aria-current={stage.active ? "step" : undefined}
+                            >
+                              <span aria-hidden="true">
+                                {stage.complete ? (
+                                  <Check
+                                    className="h-4 w-4"
+                                    strokeWidth={2.4}
+                                  />
+                                ) : (
+                                  index + 1
+                                )}
+                              </span>
+                              <strong>{stage.label}</strong>
+                            </div>
+                          ))}
                         </div>
+
+                        <button
+                          type="button"
+                          className="fp-identity-modal-cancel"
+                          onClick={() => {
+                            setIdentityValidationModalOpen(false);
+                            setWizardStep(
+                              previousVisibleWizardStep(wizardStep)
+                            );
+                          }}
+                        >
+                          Cancelar y volver
+                        </button>
                       </div>
                     )}
                   </IdentityValidationDialog>
@@ -15186,14 +15302,13 @@ export default function CreditFactoryConsole({
                 <div className="fp-factory-stage fp-firma-stage">
                   <div className="fp-stage-heading flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <div className="inline-flex rounded-full border border-[#e6d6bd] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8a5a21]">
-                        {hideIdentityWizardStep ? "Paso 3" : "Paso 4"}
-                      </div>
-                      <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        Validación de identidad y firma
+                      <h3 className="text-2xl font-black tracking-tight text-slate-950">
+                        Identidad y firma
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Verifica la identidad con Veriff y, cuando sea aprobada, envía el contrato por FirmaSeguro.
+                        {veriffApproved
+                          ? "La identidad fue aprobada. Envía el contrato para continuar."
+                          : "Valida la identidad del cliente para continuar con la firma."}
                       </p>
                     </div>
                     <div
@@ -15225,14 +15340,14 @@ export default function CreditFactoryConsole({
                         <Clock3 className="h-[18px] w-[18px]" strokeWidth={2} />
                       )}
                       {veriffApproved
-                        ? "Identidad validada"
+                        ? "IDENTIDAD APROBADA"
                         : veriffValidation?.status === "DECLINED" ||
                             veriffRetryPolicy.applicationRejected ||
                             dataCreditoVeriffDocumentRejected
-                          ? "Identidad rechazada"
+                          ? "IDENTIDAD RECHAZADA"
                           : veriffRefreshing || veriffSubmitting
-                            ? "Validando identidad"
-                            : "Identidad pendiente"}
+                            ? "VALIDANDO IDENTIDAD"
+                            : "IDENTIDAD PENDIENTE"}
                     </div>
                   </div>
 
@@ -15240,141 +15355,53 @@ export default function CreditFactoryConsole({
                     <section
                       className="fp-step3-identity-pending"
                       aria-labelledby="fp-step3-veriff-title"
-                      aria-describedby="fp-step3-veriff-description"
                     >
                       <div className="fp-step3-identity-copy">
                         <span className="fp-step3-identity-icon" aria-hidden="true">
                           <ShieldCheck className="h-[19px] w-[19px]" strokeWidth={1.9} />
                         </span>
                         <div>
-                          <p>1. Validación de identidad</p>
+                          <p>Validación de identidad</p>
                           <h4 id="fp-step3-veriff-title">Identidad con Veriff</h4>
-                          <span id="fp-step3-veriff-description">
-                            Solicite al cliente validar la cédula consultada desde
-                            su celular. La aprobación habilita FirmaSeguro.
+                          <span>
+                            El cliente debe escanear el código QR desde su celular.
                           </span>
                         </div>
                       </div>
-
                       <span
                         className={[
                           "fp-step3-veriff-status",
-                          dataCreditoVeriffDocumentRejected ||
-                          veriffValidation?.status === "DECLINED" ||
-                          veriffRetryPolicy.applicationRejected
+                          veriffRejected || dataCreditoVeriffDocumentRejected
                             ? "is-error"
                             : "is-pending",
                         ].join(" ")}
-                        role="status"
+                        role={veriffRejected ? "alert" : "status"}
                       >
                         {veriffSubmitting || veriffRefreshing ? (
                           <LoaderCircle
                             className="h-[18px] w-[18px] animate-spin"
                             strokeWidth={2}
                           />
-                        ) : dataCreditoVeriffDocumentRejected ||
-                          veriffValidation?.status === "DECLINED" ||
-                          veriffRetryPolicy.applicationRejected ? (
+                        ) : veriffRejected || dataCreditoVeriffDocumentRejected ? (
                           <XCircle className="h-[18px] w-[18px]" strokeWidth={2} />
                         ) : (
                           <Clock3 className="h-[18px] w-[18px]" strokeWidth={2} />
                         )}
                         {veriffVisualLabel}
                       </span>
-
-                      {veriffRestoreFailure ? (
-                        <div className="fp-step3-veriff-alert" role="alert">
-                          <span>
-                            No se pudo recuperar el resultado guardado de Veriff.
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => void retryRestoredVeriffValidation()}
-                            disabled={veriffRefreshing}
-                          >
-                            <RefreshCw
-                              className={[
-                                "h-[18px] w-[18px]",
-                                veriffRefreshing ? "animate-spin" : "",
-                              ].join(" ")}
-                              strokeWidth={2}
-                            />
-                            Reintentar
-                          </button>
-                        </div>
-                      ) : null}
-
-                      {dataCreditoRequiresVeriff && !veriffConfigLoaded ? (
-                        <p className="fp-step3-veriff-message" role="status">
-                          <LoaderCircle
-                            className="h-[18px] w-[18px] animate-spin"
-                            strokeWidth={2}
-                          />
-                          Verificando disponibilidad de Veriff...
-                        </p>
-                      ) : veriffUnavailableForDataCredito ? (
-                        <p className="fp-step3-veriff-message is-error" role="alert">
-                          Veriff no está disponible temporalmente. Esto no equivale
-                          a un rechazo de la solicitud.
-                        </p>
-                      ) : veriffInlineMessage ? (
-                        <p
-                          className={[
-                            "fp-step3-veriff-message",
-                            veriffRejected || veriffConnectionError
-                              ? "is-error"
-                              : "",
-                          ].join(" ")}
-                          role={veriffRejected || veriffConnectionError ? "alert" : "status"}
-                        >
-                          {veriffInlineMessage}
-                        </p>
-                      ) : null}
-
                       <div className="fp-step3-identity-action">
                         <button
                           type="button"
-                          onClick={() => {
-                            setIdentityValidationModalOpen(true);
-                            if (!veriffValidation && !veriffSubmitting) {
-                              veriffAutoSessionRef.current = true;
-                              void validateIdentityWithVeriff();
-                            }
-                          }}
-                          disabled={
-                            veriffSubmitting ||
-                            (!veriffValidation &&
-                              (!veriffConfigLoaded || !veriffConfig.configured))
-                          }
+                          onClick={() => setIdentityValidationModalOpen(true)}
+                          disabled={!veriffConfig.configured}
                           aria-haspopup="dialog"
-                          aria-busy={veriffSubmitting}
                         >
-                          {veriffSubmitting ? (
-                            <LoaderCircle
-                              className="h-[18px] w-[18px] animate-spin"
-                              strokeWidth={2}
-                            />
-                          ) : (
-                            <QrCode className="h-[18px] w-[18px]" strokeWidth={2} />
-                          )}
-                          {veriffSubmitting
-                            ? "Generando código"
-                            : dataCreditoVeriffDocumentRejected ||
-                                veriffRetryPolicy.applicationRejected
-                              ? "Ver resultado"
-                              : veriffValidation?.status === "DECLINED"
-                                ? "Reintentar validación"
-                                : veriffTechnicalRetryRequired ||
-                                    veriffHasFinalDecision ||
-                                    veriffConnectionError
-                                  ? "Resolver validación"
-                                  : veriffValidation?.sessionUrl
-                                    ? "Ver código QR"
-                                    : "Generar código QR"}
+                          <QrCode className="h-[18px] w-[18px]" strokeWidth={2} />
+                          Ver validación de identidad
                         </button>
                         <p>
-                          FirmaSeguro permanecerá oculto hasta recibir la
-                          aprobación de Veriff.
+                          FirmaSeguro permanecerá oculto hasta recibir la aprobación
+                          de Veriff.
                         </p>
                       </div>
                     </section>
@@ -15384,19 +15411,27 @@ export default function CreditFactoryConsole({
                       aria-labelledby="fp-step3-approved-title"
                     >
                       <span aria-hidden="true">
-                        <BadgeCheck className="h-5 w-5" strokeWidth={2.1} />
+                        <Check className="h-7 w-7" strokeWidth={2.4} />
                       </span>
                       <div>
                         <h4 id="fp-step3-approved-title">Identidad validada</h4>
-                        <p>Veriff confirmó la identidad del cliente.</p>
+                        <p>El cliente completó correctamente la validación.</p>
                       </div>
-                      <div className="fp-step3-approved-meta">
-                        <strong>{maskDocument(clienteDocumento) || "Documento validado"}</strong>
-                        <span>
-                          {veriffValidation?.decidedAt
-                            ? dateTime(veriffValidation.decidedAt)
-                            : "Validada ahora"}
-                        </span>
+                      <div
+                        className="fp-step3-veriff-complete"
+                        role="list"
+                        aria-label="Validación de identidad completada"
+                      >
+                        {["QR generado", "Cliente validado", "Aprobación recibida"].map(
+                          (label) => (
+                            <div key={label} role="listitem">
+                              <span aria-hidden="true">
+                                <Check className="h-4 w-4" strokeWidth={2.4} />
+                              </span>
+                              <strong>{label}</strong>
+                            </div>
+                          )
+                        )}
                       </div>
                     </section>
                   )}
@@ -15460,15 +15495,9 @@ export default function CreditFactoryConsole({
                   {veriffApproved ? (
                     <section
                       className="fp-step3-firma"
-                      aria-labelledby="fp-step3-firma-title"
+                      aria-label="FirmaSeguro"
                     >
-                      <div className="fp-step3-firma-heading">
-                        <div>
-                          <h4 id="fp-step3-firma-title">Enviar a FirmaSeguro</h4>
-                          <p>
-                            Revisa el expediente y envíalo al cliente para firma.
-                          </p>
-                        </div>
+                      <div className="fp-step3-firma-compact">
                         <div className="fp-step3-firma-heading-actions">
                           <span
                             className={[
@@ -15483,11 +15512,25 @@ export default function CreditFactoryConsole({
                             aria-live="polite"
                           >
                             {firmaSeguroProcessSigned ? (
-                              <BadgeCheck className="h-[18px] w-[18px]" strokeWidth={2} />
+                              <BadgeCheck
+                                className="h-[18px] w-[18px]"
+                                strokeWidth={2}
+                              />
                             ) : firmaSeguroProcessFailed ? (
-                              <XCircle className="h-[18px] w-[18px]" strokeWidth={2} />
+                              <XCircle
+                                className="h-[18px] w-[18px]"
+                                strokeWidth={2}
+                              />
+                            ) : firmaSeguroProcessSent ? (
+                              <Clock3
+                                className="h-[18px] w-[18px]"
+                                strokeWidth={2}
+                              />
                             ) : (
-                              <Clock3 className="h-[18px] w-[18px]" strokeWidth={2} />
+                              <Check
+                                className="h-[18px] w-[18px]"
+                                strokeWidth={2.2}
+                              />
                             )}
                             {firmaSeguroProcessSigned
                               ? "Firma confirmada"
@@ -15495,13 +15538,17 @@ export default function CreditFactoryConsole({
                                 ? "Error de firma"
                                 : firmaSeguroProcessSent
                                   ? "Cliente firmando"
-                                  : "Pendiente de envío"}
+                                  : contratoListo && firmaSeguroDocumentsReady
+                                    ? "Expediente listo"
+                                    : "Expediente incompleto"}
                           </span>
                           {firmaSeguroProcessExists ? (
                             <button
                               type="button"
                               className="fp-step3-firma-refresh"
-                              onClick={() => void refreshFirmaSeguroDraftProcess()}
+                              onClick={() =>
+                                void refreshFirmaSeguroDraftProcess()
+                              }
                               disabled={
                                 firmaSeguroRefreshing ||
                                 firmaSeguroSubmitting ||
@@ -15520,120 +15567,7 @@ export default function CreditFactoryConsole({
                             </button>
                           ) : null}
                         </div>
-                      </div>
 
-                      <div className="fp-step3-firma-grid">
-                        <section
-                          className="fp-step3-expediente"
-                          aria-labelledby="fp-step3-expediente-title"
-                        >
-                          <div className="fp-step3-expediente-heading">
-                            <FileText className="h-5 w-5" strokeWidth={1.9} />
-                            <div>
-                              <h5 id="fp-step3-expediente-title">
-                                Expediente preparado
-                              </h5>
-                              {firmaSeguroDraftFolio ? (
-                                <p>Folio {firmaSeguroDraftFolio}</p>
-                              ) : null}
-                            </div>
-                          </div>
-
-                          <dl className="fp-step3-expediente-list">
-                            {[
-                              {
-                                label: "Cliente",
-                                value: clienteNombre || "Sin registrar",
-                                icon: <UserRound className="h-[18px] w-[18px]" strokeWidth={1.9} />,
-                              },
-                              {
-                                label: "Documento",
-                                value: maskDocument(clienteDocumento) || "Sin registrar",
-                                icon: <IdCard className="h-[18px] w-[18px]" strokeWidth={1.9} />,
-                              },
-                              {
-                                label: "Equipo",
-                                value: referenciaEquipo || "Sin registrar",
-                                icon: <Smartphone className="h-[18px] w-[18px]" strokeWidth={1.9} />,
-                              },
-                              {
-                                label: "IMEI",
-                                value: maskImei(imei) || "Sin registrar",
-                                icon: <QrCode className="h-[18px] w-[18px]" strokeWidth={1.9} />,
-                              },
-                              {
-                                label: "Cuota",
-                                value: currency(valorCuota),
-                                icon: <CircleDollarSign className="h-[18px] w-[18px]" strokeWidth={1.9} />,
-                              },
-                            ].map((item) => (
-                              <div key={item.label}>
-                                <dt>
-                                  <span aria-hidden="true">{item.icon}</span>
-                                  {item.label}
-                                </dt>
-                                <dd>{item.value}</dd>
-                              </div>
-                            ))}
-                          </dl>
-                        </section>
-
-                        <section
-                          className="fp-step3-documents"
-                          aria-labelledby="fp-step3-documents-title"
-                        >
-                          <button
-                            type="button"
-                            className="fp-step3-documents-toggle"
-                            onClick={() =>
-                              setFirmaSeguroDocumentsOpen((current) => !current)
-                            }
-                            aria-expanded={firmaSeguroDocumentsOpen}
-                            aria-controls="fp-step3-documents-list"
-                          >
-                            <span>
-                              <FileText className="h-[19px] w-[19px]" strokeWidth={1.9} />
-                              <strong id="fp-step3-documents-title">
-                                {firmaSeguroAvailableDocuments.length} documentos incluidos
-                              </strong>
-                            </span>
-                            <ChevronRight
-                              className={[
-                                "h-[18px] w-[18px]",
-                                firmaSeguroDocumentsOpen ? "is-open" : "",
-                              ].join(" ")}
-                              strokeWidth={2}
-                              aria-hidden="true"
-                            />
-                          </button>
-
-                          {firmaSeguroDocumentsOpen ? (
-                            <ul
-                              id="fp-step3-documents-list"
-                              className="fp-step3-documents-list"
-                            >
-                              {firmaSeguroAvailableDocuments.map((document) => (
-                                <li key={document.label}>
-                                  <Check className="h-[18px] w-[18px]" strokeWidth={2.3} />
-                                  <span>{document.label}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : null}
-                        </section>
-                      </div>
-
-                      <div className="fp-step3-firma-actions">
-                        <button
-                          type="button"
-                          className="fp-step3-firma-review"
-                          onClick={() => setFirmaSeguroDocumentsOpen(true)}
-                          aria-expanded={firmaSeguroDocumentsOpen}
-                          aria-controls="fp-step3-documents-list"
-                        >
-                          <FileText className="h-[18px] w-[18px]" strokeWidth={1.9} />
-                          Revisar documentos
-                        </button>
                         <button
                           type="button"
                           className="fp-step3-firma-primary"
@@ -15648,38 +15582,51 @@ export default function CreditFactoryConsole({
                           }
                           aria-busy={creating || firmaSeguroSubmitting}
                         >
-                          <Send className="h-[18px] w-[18px]" strokeWidth={2} />
+                          {creating || firmaSeguroSubmitting ? (
+                            <LoaderCircle
+                              className="h-[18px] w-[18px] animate-spin"
+                              strokeWidth={2}
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <FileText
+                              className="h-[18px] w-[18px]"
+                              strokeWidth={2}
+                              aria-hidden="true"
+                            />
+                          )}
                           {creating || firmaSeguroSubmitting
-                            ? "Enviando a FirmaSeguro..."
+                            ? "Enviando…"
                             : firmaSeguroProcessSigned
-                              ? "Firma confirmada"
+                              ? "FIRMA CONFIRMADA"
                               : firmaSeguroProcessFailed
-                                ? "Reintentar envío"
+                                ? "REINTENTAR ENVÍO"
                                 : firmaSeguroProcessSent
-                                  ? "Expediente enviado"
-                                  : "Enviar a FirmaSeguro"}
+                                  ? "EXPEDIENTE ENVIADO"
+                                  : "ENVIAR CONTRATO A FIRMASEGURO"}
                         </button>
                       </div>
 
-                      <p className="fp-step3-firma-help">
-                        El cliente recibirá el enlace de firma por el canal registrado.
-                      </p>
-
-                      {!contratoListo || !firmaSeguroDocumentsReady ? (
-                        <p className="fp-step3-firma-message is-pending" role="status">
-                          Completa cliente, equipo e identidad para preparar el expediente.
-                        </p>
-                      ) : firmaSeguroProcessSigned ? (
-                        <p className="fp-step3-firma-message is-success" role="status">
-                          Firma confirmada. Ya puedes continuar al enrolamiento y la entrega.
+                      {firmaSeguroProcessSigned ? (
+                        <p
+                          className="fp-step3-firma-message is-success"
+                          role="status"
+                        >
+                          Firma confirmada.
                         </p>
                       ) : firmaSeguroProcessFailed ? (
-                        <p className="fp-step3-firma-message is-error" role="alert">
-                          FirmaSeguro reportó un error: {firmaSeguroProcessIssue}
+                        <p
+                          className="fp-step3-firma-message is-error"
+                          role="alert"
+                        >
+                          {firmaSeguroProcessIssue}
                         </p>
                       ) : firmaSeguroProcessSent ? (
-                        <p className="fp-step3-firma-message is-pending" role="status">
-                          Esperando la confirmación de firma del cliente.
+                        <p
+                          className="fp-step3-firma-message is-pending"
+                          role="status"
+                        >
+                          Esperando la confirmación de FirmaSeguro.
                         </p>
                       ) : null}
                     </section>
