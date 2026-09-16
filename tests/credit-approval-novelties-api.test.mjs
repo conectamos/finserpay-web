@@ -76,6 +76,25 @@ test('API de analista verifica grant y scope también al leer historial',async()
   const response=await route.GET(new Request('https://finser.test/api/aprobaciones/31/novedades'),context);assert.equal(response.status,200);assert.deepEqual(order,['active','scope','history']);
 });
 
+test('PATCH de analista valida origen y ejecuta la verificación dentro de la transacción',async()=>{
+  const actor={kind:'SHARED_LINK',id:null,grantId:'grant',sessionId:'session'},calls=[],options=[];
+  const db={};
+  const route=load('app/api/aprobaciones/[id]/novedades/route.ts',{'next/server':next,
+    '@/lib/prisma':{default:{$transaction:async(fn,received)=>{options.push(received);return fn(db);}}},
+    '@/lib/credit-approval':{approvalCreditId:Number},
+    '@/lib/credit-approval-actor':{assertApprovalActorActive:async()=>{},assertApprovalActorCreditAccess:async()=>{}},
+    '@/lib/credit-approval-http':{...http,getApprovalActor:async()=>actor},
+    '@/lib/credit-approval-novelties':{
+      getCreditApprovalNoveltyHistory:async()=>({state:{},history:[]}),parseCreateNovelty:v=>v,createCreditApprovalNovelty:async()=>({unchanged:false}),
+      parseVerifyNovelty:v=>({...v,parsed:true}),verifyCreditApprovalNovelty:async(...args)=>{calls.push(args);return{unchanged:false};},
+    }});
+  const body={noveltyId:'10000000-0000-4000-8000-000000000001',itemId:'20000000-0000-4000-8000-000000000001',expectedVersion:1,revision:2,reviewHash:'a'.repeat(64),note:'Validación realizada, ya quedó OK',idempotencyKey:'30000000-0000-4000-8000-000000000001'};
+  const make=origin=>new Request('https://finser.test/api/aprobaciones/31/novedades',{method:'PATCH',headers:{'Content-Type':'application/json',origin},body:JSON.stringify(body)});
+  let response=await route.PATCH(make('https://other.test'),context);assert.equal(response.status,403);assert.equal(calls.length,0);assert.equal(options.length,0);
+  response=await route.PATCH(make('https://finser.test'),context);assert.equal(response.status,200);assert.equal(calls.length,1);
+  assert.equal(calls[0][0],db);assert.equal(calls[0][1],31);assert.equal(calls[0][2].parsed,true);assert.equal(calls[0][3],actor);
+  assert.equal(options[0].isolationLevel,'ReadCommitted');assert.equal((await response.json()).unchanged,false);
+});
 test('contadores revalidan el enlace compartido dentro del snapshot antes de leer las colas',async()=>{
   for(const active of [true,false]) {
     const order=[],db={},actor={kind:'SHARED_LINK',id:null};

@@ -14,6 +14,9 @@ type Props = {
   onBusyChange: (id: string, busy: boolean) => void;
 };
 
+const dates = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", dateStyle: "medium", timeStyle: "short" });
+function dateLabel(value: string | null) { const date = value ? new Date(value) : null; return date && Number.isFinite(date.getTime()) ? dates.format(date) : ""; }
+
 function CurrentPhoto({ issue, clientName }: { issue: PendingIssue; clientName: string }) {
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -117,14 +120,19 @@ export default function PendingItemEditor({ detail, issue, disabled, onUpdated, 
   return <article className="min-w-0 space-y-4 border-t border-[var(--fp-border)] py-5 first:border-t-0 first:pt-0" aria-labelledby={`pending-issue-${issue.id}`}>
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h3 id={`pending-issue-${issue.id}`} className="text-base font-bold">{issue.label}</h3>
-      <StatusPill tone={issue.status === "OPEN" ? "warning" : "neutral"}>{issue.status === "OPEN" ? "Por corregir" : "Pendiente revisión analista"}</StatusPill>
+      <StatusPill tone={issue.status === "OPEN" ? "warning" : issue.status === "VERIFIED" ? "positive" : "neutral"}>{issue.status === "OPEN" ? "Por corregir" : issue.status === "VERIFIED" ? "Solucionada por el analista" : "Pendiente revisión analista"}</StatusPill>
     </div>
     <div className="border-l-2 border-[var(--fp-amber)] pl-3 text-sm">
       <p className="font-semibold">Motivo de la novedad</p>
       <p className="mt-1 whitespace-pre-wrap break-words text-[var(--fp-muted)]">{issue.reason}</p>
     </div>
     {!general ? <div className="max-w-md"><CurrentPhoto key={`${issue.evidence?.href}:${issue.evidence?.sha256}`} issue={issue} clientName={detail.clienteNombre} /></div> : null}
-    {issue.status === "RESPONDED" ? <div className="space-y-2 text-sm text-[var(--fp-muted)]">
+    {issue.status === "VERIFIED" ? <div className="space-y-2 border-l-2 border-[var(--fp-lime)] pl-3 text-sm text-[var(--fp-muted)]">
+      <p className="font-semibold text-[var(--fp-graphite)]">Confirmación del analista</p>
+      <p className="whitespace-pre-wrap break-words">{issue.responseText || "El analista confirmó que la novedad quedó solucionada."}</p>
+      {issue.respondedAt ? <p className="text-xs">Verificada: {dateLabel(issue.respondedAt)}</p> : null}
+      <p>Esta novedad ya no requiere una corrección del aliado.</p>
+    </div> : issue.status === "RESPONDED" ? <div className="space-y-2 text-sm text-[var(--fp-muted)]">
       {issue.responseText ? <p className="whitespace-pre-wrap break-words"><strong>Tu respuesta: </strong>{issue.responseText}</p> : null}
       <p>El analista revisará {general ? "tu respuesta" : "la fotografía guardada"}. Esta novedad solo admite otra corrección si vuelve a ser rechazada.</p>
     </div> : allowed ? <div className="space-y-3">

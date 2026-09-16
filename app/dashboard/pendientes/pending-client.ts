@@ -3,7 +3,7 @@ export type PendingIssue = {
   id: string;
   key: string;
   label: string;
-  status: "OPEN" | "RESPONDED";
+  status: "OPEN" | "RESPONDED" | "VERIFIED";
   version: number;
   reason: string;
   openedAt: string;

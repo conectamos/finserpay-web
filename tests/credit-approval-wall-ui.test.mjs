@@ -35,6 +35,7 @@ const pendingClient = load("app/dashboard/pendientes/pending-client.ts", {});
 // transitions that the browser uses, without depending on private hook indexes.
 function mount(path, dependencies, props = {}) {
   const slots = [];
+  const focusCalls = [];
   const listeners = new Map();
   const intervals = new Map();
   let hookIndex = 0, dirty = true, effects = [], tree;
@@ -61,7 +62,8 @@ function mount(path, dependencies, props = {}) {
     },
   };
   const Component = load(path, { react: hooks, "@/app/_components/finser-ui": ui, ...dependencies }, {
-    document: { visibilityState: "visible" },
+    document: { visibilityState: "visible", getElementById: (id) =>
+      nodes(tree).some((node) => node.props?.id === id) ? { focus: () => focusCalls.push(id) } : null },
     window: { addEventListener: (name, callback) => listeners.set(name, callback),
       removeEventListener: (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); },
       setInterval: (callback) => { const id = Symbol(); intervals.set(id, callback); return id; },
@@ -87,6 +89,7 @@ function mount(path, dependencies, props = {}) {
     find(predicate) { const node = nodes(tree).find(predicate); assert.ok(node, "Expected rendered control"); return node; },
     all(predicate) { return nodes(tree).filter(predicate); },
     focus() { listeners.get("focus")?.(); },
+    focused() { return focusCalls.at(-1) || null; },
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
   };
 }
@@ -613,4 +616,104 @@ test("una novedad compartida conserva el borrador y reintenta exactamente la ope
   assert.equal(h.find(node => node.type === "textarea").props.disabled, true); assert.equal(locks.at(-1), true); assert.equal(calls.length, 1);
   fail = false; submit("Reintentar confirmación"); await h.flush(); h.find(node => node.type === parts.ConfirmDialog).props.onConfirm(); await h.flush();
   assert.equal(calls.length, 2); assert.equal(calls[0].input, calls[1].input); assert.equal(calls[1].input.revision, 1); assert.equal(locks.at(-1), false); h.unmount();
+});
+
+
+test("marcar una novedad solucionada conserva nota e idempotencia al reintentar", async () => {
+  const calls = [], locks = []; let fail = true;
+  const item = { id: "22222222-2222-4222-8222-222222222222", key: "GENERAL", label: "Novedad general",
+    status: "OPEN", version: 3, reason: "Validar la información", openedAt: "2026-09-16T12:00:00Z", respondedAt: null, responseText: null };
+  const observed = detail(81);
+  observed.novelties = { available: true, blocksApproval: true, blocksSettlement: true, pendingCount: 1, answeredCount: 0,
+    novelty: { id: "11111111-1111-4111-8111-111111111111", status: "WAITING_ALLY", version: 2, items: [item] } };
+  const h = mount("app/dashboard/aprobaciones/approval-novelty-panel.tsx", {
+    "./approval-client": {
+      createApprovalNovelty: async () => ({ ok: true }),
+      verifyApprovalNovelty: async (id, input) => { calls.push({ id, input }); if (fail) throw new Error("Respuesta perdida"); return { ok: true, unchanged: false }; },
+    },
+    "@/app/_components/finser-confirm-dialog": { default: parts.ConfirmDialog },
+  }, { detail: observed, compact: true, onBusyChange: busy => locks.push(busy), onUpdated: async () => {
+    observed.review = { ...observed.review, revision: 2, reviewHash: "2".repeat(64) };
+    if (!fail) Object.assign(item, { status: "VERIFIED", responseText: "Validación realizada, ya quedó OK", respondedAt: "2026-09-16T13:00:00Z" });
+  } });
+  const button = label => h.find(node => node.type === ui.Button && (node.props.children === label || Array.isArray(node.props.children) && node.props.children.includes(label)));
+  await h.flush();
+  button("Marcar como solucionada").props.onClick(); await h.flush();
+  const note = () => h.find(node => node.type === "textarea" && node.props["aria-label"] === "Confirmación del analista");
+  assert.equal(note().props.autoFocus, true);
+  note().props.onChange({ target: { value: "OK" } }); await h.flush();
+  assert.equal(button("Confirmar solución").props.disabled, true, "La nota debe tener al menos cinco caracteres");
+  note().props.onChange({ target: { value: "Validación realizada, ya quedó OK" } }); await h.flush();
+  assert.equal(button("Confirmar solución").props.disabled, false);
+  button("Confirmar solución").props.onClick(); await h.flush();
+  const dialog = () => h.find(node => node.type === parts.ConfirmDialog && node.props.title === "Confirmar novedad solucionada");
+  assert.match(dialog().props.description, /ya quedó OK/); assert.match(dialog().props.description, /quedará visible como solucionada/);
+  assert.equal(dialog().props.confirmLabel, "Sí, marcar solucionada");
+  dialog().props.onConfirm(); await h.flush();
+  assert.equal(note().props.value, "Validación realizada, ya quedó OK");
+  assert.equal(note().props.disabled, true); assert.equal(locks.at(-1), true); assert.equal(calls.length, 1);
+  fail = false; button("Reintentar confirmación").props.onClick(); await h.flush(); dialog().props.onConfirm(); await h.flush();
+  assert.equal(calls.length, 2); assert.equal(calls[0].input, calls[1].input);
+  assert.equal(calls[1].input.revision, 1); assert.equal(calls[1].input.reviewHash, "1".repeat(64));
+  assert.equal(calls[1].input.note, "Validación realizada, ya quedó OK"); assert.equal(locks.at(-1), false);
+  assert.ok(h.all(node => node.type === ui.Badge && node.props.children === "Solucionada por el analista").length > 0);
+  assert.equal(h.focused(), "approval-novelty-" + item.id);
+  assert.equal(h.all(node => node.type === ui.Button && Array.isArray(node.props.children) && node.props.children.includes("Marcar como solucionada")).length, 0);
+  h.unmount();
+});
+
+
+test("si la respuesta se pierde pero la recarga confirma VERIFIED, elimina el error incierto", async () => {
+  const item = { id: "22222222-2222-4222-8222-222222222222", key: "GENERAL", label: "Novedad general",
+    status: "OPEN", version: 3, reason: "Validar la información", openedAt: "2026-09-16T12:00:00Z", respondedAt: null, responseText: null };
+  const observed = detail(81);
+  observed.novelties = { available: true, blocksApproval: true, blocksSettlement: true, pendingCount: 1, answeredCount: 0,
+    novelty: { id: "11111111-1111-4111-8111-111111111111", status: "WAITING_ALLY", version: 2, items: [item] } };
+  const h = mount("app/dashboard/aprobaciones/approval-novelty-panel.tsx", {
+    "./approval-client": {
+      createApprovalNovelty: async () => ({ ok: true }),
+      verifyApprovalNovelty: async () => { throw new Error("Respuesta perdida"); },
+    },
+    "@/app/_components/finser-confirm-dialog": { default: parts.ConfirmDialog },
+  }, { detail: observed, compact: true, onBusyChange: () => {}, onUpdated: async () => {
+    const verified = { ...item, status: "VERIFIED", version: 4, responseText: "Validación realizada, ya quedó OK", respondedAt: "2026-09-16T13:00:00Z" };
+    observed.novelties = { ...observed.novelties, pendingCount: 0, answeredCount: 1,
+      novelty: { ...observed.novelties.novelty, status: "RESPONDED", version: 3, items: [verified] } };
+  } });
+  const button = label => h.find(node => node.type === ui.Button &&
+    (node.props.children === label || Array.isArray(node.props.children) && node.props.children.includes(label)));
+  await h.flush(); button("Marcar como solucionada").props.onClick(); await h.flush();
+  h.find(node => node.type === "textarea" && node.props["aria-label"] === "Confirmación del analista")
+    .props.onChange({ target: { value: "Validación realizada, ya quedó OK" } });
+  await h.flush(); button("Confirmar solución").props.onClick(); await h.flush();
+  h.find(node => node.type === parts.ConfirmDialog && node.props.title === "Confirmar novedad solucionada").props.onConfirm();
+  await h.flush();
+  assert.equal(h.all(node => node.props?.role === "alert").length, 0);
+  assert.ok(h.all(node => node.type === ui.Badge && node.props.children === "Solucionada por el analista").length > 0);
+  assert.equal(h.focused(), "approval-novelty-" + item.id);
+  h.unmount();
+});
+
+test("marcar como solucionada solo aparece para un ítem OPEN con capacidad de novedad", async () => {
+  const base = detail(81);
+  base.novelties = { available: true, blocksApproval: true, blocksSettlement: true, pendingCount: 1, answeredCount: 0,
+    novelty: { id: "11111111-1111-4111-8111-111111111111", status: "WAITING_ALLY", version: 1, items: [{
+      id: "22222222-2222-4222-8222-222222222222", key: "GENERAL", label: "Novedad general", status: "OPEN", version: 1,
+      reason: "Validar información", openedAt: "2026-09-16T12:00:00Z", respondedAt: null, responseText: null,
+    }] } };
+  const actionCount = h => h.all(node => node.type === ui.Button && Array.isArray(node.props.children) && node.props.children.includes("Marcar como solucionada")).length;
+  for (const props of [{ detail: base, readOnly: true }, { detail: { ...base, capabilities: { ...base.capabilities, canCreateNovelty: false } } }]) {
+    const h = mount("app/dashboard/aprobaciones/approval-novelty-panel.tsx", {
+      "./approval-client": { createApprovalNovelty: async () => ({ ok: true }), verifyApprovalNovelty: async () => ({ ok: true, unchanged: false }) },
+      "@/app/_components/finser-confirm-dialog": { default: parts.ConfirmDialog },
+    }, { ...props, onBusyChange: () => {}, onUpdated: async () => {} });
+    await h.flush(); assert.equal(actionCount(h), 0); h.unmount();
+  }
+  const responded = { ...base, novelties: { ...base.novelties, novelty: { ...base.novelties.novelty,
+    items: [{ ...base.novelties.novelty.items[0], status: "RESPONDED" }] } } };
+  const h = mount("app/dashboard/aprobaciones/approval-novelty-panel.tsx", {
+    "./approval-client": { createApprovalNovelty: async () => ({ ok: true }), verifyApprovalNovelty: async () => ({ ok: true, unchanged: false }) },
+    "@/app/_components/finser-confirm-dialog": { default: parts.ConfirmDialog },
+  }, { detail: responded, onBusyChange: () => {}, onUpdated: async () => {} });
+  await h.flush(); assert.equal(actionCount(h), 0); h.unmount();
 });

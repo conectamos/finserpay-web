@@ -5,7 +5,7 @@ import { Clock3, RefreshCw } from "lucide-react";
 import { Button, EmptyState, LoadingState } from "@/app/_components/finser-ui";
 import { readApprovalNoveltyHistory, type ApprovalNoveltyHistoryEvent, type ApprovalDetail } from "@/app/dashboard/aprobaciones/approval-client";
 const dates = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", dateStyle: "medium", timeStyle: "short" });
-const labels: Record<string, string> = { REPORTED: "Novedad registrada", GENERAL_RESPONDED: "Respuesta del aliado", PHOTO_RESPONDED: "Fotografía corregida", APPROVED_RESOLVED: "Novedades resueltas con el OK" };
+const labels: Record<string, string> = { REPORTED: "Novedad registrada", GENERAL_RESPONDED: "Respuesta del aliado", PHOTO_RESPONDED: "Fotografía corregida", ANALYST_VERIFIED: "Novedad solucionada por el analista", APPROVED_RESOLVED: "Novedades resueltas con el OK" };
 function text(value: unknown) { return typeof value === "string" ? value : ""; }
 export default function SharedNoveltyHistory({ creditId, evidence = [] }: { creditId: number; evidence?: ApprovalDetail["evidence"] }) {
   const [events, setEvents] = useState<ApprovalNoveltyHistoryEvent[] | null>(null);
@@ -28,6 +28,7 @@ export default function SharedNoveltyHistory({ creditId, evidence = [] }: { cred
         return <p key={index} className="whitespace-pre-wrap break-words"><strong>{label(item.key)}: </strong>{text(item.reason)}</p>;
       }) : null}
       {event.type === "PHOTO_RESPONDED" ? <p>{label(event.payload.key)}</p> : null}
+      {event.type === "ANALYST_VERIFIED" ? <><p><strong>{label(event.payload.key)}</strong></p><p className="whitespace-pre-wrap break-words">{text(event.payload.note) || "El analista confirmó que la novedad quedó solucionada."}</p></> : null}
       {text(event.payload.text) ? <p className="whitespace-pre-wrap break-words">{text(event.payload.text)}</p> : null}
     </li>)}</ol>}
   </section>;

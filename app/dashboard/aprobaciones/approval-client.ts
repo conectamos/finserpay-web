@@ -20,7 +20,7 @@ export type ApprovalQueueItem = ApprovalListItem & {
   reissue?: { blocked: boolean; status: string | null };
 };
 export type ApprovalNoveltyItem = {
-  id: string; key: string; label: string; status: "OPEN" | "RESPONDED"; version: number;
+  id: string; key: string; label: string; status: "OPEN" | "RESPONDED" | "VERIFIED"; version: number;
   reason: string; openedAt: string; respondedAt: string | null; responseText: string | null;
 };
 export type ApprovalNoveltyState = {
@@ -175,6 +175,28 @@ export async function createApprovalNovelty(id: number, input: { keys: string[];
   const result = await readResult<{ ok?: boolean }>(response, "No se pudo confirmar la novedad. Actualiza el expediente antes de volver a intentarlo.");
   if (result.ok !== true) throw new ApprovalRequestError("No se recibió confirmación de la novedad. Actualiza el expediente.", response.status);
   return result;
+}
+
+export type VerifyApprovalNoveltyInput = {
+  noveltyId: string;
+  itemId: string;
+  expectedVersion: number;
+  revision: number;
+  reviewHash: string;
+  note: string;
+  idempotencyKey: string;
+};
+
+export async function verifyApprovalNovelty(id: number, input: VerifyApprovalNoveltyInput) {
+  const response = await fetch(`/api/aprobaciones/${id}/novedades`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+  });
+  const result = await readResult<{ ok?: boolean; unchanged?: boolean }>(response,
+    "No se pudo confirmar que la novedad quedó solucionada. Actualiza el expediente antes de volver a intentarlo.");
+  if (result.ok !== true || typeof result.unchanged !== "boolean") {
+    throw new ApprovalRequestError("No se recibió confirmación de la novedad solucionada. Actualiza el expediente.", response.status);
+  }
+  return { ok: true as const, unchanged: result.unchanged };
 }
 
 export async function uploadApprovalCallRecording(id: number, input: {

@@ -54,7 +54,7 @@ test("call continuity is append-only, bound to novelty events and used by the ap
   assert.match(schema, /CreditApprovalCallContinuation_immutable[\s\S]*BEFORE UPDATE OR DELETE/);
   assert.match(schema, /CreditApprovalCallContinuation_no_truncate[\s\S]*BEFORE TRUNCATE/);
   assert.match(schema, /credit_approval_call_continuation_insert[\s\S]*CALL_CONTINUATION_SOURCE_INVALID/);
-  assert.match(schema, /event_type NOT IN \('REPORTED','GENERAL_RESPONDED','PHOTO_RESPONDED'\)/);
+  assert.match(schema, /event_type NOT IN \('REPORTED','GENERAL_RESPONDED','PHOTO_RESPONDED','ANALYST_VERIFIED'\)/);
   assert.match(schema, /CREATE OR REPLACE FUNCTION public\.credit_approval_effective_call_recording/);
   assert.match(schema, /FROM public\."CreditApprovalEvent" approval_event[\s\S]*JOIN public\."CreditApprovalCallRecording" recording ON recording\."id"=approval_event\."callRecordingId"[\s\S]*approval_event\."eventType"='APPROVED'[\s\S]*approval_event\."revision"=target_revision[\s\S]*approval_event\."reviewHash"=target_review_hash/);
   assert.ok((schema.match(/credit_approval_effective_call_recording\(/g) || []).length >= 3,
@@ -81,4 +81,31 @@ test("call schema only exempts a verified active FINSERPAY administrator from au
   assert.match(schema, /SELECT \* INTO current_review FROM public\."CreditApprovalReview"[\s\S]*"reviewHash"=NEW\."reviewHash" FOR SHARE;/);
   assert.match(schema, /ROW\(NEW\."actorKind",NEW\."actorUserId",NEW\."actorName",NEW\."actorGrantId",NEW\."actorSessionId"\) IS DISTINCT FROM[\s\S]*ROW\(current_review\."approvedByKind",current_review\."approvedByUserId",current_review\."approvedByName"/);
   assert.match(schema, /ELSIF current_review\."callRecordingId" IS DISTINCT FROM NEW\."callRecordingId"/);
+});
+
+test("ANALYST_VERIFIED continuity is bound to one stable-review novelty invalidation", () => {
+  const schema = creditApprovalCallSchemaStatements.join("\n");
+  assert.match(schema, /ELSIF event_type='ANALYST_VERIFIED' THEN[\s\S]*NEW\."targetRevision"<>NEW\."sourceRevision"\+1/);
+  assert.match(schema, /NEW\."sourceReviewHash"<>NEW\."targetReviewHash"/);
+  assert.match(schema, /invalidation_count<>1 OR allowed_invalidation_count<>1 OR distinct_revision_count<>1/);
+  assert.match(schema, /event_payload \?& ARRAY\['key','note','itemVersion','reviewRevision','reviewHash'\]/);
+  assert.match(schema, /SELECT COUNT\(\*\) FROM jsonb_object_keys\(event_payload\)\)<>5/);
+  assert.match(schema, /item_status<>'VERIFIED'/);
+  assert.match(schema, /event_payload->>'note' IS DISTINCT FROM item_response_text/);
+  assert.match(schema, /event_payload->>'itemVersion' IS DISTINCT FROM \(item_version-1\)::text/);
+  assert.match(schema, /event_payload->>'reviewRevision' IS DISTINCT FROM NEW\."sourceRevision"::text/);
+  assert.match(schema, /event_payload->>'reviewHash' IS DISTINCT FROM NEW\."sourceReviewHash"/);
+  const analystBranch = schema.match(/ELSIF event_type='ANALYST_VERIFIED' THEN[\s\S]*?\n      ELSE\n        IF NEW\."targetRevision"<>NEW\."sourceRevision"\+2/)?.[0];
+  assert.ok(analystBranch);
+  for (const field of [
+    '"contratoCedulaFrenteDataUrl"',
+    '"contratoCedulaRespaldoDataUrl"',
+    '"iphoneSelfieCedulaDataUrl"',
+    '"fotoEntregaDataUrl"',
+    '"fotoRemisionDataUrl"',
+  ]) assert.ok(analystBranch.includes(field), field);
+  assert.match(analystBranch, /sha256\(decode\(split_part\(current_photo_value,',',2\),'base64'\)\)/);
+  assert.match(analystBranch, /sha256\(convert_to\(current_photo_value,'UTF8'\)\)/);
+  assert.match(analystBranch, /current_photo_hash IS DISTINCT FROM item_photo_hash/);
+  assert.doesNotMatch(analystBranch, /contratoSnapshot/);
 });

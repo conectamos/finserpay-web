@@ -2,6 +2,18 @@ function ensureCheck(table, name, expression) {
   return `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='${name}' AND conrelid='public."${table}"'::regclass)
     THEN ALTER TABLE public."${table}" ADD CONSTRAINT "${name}" CHECK (${expression}); END IF; END $$`;
 }
+function extensibleCheck(table, name, expression, requiredFragment) {
+  return `DO $$ DECLARE current_definition TEXT; BEGIN
+    SELECT pg_get_constraintdef(oid) INTO current_definition FROM pg_constraint
+      WHERE conname='${name}' AND conrelid='public."${table}"'::regclass AND contype='c';
+    IF current_definition IS NULL THEN
+      ALTER TABLE public."${table}" ADD CONSTRAINT "${name}" CHECK (${expression});
+    ELSIF POSITION('${requiredFragment}' IN LOWER(current_definition))=0 THEN
+      ALTER TABLE public."${table}" DROP CONSTRAINT "${name}";
+      ALTER TABLE public."${table}" ADD CONSTRAINT "${name}" CHECK (${expression});
+    END IF;
+  END $$`;
+}
 export const creditApprovalNoveltiesSchemaStatements = [
   `CREATE TABLE IF NOT EXISTS public."CreditApprovalNovelty" (
     "id" UUID PRIMARY KEY,"creditoId" INTEGER NOT NULL REFERENCES public."Credito"("id") ON DELETE RESTRICT,
@@ -27,14 +39,17 @@ export const creditApprovalNoveltiesSchemaStatements = [
   `CREATE INDEX IF NOT EXISTS "CreditApprovalNoveltyEvent_case_created" ON public."CreditApprovalNoveltyEvent"("noveltyId","createdAt","id")`,
   ensureCheck("CreditApprovalNovelty", "CreditApprovalNovelty_status_check", `"status" IN ('WAITING_ALLY','RESPONDED','RESOLVED') AND "version">0 AND (("status"='RESOLVED')=("resolvedAt" IS NOT NULL))`),
   ensureCheck("CreditApprovalNoveltyItem", "CreditApprovalNoveltyItem_key_check", `"key" IN ('GENERAL','cedula-frente','cedula-posterior','selfie-cedula','foto-entrega','foto-remision')`),
-  ensureCheck("CreditApprovalNoveltyItem", "CreditApprovalNoveltyItem_state_check", `"status" IN ('OPEN','RESPONDED') AND "version">0 AND LENGTH(BTRIM("reason")) BETWEEN 5 AND 1000`),
-  ensureCheck("CreditApprovalNoveltyItem", "CreditApprovalNoveltyItem_response_check", `("status"='OPEN' AND "respondedAt" IS NULL AND "responseText" IS NULL AND "responsePhotoHash" IS NULL)
+  extensibleCheck("CreditApprovalNoveltyItem", "CreditApprovalNoveltyItem_state_check", `"status" IN ('OPEN','RESPONDED','VERIFIED') AND "version">0 AND LENGTH(BTRIM("reason")) BETWEEN 5 AND 1000`, "verified"),
+  extensibleCheck("CreditApprovalNoveltyItem", "CreditApprovalNoveltyItem_response_check", `("status"='OPEN' AND "respondedAt" IS NULL AND "responseText" IS NULL AND "responsePhotoHash" IS NULL)
     OR ("status"='RESPONDED' AND "respondedAt" IS NOT NULL AND (("key"='GENERAL' AND "responseText" IS NOT NULL AND LENGTH(BTRIM("responseText")) BETWEEN 5 AND 2000 AND "responsePhotoHash" IS NULL)
-      OR ("key"<>'GENERAL' AND "responsePhotoHash" IS NOT NULL AND "responsePhotoHash" ~ '^[a-f0-9]{64}$')))`),
+      OR ("key"<>'GENERAL' AND "responsePhotoHash" IS NOT NULL AND "responsePhotoHash" ~ '^[a-f0-9]{64}$')))
+    OR ("status"='VERIFIED' AND "respondedAt" IS NOT NULL AND "responseText" IS NOT NULL AND LENGTH(BTRIM("responseText")) BETWEEN 5 AND 1000
+      AND (("key"='GENERAL' AND "responsePhotoHash" IS NULL)
+        OR ("key"<>'GENERAL' AND "responsePhotoHash" IS NOT NULL AND "responsePhotoHash" ~ '^[a-f0-9]{64}$')))`, "verified"),
   ensureCheck("CreditApprovalNoveltyEvent", "CreditApprovalNoveltyEvent_actor_check", `LENGTH(BTRIM("actorName"))>0 AND (("actorKind"='USER' AND "actorUserId" IS NOT NULL AND "actorGrantId" IS NULL AND "actorSessionId" IS NULL)
     OR ("actorKind"='SHARED_LINK' AND "actorUserId" IS NULL AND "actorGrantId" IS NOT NULL AND "actorSessionId" IS NOT NULL))`),
   ensureCheck("CreditApprovalNoveltyEvent", "CreditApprovalNoveltyEvent_request_check", `("requestKey" IS NULL AND "requestHash" IS NULL) OR ("requestKey" IS NOT NULL AND "requestHash" IS NOT NULL AND "requestHash" ~ '^[a-f0-9]{64}$')`),
-  ensureCheck("CreditApprovalNoveltyEvent", "CreditApprovalNoveltyEvent_type_check", `"type" IN ('REPORTED','PHOTO_RESPONDED','GENERAL_RESPONDED','APPROVED_RESOLVED')`),
+  extensibleCheck("CreditApprovalNoveltyEvent", "CreditApprovalNoveltyEvent_type_check", `"type" IN ('REPORTED','PHOTO_RESPONDED','GENERAL_RESPONDED','ANALYST_VERIFIED','APPROVED_RESOLVED')`, "analyst_verified"),
   ...[["CreditApprovalNovelty", "createdAt"], ["CreditApprovalNovelty", "updatedAt"], ["CreditApprovalNoveltyItem", "openedAt"], ["CreditApprovalNoveltyEvent", "createdAt"]]
     .map(([table, column]) => `ALTER TABLE public."${table}" ALTER COLUMN "${column}" SET DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`),
   `CREATE OR REPLACE FUNCTION public.credit_approval_novelty_editable(target_id INTEGER)
@@ -88,7 +103,9 @@ export const creditApprovalNoveltiesSchemaStatements = [
       ELSE
         IF ROW(OLD."id",OLD."noveltyId",OLD."key") IS DISTINCT FROM ROW(NEW."id",NEW."noveltyId",NEW."key") THEN
           RAISE EXCEPTION 'NOVELTY_HISTORY_IMMUTABLE' USING ERRCODE='23514'; END IF;
-        IF NEW."status"='RESPONDED' AND OLD."status"<>'OPEN' THEN RAISE EXCEPTION 'NOVELTY_CHANGED' USING ERRCODE='23514'; END IF;
+        IF NOT ((OLD."status"='OPEN' AND NEW."status" IN ('OPEN','RESPONDED','VERIFIED'))
+          OR (OLD."status" IN ('RESPONDED','VERIFIED') AND NEW."status"='OPEN'))
+          THEN RAISE EXCEPTION 'NOVELTY_CHANGED' USING ERRCODE='23514'; END IF;
         NEW."version":=OLD."version"+1;
       END IF;
       RETURN NEW;

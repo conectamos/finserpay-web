@@ -14,7 +14,7 @@ export const NOVELTY_PHOTOS = [
 export type NoveltyKey = typeof NOVELTY_PHOTOS[number]["key"] | "GENERAL";
 export type NoveltyStatus = "WAITING_ALLY" | "RESPONDED" | "RESOLVED";
 export type NoveltyItem = {
-  id: string; key: NoveltyKey; label: string; status: "OPEN" | "RESPONDED"; version: number;
+  id: string; key: NoveltyKey; label: string; status: "OPEN" | "RESPONDED" | "VERIFIED"; version: number;
   reason: string; openedAt: string; respondedAt: string | null; responseText: string | null;
   responsePhotoHash: string | null;
 };

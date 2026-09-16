@@ -75,7 +75,7 @@ export async function listCreditApprovalQueue(db: NoveltyDatabase, input: Credit
     LEFT JOIN "CreditApprovalReview" review ON review."creditoId"=credit."id"
     LEFT JOIN "CreditApprovalNovelty" novelty ON novelty."creditoId"=credit."id" AND novelty."status"<>'RESOLVED'
     LEFT JOIN LATERAL (SELECT COUNT(*) FILTER (WHERE i."status"='OPEN')::integer AS pending,
-      COUNT(*) FILTER (WHERE i."status"='RESPONDED')::integer AS answered FROM "CreditApprovalNoveltyItem" i WHERE i."noveltyId"=novelty."id") counts ON true
+      COUNT(*) FILTER (WHERE i."status" IN ('RESPONDED','VERIFIED'))::integer AS answered FROM "CreditApprovalNoveltyItem" i WHERE i."noveltyId"=novelty."id") counts ON true
     LEFT JOIN LATERAL (SELECT r."status" FROM "CreditApprovalReissue" r WHERE r."creditoId"=credit."id"
       ORDER BY CASE WHEN r."status" IN ('PREPARING','DISPATCHING','AWAITING_SIGNATURE','UNCERTAIN') THEN 0 ELSE 1 END,r."requestedAt" DESC,r."id" DESC LIMIT 1) reissue ON true
     WHERE ${queueVisibleScopeSql()}

@@ -35,6 +35,19 @@ export function parseCreateNovelty(value: unknown) {
   return { keys: (body.keys.length ? [...body.keys].sort() : ["GENERAL"]) as NoveltyKey[], reason: noveltyText(body.reason, 1000),
     revision: positiveVersion(body.revision), reviewHash: body.reviewHash, idempotencyKey: uuid(body.idempotencyKey) };
 }
+export function parseVerifyNovelty(value: unknown) {
+  const body = record(value);
+  exactKeys(body, ["noveltyId", "itemId", "expectedVersion", "revision", "reviewHash", "note", "idempotencyKey"]);
+  if (typeof body.reviewHash !== "string" || !/^[a-f0-9]{64}$/.test(body.reviewHash)) {
+    noveltyError("Actualiza el expediente antes de confirmar la novedad.", "INVALID_NOVELTY", 400);
+  }
+  return {
+    noveltyId: uuid(body.noveltyId), itemId: uuid(body.itemId), expectedVersion: positiveVersion(body.expectedVersion),
+    revision: positiveVersion(body.revision), reviewHash: body.reviewHash, note: noveltyText(body.note, 1000),
+    idempotencyKey: uuid(body.idempotencyKey),
+  };
+}
+
 export function parseNoveltyResponse(value: unknown, photo: boolean) {
   const body = record(value);
   exactKeys(body, ["noveltyId", "itemId", "expectedVersion", "idempotencyKey", ...(photo ? ["dataUrl", "expectedPhotoHash"] : ["text"])]);
@@ -123,6 +136,62 @@ export async function createCreditApprovalNovelty(db: NoveltyDatabase, creditId:
   await continueCreditApprovalCall(db, creditId, callContinuity, { noveltyId, noveltyEventId });
   return { unchanged: false };
 }
+export async function verifyCreditApprovalNovelty(db: NoveltyDatabase, creditId: number,
+  input: ReturnType<typeof parseVerifyNovelty>, actor: ApprovalActor) {
+  await assertApprovalActorActive(db, actor);
+  await lockCreditReview(db, creditId);
+  await assertApprovalActorCreditAccess(db, creditId, actor);
+  const credit = await readHeader(db, creditId);
+  const hash = requestHash({ creditId, ...input });
+  if (await previousRequest(db, creditId, input.idempotencyKey, hash, actor)) return { unchanged: true };
+  const reissue = await getCreditApprovalReissueState(db, creditId);
+  const blocked = editableReason(credit, reissue.blocked || !reissue.available);
+  if (blocked) noveltyError(blocked, "NOVELTY_NOT_ALLOWED");
+
+  const detail = await getCreditApprovalDetail(db, creditId);
+  if (!detail.capabilities.canCorrectEvidence) {
+    noveltyError(detail.capabilities.correctionBlockedReason || "No se permite solucionar esta novedad.", "NOVELTY_NOT_ALLOWED");
+  }
+  if (input.revision !== detail.review.revision || input.reviewHash !== detail.review.reviewHash) {
+    noveltyError("El expediente cambió. Actualízalo antes de confirmar la novedad.", "REVIEW_CHANGED");
+  }
+  const callContinuity = captureCreditApprovalCallContinuity(detail);
+  const cases = await db.$queryRawUnsafe<Array<{ id: string; status: string }>>(
+    'SELECT "id"::text,"status" FROM "CreditApprovalNovelty" WHERE "creditoId"=$1 AND "id"=$2::uuid AND "status"=\'WAITING_ALLY\' FOR UPDATE',
+    creditId, input.noveltyId);
+  if (!cases[0]) noveltyError("La novedad cambió o ya fue atendida.");
+
+  const items = await db.$queryRawUnsafe<NoveltyItem[]>(
+    'SELECT * FROM "CreditApprovalNoveltyItem" WHERE "id"=$1::uuid AND "noveltyId"=$2::uuid FOR UPDATE',
+    input.itemId, input.noveltyId);
+  const item = items[0];
+  if (!item || item.status !== "OPEN" || item.version !== input.expectedVersion) {
+    noveltyError("La novedad cambió. Actualiza su estado antes de continuar.");
+  }
+
+  let responsePhotoHash: string | null = null;
+  if (item.key !== "GENERAL") {
+    const config = NOVELTY_PHOTOS.find(photo => photo.key === item.key);
+    if (!config) noveltyError("La fotografía de la novedad no es válida.", "INVALID_EVIDENCE", 400);
+    const photos = await db.$queryRawUnsafe<Array<{ value: string | null }>>(
+      `SELECT "${config.field}" AS value FROM "Credito" WHERE "id"=$1`, creditId);
+    const value = photos[0]?.value || null;
+    if (!approvalImage(value)) noveltyError("La fotografía vigente no está disponible para verificar.", "INVALID_EVIDENCE", 409);
+    responsePhotoHash = evidenceSha256(value);
+  }
+
+  await db.$executeRawUnsafe(`UPDATE "CreditApprovalNoveltyItem" SET "status"='VERIFIED',"responseText"=$2,
+    "responsePhotoHash"=$3,"respondedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC' WHERE "id"=$1::uuid`,
+    item.id, input.note, responsePhotoHash);
+  const noveltyEventId = await appendNoveltyEvent(db, {
+    noveltyId: input.noveltyId, itemId: item.id, type: "ANALYST_VERIFIED", actor,
+    payload: { key: item.key, note: input.note, itemVersion: item.version, reviewRevision: input.revision, reviewHash: input.reviewHash },
+    requestKey: input.idempotencyKey, requestHash: hash,
+  });
+  await continueCreditApprovalCall(db, creditId, callContinuity, { noveltyId: input.noveltyId, noveltyEventId });
+  return { unchanged: false };
+}
+
 export async function getCreditApprovalNoveltyHistory(db: NoveltyDatabase, creditId: number) {
   await readHeader(db, creditId);
   const events = await db.$queryRawUnsafe<Array<{ id: string; type: string; actorKind: string; actorName: string; createdAt: Date; payload: Record<string, unknown> }>>(`SELECT event."id"::text,event."type",event."actorKind",event."actorName",event."createdAt",event."payload"
@@ -138,7 +207,7 @@ export async function getPendingAllyCredit(db: NoveltyDatabase, creditId: number
   const state = await getCreditApprovalNoveltyState(db, creditId);
   if (!state.novelty || state.novelty.status === "RESOLVED") noveltyError("El crédito no tiene novedades pendientes.", "NOVELTY_NOT_FOUND", 404);
   const reissue = await getCreditApprovalReissueState(db, creditId);
-  const blockedReason = editableReason(credit, reissue.blocked || !reissue.available) || (state.novelty.status === "RESPONDED" ? "La respuesta ya está guardada y pendiente de revisión del analista." : null);
+  const blockedReason = editableReason(credit, reissue.blocked || !reissue.available) || (state.novelty.status === "RESPONDED" ? "Las novedades ya fueron atendidas. El crédito está pendiente de revisión y OK del analista." : null);
   const photoKeys = state.novelty.items.filter(item => item.key !== "GENERAL").map(item => item.key);
   const photos = photoKeys.length ? await db.$queryRawUnsafe<Array<Record<string, string | null>>>(
     `SELECT ${NOVELTY_PHOTOS.filter(photo => photoKeys.includes(photo.key)).map(photo => `"${photo.field}"`).join(",")} FROM "Credito" WHERE "id"=$1`, creditId) : [];
@@ -168,7 +237,7 @@ export async function listPendingAllyCredits(db: NoveltyDatabase, actor: Pending
     'pendingCount',counts.pending,'answeredCount',counts.answered) AS novelty
     FROM "Credito" credit JOIN "Sede" site ON site."id"=credit."sedeId" JOIN "Aliado" ally ON ally."id"=site."aliadoId"
     JOIN "CreditApprovalNovelty" novelty ON novelty."creditoId"=credit."id" AND novelty."status"<>'RESOLVED'
-    CROSS JOIN LATERAL (SELECT COUNT(*) FILTER(WHERE "status"='OPEN')::integer AS pending,COUNT(*) FILTER(WHERE "status"='RESPONDED')::integer AS answered FROM "CreditApprovalNoveltyItem" WHERE "noveltyId"=novelty."id") counts
+    CROSS JOIN LATERAL (SELECT COUNT(*) FILTER(WHERE "status"='OPEN')::integer AS pending,COUNT(*) FILTER(WHERE "status" IN ('RESPONDED','VERIFIED'))::integer AS answered FROM "CreditApprovalNoveltyItem" WHERE "noveltyId"=novelty."id") counts
     WHERE ally."id"=$1 AND UPPER(BTRIM(COALESCE(ally."codigo",'')))<>'FINSERPAY' AND ally."activo"
       AND EXISTS (SELECT 1 FROM "Usuario" account JOIN "Rol" role ON role."id"=account."rolId" JOIN "Sede" actor_site ON actor_site."id"=account."sedeId"
         WHERE account."id"=$2 AND account."activo" AND UPPER(BTRIM(role."nombre"))='ADMIN' AND actor_site."aliadoId"=$1 AND actor_site."activa")

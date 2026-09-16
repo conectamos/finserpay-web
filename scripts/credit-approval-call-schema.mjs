@@ -103,7 +103,8 @@ export const creditApprovalCallSchemaStatements = [
     DECLARE
       current_review public."CreditApprovalReview"%ROWTYPE;
       event_type TEXT; event_item_id UUID; event_payload JSONB; event_credit_id INTEGER;
-      item_key TEXT; item_status TEXT; item_photo_hash TEXT; snapshot_photo_hash TEXT;
+      item_key TEXT; item_status TEXT; item_version INTEGER; item_response_text TEXT;
+      item_photo_hash TEXT; snapshot_photo_hash TEXT; current_photo_value TEXT; current_photo_hash TEXT;
       invalidation_count BIGINT; allowed_invalidation_count BIGINT; distinct_revision_count BIGINT;
     BEGIN
       -- The lock order remains Credit, then Review, matching upload, approval and settlement.
@@ -122,7 +123,7 @@ export const creditApprovalCallSchemaStatements = [
       JOIN public."CreditApprovalNovelty" novelty ON novelty."id"=event."noveltyId"
       WHERE event."id"=NEW."noveltyEventId" AND event."noveltyId"=NEW."noveltyId";
       IF NOT FOUND OR event_credit_id IS DISTINCT FROM NEW."creditoId"
-        OR event_type NOT IN ('REPORTED','GENERAL_RESPONDED','PHOTO_RESPONDED')
+        OR event_type NOT IN ('REPORTED','GENERAL_RESPONDED','PHOTO_RESPONDED','ANALYST_VERIFIED')
         THEN RAISE EXCEPTION 'CALL_CONTINUATION_EVENT_INVALID' USING ERRCODE='23514'; END IF;
 
       SELECT COUNT(*),
@@ -151,6 +152,46 @@ export const creditApprovalCallSchemaStatements = [
           IF NOT FOUND OR item_key<>'GENERAL' OR item_status<>'RESPONDED'
             OR event_payload->>'key' IS DISTINCT FROM 'GENERAL'
             THEN RAISE EXCEPTION 'CALL_CONTINUATION_EVENT_INVALID' USING ERRCODE='23514'; END IF;
+        END IF;
+      ELSIF event_type='ANALYST_VERIFIED' THEN
+        IF NEW."targetRevision"<>NEW."sourceRevision"+1
+          OR NEW."sourceReviewHash"<>NEW."targetReviewHash"
+          OR invalidation_count<>1 OR allowed_invalidation_count<>1 OR distinct_revision_count<>1
+          THEN RAISE EXCEPTION 'CALL_CONTINUATION_TRANSITION_INVALID' USING ERRCODE='23514'; END IF;
+        IF event_item_id IS NULL
+          OR NOT (event_payload ?& ARRAY['key','note','itemVersion','reviewRevision','reviewHash'])
+          OR (SELECT COUNT(*) FROM jsonb_object_keys(event_payload))<>5
+          THEN RAISE EXCEPTION 'CALL_CONTINUATION_EVENT_INVALID' USING ERRCODE='23514'; END IF;
+        SELECT "key","status","version","responseText","responsePhotoHash"
+          INTO item_key,item_status,item_version,item_response_text,item_photo_hash
+        FROM public."CreditApprovalNoveltyItem"
+        WHERE "id"=event_item_id AND "noveltyId"=NEW."noveltyId";
+        IF NOT FOUND OR item_status<>'VERIFIED'
+          OR event_payload->>'key' IS DISTINCT FROM item_key
+          OR event_payload->>'note' IS DISTINCT FROM item_response_text
+          OR event_payload->>'itemVersion' IS DISTINCT FROM (item_version-1)::text
+          OR event_payload->>'reviewRevision' IS DISTINCT FROM NEW."sourceRevision"::text
+          OR event_payload->>'reviewHash' IS DISTINCT FROM NEW."sourceReviewHash"
+          OR (item_key='GENERAL' AND item_photo_hash IS NOT NULL)
+          OR (item_key<>'GENERAL' AND (item_photo_hash IS NULL OR item_photo_hash !~ '^[a-f0-9]{64}$'))
+          THEN RAISE EXCEPTION 'CALL_CONTINUATION_EVENT_INVALID' USING ERRCODE='23514'; END IF;
+        IF item_key<>'GENERAL' THEN
+          SELECT CASE item_key
+            WHEN 'cedula-frente' THEN "contratoCedulaFrenteDataUrl"
+            WHEN 'cedula-posterior' THEN "contratoCedulaRespaldoDataUrl"
+            WHEN 'selfie-cedula' THEN "iphoneSelfieCedulaDataUrl"
+            WHEN 'foto-entrega' THEN "fotoEntregaDataUrl"
+            WHEN 'foto-remision' THEN "fotoRemisionDataUrl"
+          END INTO current_photo_value FROM public."Credito" WHERE "id"=NEW."creditoId";
+          IF current_photo_value IS NULL
+            THEN RAISE EXCEPTION 'CALL_CONTINUATION_PHOTO_INVALID' USING ERRCODE='23514'; END IF;
+          IF current_photo_value ~* '^data:image/(png|jpe?g|webp);base64,[A-Za-z0-9+/]*={0,2}$' THEN
+            current_photo_hash:=encode(sha256(decode(split_part(current_photo_value,',',2),'base64')),'hex');
+          ELSE
+            current_photo_hash:=encode(sha256(convert_to(current_photo_value,'UTF8')),'hex');
+          END IF;
+          IF current_photo_hash IS DISTINCT FROM item_photo_hash
+            THEN RAISE EXCEPTION 'CALL_CONTINUATION_PHOTO_INVALID' USING ERRCODE='23514'; END IF;
         END IF;
       ELSE
         IF NEW."targetRevision"<>NEW."sourceRevision"+2

@@ -53,3 +53,10 @@ test("el flujo compacto explica que guardar envía la novedad al aliado", () => 
   assert.match(panel, /Confirmar envío al aliado/);
   assert.match(panel, /La novedad aparece en PENDIENTES del aliado/);
 });
+
+test("el historial distingue la solución confirmada por el analista", () => {
+  const history = read("app/revision-creditos/shared-novelty-history.tsx");
+  assert.match(history, /ANALYST_VERIFIED: "Novedad solucionada por el analista"/);
+  assert.match(history, /event\.payload\.note/);
+  assert.match(history, /event\.payload\.key/);
+});

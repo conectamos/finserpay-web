@@ -375,7 +375,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false }: 
                   <td className="px-4 py-4 align-top sm:px-6"><div className="flex flex-col items-start gap-2"><ReviewStatus status={item.status} required={item.required} />
                     {item.paid ? <Badge>Incluido en liquidación</Badge> : null}
                     {item.novelty?.pendingCount ? <Badge tone="warning">{item.novelty.pendingCount} por corregir en el aliado</Badge> : null}
-                    {item.novelty?.answeredCount ? <Badge tone="positive">Correcciones por revisar</Badge> : null}
+                    {item.novelty?.answeredCount ? <Badge tone="positive">{item.novelty.answeredCount} {item.novelty.answeredCount === 1 ? "novedad atendida" : "novedades atendidas"}</Badge> : null}
                     {item.reissue?.blocked ? <Badge tone="warning">Firma pendiente</Badge> : null}
                   </div></td>
                   <td className="px-4 py-4 align-top sm:px-6"><Button variant="secondary" onClick={() => selectCredit(item.id)} disabled={busy || searching} aria-label={`${view === "pending" ? "Revisar" : "Ver"} crédito ${item.folio}`} aria-pressed={selectedId === item.id}>{selectedId === item.id ? "Seleccionado" : view === "pending" ? "Revisar" : "Ver expediente"}</Button></td>
