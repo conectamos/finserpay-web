@@ -42,6 +42,13 @@ export const SOLICITUD_STATE_LABELS: Record<
   ERROR_TECNICO: "Error técnico",
 };
 
+export function isSolicitudVisibleOnWall(
+  state: SolicitudState | SolicitudStage,
+  requestedState: SolicitudFilterState | "" = ""
+) {
+  return state !== "CANCELADA" || requestedState === "CANCELADA";
+}
+
 export type SolicitudViewer = {
   kind: "CENTRAL_ADMIN" | "ALLY_ADMIN" | "SUPERVISOR" | "SELLER";
   userId: number;

@@ -27,6 +27,7 @@ import {
   canonicalSolicitudDocumentKey,
   canSeeSensitiveSolicitudData,
   getSolicitudActions,
+  isSolicitudVisibleOnWall,
   maskDocument,
   maskImei,
   resolveSolicitudDraftCanonicalIdentity,
@@ -2359,6 +2360,9 @@ export async function listSolicitudes(input: {
     : null;
   const all = selectCanonicalSolicitudesByDocument(rawRows)
     .map((row) => ({ row, item: serializeSolicitudRow(row, input.viewer) }))
+    .filter(({ item }) =>
+      isSolicitudVisibleOnWall(item.estado, input.filters.estado)
+    )
     .filter(({ row, item }) =>
       matchesOperationalFilters(row, item, input.filters, queryGroupKeys)
     )
