@@ -1,8 +1,16 @@
 "use client";
 
 import Image from "next/image";
-import { FileSignature, Printer } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  Check,
+  Download,
+  FileSignature,
+  Info,
+  LoaderCircle,
+  Printer,
+  X,
+} from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { Button } from "@/app/_components/finser-ui";
 import {
@@ -17,10 +25,13 @@ import styles from "./credit-remission-note.module.css";
 type CreditRemissionNoteProps = CreditRemissionData & {
   frecuenciaPago: string;
   ready: boolean;
+  autoOpen: boolean;
 };
 
 const BRAND_LOGO_PATH = "/branding/finserpay-logo.jpg";
+const REMISSION_MASCOT_PATH = "/assets/creditos/step-four-remission-phone.png";
 const PRINTING_CLASS = "fp-remission-printing";
+const REMISSION_SESSION_PREFIX = "finserpay:factory:step-four-remission";
 
 export default function CreditRemissionNote({
   clienteNombre,
@@ -33,11 +44,25 @@ export default function CreditRemissionNote({
   fechaPrimerPago,
   frecuenciaPago,
   ready,
+  autoOpen,
 }: CreditRemissionNoteProps) {
   const [portalReady, setPortalReady] = useState(false);
   const [logoReady, setLogoReady] = useState(false);
   const [logoLoadFailed, setLogoLoadFailed] = useState(false);
   const [printedAt, setPrintedAt] = useState<Date | null>(null);
+  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
+  const [printInvoked, setPrintInvoked] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [dialogError, setDialogError] = useState("");
+  const downloadDialogBackdropRef = useRef<HTMLDivElement>(null);
+  const downloadDialogRef = useRef<HTMLElement>(null);
+  const downloadDialogTitleRef = useRef<HTMLHeadingElement>(null);
+  const downloadDialogId = useId();
+  const downloadDialogTitleId = useId();
+  const downloadDialogDescriptionId = useId();
+  const remissionSessionKey = `${REMISSION_SESSION_PREFIX}:${encodeURIComponent(
+    [clienteDocumento, referenciaEquipo, fechaPrimerPago].join("|"),
+  )}`;
 
   useEffect(() => {
     setPortalReady(true);
@@ -51,6 +76,134 @@ export default function CreditRemissionNote({
     };
   }, []);
 
+  useEffect(() => {
+    if (!portalReady) return;
+
+    if (!autoOpen) {
+      setDownloadDialogOpen(false);
+      return;
+    }
+
+    if (window.sessionStorage.getItem(remissionSessionKey) === "confirmed") {
+      return;
+    }
+
+    setPrintInvoked(false);
+    setGenerating(false);
+    setDialogError("");
+    setDownloadDialogOpen(true);
+  }, [autoOpen, portalReady, remissionSessionKey]);
+
+  useEffect(() => {
+    if (!portalReady || !downloadDialogOpen) return;
+
+    const backdrop = downloadDialogBackdropRef.current;
+    const dialog = downloadDialogRef.current;
+    const title = downloadDialogTitleRef.current;
+    if (!backdrop || !dialog || !title) return;
+
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    title.focus();
+
+    const backgroundElements = Array.from(document.body.children).filter(
+      (element): element is HTMLElement =>
+        element instanceof HTMLElement && element !== backdrop,
+    );
+    const backgroundElementStates = backgroundElements.map((element) => ({
+      element,
+      inert: element.inert,
+      ariaHidden: element.getAttribute("aria-hidden"),
+    }));
+    for (const element of backgroundElements) {
+      element.inert = true;
+      element.setAttribute("aria-hidden", "true");
+    }
+
+    const getFocusableElements = () =>
+      Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter(
+        (element) =>
+          !element.hasAttribute("hidden") &&
+          element.getAttribute("aria-hidden") !== "true",
+      );
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (printInvoked) {
+          window.sessionStorage.setItem(remissionSessionKey, "confirmed");
+          setDownloadDialogOpen(false);
+        }
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusableElements = getFocusableElements();
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        title.focus();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements.at(-1)!;
+      const activeElement = document.activeElement;
+      if (!dialog.contains(activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? lastElement : firstElement).focus();
+      } else if (event.shiftKey && activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+
+    const handleFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof Node && !dialog.contains(event.target)) {
+        const firstFocusableElement = getFocusableElements()[0];
+        if (firstFocusableElement) {
+          firstFocusableElement.focus();
+        } else {
+          title.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("focusin", handleFocusIn);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("focusin", handleFocusIn);
+      document.body.style.overflow = previousBodyOverflow;
+      for (const state of backgroundElementStates) {
+        if (!state.element.isConnected) continue;
+        state.element.inert = state.inert;
+        if (state.ariaHidden === null) {
+          state.element.removeAttribute("aria-hidden");
+        } else {
+          state.element.setAttribute("aria-hidden", state.ariaHidden);
+        }
+      }
+      if (previouslyFocused?.isConnected) {
+        previouslyFocused.focus();
+      } else {
+        document.getElementById("remission-note-print-action")?.focus();
+      }
+    };
+  }, [downloadDialogOpen, portalReady, printInvoked, remissionSessionKey]);
+
   const remissionData: CreditRemissionData = {
     clienteNombre,
     clienteDocumento,
@@ -63,6 +216,13 @@ export default function CreditRemissionNote({
   };
   const dataReady = ready && isCreditRemissionReady(remissionData);
   const canPrint = dataReady && portalReady && logoReady;
+  const visibleDialogError = dialogError
+    ? dialogError
+    : logoLoadFailed
+      ? "No fue posible cargar el logo. Recarga la pantalla antes de descargar la remisión."
+      : !dataReady
+        ? "Completa los datos obligatorios del cliente y del plan antes de generar la remisión."
+        : "";
   const paymentSchedule = getCreditRemissionPaymentSchedule(
     frecuenciaPago,
     fechaPrimerPago,
@@ -76,18 +236,40 @@ export default function CreditRemissionNote({
     setLogoLoadFailed(true);
   };
 
+  const closeDownloadDialog = () => {
+    if (!printInvoked) return;
+
+    window.sessionStorage.setItem(remissionSessionKey, "confirmed");
+    setDownloadDialogOpen(false);
+  };
+
   const handlePrint = () => {
-    if (!canPrint) return;
+    if (!canPrint || generating || (downloadDialogOpen && printInvoked)) return;
 
     flushSync(() => {
       setPrintedAt(new Date());
+      setGenerating(true);
+      setDialogError("");
     });
     document.body.classList.add(PRINTING_CLASS);
 
     window.requestAnimationFrame(() => {
       try {
+        if (downloadDialogOpen) {
+          flushSync(() => setPrintInvoked(true));
+        }
         window.print();
+      } catch (error) {
+        if (downloadDialogOpen) {
+          setPrintInvoked(false);
+        }
+        setDialogError(
+          error instanceof Error
+            ? error.message
+            : "No se pudo abrir la impresión de la remisión. Intenta de nuevo.",
+        );
       } finally {
+        setGenerating(false);
         document.body.classList.remove(PRINTING_CLASS);
       }
     });
@@ -189,6 +371,125 @@ export default function CreditRemissionNote({
     </article>
   );
 
+  const downloadDialog = downloadDialogOpen ? (
+    <div
+      ref={downloadDialogBackdropRef}
+      className={`fp-ui-dialog-backdrop ${styles.dialogBackdrop}`}
+      role="presentation"
+    >
+      <section
+        id={downloadDialogId}
+        ref={downloadDialogRef}
+        className={styles.downloadDialog}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={downloadDialogTitleId}
+        aria-describedby={downloadDialogDescriptionId}
+      >
+        <header className={styles.dialogHeader}>
+          <Image
+            src={BRAND_LOGO_PATH}
+            alt="FINSER PAY"
+            width={1280}
+            height={1280}
+            preload
+            unoptimized
+            className={styles.dialogBrand}
+          />
+          <button
+            type="button"
+            className={styles.dialogClose}
+            aria-label="Cerrar aviso de remisión"
+            onClick={closeDownloadDialog}
+            disabled={!printInvoked}
+          >
+            <X aria-hidden="true" />
+          </button>
+          <span className={styles.dialogWave} aria-hidden="true" />
+        </header>
+
+        <div className={styles.dialogBody}>
+          <h2
+            id={downloadDialogTitleId}
+            ref={downloadDialogTitleRef}
+            tabIndex={-1}
+            className={styles.srOnly}
+          >
+            Antes de continuar
+          </h2>
+
+          <div className={styles.dialogMascot} aria-hidden="true">
+            <Image
+              src={REMISSION_MASCOT_PATH}
+              alt=""
+              width={1217}
+              height={1293}
+              preload
+              unoptimized
+            />
+          </div>
+
+          <div className={styles.dialogCopy}>
+            <p
+              id={downloadDialogDescriptionId}
+              className={styles.dialogDescription}
+            >
+              Descargue e imprima la remisión del cliente.
+            </p>
+            <p className={styles.dialogWarning}>
+              El cliente debe firmar como en la cédula.
+            </p>
+
+            {visibleDialogError ? (
+              <p className={styles.dialogError} role="alert">
+                {visibleDialogError}
+              </p>
+            ) : null}
+
+            <button
+              type="button"
+              className={styles.dialogDownload}
+              onClick={handlePrint}
+              disabled={!canPrint || generating || printInvoked}
+              aria-label={
+                printInvoked
+                  ? "Remisión descargada"
+                  : "Descargar remisión mediante el diálogo de impresión"
+              }
+            >
+              {generating ? (
+                <LoaderCircle className={styles.dialogSpinner} aria-hidden="true" />
+              ) : printInvoked ? (
+                <Check aria-hidden="true" />
+              ) : (
+                <Download aria-hidden="true" />
+              )}
+              {generating
+                ? "Generando remisión…"
+                : printInvoked
+                  ? "Remisión descargada"
+                  : "Descargar remisión"}
+            </button>
+
+            <button
+              type="button"
+              className={styles.dialogContinue}
+              onClick={closeDownloadDialog}
+              disabled={!printInvoked}
+            >
+              Cerrar y continuar
+            </button>
+
+            <p className={styles.dialogNote} aria-live="polite">
+              <Info aria-hidden="true" />
+              Se habilitará después de descargar la remisión.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+  ) : null;
+
   return (
     <>
       <section className={styles.launcher} aria-labelledby="remission-note-title">
@@ -222,13 +523,19 @@ export default function CreditRemissionNote({
               onError={handleLogoError}
             />
           </span>
-          <Button type="button" onClick={handlePrint} disabled={!canPrint}>
+          <Button
+            id="remission-note-print-action"
+            type="button"
+            onClick={handlePrint}
+            disabled={!canPrint}
+          >
             <Printer className="h-4 w-4" aria-hidden="true" />
-            Imprimir nota de remisión
+            Imprimir o guardar PDF
           </Button>
         </div>
       </section>
 
+      {portalReady ? createPortal(downloadDialog, document.body) : null}
       {portalReady ? createPortal(printSheet, document.body) : null}
     </>
   );

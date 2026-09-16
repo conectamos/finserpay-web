@@ -15991,6 +15991,7 @@ export default function CreditFactoryConsole({
                     valorCuota={valorCuotaPactada}
                     fechaPrimerPago={fechaPrimerPago}
                     frecuenciaPago={frecuenciaPagoCredito}
+                    autoOpen={activeFactoryStepNumber === 4}
                     ready={
                       stepClienteReady &&
                       stepEquipoReady &&

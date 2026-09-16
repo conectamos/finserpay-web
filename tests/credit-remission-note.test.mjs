@@ -92,6 +92,10 @@ test("el paso 4 visible usa la remisión con la cuota pactada y los datos del cr
   assert.match(source.slice(remediation, internalControls), /valorInicial=\{cuotaInicialNumero\}/);
   assert.match(source.slice(remediation, internalControls), /clienteDocumento=\{clienteDocumento\}/);
   assert.match(source.slice(remediation, internalControls), /fechaPrimerPago=\{fechaPrimerPago\}/);
+  assert.match(
+    source.slice(remediation, internalControls),
+    /autoOpen=\{activeFactoryStepNumber === 4\}/,
+  );
 });
 
 test("la hoja contiene el logo, todos los campos, firma, huella y notas legales", async () => {
@@ -122,11 +126,48 @@ test("la hoja contiene el logo, todos los campos, firma, huella y notas legales"
 
   assert.match(source, /flushSync[\s\S]*setPrintedAt\(new Date\(\)\)/);
   assert.match(source, /window\.requestAnimationFrame\([\s\S]*window\.print\(\)/);
-  assert.match(source, /<Button type="button"[\s\S]*Imprimir nota de remisión/);
+  assert.match(source, /Imprimir o guardar PDF/);
   assert.match(source, /preload[\s\S]*unoptimized/);
   assert.match(source, /No fue posible cargar el logo/);
   assert.doesNotMatch(source, /\bpriority\b/);
   assert.doesNotMatch(source, />\$0</);
+});
+
+test("abre un diálogo accesible para descargar la remisión al llegar al paso 4", async () => {
+  const source = await readProjectFile(
+    "app/dashboard/creditos/credit-remission-note.tsx",
+  );
+
+  assert.match(source, /useState\(false\)/);
+  assert.match(source, /window\.sessionStorage\.getItem\(remissionSessionKey\)/);
+  assert.match(source, /setDownloadDialogOpen\(true\)/);
+  assert.match(source, /window\.sessionStorage\.setItem\(remissionSessionKey, "confirmed"\)/);
+  assert.match(source, /role="dialog"/);
+  assert.match(source, /aria-modal="true"/);
+  assert.match(source, /aria-labelledby=\{downloadDialogTitleId\}/);
+  assert.match(source, /aria-describedby=\{downloadDialogDescriptionId\}/);
+  assert.match(source, /event\.key === "Escape"[\s\S]*if \(printInvoked\)/);
+  assert.match(source, /document\.body\.style\.overflow = "hidden"/);
+  assert.match(source, /element\.inert = true/);
+  assert.match(source, /element\.setAttribute\("aria-hidden", "true"\)/);
+  assert.match(source, /state\.element\.inert = state\.inert/);
+  assert.match(source, /Antes de continuar/);
+  assert.match(source, /Descargue e imprima la remisión del cliente\./);
+  assert.match(source, /El cliente debe firmar como en la cédula\./);
+  assert.match(source, /Descargar remisión/);
+  assert.match(source, /Generando remisión…/);
+  assert.match(source, /Remisión descargada/);
+  assert.match(source, /Cerrar y continuar/);
+  assert.match(source, /Se habilitará después de descargar la remisión\./);
+  assert.match(source, /disabled=\{!printInvoked\}/);
+  assert.match(source, /step-four-remission-phone\.png/);
+  assert.match(source, /setPrintInvoked\(true\)[\s\S]*window\.print\(\)/);
+  assert.doesNotMatch(source, /onMouseDown=\{\(\) => setDownloadDialogOpen\(false\)\}/);
+  assert.doesNotMatch(
+    source.slice(0, source.indexOf("const handlePrint")),
+    /window\.print\(\)/,
+    "La apertura automática no debe lanzar la impresión sin un gesto del asesor",
+  );
 });
 
 test("la impresión aísla una hoja A4 y conserva colores y bloques completos", async () => {
@@ -140,4 +181,10 @@ test("la impresión aísla una hoja A4 y conserva colores y bloques completos", 
   assert.match(css, /fp-remission-print-root/);
   assert.match(css, /print-color-adjust:\s*exact/);
   assert.match(css, /break-inside:\s*avoid/);
+  assert.match(css, /backdrop-filter:\s*blur\(6px\)/);
+  assert.match(css, /width:\s*min\(100%, 37rem\)/);
+  assert.match(css, /border-radius:\s*14px/);
+  assert.match(css, /background:\s*#fffaf2/);
+  assert.match(css, /background:\s*#359523/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
 });
