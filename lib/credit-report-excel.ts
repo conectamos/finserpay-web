@@ -1,8 +1,10 @@
 import ExcelJS from "exceljs";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 export type CreditReportExportItem = {
   fechaCredito: string;
   folio: string;
+  numeroCreditoVisible?: string | null;
   clienteNombre: string;
   clienteDocumento: string | null;
   clienteTelefono: string | null;
@@ -39,7 +41,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
 
   sheet.columns = [
     { header: "Fecha", width: 13 },
-    { header: "Folio", width: 30 },
+    { header: "Número crédito", width: 30 },
     { header: "Cliente", width: 28 },
     { header: "Documento", width: 17 },
     { header: "Teléfono", width: 20 },
@@ -52,6 +54,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
     { header: "Inicial", width: 20 },
     { header: "Valor crédito autorizado", width: 25 },
     { header: "Estado", width: 20 },
+    { header: "Folio original", width: 30 },
   ];
 
   sheet.columns.forEach((column, index) => {
@@ -69,7 +72,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
     // Plain string cell values stay literal in XLSX, including =, + and leading zeros.
     const row = sheet.addRow([
       excelDate(item.fechaCredito),
-      item.folio,
+      creditDisplayNumber(item),
       item.clienteNombre,
       item.clienteDocumento ?? "",
       item.clienteTelefono ?? "",
@@ -82,6 +85,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
       item.cuotaInicial,
       item.creditoAutorizado,
       item.estadoReporte ?? item.estado,
+      item.folio,
     ]);
     row.height = 32;
     row.eachCell({ includeEmpty: true }, (cell) => {
@@ -101,7 +105,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
     cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
     cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
   });
-  sheet.autoFilter = `A1:N${sheet.rowCount}`;
+  sheet.autoFilter = `A1:O${sheet.rowCount}`;
 
   return workbook;
 }

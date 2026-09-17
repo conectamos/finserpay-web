@@ -6,6 +6,7 @@ import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
+import { creditNumberSearchWhere, getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
 import {
   calculateFinancedBalance,
   DEFAULT_CREDIT_INSTALLMENTS,
@@ -900,7 +901,7 @@ export async function GET(req: Request) {
           { clienteDocumento: { contains: search, mode: "insensitive" } },
           { clienteTelefono: { contains: search, mode: "insensitive" } },
           { clienteDireccion: { contains: search, mode: "insensitive" } },
-          { folio: { contains: search, mode: "insensitive" } },
+          creditNumberSearchWhere(search),
           { imei: { contains: search, mode: "insensitive" } },
           { deviceUid: { contains: search, mode: "insensitive" } },
           { referenciaEquipo: { contains: search, mode: "insensitive" } },
@@ -947,7 +948,10 @@ export async function GET(req: Request) {
       },
       take,
     });
-    const paymentMap = await buildPaymentSummaryMap(items.map((item) => item.id));
+    const [paymentMap, displayNumbers] = await Promise.all([
+      buildPaymentSummaryMap(items.map((item) => item.id)),
+      getCreditDisplayNumbers(items.map((item) => item.id)),
+    ]);
 
     return NextResponse.json({
       canAdmin: admin,
@@ -958,7 +962,7 @@ export async function GET(req: Request) {
           : "vendedor",
       search,
       items: items.map((item) => {
-        const serialized = serializeCredit(item, paymentMap);
+        const serialized = withCreditDisplayNumber(serializeCredit(item, paymentMap), displayNumbers);
         return admin ? serialized : redactCreditForNonAdmin(serialized);
       }),
     });

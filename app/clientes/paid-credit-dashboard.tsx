@@ -1,4 +1,5 @@
 "use client";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import { useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -33,6 +34,7 @@ export type PaidCreditPanel = "payments" | "pending" | "history" | null;
 export type PaidCreditDashboardCredit = {
   id: number;
   folio: string;
+  numeroCreditoVisible?: string;
   clienteDocumento: string | null;
   referenciaEquipo: string | null;
   imei?: string | null;
@@ -114,7 +116,7 @@ function shortDate(value: string | null | undefined) {
 }
 
 function creditTitle(credit: PaidCreditDashboardCredit) {
-  return credit.referenciaEquipo || `Crédito ${credit.folio}`;
+  return credit.referenciaEquipo || `Crédito ${creditDisplayNumber(credit)}`;
 }
 
 function creditStateLabel(credit: PaidCreditDashboardCredit) {
@@ -261,13 +263,14 @@ export default function PaidCreditDashboard({
         </header>
         <main>
           <h1 className={styles.greeting}>Hola, {firstName}</h1>
+          <p className={styles.creditNumber}>Crédito <strong>{creditDisplayNumber(credit)}</strong></p>
           <p className={styles.status} role="status"><span aria-hidden="true" />Crédito finalizado</p>
           {credits.length > 1 ? (
             <label className={styles.creditSelector}>
               <span>Crédito consultado</span>
               <select value={credit.id} onChange={(event) => onSelectCredit(Number(event.target.value))}>
-                {credits.map((item, index) => (
-                  <option key={item.id} value={item.id}>Crédito {index + 1} · {creditTitle(item)} · {creditStateLabel(item)}</option>
+                {credits.map((item) => (
+                  <option key={item.id} value={item.id}>Crédito {creditDisplayNumber(item)}{item.referenciaEquipo ? ` · ${item.referenciaEquipo}` : ""} · {creditStateLabel(item)}</option>
                 ))}
               </select>
             </label>

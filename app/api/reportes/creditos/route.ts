@@ -9,6 +9,7 @@ import { resolveCreditPaymentSummary, sanitizeSearch } from "@/lib/credit-factor
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
 import { resolveCreditReportState } from "@/lib/credit-report-status";
+import { creditNumberSearchWhere, getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
 
 type PaymentAggregate = {
   abonosCount: number;
@@ -147,7 +148,7 @@ export async function GET(req: Request) {
           { clienteNombre: { contains: search, mode: "insensitive" } },
           { clienteDocumento: { contains: search, mode: "insensitive" } },
           { clienteTelefono: { contains: search, mode: "insensitive" } },
-          { folio: { contains: search, mode: "insensitive" } },
+          creditNumberSearchWhere(search),
           { imei: { contains: search, mode: "insensitive" } },
           { deviceUid: { contains: search, mode: "insensitive" } },
           { equipoMarca: { contains: search, mode: "insensitive" } },
@@ -253,7 +254,10 @@ export async function GET(req: Request) {
       take: 500,
     });
 
-    const paymentMap = await buildPaymentSummaryMap(items.map((item) => item.id));
+    const [paymentMap, displayNumbers] = await Promise.all([
+      buildPaymentSummaryMap(items.map((item) => item.id)),
+      getCreditDisplayNumbers(items.map((item) => item.id)),
+    ]);
 
     const rows = items.map((item) => {
       const payment = paymentMap.get(item.id) || {
@@ -287,8 +291,7 @@ export async function GET(req: Request) {
       };
 
       return {
-        id: item.id,
-        folio: item.folio,
+        ...withCreditDisplayNumber({ id: item.id, folio: item.folio }, displayNumbers),
         clienteNombre: item.clienteNombre,
         clienteDocumento: item.clienteDocumento,
         clienteTelefono: item.clienteTelefono,

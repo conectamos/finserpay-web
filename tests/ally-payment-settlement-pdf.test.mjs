@@ -1,6 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAllyPaymentSettlementPdf } from "../lib/ally-payment-settlement-pdf.ts";
+import { fileURLToPath } from "node:url";
+import { createJiti } from "jiti";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+
+const jiti = createJiti(import.meta.url, { alias: { "@": fileURLToPath(new URL("../", import.meta.url)) } });
+const { buildAllyPaymentSettlementPdf } = await jiti.import("../lib/ally-payment-settlement-pdf.ts");
+
+async function pdfText(buffer) {
+  const loading = getDocument({ data: new Uint8Array(buffer), useSystemFonts: true });
+  try {
+    const pdf = await loading.promise;
+    const pages = [];
+    for (let number = 1; number <= pdf.numPages; number += 1) {
+      pages.push((await (await pdf.getPage(number)).getTextContent()).items.map(item => item.str).join(" "));
+    }
+    return pages.join(" ").replace(/\s+/g, " ");
+  } finally { await loading.destroy(); }
+}
 
 function sampleLine(index) {
   const percentage = index % 3 === 0 ? 0 : index % 3 === 1 ? 5 : 10;
@@ -66,6 +83,7 @@ test("genera un comprobante PDF multipagina desde el snapshot pagado", async () 
       {
         paymentDate: "2026-09-12T15:00:00.000Z",
         folio: "CR-1001",
+        numeroCreditoVisible: "000145-A",
         clientName: "Cliente recaudo",
         clientDocument: "1010202030",
         siteName: "Sede Norte",
@@ -80,4 +98,7 @@ test("genera un comprobante PDF multipagina desde el snapshot pagado", async () 
   assert.ok(pdf.length > 6_000, "El comprobante debe contener contenido sustancial");
   const pageObjects = pdf.toString("latin1").match(/\/Type\s*\/Page\b/g) || [];
   assert.ok(pageObjects.length >= 2, "El fixture debe validar paginacion");
+  const text = await pdfText(pdf);
+  assert.match(text, /000145-A/);
+  assert.doesNotMatch(text, /CR-1001/);
 });

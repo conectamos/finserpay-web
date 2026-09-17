@@ -114,11 +114,12 @@ const connectionString=process.env.CREDIT_NOVELTIES_TEST_DATABASE_URL;
 test('PostgreSQL aislado: novedades, permisos, respuestas independientes e historial', {skip:connectionString?false:'Requiere CREDIT_NOVELTIES_TEST_DATABASE_URL en approval_novelties_test local'},async t=>{
   const url=new URL(connectionString);assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname));assert.equal(url.pathname,'/approval_novelties_test');
   const db=new pg.Client({connectionString});await db.connect();t.after(()=>db.end());
-  const tables=['CreditApprovalNoveltyEvent','CreditApprovalNoveltyItem','CreditApprovalNovelty','CreditApprovalReissue','CreditApprovalEvent','CreditApprovalReview','CreditApprovalPolicy','LiquidacionAliadoCredito','Credito','Usuario','Rol','Sede','Aliado'];
+  const tables=["CreditSadminRegistration",'CreditApprovalNoveltyEvent','CreditApprovalNoveltyItem','CreditApprovalNovelty','CreditApprovalReissue','CreditApprovalEvent','CreditApprovalReview','CreditApprovalPolicy','LiquidacionAliadoCredito','Credito','Usuario','Rol','Sede','Aliado'];
   const existing=(await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public'")).rows;
   assert.ok(existing.every(row=>tables.includes(row.tablename)),'No borrar tablas ajenas');
   for(const table of tables) await db.query('DROP TABLE IF EXISTS public."'+table+'" CASCADE');
   await db.query(`
+    CREATE TABLE "CreditSadminRegistration" ("creditoId" INTEGER PRIMARY KEY,"numeroCredito" TEXT,"numeroCreditoConfirmado" BOOLEAN NOT NULL DEFAULT false);
     CREATE TABLE "Rol" ("id" INTEGER PRIMARY KEY,"nombre" TEXT); INSERT INTO "Rol" VALUES (1,'ADMIN'),(2,'VENDEDOR');
     CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY,"codigo" TEXT,"nombre" TEXT,"activo" BOOLEAN DEFAULT true,
       "redescuentoPorcentaje" FLOAT DEFAULT 10,"redescuentoAndroidPorcentaje" FLOAT DEFAULT 10,"redescuentoIphonePorcentaje" FLOAT DEFAULT 15);

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import { withSettlementDisplayNumbers } from "@/lib/credit-display-number-server";
 import { getAllyPaymentAccess } from "@/lib/ally-payment-access";
 import {
   AllyPaymentConflictError,
@@ -121,7 +122,7 @@ export async function GET(
       throw new AllyPaymentNotFoundError();
     }
 
-    return response({ ok: true, settlement, correlationId });
+    return response({ ok: true, settlement: (await withSettlementDisplayNumbers([settlement]))[0], correlationId });
   } catch (error) {
     return errorResponse(error, correlationId);
   }

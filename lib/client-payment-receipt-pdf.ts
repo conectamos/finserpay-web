@@ -8,6 +8,7 @@ export type ClientPaymentReceiptPdfInput = {
   clientName: string;
   clientDocument: string;
   creditFolio: string;
+  numeroCreditoVisible?: string;
   totalPaidThroughPayment: number;
   paymentSequence: number;
   paymentType: "PAYMENT" | "EARLY_PAYOFF";
@@ -295,7 +296,7 @@ export async function buildClientPaymentReceiptPdf(
 
   drawDetailRow(doc, clientY + 45, "Cliente", safeText(input.clientName, 52));
   drawDetailRow(doc, clientY + 82, "Identificación", maskedDocument(input.clientDocument));
-  drawDetailRow(doc, clientY + 119, "Crédito", safeText(input.creditFolio, 42), {
+  drawDetailRow(doc, clientY + 119, "Crédito", safeText(input.numeroCreditoVisible || input.creditFolio, 42), {
     last: true,
   });
 

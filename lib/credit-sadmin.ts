@@ -60,7 +60,9 @@ export function buildSadminCreditRow(credit: CreditRow, today = new Date()): Sad
   const days = pending.map(item => Math.floor((Date.parse(todayKey) - Date.parse(item.fechaVencimiento)) / 86_400_000));
   const lastPayment = credit.abonos.at(-1);
   return {
-    id: credit.id, folio: credit.folio, createdAt: credit.createdAt.toISOString(), fechaCredito: calendar(credit.fechaCredito),
+    id: credit.id, folio: credit.folio,
+    numeroCreditoVisible: credit.registration?.numeroCreditoConfirmado && credit.registration.numeroCredito?.trim() || credit.folio,
+    createdAt: credit.createdAt.toISOString(), fechaCredito: calendar(credit.fechaCredito),
     clienteNombre: credit.clienteNombre, clienteDocumento: credit.clienteDocumento || "", clienteTelefono: credit.clienteTelefono || "",
     clienteDireccion: credit.clienteDireccion || "", clienteFechaNacimiento: calendar(credit.clienteFechaNacimiento),
     clienteCorreo: credit.clienteCorreo || "", clienteGenero: credit.clienteGenero || "", imei: credit.imei,

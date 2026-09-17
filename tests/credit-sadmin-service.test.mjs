@@ -101,10 +101,15 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
     row = await change(id, 2, "creditoCreado", true);
     row = await change(id, 3, "numeroCreditoConfirmado", true);
     assert.equal(row.version, 4); assert.equal(row.estado, "CREADO_SADMIN"); assert.ok(row.completedAt);
+    const confirmedCredit = (await service.listSadminCredits(db, actor, { q: "0000123-A" })).items[0];
+    assert.equal(confirmedCredit.numeroCreditoVisible, "0000123-A");
+    assert.notEqual(confirmedCredit.folio, confirmedCredit.numeroCreditoVisible);
     const unchanged = await change(id, 4, "numeroCreditoConfirmado", true);
     assert.equal(unchanged.version, 4); assert.equal(unchanged.completedAt, row.completedAt); assert.equal(await eventCount(id), 4);
     row = await change(id, 4, "numeroCredito", "0000123-B");
     assert.equal(row.version, 5); assert.equal(row.numeroCreditoConfirmado, false); assert.equal(row.estado, "PENDIENTE"); assert.equal(row.completedAt, null);
+    const unconfirmedCredit = (await service.listSadminCredits(db, actor, { q: "0000123-B" })).items[0];
+    assert.equal(unconfirmedCredit.numeroCreditoVisible, unconfirmedCredit.folio);
     assert.equal((await getRegistration(id)).numeroCredito, "0000123-B");
     const credit = (await pool.query('SELECT "estado" FROM "Credito" WHERE "id"=$1', [id])).rows[0];
     assert.equal(credit.estado, "INSCRITO");

@@ -1,5 +1,7 @@
 "use client";
 
+import { creditDisplayNumber } from "@/lib/credit-display-number";
+
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw, Send } from "lucide-react";
 import { Button, Card, StatusPill } from "@/app/_components/finser-ui";
@@ -99,7 +101,7 @@ export default function ApprovalSignatureReissue({ detail, disabled = false, com
         {!detail.capabilities.canReissueSignature && detail.capabilities.correctionBlockedReason ? <p className="text-sm text-[var(--fp-muted)]">{detail.capabilities.correctionBlockedReason}</p> : null}
       </div>}
       <ConfirmDialog open={confirming} title="Reenviar folio a firma" confirmLabel="Confirmar reenvío" busy={saving}
-        description={`Se enviará nuevamente el folio ${detail.folio} de ${detail.clienteNombre}, cédula ${detail.clienteDocumento}. Motivo: ${reason.trim()}. El crédito quedará pendiente de nueva firma y revisión; su documento anterior se conservará.`}
+        description={`Se enviará nuevamente a firma el crédito ${creditDisplayNumber(detail)} de ${detail.clienteNombre}, cédula ${detail.clienteDocumento}, conservando el folio contractual ${detail.folio}. Motivo: ${reason.trim()}. El crédito quedará pendiente de nueva firma y revisión; su documento anterior se conservará.`}
         onCancel={() => { if (!submitting.current) setConfirming(false); }} onConfirm={() => void send()} />
     </Card>
   );

@@ -48,6 +48,7 @@ type SolicitudRow = {
   source: "DRAFT" | "CREDIT";
   entityId: number;
   numero: string;
+  numeroCreditoVisible?: string | null;
   rawState: string;
   closedReason: string | null;
   currentStep: number | null;
@@ -1959,6 +1960,8 @@ function buildCommonWhere(input: {
       OR COALESCE(${alias}."clienteDocumento", '') ILIKE $${index}
       OR COALESCE(${alias}."imei", '') ILIKE $${index}
       OR COALESCE(${input.numberExpression}, '') ILIKE $${index}
+      ${input.source === "CREDIT" ? `OR EXISTS (SELECT 1 FROM "CreditSadminRegistration" sadmin
+        WHERE sadmin."creditoId"=${alias}."id" AND sadmin."numeroCreditoConfirmado" AND sadmin."numeroCredito" ILIKE $${index})` : ""}
     )`);
   }
 
@@ -2055,6 +2058,8 @@ async function readCreditRows(viewer: SolicitudViewer, filters: SolicitudFilters
   return prisma.$queryRawUnsafe<SolicitudRow[]>(
     `
       SELECT 'CREDIT'::text AS "source", c."id" AS "entityId", c."folio" AS "numero",
+        COALESCE((SELECT NULLIF(BTRIM(sadmin."numeroCredito"),'') FROM "CreditSadminRegistration" sadmin
+          WHERE sadmin."creditoId"=c."id" AND sadmin."numeroCreditoConfirmado"),c."folio") AS "numeroCreditoVisible",
         c."estado" AS "rawState", NULL::text AS "closedReason", NULL::integer AS "currentStep",
         c."usuarioId", c."vendedorId", c."sedeId", s."aliadoId",
         c."clienteNombre", c."clienteDocumento", c."imei", ${platform} AS "plataforma",
@@ -2185,6 +2190,7 @@ function serializeSolicitudRow(row: SolicitudRow, viewer: SolicitudViewer) {
     source: row.source,
     entityId: row.entityId,
     numero: row.numero,
+    numeroCreditoVisible: row.numeroCreditoVisible || row.numero,
     clienteNombre: row.clienteNombre || "Cliente sin nombre",
     documento: sensitive ? row.clienteDocumento : maskDocument(row.clienteDocumento),
     imei: sensitive ? row.imei : maskImei(row.imei),
@@ -2261,6 +2267,7 @@ function rawRowMatchesQuery(row: SolicitudRow, query: string) {
     row.clienteDocumento,
     row.imei,
     row.numero,
+    row.numeroCreditoVisible,
   ].some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
   if (textMatch) return true;
 

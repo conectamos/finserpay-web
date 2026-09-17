@@ -1,4 +1,5 @@
 "use client";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -45,6 +46,7 @@ type PanelPayment = {
 type PanelCredit = {
   id: number;
   folio: string;
+  numeroCreditoVisible?: string;
   clienteDocumento: string | null;
   estadoPago: "PAGADO" | "AL_DIA" | "MORA";
   saldoPendiente: number;
@@ -243,6 +245,7 @@ export default function ClientCreditPanel({
       </header>
 
       <div className={styles.content}>
+        <p className="text-sm text-[var(--fp-muted)]">Crédito <strong className="text-[var(--fp-graphite)]">{creditDisplayNumber(credit)}</strong></p>
         {notice ? (
           <div className={`${styles.notice} ${notice.tone === "red" ? styles.noticeError : styles.noticeSuccess}`} role={notice.tone === "red" ? "alert" : "status"}>
             {notice.text}

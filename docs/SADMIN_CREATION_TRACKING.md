@@ -17,6 +17,18 @@ texto de hasta 80 caracteres, conserva ceros iniciales y debe ser único. El est
 el número desmarca su verificación; desmarcar cualquier casilla deja el seguimiento
 pendiente de nuevo. No se crean operaciones en un servicio externo.
 
+Una vez guardado y confirmado el número, se usa como número principal visible en
+Cartera, reportes, exportaciones y consultas. El campo `Credito.folio` no se
+renombra: permanece como referencia contractual e interna de FirmaSeguro,
+integraciones, rutas y recibos. Las respuestas añaden `numeroCreditoVisible` y
+las búsquedas autorizadas aceptan tanto el número confirmado como el folio
+original. Los números aún sin confirmar no sustituyen el folio. Editar el número
+requiere confirmarlo nuevamente para mostrar la nueva referencia.
+
+La tabla principal de SADMIN es compacta. El nombre de cada cliente es un botón
+que despliega sus datos y el detalle del equipo, origen, valores, tasas, pagos y
+saldos. Las verificaciones permanecen disponibles en la fila principal.
+
 El seguimiento se almacena en CreditSadminRegistration con versión de concurrencia
 y eventos inmutables en CreditSadminEvent. No modifica el estado financiero del
 crédito ni su aprobación documental. Las API reutilizan los permisos de aprobación,

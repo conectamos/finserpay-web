@@ -72,10 +72,12 @@ async function lockCreditReview(db: NoveltyDatabase, creditId: number) {
   if (!reviews.length) noveltyError("Este crédito no tiene una revisión activa.", "NOVELTY_NOT_ALLOWED");
   return reviews[0];
 }
-type Header = { id: number; folio: string; clienteNombre: string; clienteDocumento: string | null; aliadoNombre: string; sedeNombre: string; fechaCredito: Date; createdAt: Date; required: boolean; paid: boolean; estado: string };
+type Header = { id: number; folio: string; numeroCreditoVisible: string; clienteNombre: string; clienteDocumento: string | null; aliadoNombre: string; sedeNombre: string; fechaCredito: Date; createdAt: Date; required: boolean; paid: boolean; estado: string };
+const displayNumberSql = `COALESCE((SELECT NULLIF(BTRIM(sadmin."numeroCredito"),'') FROM "CreditSadminRegistration" sadmin
+  WHERE sadmin."creditoId"=credit."id" AND sadmin."numeroCreditoConfirmado"),credit."folio")`;
 async function readHeader(db: NoveltyDatabase, creditId: number, actor?: PendingAllyActor) {
   await requireNoveltyPolicy(db);
-  const rows = await db.$queryRawUnsafe<Header[]>(`SELECT credit."id",credit."folio",credit."clienteNombre",credit."clienteDocumento",
+  const rows = await db.$queryRawUnsafe<Header[]>(`SELECT credit."id",credit."folio",${displayNumberSql} AS "numeroCreditoVisible",credit."clienteNombre",credit."clienteDocumento",
     ally."nombre" AS "aliadoNombre",site."nombre" AS "sedeNombre",credit."fechaCredito",credit."createdAt",credit."estado",
     ${buildCreditApprovalQueueScopeSql("credit")} AS required,
     EXISTS(SELECT 1 FROM "LiquidacionAliadoCredito" WHERE "creditoId"=credit."id") AS paid
@@ -219,7 +221,7 @@ export async function getPendingAllyCredit(db: NoveltyDatabase, creditId: number
     return { ...item, evidence: { available: Boolean(approvalImage(dataUrl)), sha256,
       href: `/api/pendientes/${creditId}/evidencias?tipo=${item.key}${sha256 ? `&v=${sha256}` : ""}` } };
   });
-  return { id: credit.id, folio: credit.folio, clienteNombre: credit.clienteNombre, clienteDocumento: credit.clienteDocumento,
+  return { id: credit.id, folio: credit.folio, numeroCreditoVisible: credit.numeroCreditoVisible || credit.folio, clienteNombre: credit.clienteNombre, clienteDocumento: credit.clienteDocumento,
     aliadoNombre: credit.aliadoNombre, sedeNombre: credit.sedeNombre, fechaCredito: credit.fechaCredito,
     novelty: { ...state.novelty, items }, canRespond: !blockedReason && state.pendingCount > 0, blockedReason };
 }
@@ -232,7 +234,7 @@ export async function listPendingAllyCredits(db: NoveltyDatabase, actor: Pending
   const cursor = parseApprovalQueueCursor(input.cursor);
   const limit = approvalQueueLimit(input.limit);
   if (input.status && !["WAITING_ALLY", "RESPONDED"].includes(input.status)) noveltyError("Estado de novedad no válido.", "INVALID_NOVELTY", 400);
-  const rows = await db.$queryRawUnsafe<Array<Header>>(`SELECT credit."id",credit."folio",credit."clienteNombre",credit."clienteDocumento",credit."fechaCredito",credit."createdAt",
+  const rows = await db.$queryRawUnsafe<Array<Header>>(`SELECT credit."id",credit."folio",${displayNumberSql} AS "numeroCreditoVisible",credit."clienteNombre",credit."clienteDocumento",credit."fechaCredito",credit."createdAt",
     ally."nombre" AS "aliadoNombre",site."nombre" AS "sedeNombre",json_build_object('id',novelty."id",'status',novelty."status",'version',novelty."version",
     'pendingCount',counts.pending,'answeredCount',counts.answered) AS novelty
     FROM "Credito" credit JOIN "Sede" site ON site."id"=credit."sedeId" JOIN "Aliado" ally ON ally."id"=site."aliadoId"

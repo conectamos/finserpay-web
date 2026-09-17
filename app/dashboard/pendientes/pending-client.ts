@@ -14,6 +14,7 @@ export type PendingIssue = {
 export type PendingCredit = {
   id: number;
   folio: string;
+  numeroCreditoVisible?: string | null;
   clienteNombre: string;
   clienteDocumento: string | null;
   aliadoNombre: string;

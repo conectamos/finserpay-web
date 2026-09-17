@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
 import { NextResponse } from "next/server";
+import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
@@ -436,6 +437,7 @@ export async function GET(
     );
     const isAnnulled = String(abono.estado || "").toUpperCase() === "ANULADO";
     const reciboNumero = `RP-${abono.credito.folio}-${abono.id}`;
+    const numeroCreditoVisible = (await getCreditDisplayNumbers([abono.creditoId])).get(abono.creditoId) || abono.credito.folio;
     const equipo =
       abono.credito.referenciaEquipo ||
       [abono.credito.equipoMarca, abono.credito.equipoModelo].filter(Boolean).join(" ") ||
@@ -510,7 +512,7 @@ export async function GET(
       size: 8,
       gap: 4,
     });
-    y = drawKeyValue(doc, fonts, y, "No. credito", shortText(abono.credito.folio, 34), {
+    y = drawKeyValue(doc, fonts, y, "No. credito", shortText(numeroCreditoVisible, 34), {
       boldValue: true,
     });
     y = drawKeyValue(doc, fonts, y, "Metodo", paymentMethodLabel(abono.metodoPago));

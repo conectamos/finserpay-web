@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -30,6 +31,7 @@ type RecentCredit = {
   estado: string;
   fecha: string;
   folio: string;
+  numeroCreditoVisible?: string;
   id: number;
   listoEntrega: boolean;
 };
@@ -375,7 +377,7 @@ function RecentCreditsTable({
                       <p className="truncate text-sm font-semibold text-[var(--fp-graphite)]">
                         {credit.clienteNombre}
                       </p>
-                      <p className="mt-1 truncate text-xs text-[var(--fp-muted)]">{credit.folio}</p>
+                      <p className="mt-1 truncate text-xs text-[var(--fp-muted)]">{creditDisplayNumber(credit)}</p>
                     </div>
                     <span
                       className={`inline-flex shrink-0 rounded-md border px-2 py-1 text-[10px] font-semibold uppercase ${status.className}`}
@@ -414,7 +416,7 @@ function RecentCreditsTable({
                         {credit.clienteNombre}
                       </span>
                       <span className="mt-1 block max-w-[300px] truncate text-xs text-[var(--fp-muted)]">
-                        {credit.folio}
+                        {creditDisplayNumber(credit)}
                       </span>
                     </td>
                     <td className="max-w-[260px] truncate px-5 py-4 text-sm text-[var(--fp-graphite)]">
@@ -520,7 +522,7 @@ export default function SellerCommercialDashboard({
           <section className="mt-7 flex flex-col gap-3 border-y border-[var(--fp-border)] py-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-sm font-semibold">Buscar expediente</p>
-              <p className="mt-0.5 text-xs text-[var(--fp-muted)]">Consulta por c&eacute;dula, tel&eacute;fono, folio o IMEI.</p>
+              <p className="mt-0.5 text-xs text-[var(--fp-muted)]">Consulta por cédula, teléfono, número de crédito o IMEI.</p>
             </div>
             <form action="/dashboard/clientes" className="flex w-full flex-col gap-2 sm:flex-row lg:max-w-2xl">
               <div className="relative min-w-0 flex-1">
@@ -529,7 +531,7 @@ export default function SellerCommercialDashboard({
                   type="text"
                   name="search"
                   aria-label="Buscar cliente"
-                  placeholder="Cedula, telefono, folio o IMEI"
+                  placeholder="Cédula, teléfono, número de crédito o IMEI"
                   className="h-11 w-full rounded-md border border-[var(--fp-border)] bg-white pl-11 pr-4 text-sm outline-none transition focus:border-[var(--fp-lime-strong)] focus:ring-2 focus:ring-[var(--fp-lime)]/30"
                 />
               </div>

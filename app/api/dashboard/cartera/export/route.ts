@@ -17,6 +17,8 @@ import {
 } from "@/lib/cartera-export";
 import { isAdminRole } from "@/lib/roles";
 import prisma from "@/lib/prisma";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
+import { getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -101,6 +103,8 @@ function buildWorkbookHtml(rows: string) {
     <thead>
       <tr>
         <th>Fecha apertura</th>
+        <th>Número crédito</th>
+        <th>Folio original</th>
         <th>Nombre del cliente</th>
         <th>Cedula</th>
         <th>Telefono del cliente</th>
@@ -215,7 +219,9 @@ export async function GET(req: Request) {
       },
     });
 
+    const displayNumbers = await getCreditDisplayNumbers(creditos.map(credito => credito.id));
     const rows = creditos
+      .map(credito => withCreditDisplayNumber(credito, displayNumbers))
       .filter((credito) => !isExcludedCarteraCreditState(credito.estado))
       .map((credito) => {
         const plan = buildCreditPaymentPlan({
@@ -293,6 +299,8 @@ export async function GET(req: Request) {
 
         return `<tr>
           ${textCell(formatDate(credito.fechaCredito))}
+          ${textCell(creditDisplayNumber(credito))}
+          ${textCell(credito.folio)}
           ${textCell(credito.clienteNombre)}
           ${textCell(credito.clienteDocumento || "")}
           ${textCell(credito.clienteTelefono || "")}

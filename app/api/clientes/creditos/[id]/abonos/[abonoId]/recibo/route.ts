@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import { buildClientPaymentReceiptPdf } from "@/lib/client-payment-receipt-pdf";
 import prisma from "@/lib/prisma";
 import { isWompiEarlyPayoffIntent } from "@/lib/wompi-early-payoff-intent";
@@ -271,6 +272,7 @@ export async function GET(
       clientName: payment.credito.clienteNombre,
       clientDocument: document,
       creditFolio: payment.credito.folio,
+      numeroCreditoVisible: (await getCreditDisplayNumbers([creditId])).get(creditId) || payment.credito.folio,
       totalPaidThroughPayment,
       paymentSequence: paymentIndex + 1,
       paymentType: isEarlyPayoff ? "EARLY_PAYOFF" : "PAYMENT",

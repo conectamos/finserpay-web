@@ -1,5 +1,7 @@
 "use client";
 
+import { creditDisplayNumber } from "@/lib/credit-display-number";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Expand, FileText, ImageOff, ListChecks, RefreshCw, ShieldCheck } from "lucide-react";
 import SharedApprovalWorkspace from "@/app/revision-creditos/shared-approval-workspace";
@@ -67,11 +69,11 @@ function EvidencePhoto({ item, clientName }: { item: ApprovalDetail["evidence"][
   );
 }
 
-type Confirmation = { id: number; folio: string; clienteNombre: string; clienteDocumento: string | null; revision: number; reviewHash: string; recordingId: string | null; recordingRequired: boolean };
+type Confirmation = { id: number; folio: string; numeroCreditoVisible?: string | null; clienteNombre: string; clienteDocumento: string | null; revision: number; reviewHash: string; recordingId: string | null; recordingRequired: boolean };
 
 function confirmationDescription(confirmation: Confirmation, shared: boolean) {
   const recordingConfirmation = confirmation.recordingRequired ? " Confirma que realizaste la llamada y guardaste su grabación." : "";
-  return `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, folio ${confirmation.folio}, y verificaste las correcciones.${recordingConfirmation} El OK habilitará este crédito para la liquidación al aliado y ${shared ? "quedará registrado por este acceso" : "quedará registrado con tu usuario"}.`;
+  return `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, crédito ${creditDisplayNumber(confirmation)}, y verificaste las correcciones.${recordingConfirmation} El OK habilitará este crédito para la liquidación al aliado y ${shared ? "quedará registrado por este acceso" : "quedará registrado con tu usuario"}.`;
 }
 
 export default function ApprovalConsole({ shared = false, redesigned = false, onOpenSadmin }: { shared?: boolean; redesigned?: boolean; onOpenSadmin?: () => void } = {}) {
@@ -128,7 +130,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
       if (controller.signal.aborted) return;
       if (nextDetail.review.status !== (view === "approved" ? "APPROVED" : "PENDING")) {
         setItems((current) => current.filter((item) => item.id !== id)); setSelectedId(null); setSelectedItem(null); setDetail(null);
-        setNotice({ text: view === "pending" ? `Crédito ${nextDetail.folio} aprobado. Puedes consultarlo en Aprobadas.` : `El crédito ${nextDetail.folio} ya no tiene una aprobación vigente. Consulta Pendientes por aprobar.`, warning: view === "approved" });
+        setNotice({ text: view === "pending" ? `Crédito ${creditDisplayNumber(nextDetail)} aprobado. Puedes consultarlo en Aprobadas.` : `El crédito ${creditDisplayNumber(nextDetail)} ya no tiene una aprobación vigente. Consulta Pendientes por aprobar.`, warning: view === "approved" });
         return nextDetail;
       }
       if (modern && detail?.id === nextDetail.id && (nextDetail.review.revision !== detail.review.revision || nextDetail.review.reviewHash !== detail.review.reviewHash)) {
@@ -236,7 +238,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
           if (updated.review.status !== (view === "approved" ? "APPROVED" : "PENDING")) {
             setSelectedId(null); setSelectedItem(null); setDetail(null);
             setItems((current) => current.filter((item) => item.id !== updated.id));
-            setNotice({ text: view === "pending" ? `Crédito ${updated.folio} aprobado. Puedes consultarlo en Aprobadas.` : `El crédito ${updated.folio} ya no tiene una aprobación vigente. Consulta Pendientes por aprobar.`, warning: view === "approved" });
+            setNotice({ text: view === "pending" ? `Crédito ${creditDisplayNumber(updated)} aprobado. Puedes consultarlo en Aprobadas.` : `El crédito ${creditDisplayNumber(updated)} ya no tiene una aprobación vigente. Consulta Pendientes por aprobar.`, warning: view === "approved" });
           } else {
             setDetail(updated);
             if (detail && (updated.review.revision !== detail.review.revision || updated.review.reviewHash !== detail.review.reviewHash)) {
@@ -284,7 +286,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
   function requestApproval() {
     if (!detail || !canConfirm || submitting.current || recordingRequired && !recordingId) return;
     setNotice(null);
-    setConfirmation({ id: detail.id, folio: detail.folio, clienteNombre: detail.clienteNombre, clienteDocumento: detail.clienteDocumento, revision: detail.review.revision, reviewHash: detail.review.reviewHash, recordingId, recordingRequired });
+    setConfirmation({ id: detail.id, folio: detail.folio, numeroCreditoVisible: detail.numeroCreditoVisible, clienteNombre: detail.clienteNombre, clienteDocumento: detail.clienteDocumento, revision: detail.review.revision, reviewHash: detail.review.reviewHash, recordingId, recordingRequired });
   }
 
   async function confirmApproval() {
@@ -296,7 +298,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
     try {
       await approveCreditReview(confirmation.id, confirmation.revision, confirmation.reviewHash, confirmation.recordingId);
       setConfirmation(null);
-      setNotice({ text: `Crédito ${confirmation.folio} aprobado para liquidación al aliado. Puedes consultarlo en Aprobadas.`, warning: false });
+      setNotice({ text: `Crédito ${creditDisplayNumber(confirmation)} aprobado para liquidación al aliado. Puedes consultarlo en Aprobadas.`, warning: false });
       setItems((current) => current.filter((item) => item.id !== confirmation.id));
       detailController.current?.abort(); setSelectedId(null); setSelectedItem(null); setDetail(null); setLoadingDetail(false);
       setReviewChanged(false); setRereviewed(false);
@@ -369,7 +371,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
               </thead>
               <tbody>{items.map((item) => (
                 <tr key={item.id} className={`border-t border-[var(--fp-border)] ${selectedId === item.id ? "bg-[var(--fp-lime-soft)]" : ""}`}>
-                  <td className="px-4 py-4 align-top sm:px-6"><strong>{item.folio}</strong><span className="mt-1 block text-[var(--fp-muted)]">{item.clienteNombre}</span></td>
+                  <td className="px-4 py-4 align-top sm:px-6"><strong>{creditDisplayNumber(item)}</strong>{creditDisplayNumber(item) !== item.folio ? <span className="mt-1 block text-xs text-[var(--fp-muted)]">Folio: {item.folio}</span> : null}<span className="mt-1 block text-[var(--fp-muted)]">{item.clienteNombre}</span></td>
                   <td className="px-4 py-4 align-top sm:px-6">{item.aliadoNombre}{item.sedeNombre ? <span className="mt-1 block text-[var(--fp-muted)]">{item.sedeNombre}</span> : null}</td>
                   <td className="whitespace-nowrap px-4 py-4 align-top sm:px-6">{dateLabel(view === "approved" ? item.approvedAt ?? null : item.fechaCredito)}{view === "approved" ? <span className="mt-1 block whitespace-normal text-[var(--fp-muted)]">{item.approvedByName || "Analista autorizado"}</span> : null}</td>
                   <td className="px-4 py-4 align-top sm:px-6"><div className="flex flex-col items-start gap-2"><ReviewStatus status={item.status} required={item.required} />
@@ -378,13 +380,13 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
                     {item.novelty?.answeredCount ? <Badge tone="positive">{item.novelty.answeredCount} {item.novelty.answeredCount === 1 ? "novedad atendida" : "novedades atendidas"}</Badge> : null}
                     {item.reissue?.blocked ? <Badge tone="warning">Firma pendiente</Badge> : null}
                   </div></td>
-                  <td className="px-4 py-4 align-top sm:px-6"><Button variant="secondary" onClick={() => selectCredit(item.id)} disabled={busy || searching} aria-label={`${view === "pending" ? "Revisar" : "Ver"} crédito ${item.folio}`} aria-pressed={selectedId === item.id}>{selectedId === item.id ? "Seleccionado" : view === "pending" ? "Revisar" : "Ver expediente"}</Button></td>
+                  <td className="px-4 py-4 align-top sm:px-6"><Button variant="secondary" onClick={() => selectCredit(item.id)} disabled={busy || searching} aria-label={`${view === "pending" ? "Revisar" : "Ver"} crédito ${creditDisplayNumber(item)}`} aria-pressed={selectedId === item.id}>{selectedId === item.id ? "Seleccionado" : view === "pending" ? "Revisar" : "Ver expediente"}</Button></td>
                 </tr>
               ))}</tbody>
             </table>
           </DataTable>
           {nextCursor ? <div className="border-t border-[var(--fp-border)] p-4"><Button variant="secondary" disabled={busy || searching} onClick={() => void loadQueue(nextCursor)}>Cargar más créditos</Button></div> : null}
-          {!selectedId && items.length > 1 ? <p className="p-4 text-sm text-[var(--fp-muted)]">Selecciona un folio para abrir su expediente.</p> : null}
+          {!selectedId && items.length > 1 ? <p className="p-4 text-sm text-[var(--fp-muted)]">Selecciona un crédito para abrir su expediente.</p> : null}
         </Card>
       ) : null}
 
@@ -393,11 +395,12 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
       {notice ? <div role={notice.warning ? "alert" : "status"} className={`rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] p-4 text-sm ${notice.warning ? "bg-[var(--fp-amber-soft)]" : "bg-[var(--fp-lime-soft)]"}`}>{notice.text}</div> : null}
 
       {detail ? (
-        <section aria-label={`Expediente del crédito ${detail.folio}`} aria-busy={loadingDetail} className="space-y-6">
+        <section aria-label={`Expediente del crédito ${creditDisplayNumber(detail)}`} aria-busy={loadingDetail} className="space-y-6">
           <Card className="p-4 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
-                <p className="text-sm text-[var(--fp-muted)]">Crédito {detail.folio}</p>
+                <p className="text-sm text-[var(--fp-muted)]">Crédito {creditDisplayNumber(detail)}</p>
+                {creditDisplayNumber(detail) !== detail.folio ? <p className="mt-1 text-xs text-[var(--fp-muted)]">Folio original: {detail.folio}</p> : null}
                 <h2 className="mt-1 break-words text-xl font-bold">{detail.clienteNombre?.trim() || "No disponible"}</h2>
                 <p className="mt-2 text-sm text-[var(--fp-muted)]">{detail.aliadoNombre}</p>
                 <p className="mt-1 text-sm text-[var(--fp-muted)]">{dateLabel(detail.fechaCredito)}</p>
@@ -433,7 +436,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
           <div className={`grid items-start gap-6 ${detail.review.required ? "xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]" : ""}`}>
             <Card role="region" aria-label="Documento firmado" className="min-w-0 p-4 sm:p-6">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="flex items-center gap-2 text-lg font-semibold"><FileText className="h-5 w-5" aria-hidden="true" />Documento firmado</h2></div>
-              {detail.document.available ? <><p className="mb-3 break-words text-sm text-[var(--fp-muted)]">{detail.document.fileName || "Documento de FirmaSeguro"}</p><LastPdfPagePreview key={`${detail.id}:${detail.review.reviewHash}`} href={detail.document.href} folio={detail.folio} /></> : <EmptyState title="Documento firmado no disponible" description="El expediente debe contar con el documento firmado para completar la aprobación." />}
+              {detail.document.available ? <><p className="mb-3 break-words text-sm text-[var(--fp-muted)]">{detail.document.fileName || "Documento de FirmaSeguro"}</p><LastPdfPagePreview key={`${detail.id}:${detail.review.reviewHash}`} href={detail.document.href} folio={creditDisplayNumber(detail)} /></> : <EmptyState title="Documento firmado no disponible" description="El expediente debe contar con el documento firmado para completar la aprobación." />}
             </Card>
 
             {detail.review.required ? <aside aria-label="Acciones de revisión" className="min-w-0 space-y-6">

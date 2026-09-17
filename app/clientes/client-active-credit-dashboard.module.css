@@ -26,6 +26,8 @@
 .avatar:disabled { cursor: default; }
 .screen button:focus-visible, .screen select:focus-visible { outline: 2px solid var(--active-green); outline-offset: 4px; }
 .greeting { margin: 24px 0 6px; font-size: clamp(27px, 7vw, 34px); line-height: 1.2; font-weight: 750; letter-spacing: -.045em; overflow-wrap: anywhere; }
+.creditNumber { margin: 0 0 10px; color: var(--fp-muted); font-size: 14px; overflow-wrap: anywhere; }
+.creditNumber strong { color: var(--fp-graphite); }
 .status { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--active-green); font-size: 16px; font-weight: 650; }
 .status > span { width: 11px; height: 11px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .statusOverdue { color: var(--fp-danger); }

@@ -4,6 +4,7 @@ import { calculateCreditEarlyPayoff } from "@/lib/credit-early-payoff";
 import { sanitizeSearch } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import prisma from "@/lib/prisma";
+import { getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,6 +80,7 @@ export async function GET(req: Request) {
       take: 20,
     });
 
+    const displayNumbers = await getCreditDisplayNumbers(credits.map((credit) => credit.id));
     const items = credits.map((credit) => {
       const settled = Boolean(credit.pazYSalvoEmitidoAt);
       const plan = buildCreditPaymentPlan({
@@ -147,7 +149,7 @@ export async function GET(req: Request) {
       };
     });
 
-    return NextResponse.json({ ok: true, items });
+    return NextResponse.json({ ok: true, items: items.map((credit) => withCreditDisplayNumber(credit, displayNumbers)) });
   } catch (error) {
     console.error("ERROR CONSULTA CLIENTE CREDITOS:", error);
     return NextResponse.json(

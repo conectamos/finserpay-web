@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 export type AllyPaymentSettlementPdfLine = {
   creditId: number;
@@ -28,6 +29,7 @@ export type AllyPaymentSettlementPdfBucket = {
 export type AllyPaymentSettlementPdfCollection = {
   paymentDate: string;
   folio: string;
+  numeroCreditoVisible?: string;
   clientName: string;
   clientDocument: string;
   siteName: string;
@@ -113,7 +115,7 @@ const TABLE_COLUMNS = [
 
 const COLLECTION_COLUMNS = [
   { key: "date", label: "Fecha", width: 82, align: "left" },
-  { key: "folio", label: "Folio", width: 80, align: "left" },
+  { key: "folio", label: "Crédito", width: 80, align: "left" },
   { key: "client", label: "Cliente", width: 120, align: "left" },
   { key: "document", label: "Cedula", width: 85, align: "left" },
   { key: "site", label: "Sede que recaudo", width: 130, align: "left" },
@@ -444,7 +446,7 @@ function drawCollectionRow(
   doc.rect(PAGE_MARGIN, y, CONTENT_WIDTH, ROW_HEIGHT).fill(index % 2 === 0 ? COLORS.white : COLORS.soft);
   const values = {
     date: dateTimeLabel(new Date(item.paymentDate)),
-    folio: safeText(item.folio, "-", 30),
+    folio: safeText(creditDisplayNumber(item), "-", 30),
     client: safeText(item.clientName, "Cliente", 42),
     document: safeText(item.clientDocument, "-", 24),
     site: safeText(item.siteName, "Sede", 44),
