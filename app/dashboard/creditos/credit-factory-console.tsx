@@ -18530,10 +18530,19 @@ export default function CreditFactoryConsole({
                             </button>
                           </div>
 
-                          <div
-                            data-client-factory-summary
-                            className="mt-6 border-t border-[var(--fp-border)] pt-6"
+                          <details
+                            key={`client-factory-summary-${selectedCredit.id}`}
+                            className="group/factory-summary mt-5"
                           >
+                            <summary className="fp-ui-button is-secondary w-fit cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                              <FileText className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
+                              RESUMEN
+                              <ChevronDown className="h-4 w-4 transition-transform group-open/factory-summary:rotate-180" strokeWidth={1.8} aria-hidden="true" />
+                            </summary>
+                            <div
+                              data-client-factory-summary
+                              className="mt-6 border-t border-[var(--fp-border)] pt-6"
+                            >
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                               <div>
                                 <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#5c7a13]">
@@ -18670,7 +18679,8 @@ export default function CreditFactoryConsole({
                                 <DossierInfoField label="Fecha de creación" value={dateTime(selectedCredit.createdAt)} className="sm:col-span-2 lg:col-span-3" />
                               </dl>
                             </section>
-                          </div>
+                            </div>
+                          </details>
                         </section>
 
                         <aside className="rounded-lg border border-[#d8dee5] bg-white p-5 shadow-[0_4px_14px_rgba(16,24,40,0.05)]">
