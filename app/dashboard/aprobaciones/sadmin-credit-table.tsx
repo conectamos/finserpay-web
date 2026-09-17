@@ -138,7 +138,7 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
       <div className={styles.summary}><span>{data.total.toLocaleString("es-CO")} créditos · 20 registros por página</span><span>Más recientes primero</span></div>
       <DataTable className={styles.tableWrap}>
         <table className={styles.table} aria-label="Créditos de cartera para creación en SADMIN" aria-busy={loading}>
-          <thead><tr>{["Crédito", "Cliente", "Equipo", "Valores del crédito", "Creación SADMIN"].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
+          <thead><tr><th scope="col">Crédito</th></tr></thead>
           <tbody>{data.items.map(row => {
             const saving = savingIds.has(row.id);
             const dirty = Object.hasOwn(draftNumbers, row.id);
@@ -148,11 +148,26 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
             const expanded = expandedId === row.id;
             const visibleNumber = creditDisplayNumber(row);
             return <Fragment key={row.id}><tr>
-              <th scope="row" className={styles.credit}><strong>{visibleNumber}</strong>{visibleNumber !== row.folio ? <span className={styles.originalFolio}>Folio: {row.folio}</span> : null}<Facts items={[["Fecha crédito", date(row.fechaCredito)]]} /><Badge tone={row.sadmin.estado === "CREADO_SADMIN" ? "positive" : "neutral"}>{row.sadmin.estado === "CREADO_SADMIN" ? "CREADO SADMIN" : "PENDIENTE SADMIN"}</Badge></th>
-              <td><button id={`sadmin-client-${row.id}`} type="button" className={styles.clientButton} aria-expanded={expanded} aria-controls={`sadmin-detail-${row.id}`} onClick={() => setExpandedId(expanded ? null : row.id)}><span>{text(row.clienteNombre)}</span><ChevronDown size={16} aria-hidden="true" className={expanded ? styles.expandedIcon : ""} /></button><Facts items={[["Cédula", text(row.clienteDocumento)]]} /><span className={styles.detailHint}>{expanded ? "Ocultar información del crédito" : "Ver información del crédito"}</span></td>
-              <td><strong>{text(row.referenciaEquipo)}</strong><Facts items={[["Aliado", text(row.aliadoNombre)], ["Sede", text(row.sedeNombre)]]} /></td>
-              <td><Facts numeric items={[["Valor venta", amount(row.valorVenta)], ["Inicial", amount(row.cuotaInicial)], ["Crédito autorizado", amount(row.creditoAutorizado)]]} /></td>
-              <td className={styles.registration}>
+              <th scope="row" className={styles.credit}>
+                <button id={`sadmin-credit-${row.id}`} type="button" className={styles.creditButton} aria-expanded={expanded} aria-controls={`sadmin-detail-${row.id}`} onClick={() => setExpandedId(expanded ? null : row.id)}>
+                  <span className={styles.creditSummary}>
+                    <strong>{visibleNumber}</strong>
+                    <span className={styles.creditDate}><span>Fecha crédito</span><span>{date(row.fechaCredito)}</span></span>
+                    <Badge tone={row.sadmin.estado === "CREADO_SADMIN" ? "positive" : "neutral"}>{row.sadmin.estado === "CREADO_SADMIN" ? "CREADO SADMIN" : "PENDIENTE SADMIN"}</Badge>
+                  </span>
+                  <ChevronDown size={18} aria-hidden="true" className={expanded ? styles.expandedIcon : ""} />
+                </button>
+              </th>
+            </tr>{expanded ? <tr className={styles.detailRow}><td><div id={`sadmin-detail-${row.id}`} role="region" aria-labelledby={`sadmin-credit-${row.id}`} className={styles.expandedContent}>
+              <div className={styles.details}>
+              <section><h3>Datos del cliente</h3><Facts items={[["Nombre", text(row.clienteNombre)], ["Cédula", text(row.clienteDocumento)], ["Teléfono", text(row.clienteTelefono)], ["Correo", text(row.clienteCorreo)], ["Dirección", text(row.clienteDireccion)], ["Nacimiento", date(row.clienteFechaNacimiento)], ["Género", text(row.clienteGenero)]]} /></section>
+              <section><h3>Crédito, equipo y origen</h3><Facts items={[["Número de crédito", visibleNumber], ["Folio original", row.folio], ["Fecha crédito", date(row.fechaCredito)], ["Creado", date(row.createdAt, true)], ["Referencia", text(row.referenciaEquipo)], ["IMEI", text(row.imei)], ["Aliado", text(row.aliadoNombre)], ["Sede", text(row.sedeNombre)]]} /></section>
+              <section><h3>Valores y plan</h3><Facts numeric items={[["Valor venta", amount(row.valorVenta)], ["Inicial", amount(row.cuotaInicial)], ["Crédito autorizado", amount(row.creditoAutorizado)], ["N.º cuotas", row.numeroCuotas], ["Valor cuota", amount(row.valorCuota)], ["Frecuencia", frequency(row.frecuenciaPago)]]} /></section>
+              <section><h3>Tasas</h3><Facts numeric items={[["Interés mensual efectivo", rate(row.interesMensual)], ["Fianza total del crédito", rate(row.fianza)], ["Seguro por cuota", rate(row.seguro)]]} /></section>
+              <section><h3>Pagos</h3><Facts numeric items={[["Próximo pago", date(row.fechaProximoPago)], ["Cuotas pagadas", row.cuotasPagadas], ["Cuotas pendientes", row.cuotasPendientes], ["Días vencidos", row.diasVencidos], ["Último pago", text(row.ultimoPago)]]} /></section>
+              <section><h3>Saldos</h3><Facts numeric items={[["Obligación", amount(row.saldoObligacion)], ["Capital", amount(row.saldoCapital)], ["Fianza", amount(row.saldoFianza)], ["Intereses", amount(row.saldoIntereses)]]} /></section>
+              </div>
+              <section className={styles.registration}><h3>Creación SADMIN</h3>
                 <div className={styles.progress}><Badge tone={row.sadmin.estado === "CREADO_SADMIN" ? "positive" : "warning"}>{completed} de 3 verificaciones</Badge>{saving ? <span role="status">Guardando...</span> : null}</div>
                 <fieldset id={`sadmin-checklist-${row.id}`} disabled={disabled} aria-label={`Verificaciones SADMIN de ${visibleNumber}`}>
                   {checklist.slice(0, 2).map(([field, label]) => <label key={field} className={styles.check}><input type="checkbox" checked={row.sadmin[field]} onChange={event => void save(row, field, event.target.checked)} /><span>{label}</span></label>)}
@@ -166,14 +181,7 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
                 </fieldset>
                 {rowErrors[row.id] ? <p role="alert" className={styles.rowError}>{rowErrors[row.id]}</p> : null}
                 {row.sadmin.completedAt ? <p className={styles.updated}>Completado: {date(row.sadmin.completedAt, true)}</p> : row.sadmin.updatedAt ? <p className={styles.updated}>Actualizado: {date(row.sadmin.updatedAt, true)}</p> : null}
-              </td>
-            </tr>{expanded ? <tr className={styles.detailRow}><td colSpan={5}><div id={`sadmin-detail-${row.id}`} role="region" aria-labelledby={`sadmin-client-${row.id}`} className={styles.details}>
-              <section><h3>Datos del cliente</h3><Facts items={[["Nombre", text(row.clienteNombre)], ["Cédula", text(row.clienteDocumento)], ["Teléfono", text(row.clienteTelefono)], ["Correo", text(row.clienteCorreo)], ["Dirección", text(row.clienteDireccion)], ["Nacimiento", date(row.clienteFechaNacimiento)], ["Género", text(row.clienteGenero)]]} /></section>
-              <section><h3>Crédito, equipo y origen</h3><Facts items={[["Número de crédito", visibleNumber], ["Folio original", row.folio], ["Fecha crédito", date(row.fechaCredito)], ["Creado", date(row.createdAt, true)], ["Referencia", text(row.referenciaEquipo)], ["IMEI", text(row.imei)], ["Aliado", text(row.aliadoNombre)], ["Sede", text(row.sedeNombre)]]} /></section>
-              <section><h3>Valores y plan</h3><Facts numeric items={[["Valor venta", amount(row.valorVenta)], ["Inicial", amount(row.cuotaInicial)], ["Crédito autorizado", amount(row.creditoAutorizado)], ["N.º cuotas", row.numeroCuotas], ["Valor cuota", amount(row.valorCuota)], ["Frecuencia", frequency(row.frecuenciaPago)]]} /></section>
-              <section><h3>Tasas</h3><Facts numeric items={[["Interés mensual efectivo", rate(row.interesMensual)], ["Fianza total del crédito", rate(row.fianza)], ["Seguro por cuota", rate(row.seguro)]]} /></section>
-              <section><h3>Pagos</h3><Facts numeric items={[["Próximo pago", date(row.fechaProximoPago)], ["Cuotas pagadas", row.cuotasPagadas], ["Cuotas pendientes", row.cuotasPendientes], ["Días vencidos", row.diasVencidos], ["Último pago", text(row.ultimoPago)]]} /></section>
-              <section><h3>Saldos</h3><Facts numeric items={[["Obligación", amount(row.saldoObligacion)], ["Capital", amount(row.saldoCapital)], ["Fianza", amount(row.saldoFianza)], ["Intereses", amount(row.saldoIntereses)]]} /></section>
+              </section>
             </div></td></tr> : null}</Fragment>;
           })}</tbody>
         </table>

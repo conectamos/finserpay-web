@@ -104,11 +104,13 @@ const check = (h, id, label) => {
   return h.find(node => node.type === "input" && node.props.type === "checkbox", wrapper);
 };
 const number = (h, id) => h.find(node => node.type === ui.Input && node.props.id === `sadmin-number-${id}`);
-const renderedIds = h => h.all(node => node.type === "fieldset").map(node => Number(node.props.id.replace("sadmin-checklist-", "")));
+const creditButton = (h, id) => h.find(node => node.type === "button" && node.props.id === `sadmin-credit-${id}`);
+const toggleCredit = async (h, id) => { creditButton(h, id).props.onClick(); await h.flush(); };
+const renderedIds = h => h.all(node => node.type === "button" && /^sadmin-credit-\d+$/.test(node.props.id)).map(node => Number(node.props.id.replace("sadmin-credit-", "")));
 const editNumber = (h, id, value) => number(h, id).props.onChange({ target: { value } });
 const errors = h => h.all(node => node.props?.role === "alert").map(content).join(" ");
 
-test("carga 20 registros y cada página reemplaza los anteriores", async () => {
+test("carga 20 resúmenes de número, fecha y estado; cada página reemplaza los anteriores", async () => {
   const requests = [];
   const h = mount(async (url, options) => {
     requests.push({ url, options });
@@ -120,10 +122,27 @@ test("carga 20 registros y cada página reemplaza los anteriores", async () => {
   assert.equal(requests[0].options.cache, "no-store");
   assert.equal(requests[0].url, "/api/aprobaciones/sadmin?page=1&q=");
   assert.deepEqual(renderedIds(h), Array.from({ length: 20 }, (_, index) => 40 - index));
+  const assertCollapsed = () => {
+    const body = h.find(node => node.type === "tbody");
+    assert.equal(nodes(body).filter(node => node.type === "fieldset" || node.type === "input" || node.type === ui.Input || node.props?.role === "region").length, 0);
+    assert.doesNotMatch(content(body), /Cliente \d|Equipo de prueba|Aliado QA|Sede QA|CODEUDOR|CRÉDITO CREADO|\$|Valor venta/);
+    for (const id of renderedIds(h)) {
+      const summary = creditButton(h, id);
+      assert.equal(summary.props["aria-expanded"], false);
+      assert.equal(summary.props["aria-controls"], `sadmin-detail-${id}`);
+      assert.ok(content(summary).includes(`QA-${id}`));
+      assert.ok(content(summary).includes("PENDIENTE SADMIN"));
+      assert.ok(content(summary).includes(new Intl.DateTimeFormat("es-CO", { timeZone: "UTC", dateStyle: "short" }).format(new Date("2026-09-17"))));
+    }
+  };
+  assertCollapsed();
+  const headers = h.all(node => node.type === "thead").flatMap(nodes).filter(node => node.type === "th").map(content);
+  assert.deepEqual(headers, ["Crédito"]);
   assert.equal(button(h, "Anterior").props.disabled, true);
   button(h, "Siguiente").props.onClick(); await h.flush();
   assert.equal(new URL(requests[1].url, "https://example.test").searchParams.get("page"), "2");
   assert.deepEqual(renderedIds(h), Array.from({ length: 20 }, (_, index) => 20 - index));
+  assertCollapsed();
   assert.equal(button(h, "Siguiente").props.disabled, true);
   assert.equal(button(h, "Anterior").props.disabled, false);
   h.unmount();
@@ -137,18 +156,28 @@ test("conserva ceros y letras del número y solo permite verificarlo después de
     return json({ ok: true, sadmin: registration({ version: 1, numeroCredito: body.value }) });
   });
   await h.flush();
+  await toggleCredit(h, 81);
   assert.equal(check(h, 81, "NÚMERO DE CRÉDITO").props.disabled, true);
   editNumber(h, 81, "0007-A"); await h.flush();
   assert.equal(number(h, 81).props.value, "0007-A");
   assert.equal(check(h, 81, "NÚMERO DE CRÉDITO").props.disabled, true);
   assert.equal(button(h, "Volver a aprobaciones").props.disabled, true);
   assert.equal(h.guardsLeaving(), true);
+  await toggleCredit(h, 81);
+  assert.equal(h.all(node => node.type === "fieldset").length, 0);
+  assert.equal(button(h, "Volver a aprobaciones").props.disabled, true);
+  assert.equal(h.guardsLeaving(), true);
+  await toggleCredit(h, 81);
+  assert.equal(number(h, 81).props.value, "0007-A");
   button(h, "Guardar número", fieldset(h, 81)).props.onClick(); await h.flush();
   assert.deepEqual(patches, [{ version: 0, field: "numeroCredito", value: "0007-A" }]);
   assert.equal(number(h, 81).props.value, "0007-A");
   assert.equal(check(h, 81, "NÚMERO DE CRÉDITO").props.disabled, false);
   assert.equal(button(h, "Volver a aprobaciones").props.disabled, false);
   assert.equal(h.guardsLeaving(), false);
+  await toggleCredit(h, 81); await toggleCredit(h, 81);
+  assert.equal(number(h, 81).props.value, "0007-A");
+  assert.equal(check(h, 81, "NÚMERO DE CRÉDITO").props.disabled, false);
   h.unmount();
 });
 
@@ -163,6 +192,7 @@ test("muestra CREADO SADMIN cuando el servidor confirma las tres verificaciones"
     return json({ ok: true, sadmin: stored });
   });
   await h.flush();
+  await toggleCredit(h, 81);
   for (const label of ["CODEUDOR CREADO", "CRÉDITO CREADO", "NÚMERO DE CRÉDITO"]) {
     check(h, 81, label).props.onChange({ target: { checked: true } }); await h.flush();
   }
@@ -170,12 +200,15 @@ test("muestra CREADO SADMIN cuando el servidor confirma las tres verificaciones"
   assert.equal(h.all(node => node.type === ui.Badge && content(node) === "CREADO SADMIN").length, 1);
   assert.equal(h.all(node => node.type === ui.Badge && content(node) === "3 de 3 verificaciones").length, 1);
   assert.equal(h.all(node => node.type === "strong" && content(node) === "00081").length, 1);
-  assert.match(content(h.tree()), /Folio: QA-81/);
+  assert.ok(content(creditButton(h, 81)).includes("00081"));
+  assert.ok(!content(creditButton(h, 81)).includes("QA-81"));
+  const identity = h.find(node => typeof node.type === "function" && node.type.name === "Facts" && node.props.items.some(([label]) => label === "Folio original"));
+  assert.ok(content(identity.type(identity.props)).includes("QA-81"));
   for (const label of ["CODEUDOR CREADO", "CRÉDITO CREADO", "NÚMERO DE CRÉDITO"]) assert.equal(check(h, 81, label).props.checked, true);
   h.unmount();
 });
 
-test("serializa guardados incluso si dos filas se activan antes del siguiente render", async () => {
+test("abre un detalle a la vez y serializa callbacks retenidos de filas distintas", async () => {
   const pending = deferred(); const patches = [];
   const h = mount(async (url, options) => {
     if (options.method !== "PATCH") return json(page([row(81), row(82)]));
@@ -183,18 +216,25 @@ test("serializa guardados incluso si dos filas se activan antes del siguiente re
     return pending.promise;
   });
   await h.flush();
+  await toggleCredit(h, 81);
   const first = check(h, 81, "CODEUDOR CREADO").props.onChange;
+  await toggleCredit(h, 82);
+  assert.equal(creditButton(h, 81).props["aria-expanded"], false);
+  assert.equal(creditButton(h, 82).props["aria-expanded"], true);
+  assert.equal(h.all(node => node.type === "fieldset").length, 1);
+  assert.equal(h.all(node => node.props?.id === "sadmin-detail-81").length, 0);
   const second = check(h, 82, "CODEUDOR CREADO").props.onChange;
   first({ target: { checked: true } }); second({ target: { checked: true } }); await h.flush();
   assert.equal(patches.length, 1);
-  assert.equal(fieldset(h, 81).props.disabled, true);
   assert.equal(fieldset(h, 82).props.disabled, true);
   assert.equal(button(h, "Volver a aprobaciones").props.disabled, true);
   pending.resolve(json({ ok: true, sadmin: registration({ version: 1, codeudorCreado: true }) })); await h.flush();
-  assert.equal(fieldset(h, 81).props.disabled, false);
   assert.equal(fieldset(h, 82).props.disabled, false);
-  assert.equal(check(h, 81, "CODEUDOR CREADO").props.checked, true);
   assert.equal(check(h, 82, "CODEUDOR CREADO").props.checked, false);
+  await toggleCredit(h, 81);
+  assert.equal(fieldset(h, 81).props.disabled, false);
+  assert.equal(check(h, 81, "CODEUDOR CREADO").props.checked, true);
+  assert.equal(h.all(node => node.props?.id === "sadmin-detail-82").length, 0);
   h.unmount();
 });
 
@@ -209,7 +249,7 @@ test("un conflicto de versión recarga y conserva el número editado para reinte
     if (patches.length === 1) return json({ ok: false, code: "SADMIN_CHANGED", error: "Cambió el crédito" }, 409);
     return json({ ok: true, sadmin: registration({ version: 5, numeroCredito: body.value, codeudorCreado: true }) });
   });
-  await h.flush(); editNumber(h, 81, "000-NUEVO"); await h.flush();
+  await h.flush(); await toggleCredit(h, 81); editNumber(h, 81, "000-NUEVO"); await h.flush();
   button(h, "Guardar número", fieldset(h, 81)).props.onClick(); await h.flush();
   assert.equal(reads, 2);
   assert.equal(number(h, 81).props.value, "000-NUEVO");
@@ -230,7 +270,7 @@ test("un número duplicado muestra el motivo real y no recarga ni borra el borra
     if (options.method !== "PATCH") { reads++; return json(page([row(81)])); }
     return json({ ok: false, code: "SADMIN_NUMBER_EXISTS", error: "Ese número de SADMIN ya está registrado en otro crédito." }, 409);
   });
-  await h.flush(); editNumber(h, 81, "000-DUPLICADO"); await h.flush();
+  await h.flush(); await toggleCredit(h, 81); editNumber(h, 81, "000-DUPLICADO"); await h.flush();
   button(h, "Guardar número", fieldset(h, 81)).props.onClick(); await h.flush();
   assert.equal(reads, 1);
   assert.match(errors(h), /Ese número de SADMIN ya está registrado en otro crédito/);
@@ -250,7 +290,7 @@ test("un fallo de conexión conserva las verificaciones guardadas y permite rein
     if (failing) throw new TypeError("Failed to fetch");
     return json({ ok: true, sadmin: { ...saved, version: 3, numeroCredito: body.value } });
   });
-  await h.flush(); editNumber(h, 81, "000-REINTENTO"); await h.flush();
+  await h.flush(); await toggleCredit(h, 81); editNumber(h, 81, "000-REINTENTO"); await h.flush();
   button(h, "Guardar número", fieldset(h, 81)).props.onClick(); await h.flush();
   assert.equal(number(h, 81).props.value, "000-REINTENTO");
   assert.equal(check(h, 81, "CODEUDOR CREADO").props.checked, true);
@@ -277,23 +317,28 @@ test("desmontar la tabla aborta una carga pendiente", async () => {
   assert.deepEqual(renderedIds(h), []);
 });
 
-test("clic en nombre abre y cierra información general completa sin alterar checklist ni número visible", async () => {
+test("clic en crédito abre toda la información y verificaciones, y cerrar oculta todo salvo número, fecha y estado", async () => {
   const stored = registration({ version: 4, codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "00081-A", estado: "CREADO_SADMIN" });
   const fixture = { ...row(81, stored), numeroCreditoVisible: "00081-A", ultimoPago: "2026-09-16 · $ 45.000 · EFECTIVO" };
   let patches = 0;
   const h = mount(async (_url, options) => { if (options.method === "PATCH") patches++; return json(page([fixture])); });
   await h.flush();
-  const toggle = () => h.find(node => node.type === "button" && node.props.id === "sadmin-client-81");
+  const toggle = () => creditButton(h, 81);
   assert.equal(toggle().props["aria-expanded"], false);
   assert.equal(toggle().props["aria-controls"], "sadmin-detail-81");
   assert.equal(h.all(node => node.props?.id === "sadmin-detail-81").length, 0);
-  assert.equal(h.all(node => node.type === "thead").flatMap(node => nodes(node)).filter(node => node.type === "th").length, 5);
+  assert.equal(h.all(node => node.type === "thead").flatMap(nodes).filter(node => node.type === "th").length, 1);
+  assert.equal(h.all(node => node.type === "fieldset").length, 0);
+  assert.ok(content(toggle()).includes("00081-A"));
+  assert.ok(!content(toggle()).includes("QA-81"));
+  assert.doesNotMatch(content(h.find(node => node.type === "tbody")), /Cliente 81|Equipo de prueba|3 de 3 verificaciones|Folio/);
   toggle().props.onClick(); await h.flush();
   assert.equal(toggle().props["aria-expanded"], true);
   const detail = h.find(node => node.props?.id === "sadmin-detail-81");
-  assert.equal(detail.props.role, "region"); assert.equal(detail.props["aria-labelledby"], "sadmin-client-81");
+  assert.equal(detail.props.role, "region"); assert.equal(detail.props["aria-labelledby"], "sadmin-credit-81");
   const sectionNames = nodes(detail).filter(node => node.type === "h3").map(content);
-  assert.deepEqual(sectionNames, ["Datos del cliente", "Crédito, equipo y origen", "Valores y plan", "Tasas", "Pagos", "Saldos"]);
+  assert.deepEqual(sectionNames.slice().sort(), ["Datos del cliente", "Crédito, equipo y origen", "Valores y plan", "Tasas", "Pagos", "Saldos", "Creación SADMIN"].sort());
+  assert.ok(nodes(detail).includes(fieldset(h, 81)), "Las verificaciones están dentro del detalle desplegado");
   const facts = nodes(detail).filter(node => typeof node.type === "function" && node.type.name === "Facts");
   const fields = facts.flatMap(node => node.props.items);
   for (const label of ["Nombre", "Cédula", "Teléfono", "Correo", "Dirección", "Nacimiento", "Género", "Número de crédito", "Folio original", "Fecha crédito", "Creado", "Referencia", "IMEI", "Aliado", "Sede", "Valor venta", "Inicial", "Crédito autorizado", "N.º cuotas", "Valor cuota", "Frecuencia", "Interés mensual efectivo", "Fianza total del crédito", "Seguro por cuota", "Próximo pago", "Cuotas pagadas", "Cuotas pendientes", "Días vencidos", "Último pago", "Obligación", "Capital", "Fianza", "Intereses"]) {
@@ -304,6 +349,9 @@ test("clic en nombre abre y cierra información general completa sin alterar che
   for (const value of ["00081-A", "QA-81", fixture.clienteNombre, fixture.clienteTelefono, fixture.clienteDireccion, fixture.clienteCorreo, fixture.imei, fixture.referenciaEquipo, fixture.aliadoNombre, fixture.sedeNombre, fixture.ultimoPago]) assert.ok(renderedFacts.includes(value));
   toggle().props.onClick(); await h.flush();
   assert.equal(toggle().props["aria-expanded"], false); assert.equal(h.all(node => node.props?.id === "sadmin-detail-81").length, 0);
+  assert.equal(h.all(node => node.type === "fieldset").length, 0);
+  assert.doesNotMatch(content(h.find(node => node.type === "tbody")), /Cliente 81|Equipo de prueba|3 de 3 verificaciones|Folio/);
+  toggle().props.onClick(); await h.flush();
   assert.equal(fieldset(h, 81).props["aria-label"], "Verificaciones SADMIN de 00081-A");
   for (const label of ["CODEUDOR CREADO", "CRÉDITO CREADO", "NÚMERO DE CRÉDITO"]) assert.equal(check(h, 81, label).props.checked, true);
   assert.equal(number(h, 81).props.value, "00081-A"); assert.equal(patches, 0);

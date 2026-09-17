@@ -25,9 +25,11 @@ las búsquedas autorizadas aceptan tanto el número confirmado como el folio
 original. Los números aún sin confirmar no sustituyen el folio. Editar el número
 requiere confirmarlo nuevamente para mostrar la nueva referencia.
 
-La tabla principal de SADMIN es compacta. El nombre de cada cliente es un botón
-que despliega sus datos y el detalle del equipo, origen, valores, tasas, pagos y
-saldos. Las verificaciones permanecen disponibles en la fila principal.
+La tabla principal de SADMIN muestra únicamente número del crédito, fecha y
+estado. El bloque completo es un botón que despliega datos del cliente, equipo,
+origen, valores, tasas, pagos, saldos y las verificaciones SADMIN. El folio original
+y el formulario de registro se consultan dentro de ese detalle; cerrar y volver
+a abrir conserva cualquier número pendiente de guardar.
 
 El seguimiento se almacena en CreditSadminRegistration con versión de concurrencia
 y eventos inmutables en CreditSadminEvent. No modifica el estado financiero del
