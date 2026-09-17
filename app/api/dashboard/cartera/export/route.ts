@@ -9,6 +9,12 @@ import {
 } from "@/lib/credit-factory";
 import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
+import {
+  formatCarteraPercentageCell,
+  isExcludedCarteraCreditState,
+  resolveCarteraExportRates,
+  shouldIncludeCarteraExportCredit,
+} from "@/lib/cartera-export";
 import { isAdminRole } from "@/lib/roles";
 import prisma from "@/lib/prisma";
 
@@ -19,10 +25,6 @@ const moneyFormatter = new Intl.NumberFormat("es-CO", {
   maximumFractionDigits: 0,
   minimumFractionDigits: 0,
 });
-
-function isAnnulled(value: string | null | undefined) {
-  return String(value || "").toUpperCase().includes("ANUL");
-}
 
 function formatMoney(value: number) {
   return moneyFormatter.format(Math.round(Number(value || 0)));
@@ -110,6 +112,9 @@ function buildWorkbookHtml(rows: string) {
         <th>Referencia</th>
         <th>Plazo credito</th>
         <th>Frecuencia de pago</th>
+        <th>Interés mensual efectivo (%)</th>
+        <th>Fianza total del crédito (%)</th>
+        <th>Seguro por cuota (%)</th>
         <th>ALIADO</th>
         <th>SEDE</th>
         <th>Fecha proxima cuota a pagar</th>
@@ -149,13 +154,14 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const requestedAliadoId = parsePositiveInt(searchParams.get("aliadoId"));
-    const exportScope = searchParams.get("scope") === "mora" ? "mora" : "activa";
+    const exportScope =
+      searchParams.get("scope") === "mora" ? "mora" : "cartera";
     const adminCentral = isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const ownAliadoId = parsePositiveInt(user.aliadoAccesoId);
     const selectedAliadoId = adminCentral ? requestedAliadoId : ownAliadoId;
     const where: Prisma.CreditoWhereInput = {
       estado: {
-        not: "ANULADO",
+        notIn: ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"],
       },
       ...(selectedAliadoId
         ? {
@@ -185,6 +191,14 @@ export async function GET(req: Request) {
             fechaAbono: "asc",
           },
         },
+        amortizacion: {
+          select: {
+            tasaInteresEaPorcentaje: true,
+            fianzaCuotaPorcentaje: true,
+            seguroCuotaPorcentaje: true,
+            numeroCuotas: true,
+          },
+        },
         sede: {
           select: {
             nombre: true,
@@ -202,7 +216,7 @@ export async function GET(req: Request) {
     });
 
     const rows = creditos
-      .filter((credito) => !isAnnulled(credito.estado))
+      .filter((credito) => !isExcludedCarteraCreditState(credito.estado))
       .map((credito) => {
         const plan = buildCreditPaymentPlan({
           montoCredito: Number(credito.montoCredito || 0),
@@ -225,17 +239,14 @@ export async function GET(req: Request) {
         };
       })
       .filter(({ plan }) => {
-        if (plan.saldoPendiente <= 0) {
-          return false;
-        }
-
-        if (exportScope !== "mora") {
-          return true;
-        }
-
-        return plan.installments.some(
-          (installment) => installment.estaEnMora && installment.saldoPendiente > 0
-        );
+        return shouldIncludeCarteraExportCredit({
+          scope: exportScope,
+          saldoPendiente: plan.saldoPendiente,
+          hasOverdueInstallment: plan.installments.some(
+            (installment) =>
+              installment.estaEnMora && installment.saldoPendiente > 0
+          ),
+        });
       })
       .map(({ credito, plan }) => {
         const pendingInstallments = plan.installments.filter(
@@ -259,6 +270,12 @@ export async function GET(req: Request) {
           valorEquipoTotal: Number(credito.valorEquipoTotal || 0),
           valorFianza: Number(credito.valorFianza || 0),
           valorInteres: Number(credito.valorInteres || 0),
+        });
+        const rates = resolveCarteraExportRates({
+          tasaInteresEa: credito.tasaInteresEa,
+          fianzaPorcentaje: credito.fianzaPorcentaje,
+          contratoSnapshot: credito.contratoSnapshot,
+          amortizacion: credito.amortizacion,
         });
         const ultimoPago = lastPayment
           ? [
@@ -287,6 +304,9 @@ export async function GET(req: Request) {
           ${textCell(referenciaEquipo)}
           ${numberCell(Number(credito.plazoMeses || 0))}
           ${textCell(getPaymentFrequencyLabel(credito.frecuenciaPago))}
+          ${formatCarteraPercentageCell(rates.interesMensual)}
+          ${formatCarteraPercentageCell(rates.fianza)}
+          ${formatCarteraPercentageCell(rates.seguro)}
           ${textCell(credito.sede.aliado?.nombre || "")}
           ${textCell(credito.sede.nombre)}
           ${textCell(plan.nextInstallment?.fechaVencimiento || "")}
@@ -305,7 +325,7 @@ export async function GET(req: Request) {
 
     const html = buildWorkbookHtml(rows);
     const filenamePrefix =
-      exportScope === "mora" ? "clientes-en-mora-finserpay" : "cartera-activa-finserpay";
+      exportScope === "mora" ? "clientes-en-mora-finserpay" : "cartera-finserpay";
     const filename = `${filenamePrefix}-${new Date()
       .toISOString()
       .slice(0, 10)}.xls`;
