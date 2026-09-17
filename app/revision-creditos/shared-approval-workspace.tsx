@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { ArrowLeft, CheckCircle2, ChevronDown, FileText, FolderOpen, ListFilter, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ChevronDown, FileText, FolderOpen, ListChecks, ListFilter, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { Badge, Button, Card, EmptyState, Input, LoadingState, Tabs } from "@/app/_components/finser-ui";
 import type { ApprovalDetail, ApprovalQueueItem, ApprovalView } from "@/app/dashboard/aprobaciones/approval-client";
 import { PAYMENT_FREQUENCY_OPTIONS } from "@/lib/credit-factory";
@@ -37,6 +37,7 @@ type Props = {
   onSelect: (id: number) => void; onView: (view: ApprovalView) => void; onSearch: (query: string) => void;
   onRefresh: () => void; onMore: () => void; onBack: () => void; onRetryDetail: () => void;
   onUpdated: () => Promise<void>; onCorrectionBusy: (busy: boolean) => void;
+  onOpenSadmin?: () => void;
   callPanel: ReactNode; noveltyPanel: ReactNode; signaturePanel: ReactNode; approvalPanel: ReactNode; confirmationDialog: ReactNode;
 };
 
@@ -57,9 +58,9 @@ export default function SharedApprovalWorkspace(props: Props) {
   ] : [];
 
   return <main className={styles.main}>
-    <div className={styles.heading}>
+    <div className={`${styles.heading} flex-wrap`}>
       <div><p className={styles.eyebrow}>Revisión de expedientes</p><h1>Muro de aprobaciones</h1></div>
-      <Button variant="secondary" disabled={busy || props.searching || props.loadingDetail} onClick={props.onRefresh}><RefreshCw size={16} aria-hidden="true" />Actualizar</Button>
+      <div className="flex flex-wrap items-center gap-2">{props.onOpenSadmin ? <Button disabled={busy} onClick={props.onOpenSadmin}><ListChecks size={16} aria-hidden="true" />Creación SADMIN</Button> : null}<Button variant="secondary" disabled={busy || props.searching || props.loadingDetail} onClick={props.onRefresh}><RefreshCw size={16} aria-hidden="true" />Actualizar</Button></div>
     </div>
     <div className={styles.toolbar}>
       <Tabs aria-label="Vistas de aprobaciones" className={styles.viewTabs}>
