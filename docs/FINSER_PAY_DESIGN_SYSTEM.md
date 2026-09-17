@@ -115,3 +115,13 @@ producto documentada.
   horizontal sin cortar contenido.
 - Iconos decorativos se ocultan a lectores de pantalla; acciones solo con icono
   requieren una etiqueta accesible.
+
+## Inicio de FINSER PAY Clientes
+
+La referencia móvil aprobada usa los tokens compartidos `--fp-client-bg` (marfil),
+`--fp-client-green` (texto verde con contraste AA), `--fp-client-action` (acción y
+avance) y `--fp-client-soft` (recordatorio). Esta variante conserva Button y
+ProgressBar compartidos, con botones redondeados y una única superficie para
+«Tu actividad». La mascota es una ilustración de marca; el equipo financiado
+se identifica mediante la referencia real del crédito, sin fotos de catálogo.
+Los estados y la disponibilidad de liquidación provienen del servidor.

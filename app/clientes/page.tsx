@@ -185,13 +185,6 @@ function creditTitle(credit: ClientCredit) {
   return credit.referenciaEquipo || `Credito ${credit.folio}`;
 }
 
-function creditDeviceImage(credit: ClientCredit) {
-  const reference = String(credit.referenciaEquipo || "").toUpperCase();
-  return /IPHONE|APPLE|IOS/.test(reference)
-    ? "/assets/creditos/iphone-choice-light.png"
-    : "/assets/creditos/android-choice-light.png";
-}
-
 function scrollToSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
 }
@@ -722,9 +715,9 @@ export default function ClienteConsultaPage() {
   return (
     <div
       id="cliente-dashboard"
-      className="min-h-[100svh] overflow-x-hidden bg-[#F4F3EE] text-[#111317]"
+      className="min-h-[100svh] overflow-x-hidden bg-[var(--fp-client-bg)] text-[#111317]"
     >
-      <div className="mx-auto min-h-[100svh] w-full max-w-[430px] bg-[#F4F3EE] pb-[calc(88px+env(safe-area-inset-bottom))] shadow-[0_0_60px_rgba(13,17,18,0.16)]">
+      <div className="mx-auto min-h-[100svh] w-full max-w-[600px] bg-[var(--fp-client-bg)] pb-[calc(88px+env(safe-area-inset-bottom))]">
         <div
           aria-hidden={activePanel ? true : undefined}
           inert={activePanel ? true : undefined}
@@ -737,9 +730,6 @@ export default function ClienteConsultaPage() {
             label: `Crédito ${index + 1} · ${creditTitle(credit)}`,
           }))}
           device={{
-            imageAlt: "",
-            imageSrc: creditDeviceImage(activeCredit),
-            meta: `${totalCount} cuotas · Equipo financiado`,
             name: creditTitle(activeCredit),
           }}
           lastPayment={
@@ -778,13 +768,14 @@ export default function ClienteConsultaPage() {
               ? {
                   amount: activePayoff.capitalPendiente,
                   available: canPayToday,
+                  reason: activePayoff.motivo,
                 }
               : null
           }
           profileActionLabel="Cambiar cliente"
           profileInitials={profileInitials}
           statusLabel={
-            activeCredit.estadoPago === "MORA" ? "Crédito en mora" : "Crédito al día"
+            activeCredit.estadoPago === "MORA" ? "Pago pendiente" : "Crédito al día"
           }
           statusTone={activeCredit.estadoPago === "MORA" ? "overdue" : "current"}
             totalInstallments={totalCount}
@@ -813,7 +804,7 @@ export default function ClienteConsultaPage() {
 
         <nav
           aria-label="Navegación del portal"
-          className="fixed bottom-0 left-1/2 z-30 w-full max-w-[430px] -translate-x-1/2 border-t border-[#e5e3de] bg-white/95 px-4 pb-[calc(8px+env(safe-area-inset-bottom))] pt-2 shadow-[0_-14px_34px_rgba(17,20,24,0.09)] backdrop-blur-xl"
+          className="fixed bottom-0 left-1/2 z-30 w-full max-w-[600px] -translate-x-1/2 border-t border-[#e5e3de] bg-white/95 px-4 pb-[calc(8px+env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl"
         >
           <div className="grid min-h-[72px] grid-cols-4 items-center">
             <button
@@ -821,18 +812,18 @@ export default function ClienteConsultaPage() {
               onClick={returnHome}
               aria-current={activePanel === null ? "page" : undefined}
               className={`grid min-h-[60px] place-items-center gap-1 ${
-                activePanel === null ? "text-[#5f8f16]" : "text-[#676d72]"
+                activePanel === null ? "text-[var(--fp-client-green)]" : "text-[#676d72]"
               }`}
             >
               <Home
                 className={`h-7 w-7 stroke-[2] ${
-                  activePanel === null ? "fill-[#77a923]" : "fill-none"
+                  activePanel === null ? "fill-[var(--fp-client-green)]" : "fill-none"
                 }`}
               />
               <span className="text-[12px] font-semibold">Inicio</span>
               <span
                 className={`h-1 w-8 rounded-full ${
-                  activePanel === null ? "bg-[#b7e63d]" : "bg-transparent"
+                  activePanel === null ? "bg-[var(--fp-client-action)]" : "bg-transparent"
                 }`}
               />
             </button>
@@ -862,7 +853,7 @@ export default function ClienteConsultaPage() {
               <span
                 className={`h-1 w-8 rounded-full ${
                   activePanel === "pending" || activePanel === "payments"
-                    ? "bg-[#b7e63d]"
+                    ? "bg-[var(--fp-client-action)]"
                     : "bg-transparent"
                 }`}
               />
@@ -880,7 +871,7 @@ export default function ClienteConsultaPage() {
               <span className="text-[12px] font-semibold">Historial</span>
               <span
                 className={`h-1 w-8 rounded-full ${
-                  activePanel === "history" ? "bg-[#b7e63d]" : "bg-transparent"
+                  activePanel === "history" ? "bg-[var(--fp-client-action)]" : "bg-transparent"
                 }`}
               />
             </button>

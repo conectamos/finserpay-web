@@ -1,6 +1,9 @@
 "use client";
 
-import Image, { type ImageProps } from "next/image";
+import Image from "next/image";
+import { useEffect, useState } from "react";
+import { Button, ProgressBar } from "@/app/_components/finser-ui";
+import { paymentReminder } from "./credit-dashboard-presentation";
 import {
   Bell,
   CalendarDays,
@@ -8,6 +11,7 @@ import {
   ChevronRight,
   CircleCheck,
   CreditCard,
+  Smartphone,
 } from "lucide-react";
 import {
   COLOMBIA_TIME_ZONE,
@@ -37,8 +41,6 @@ export type ActiveCreditDashboardPayment = {
 };
 
 export type ActiveCreditDashboardDevice = {
-  imageAlt: string;
-  imageSrc: ImageProps["src"];
   meta?: string;
   name: string;
 };
@@ -61,7 +63,7 @@ export type ClientActiveCreditDashboardProps = {
   onSelectCredit: (creditId: number) => void;
   paidInstallments: number;
   paying?: boolean;
-  payoff?: { amount: number; available: boolean } | null;
+  payoff?: { amount: number; available: boolean; reason?: string | null } | null;
   profileActionLabel?: string;
   profileInitials: string;
   statusLabel: string;
@@ -109,262 +111,126 @@ function compactDateLabel(value: string) {
   return `${day} ${month}`;
 }
 
-function PhoneOutline() {
-  return (
-    <span className={styles.phoneIllustration} aria-hidden="true">
-      <span className={styles.phoneBack} />
-      <span className={styles.phoneBody}>
-        <span className={styles.phoneCamera} />
-        <span className={styles.phoneSpeaker} />
-        <span className={styles.phoneSideButton} />
-      </span>
-    </span>
-  );
-}
 
 export default function ClientActiveCreditDashboard({
-  activeCreditId,
-  clientFirstName,
-  creditOptions = [],
-  device,
-  lastPayment,
-  nextInstallment,
-  notice,
-  onOpenDevice,
-  onOpenHistory,
-  onOpenNotifications,
-  onPayInstallment,
-  onOpenPlan,
-  onOpenProfile,
-  onPayoff,
-  onSelectCredit,
-  paidInstallments,
-  paying = false,
-  payoff,
-  profileActionLabel,
-  profileInitials,
-  statusLabel,
-  statusTone = "current",
-  totalInstallments,
+  activeCreditId, clientFirstName, creditOptions = [], device, lastPayment,
+  nextInstallment, notice, onOpenDevice, onOpenHistory, onOpenNotifications,
+  onPayInstallment, onOpenPlan, onOpenProfile, onPayoff, onSelectCredit,
+  paidInstallments, paying = false, payoff, profileActionLabel, profileInitials,
+  statusLabel, statusTone = "current", totalInstallments,
 }: ClientActiveCreditDashboardProps) {
+  const [today, setToday] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setToday(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const overdue = statusTone === "overdue";
   const safeTotal = Math.max(0, Math.floor(totalInstallments));
   const safePaid = Math.min(safeTotal, Math.max(0, Math.floor(paidInstallments)));
-  const displayOptions = creditOptions.length
-    ? creditOptions
-    : [{ id: activeCreditId, label: "Crédito actual" }];
-  const canPayInstallment = Boolean(nextInstallment) && !paying;
-  const canPayoff = Boolean(payoff?.available) && !paying;
-  const profileLabel =
-    profileActionLabel || `Abrir perfil de ${clientFirstName || "cliente"}`;
+  const pending = safeTotal - safePaid;
+  const installmentLabel = overdue ? "Cuota vencida" : "Próxima cuota";
 
   return (
-    <div className={styles.screen}>
+    <div className={styles.screen} data-credit-status={statusTone}>
       <header className={styles.header}>
-        <span className={styles.brand} aria-label="FINSER PAY">
-          FINSER <strong>PAY</strong>
-        </span>
-
-        <span className={styles.headerActions}>
-          <button
-            type="button"
-            className={styles.iconButton}
-            onClick={onOpenNotifications}
-            aria-label="Abrir notificaciones"
-          >
+        <span className={styles.brand} aria-label="FINSER PAY">FINSER <strong>PAY</strong></span>
+        <div className={styles.headerActions}>
+          <button type="button" className={styles.iconButton} onClick={onOpenNotifications} aria-label="Abrir notificaciones">
             <Bell aria-hidden="true" />
-            <span className={styles.notificationDot} aria-hidden="true" />
           </button>
-
-          <button
-            type="button"
-            className={styles.avatar}
-            onClick={onOpenProfile}
-            disabled={!onOpenProfile}
-            aria-label={profileLabel}
-          >
+          <button type="button" className={styles.avatar} onClick={onOpenProfile} disabled={!onOpenProfile}
+            aria-label={profileActionLabel || `Abrir perfil de ${clientFirstName || "cliente"}`}>
             {profileInitials}
           </button>
-        </span>
+        </div>
       </header>
-
       <main>
         <h1 className={styles.greeting}>Hola, {clientFirstName}</h1>
-
-        {displayOptions.length > 1 ? (
+        <p className={`${styles.status} ${overdue ? styles.statusOverdue : ""}`} role="status">
+          <span aria-hidden="true" />{overdue ? "Pago pendiente" : statusLabel}
+        </p>
+        {creditOptions.length > 1 ? (
           <label className={styles.creditSelector}>
             <span>Crédito consultado</span>
-            <select
-              value={activeCreditId}
-              onChange={(event) => onSelectCredit(Number(event.target.value))}
-              aria-label="Seleccionar crédito"
-            >
-              {displayOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
+            <select value={activeCreditId} onChange={(event) => onSelectCredit(Number(event.target.value))}>
+              {creditOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
             </select>
           </label>
         ) : null}
-
         {notice ? (
-          <p
-            className={`${styles.notice} ${
-              notice.tone === "red" ? styles.noticeError : styles.noticeSuccess
-            }`}
-            role={notice.tone === "red" ? "alert" : "status"}
-          >
-            {notice.text}
-          </p>
+          <p className={`${styles.notice} ${notice.tone === "red" ? styles.noticeError : ""}`}
+            role={notice.tone === "red" ? "alert" : "status"}>{notice.text}</p>
         ) : null}
 
-        <section className={styles.creditCard} aria-labelledby="active-credit-summary">
-          <div className={styles.cardTopline}>
-            <p
-              className={`${styles.status} ${
-                statusTone === "overdue" ? styles.statusOverdue : ""
-              }`}
-            >
-              <span aria-hidden="true" />
-              {statusLabel}
-            </p>
-            <p className={styles.installmentCount}>
-              {safePaid} / {safeTotal} cuotas
-            </p>
+        <section className={styles.hero} aria-labelledby="active-credit-summary">
+          <div className={`${styles.mascotScene} ${overdue ? styles.mascotSad : ""}`}>
+            <div className={styles.mascotFloat}>
+              <Image className={styles.mascotImage}
+                src={`/assets/clientes/mascot-${overdue ? "overdue" : "current"}.webp`}
+                alt={overdue ? "Mascota FINSER PAY triste, con una lágrima" : "Mascota FINSER PAY tranquila y sonriente"}
+                width={1024} height={1536} sizes="(max-width: 359px) 120px, (max-width: 600px) 180px, 240px" loading="eager" />
+              <span className={styles.eyelidLeft} aria-hidden="true" />
+              <span className={styles.eyelidRight} aria-hidden="true" />
+            </div>
           </div>
-
-          <PhoneOutline />
-
-          <div className={styles.cardContent}>
-            <p className={styles.amountEyebrow} id="active-credit-summary">
-              Próxima cuota
-            </p>
-            <p className={styles.heroAmount}>
-              {nextInstallment ? money(nextInstallment.amount) : "Sin saldo"}
-            </p>
-
-            {nextInstallment ? (
-              <p className={styles.dueDate}>
-                <CalendarDays aria-hidden="true" />
-                Vence el {fullDateLabel(nextInstallment.dueDate)}
-              </p>
-            ) : null}
+          <div className={styles.summary}>
+            <p className={styles.amountEyebrow} id="active-credit-summary">{installmentLabel}</p>
+            <p className={styles.heroAmount}>{nextInstallment ? money(nextInstallment.amount) : "Sin saldo"}</p>
+            {nextInstallment ? <p className={styles.dueDate}>
+              {overdue ? "Venció el " : ""}{fullDateLabel(nextInstallment.dueDate)}
+            </p> : null}
+            <p className={styles.installmentCount}><strong>{safePaid}</strong> / {safeTotal} cuotas</p>
           </div>
-
-          <div className={styles.cardActions}>
-            <button
-              type="button"
-              className={styles.payButton}
-              onClick={onPayInstallment}
-              disabled={!canPayInstallment}
-            >
-              <CreditCard aria-hidden="true" />
-              <span>{paying ? "Abriendo..." : "Pagar cuota"}</span>
-              {nextInstallment ? <strong>{money(nextInstallment.amount)}</strong> : null}
-            </button>
-
-            {payoff?.available ? (
-              <button
-                type="button"
-                className={styles.payoffButton}
-                onClick={onPayoff}
-                disabled={!canPayoff}
-              >
-                <span>Liquidar crédito hoy</span>
-                <strong>{money(payoff.amount)}</strong>
-                <ChevronRight aria-hidden="true" />
-              </button>
-            ) : null}
+          <div className={styles.actions}>
+            <Button className={styles.payButton} onClick={onPayInstallment} disabled={!nextInstallment || paying}>
+              <CreditCard aria-hidden="true" /><span>{paying ? "Abriendo…" : "Pagar cuota"}</span>
+            </Button>
+            <Button variant="secondary" className={styles.payoffButton} onClick={onPayoff}
+              disabled={!payoff || paying} aria-describedby={payoff && !payoff.available ? "payoff-availability" : undefined}>
+              <span>Liquidar crédito</span>
+              <small>{payoff ? money(payoff.amount) : "Valor no disponible"}</small>
+            </Button>
+            {payoff && !payoff.available ? <p className={styles.availability} id="payoff-availability">
+              {payoff.reason || "Consulta la disponibilidad de liquidación."}
+            </p> : null}
+            <p className={styles.reminder}><CalendarDays aria-hidden="true" />
+              <span>{paymentReminder(nextInstallment?.dueDate || null, overdue, today)}</span>
+            </p>
           </div>
         </section>
 
         <section className={styles.progressSection} aria-labelledby="credit-progress-title">
-          <div className={styles.sectionHeadingRow}>
-            <h2 id="credit-progress-title">Avance del crédito</h2>
-            <p>
-              Cuota {safePaid} de {safeTotal}
-            </p>
-          </div>
-          <div
-            className={styles.progressDots}
-            role="progressbar"
-            aria-label={`${safePaid} de ${safeTotal} cuotas pagadas`}
-            aria-valuemin={0}
-            aria-valuemax={safeTotal}
-            aria-valuenow={safePaid}
-          >
-            {Array.from({ length: safeTotal }, (_, index) => (
-              <span
-                key={index}
-                className={index < safePaid ? styles.progressDotPaid : styles.progressDot}
-                aria-hidden="true"
-              />
-            ))}
+          <h2 id="credit-progress-title">Estado del crédito</h2>
+          <ProgressBar className={styles.progress} value={safeTotal ? safePaid / safeTotal * 100 : 0}
+            label={`${safePaid} de ${safeTotal} cuotas pagadas`} />
+          <div className={styles.progressLabels}>
+            <span>{safePaid} {safePaid === 1 ? "pagada" : "pagadas"}</span>
+            <span>{pending} {pending === 1 ? "pendiente" : "pendientes"}</span>
           </div>
         </section>
 
-        <button
-          type="button"
-          className={styles.deviceCard}
-          onClick={onOpenDevice || onOpenPlan}
-          aria-label={`Ver detalles de ${device.name}`}
-        >
-          <span className={styles.deviceImage}>
-            <Image
-              src={device.imageSrc}
-              alt={device.imageAlt}
-              fill
-              sizes="(max-width: 430px) 96px, 96px"
-            />
-          </span>
-          <span className={styles.deviceCopy}>
-            <span>Mi equipo</span>
-            <strong>{device.name}</strong>
-            {device.meta ? <small>{device.meta}</small> : null}
-          </span>
-          <ChevronRight className={styles.deviceChevron} aria-hidden="true" />
-        </button>
-
-        <section className={styles.movements} aria-labelledby="movements-title">
-          <h2 id="movements-title">Movimientos</h2>
-
-          <div className={styles.movementList}>
-            {nextInstallment ? (
-              <button type="button" className={styles.movement} onClick={onOpenPlan}>
-                <span className={styles.movementIcon} aria-hidden="true">
-                  <CalendarDays />
-                </span>
-                <span className={styles.movementCopy}>
-                  <strong>
-                    {compactDateLabel(nextInstallment.dueDate)} · Próxima cuota
-                  </strong>
-                  <small>{nextInstallment.stateLabel || "Programada"}</small>
-                </span>
-                <strong className={styles.movementAmount}>
-                  {money(nextInstallment.amount)}
-                </strong>
-              </button>
-            ) : null}
-
-            {lastPayment ? (
-              <button type="button" className={styles.movement} onClick={onOpenHistory}>
-                <span className={styles.movementIcon} aria-hidden="true">
-                  <CircleCheck />
-                </span>
-                <span className={styles.movementCopy}>
-                  <strong>
-                    {compactDateLabel(lastPayment.date)} · {lastPayment.label || "Pago recibido"}
-                  </strong>
-                  <small>{lastPayment.stateLabel || "Confirmado"}</small>
-                </span>
-                <strong className={styles.movementAmount}>{money(lastPayment.amount)}</strong>
-              </button>
-            ) : (
-              <p className={styles.emptyMovement}>
-                <Check aria-hidden="true" /> Aún no registras pagos en este crédito.
-              </p>
-            )}
-          </div>
+        <section className={styles.activity} aria-labelledby="activity-title">
+          <span className={styles.activityHandle} aria-hidden="true" />
+          <h2 id="activity-title">Tu actividad</h2>
+          <button type="button" className={styles.activityRow} onClick={onOpenDevice || onOpenPlan} aria-label={`Ver detalles de ${device.name}`}>
+            <span className={styles.deviceIcon} aria-hidden="true"><Smartphone /></span>
+            <span className={styles.activityCopy}><strong>{device.name}</strong><small>Equipo financiado</small></span>
+            <ChevronRight aria-hidden="true" />
+          </button>
+          {lastPayment ? (
+            <button type="button" className={styles.activityRow} onClick={onOpenHistory}>
+              <span className={`${styles.activityIcon} ${styles.paidIcon}`} aria-hidden="true"><Check /></span>
+              <span className={styles.activityCopy}><strong>{compactDateLabel(lastPayment.date)}</strong><small>{lastPayment.label || "Pago recibido"}</small></span>
+              <strong className={styles.activityAmount}>{money(lastPayment.amount)}</strong><ChevronRight aria-hidden="true" />
+            </button>
+          ) : <p className={styles.emptyActivity}><CircleCheck aria-hidden="true" />Aún no registras pagos en este crédito.</p>}
+          {nextInstallment ? (
+            <button type="button" className={styles.activityRow} onClick={onOpenPlan}>
+              <span className={styles.activityIcon} aria-hidden="true"><CalendarDays /></span>
+              <span className={styles.activityCopy}><strong>{compactDateLabel(nextInstallment.dueDate)}</strong><small>{installmentLabel}</small></span>
+              <strong className={styles.activityAmount}>{money(nextInstallment.amount)}</strong><ChevronRight aria-hidden="true" />
+            </button>
+          ) : null}
         </section>
       </main>
     </div>

@@ -1,0 +1,12 @@
+{
+  "tool": "image_gen (built-in)",
+  "current": "Use case: stylized-concept. Asset: production transparent PNG mascot for FINSER PAY customer app. Create ONE full-body premium 3D anthropomorphic black smartphone character matching the supplied user references: rounded tall black phone, black arms and hands at sides, short black legs and black sneakers, subtly angled three-quarter facing viewer, gentle large glossy eyes with small green iris rims, curved eyebrows and a small kind smile. Screen has precisely \"FINSER\" in vivid green and \"PAY\" in white together below the face. Calm friendly sophisticated expression, restrained high quality studio render, soft lighting, no Apple logo, no other text, no scene, no props. Fully transparent background, full character within frame with minimal margins, portrait. Do not create a UI or mockup. Eyes should be level at about 37% of full character height to support a subtle animated eyelid overlay.",
+  "overdue": [
+    "Use case: precise-object-edit. Change ONLY facial expression of the latest full-body FINSER PAY black smartphone mascot on warm ivory background. Preserve exact character identity, body, arms, sneakers, scale, framing, eye centers, branding and warm ivory background #F8F7F2. Expression clearly sad and concerned, not threatening: glossy watery eyes, inner eyebrow ends raised at center, outer ends drooping, small mouth curving DOWN with corners lowered, one clearly visible translucent tear falling from outer edge of right eye. Slightly lowered head feel through downcast gaze. Preserve the eye positions so the same animation overlay can be used. No smile, no grin, no angry eyebrows, no other elements. Full body premium 3D render with FINSER green and PAY white text.",
+    "Use case: background-extraction. Edit the latest provided sad FINSER PAY mascot image. Remove the ivory background completely and return a genuinely TRANSPARENT PNG cutout with alpha channel. Preserve every detail of the sad black smartphone character unchanged: full body, same eye positions, raised inner eyebrows, downturned mouth and visible tear, FINSER in green and PAY in white, same framing and aspect ratio. No backdrop, no dark halo, no new shadow, no white or ivory rectangle. Actual alpha transparency is required."
+  ],
+  "outputs": [
+    "public/assets/clientes/mascot-current.webp",
+    "public/assets/clientes/mascot-overdue.webp"
+  ]
+}
