@@ -1170,17 +1170,81 @@ test("la fábrica sincroniza el resultado y el portal usa un acceso compartido s
   assert.match(portalSource, /setAnalyst\(data\.analyst\)/);
   assert.doesNotMatch(portalSource, /setAnalystName|setAnalystExternalId/);
   assert.doesNotMatch(portalSource, /\{analyst\.name\}|\{analyst\.externalId\}/);
-  assert.match(portalSource, /Acceso de especialistas activo/);
   assert.match(portalSource, /inputMode="numeric"/);
+  assert.match(portalSource, /Enrolamiento del equipo/);
+  assert.match(portalSource, /Buscar solicitud/);
   assert.match(portalSource, /Aprobada/);
-  assert.match(portalSource, /Solo falta enrolar/);
-  assert.match(portalSource, /La venta llegó al paso 4/);
-  assert.match(portalSource, /ENROLADO CORRECTAMENTE/);
-  assert.match(portalSource, /import ConfirmDialog/);
+  assert.match(portalSource, /Verificación del analista/);
   assert.match(
     portalSource,
-    /confirmLabel="Confirmar ENROLADO CORRECTAMENTE"/
+    /Marca cada verificación al finalizar la prueba./
   );
+  const verificationLabels = [
+    "Confirmo BLOQUEO ACTIVACIÓN",
+    "Confirmo ABM",
+    "Confirmo BLOQUEO DISPOSITIVO",
+    "Confirmo DESBLOQUEO DISPOSITIVO",
+  ];
+  let previousVerificationIndex = -1;
+  for (const label of verificationLabels) {
+    assert.match(portalSource, new RegExp(label));
+    const verificationIndex = portalSource.indexOf(label);
+    assert.ok(verificationIndex > previousVerificationIndex);
+    previousVerificationIndex = verificationIndex;
+  }
+  assert.match(
+    portalSource,
+    /Completa las 4 verificaciones para continuar./
+  );
+  assert.match(portalSource, /CONFIRMAR ENROLAMIENTO/);
+  assert.ok(globalsSource.includes(".fp-enrollment-check:focus-visible"));
+  assert.doesNotMatch(portalSource, /Resultado de la prueba/);
+  assert.doesNotMatch(
+    portalSource,
+    /Confirmo que la prueba terminó al 100 %/
+  );
+  assert.match(portalSource, /import ConfirmDialog/);
+  assert.match(portalSource, /confirmLabel="Confirmar enrolamiento"/);
+  assert.match(
+    portalSource,
+    /const analystVerificationComplete = ANALYST_VERIFICATIONS.every/
+  );
+  assert.ok(
+    portalSource.includes(
+      "disabled={!analystVerificationComplete || !analyst || approving}"
+    )
+  );
+
+  const approveGuardStart = portalSource.indexOf(
+    "const approveCase = async () =>"
+  );
+  const approveGuardEnd = portalSource.indexOf(
+    "setApproving(true)",
+    approveGuardStart
+  );
+  const approveGuard = portalSource.slice(approveGuardStart, approveGuardEnd);
+  assert.match(approveGuard, /!analystVerificationComplete/);
+  assert.match(approveGuard, /approving/);
+  assert.ok(approveGuard.includes("setConfirmOpen(false)"));
+
+  const openGuardStart = portalSource.indexOf("const openConfirmation = () =>");
+  const openGuardEnd = portalSource.indexOf(
+    "const closeAccess",
+    openGuardStart
+  );
+  const openGuard = portalSource.slice(openGuardStart, openGuardEnd);
+  assert.match(openGuard, /!analystVerificationComplete/);
+  assert.ok(openGuard.includes("setConfirmOpen(false)"));
+  assert.ok(openGuard.includes("setConfirmOpen(true)"));
+
+  const confirmDialogStart = portalSource.indexOf("<ConfirmDialog");
+  const confirmDialogEnd = portalSource.indexOf("/>", confirmDialogStart);
+  const confirmDialog = portalSource.slice(
+    confirmDialogStart,
+    confirmDialogEnd
+  );
+  assert.match(confirmDialog, /confirmOpen/);
+  assert.match(confirmDialog, /analystVerificationComplete/);
 
   const approvalRequestStart = portalSource.indexOf(
     "/api/public/iphone-enrollment/cases/approve"

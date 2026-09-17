@@ -6008,6 +6008,11 @@ body {
   }
 }
 
+.fp-enrollment-check:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--fp-lime) 55%, transparent);
+  outline-offset: 3px;
+}
+
 .fp-enrollment-success-header {
   width: 112%;
   min-height: 128px;

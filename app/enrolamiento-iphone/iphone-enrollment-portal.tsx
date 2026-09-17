@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import {
-  Check,
   CheckCircle2,
   Clock3,
   LockKeyhole,
@@ -74,6 +73,23 @@ type ApiResponse = {
   expiresAt?: string;
 };
 
+const ANALYST_VERIFICATIONS = [
+  { key: "activationLock", label: "Confirmo BLOQUEO ACTIVACIÓN" },
+  { key: "abm", label: "Confirmo ABM" },
+  { key: "deviceLock", label: "Confirmo BLOQUEO DISPOSITIVO" },
+  { key: "deviceUnlock", label: "Confirmo DESBLOQUEO DISPOSITIVO" },
+] as const;
+
+type AnalystVerificationKey = (typeof ANALYST_VERIFICATIONS)[number]["key"];
+type AnalystVerifications = Record<AnalystVerificationKey, boolean>;
+
+const EMPTY_ANALYST_VERIFICATIONS: AnalystVerifications = {
+  activationLock: false,
+  abm: false,
+  deviceLock: false,
+  deviceUnlock: false,
+};
+
 async function readJson(response: Response) {
   return (await response.json().catch(() => ({}))) as ApiResponse;
 }
@@ -95,12 +111,16 @@ export default function IphoneEnrollmentPortal() {
   const [analyst, setAnalyst] = useState<AuthorizedAnalyst | null>(null);
   const [caseToken, setCaseToken] = useState("");
   const [enrollmentCase, setEnrollmentCase] = useState<EnrollmentCase | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
+  const [analystVerifications, setAnalystVerifications] =
+    useState<AnalystVerifications>(EMPTY_ANALYST_VERIFICATIONS);
   const [searching, setSearching] = useState(false);
   const [approving, setApproving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [successOpen, setSuccessOpen] = useState(false);
   const [message, setMessage] = useState("");
+  const analystVerificationComplete = ANALYST_VERIFICATIONS.every(
+    ({ key }) => analystVerifications[key]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -154,7 +174,7 @@ export default function IphoneEnrollmentPortal() {
   const resetCase = () => {
     setEnrollmentCase(null);
     setCaseToken("");
-    setConfirmed(false);
+    setAnalystVerifications(EMPTY_ANALYST_VERIFICATIONS);
     setConfirmOpen(false);
     setSuccessOpen(false);
     setMessage("");
@@ -172,7 +192,7 @@ export default function IphoneEnrollmentPortal() {
     setMessage("");
     setEnrollmentCase(null);
     setCaseToken("");
-    setConfirmed(false);
+    setAnalystVerifications(EMPTY_ANALYST_VERIFICATIONS);
     try {
       const response = await fetch("/api/public/iphone-enrollment/cases", {
         method: "POST",
@@ -202,7 +222,15 @@ export default function IphoneEnrollmentPortal() {
   };
 
   const approveCase = async () => {
-    if (!caseToken || !confirmed || !analyst) return;
+    if (
+      !caseToken ||
+      !analystVerificationComplete ||
+      !analyst ||
+      approving
+    ) {
+      setConfirmOpen(false);
+      return;
+    }
     setApproving(true);
     setMessage("");
     try {
@@ -235,7 +263,6 @@ export default function IphoneEnrollmentPortal() {
         current ? { ...current, review: data.review || null } : current
       );
       setConfirmOpen(false);
-      setConfirmed(true);
       setMessage("");
       setSuccessOpen(true);
     } catch {
@@ -244,6 +271,20 @@ export default function IphoneEnrollmentPortal() {
     } finally {
       setApproving(false);
     }
+  };
+
+  const openConfirmation = () => {
+    if (
+      !enrollmentCase ||
+      !caseToken ||
+      !analystVerificationComplete ||
+      !analyst ||
+      approving
+    ) {
+      setConfirmOpen(false);
+      return;
+    }
+    setConfirmOpen(true);
   };
 
   const closeAccess = async () => {
@@ -257,35 +298,54 @@ export default function IphoneEnrollmentPortal() {
     resetCase();
   };
 
+  const currentStep = enrollmentCase?.review
+    ? 3
+    : enrollmentCase
+      ? analystVerificationComplete
+        ? 3
+        : 2
+      : 1;
+
   return (
-    <main className="min-h-svh bg-[var(--fp-bg)] text-[var(--fp-graphite)]">
-      <div className="border-b border-white/10 bg-[var(--fp-navy)] px-4 py-4 sm:px-6">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
-          <FinserBrand compact dark accentPay showTagline={false} />
+    <main className="min-h-svh bg-[var(--fp-client-bg)] text-[var(--fp-graphite)]">
+      <div className="border-b border-white/10 bg-[var(--fp-client-matte)] px-4 sm:px-6">
+        <div className="mx-auto grid min-h-[68px] max-w-5xl grid-cols-[1fr_auto] items-center gap-4 sm:grid-cols-[1fr_auto_1fr]">
+          <FinserBrand wordmarkOnly dark accentFinser showTagline={false} />
+          <p className="hidden text-base font-black text-white sm:block">
+            Enrolamiento
+          </p>
           {accessState === "authorized" ? (
             <Button
               variant="ghost"
-              className="min-h-11 border border-white/15 text-white hover:bg-white/10"
+              className="min-h-11 justify-self-end !border-0 !px-0 text-white hover:bg-white/10 sm:!px-3"
               onClick={() => void closeAccess()}
             >
-              <LogOut className="h-4 w-4" aria-hidden="true" />
-              <span className="hidden sm:inline">Cerrar acceso</span>
+              <span className="grid h-8 w-8 place-items-center rounded-full bg-white/15">
+                <UserRound className="h-5 w-5 text-white/80" aria-hidden="true" />
+              </span>
+              <span className="hidden h-6 w-px bg-white/35 sm:block" aria-hidden="true" />
+              <LogOut className="h-4 w-4 sm:hidden" aria-hidden="true" />
+              <span className="hidden sm:inline">Cerrar sesión</span>
             </Button>
-          ) : null}
+          ) : (
+            <span />
+          )}
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-5xl px-4 py-7 sm:px-6 sm:py-10">
-        <header className="mb-6 max-w-3xl">
-          <Badge tone="positive">Operación iPhone</Badge>
-          <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-5xl">
-            Control de enrolamiento
+      <div className="mx-auto w-full max-w-5xl px-4 py-7 sm:px-6 sm:py-8">
+        <header className="max-w-3xl">
+          <Badge tone="positive" className="!normal-case">Operación iPhone</Badge>
+          <h1 className="mt-3 text-3xl font-black tracking-[-0.035em] text-black sm:text-[2.5rem] sm:leading-none">
+            Enrolamiento del equipo
           </h1>
           <p className="mt-3 text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
             Consulta la venta con cédula e IMEI, realiza la prueba y confirma el
-            enrolamiento. La fábrica del asesor se actualizará automáticamente.
+            enrolamiento.
           </p>
         </header>
+
+        <EnrollmentProgress currentStep={currentStep} />
 
         {accessState === "checking" ? (
           <Card className="p-7 sm:p-10">
@@ -315,40 +375,24 @@ export default function IphoneEnrollmentPortal() {
             />
           </Card>
         ) : (
-          <div className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
-            <Card className="p-5 sm:p-7">
+          <div className="mt-7 grid gap-5 lg:grid-cols-[0.82fr_1.18fr] lg:items-start">
+            <Card className="p-5 sm:p-6">
               <div className="flex items-start gap-3">
-                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--fp-radius-sm)] bg-[var(--fp-lime-soft)] text-[var(--fp-lime-strong)]">
-                  <Search className="h-5 w-5" aria-hidden="true" />
+                <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-lime-soft)] text-[#438f19]">
+                  <Search className="h-6 w-6" strokeWidth={2.2} aria-hidden="true" />
                 </span>
                 <div>
-                  <h2 className="text-xl font-black">Consultar solicitud</h2>
-                  <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-                    Ambos datos deben coincidir con una única solicitud iPhone activa.
+                  <h2 className="text-xl font-black text-black">Buscar solicitud</h2>
+                  <p className="mt-1 text-sm leading-5 text-[var(--fp-muted)]">
+                    Ingresa los datos de la venta para consultar la solicitud de
+                    enrolamiento.
                   </p>
                 </div>
               </div>
 
-              {analyst ? (
-                <div className="mt-5 flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
-                  <ShieldCheck
-                    className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-lime-strong)]"
-                    aria-hidden="true"
-                  />
-                  <div className="min-w-0 text-sm">
-                    <p className="font-black text-[var(--fp-graphite)]">
-                      Acceso de especialistas activo
-                    </p>
-                    <p className="mt-1 break-words text-[var(--fp-muted)]">
-                      Puede consultar y enrolar múltiples solicitudes durante esta sesión.
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
-              <form className="mt-6 grid gap-5" onSubmit={searchCase}>
-                <label className="grid gap-2 text-sm font-bold">
-                  Cédula del cliente
+              <form className="mt-8 grid gap-6" onSubmit={searchCase}>
+                <label className="grid gap-2 text-sm font-black text-black">
+                  <span>Cédula del cliente</span>
                   <Input
                     value={document}
                     onChange={(event) => {
@@ -361,10 +405,17 @@ export default function IphoneEnrollmentPortal() {
                     minLength={5}
                     maxLength={20}
                     required
+                    aria-describedby="iphone-enrollment-document-help"
                   />
+                  <span
+                    id="iphone-enrollment-document-help"
+                    className="text-xs font-normal text-[var(--fp-muted)]"
+                  >
+                    Número de documento sin espacios.
+                  </span>
                 </label>
-                <label className="grid gap-2 text-sm font-bold">
-                  IMEI del iPhone
+                <label className="grid gap-2 text-sm font-black text-black">
+                  <span>IMEI del iPhone</span>
                   <Input
                     value={imei}
                     onChange={(event) => {
@@ -377,14 +428,21 @@ export default function IphoneEnrollmentPortal() {
                     minLength={15}
                     maxLength={15}
                     required
+                    aria-describedby="iphone-enrollment-imei-help"
                   />
+                  <span
+                    id="iphone-enrollment-imei-help"
+                    className="text-xs font-normal text-[var(--fp-muted)]"
+                  >
+                    Ingresa el IMEI de 15 dígitos.
+                  </span>
                 </label>
                 <Button
                   type="submit"
-                  className="min-h-12 w-full"
+                  className="mt-1 min-h-12 w-full !rounded-[var(--fp-radius-md)]"
                   disabled={searching || document.length < 5 || imei.length !== 15}
                 >
-                  {searching ? "Consultando..." : "Consultar solicitud"}
+                  {searching ? "CONSULTANDO..." : "CONSULTAR SOLICITUD"}
                 </Button>
               </form>
 
@@ -399,7 +457,7 @@ export default function IphoneEnrollmentPortal() {
               ) : null}
             </Card>
 
-            <Card className="min-h-[360px] p-5 sm:p-7">
+            <Card className="min-h-[360px] p-5 sm:p-6">
               {searching ? (
                 <LoadingState label="Buscando la solicitud exacta..." />
               ) : !enrollmentCase ? (
@@ -411,64 +469,106 @@ export default function IphoneEnrollmentPortal() {
                 <ApprovedCase item={enrollmentCase} onNewCase={startNewCase} />
               ) : (
                 <div>
-                  <div className="flex flex-col gap-3 border-b border-[var(--fp-border)] pb-5 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex gap-4 border-b border-[var(--fp-border)] pb-4 sm:items-start sm:justify-between">
                     <div>
                       <div className="flex flex-wrap gap-2">
                         <StatusPill tone="positive">Aprobada</StatusPill>
-                        <StatusPill tone="warning">Solo falta enrolar</StatusPill>
                         {enrollmentCase.operationType ===
                         "WARRANTY_REPLACEMENT" ? (
                           <StatusPill tone="neutral">Cambio por garantía</StatusPill>
                         ) : null}
                       </div>
-                      <h2 className="mt-3 text-2xl font-black">
+                      <h2 className="mt-3 text-3xl font-black tracking-[-0.03em] text-black">
                         {enrollmentCase.solicitudNumero}
                       </h2>
                       <p className="mt-1 text-sm text-[var(--fp-muted)]">
                         {enrollmentCase.clienteNombre} · {enrollmentCase.documento}
                       </p>
                     </div>
-                    <Smartphone className="h-8 w-8 text-[var(--fp-lime-strong)]" aria-hidden="true" />
+                    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-lime-soft)] text-[#438f19]">
+                      <Smartphone className="h-6 w-6" strokeWidth={2.2} aria-hidden="true" />
+                    </span>
                   </div>
 
-                  <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+                  <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
                     <CaseDetail label="Equipo" value={enrollmentCase.equipo} />
                     <CaseDetail label="IMEI" value={enrollmentCase.imei} />
                     <CaseDetail label="Aliado" value={enrollmentCase.aliado} />
                     <CaseDetail label="Sede" value={enrollmentCase.sede} />
                   </dl>
 
-                  <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-lime-strong)] bg-[var(--fp-lime-soft)] p-4 text-sm leading-6 text-[var(--fp-graphite)]">
-                    {enrollmentCase.operationType === "WARRANTY_REPLACEMENT"
-                      ? "El crédito ya fue finalizado y este IMEI corresponde al equipo de reemplazo autorizado. Realiza la prueba antes de dejar el cambio listo para activación."
-                      : "La venta llegó al paso 4. El crédito está aprobado y el iPhone está listo para realizar la prueba de enrolamiento."}
-                  </div>
+                  <section
+                    className="mt-3 overflow-hidden rounded-[var(--fp-radius-md)] border border-[#8fca58] bg-white"
+                    aria-labelledby="iphone-enrollment-verification-title"
+                  >
+                    <div className="flex items-center gap-3 px-3 py-2">
+                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-lime-soft)] text-[#438f19]">
+                        <ShieldCheck className="h-6 w-6" strokeWidth={2.2} aria-hidden="true" />
+                      </span>
+                      <div>
+                        <h3
+                          id="iphone-enrollment-verification-title"
+                          className="text-lg font-black text-black"
+                        >
+                          Verificación del analista
+                        </h3>
+                        <p
+                          id="iphone-enrollment-verification-help"
+                          className="text-sm text-[var(--fp-muted)]"
+                        >
+                          Marca cada verificación al finalizar la prueba.
+                        </p>
+                      </div>
+                    </div>
+                    <fieldset
+                      className="border-t border-[var(--fp-border)] px-3"
+                      aria-describedby="iphone-enrollment-verification-help"
+                    >
+                      <legend className="sr-only">Verificaciones del analista</legend>
+                      {ANALYST_VERIFICATIONS.map(({ key, label }) => (
+                        <label
+                          key={key}
+                          className="flex min-h-10 cursor-pointer items-center gap-3 border-b border-[var(--fp-border)] py-2 text-sm font-bold text-[var(--fp-graphite)] last:border-b-0"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={analystVerifications[key]}
+                            onChange={(event) =>
+                              setAnalystVerifications((current) => ({
+                                ...current,
+                                [key]: event.target.checked,
+                              }))
+                            }
+                            className="fp-enrollment-check h-5 w-5 shrink-0 accent-[var(--fp-lime-strong)]"
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  </section>
 
-                  <div className="mt-6 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
-                    <p className="text-xs font-black uppercase tracking-[0.16em] text-[var(--fp-lime-strong)]">
-                      Resultado de la prueba
+                  {!analystVerificationComplete ? (
+                    <p
+                      id="iphone-enrollment-verification-pending"
+                      className="mt-2 text-sm text-[var(--fp-muted)]"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      Completa las 4 verificaciones para continuar.
                     </p>
-                    <ChecklistItem label="La cédula coincide con la solicitud" />
-                    <ChecklistItem label="El IMEI coincide con el iPhone consultado" />
-                    <label className="mt-3 flex min-h-14 cursor-pointer items-start gap-3 rounded-[var(--fp-radius-sm)] border border-[var(--fp-border)] bg-white p-3 text-sm font-bold leading-6">
-                      <input
-                        type="checkbox"
-                        checked={confirmed}
-                        onChange={(event) => setConfirmed(event.target.checked)}
-                        className="mt-0.5 h-5 w-5 shrink-0 accent-[var(--fp-lime-strong)]"
-                      />
-                      Confirmo que la prueba terminó al 100 % y el iPhone quedó
-                      enrolado correctamente.
-                    </label>
-                  </div>
-
+                  ) : null}
                   <Button
-                    className="mt-5 min-h-12 w-full"
-                    disabled={!confirmed || !analyst || approving}
-                    onClick={() => setConfirmOpen(true)}
+                    className="mt-3 min-h-12 w-full !rounded-[var(--fp-radius-md)]"
+                    disabled={!analystVerificationComplete || !analyst || approving}
+                    aria-describedby={
+                      analystVerificationComplete
+                        ? undefined
+                        : "iphone-enrollment-verification-pending"
+                    }
+                    onClick={openConfirmation}
                   >
                     <ShieldCheck className="h-5 w-5" aria-hidden="true" />
-                    ENROLADO CORRECTAMENTE
+                    CONFIRMAR ENROLAMIENTO
                   </Button>
                 </div>
               )}
@@ -478,8 +578,12 @@ export default function IphoneEnrollmentPortal() {
       </div>
 
       <ConfirmDialog
-        open={confirmOpen && Boolean(enrollmentCase)}
-        title="¿Confirmar ENROLADO CORRECTAMENTE?"
+        open={
+          confirmOpen &&
+          Boolean(enrollmentCase) &&
+          analystVerificationComplete
+        }
+        title="¿Confirmar enrolamiento?"
         description={
           enrollmentCase
             ? enrollmentCase.operationType === "WARRANTY_REPLACEMENT"
@@ -487,7 +591,7 @@ export default function IphoneEnrollmentPortal() {
               : `Se enviará la confirmación a ${enrollmentCase.solicitudNumero}. La fábrica validará nuevamente la cédula y el IMEI y habilitará las fotografías al asesor.`
             : ""
         }
-        confirmLabel="Confirmar ENROLADO CORRECTAMENTE"
+        confirmLabel="Confirmar enrolamiento"
         busy={approving}
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => void approveCase()}
@@ -504,6 +608,59 @@ export default function IphoneEnrollmentPortal() {
         />
       ) : null}
     </main>
+  );
+}
+
+function EnrollmentProgress({ currentStep }: { currentStep: 1 | 2 | 3 }) {
+  const steps = ["Consultar", "Validar", "Confirmar"] as const;
+
+  return (
+    <nav
+      className="mx-auto mt-5 max-w-2xl"
+      aria-label="Progreso del enrolamiento"
+    >
+      <ol className="grid grid-cols-3 sm:flex sm:items-center">
+        {steps.map((label, index) => {
+          const step = (index + 1) as 1 | 2 | 3;
+          const reached = step <= currentStep;
+          return (
+            <li
+              key={label}
+              className={`relative flex min-w-0 flex-col items-center ${
+                index < steps.length - 1 ? "sm:flex-1" : ""
+              }`}
+              aria-current={step === currentStep ? "step" : undefined}
+            >
+              <span
+                className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-black ${
+                  reached
+                    ? "bg-[#4b971c] text-white"
+                    : "bg-[#e8ebee] text-[#7b8492]"
+                }`}
+                aria-hidden="true"
+              >
+                {step}
+              </span>
+              <span
+                className={`mt-2 text-center text-xs sm:ml-3 sm:mt-0 sm:text-left sm:text-sm ${
+                  step === currentStep
+                    ? "font-black text-black"
+                    : "font-medium text-[var(--fp-muted)]"
+                }`}
+              >
+                {label}
+              </span>
+              {index < steps.length - 1 ? (
+                <span
+                  className="absolute left-[calc(50%+24px)] right-[calc(-50%+24px)] top-[18px] h-px bg-[var(--fp-border)] sm:static sm:mx-5 sm:min-w-3 sm:flex-1"
+                  aria-hidden="true"
+                />
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
   );
 }
 
@@ -769,22 +926,13 @@ function EnrollmentSuccessRow({
 
 function CaseDetail({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[var(--fp-radius-sm)] border border-[var(--fp-border)] bg-white px-3 py-3">
-      <dt className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--fp-muted)]">
+    <div className="min-h-[60px] rounded-[var(--fp-radius-sm)] border border-[var(--fp-border)] bg-[#fcfcfb] px-3 py-2">
+      <dt className="text-[0.68rem] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
         {label}
       </dt>
-      <dd className="mt-1 break-words font-black text-[var(--fp-graphite)]">{value}</dd>
-    </div>
-  );
-}
-
-function ChecklistItem({ label }: { label: string }) {
-  return (
-    <div className="mt-3 flex items-center gap-3 text-sm font-bold">
-      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--fp-lime-soft)] text-[var(--fp-lime-strong)]">
-        <Check className="h-4 w-4" aria-hidden="true" />
-      </span>
-      {label}
+      <dd className="mt-1 break-words font-black leading-tight text-[var(--fp-graphite)]">
+        {value}
+      </dd>
     </div>
   );
 }
