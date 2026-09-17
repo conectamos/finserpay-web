@@ -1,0 +1,17 @@
+.page { min-height: 100svh; background: var(--fp-client-bg); color: var(--fp-graphite); }
+.screen { max-width: 600px; min-height: 100svh; padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+.screen a { text-decoration: none; }
+.screen a:focus-visible, .navigation button:focus-visible { outline: 2px solid var(--fp-client-green); outline-offset: 4px; }
+.screen .paidAmount { font-size: clamp(42px, 11vw, 64px); }
+.screen .documentButton { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 54px; font-size: 14px; }
+.documentButton[aria-busy="true"] { opacity: .7; cursor: wait; }
+.navigation { position: fixed; bottom: 0; left: 50%; z-index: 40; transform: translateX(-50%); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; max-width: 600px; padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--fp-border); background: var(--fp-surface); }
+.navigation button { display: grid; place-items: center; gap: 4px; min-height: 60px; border: 0; background: transparent; color: var(--fp-client-muted); font-size: 12px; font-weight: 600; cursor: pointer; }
+.navigation svg { width: 28px; height: 28px; stroke-width: 2; }
+.navigation i { width: 32px; height: 4px; border-radius: 4px; }
+.navigation [aria-current="page"] { color: var(--fp-client-green); }
+.navigation [aria-current="page"] i { background: var(--fp-client-action); }
+@media (min-width: 540px) { .screen .documentButton { font-size: 17px; min-height: 58px; } }
+@media (max-width: 359px) { .screen .documentButton { font-size: 16px; } }
+@media (min-width: 360px) { .screen .mascotFloat { width: calc(100% + 36px); margin-left: -20px; } }
+.navigation button:first-child[aria-current="page"] svg { fill: currentColor; }
