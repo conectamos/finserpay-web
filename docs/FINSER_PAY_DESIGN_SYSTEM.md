@@ -125,3 +125,11 @@ ProgressBar compartidos, con botones redondeados y una única superficie para
 «Tu actividad». La mascota es una ilustración de marca; el equipo financiado
 se identifica mediante la referencia real del crédito, sin fotos de catálogo.
 Los estados y la disponibilidad de liquidación provienen del servidor.
+
+## Entrada de FINSER PAY Clientes
+
+La referencia aprobada usa una cabecera negra mate curva y una única tarjeta
+blanca de consulta sobre el marfil compartido. Los tokens `--fp-client-matte`
+y `--fp-client-muted` mantienen negro y gris neutros sin matices azules.
+Se reutilizan Button y FinserSupportLink. Los controles tienen áreas táctiles
+de al menos 44 px; la mascota respeta prefers-reduced-motion.
