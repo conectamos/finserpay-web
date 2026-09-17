@@ -1,4 +1,5 @@
 "use client";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import { useCallback, useEffect, useState } from "react";
 import ClientActiveCreditDashboard from "@/app/clientes/client-active-credit-dashboard";
@@ -27,6 +28,7 @@ type ClientInstallment = {
 type ClientCredit = {
   id: number;
   folio: string;
+  numeroCreditoVisible?: string;
   clienteNombre: string;
   clienteDocumento: string | null;
   clienteTelefono?: string | null;
@@ -182,7 +184,7 @@ function installmentsRangeLabel(items: ClientInstallment[]) {
 }
 
 function creditTitle(credit: ClientCredit) {
-  return credit.referenciaEquipo || `Credito ${credit.folio}`;
+  return credit.referenciaEquipo || `Crédito ${creditDisplayNumber(credit)}`;
 }
 
 function scrollToSection(id: string) {
@@ -724,10 +726,11 @@ export default function ClienteConsultaPage() {
         >
           <ClientActiveCreditDashboard
           activeCreditId={activeCredit.id}
+          creditNumber={creditDisplayNumber(activeCredit)}
           clientFirstName={firstName}
-          creditOptions={items.map((credit, index) => ({
+          creditOptions={items.map((credit) => ({
             id: credit.id,
-            label: `Crédito ${index + 1} · ${creditTitle(credit)}`,
+            label: `Crédito ${creditDisplayNumber(credit)}${credit.referenciaEquipo ? ` · ${credit.referenciaEquipo}` : ""}`,
           }))}
           device={{
             name: creditTitle(activeCredit),

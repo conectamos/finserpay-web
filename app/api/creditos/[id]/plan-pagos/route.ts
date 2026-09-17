@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
@@ -98,6 +99,7 @@ export async function GET(
     });
     const buffer = await buildCreditPaymentPlanPdf({
       folio: credito.folio,
+      numeroCreditoVisible: (await getCreditDisplayNumbers([credito.id])).get(credito.id) || credito.folio,
       clienteNombre: credito.clienteNombre,
       clienteDocumento: credito.clienteDocumento || "-",
       sedeNombre: credito.sede.nombre,

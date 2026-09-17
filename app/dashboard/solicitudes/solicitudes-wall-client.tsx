@@ -1,4 +1,5 @@
 "use client";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -48,6 +49,7 @@ type SolicitudItem = {
   id: string;
   source: "DRAFT" | "CREDIT";
   numero: string;
+  numeroCreditoVisible?: string | null;
   clienteNombre: string;
   documento: string | null;
   telefono?: string | null;
@@ -85,6 +87,12 @@ type FilterOption =
       label?: string;
       nombre?: string;
     };
+
+function solicitudDisplayNumber(item: SolicitudItem) {
+  return item.source === "CREDIT"
+    ? creditDisplayNumber({ folio: item.numero, numeroCreditoVisible: item.numeroCreditoVisible })
+    : item.numero;
+}
 
 type SolicitudOptions = {
   aliados?: FilterOption[];
@@ -744,7 +752,7 @@ export default function SolicitudesWallClient({
                       <tr key={item.id} className="align-top transition hover:bg-[var(--fp-bg)]">
                         <td className="px-4 py-4">
                           <strong className="block text-[var(--fp-graphite)]">{item.clienteNombre || "Sin nombre"}</strong>
-                          <span className="mt-1 block text-xs text-[var(--fp-muted)]">{item.numero}</span>
+                          <span className="mt-1 block text-xs text-[var(--fp-muted)]">{solicitudDisplayNumber(item)}</span>
                           <span className="mt-1 block text-xs font-semibold text-[var(--fp-muted)]">{item.documento || "Documento no disponible"}</span>
                         </td>
                         <td className="px-4 py-4"><StateBadges item={item} /></td>
@@ -821,7 +829,7 @@ export default function SolicitudesWallClient({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate font-black">{item.clienteNombre || "Sin nombre"}</p>
-                      <p className="mt-1 text-xs text-[var(--fp-muted)]">{item.numero} · {item.documento || "Sin documento"}</p>
+                      <p className="mt-1 text-xs text-[var(--fp-muted)]">{solicitudDisplayNumber(item)} · {item.documento || "Sin documento"}</p>
                     </div>
                     <ClipboardList className="h-5 w-5 shrink-0 text-[var(--fp-lime-strong)]" aria-hidden="true" />
                   </div>
@@ -928,8 +936,9 @@ export default function SolicitudesWallClient({
               <div className="min-w-0">
                 <p className="text-xs font-bold uppercase tracking-wide text-[var(--fp-lime-strong)]">Detalle operativo</p>
                 <h2 id="solicitud-detail-title" className="mt-1 truncate text-xl font-black">
-                  {detail?.numero || selectedId}
+                  {detail ? solicitudDisplayNumber(detail) : selectedId}
                 </h2>
+                {detail?.source === "CREDIT" && solicitudDisplayNumber(detail) !== detail.numero ? <p className="mt-1 text-xs text-[var(--fp-muted)]">Folio interno: {detail.numero}</p> : null}
               </div>
               <button
                 type="button"
@@ -1060,7 +1069,7 @@ export default function SolicitudesWallClient({
       <ConfirmDialog
         open={Boolean(desistTarget)}
         title="Desistir esta solicitud"
-        description={`La solicitud ${desistTarget?.numero || "seleccionada"} se cerrará y conservará su historial. Si existen otros expedientes para la misma cédula, el administrador central deberá gestionarlos antes de iniciar otra venta.`}
+        description={`La solicitud ${desistTarget ? solicitudDisplayNumber(desistTarget) : "seleccionada"} se cerrará y conservará su historial. Si existen otros expedientes para la misma cédula, el administrador central deberá gestionarlos antes de iniciar otra venta.`}
         confirmLabel="Sí, desistir"
         danger
         busy={desisting}

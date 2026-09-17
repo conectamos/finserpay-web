@@ -1,4 +1,5 @@
 "use client";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import Link from "next/link";
 import NextImage from "next/image";
@@ -553,6 +554,7 @@ type WhatsAppOtpResponse = {
 type CreditItem = {
   id: number;
   folio: string;
+  numeroCreditoVisible?: string;
   clienteNombre: string;
   clientePrimerNombre?: string | null;
   clientePrimerApellido?: string | null;
@@ -910,6 +912,7 @@ type CreditPaymentsResponse = {
   credito: {
     id: number;
     folio: string;
+    numeroCreditoVisible?: string;
     clienteNombre: string;
     clienteDocumento: string | null;
     clienteTelefono: string | null;
@@ -5583,6 +5586,7 @@ export default function CreditFactoryConsole({
       ? {
           id: selectedCredit.id,
           folio: selectedCredit.folio,
+          numeroCreditoVisible: selectedCredit.numeroCreditoVisible,
           clienteNombre: selectedCredit.clienteNombre,
           clienteDocumento: selectedCredit.clienteDocumento,
           clienteTelefono: selectedCredit.clienteTelefono,
@@ -5813,17 +5817,17 @@ export default function CreditFactoryConsole({
     : simulatorMode
       ? "Selecciona marca, modelo, precio e inicial para revisar cuotas antes de iniciar la venta."
     : lookupMode
-      ? "Consulta por cedula, telefono, folio, IMEI o nombre y abre el expediente del credito seleccionado."
+      ? "Consulta por cédula, teléfono, número de crédito, IMEI o nombre y abre el expediente del crédito seleccionado."
     : createClientMode
       ? `${initialSeller?.nombre || "Asesor"} | ${initialSession.sedeNombre}`
       : "Genera el credito, inscribe el equipo y confirma si el dispositivo se puede entregar.";
   const searchDescription = paymentsView
-    ? "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid para ubicar el caso y recibir el pago de las cuotas desde esta vista separada."
+    ? "Busca por cédula, teléfono, nombre, número de crédito, IMEI o deviceUid para ubicar el caso y recibir el pago de las cuotas desde esta vista separada."
     : deliveryMode
       ? "Escribe la cedula del cliente o el IMEI del equipo. Al consultar se mostrara si el credito ya esta en estado entregable."
     : lookupMode
-      ? "Cedula, telefono, nombre, folio o IMEI."
-      : "Busca por cedula, telefono, nombre, folio, IMEI o deviceUid para ubicar creditos existentes y revisar su estado sin salir de la fabrica.";
+      ? "Cédula, teléfono, nombre, número de crédito o IMEI."
+      : "Busca por cédula, teléfono, nombre, número de crédito, IMEI o deviceUid para ubicar créditos existentes y revisar su estado sin salir de la fábrica.";
   const factorySteps = [
     {
       id: 1,
@@ -9734,7 +9738,7 @@ export default function CreditFactoryConsole({
 
       if (result.data.deliveryStatus?.ready) {
         setNotice({
-          text: `${createdCredit.folio} quedo inscrito y 100% entregable.`,
+          text: `${creditDisplayNumber(createdCredit)} quedo inscrito y 100% entregable.`,
           tone: "emerald",
         });
       } else if (result.data.warning) {
@@ -9774,7 +9778,7 @@ export default function CreditFactoryConsole({
             solicitudId: draftId,
           });
           setNotice({
-            text: recoveredCredit.folio + " quedo creado correctamente.",
+            text: creditDisplayNumber(recoveredCredit) + " quedo creado correctamente.",
             tone: "emerald",
           });
           return recoveredCredit;
@@ -11785,9 +11789,9 @@ export default function CreditFactoryConsole({
 
             <dl className="mt-7 divide-y divide-[#e2e5e1] border-y border-[#e2e5e1]">
               <div className="grid gap-1 py-4 sm:grid-cols-[140px_1fr] sm:items-center">
-                <dt className="text-xs font-bold uppercase text-[#737b77]">Folio</dt>
+                <dt className="text-xs font-bold uppercase text-[#737b77]">Número de crédito</dt>
                 <dd className="break-all font-black text-[#111514]">
-                  {completedCredit.item.folio}
+                  {creditDisplayNumber(completedCredit.item)}
                 </dd>
               </div>
               <div className="grid gap-1 py-4 sm:grid-cols-[140px_1fr] sm:items-center">
@@ -12241,7 +12245,7 @@ export default function CreditFactoryConsole({
               ].join(" ")}
             >
               {paymentsView
-                ? "Cedula, telefono, folio o IMEI."
+                ? "Cédula, teléfono, número de crédito o IMEI."
                 : deliveryMode
                   ? "Ingresa cedula o IMEI para saber si el equipo se puede entregar."
                   : searchDescription}
@@ -12277,8 +12281,8 @@ export default function CreditFactoryConsole({
                   deliveryMode || adminFactoryAssistMode
                     ? "Cedula o IMEI"
                     : paymentsView
-                      ? "Cedula, telefono, folio o IMEI"
-                      : "Cedula, telefono, nombre, folio o IMEI"
+                      ? "Cédula, teléfono, número de crédito o IMEI"
+                      : "Cédula, teléfono, nombre, número de crédito o IMEI"
                 }
                 className={[
                   "w-full border bg-white py-3 pl-11 pr-4 text-base text-slate-900 outline-none transition focus:border-[#7ca613] focus:ring-4 focus:ring-[#b7e63d]/20",
@@ -12387,7 +12391,7 @@ export default function CreditFactoryConsole({
                           </span>
                         </span>
                         <span className="min-w-0 text-sm font-semibold text-slate-700">
-                          <span className="block truncate">{credit.folio}</span>
+                          <span className="block truncate">{creditDisplayNumber(credit)}</span>
                           <span className="mt-0.5 block text-xs font-normal text-slate-500">{credit.estado}</span>
                         </span>
                         <span className="min-w-0 text-sm text-slate-600">
@@ -12426,7 +12430,7 @@ export default function CreditFactoryConsole({
                       <option value="">Elige el credito a recaudar</option>
                       {credits.map((credit) => (
                         <option key={credit.id} value={credit.id}>
-                          {credit.clienteNombre} - {credit.clienteDocumento || credit.clienteTelefono || credit.folio} - {credit.referenciaEquipo || credit.imei} - saldo {currency(credit.saldoPendiente)}
+                          {creditDisplayNumber(credit)} - {credit.clienteNombre} - {credit.clienteDocumento || credit.clienteTelefono || "Sin documento"} - {credit.referenciaEquipo || credit.imei} - saldo {currency(credit.saldoPendiente)}
                         </option>
                       ))}
                     </select>
@@ -18446,7 +18450,7 @@ export default function CreditFactoryConsole({
                             <div>
                               <div className="flex flex-wrap items-center gap-2">
                                 <h4 className="text-xl font-black text-[#151a21]">
-                                  Credito {selectedCredit.folio}
+                                  Credito {creditDisplayNumber(selectedCredit)}
                                 </h4>
                                 <span className="fp-ui-status is-positive">
                                   {selectedCredit.deliverableReady ? "Entregable" : selectedCredit.estado}
@@ -18818,7 +18822,7 @@ export default function CreditFactoryConsole({
                         {sameClientCredits.map((credit) => (
                           <article key={`client-credit-${credit.id}`} className="flex flex-col gap-4 rounded-lg border border-[#d8dee5] bg-white p-5 shadow-[0_4px_14px_rgba(16,24,40,0.04)] sm:flex-row sm:items-center sm:justify-between">
                             <div>
-                              <h4 className="font-black text-[#151a21]">Credito {credit.folio}</h4>
+                              <h4 className="font-black text-[#151a21]">Credito {creditDisplayNumber(credit)}</h4>
                               <p className="mt-1 text-sm text-[#667085]">{credit.referenciaEquipo || "Equipo sin referencia"} · Saldo {currency(credit.saldoPendiente)}</p>
                             </div>
                             <button type="button" onClick={() => openLookupDetail(credit.id)} className="fp-ui-button is-secondary">
@@ -18868,7 +18872,7 @@ export default function CreditFactoryConsole({
                           {sameClientCredits.map((credit) => (
                             <div key={`client-history-${credit.id}`} className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                               <div>
-                                <p className="font-bold text-[#151a21]">{credit.folio} · {credit.estado}</p>
+                                <p className="font-bold text-[#151a21]">{creditDisplayNumber(credit)} · {credit.estado}</p>
                                 <p className="mt-1 text-sm text-[#667085]">Abierto {dateOnly(credit.fechaCredito)} · {currency(credit.saldoPendiente)} pendiente</p>
                               </div>
                               <button type="button" onClick={() => openLookupDetail(credit.id)} className="fp-ui-button is-ghost">
@@ -18979,9 +18983,9 @@ export default function CreditFactoryConsole({
                         </h4>
                         <div className="mt-2 border-y border-slate-200">
                           <DetailRow
-                            label="Folio y estado"
-                            value={selectedCredit.folio}
-                            detail={`${selectedCredit.estado} | ${selectedCreditPaymentStatusLabel}`}
+                            label="Número de crédito y estado"
+                            value={creditDisplayNumber(selectedCredit)}
+                            detail={`${selectedCredit.estado} | ${selectedCreditPaymentStatusLabel}${creditDisplayNumber(selectedCredit) !== selectedCredit.folio ? ` | Folio interno: ${selectedCredit.folio}` : ""}`}
                           />
                           <DetailRow
                             label="Responsable"
@@ -19138,7 +19142,7 @@ export default function CreditFactoryConsole({
                               className="grid gap-2 py-3 text-sm md:grid-cols-[1.2fr_1fr_1fr_auto] md:items-center"
                             >
                               <div>
-                                <p className="font-black text-slate-950">{credit.folio}</p>
+                                <p className="font-black text-slate-950">{creditDisplayNumber(credit)}</p>
                                 <p className="text-xs text-slate-500">{credit.estado}</p>
                               </div>
                               <p className="text-slate-600">{credit.referenciaEquipo || credit.imei}</p>
@@ -19256,8 +19260,8 @@ export default function CreditFactoryConsole({
 
                 <div className="grid gap-3 md:grid-cols-2">
                   <InfoTile
-                    label="Folio y estado"
-                    value={selectedCredit.folio}
+                    label="Número de crédito y estado"
+                    value={creditDisplayNumber(selectedCredit)}
                     detail={
                       <span
                         className={[
@@ -19687,7 +19691,7 @@ export default function CreditFactoryConsole({
                             <div>
                               <div className="flex flex-wrap items-center gap-2">
                                 <p className="text-lg font-black tracking-tight">
-                                  Credito #{credit.folio}
+                                  Credito #{creditDisplayNumber(credit)}
                                 </p>
                                 <span
                                   className={[
@@ -20026,7 +20030,7 @@ export default function CreditFactoryConsole({
                             selectedId === credit.id ? "text-slate-300" : "text-slate-500",
                           ].join(" ")}
                         >
-                          {credit.folio}
+                          {creditDisplayNumber(credit)}
                         </p>
                         <p className="mt-2 text-lg font-black tracking-tight">
                           {credit.clienteNombre}

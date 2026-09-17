@@ -12,6 +12,7 @@ export type SadminRegistration = {
 export type SadminCreditRow = {
   id: number;
   folio: string;
+  numeroCreditoVisible: string;
   createdAt: string;
   fechaCredito: string | null;
   clienteNombre: string;

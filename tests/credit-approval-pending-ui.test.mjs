@@ -21,6 +21,7 @@ function load(path, dependencies = {}, globals = {}) {
       if (name === "react") return React;
       if (name === "react/jsx-runtime") return jsxRuntime;
       if (name === "lucide-react") return icons;
+      if (name === "@/lib/credit-display-number") return load("lib/credit-display-number.ts");
       assert.ok(name in dependencies, `Unexpected dependency ${name} from ${path}`);
       return dependencies[name];
     }, ...globals,

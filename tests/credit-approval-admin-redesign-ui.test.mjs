@@ -28,9 +28,9 @@ test("cada fila muestra la cédula disponible y conserva un estado explícito cu
 
 test("el buscador compartido anuncia la cédula en su etiqueta, ayuda y estado vacío", () => {
   const workspace = read("app/revision-creditos/shared-approval-workspace.tsx");
-  assert.match(workspace, /Buscar por cliente, cédula, folio o aliado/);
-  assert.match(workspace, /placeholder="Cliente, cédula, folio o aliado"/);
-  assert.match(workspace, /Prueba con otro cliente, cédula, folio o aliado\./);
+  assert.match(workspace, /Buscar por cliente, cédula, crédito, folio o aliado/);
+  assert.match(workspace, /placeholder="Cliente, cédula, crédito o aliado"/);
+  assert.match(workspace, /Prueba con otro cliente, cédula, crédito, folio o aliado\./);
 });
 
 test("la ficha muestra la referencia del equipo y contempla el dato ausente", () => {

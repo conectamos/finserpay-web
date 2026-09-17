@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
@@ -79,7 +80,7 @@ export async function GET(
 
     return NextResponse.json({
       ok: true,
-      credit: { id: credit.id, folio: credit.folio },
+      credit: withCreditDisplayNumber(credit, await getCreditDisplayNumbers([credit.id])),
       amortization,
     });
   } catch (error) {

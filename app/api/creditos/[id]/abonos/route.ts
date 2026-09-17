@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
@@ -661,6 +662,7 @@ export async function GET(
       ok: true,
       credito: {
         ...syncedCredit,
+        numeroCreditoVisible: (await getCreditDisplayNumbers([credit.id])).get(credit.id) || credit.folio,
         fechaPrimerPago: syncedCredit.fechaPrimerPago?.toISOString() || null,
         fechaProximoPago: syncedCredit.fechaProximoPago?.toISOString() || null,
         equalityLastCheckAt: syncedCredit.equalityLastCheckAt?.toISOString() || null,

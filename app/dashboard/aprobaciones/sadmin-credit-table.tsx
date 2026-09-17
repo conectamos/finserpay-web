@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, RefreshCw, Save, Search } from "lucide-react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Save, Search } from "lucide-react";
 import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, PageHeader } from "@/app/_components/finser-ui";
 import type { SadminCreditRow, SadminPage, SadminRegistration } from "@/lib/credit-sadmin-types";
+import { confirmedSadminNumber, creditDisplayNumber } from "@/lib/credit-display-number";
 import styles from "./sadmin-credit-table.module.css";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
@@ -42,6 +43,7 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
   const [draftNumbers, setDraftNumbers] = useState<Record<number, string>>({});
   const [rowErrors, setRowErrors] = useState<Record<number, string>>({});
   const [savingIds, setSavingIds] = useState<Set<number>>(new Set());
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const pendingRequests = useRef(new Set<number>());
   const hasDrafts = Object.keys(draftNumbers).length > 0;
   const navigationBlocked = savingIds.size > 0 || hasDrafts;
@@ -103,7 +105,7 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
       }
       if (!response.ok || !payload.ok || !payload.sadmin) throw new SadminRequestError(responseError(payload, "No pudimos guardar el cambio. Intenta de nuevo."));
       const saved = payload.sadmin;
-      setData(current => current ? { ...current, items: current.items.map(item => item.id === row.id ? { ...item, sadmin: saved } : item) } : current);
+      setData(current => current ? { ...current, items: current.items.map(item => item.id === row.id ? { ...item, sadmin: saved, numeroCreditoVisible: confirmedSadminNumber(saved) || item.folio } : item) } : current);
       if (field === "numeroCredito") discardDraft(row.id);
     } catch (cause) {
       setRowErrors(current => ({ ...current, [row.id]: cause instanceof SadminRequestError ? cause.message : "No pudimos guardar el cambio. Revisa tu conexión e intenta de nuevo." }));
@@ -136,24 +138,23 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
       <div className={styles.summary}><span>{data.total.toLocaleString("es-CO")} créditos · 20 registros por página</span><span>Más recientes primero</span></div>
       <DataTable className={styles.tableWrap}>
         <table className={styles.table} aria-label="Créditos de cartera para creación en SADMIN" aria-busy={loading}>
-          <thead><tr>{["Crédito", "Cliente", "Equipo y origen", "Valores del crédito", "Tasas", "Pagos", "Saldos", "Creación SADMIN"].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
+          <thead><tr>{["Crédito", "Cliente", "Equipo", "Valores del crédito", "Creación SADMIN"].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
           <tbody>{data.items.map(row => {
             const saving = savingIds.has(row.id);
             const dirty = Object.hasOwn(draftNumbers, row.id);
             const number = draftNumbers[row.id] ?? row.sadmin.numeroCredito ?? "";
             const disabled = savingIds.size > 0 || loading || Boolean(error);
             const completed = checklist.filter(([field]) => row.sadmin[field]).length;
-            return <tr key={row.id}>
-              <th scope="row" className={styles.credit}><strong>{row.folio}</strong><Facts items={[["Fecha crédito", date(row.fechaCredito)], ["Creado", date(row.createdAt, true)]]} /><Badge tone={row.sadmin.estado === "CREADO_SADMIN" ? "positive" : "neutral"}>{row.sadmin.estado === "CREADO_SADMIN" ? "CREADO SADMIN" : "PENDIENTE SADMIN"}</Badge></th>
-              <td><strong>{text(row.clienteNombre)}</strong><Facts items={[["Cédula", text(row.clienteDocumento)], ["Teléfono", text(row.clienteTelefono)], ["Correo", text(row.clienteCorreo)], ["Dirección", text(row.clienteDireccion)], ["Nacimiento", date(row.clienteFechaNacimiento)], ["Género", text(row.clienteGenero)]]} /></td>
-              <td><strong>{text(row.referenciaEquipo)}</strong><Facts items={[["IMEI", text(row.imei)], ["Aliado", text(row.aliadoNombre)], ["Sede", text(row.sedeNombre)]]} /></td>
-              <td><Facts numeric items={[["Valor venta", amount(row.valorVenta)], ["Inicial", amount(row.cuotaInicial)], ["Crédito autorizado", amount(row.creditoAutorizado)], ["N.º cuotas", row.numeroCuotas], ["Valor cuota", amount(row.valorCuota)], ["Frecuencia", frequency(row.frecuenciaPago)]]} /></td>
-              <td><Facts numeric items={[["Interés mensual efectivo", rate(row.interesMensual)], ["Fianza total del crédito", rate(row.fianza)], ["Seguro por cuota", rate(row.seguro)]]} /></td>
-              <td><Facts numeric items={[["Próximo pago", date(row.fechaProximoPago)], ["Cuotas pagadas", row.cuotasPagadas], ["Cuotas pendientes", row.cuotasPendientes], ["Días vencidos", row.diasVencidos], ["Último pago", text(row.ultimoPago)]]} /></td>
-              <td><Facts numeric items={[["Obligación", amount(row.saldoObligacion)], ["Capital", amount(row.saldoCapital)], ["Fianza", amount(row.saldoFianza)], ["Intereses", amount(row.saldoIntereses)]]} /></td>
+            const expanded = expandedId === row.id;
+            const visibleNumber = creditDisplayNumber(row);
+            return <Fragment key={row.id}><tr>
+              <th scope="row" className={styles.credit}><strong>{visibleNumber}</strong>{visibleNumber !== row.folio ? <span className={styles.originalFolio}>Folio: {row.folio}</span> : null}<Facts items={[["Fecha crédito", date(row.fechaCredito)]]} /><Badge tone={row.sadmin.estado === "CREADO_SADMIN" ? "positive" : "neutral"}>{row.sadmin.estado === "CREADO_SADMIN" ? "CREADO SADMIN" : "PENDIENTE SADMIN"}</Badge></th>
+              <td><button id={`sadmin-client-${row.id}`} type="button" className={styles.clientButton} aria-expanded={expanded} aria-controls={`sadmin-detail-${row.id}`} onClick={() => setExpandedId(expanded ? null : row.id)}><span>{text(row.clienteNombre)}</span><ChevronDown size={16} aria-hidden="true" className={expanded ? styles.expandedIcon : ""} /></button><Facts items={[["Cédula", text(row.clienteDocumento)]]} /><span className={styles.detailHint}>{expanded ? "Ocultar información del crédito" : "Ver información del crédito"}</span></td>
+              <td><strong>{text(row.referenciaEquipo)}</strong><Facts items={[["Aliado", text(row.aliadoNombre)], ["Sede", text(row.sedeNombre)]]} /></td>
+              <td><Facts numeric items={[["Valor venta", amount(row.valorVenta)], ["Inicial", amount(row.cuotaInicial)], ["Crédito autorizado", amount(row.creditoAutorizado)]]} /></td>
               <td className={styles.registration}>
                 <div className={styles.progress}><Badge tone={row.sadmin.estado === "CREADO_SADMIN" ? "positive" : "warning"}>{completed} de 3 verificaciones</Badge>{saving ? <span role="status">Guardando...</span> : null}</div>
-                <fieldset disabled={disabled} aria-label={`Verificaciones SADMIN de ${row.folio}`}>
+                <fieldset id={`sadmin-checklist-${row.id}`} disabled={disabled} aria-label={`Verificaciones SADMIN de ${visibleNumber}`}>
                   {checklist.slice(0, 2).map(([field, label]) => <label key={field} className={styles.check}><input type="checkbox" checked={row.sadmin[field]} onChange={event => void save(row, field, event.target.checked)} /><span>{label}</span></label>)}
                   <div className={styles.number}>
                     <label htmlFor={`sadmin-number-${row.id}`}>Número asignado en SADMIN</label>
@@ -166,7 +167,14 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
                 {rowErrors[row.id] ? <p role="alert" className={styles.rowError}>{rowErrors[row.id]}</p> : null}
                 {row.sadmin.completedAt ? <p className={styles.updated}>Completado: {date(row.sadmin.completedAt, true)}</p> : row.sadmin.updatedAt ? <p className={styles.updated}>Actualizado: {date(row.sadmin.updatedAt, true)}</p> : null}
               </td>
-            </tr>;
+            </tr>{expanded ? <tr className={styles.detailRow}><td colSpan={5}><div id={`sadmin-detail-${row.id}`} role="region" aria-labelledby={`sadmin-client-${row.id}`} className={styles.details}>
+              <section><h3>Datos del cliente</h3><Facts items={[["Nombre", text(row.clienteNombre)], ["Cédula", text(row.clienteDocumento)], ["Teléfono", text(row.clienteTelefono)], ["Correo", text(row.clienteCorreo)], ["Dirección", text(row.clienteDireccion)], ["Nacimiento", date(row.clienteFechaNacimiento)], ["Género", text(row.clienteGenero)]]} /></section>
+              <section><h3>Crédito, equipo y origen</h3><Facts items={[["Número de crédito", visibleNumber], ["Folio original", row.folio], ["Fecha crédito", date(row.fechaCredito)], ["Creado", date(row.createdAt, true)], ["Referencia", text(row.referenciaEquipo)], ["IMEI", text(row.imei)], ["Aliado", text(row.aliadoNombre)], ["Sede", text(row.sedeNombre)]]} /></section>
+              <section><h3>Valores y plan</h3><Facts numeric items={[["Valor venta", amount(row.valorVenta)], ["Inicial", amount(row.cuotaInicial)], ["Crédito autorizado", amount(row.creditoAutorizado)], ["N.º cuotas", row.numeroCuotas], ["Valor cuota", amount(row.valorCuota)], ["Frecuencia", frequency(row.frecuenciaPago)]]} /></section>
+              <section><h3>Tasas</h3><Facts numeric items={[["Interés mensual efectivo", rate(row.interesMensual)], ["Fianza total del crédito", rate(row.fianza)], ["Seguro por cuota", rate(row.seguro)]]} /></section>
+              <section><h3>Pagos</h3><Facts numeric items={[["Próximo pago", date(row.fechaProximoPago)], ["Cuotas pagadas", row.cuotasPagadas], ["Cuotas pendientes", row.cuotasPendientes], ["Días vencidos", row.diasVencidos], ["Último pago", text(row.ultimoPago)]]} /></section>
+              <section><h3>Saldos</h3><Facts numeric items={[["Obligación", amount(row.saldoObligacion)], ["Capital", amount(row.saldoCapital)], ["Fianza", amount(row.saldoFianza)], ["Intereses", amount(row.saldoIntereses)]]} /></section>
+            </div></td></tr> : null}</Fragment>;
           })}</tbody>
         </table>
       </DataTable>

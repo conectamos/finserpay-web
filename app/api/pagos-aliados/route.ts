@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import { withSettlementDisplayNumbers } from "@/lib/credit-display-number-server";
 import {
   canCreateAllyPayment,
   getAllyPaymentAccess,
@@ -208,9 +209,9 @@ export async function GET(request: Request) {
         allyId: access.allyId,
       },
       allies,
-      pending,
-      settlements,
-      preview,
+      pending: (await withSettlementDisplayNumbers([pending]))[0],
+      settlements: await withSettlementDisplayNumbers(settlements),
+      preview: preview ? (await withSettlementDisplayNumbers([preview]))[0] : null,
       correlationId,
     });
   } catch (error) {

@@ -28,7 +28,7 @@ export const APPROVAL_EVIDENCE = [
 type EvidenceField = (typeof APPROVAL_EVIDENCE)[number]["field"];
 
 export type ApprovalCredit = Record<EvidenceField, string | null> & {
-  id: number; folio: string; clienteNombre: string; clienteDocumento: string | null;
+  id: number; folio: string; numeroCreditoVisible?: string | null; clienteNombre: string; clienteDocumento: string | null;
   clienteCorreo: string | null; clienteTelefono: string | null; clienteDepartamento: string | null;
   clienteCiudad: string | null; clienteDireccion: string | null;
   plazoMeses: number | null; frecuenciaPago: string | null; valorCuota: number | null;
@@ -126,6 +126,8 @@ export function approvalPdf(value: string | null) {
 
 const requiredSql = buildCreditApprovalRequiredSql("credit");
 const scopeSql = `UPPER(BTRIM(COALESCE(ally."codigo", ''))) <> 'FINSERPAY'`;
+const displayNumberSql = `COALESCE((SELECT NULLIF(BTRIM(sadmin."numeroCredito"),'') FROM "CreditSadminRegistration" sadmin
+  WHERE sadmin."creditoId"=credit."id" AND sadmin."numeroCreditoConfirmado"),credit."folio")`;
 
 async function requirePolicy(db: ApprovalDatabase) {
   const rows = await db.$queryRawUnsafe<Array<{ id: number }>>('SELECT "id" FROM "CreditApprovalPolicy" WHERE "id" = 1');
@@ -135,9 +137,9 @@ async function requirePolicy(db: ApprovalDatabase) {
 export async function listCreditApprovals(db: ApprovalDatabase, documento: string) {
   await requirePolicy(db);
   return db.$queryRawUnsafe<Array<{
-    id: number; folio: string; clienteDocumento: string | null; clienteNombre: string;
+    id: number; folio: string; numeroCreditoVisible: string; clienteDocumento: string | null; clienteNombre: string;
     aliadoNombre: string; fechaCredito: Date; required: boolean; status: string;
-  }>>(`SELECT credit."id", credit."folio", credit."clienteDocumento", credit."clienteNombre",
+  }>>(`SELECT credit."id", credit."folio", ${displayNumberSql} AS "numeroCreditoVisible", credit."clienteDocumento", credit."clienteNombre",
       ally."nombre" AS "aliadoNombre", credit."fechaCredito", ${requiredSql} AS required,
       CASE WHEN NOT ${requiredSql} THEN 'NOT_REQUIRED'
         WHEN review."status" = 'APPROVED' AND review."approvedRevision" = review."revision" THEN 'APPROVED'
@@ -150,7 +152,7 @@ export async function listCreditApprovals(db: ApprovalDatabase, documento: strin
 }
 
 async function readCredit(db: ApprovalDatabase, id: number, lock = false) {
-  const rows = await db.$queryRawUnsafe<ApprovalCredit[]>(`SELECT credit."id", credit."folio",
+  const rows = await db.$queryRawUnsafe<ApprovalCredit[]>(`SELECT credit."id", credit."folio", ${displayNumberSql} AS "numeroCreditoVisible",
       credit."clienteNombre", credit."clienteDocumento", credit."fechaCredito", credit."createdAt",
       credit."clienteCorreo", credit."clienteTelefono", credit."clienteDepartamento", credit."clienteCiudad",
       credit."clienteDireccion", credit."plazoMeses", credit."frecuenciaPago",
@@ -253,7 +255,7 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
   if (!documentAvailable) blockingReasons.push("El documento firmado de FirmaSeguro aún no está disponible.");
   if (recordingBlockedReason) blockingReasons.push(recordingBlockedReason);
   return {
-    id: credit.id, folio: credit.folio, clienteDocumento: credit.clienteDocumento,
+    id: credit.id, folio: credit.folio, numeroCreditoVisible: credit.numeroCreditoVisible || credit.folio, clienteDocumento: credit.clienteDocumento,
     clienteNombre: credit.clienteNombre, aliadoNombre: credit.aliadoNombre, fechaCredito: iso(credit.fechaCredito),
     clienteCorreo: contact(credit.clienteCorreo), clienteTelefono: contact(credit.clienteTelefono),
     clienteDepartamento: contact(getColombiaDepartmentLabel(credit.clienteDepartamento)),

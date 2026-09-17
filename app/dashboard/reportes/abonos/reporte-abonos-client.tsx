@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 type SessionUser = {
   id: number;
@@ -44,6 +45,7 @@ type PaymentReportItem = {
   credito: {
     id: number;
     folio: string;
+    numeroCreditoVisible?: string | null;
     clienteNombre: string;
     clienteDocumento: string | null;
     sede?: {
@@ -156,7 +158,7 @@ function htmlTable(headers: string[], rows: Array<Array<string | number | null |
     .join("")}</tr></thead><tbody>${rows
     .map(
       (row) =>
-        `<tr>${row.map((cell) => `<td>${excelCell(cell)}</td>`).join("")}</tr>`
+        `<tr>${row.map((cell) => `<td${typeof cell === "string" ? ` style='mso-number-format:"\\@";'` : ""}>${excelCell(cell)}</td>`).join("")}</tr>`
     )
     .join("")}</tbody></table>`;
 }
@@ -195,7 +197,8 @@ function exportPaymentsToExcel(items: PaymentReportItem[], byDay: PaymentByDay[]
     "Fecha",
     "Cliente",
     "Documento",
-    "Folio",
+    "Número crédito",
+    "Folio original",
     "Aliado",
     "Sede",
     "Vendedor/Supervisor",
@@ -210,6 +213,7 @@ function exportPaymentsToExcel(items: PaymentReportItem[], byDay: PaymentByDay[]
     formatDateTime(item.fechaAbono),
     item.credito.clienteNombre,
     item.credito.clienteDocumento || "",
+    creditDisplayNumber(item.credito),
     item.credito.folio,
     item.sede.aliado?.nombre || "",
     item.sede.nombre,
@@ -400,7 +404,7 @@ export default function ReporteAbonosPage({
     }
 
     const motivo = window.prompt(
-      `Motivo de anulacion del recaudo ${formatMoney(item.valor)} del folio ${item.credito.folio}:`,
+      `Motivo de anulacion del recaudo ${formatMoney(item.valor)} del crédito ${creditDisplayNumber(item.credito)}:`,
       "Anulacion administrativa"
     );
 
@@ -451,7 +455,7 @@ export default function ReporteAbonosPage({
     }
 
     const confirmed = window.confirm(
-      `Vas a ELIMINAR este recaudo de ${formatMoney(item.valor)} del folio ${item.credito.folio}. Se borrara el abono local, caja asociada y enlaces digitales relacionados, y se quitara este registro del reporte.`
+      `Vas a ELIMINAR este recaudo de ${formatMoney(item.valor)} del crédito ${creditDisplayNumber(item.credito)}. Se borrara el abono local, caja asociada y enlaces digitales relacionados, y se quitara este registro del reporte.`
     );
 
     if (!confirmed) {
@@ -539,7 +543,7 @@ export default function ReporteAbonosPage({
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar por cliente, documento, folio, sede o vendedor"
+              placeholder="Cliente, documento, número crédito, folio, sede o vendedor"
               className="fp-ui-input"
             />
 
@@ -671,7 +675,7 @@ export default function ReporteAbonosPage({
                   <tr>
                     <th className="px-3 py-3 text-left font-semibold">Fecha</th>
                     <th className="px-3 py-3 text-left font-semibold">Cliente</th>
-                    <th className="px-3 py-3 text-left font-semibold">Folio</th>
+                    <th className="px-3 py-3 text-left font-semibold">Número crédito</th>
                     <th className="px-3 py-3 text-left font-semibold">Aliado</th>
                     <th className="px-3 py-3 text-left font-semibold">Sede</th>
                     <th className="px-3 py-3 text-left font-semibold">Vendedor/Supervisor</th>
@@ -700,7 +704,10 @@ export default function ReporteAbonosPage({
                             {item.credito.clienteDocumento || "-"}
                           </div>
                         </td>
-                        <td className="break-all px-3 py-3 align-top font-semibold text-slate-950">{item.credito.folio}</td>
+                        <td className="break-all px-3 py-3 align-top font-semibold text-slate-950">
+                          {creditDisplayNumber(item.credito)}
+                          {creditDisplayNumber(item.credito) !== item.credito.folio ? <p className="mt-1 text-xs font-normal text-[var(--fp-muted)]">Folio original: {item.credito.folio}</p> : null}
+                        </td>
                         <td className="break-words px-3 py-3 align-top">
                           {item.sede.aliado?.nombre || "-"}
                         </td>

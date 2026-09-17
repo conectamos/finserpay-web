@@ -13,6 +13,7 @@ const projectRoot = path.resolve(
 );
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const carteraExport = await jiti.import("../lib/cartera-export.ts");
+const displayNumber = await jiti.import("../lib/credit-display-number.ts");
 
 function loadRoute(dependencies) {
   const routePath = "app/api/dashboard/cartera/export/route.ts";
@@ -182,6 +183,14 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
     },
     "@/lib/aliados": { isFinserPayCentralAlly: () => true },
     "@/lib/cartera-export": carteraExport,
+    "@/lib/credit-display-number": displayNumber,
+    "@/lib/credit-display-number-server": {
+      async getCreditDisplayNumbers(ids) {
+        assert.deepEqual(Array.from(ids), [1, 2, 3, 4]);
+        return new Map([[1, "000123-A"]]);
+      },
+      withCreditDisplayNumber: (credit, numbers) => ({ ...credit, numeroCreditoVisible: numbers.get(credit.id) || credit.folio }),
+    },
     "@/lib/roles": { isAdminRole: () => true },
     "@/lib/prisma": { default: prisma },
   });
@@ -198,11 +207,17 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
   assert.match(html, /Interés mensual efectivo \(%\)/);
   assert.match(html, /Fianza total del crédito \(%\)/);
   assert.match(html, /Seguro por cuota \(%\)/);
+  assert.match(html, /<th>Número crédito<\/th>/);
+  assert.match(html, /<th>Folio original<\/th>/);
 
   const activeRow = rows.find((row) => row.includes("CLIENTE_ACTIVO_EXPORTADO"));
   const paidRow = rows.find((row) => row.includes("CLIENTE_PAGADO_EXPORTADO"));
   assert.ok(activeRow);
   assert.ok(paidRow);
+  assert.match(activeRow, />000123-A<\/td>[\s\S]*>CARTERA-1<\/td>/);
+  assert.match(paidRow, />CARTERA-2<\/td>[\s\S]*>CARTERA-2<\/td>/);
+  assert.equal(credits[0].folio, "CARTERA-1");
+  assert.equal(credits[0].numeroCreditoVisible, undefined);
   assert.doesNotMatch(html, /CLIENTE_CANCELADO_NO_EXPORTAR/);
   assert.doesNotMatch(html, /CLIENTE_ANULADO_NO_EXPORTAR/);
 

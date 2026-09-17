@@ -4,11 +4,13 @@ import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import type { NoveltyDatabase } from "@/lib/credit-approval-novelty-core";
 
 type Cursor = { createdAt: string; id: number };
+const displayNumberSql = `COALESCE((SELECT NULLIF(BTRIM(sadmin."numeroCredito"),'') FROM "CreditSadminRegistration" sadmin
+  WHERE sadmin."creditoId"=credit."id" AND sadmin."numeroCreditoConfirmado"),credit."folio")`;
 export type CreditApprovalQueueInput = { cursor?: string | null; limit?: number; documento?: string | null; q?: string | null };
 export function approvalQueueSearch(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "string" || value.length > 100 || /[\u0000-\u001f\u007f]/.test(value)) {
-    throw new CreditApprovalError("INVALID_SEARCH", "Busca por cliente, cédula, folio o aliado con hasta 100 caracteres.");
+    throw new CreditApprovalError("INVALID_SEARCH", "Busca por cliente, cédula, número de crédito, folio o aliado con hasta 100 caracteres.");
   }
   return value.trim() || null;
 }
@@ -17,6 +19,8 @@ function queueSearchSql(parameter: number) {
   return `(strpos(lower(COALESCE(credit."clienteNombre",'')),lower($${parameter}::text))>0
     OR strpos(lower(COALESCE(credit."clienteDocumento",'')),lower($${parameter}::text))>0
     OR strpos(lower(COALESCE(credit."folio",'')),lower($${parameter}::text))>0
+    OR EXISTS (SELECT 1 FROM "CreditSadminRegistration" sadmin WHERE sadmin."creditoId"=credit."id"
+      AND sadmin."numeroCreditoConfirmado" AND strpos(lower(COALESCE(sadmin."numeroCredito",'')),lower($${parameter}::text))>0)
     OR strpos(lower(COALESCE(ally."nombre",'')),lower($${parameter}::text))>0)`;
 }
 function queueVisibleScopeSql() {
@@ -65,7 +69,7 @@ export async function listCreditApprovalQueue(db: NoveltyDatabase, input: Credit
   const cursor = parseApprovalQueueCursor(input.cursor);
   const limit = approvalQueueLimit(input.limit);
   const search = approvalQueueSearch(input.q);
-  const rows = await db.$queryRawUnsafe<Array<{ id: number; createdAt: Date }>>(`SELECT credit."id",credit."folio",credit."clienteDocumento",credit."clienteNombre",
+  const rows = await db.$queryRawUnsafe<Array<{ id: number; createdAt: Date }>>(`SELECT credit."id",credit."folio",${displayNumberSql} AS "numeroCreditoVisible",credit."clienteDocumento",credit."clienteNombre",
     ally."nombre" AS "aliadoNombre",site."nombre" AS "sedeNombre",credit."fechaCredito",credit."createdAt",
     true AS required,'PENDING' AS status,COALESCE(review."revision",1) AS revision,
     CASE WHEN novelty."id" IS NULL THEN NULL ELSE json_build_object('id',novelty."id",'status',novelty."status",'version',novelty."version",
@@ -112,7 +116,7 @@ export async function listApprovedCreditQueue(db: NoveltyDatabase, input: Credit
   const cursor = parseApprovedQueueCursor(input.cursor);
   const limit = approvalQueueLimit(input.limit);
   const search = approvalQueueSearch(input.q);
-  const rows = await db.$queryRawUnsafe<Array<{ id: number; approvedAt: Date }>>(`SELECT credit."id",credit."folio",credit."clienteDocumento",credit."clienteNombre",
+  const rows = await db.$queryRawUnsafe<Array<{ id: number; approvedAt: Date }>>(`SELECT credit."id",credit."folio",${displayNumberSql} AS "numeroCreditoVisible",credit."clienteDocumento",credit."clienteNombre",
     ally."nombre" AS "aliadoNombre",site."nombre" AS "sedeNombre",credit."fechaCredito",credit."createdAt",
     true AS required,'APPROVED' AS status,review."revision",review."approvedAt",review."approvedByName",
     EXISTS (SELECT 1 FROM "LiquidacionAliadoCredito" paid WHERE paid."creditoId"=credit."id") AS paid

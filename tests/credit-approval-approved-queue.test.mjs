@@ -53,7 +53,7 @@ test("el listado aprobado exige política y no usa auditoría, blobs ni escritur
   assert.throws(() => actors.buildCurrentCreditApprovalSql("credit; DROP TABLE", "review"), /Invalid approval SQL alias/);
 });
 
-test("búsqueda limitada, literal y parametrizada se aplica a cliente, cédula, folio y aliado", async () => {
+test("búsqueda limitada y parametrizada incluye folio y número SADMIN confirmado", async () => {
   assert.equal(queue.approvalQueueSearch("  Cliente  "), "Cliente");
   for (const empty of [null, undefined, "", "   "]) assert.equal(queue.approvalQueueSearch(empty), null);
   for (const invalid of [1, {}, "x".repeat(101), "x\u0000", "x\n"]) assert.throws(() => queue.approvalQueueSearch(invalid), { code: "INVALID_SEARCH" });
@@ -73,11 +73,13 @@ test("búsqueda limitada, literal y parametrizada se aplica a cliente, cédula, 
       'credit\\."clienteNombre"',
       'credit\\."clienteDocumento"',
       'credit\\."folio"',
+      'sadmin\\."numeroCredito"',
       'ally\\."nombre"',
     ]) {
       assert.match(calls[1].sql, new RegExp("strpos\\(lower\\(COALESCE\\(" + field + ",''\\)\\),lower\\(\\$" + searchParameter + "::text\\)\\)>0"));
     }
-    assert.equal((calls[1].sql.match(new RegExp("lower\\(\\$" + searchParameter + "::text\\)", "g")) || []).length, 4);
+    assert.equal((calls[1].sql.match(new RegExp("lower\\(\\$" + searchParameter + "::text\\)", "g")) || []).length, 5);
+    assert.match(calls[1].sql, /sadmin\."creditoId"=credit\."id"\s+AND sadmin\."numeroCreditoConfirmado"/);
     assert.match(calls[1].sql, /credit\."createdAt">=\(SELECT "activatedAt"/);
     assert.match(calls[1].sql, /credit\."equalityService"[\s\S]*IMPORTACION_MASIVA/);
     assert.match(calls[1].sql, /ally\."codigo"[\s\S]*FINSERPAY/);
@@ -126,12 +128,13 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
   assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname));
   assert.equal(url.pathname, "/approval_queue_test");
   const db = new pg.Client({ connectionString }); await db.connect(); t.after(() => db.end());
-  const tables = ["CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalReissue",
+  const tables = ["CreditSadminRegistration","CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalReissue",
     "CreditApprovalReview", "CreditApprovalPolicy", "LiquidacionAliadoCredito", "Credito", "Sede", "Aliado"];
   const existing = (await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public'")).rows;
   assert.ok(existing.every(row => tables.includes(row.tablename)), "No eliminar tablas ajenas al fixture");
   for (const table of tables) await db.query(`DROP TABLE IF EXISTS public."${table}" CASCADE`);
   await db.query(`
+    CREATE TABLE "CreditSadminRegistration" ("creditoId" INTEGER PRIMARY KEY,"numeroCredito" TEXT,"numeroCreditoConfirmado" BOOLEAN NOT NULL DEFAULT false);
     CREATE TABLE "CreditApprovalPolicy" ("id" INT PRIMARY KEY,"activatedAt" TIMESTAMP(3));
     INSERT INTO "CreditApprovalPolicy" VALUES (1,'2026-09-09');
     CREATE TABLE "Aliado" ("id" INT PRIMARY KEY,"nombre" TEXT,"codigo" TEXT);
@@ -243,7 +246,7 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
     do { const page = await queue.listApprovedCreditQueue(api, { documento: "pages", limit: 2, cursor: next }); rows.push(...page.items); next = page.nextCursor; } while (next);
     assert.deepEqual(rows.map(row => row.id), ids.reverse());
     assert.ok(rows.every(row => row.status === "APPROVED" && row.required === true && row.paid === false));
-    assert.ok(rows.every(row => Object.keys(row).sort().join(",") === "aliadoNombre,approvedAt,approvedByName,clienteDocumento,clienteNombre,createdAt,fechaCredito,folio,id,paid,required,revision,sedeNombre,status"));
+    assert.ok(rows.every(row => Object.keys(row).sort().join(",") === "aliadoNombre,approvedAt,approvedByName,clienteDocumento,clienteNombre,createdAt,fechaCredito,folio,id,numeroCreditoVisible,paid,required,revision,sedeNombre,status"));
   });
   await t.test("El liquidado con OK vigente sigue visible y legible; el permiso de escritura no cambia", async () => {
     const id = await create("paid"); await approve(id);
@@ -301,6 +304,23 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
       await db.query("COMMIT");
       assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, { documento: "snapshotCounts" })), { pending: 0, approved: 1 });
     } finally { await db.query("ROLLBACK"); await second.end(); }
+  });
+  await t.test("número SADMIN confirmado se muestra y busca sin perder el folio original", async () => {
+    const id = await create("display-number", { folio: "FC-ORIGINAL-712" });
+    await db.query('INSERT INTO "CreditSadminRegistration" ("creditoId","numeroCredito") VALUES ($1,$2)', [id, "000712-A"]);
+    assert.deepEqual(await pendingQueryIds("000712-A"), []);
+    assert.deepEqual(await pendingQueryIds("FC-ORIGINAL-712"), [id]);
+    await db.query('UPDATE "CreditSadminRegistration" SET "numeroCreditoConfirmado"=true WHERE "creditoId"=$1', [id]);
+    const current = (await queue.listCreditApprovalQueue(api, { q: "000712-A" })).items[0];
+    assert.equal(current.numeroCreditoVisible, "000712-A"); assert.equal(current.folio, "FC-ORIGINAL-712");
+    assert.deepEqual(await pendingQueryIds("FC-ORIGINAL-712"), [id]);
+    assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, { q: "000712-A" })), { pending: 1, approved: 0 });
+    await approve(id);
+    assert.deepEqual(await approvedQueryIds("000712-A"), [id]);
+    assert.equal((await queue.listApprovedCreditQueue(api, { q: "FC-ORIGINAL-712" })).items[0].numeroCreditoVisible, "000712-A");
+    await db.query('UPDATE "CreditSadminRegistration" SET "numeroCreditoConfirmado"=false WHERE "creditoId"=$1', [id]);
+    assert.deepEqual(await approvedQueryIds("000712-A"), []);
+    assert.equal((await queue.listApprovedCreditQueue(api, { q: "FC-ORIGINAL-712" })).items[0].numeroCreditoVisible, "FC-ORIGINAL-712");
   });
   await t.test("El nuevo lector valida revocación, vencimiento y existencia antes del crédito", async () => {
     const id = await create("access"); await approve(id);

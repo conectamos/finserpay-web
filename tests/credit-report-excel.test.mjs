@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import ExcelJS from "exceljs";
-import { buildCreditReportWorkbook } from "../lib/credit-report-excel.ts";
+import { createJiti } from "jiti";
+import { fileURLToPath } from "node:url";
+const projectRoot = fileURLToPath(new URL("../", import.meta.url));
+const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
+const { buildCreditReportWorkbook } = await jiti.import("../lib/credit-report-excel.ts");
 
 const example = {
   fechaCredito: "2026-09-08T17:30:00.000Z",
@@ -30,12 +34,12 @@ async function roundTrip(items) {
   return workbook.getWorksheet("Créditos");
 }
 
-test("exporta las 14 columnas con identificadores completos y valores numéricos", async () => {
+test("exporta las 15 columnas con identificadores completos y valores numéricos", async () => {
   const sheet = await roundTrip([example]);
   assert.equal(sheet.rowCount, 2);
   assert.deepEqual(sheet.getRow(1).values.slice(1), [
-    "Fecha", "Folio", "Cliente", "Documento", "Teléfono", "Referencia", "IMEI",
-    "Aliado", "Sede", "Vendedor", "Valor venta", "Inicial", "Valor crédito autorizado", "Estado",
+    "Fecha", "Número crédito", "Cliente", "Documento", "Teléfono", "Referencia", "IMEI",
+    "Aliado", "Sede", "Vendedor", "Valor venta", "Inicial", "Valor crédito autorizado", "Estado", "Folio original",
   ]);
   for (const [address, expected] of [
     ["B2", example.folio], ["C2", example.clienteNombre],
@@ -93,7 +97,7 @@ test("respeta filas y orden recibidos, vacíos, ceros y referencia alternativa",
   assert.equal(sheet.getCell("F3").value, "APPLE IPHONE 16");
   assert.equal(sheet.getCell("H3").text, "");
   for (const column of ["K", "L", "M"]) assert.equal(sheet.getCell(`${column}3`).value, 0);
-  assert.equal(sheet.autoFilter, "A1:N3");
+  assert.equal(sheet.autoFilter, "A1:O3");
   assert.equal(sheet.views[0].state, "frozen");
   assert.equal(sheet.views[0].ySplit, 1);
   assert.equal(sheet.getCell("A1").alignment.wrapText, true);
@@ -105,7 +109,9 @@ test("respeta filas y orden recibidos, vacíos, ceros y referencia alternativa",
 
 test("la fecha de Excel conserva el día mostrado en Colombia cerca de medianoche UTC", () => {
   const script = `
-    import { buildCreditReportWorkbook } from ${JSON.stringify(new URL("../lib/credit-report-excel.ts", import.meta.url).href)};
+    import { createJiti } from "jiti";
+    const jiti = createJiti(${JSON.stringify(import.meta.url)}, { alias: { "@": ${JSON.stringify(projectRoot)} } });
+    const { buildCreditReportWorkbook } = await jiti.import(${JSON.stringify(fileURLToPath(new URL("../lib/credit-report-excel.ts", import.meta.url)))});
     const item = ${JSON.stringify({ ...example, fechaCredito: "2026-09-09T00:30:00.000Z" })};
     process.stdout.write(buildCreditReportWorkbook([item]).getWorksheet("Créditos").getCell("A2").value.toISOString());
   `;
@@ -131,6 +137,25 @@ test("la columna Estado coincide con el reporte aprobado y conserva el fallback 
     assert.equal(sheet.getCell("L" + row).value, example.cuotaInicial);
     assert.equal(sheet.getCell("M" + row).value, example.creditoAutorizado);
   }
-  assert.equal(sheet.columnCount, 14);
+  assert.equal(sheet.columnCount, 15);
   assert.deepEqual(items, snapshot);
+});
+
+test("el número visible SADMIN conserva texto literal y el folio contractual en columna separada", async () => {
+  const items = [
+    { ...example, numeroCreditoVisible: "0000123-A" },
+    { ...example, numeroCreditoVisible: "=00123" },
+    { ...example, numeroCreditoVisible: null },
+  ];
+  const before = structuredClone(items);
+  const sheet = await roundTrip(items);
+  for (const [row, expected] of [[2, "0000123-A"], [3, "=00123"], [4, example.folio]]) {
+    assert.equal(sheet.getCell(`B${row}`).value, expected);
+    assert.equal(sheet.getCell(`B${row}`).type, ExcelJS.ValueType.String);
+    assert.equal(sheet.getCell(`B${row}`).numFmt, "@");
+    assert.equal(sheet.getCell(`B${row}`).formula, undefined);
+    assert.equal(sheet.getCell(`O${row}`).value, example.folio);
+    assert.equal(sheet.getCell(`O${row}`).type, ExcelJS.ValueType.String);
+  }
+  assert.deepEqual(items, before);
 });

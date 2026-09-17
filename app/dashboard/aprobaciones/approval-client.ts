@@ -5,6 +5,7 @@ export type ApprovalStatus = "PENDING" | "APPROVED" | "NOT_REQUIRED";
 export type ApprovalListItem = {
   id: number;
   folio: string;
+  numeroCreditoVisible?: string | null;
   clienteDocumento: string | null;
   clienteNombre: string;
   aliadoNombre: string;

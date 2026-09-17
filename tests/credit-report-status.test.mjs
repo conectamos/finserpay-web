@@ -47,12 +47,21 @@ function fixture(id, changes = {}) {
   };
 }
 
-function harness(items, { user = admin, seller = null, paid = [] } = {}) {
+function harness(items, { user = admin, seller = null, paid = [], registrations = [] } = {}) {
   const calls = [];
   const database = {
     credito: { async findMany(query) { calls.push({ kind: "credits", query: plain(query) }); return items; } },
     creditoAbono: { async groupBy(query) { calls.push({ kind: "payments", query: plain(query) }); return paid; } },
+    creditSadminRegistration: { async findMany(query) {
+      calls.push({ kind: "numbers", query: plain(query) });
+      return registrations.filter(row => query.where.creditoId.in.includes(row.creditoId) && row.numeroCreditoConfirmado && row.numeroCredito !== null);
+    } },
   };
+  const displayHelpers = loadModule("lib/credit-display-number-server.ts", {
+    "server-only": {},
+    "@/lib/prisma": { default: database },
+    "@/lib/credit-display-number": loadModule("lib/credit-display-number.ts"),
+  });
   const route = loadModule("app/api/reportes/creditos/route.ts", {
     "next/server": { NextResponse: Response },
     "@/lib/auth": { getSessionUser: async () => user },
@@ -63,6 +72,7 @@ function harness(items, { user = admin, seller = null, paid = [] } = {}) {
     "@/lib/credit-abono-audit": { ensureCreditAbonoAuditColumns: async () => {} },
     "@/lib/credit-route-lookup": scope,
     "@/lib/credit-report-status": { resolveCreditReportState },
+    "@/lib/credit-display-number-server": displayHelpers,
   });
   return { calls, get: (query = "") => route.GET(new Request("https://finserpay.test/api/reportes/creditos" + query)) };
 }
@@ -71,6 +81,33 @@ test("un OK de la revision vigente muestra APROBADO en estados operativos de ape
   for (const estado of ["GENERADO", "INSCRITO", "ENTREGABLE", " inscrito "]) {
     assert.equal(resolveCreditReportState(estado, approved), "APROBADO");
   }
+});
+
+test("el reporte agrega números SADMIN confirmados sin alterar folios ni ampliar el alcance al buscar", async () => {
+  const rows = [fixture(1), fixture(2)];
+  const api = harness(rows, {
+    user: { ...admin, aliadoAccesoCodigo: "ALIADO", aliadoAccesoId: 5 },
+    registrations: [
+      { creditoId: 1, numeroCreditoConfirmado: true, numeroCredito: "000123-A" },
+      { creditoId: 2, numeroCreditoConfirmado: false, numeroCredito: "SIN-CONFIRMAR" },
+      { creditoId: 99, numeroCreditoConfirmado: true, numeroCredito: "OTRO-ALIADO" },
+    ],
+  });
+  const response = await api.get("?search=000123-A&aliadoId=99");
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.deepEqual(data.items.map(row => [row.id, row.folio, row.numeroCreditoVisible]), [[1, "REPORT-1", "000123-A"], [2, "REPORT-2", "REPORT-2"]]);
+  assert.equal(rows[0].folio, "REPORT-1");
+  assert.equal(rows[0].numeroCreditoVisible, undefined);
+  const where = api.calls.find(call => call.kind === "credits").query.where;
+  assert.deepEqual(where.AND[0], { sede: { aliadoId: 5 } });
+  const search = where.AND[1].OR.find(condition => condition.OR)?.OR;
+  assert.deepEqual(search, [
+    { folio: { contains: "000123-A", mode: "insensitive" } },
+    { registroSadmin: { is: { numeroCreditoConfirmado: true, numeroCredito: { contains: "000123-A", mode: "insensitive" } } } },
+  ]);
+  assert.deepEqual(api.calls.find(call => call.kind === "numbers").query.where,
+    { creditoId: { in: [1, 2] }, numeroCreditoConfirmado: true, numeroCredito: { not: null } });
 });
 
 test("pendientes, historicos sin revision e invalidaciones conservan el estado original", () => {
@@ -117,7 +154,7 @@ test("el DTO agrega la etiqueta sin sobrescribir estado, divulgar revision ni ca
   assert.ok(data.items.every(row => !("aprobacionAnalista" in row)));
   assert.deepEqual(api.calls[0].query.include.aprobacionAnalista,
     { select: { status: true, revision: true, approvedRevision: true } });
-  assert.deepEqual(api.calls[1].query.where.estado, { not: "ANULADO" });
+  assert.deepEqual(api.calls.find(call => call.kind === "payments").query.where.estado, { not: "ANULADO" });
 });
 
 test("el siguiente GET refleja la invalidacion sin convertirla en un cambio financiero", async () => {

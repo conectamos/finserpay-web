@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 import {
   ArrowLeft,
   Ban,
@@ -57,6 +58,7 @@ type AliadoItem = {
 type CreditReportItem = {
   id: number;
   folio: string;
+  numeroCreditoVisible?: string | null;
   clienteNombre: string;
   clienteDocumento: string | null;
   clienteTelefono: string | null;
@@ -306,7 +308,7 @@ export default function ReporteCreditosPage({
     }
 
     const reason = window.prompt(
-      `Motivo de anulacion del credito ${item.folio}:`,
+      `Motivo de anulacion del credito ${creditDisplayNumber(item)}:`,
       "Anulacion administrativa"
     );
 
@@ -315,7 +317,7 @@ export default function ReporteCreditosPage({
     }
 
     const confirmed = window.confirm(
-      `Vas a anular el credito ${item.folio}. Esta accion dejara trazabilidad y liberara la cedula/IMEI para una nueva venta.`
+      `Vas a anular el credito ${creditDisplayNumber(item)}. Esta accion dejara trazabilidad y liberara la cedula/IMEI para una nueva venta.`
     );
 
     if (!confirmed) {
@@ -359,7 +361,7 @@ export default function ReporteCreditosPage({
     }
 
     const confirmed = window.confirm(
-      `Vas a ELIMINAR el credito ${item.folio}. Se borraran sus recaudos locales, movimientos de caja asociados, intents Wompi locales y enlaces Efecty, y se quitara este registro del reporte. Esta accion no es una anulacion.`
+      `Vas a ELIMINAR el credito ${creditDisplayNumber(item)}. Se borraran sus recaudos locales, movimientos de caja asociados, intents Wompi locales y enlaces Efecty, y se quitara este registro del reporte. Esta accion no es una anulacion.`
     );
 
     if (!confirmed) {
@@ -420,7 +422,7 @@ export default function ReporteCreditosPage({
       <details className="relative ml-auto w-fit">
         <summary
           className="grid h-10 w-10 cursor-pointer list-none place-items-center rounded-md border border-[#d0d5dd] bg-white text-[#344054] transition hover:border-[#98a2b3] hover:bg-[#f8fafb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a8f34a] [&::-webkit-details-marker]:hidden"
-          aria-label={`Gestionar credito ${item.folio}`}
+          aria-label={`Gestionar credito ${creditDisplayNumber(item)}`}
           title="Gestionar credito"
         >
           <MoreHorizontal className="h-5 w-5" strokeWidth={1.8} aria-hidden="true" />
@@ -517,7 +519,7 @@ export default function ReporteCreditosPage({
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Cliente, documento, folio, IMEI o vendedor"
+              placeholder="Cliente, documento, número crédito, folio, IMEI o vendedor"
               className="!pl-10"
               onKeyDown={(event) => {
                 if (event.key === "Enter") void loadReport();
@@ -598,8 +600,9 @@ export default function ReporteCreditosPage({
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="break-all text-sm font-black text-[var(--fp-graphite)]">
-                      {item.folio}
+                      {creditDisplayNumber(item)}
                     </p>
+                    {creditDisplayNumber(item) !== item.folio ? <p className="mt-1 break-all text-xs text-[var(--fp-muted)]">Folio original: {item.folio}</p> : null}
                     <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-[var(--fp-muted)]">
                       <CalendarDays className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
                       {formatDate(item.fechaCredito)}
@@ -708,8 +711,9 @@ export default function ReporteCreditosPage({
                   >
                     <td className="px-3 py-2 align-top">
                       <p className="break-all font-black leading-5 text-[var(--fp-graphite)]">
-                        {item.folio}
+                        {creditDisplayNumber(item)}
                       </p>
+                      {creditDisplayNumber(item) !== item.folio ? <p className="mt-1 break-all text-xs text-[var(--fp-muted)]">Folio original: {item.folio}</p> : null}
                       <p className="mt-1 inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-[var(--fp-muted)]">
                         <CalendarDays className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
                         {formatDate(item.fechaCredito)}

@@ -3,6 +3,7 @@ import "server-only";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 export type CreditPazYSalvoPdfInput = {
   clienteDocumento?: string | null;
@@ -12,6 +13,7 @@ export type CreditPazYSalvoPdfInput = {
   equipo?: string | null;
   estado?: string | null;
   folio: string;
+  numeroCreditoVisible?: string;
   imei?: string | null;
   issuedAt: Date;
   issuer: string;
@@ -211,7 +213,7 @@ async function renderCreditPazYSalvoPdf(
     compress: true,
     font: fonts.regular,
     info: {
-      Title: `Paz y salvo ${input.folio}`,
+      Title: `Paz y salvo ${creditDisplayNumber(input)}`,
       Author: "FINSER PAY",
     },
   });
@@ -263,7 +265,7 @@ async function renderCreditPazYSalvoPdf(
     .fillColor(COLORS.white)
     .font(fonts.bold)
     .fontSize(8.5)
-    .text(valueOrDash(input.folio), 324, 143, {
+    .text(creditDisplayNumber(input), 324, 143, {
       width: 214,
       align: "right",
       ellipsis: true,

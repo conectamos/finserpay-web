@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
@@ -181,6 +182,7 @@ export default async function DashboardPage({
       }),
     ]);
 
+    const displayNumbers = await getCreditDisplayNumbers(recentCredits.map((credit) => credit.id));
     return (
       <SellerCommercialDashboard
         avatarSrc={sellerAvatarSrc}
@@ -204,6 +206,7 @@ export default async function DashboardPage({
           estado: credit.estado,
           fecha: credit.fechaCredito.toISOString(),
           folio: credit.folio,
+          numeroCreditoVisible: displayNumbers.get(credit.id) || credit.folio,
           id: credit.id,
           listoEntrega: credit.deliverableReady,
         }))}

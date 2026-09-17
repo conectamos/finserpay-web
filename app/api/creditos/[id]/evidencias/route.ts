@@ -8,6 +8,7 @@ import {
   markNoveltyPhotoCorrected,
 } from "@/lib/credit-approval-novelty-state";
 import { NextResponse } from "next/server";
+import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import { createHash } from "node:crypto";
 import { archiveEvidenceRevision, evidenceSha256 } from "@/lib/credit-approval-evidence-history";
 import { getCreditApprovalReissueState } from "@/lib/credit-approval-reissue-state";
@@ -469,6 +470,7 @@ export async function GET(
         ok: true,
         creditId: credito.id,
         folio: credito.folio,
+        numeroCreditoVisible: (await getCreditDisplayNumbers([credito.id])).get(credito.id) || credito.folio,
         platform: isIphone ? "IPHONE" : snapshotPlatform || "ANDROID",
         estado: credito.estado,
         updatedAt: credito.updatedAt.toISOString(),

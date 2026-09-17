@@ -1,5 +1,7 @@
 "use client";
 
+import { creditDisplayNumber } from "@/lib/credit-display-number";
+
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, MessageSquareWarning, Plus } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
@@ -166,10 +168,10 @@ export default function ApprovalNoveltyPanel({ detail, disabled = false, compact
     {error ? <p className="text-sm text-[var(--fp-danger)]" role="alert">{error}</p> : null}
     {notice ? <p className="text-sm text-[var(--fp-muted)]" role="status">{notice}</p> : null}
     <ConfirmDialog open={confirming} title="Registrar novedad del crédito" confirmLabel={compact ? "Confirmar envío al aliado" : "Confirmar novedad"} busy={saving}
-      description={`Folio ${detail.folio}, de ${detail.clienteNombre}. ${mode === "GENERAL" ? "Otra novedad" : detail.evidence.filter((photo) => keys.includes(photo.key)).map((photo) => photo.label).join(", ")}: ${reason.trim()}. El aliado verá lo requerido en PENDIENTES.`}
+      description={`Crédito ${creditDisplayNumber(detail)}, de ${detail.clienteNombre}. ${mode === "GENERAL" ? "Otra novedad" : detail.evidence.filter((photo) => keys.includes(photo.key)).map((photo) => photo.label).join(", ")}: ${reason.trim()}. El aliado verá lo requerido en PENDIENTES.`}
       onCancel={() => { if (!submitting.current) setConfirming(false); }} onConfirm={() => void save()} />
     <ConfirmDialog open={verificationConfirming} title="Confirmar novedad solucionada" confirmLabel="Sí, marcar solucionada" busy={verifying}
-      description={verificationItem ? `Confirma que verificaste ${verificationItem.label.toLocaleLowerCase("es")} del folio ${detail.folio}, de ${detail.clienteNombre}, y que ya quedó OK. Nota: ${verificationNote.trim()}. Ya no requerirá corrección del aliado y quedará visible como solucionada; las demás seguirán bloqueando el OK para liquidación.` : ""}
+      description={verificationItem ? `Confirma que verificaste ${verificationItem.label.toLocaleLowerCase("es")} del crédito ${creditDisplayNumber(detail)}, de ${detail.clienteNombre}, y que ya quedó OK. Nota: ${verificationNote.trim()}. Ya no requerirá corrección del aliado y quedará visible como solucionada; las demás seguirán bloqueando el OK para liquidación.` : ""}
       onCancel={() => { if (!submitting.current) setVerificationConfirming(false); }} onConfirm={() => void saveVerification()} />
   </Card>;
 }

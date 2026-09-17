@@ -1,4 +1,5 @@
 "use client";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
@@ -43,6 +44,7 @@ type ReplacementResponse = {
   credit: {
     id: number;
     folio: string;
+    numeroCreditoVisible?: string;
     clienteNombre: string;
     clienteDocumentoMasked: string;
     equipment: string;
@@ -320,7 +322,7 @@ export function ApprovedCreditEquipmentReplacement({
                 Crédito aprobado
               </p>
               <h2 className="mt-1 break-words text-xl font-black text-[var(--fp-graphite)]">
-                {data.credit.folio}
+                {creditDisplayNumber(data.credit)}
               </h2>
             </div>
           </div>
@@ -581,7 +583,7 @@ export function ApprovedCreditEquipmentReplacement({
       <ConfirmDialog
         open={confirmAction === "COMPLETE"}
         title="Aplicar el cambio de equipo"
-        description={`El IMEI ${replacement?.newImeiMasked || "nuevo"} quedará como equipo operativo del crédito ${data.credit.folio}. El IMEI anterior permanecerá en el historial.`}
+        description={`El IMEI ${replacement?.newImeiMasked || "nuevo"} quedará como equipo operativo del crédito ${creditDisplayNumber(data.credit)}. El IMEI anterior permanecerá en el historial.`}
         confirmLabel="Sí, aplicar cambio"
         busy={busy}
         onCancel={() => {

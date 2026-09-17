@@ -1,4 +1,5 @@
 "use client";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import { useEffect, useMemo, useState } from "react";
 import { normalizeEvidenceFile } from "@/lib/credit-approval-evidence-file";
@@ -27,6 +28,7 @@ type EvidenceResponse = {
   ok: true;
   creditId: number;
   folio: string;
+  numeroCreditoVisible?: string;
   platform: string;
   estado: string;
   updatedAt: string;
@@ -331,7 +333,7 @@ export function ApprovedCreditEvidenceCorrection({
     if (!data?.canCorrect || replacingKey) return;
 
     const confirmed = window.confirm(
-      `Se reemplazara ${item.label} del credito ${data.folio}. La correccion quedara auditada. ¿Deseas continuar?`
+      `Se reemplazara ${item.label} del credito ${creditDisplayNumber(data)}. La correccion quedara auditada. ¿Deseas continuar?`
     );
     if (!confirmed) return;
 
@@ -423,7 +425,7 @@ export function ApprovedCreditEvidenceCorrection({
             Correccion controlada
           </p>
           <h2 className="mt-1 text-xl font-black text-[var(--fp-graphite)]">
-            Evidencias del credito {data.folio}
+            Evidencias del credito {creditDisplayNumber(data)}
           </h2>
           {data.summary ? (
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-[var(--fp-muted)]">

@@ -1,5 +1,7 @@
 "use client";
 
+import { creditDisplayNumber } from "@/lib/credit-display-number";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { Badge, Button, Card, DataTable, EmptyState, LoadingState, PageHeader, Select, StatusPill } from "@/app/_components/finser-ui";
@@ -122,9 +124,9 @@ export default function PendingConsole() {
             <th scope="col" className="px-4 py-3 font-semibold">Estado</th><th scope="col" className="relative px-4 py-3"><span className="sr-only">Abrir crédito</span></th>
           </tr></thead>
           <tbody>{items.map((item) => <tr key={item.id} className={`border-b border-[var(--fp-border)] last:border-0 ${selectedId === item.id ? "bg-[var(--fp-lime-soft)]" : ""}`}>
-            <td className="px-4 py-4 font-semibold">{item.folio}</td><td className="px-4 py-4"><span className="block font-semibold">{item.clienteNombre}</span><span className="text-[var(--fp-muted)]">{item.clienteDocumento || "Sin documento"}</span></td>
+            <td className="px-4 py-4 font-semibold">{creditDisplayNumber(item)}{creditDisplayNumber(item) !== item.folio ? <span className="mt-1 block text-xs font-normal text-[var(--fp-muted)]">Folio: {item.folio}</span> : null}</td><td className="px-4 py-4"><span className="block font-semibold">{item.clienteNombre}</span><span className="text-[var(--fp-muted)]">{item.clienteDocumento || "Sin documento"}</span></td>
             <td className="px-4 py-4">{item.sedeNombre}</td><td className="px-4 py-4"><span className="block">{item.novelty.pendingCount} por corregir</span><span className="text-[var(--fp-muted)]">{item.novelty.answeredCount} {item.novelty.answeredCount === 1 ? "atendida" : "atendidas"}</span></td>
-            <td className="px-4 py-4"><NoveltyStatus item={item} /></td><td className="px-4 py-4"><Button variant="secondary" disabled={busy} aria-label={`Ver novedades del crédito ${item.folio}`} onClick={() => selectCredit(item.id)}>Ver novedades<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button></td>
+            <td className="px-4 py-4"><NoveltyStatus item={item} /></td><td className="px-4 py-4"><Button variant="secondary" disabled={busy} aria-label={`Ver novedades del crédito ${creditDisplayNumber(item)}`} onClick={() => selectCredit(item.id)}>Ver novedades<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button></td>
           </tr>)}</tbody>
         </table></DataTable>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--fp-border)] p-4 text-sm text-[var(--fp-muted)]">
@@ -136,7 +138,7 @@ export default function PendingConsole() {
     {notice ? <div role="status" className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] p-4 text-sm">{notice}</div> : null}
     {selectedId !== null ? <Card className="min-w-0 overflow-hidden p-4 sm:p-6">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3"><div>
-        <h2 ref={detailHeading} tabIndex={-1} className="text-xl font-bold outline-none">{detail ? `Novedades · ${detail.folio}` : "Novedades del crédito"}</h2>
+        <h2 ref={detailHeading} tabIndex={-1} className="text-xl font-bold outline-none">{detail ? `Novedades · ${creditDisplayNumber(detail)}` : "Novedades del crédito"}</h2>
         {detail ? <p className="mt-1 text-sm text-[var(--fp-muted)]">{detail.clienteNombre} · {detail.clienteDocumento || "Sin documento"} · {detail.sedeNombre}</p> : null}
       </div>{detail ? <NoveltyStatus item={detail} /> : null}</div>
       {detailError ? <div className="mb-5 space-y-3"><p role="alert" className="text-sm text-[var(--fp-danger)]">{detailError} Actualiza el crédito antes de corregir otra novedad.</p><Button variant="secondary" disabled={Boolean(editingId) || loadingDetail} onClick={() => { void loadDetail(selectedId); }}>Actualizar crédito</Button></div> : null}

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import {
   resolveCreditPaymentSummary,
   resolveCreditState,
@@ -183,6 +184,7 @@ export async function GET(
       equipo: credito.referenciaEquipo,
       estado: "PAZ_Y_SALVO",
       folio: credito.folio,
+      numeroCreditoVisible: (await getCreditDisplayNumbers([credito.id])).get(credito.id) || credito.folio,
       imei: credito.imei,
       issuedAt,
       issuer: "FINSER PAY",

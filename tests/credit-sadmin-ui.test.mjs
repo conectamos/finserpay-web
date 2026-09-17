@@ -14,6 +14,10 @@ const source = readFileSync(new URL("../app/dashboard/aprobaciones/sadmin-credit
 const { outputText } = ts.transpileModule(source, { compilerOptions: {
   module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
 } });
+const displayModule = { exports: {} };
+runInNewContext(ts.transpileModule(readFileSync(new URL("../lib/credit-display-number.ts", import.meta.url), "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { module: displayModule, exports: displayModule.exports });
 
 function nodes(node) {
   if (Array.isArray(node)) return node.flatMap(nodes);
@@ -34,6 +38,7 @@ function mount(fetch) {
   let hookIndex = 0, dirty = true, effects = [], tree;
   const changed = (old, next) => !old || !next || old.length !== next.length || next.some((value, index) => !Object.is(value, old[index]));
   const hooks = {
+    Fragment: jsxRuntime.Fragment,
     useState(initial) {
       const index = hookIndex++;
       slots[index] ||= { value: typeof initial === "function" ? initial() : initial,
@@ -61,6 +66,7 @@ function mount(fetch) {
       if (name === "react/jsx-runtime") return jsxRuntime;
       if (name === "lucide-react") return icons;
       if (name === "@/app/_components/finser-ui") return ui;
+      if (name === "@/lib/credit-display-number") return displayModule.exports;
       if (name === "./sadmin-credit-table.module.css") return { __esModule: true, default: styles };
       assert.fail(`Unexpected dependency ${name}`);
     },
@@ -91,14 +97,14 @@ const registration = (overrides = {}) => ({ version: 0, codeudorCreado: false, c
 const row = (id, sadmin = registration()) => ({ id, folio: `QA-${id}`, createdAt: "2026-09-17T13:30:00Z", fechaCredito: "2026-09-17", clienteNombre: `Cliente ${id}`, clienteDocumento: `QA${id}`, clienteTelefono: "3000000000", clienteDireccion: "Dirección de prueba", clienteFechaNacimiento: "1990-01-02", clienteCorreo: "qa@example.test", clienteGenero: "No informado", imei: "000000000000000", referenciaEquipo: "Equipo de prueba", numeroCuotas: 24, frecuenciaPago: "QUINCENAL", valorVenta: 1000000, cuotaInicial: 200000, creditoAutorizado: 800000, valorCuota: 45000, interesMensual: 0.02, fianza: 0.6, seguro: 0.0003, aliadoNombre: "Aliado QA", sedeNombre: "Sede QA", fechaProximoPago: "2026-10-02", cuotasPagadas: 0, cuotasPendientes: 24, saldoObligacion: 1080000, saldoCapital: 800000, saldoFianza: 180000, saldoIntereses: 100000, diasVencidos: 0, ultimoPago: null, sadmin });
 const page = (items, current = 1, total = items.length) => ({ ok: true, items, page: current, pageSize: 20, total, totalPages: Math.max(1, Math.ceil(total / 20)) });
 const json = (value, status = 200) => Response.json(value, { status });
-const fieldset = (h, id) => h.find(node => node.type === "fieldset" && node.props["aria-label"] === `Verificaciones SADMIN de QA-${id}`);
+const fieldset = (h, id) => h.find(node => node.type === "fieldset" && node.props.id === `sadmin-checklist-${id}`);
 const button = (h, label, root) => h.find(node => node.type === ui.Button && content(node) === label, root);
 const check = (h, id, label) => {
   const wrapper = h.find(node => node.type === "label" && content(node) === label, fieldset(h, id));
   return h.find(node => node.type === "input" && node.props.type === "checkbox", wrapper);
 };
 const number = (h, id) => h.find(node => node.type === ui.Input && node.props.id === `sadmin-number-${id}`);
-const renderedIds = h => h.all(node => node.type === "fieldset").map(node => Number(node.props["aria-label"].split("QA-")[1]));
+const renderedIds = h => h.all(node => node.type === "fieldset").map(node => Number(node.props.id.replace("sadmin-checklist-", "")));
 const editNumber = (h, id, value) => number(h, id).props.onChange({ target: { value } });
 const errors = h => h.all(node => node.props?.role === "alert").map(content).join(" ");
 
@@ -163,6 +169,8 @@ test("muestra CREADO SADMIN cuando el servidor confirma las tres verificaciones"
   assert.deepEqual(patches.map(patch => patch.version), [1, 2, 3]);
   assert.equal(h.all(node => node.type === ui.Badge && content(node) === "CREADO SADMIN").length, 1);
   assert.equal(h.all(node => node.type === ui.Badge && content(node) === "3 de 3 verificaciones").length, 1);
+  assert.equal(h.all(node => node.type === "strong" && content(node) === "00081").length, 1);
+  assert.match(content(h.tree()), /Folio: QA-81/);
   for (const label of ["CODEUDOR CREADO", "CRÉDITO CREADO", "NÚMERO DE CRÉDITO"]) assert.equal(check(h, 81, label).props.checked, true);
   h.unmount();
 });
@@ -267,4 +275,37 @@ test("desmontar la tabla aborta una carga pendiente", async () => {
   assert.equal(signal.aborted, true);
   pending.resolve(json(page([row(81)]))); await h.flush();
   assert.deepEqual(renderedIds(h), []);
+});
+
+test("clic en nombre abre y cierra información general completa sin alterar checklist ni número visible", async () => {
+  const stored = registration({ version: 4, codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "00081-A", estado: "CREADO_SADMIN" });
+  const fixture = { ...row(81, stored), numeroCreditoVisible: "00081-A", ultimoPago: "2026-09-16 · $ 45.000 · EFECTIVO" };
+  let patches = 0;
+  const h = mount(async (_url, options) => { if (options.method === "PATCH") patches++; return json(page([fixture])); });
+  await h.flush();
+  const toggle = () => h.find(node => node.type === "button" && node.props.id === "sadmin-client-81");
+  assert.equal(toggle().props["aria-expanded"], false);
+  assert.equal(toggle().props["aria-controls"], "sadmin-detail-81");
+  assert.equal(h.all(node => node.props?.id === "sadmin-detail-81").length, 0);
+  assert.equal(h.all(node => node.type === "thead").flatMap(node => nodes(node)).filter(node => node.type === "th").length, 5);
+  toggle().props.onClick(); await h.flush();
+  assert.equal(toggle().props["aria-expanded"], true);
+  const detail = h.find(node => node.props?.id === "sadmin-detail-81");
+  assert.equal(detail.props.role, "region"); assert.equal(detail.props["aria-labelledby"], "sadmin-client-81");
+  const sectionNames = nodes(detail).filter(node => node.type === "h3").map(content);
+  assert.deepEqual(sectionNames, ["Datos del cliente", "Crédito, equipo y origen", "Valores y plan", "Tasas", "Pagos", "Saldos"]);
+  const facts = nodes(detail).filter(node => typeof node.type === "function" && node.type.name === "Facts");
+  const fields = facts.flatMap(node => node.props.items);
+  for (const label of ["Nombre", "Cédula", "Teléfono", "Correo", "Dirección", "Nacimiento", "Género", "Número de crédito", "Folio original", "Fecha crédito", "Creado", "Referencia", "IMEI", "Aliado", "Sede", "Valor venta", "Inicial", "Crédito autorizado", "N.º cuotas", "Valor cuota", "Frecuencia", "Interés mensual efectivo", "Fianza total del crédito", "Seguro por cuota", "Próximo pago", "Cuotas pagadas", "Cuotas pendientes", "Días vencidos", "Último pago", "Obligación", "Capital", "Fianza", "Intereses"]) {
+    assert.ok(fields.some(([name]) => name === label), `Campo de detalle presente: ${label}`);
+  }
+  // Render the actual Facts leaf to confirm values are not only present in props.
+  const renderedFacts = facts.map(node => content(node.type(node.props))).join(" ");
+  for (const value of ["00081-A", "QA-81", fixture.clienteNombre, fixture.clienteTelefono, fixture.clienteDireccion, fixture.clienteCorreo, fixture.imei, fixture.referenciaEquipo, fixture.aliadoNombre, fixture.sedeNombre, fixture.ultimoPago]) assert.ok(renderedFacts.includes(value));
+  toggle().props.onClick(); await h.flush();
+  assert.equal(toggle().props["aria-expanded"], false); assert.equal(h.all(node => node.props?.id === "sadmin-detail-81").length, 0);
+  assert.equal(fieldset(h, 81).props["aria-label"], "Verificaciones SADMIN de 00081-A");
+  for (const label of ["CODEUDOR CREADO", "CRÉDITO CREADO", "NÚMERO DE CRÉDITO"]) assert.equal(check(h, 81, label).props.checked, true);
+  assert.equal(number(h, 81).props.value, "00081-A"); assert.equal(patches, 0);
+  h.unmount();
 });

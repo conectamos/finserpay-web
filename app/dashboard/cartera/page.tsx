@@ -15,6 +15,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import prisma from "@/lib/prisma";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
+import { getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
 import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import {
   ALIADO_FINSER_PAY,
@@ -285,6 +287,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
     }),
   ]);
 
+  const displayNumbers = await getCreditDisplayNumbers(creditos.map(credito => credito.id));
   const cartera = creditos
     .filter((credito) => !isAnnulled(credito.estado))
     .map((credito) => {
@@ -329,8 +332,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
       );
 
       return {
-        id: credito.id,
-        folio: credito.folio,
+        ...withCreditDisplayNumber({ id: credito.id, folio: credito.folio }, displayNumbers),
         imei: credito.imei || credito.deviceUid || "Sin IMEI",
         clienteNombre: credito.clienteNombre,
         clienteDocumento: credito.clienteDocumento || "",
@@ -671,7 +673,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                   <th className="w-[125px] px-4 py-3 text-[10px] font-bold uppercase">Documento</th>
                   <th className="w-[130px] px-4 py-3 text-[10px] font-bold uppercase">Celular</th>
                   <th className="w-[130px] px-4 py-3 text-[10px] font-bold uppercase">Ref. familiar</th>
-                  <th className="w-[175px] px-4 py-3 text-[10px] font-bold uppercase">Folio</th>
+                  <th className="w-[175px] px-4 py-3 text-[10px] font-bold uppercase">Número crédito</th>
                   <th className="w-[215px] px-4 py-3 text-[10px] font-bold uppercase">Equipo</th>
                   <th className="w-[120px] px-4 py-3 text-[10px] font-bold uppercase">Sede</th>
                   <th className="w-[175px] px-4 py-3 text-[10px] font-bold uppercase">Mora</th>
@@ -698,7 +700,8 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                         {item.primeraReferenciaTelefono || "Sin referencia"}
                       </td>
                       <td className="px-4 py-3 align-top font-bold leading-5 text-[#101828]">
-                        {item.folio || "Sin folio"}
+                        {creditDisplayNumber(item) || "Sin número"}
+                        {creditDisplayNumber(item) !== item.folio ? <p className="mt-1 break-all text-xs font-normal text-[var(--fp-muted)]">Folio original: {item.folio}</p> : null}
                       </td>
                       <td className="px-4 py-3 align-top">
                         <p className="font-semibold leading-5 text-[#101828]">{item.referencia}</p>

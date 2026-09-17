@@ -47,6 +47,7 @@ export type ActiveCreditDashboardDevice = {
 
 export type ClientActiveCreditDashboardProps = {
   activeCreditId: number;
+  creditNumber?: string;
   clientFirstName: string;
   creditOptions?: ActiveCreditDashboardCreditOption[];
   device: ActiveCreditDashboardDevice;
@@ -113,7 +114,7 @@ function compactDateLabel(value: string) {
 
 
 export default function ClientActiveCreditDashboard({
-  activeCreditId, clientFirstName, creditOptions = [], device, lastPayment,
+  activeCreditId, creditNumber, clientFirstName, creditOptions = [], device, lastPayment,
   nextInstallment, notice, onOpenDevice, onOpenHistory, onOpenNotifications,
   onPayInstallment, onOpenPlan, onOpenProfile, onPayoff, onSelectCredit,
   paidInstallments, paying = false, payoff, profileActionLabel, profileInitials,
@@ -146,6 +147,7 @@ export default function ClientActiveCreditDashboard({
       </header>
       <main>
         <h1 className={styles.greeting}>Hola, {clientFirstName}</h1>
+        {creditNumber ? <p className={styles.creditNumber}>Crédito <strong>{creditNumber}</strong></p> : null}
         <p className={`${styles.status} ${overdue ? styles.statusOverdue : ""}`} role="status">
           <span aria-hidden="true" />{overdue ? "Pago pendiente" : statusLabel}
         </p>

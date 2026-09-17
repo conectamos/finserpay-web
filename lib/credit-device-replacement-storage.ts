@@ -14,6 +14,7 @@ import {
 } from "@/lib/iphone-enrollment";
 import { isValidCreditDeviceReplacementImei } from "@/lib/credit-device-replacement";
 import prisma from "@/lib/prisma";
+import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import { lockSolicitudIdentityMutation } from "@/lib/solicitudes-storage";
 
 export { isValidCreditDeviceReplacementImei } from "@/lib/credit-device-replacement";
@@ -155,6 +156,7 @@ export type CreditDeviceReplacementOverview = {
   credit: {
     id: number;
     folio: string;
+    numeroCreditoVisible?: string;
     clienteNombre: string;
     clienteDocumentoMasked: string;
     equipment: string;
@@ -760,10 +762,12 @@ export async function getCreditDeviceReplacementOverview(
   }
   const document = normalizedDigits(row.clienteDocumento);
   const currentImei = normalizedDigits(row.creditImei || row.creditDeviceUid);
+  const visibleNumbers = await getCreditDisplayNumbers([row.creditId]);
   return {
     credit: {
       id: row.creditId,
       folio: row.folio,
+      numeroCreditoVisible: visibleNumbers.get(row.creditId) || row.folio,
       clienteNombre: cleanText(row.clienteNombre, 180) || "Cliente",
       clienteDocumentoMasked: maskDocument(document),
       equipment: equipmentLabel(row),

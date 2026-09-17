@@ -1,5 +1,7 @@
 "use client";
 
+import { creditDisplayNumber } from "@/lib/credit-display-number";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
@@ -48,6 +50,7 @@ type AllyOption = {
 };
 
 type PaymentCreditItem = {
+  numeroCreditoVisible?: string | null;
   id?: number | string;
   creditoId?: number | string;
   fecha?: string | null;
@@ -75,6 +78,7 @@ type PaymentCreditItem = {
 };
 
 type PaymentCollectionItem = {
+  numeroCreditoVisible?: string | null;
   id?: number | string;
   abonoId?: number | string;
   creditoId?: number | string;
@@ -856,7 +860,7 @@ function CollectionItems({
             {items.map((item, index) => (
               <tr key={String(item.id ?? item.abonoId ?? index)} className="bg-white even:bg-[#fbfcfa]">
                 <td className="whitespace-nowrap px-4 py-3">{formatDateTime(item.fechaAbono)}</td>
-                <td className="px-4 py-3 font-bold">{item.folio || "-"}</td>
+                <td className="px-4 py-3 font-bold">{creditDisplayNumber(item)}{item.numeroCreditoVisible && item.numeroCreditoVisible !== item.folio ? <span className="block text-xs font-normal text-slate-500">Folio original: {item.folio}</span> : null}</td>
                 <td className="px-4 py-3 font-semibold">{item.clienteNombre || "-"}</td>
                 <td className="whitespace-nowrap px-4 py-3 font-mono">{item.clienteDocumento || "-"}</td>
                 <td className="px-4 py-3 font-semibold">{item.sedeNombre || "-"}</td>
@@ -1219,6 +1223,9 @@ export default function AllyPaymentsConsole({
       }
       setAllies(Array.isArray(payload.allies) ? payload.allies : []);
       setSettlements(Array.isArray(payload.settlements) ? payload.settlements : []);
+      setSelectedSettlement(current => current
+        ? payload.settlements?.find(item => String(item.id) === String(current.id)) || current
+        : null);
       setPending({
         items: Array.isArray(payload.pending?.items) ? payload.pending.items : [],
         summary: payload.pending?.summary || null,

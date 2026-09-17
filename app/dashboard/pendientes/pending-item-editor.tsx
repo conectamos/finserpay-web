@@ -1,5 +1,7 @@
 "use client";
 
+import { creditDisplayNumber } from "@/lib/credit-display-number";
+
 import { useEffect, useRef, useState } from "react";
 import { Expand, ImageOff, Upload, X } from "lucide-react";
 import { Button, StatusPill } from "@/app/_components/finser-ui";
@@ -161,7 +163,7 @@ export default function PendingItemEditor({ detail, issue, disabled, onUpdated, 
     </div> : <p className="text-sm text-[var(--fp-muted)]">{detail.blockedReason || "Este crédito no admite correcciones en este momento."}</p>}
     {error ? <p className="text-sm text-[var(--fp-danger)]" role="alert">{error}</p> : null}
     <ConfirmDialog open={confirming} title={general ? "Confirmar respuesta" : "Confirmar fotografía corregida"}
-      description={`Se guardará ${general ? "tu respuesta a la novedad" : `la nueva ${issue.label.toLocaleLowerCase("es")}`} del crédito ${detail.folio}, de ${detail.clienteNombre}. ${general ? "" : "La fotografía anterior quedará conservada. "}El crédito volverá automáticamente a revisión del analista; las demás novedades seguirán pendientes.`}
+      description={`Se guardará ${general ? "tu respuesta a la novedad" : `la nueva ${issue.label.toLocaleLowerCase("es")}`} del crédito ${creditDisplayNumber(detail)}, de ${detail.clienteNombre}. ${general ? "" : "La fotografía anterior quedará conservada. "}El crédito volverá automáticamente a revisión del analista; las demás novedades seguirán pendientes.`}
       confirmLabel={general ? "Guardar respuesta" : "Guardar fotografía"} busy={saving}
       onCancel={() => { if (!submitting.current) setConfirming(false); }} onConfirm={() => { void save(); }} />
   </article>;

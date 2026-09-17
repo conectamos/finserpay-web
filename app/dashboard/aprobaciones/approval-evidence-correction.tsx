@@ -1,5 +1,7 @@
 "use client";
 
+import { creditDisplayNumber } from "@/lib/credit-display-number";
+
 import { useEffect, useRef, useState } from "react";
 import { Upload, X } from "lucide-react";
 import { Button, Select } from "@/app/_components/finser-ui";
@@ -113,7 +115,7 @@ export default function ApprovalEvidenceCorrection({ detail, disabled = false, o
       </div> : null}
       {error ? <p className="text-sm text-[var(--fp-danger)]" role="alert">{error}</p> : null}
       {notice ? <p className="text-sm text-[var(--fp-muted)]" role="status">{notice}</p> : null}
-      <ConfirmDialog open={confirming} title="Confirmar reemplazo de fotografía" description={`Se reemplazará ${pending?.label || "la fotografía"} del crédito ${detail.folio}, de ${detail.clienteNombre}. La imagen anterior quedará en el historial y será necesario revisar de nuevo el expediente antes del OK.`} confirmLabel="Reemplazar fotografía" busy={saving} onCancel={() => { if (!submitting.current) setConfirming(false); }} onConfirm={() => { void savePhoto(); }} />
+      <ConfirmDialog open={confirming} title="Confirmar reemplazo de fotografía" description={`Se reemplazará ${pending?.label || "la fotografía"} del crédito ${creditDisplayNumber(detail)}, de ${detail.clienteNombre}. La imagen anterior quedará en el historial y será necesario revisar de nuevo el expediente antes del OK.`} confirmLabel="Reemplazar fotografía" busy={saving} onCancel={() => { if (!submitting.current) setConfirming(false); }} onConfirm={() => { void savePhoto(); }} />
     </div>
   );
 }

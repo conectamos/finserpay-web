@@ -41,17 +41,20 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
   const client = new pg.Client({ connectionString });
   await client.connect();
   t.after(() => client.end());
-  const tables = ["CreditApprovalCallContinuation", "CreditApprovalCallRecording", "CreditApprovalNoveltyEvent", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalEvidenceRevision", "CreditApprovalReissueEvent", "CreditApprovalReissue", "CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy", "FirmaSeguroProcess", "DataCreditoAssessment", "LiquidacionAliadoCredito", "CreditoAmortizacion", "Credito", "Usuario", "Sede", "Aliado"];
+  const tables = ["CreditSadminRegistration","CreditApprovalCallContinuation", "CreditApprovalCallRecording", "CreditApprovalNoveltyEvent", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalEvidenceRevision", "CreditApprovalReissueEvent", "CreditApprovalReissue", "CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy", "FirmaSeguroProcess", "DataCreditoAssessment", "LiquidacionAliadoCredito", "CreditoAmortizacion", "Credito", "Usuario", "Rol", "Sede", "Aliado"];
   const existing = await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(existing.rows.every(({ tablename }) => tables.includes(tablename)), "No se reinicia una base con tablas ajenas");
   for (const table of tables) await client.query(`DROP TABLE IF EXISTS public."${table}" CASCADE`);
   await client.query(`
-    CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY);
-    INSERT INTO "Usuario" VALUES (7);
-    CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY,"codigo" TEXT,"nombre" TEXT);
-    INSERT INTO "Aliado" VALUES (10,'ALLY','Aliado sintético'),(20,'FINSERPAY','Central');
-    CREATE TABLE "Sede" ("id" INTEGER PRIMARY KEY,"aliadoId" INTEGER);
-    INSERT INTO "Sede" VALUES (10,10),(20,20);
+    CREATE TABLE "CreditSadminRegistration" ("creditoId" INTEGER PRIMARY KEY,"numeroCredito" TEXT,"numeroCreditoConfirmado" BOOLEAN NOT NULL DEFAULT false);
+    CREATE TABLE "Rol" ("id" INTEGER PRIMARY KEY,"nombre" TEXT);
+    INSERT INTO "Rol" VALUES (1,'ANALISTA_APROBACION');
+    CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY,"sedeId" INTEGER,"rolId" INTEGER,"activo" BOOLEAN DEFAULT true);
+    INSERT INTO "Usuario" ("id","sedeId","rolId") VALUES (7,20,1);
+    CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY,"codigo" TEXT,"nombre" TEXT,"activo" BOOLEAN DEFAULT true);
+    INSERT INTO "Aliado" ("id","codigo","nombre") VALUES (10,'ALLY','Aliado sintético'),(20,'FINSERPAY','Central');
+    CREATE TABLE "Sede" ("id" INTEGER PRIMARY KEY,"aliadoId" INTEGER,"activa" BOOLEAN DEFAULT true);
+    INSERT INTO "Sede" ("id","aliadoId") VALUES (10,10),(20,20);
     CREATE TABLE "Credito" (
       "id" SERIAL PRIMARY KEY,"folio" TEXT DEFAULT 'TEST',"clienteNombre" TEXT DEFAULT 'Cliente sintético',
       "clienteDocumento" TEXT DEFAULT '100000001',"clienteCorreo" TEXT,"clienteTelefono" TEXT,

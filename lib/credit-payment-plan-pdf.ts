@@ -1,12 +1,14 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
+import { creditDisplayNumber } from "@/lib/credit-display-number";
 import type { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 
 type PaymentPlan = ReturnType<typeof buildCreditPaymentPlan>;
 
 export type CreditPaymentPlanPdfInput = {
   folio: string;
+  numeroCreditoVisible?: string;
   clienteNombre: string;
   clienteDocumento: string;
   sedeNombre: string;
@@ -163,7 +165,7 @@ function drawContinuationHeader(
   input: CreditPaymentPlanPdfInput
 ) {
   doc.fillColor(COLORS.navy).font(fonts.bold).fontSize(15).text("FINSER PAY", 32, 34);
-  doc.fillColor(COLORS.muted).font(fonts.regular).fontSize(8.5).text(`Plan de pagos · ${input.folio}`, 32, 55);
+  doc.fillColor(COLORS.muted).font(fonts.regular).fontSize(8.5).text(`Plan de pagos · ${creditDisplayNumber(input)}`, 32, 55);
   doc.moveTo(32, 73).lineTo(563, 73).strokeColor(COLORS.border).stroke();
 }
 
@@ -176,7 +178,7 @@ export async function buildCreditPaymentPlanPdf(input: CreditPaymentPlanPdfInput
     bufferPages: true,
     font: fonts.regular,
     info: {
-      Title: `Plan de pagos ${input.folio}`,
+      Title: `Plan de pagos ${creditDisplayNumber(input)}`,
       Author: "FINSER PAY",
     },
   });
@@ -202,11 +204,14 @@ export async function buildCreditPaymentPlanPdf(input: CreditPaymentPlanPdfInput
   }
   doc.fillColor(COLORS.white).font(fonts.bold).fontSize(18).text("FINSER PAY", 116, 48);
   doc.fillColor("#DCE4EC").font(fonts.regular).fontSize(8.5).text("Plan de pagos", 116, 72);
-  doc.fillColor(COLORS.white).font(fonts.bold).fontSize(15).text(input.folio, 116, 88, {
+  doc.fillColor(COLORS.white).font(fonts.bold).fontSize(15).text(creditDisplayNumber(input), 116, 88, {
     width: 260,
     ellipsis: true,
     lineBreak: false,
   });
+  if (creditDisplayNumber(input) !== input.folio) {
+    doc.fillColor("#DCE4EC").font(fonts.regular).fontSize(7).text(`Folio original: ${input.folio}`, 116, 109, { width: 280, lineBreak: false, ellipsis: true });
+  }
   doc.save().roundedRect(446, 48, 92, 25, 12).fill(stateColors.fill).restore();
   doc.fillColor(stateColors.text).font(fonts.bold).fontSize(8.5).text(state, 446, 57, {
     width: 92,

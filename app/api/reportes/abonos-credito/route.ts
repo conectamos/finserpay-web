@@ -7,6 +7,7 @@ import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { resolveCreditPaymentSummary, sanitizeSearch } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import { creditNumberSearchWhere, getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
 import {
   DIGITAL_COLLECTION_SEDE_CODE,
   DIGITAL_COLLECTION_SEDE_NAME,
@@ -125,7 +126,7 @@ export async function GET(req: Request) {
           { clienteNombre: { contains: search, mode: "insensitive" } },
           { clienteDocumento: { contains: search, mode: "insensitive" } },
           { clienteTelefono: { contains: search, mode: "insensitive" } },
-          { folio: { contains: search, mode: "insensitive" } },
+          creditNumberSearchWhere(search),
           { imei: { contains: search, mode: "insensitive" } },
           { deviceUid: { contains: search, mode: "insensitive" } },
           { sede: { nombre: { contains: search, mode: "insensitive" } } },
@@ -140,7 +141,7 @@ export async function GET(req: Request) {
           { credito: { clienteNombre: { contains: search, mode: "insensitive" } } },
           { credito: { clienteDocumento: { contains: search, mode: "insensitive" } } },
           { credito: { clienteTelefono: { contains: search, mode: "insensitive" } } },
-          { credito: { folio: { contains: search, mode: "insensitive" } } },
+          { credito: creditNumberSearchWhere(search) },
           { credito: { imei: { contains: search, mode: "insensitive" } } },
           { credito: { deviceUid: { contains: search, mode: "insensitive" } } },
           { sede: { nombre: { contains: search, mode: "insensitive" } } },
@@ -310,6 +311,7 @@ export async function GET(req: Request) {
       take: 500,
     });
 
+    const displayNumbers = await getCreditDisplayNumbers(abonos.map(item => item.credito.id));
     const abonosRows = abonos.map((item) => {
       const digitalCollection = isDigitalCollectionSede(item.sede);
 
@@ -322,7 +324,7 @@ export async function GET(req: Request) {
         anuladoAt: item.anuladoAt?.toISOString() || null,
         anulacionMotivo: item.anulacionMotivo || null,
         fechaAbono: item.fechaAbono.toISOString(),
-        credito: item.credito,
+        credito: withCreditDisplayNumber(item.credito, displayNumbers),
         usuario: item.usuario,
         vendedor: digitalCollection
           ? {
