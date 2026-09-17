@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Expand, FileText, ImageOff, RefreshCw, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Expand, FileText, ImageOff, ListChecks, RefreshCw, ShieldCheck } from "lucide-react";
 import SharedApprovalWorkspace from "@/app/revision-creditos/shared-approval-workspace";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import { PAYMENT_FREQUENCY_OPTIONS } from "@/lib/credit-factory";
@@ -74,7 +74,7 @@ function confirmationDescription(confirmation: Confirmation, shared: boolean) {
   return `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, folio ${confirmation.folio}, y verificaste las correcciones.${recordingConfirmation} El OK habilitará este crédito para la liquidación al aliado y ${shared ? "quedará registrado por este acceso" : "quedará registrado con tu usuario"}.`;
 }
 
-export default function ApprovalConsole({ shared = false, redesigned = false }: { shared?: boolean; redesigned?: boolean } = {}) {
+export default function ApprovalConsole({ shared = false, redesigned = false, onOpenSadmin }: { shared?: boolean; redesigned?: boolean; onOpenSadmin?: () => void } = {}) {
   const modern = shared || redesigned;
   const [query, setQuery] = useState("");
   const [counts, setCounts] = useState<{ pending: number; approved: number } | null>(null);
@@ -323,7 +323,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false }: 
     const correctionDisabled = saving || Boolean(confirmation) || signatureBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError);
     return <SharedApprovalWorkspace view={view} counts={counts} query={query} items={items} selectedId={selectedId} selectedItem={selectedItem} detail={detail}
       queueLoaded={queueLoaded} searching={searching} searchError={searchError} nextCursor={nextCursor} loadingDetail={loadingDetail} detailError={detailError} busy={busy} correctionDisabled={correctionDisabled} notice={notice}
-      onSelect={selectCredit} onView={changeView} onSearch={searchShared} onRefresh={refreshShared} onMore={() => { if (!busy && nextCursor) void loadQueue(nextCursor); }} onBack={backToList} onRetryDetail={() => { if (selectedId && !busy) void loadDetail(selectedId); }} onUpdated={reloadAfterCorrection} onCorrectionBusy={setCorrectionBusy}
+      onSelect={selectCredit} onView={changeView} onSearch={searchShared} onRefresh={refreshShared} onMore={() => { if (!busy && nextCursor) void loadQueue(nextCursor); }} onBack={backToList} onRetryDetail={() => { if (selectedId && !busy) void loadDetail(selectedId); }} onUpdated={reloadAfterCorrection} onCorrectionBusy={setCorrectionBusy} onOpenSadmin={onOpenSadmin}
       callPanel={detail ? <ApprovalCallRecording key={detail.id} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} /> : null}
       noveltyPanel={detail ? <ApprovalNoveltyPanel key={detail.id} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null}
       signaturePanel={detail ? <ApprovalSignatureReissue key={detail.id} detail={detail} compact sharedAccess={shared} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null}
@@ -339,7 +339,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false }: 
 
   return (
     <main className="space-y-6 p-4 text-[var(--fp-graphite)] sm:p-6 lg:p-8">
-      <PageHeader eyebrow="Control documental" title="Muro de aprobaciones" description="Revisa los expedientes de todos los aliados y consulta las aprobaciones vigentes para liquidación." actions={<Button variant="secondary" disabled={busy || searching} onClick={() => void loadQueue()}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar muro</Button>} />
+      <PageHeader eyebrow="Control documental" title="Muro de aprobaciones" description="Revisa los expedientes de todos los aliados y consulta las aprobaciones vigentes para liquidación." actions={<>{onOpenSadmin ? <Button disabled={busy} onClick={onOpenSadmin}><ListChecks className="h-4 w-4" aria-hidden="true" />Creación SADMIN</Button> : null}<Button variant="secondary" disabled={busy || searching} onClick={() => void loadQueue()}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar muro</Button></>} />
       <Tabs role="tablist" aria-label="Vistas de aprobaciones">
         {(["pending", "approved"] as const).map((tab) => <button key={tab} id={"approval-tab-" + tab} role="tab" type="button" aria-selected={view === tab} aria-controls="approval-view" tabIndex={view === tab ? 0 : -1} disabled={busy} onClick={() => changeView(tab)} onKeyDown={(event) => {
           if (busy || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;

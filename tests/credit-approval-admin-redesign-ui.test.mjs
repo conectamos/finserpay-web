@@ -6,8 +6,10 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 
 test("la ruta administrativa activa el muro rediseñado sin convertir su sesión en acceso compartido", () => {
   const page = read("app/dashboard/aprobaciones/page.tsx");
-  assert.match(page, /<ApprovalConsole redesigned\s*\/>/);
-  assert.doesNotMatch(page, /<ApprovalConsole shared\s*\/>/);
+  assert.match(page, /<ApprovalWorkspace redesigned\s*\/>/);
+  assert.doesNotMatch(page, /<ApprovalWorkspace shared\s*\/>/);
+  const wrapper = read("app/dashboard/aprobaciones/approval-workspace.tsx");
+  assert.match(wrapper, /<ApprovalConsole shared=\{shared\} redesigned=\{redesigned\}/);
 });
 
 test("el muro administrativo y el enlace usan el scroll normal de la página", () => {
@@ -44,7 +46,7 @@ test("datos del cliente muestra departamento, ciudad y dirección en el render c
   assert.match(workspace, /\["Departamento", detail\.clienteDepartamento\], \["Ciudad", detail\.clienteCiudad\], \["Dirección", detail\.clienteDireccion\]/);
   assert.match(workspace, /styles\.customerAddress/);
   assert.match(console, /return <SharedApprovalWorkspace/);
-  assert.match(sharedPage, /<ApprovalConsole shared\s*\/>/);
+  assert.match(sharedPage, /<ApprovalWorkspace shared\s*\/>/);
 });
 
 test("el flujo compacto explica que guardar envía la novedad al aliado", () => {

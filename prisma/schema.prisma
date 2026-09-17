@@ -209,6 +209,7 @@ model Usuario {
   approvalCallRecordings CreditApprovalCallRecording[]
   aprobacionesCredito CreditApprovalReview[]
   eventosAprobacionCredito CreditApprovalEvent[]
+  eventosSadmin CreditSadminEvent[]
   approvalAccessLink CreditApprovalAccessLink? @relation("ApprovalAccessLinkOwner")
   issuedApprovalAccessLinks CreditApprovalAccessLink[] @relation("ApprovalAccessLinkIssuer")
   bloqueosDocumentoCreados ListaNegraDocumento[] @relation("BlacklistCreatedBy")
@@ -374,6 +375,8 @@ model Credito {
   novedadesAprobacion           CreditApprovalNovelty[]
   grabacionesAprobacion         CreditApprovalCallRecording[]
   continuidadesGrabacionAprobacion CreditApprovalCallContinuation[]
+  registroSadmin                 CreditSadminRegistration?
+  eventosSadmin                  CreditSadminEvent[]
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
 
@@ -421,9 +424,41 @@ model CreditApprovalSharedSession {
   reissues CreditApprovalReissue[]
   noveltyEvents CreditApprovalNoveltyEvent[]
   callRecordings CreditApprovalCallRecording[]
+  sadminEvents CreditSadminEvent[]
 
   @@unique([id, grantId], map: "CreditApprovalSharedSession_id_grant")
   @@index([grantId, expiresAt], map: "CreditApprovalSharedSession_grant_idx")
+}
+
+model CreditSadminRegistration {
+  creditoId Int @id
+  version Int @default(1)
+  codeudorCreado Boolean @default(false)
+  creditoCreado Boolean @default(false)
+  numeroCreditoConfirmado Boolean @default(false)
+  numeroCredito String? @db.VarChar(80)
+  completedAt DateTime? @db.Timestamp(3)
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  updatedAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+}
+
+model CreditSadminEvent {
+  id String @id @db.Uuid
+  creditoId Int
+  version Int
+  actorKind String @db.VarChar(16)
+  actorUserId Int?
+  actorName String @db.VarChar(160)
+  actorGrantId String? @db.Uuid
+  actorSessionId String? @db.Uuid
+  payload Json
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actor Usuario? @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actorSharedSession CreditApprovalSharedSession? @relation(fields: [actorSessionId, actorGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditSadminEvent_shared_actor_fkey")
+
+  @@unique([creditoId, version], map: "CreditSadminEvent_credit_version_key")
 }
 
 model CreditApprovalNovelty {

@@ -9,7 +9,7 @@ import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
 import SharedLogout from "@/app/revision-creditos/shared-logout";
 import SharedAccessControl from "./shared-access-control";
 import { canManageApprovalAnalysts } from "@/lib/roles";
-import ApprovalConsole from "./approval-console";
+import ApprovalWorkspace from "./approval-workspace";
 
 export const dynamic = "force-dynamic";
 export const metadata = {
@@ -46,7 +46,7 @@ export default async function AprobacionesPage() {
         <SharedLogout returnTo="/dashboard/aprobaciones" />
       </Card>}
       {canManageApprovalAnalysts(user) && <SharedAccessControl />}
-      <ApprovalConsole redesigned />
+      <ApprovalWorkspace redesigned />
     </AppShell>
   );
 }
