@@ -6,7 +6,7 @@
 - Ambos estados dependen de `estadoPago` del crédito recibido por la API existente.
 - La cuota conserva `saldoPendiente`, `fechaVencimiento` y el plan original.
 - La liquidación muestra `liquidacionAnticipada.capitalPendiente` y conserva el callback de confirmación.
-- En mora el botón de liquidación permanece visible y se puede consultar; la regla existente impide procesarla y muestra `motivo`. No se habilitó una operación que el servidor prohíbe.
+- En mora se oculta todo el bloque de liquidación: botón, importe y motivo. Al día conserva su comportamiento y disponibilidad existentes. No se modifica la regla del servidor.
 - La referencia del equipo proviene de `referenciaEquipo`; no hay fotos genéricas ni marcas gráficas de fabricantes.
 - El recordatorio calcula únicamente días de calendario en Colombia. No decide mora ni calcula importes.
 - Se reutilizan Button y ProgressBar y los tokens compartidos; animaciones de respiración y parpadeo se desactivan con movimiento reducido.

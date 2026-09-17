@@ -882,7 +882,7 @@ export default function ClienteConsultaPage() {
               className="grid min-h-[60px] place-items-center gap-1 text-[#676d72] active:text-[#111317]"
             >
               <CircleUserRound className="h-7 w-7 stroke-[2]" />
-              <span className="text-[12px] font-semibold">Perfil</span>
+              <span className="text-[12px] font-semibold">SALIR</span>
               <span className="h-1 w-8 rounded-full bg-transparent" />
             </button>
           </div>

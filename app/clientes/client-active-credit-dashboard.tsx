@@ -185,14 +185,18 @@ export default function ClientActiveCreditDashboard({
             <Button className={styles.payButton} onClick={onPayInstallment} disabled={!nextInstallment || paying}>
               <CreditCard aria-hidden="true" /><span>{paying ? "Abriendo…" : "Pagar cuota"}</span>
             </Button>
-            <Button variant="secondary" className={styles.payoffButton} onClick={onPayoff}
-              disabled={!payoff || paying} aria-describedby={payoff && !payoff.available ? "payoff-availability" : undefined}>
-              <span>Liquidar crédito</span>
-              <small>{payoff ? money(payoff.amount) : "Valor no disponible"}</small>
-            </Button>
-            {payoff && !payoff.available ? <p className={styles.availability} id="payoff-availability">
-              {payoff.reason || "Consulta la disponibilidad de liquidación."}
-            </p> : null}
+            {!overdue ? (
+              <>
+                <Button variant="secondary" className={styles.payoffButton} onClick={onPayoff}
+                  disabled={!payoff || paying} aria-describedby={payoff && !payoff.available ? "payoff-availability" : undefined}>
+                  <span>Liquidar crédito</span>
+                  <small>{payoff ? money(payoff.amount) : "Valor no disponible"}</small>
+                </Button>
+                {payoff && !payoff.available ? <p className={styles.availability} id="payoff-availability">
+                  {payoff.reason || "Consulta la disponibilidad de liquidación."}
+                </p> : null}
+              </>
+            ) : null}
             <p className={styles.reminder}><CalendarDays aria-hidden="true" />
               <span>{paymentReminder(nextInstallment?.dueDate || null, overdue, today)}</span>
             </p>

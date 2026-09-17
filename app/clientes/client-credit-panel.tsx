@@ -401,7 +401,7 @@ export default function ClientCreditPanel({
                 </div>
                 <strong>{money(nextInstallment.saldoPendiente)}</strong>
                 <button type="button" onClick={() => onOpenPanel("payments")}>
-                  Pagar ahora
+                  MEDIOS DE PAGO
                 </button>
               </section>
             ) : (
