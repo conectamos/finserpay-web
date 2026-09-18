@@ -341,9 +341,9 @@ test("sin grabación no permite confirmar aunque los demás documentos estén co
   } finally { h.unmount(); }
 });
 
-test("el panel de llamada informa cuando la grabación no es requerida", async () => {
+test("el panel de llamada permite cargar una grabación opcional sin presentarla como requisito", async () => {
   const exempt = detail(81);
-  exempt.callRecording = { ...exempt.callRecording, required: false, canUpload: false, recording: null };
+  exempt.callRecording = { ...exempt.callRecording, required: false, canUpload: true, recording: null };
   const h = mount("app/dashboard/aprobaciones/approval-call-recording.tsx", { "./approval-client": {} },
     { detail: exempt, disabled: false, onUpdated: async () => {}, onBusyChange: () => {} });
   try {
@@ -351,8 +351,11 @@ test("el panel de llamada informa cuando la grabación no es requerida", async (
     assert.equal(h.find((node) => node.type === ui.Badge).props.children, "No requerida");
     const copy = h.all((node) => node.type === "p").map((node) => String(node.props.children)).join(" ");
     assert.match(copy, /no es requerida/i);
+    assert.match(copy, /opcional/i);
+    assert.match(copy, /no bloquea el OK/i);
     assert.doesNotMatch(copy, /Llama al cliente|Falta la grabación/i);
-    assert.equal(h.all((node) => node.type === "input" && node.props.type === "file").length, 0);
+    assert.equal(h.find((node) => node.type === "label").props.children, "Subir grabación (opcional)");
+    assert.equal(h.all((node) => node.type === "input" && node.props.type === "file").length, 1);
   } finally { h.unmount(); }
 });
 
@@ -493,7 +496,7 @@ test("el panel administrativo usa el muro rediseñado y conserva la autoría per
 test("el panel administrativo permite confirmar cuando el DTO exime la grabación", async () => {
   const approvals = [];
   const exempt = detail(81);
-  exempt.callRecording = { ...exempt.callRecording, required: false, canUpload: false, recording: null };
+  exempt.callRecording = { ...exempt.callRecording, required: false, canUpload: true, recording: null };
   const h = wall({
     readApprovalQueue: async () => countedPage([row(81)]),
     readApprovalCredit: async () => exempt,
@@ -501,6 +504,8 @@ test("el panel administrativo permite confirmar cuando el DTO exime la grabació
   }, { redesigned: true });
   try {
     await h.flush(); sharedProps(h).onSelect(81); await h.flush();
+    assert.equal(sharedProps(h).callPanel.props.detail.callRecording.canUpload, true);
+    assert.equal(sharedProps(h).callPanel.props.detail.callRecording.recording, null);
     const ok = subtree(sharedProps(h).approvalPanel).find(node => node.type === ui.Button && node.props.onClick?.name === "requestApproval");
     assert.equal(ok.props.disabled, false);
     ok.props.onClick(); await h.flush();

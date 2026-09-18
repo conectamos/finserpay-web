@@ -38,8 +38,9 @@ El muro ofrece dos vistas sin búsqueda por cédula:
   externos, pendientes y sin liquidación pagada. Ordena por antigüedad e incluye
   novedades esperando al aliado y correcciones que el analista debe revisar.
 - **Aprobadas**: créditos con un OK de liquidación vigente, del más reciente al
-  más antiguo. Incluye aprobaciones previas sin audio y créditos ya incluidos en
-  liquidación. Muestra fecha y autor del OK; su expediente se consulta en lectura.
+  más antiguo. Incluye aprobaciones históricas sin audio, aprobaciones del
+  administrador central que usaron su excepción de audio y créditos ya incluidos
+  en liquidación. Muestra fecha y autor del OK; su expediente se consulta en lectura.
 
 Solo confirmar el OK tras revisar el expediente mueve un crédito a Aprobadas.
 Un cambio posterior que invalide la aprobación lo devuelve a Pendientes.
@@ -89,16 +90,26 @@ El flujo consiste en:
 3. Registrar novedades cuando algo requiera corrección y revisar las respuestas
    del aliado. Una novedad abierta impide aprobar; responder nunca aprueba solo.
 4. Realizar la llamada al cliente y guardar su grabación para la revisión vigente.
+   Este paso es obligatorio para analistas y para el enlace compartido. El
+   administrador central puede adjuntar la grabación de forma opcional.
 5. Confirmar **OK para liquidación** cuando todo esté en orden. El crédito sale de
-   Pendientes y queda en Aprobadas. Subir el audio no concede el OK.
+   Pendientes y queda en Aprobadas. El administrador central conserva la facultad
+   de dar el OK sin audio. Subir el audio no concede el OK.
 
-### Grabación obligatoria antes del OK
+### Grabación de la llamada y excepción del administrador central
 
-La llamada la realiza el analista; el teléfono del cliente permite abrir la
-aplicación de llamadas disponible en su dispositivo. El sistema recibe una
+El teléfono del cliente permite abrir la aplicación de llamadas disponible en el
+dispositivo del revisor. El sistema recibe una
 **grabación MP3, M4A, MP4 de audio, OGG (Opus) o WAV de hasta 10 MiB**. La fecha mostrada es la de carga,
-no una fecha de llamada inferida. El analista confirma que realizó la llamada
-al conceder el OK; no se integra un proveedor de telefonía ni se graba automáticamente.
+no una fecha de llamada inferida. No se integra un proveedor de telefonía ni se
+graba automáticamente.
+
+La grabación es obligatoria antes del OK para las cuentas con rol
+`ANALISTA_APROBACION` y para las sesiones del enlace compartido. Un ADMIN activo
+del aliado central FINSER PAY puede adjuntarla de forma opcional y también puede
+confirmar el OK sin audio. Esta excepción se resuelve con la identidad vigente en
+base de datos; no se concede por el nombre mostrado ni por datos enviados por el
+navegador.
 
 El audio se almacena de forma privada y separada del contrato. No se incorpora al
 snapshot contractual ni a sus valores. Cada carga conserva su archivo, autor,
@@ -113,10 +124,14 @@ la lectura e identificador de operación para reintentos. Reproducir el audio ex
 una sesión vigente, acceso al crédito y admite peticiones Range autenticadas.
 No se generan URL públicas para los archivos ni se entrega audio en los listados.
 
-El OK nuevo debe identificar la grabación vigente observada por el analista.
-Otra carga concurrente invalida esa selección y requiere actualizar. Las
-aprobaciones existentes conservan su estado aunque no tengan audio. Una aprobación
-que se invalide deberá satisfacer los requisitos del nuevo OK.
+Cuando existe una grabación para la revisión vigente, incluso si la adjuntó el
+administrador central de forma opcional, el OK debe identificarla y queda vinculada
+a la aprobación y a su evento de auditoría. Otra carga concurrente invalida esa
+selección y requiere actualizar. Si el administrador central no adjunta audio, el
+OK conserva `callRecordingId` nulo. Analistas y enlace compartido no pueden usar
+esta excepción. Las aprobaciones existentes conservan su estado aunque no tengan
+audio. Una aprobación que se invalide deberá satisfacer los requisitos del nuevo
+OK y del actor que vuelva a confirmarlo.
 
 Rutas adicionales:
 
@@ -127,7 +142,8 @@ Rutas adicionales:
   `x-review-hash` e `idempotency-key`.
 - `GET /api/aprobaciones/:id/grabaciones/:recordingId`: reproducción privada.
 - `POST /api/aprobaciones/:id`: incorpora `recordingId` al OK junto a revisión
-  y huella. Un reintento de un OK previo no altera su grabación registrada.
+  y huella cuando existe audio vigente. Solo el ADMIN central puede omitirlo si
+  no adjuntó una grabación. Un reintento de un OK previo no altera su audio.
 
 ### Novedades y PENDIENTES del aliado
 
@@ -340,7 +356,7 @@ las fotografías y el PDF, usan `Cache-Control: private, no-store` y
 | `GET /api/aprobaciones/[id]` | Devuelve `item` con información financiera, `review`, disponibilidad de documentos, `canApprove` y `blockingReasons`. |
 | `PATCH /api/aprobaciones/[id]/evidencias` | Reemplaza una fotografía con key, dataUrl, revision y reviewHash. |
 | `POST /api/aprobaciones/[id]/firma-seguro` | Solicita otra firma (REQUEST) o consulta su estado (REFRESH). |
-| `POST /api/aprobaciones/[id]` | Recibe únicamente `{revision, reviewHash}`; confirma el OK con el actor de la sesión. |
+| `POST /api/aprobaciones/[id]` | Recibe `{revision, reviewHash, recordingId?}` y confirma el OK con el actor de la sesión. `recordingId` es obligatorio para analistas y enlace compartido; el ADMIN central puede omitirlo cuando no adjuntó audio. |
 | `GET /api/aprobaciones/[id]/evidencias?tipo=...` | Entrega una de las cinco fotografías permitidas. |
 | `GET /api/aprobaciones/[id]/documento` | Entrega el PDF firmado vigente completo para renderizar localmente su última página. |
 | `GET /api/usuarios/analistas/[id]/enlace` | Consulta el estado del enlace personal y su URL cuando está vigente. |
@@ -467,7 +483,9 @@ El despliegue debe instalar primero el esquema del audio y luego iniciar la
 versión que envía `recordingId`. No hay backfill ni cambio de la fecha original
 que decide qué créditos requieren revisión. La instalación se puede repetir;
 conserva las decisiones existentes y sus documentos. Una versión anterior de la
-aplicación que no envíe audio no podrá conceder nuevos OK después de esta instalación.
+aplicación que no envíe audio no podrá conceder nuevos OK que requieran grabación;
+la excepción sin audio del ADMIN central permanece validada en el servidor y en
+PostgreSQL.
 
 Las pruebas adicionales de PostgreSQL usan bases locales exclusivas de fixtures:
 
@@ -480,7 +498,8 @@ Las pruebas adicionales de PostgreSQL usan bases locales exclusivas de fixtures:
 Cubren instalación repetida y después de Prisma, aprobaciones previas sin audio,
 checksum/tamaño/autoría, inmutabilidad, invalidación, selección de la última
 carga y las carreras entre subir, sustituir y aprobar. El OK sin audio se rechaza
-en el servicio y en SQL; liquidación continúa usando su bloqueo existente.
+para analistas y enlace compartido; la excepción del ADMIN central se valida en
+el servicio y en SQL. Liquidación continúa usando su bloqueo existente.
 
 Verificar en navegador el enlace común, ambas pestañas, novedad de fotografía,
 respuesta desde PENDIENTES del aliado, carga del audio sin aprobación automática,

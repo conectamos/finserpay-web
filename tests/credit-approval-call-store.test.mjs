@@ -6,7 +6,8 @@ import { loadCallModule, errors, actors, files, tone, stateModule, plain } from 
 function setup(overrides = {}) {
   const state = { rows: [], queries: [], writes: [], revoked: false, writable: true,
     detail: { review: { revision: 1, reviewHash: "a".repeat(64), required: true, status: "PENDING" },
-      capabilities: { canCorrectEvidence: true, correctionBlockedReason: null }, callRecording: { available: true } }, ...overrides };
+      capabilities: { canCorrectEvidence: true, correctionBlockedReason: null }, callRecording: { available: true, canUpload: true } },
+    detailActors: [], ...overrides };
   const db = {
     async $queryRawUnsafe(sql, ...args) {
       state.queries.push({ sql, args });
@@ -29,7 +30,9 @@ function setup(overrides = {}) {
     },
   };
   const service = loadCallModule("lib/credit-approval-call-store.ts", {
-    "@/lib/credit-approval": { getCreditApprovalDetail: async () => state.detail },
+    "@/lib/credit-approval": { getCreditApprovalDetail: async (_db, _creditId, currentActor) => {
+      state.detailActors.push(currentActor); return state.detail;
+    } },
     "@/lib/credit-approval-errors": errors, "@/lib/credit-approval-call-state": stateModule,
     "@/lib/credit-approval-actor": { ...actors,
       async assertApprovalActorActive() { state.queries.push({ sql: "LOCK ACTOR" }); if (state.revoked) throw new actors.ApprovalActorAccessError(); },
@@ -56,6 +59,7 @@ test("call upload preserves bytes and actor, locks credit before review and only
   assert.equal(state.queries[0].sql, "LOCK ACTOR");
   assert.match(state.queries[1].sql, /FROM "Credito".*FOR UPDATE/);
   assert.match(state.queries[2].sql, /FROM "CreditApprovalReview".*FOR UPDATE/);
+  assert.deepEqual(plain(state.detailActors), [actor]);
   assert.ok(state.rows[0].bytes.equals(file.bytes));
 });
 test("call upload is idempotent and preserves original actor and bytes", async () => {
@@ -86,15 +90,25 @@ test("shared actor audit retains grant and session and never invents a user", as
 test("upload denies revoked/out of scope, changed review, approved, legacy and blocked signatures", async () => {
   for (const patch of [ { revoked: true }, { writable: false },
     { review: { revision: 2 } }, { review: { reviewHash: "b".repeat(64) } },
-    { review: { status: "APPROVED" } }, { review: { required: false } },
-    { capabilities: { canCorrectEvidence: false, correctionBlockedReason: "Firma pendiente" } },
+    { review: { status: "APPROVED" }, callRecording: { canUpload: false } },
+    { review: { required: false }, callRecording: { canUpload: false } },
+    { capabilities: { canCorrectEvidence: false, correctionBlockedReason: "Firma pendiente" }, callRecording: { canUpload: false } },
   ]) {
     const { state, db, service } = setup();
     Object.assign(state, { revoked: patch.revoked || false, writable: patch.writable ?? true });
     Object.assign(state.detail.review, patch.review); Object.assign(state.detail.capabilities, patch.capabilities);
+    Object.assign(state.detail.callRecording, patch.callRecording);
     await assert.rejects(service.saveCreditApprovalCall(db, 81, await input(), actor));
     assert.equal(state.writes.length, 0);
   }
+});
+test("upload rejects the same actor-aware capability exposed by the detail DTO", async () => {
+  const { state, db, service } = setup();
+  state.detail.callRecording.canUpload = false;
+  await assert.rejects(service.saveCreditApprovalCall(db, 81, await input(), actor),
+    { code: "CALL_RECORDING_NOT_ALLOWED", status: 409 });
+  assert.deepEqual(plain(state.detailActors), [actor]);
+  assert.equal(state.writes.length, 0);
 });
 test("recording selection is scoped to revision/hash and preserves legacy null and fixed approved ID", async () => {
   const { db, service } = setup();
