@@ -33,12 +33,12 @@ export async function saveCreditApprovalCall(db: ApprovalDatabase, creditId: num
     }
     return { state: await readCreditApprovalCallState(db, creditId, saved.revision, saved.reviewHash, saved.id), unchanged: true };
   }
-  const detail = await getCreditApprovalDetail(db, creditId);
+  const detail = await getCreditApprovalDetail(db, creditId, actor);
   if (!detail.callRecording.available) throw new CreditApprovalError("CALL_RECORDING_UNAVAILABLE", "No se pudo verificar el almacenamiento de grabaciones. Intenta de nuevo en unos momentos.", 503);
   if (detail.review.revision !== input.revision || detail.review.reviewHash !== input.reviewHash) {
     throw new CreditApprovalError("REVIEW_CHANGED", "El expediente cambió. Actualiza antes de cargar la grabación.", 409);
   }
-  if (detail.review.status !== "PENDING" || !detail.review.required || !detail.capabilities.canCorrectEvidence) {
+  if (!detail.callRecording.canUpload) {
     throw new CreditApprovalError("CALL_RECORDING_NOT_ALLOWED", detail.capabilities.correctionBlockedReason || "Este crédito no permite cargar una grabación.", 409);
   }
   const id = randomUUID();

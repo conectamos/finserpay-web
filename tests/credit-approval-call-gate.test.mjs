@@ -8,7 +8,8 @@ const sharedActor = { kind: "SHARED_LINK", id: null, nombre: "Acceso compartido"
   grantId: "00000000-0000-4000-8000-000000000071", sessionId: "00000000-0000-4000-8000-000000000072" };
 const anotherId = "00000000-0000-4000-8000-000000000082";
 const inputFor = (detail, recordingId = CALL_RECORDING_ID) => ({ revision: detail.review.revision, reviewHash: detail.review.reviewHash, recordingId });
-const pureDetail = (fixture, state) => service.buildCreditApprovalDetail(fixture.credit, fixture.review, fixture.assessment, fixture.document, undefined, undefined, state);
+const pureDetail = (fixture, state, canSkipCallRecording = false, reissue) => service.buildCreditApprovalDetail(
+  fixture.credit, fixture.review, fixture.assessment, fixture.document, reissue, undefined, state, undefined, canSkipCallRecording);
 const continuity = loadApprovalModule("lib/credit-approval-call-continuity.ts", {
   "@/lib/credit-approval": { getCreditApprovalDetail: async () => { throw new Error("El test suministra el detalle final"); } },
 });
@@ -57,7 +58,7 @@ test("solo el administrador central activo puede aprobar sin una grabación", as
   const { db, state } = approvalDatabase({ callRecording: null, centralAdminUserIds: [centralActor.id] });
   const detail = await service.getCreditApprovalDetail(db, 81, centralActor);
   assert.equal(detail.callRecording.required, false);
-  assert.equal(detail.callRecording.canUpload, false);
+  assert.equal(detail.callRecording.canUpload, true);
   assert.equal(detail.canApprove, true);
 
   const result = await service.approveCredit(db, 81,
@@ -96,6 +97,32 @@ test("el administrador central sin audio no depende del almacenamiento de grabac
   assert.equal(state.review.callRecordingId, null);
 });
 
+test("la carga opcional central solo está disponible mientras la revisión siga pendiente y elegible", () => {
+  const pendingFixture = approvalFixture();
+  const pending = pureDetail(pendingFixture, { available: true, recording: null }, true);
+  assert.equal(pending.callRecording.required, false);
+  assert.equal(pending.callRecording.canUpload, true);
+
+  const approvedFixture = approvalFixture();
+  approvedFixture.review = { status: "APPROVED", revision: 1, approvedRevision: 1,
+    approvedAt: new Date("2026-09-11T15:00:00Z"), approvedByName: "Administrador central", callRecordingId: null };
+  const approved = pureDetail(approvedFixture, { available: true, recording: null }, true);
+
+  const legacyFixture = approvalFixture(); legacyFixture.credit.required = false;
+  const legacy = pureDetail(legacyFixture, { available: true, recording: null }, true);
+  const paidFixture = approvalFixture(); paidFixture.credit.paid = true;
+  const paid = pureDetail(paidFixture, { available: true, recording: null }, true);
+  const cancelledFixture = approvalFixture(); cancelledFixture.credit.estado = "CANCELADO";
+  const cancelled = pureDetail(cancelledFixture, { available: true, recording: null }, true);
+  const blockedFixture = approvalFixture();
+  const blocked = pureDetail(blockedFixture, { available: true, recording: null }, true,
+    { available: true, blocked: true, operation: null });
+  const unavailable = pureDetail(approvalFixture(), { available: false, recording: null }, true);
+
+  for (const detail of [approved, legacy, paid, cancelled, blocked, unavailable]) {
+    assert.equal(detail.callRecording.canUpload, false);
+  }
+});
 test("si existe audio vigente el administrador central debe confirmar ese identificador", async () => {
   const { db, state } = approvalDatabase({ centralAdminUserIds: [centralActor.id] });
   const detail = await service.getCreditApprovalDetail(db, 81, centralActor);

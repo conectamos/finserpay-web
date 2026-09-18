@@ -232,6 +232,7 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
     : reissue.blocked ? "Resuelve el reenvío de firma en curso antes de corregir o aprobar este expediente."
     : !reissue.available ? "No se pudo verificar el estado de la firma. Actualiza el expediente." : null;
   const recordingRequired = credit.required && !approved && !canSkipCallRecording;
+  const canUploadRecording = credit.required && !approved && correctionBlockedReason === null && callState.available;
   const recordingValidity = callState.validFor || (callState.recording
     ? { revision: callState.recording.revision, reviewHash: callState.recording.reviewHash } : null);
   const currentRecording = callState.recording && (!recordingRequired || (
@@ -273,7 +274,7 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
       revision: review?.revision || 1, reviewHash, approvedAt: approved ? iso(review?.approvedAt || null) : null,
       approvedByName: approved ? review?.approvedByName || null : null },
     callRecording: { available: callState.available, recording: currentRecording, required: recordingRequired,
-      canUpload: recordingRequired && correctionBlockedReason === null && callState.available,
+      canUpload: canUploadRecording,
       blockedReason: recordingBlockedReason || (recordingRequired ? correctionBlockedReason : null) },
     canApprove: blockingReasons.length === 0 && !approved, blockingReasons, evidence: evidence.map((item) => ({ ...item, href: `${item.href}&revision=${reviewHash}` })), reissue, novelties,
     capabilities: { canCreateNovelty: correctionBlockedReason === null && novelties.available, canCorrectEvidence: correctionBlockedReason === null, canReissueSignature: correctionBlockedReason === null && documentAvailable && Boolean(document?.processUuid?.trim()), correctionBlockedReason },
