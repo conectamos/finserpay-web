@@ -86,7 +86,11 @@ test("el predeploy reconcilia columnas y reemplaza constraints de ciclo de vida"
   }
   assert.match(
     schema,
-    /"status" = 'COMPLETED'[\s\S]*"completedByUserId" IS NOT NULL[\s\S]*"completedByName"[\s\S]*"completedAt" IS NOT NULL/
+    /"status" = 'COMPLETED'[\s\S]*"completedByName"[\s\S]*"completedAt" IS NOT NULL/
+  );
+  assert.doesNotMatch(
+    schema,
+    /"status" = 'COMPLETED'[\s\S]{0,180}"completedByUserId" IS NOT NULL/
   );
   assert.match(
     schema,
@@ -196,14 +200,26 @@ test("Railway ejecuta el esquema despues de sus dependencias y Docker lo incluye
   const replacementPosition = predeploy.indexOf(
     'import("./ensure-credit-device-replacement-schema.mjs")'
   );
+  const approvalPosition = predeploy.indexOf(
+    'import("./ensure-credit-approval-schema.mjs")'
+  );
+  const repairPosition = predeploy.indexOf(
+    'import("./repair-credit-device-replacement-20260918.mjs")'
+  );
 
   assert.ok(solicitudesPosition >= 0, "falta preparar CreditoBorrador");
   assert.ok(enrollmentPosition >= 0, "falta preparar IphoneEnrollmentReview");
   assert.ok(replacementPosition > solicitudesPosition);
   assert.ok(replacementPosition > enrollmentPosition);
+  assert.ok(approvalPosition > replacementPosition);
+  assert.ok(repairPosition > approvalPosition);
   assert.match(
     dockerfile,
     /COPY --from=builder \/app\/scripts\/ensure-credit-device-replacement-schema\.mjs \.\/scripts\/ensure-credit-device-replacement-schema\.mjs/
+  );
+  assert.match(
+    dockerfile,
+    /COPY --from=builder \/app\/scripts\/repair-credit-device-replacement-20260918\.mjs \.\/scripts\/repair-credit-device-replacement-20260918\.mjs/
   );
   assert.match(schema, /SET LOCAL lock_timeout = '10s'/);
   assert.match(schema, /SET LOCAL statement_timeout = '120s'/);

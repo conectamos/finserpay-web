@@ -17,3 +17,4 @@ await import("./ensure-credit-approval-novelties-schema.mjs");
 await import("./ensure-approval-shared-schema.mjs");
 await import("./ensure-credit-approval-call-schema.mjs");
 await import("./ensure-credit-sadmin-schema.mjs");
+await import("./repair-credit-device-replacement-20260918.mjs");

@@ -13,6 +13,7 @@ import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import { getCreditApprovalReissueState } from "@/lib/credit-approval-reissue-state";
 import { isFirmaSeguroCompletedStatus } from "@/lib/firmaseguro";
 import { getColombiaDepartmentLabel } from "@/lib/colombia-locations";
+import { resolveContractualCreditImei } from "@/lib/credit-contract-imei";
 
 export type ApprovalDatabase = Pick<Prisma.TransactionClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
 export type { ApprovalActor } from "@/lib/credit-approval-actor";
@@ -195,7 +196,7 @@ async function readDocument(db: ApprovalDatabase, id: number) {
 function creditApprovalReviewHash(credit: ApprovalCredit, assessment: ApprovalAssessment | null, document: ApprovalDocument | null) {
   return digest({
     creditId: credit.id, document: credit.clienteDocumento, name: credit.clienteNombre,
-    allyId: credit.aliadoId, imei: credit.imei, marca: credit.equipoMarca, modelo: credit.equipoModelo,
+    allyId: credit.aliadoId, imei: resolveContractualCreditImei(credit), marca: credit.equipoMarca, modelo: credit.equipoModelo,
     valorVenta: credit.valorEquipoTotal, inicial: credit.cuotaInicial, principal: credit.saldoBaseFinanciado,
     financial: record(credit.contratoSnapshot).financiero,
     evidence: APPROVAL_EVIDENCE.map(({ field }) => digest(credit[field])),

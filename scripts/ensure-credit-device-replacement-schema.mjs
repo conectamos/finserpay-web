@@ -145,7 +145,6 @@ const statements = [
         CHECK (
           (
             "status" = 'COMPLETED'
-            AND "completedByUserId" IS NOT NULL
             AND NULLIF(btrim("completedByName"), '') IS NOT NULL
             AND "completedAt" IS NOT NULL
           )
@@ -341,8 +340,7 @@ const statements = [
       END IF;
 
       IF NEW."status" = 'COMPLETED' AND (
-        NEW."completedByUserId" IS NULL
-        OR NULLIF(btrim(NEW."completedByName"), '') IS NULL
+        NULLIF(btrim(NEW."completedByName"), '') IS NULL
         OR NEW."completedAt" IS NULL
       ) THEN
         RAISE EXCEPTION 'Completed replacement requires completion metadata';

@@ -126,7 +126,38 @@ export const creditApprovalSchemaStatements = [
     END $$`,
   `CREATE OR REPLACE FUNCTION public.credit_approval_credit_changed()
     RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE approved_replacement BOOLEAN := FALSE;
     BEGIN
+      IF OLD."imei" IS DISTINCT FROM NEW."imei"
+        AND ROW(OLD."clienteNombre", OLD."clienteDocumento", OLD."valorEquipoTotal", OLD."cuotaInicial",
+          OLD."saldoBaseFinanciado", OLD."montoCredito", OLD."sedeId", OLD."equipoMarca", OLD."equipoModelo",
+          OLD."contratoCedulaFrenteDataUrl", OLD."contratoCedulaRespaldoDataUrl",
+          OLD."iphoneSelfieCedulaDataUrl", OLD."fotoEntregaDataUrl", OLD."fotoRemisionDataUrl",
+          OLD."contratoSnapshot" -> 'financiero', OLD."contratoSnapshot" -> 'firma')
+        IS NOT DISTINCT FROM
+        ROW(NEW."clienteNombre", NEW."clienteDocumento", NEW."valorEquipoTotal", NEW."cuotaInicial",
+          NEW."saldoBaseFinanciado", NEW."montoCredito", NEW."sedeId", NEW."equipoMarca", NEW."equipoModelo",
+          NEW."contratoCedulaFrenteDataUrl", NEW."contratoCedulaRespaldoDataUrl",
+          NEW."iphoneSelfieCedulaDataUrl", NEW."fotoEntregaDataUrl", NEW."fotoRemisionDataUrl",
+          NEW."contratoSnapshot" -> 'financiero', NEW."contratoSnapshot" -> 'firma')
+        AND to_regclass('public."CreditDeviceReplacement"') IS NOT NULL THEN
+        EXECUTE 'SELECT EXISTS (
+          SELECT 1
+          FROM public."CreditDeviceReplacement" replacement
+          INNER JOIN public."CreditDeviceReplacementReview" review
+            ON review."replacementId" = replacement."id"
+          WHERE replacement."creditId" = $1
+            AND replacement."status" = ''ENROLLMENT_APPROVED''
+            AND regexp_replace(COALESCE(replacement."previousImei", ''''), ''[^0-9]'', '''', ''g'') = $2
+            AND regexp_replace(COALESCE(replacement."newImei", ''''), ''[^0-9]'', '''', ''g'') = $3
+            AND review."decision" = ''APROBADO''
+        )'
+        INTO approved_replacement
+        USING NEW."id",
+          regexp_replace(COALESCE(OLD."imei", ''), '[^0-9]', '', 'g'),
+          regexp_replace(COALESCE(NEW."imei", ''), '[^0-9]', '', 'g');
+        IF approved_replacement THEN RETURN NEW; END IF;
+      END IF;
       IF ROW(OLD."clienteNombre", OLD."clienteDocumento", OLD."valorEquipoTotal", OLD."cuotaInicial",
         OLD."saldoBaseFinanciado", OLD."montoCredito", OLD."imei", OLD."sedeId", OLD."equipoMarca", OLD."equipoModelo",
         OLD."contratoCedulaFrenteDataUrl", OLD."contratoCedulaRespaldoDataUrl",

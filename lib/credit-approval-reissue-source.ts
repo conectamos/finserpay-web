@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFinancingTermsSeal } from "@/lib/credit-amortization-contract";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
+import { resolveContractualCreditImei } from "@/lib/credit-contract-imei";
 
 export function reissueRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -35,7 +36,7 @@ export function frozenReissueCredit(credit: Record<string, unknown>, process: {
   if (!terms.folio || terms.folio !== credit.folio || process.draftFolio !== terms.folio
     || text(terms.documento) !== text(credit.clienteDocumento)
     || text(terms.clienteNombre) !== text(credit.clienteNombre)
-    || text(terms.imei) !== text(credit.imei)
+    || text(terms.imei) !== text(resolveContractualCreditImei(credit))
     || !terms.clienteTelefono || !terms.clienteDireccion
     || !terms.equipoMarca || !terms.equipoModelo
     || !["MENSUAL", "QUINCENAL", "SEMANAL"].includes(terms.frecuenciaPago)

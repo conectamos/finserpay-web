@@ -720,6 +720,100 @@ async function insertEvent(
   );
 }
 
+async function applyApprovedReplacement(
+  database: Database,
+  input: {
+    row: ReplacementContextRow;
+    review: ReplacementReviewRow;
+    completedByUserId: number | null;
+    completedByName: string;
+    eventActorType: "USER" | "ANALYST" | "SYSTEM_SUPPORT";
+    eventActorUserId: number | null;
+    eventActorName: string;
+    automatic: boolean;
+  }
+) {
+  const completedByName = cleanText(input.completedByName, 160);
+  const eventActorName = cleanText(input.eventActorName, 160);
+  if (
+    input.row.status !== "ENROLLMENT_APPROVED" ||
+    (input.completedByUserId !== null &&
+      (!Number.isInteger(input.completedByUserId) ||
+        input.completedByUserId <= 0)) ||
+    !completedByName ||
+    !eventActorName
+  ) {
+    throw new CreditDeviceReplacementError(
+      "REVIEW_INCONSISTENT",
+      "La aprobación del reemplazo no tiene información suficiente para aplicar el IMEI."
+    );
+  }
+
+  await assertImeiAvailable(database, {
+    imei: input.row.newImei,
+    creditId: input.row.creditId,
+    solicitudId: input.row.solicitudId,
+    replacementId: input.row.id,
+  });
+  const updatedCredit = await database.$queryRawUnsafe<Array<{ id: number }>>(
+    `
+      UPDATE "Credito"
+      SET "imei" = $1, "deviceUid" = $1, "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $2
+        AND regexp_replace(COALESCE("imei", ''), '[^0-9]', '', 'g') IN ($1, $3)
+        AND regexp_replace(COALESCE("deviceUid", ''), '[^0-9]', '', 'g') IN ($1, $3)
+      RETURNING "id"
+    `,
+    input.row.newImei,
+    input.row.creditId,
+    input.row.previousImei
+  );
+  if (!updatedCredit[0]) {
+    throw new CreditDeviceReplacementError(
+      "REPLACEMENT_CONCURRENT_CHANGE",
+      "El equipo vigente cambió durante la operación."
+    );
+  }
+
+  const completed = await database.$queryRawUnsafe<Array<{ id: string }>>(
+    `
+      UPDATE "CreditDeviceReplacement"
+      SET "status" = 'COMPLETED', "completedByUserId" = $2,
+        "completedByName" = $3, "completedAt" = CURRENT_TIMESTAMP,
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1::uuid AND "status" = 'ENROLLMENT_APPROVED'
+      RETURNING "id"::text
+    `,
+    input.row.id,
+    input.completedByUserId,
+    completedByName
+  );
+  if (!completed[0]) {
+    throw new CreditDeviceReplacementError(
+      "REPLACEMENT_CONCURRENT_CHANGE",
+      "El cambio de equipo ya fue procesado por otra operación."
+    );
+  }
+
+  await insertEvent(database, {
+    replacementId: input.row.id,
+    eventType: "COMPLETED",
+    actorType: input.eventActorType,
+    actorUserId: input.eventActorUserId,
+    actorName: eventActorName,
+    payload: {
+      creditId: input.row.creditId,
+      folio: input.row.folio,
+      reviewId: input.review.id,
+      automatic: input.automatic,
+      previousImeiMasked: maskImei(input.row.previousImei),
+      newImeiMasked: maskImei(input.row.newImei),
+      previousImeiHash: hashIphoneEnrollmentImei(input.row.previousImei),
+      newImeiHash: hashIphoneEnrollmentImei(input.row.newImei),
+    },
+  });
+}
+
 export async function getCreditDeviceReplacementOverview(
   creditId: number
 ): Promise<CreditDeviceReplacementOverview> {
@@ -907,18 +1001,25 @@ export async function createCreditDeviceReplacement(input: {
   });
 }
 
-async function replacementCreditId(
+async function replacementLockIdentity(
   database: Database,
   replacementId: string
 ) {
-  const rows = await database.$queryRawUnsafe<Array<{ creditId: number }>>(
+  const rows = await database.$queryRawUnsafe<
+    Array<{
+      creditId: number;
+      previousImei: string;
+      newImei: string;
+    }>
+  >(
     `
-      SELECT "creditId" FROM "CreditDeviceReplacement"
+      SELECT "creditId", "previousImei", "newImei"
+      FROM "CreditDeviceReplacement"
       WHERE "id" = $1::uuid LIMIT 1
     `,
     replacementId
   );
-  return rows[0]?.creditId || null;
+  return rows[0] || null;
 }
 
 export async function completeCreditDeviceReplacement(input: {
@@ -961,68 +1062,16 @@ export async function completeCreditDeviceReplacement(input: {
         "La aprobación de enrolamiento no pudo verificarse."
       );
     }
-    if (
-      normalizedDigits(row.creditImei) !== row.previousImei ||
-      normalizedDigits(row.creditDeviceUid) !== row.previousImei
-    ) {
-      throw new CreditDeviceReplacementError(
-        "REPLACEMENT_CONCURRENT_CHANGE",
-        "El equipo vigente cambió. Recarga el crédito antes de continuar."
-      );
-    }
-    await assertImeiAvailable(transaction, {
-      imei: row.newImei,
-      creditId: row.creditId,
-      solicitudId: row.solicitudId,
-      replacementId: row.id,
-    });
-    const updatedCredit = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
-      `
-        UPDATE "Credito"
-        SET "imei" = $1, "deviceUid" = $1, "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "id" = $2
-          AND regexp_replace(COALESCE("imei", ''), '[^0-9]', '', 'g') = $3
-          AND regexp_replace(COALESCE("deviceUid", ''), '[^0-9]', '', 'g') = $3
-        RETURNING "id"
-      `,
-      row.newImei,
-      row.creditId,
-      row.previousImei
-    );
-    if (!updatedCredit[0]) {
-      throw new CreditDeviceReplacementError(
-        "REPLACEMENT_CONCURRENT_CHANGE",
-        "El equipo vigente cambió durante la operación."
-      );
-    }
     const actorName = cleanText(input.actor.name, 160) || "Administrador";
-    await transaction.$executeRawUnsafe(
-      `
-        UPDATE "CreditDeviceReplacement"
-        SET "status" = 'COMPLETED', "completedByUserId" = $2,
-          "completedByName" = $3, "completedAt" = CURRENT_TIMESTAMP,
-          "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "id" = $1::uuid AND "status" = 'ENROLLMENT_APPROVED'
-      `,
-      row.id,
-      input.actor.userId,
-      actorName
-    );
-    await insertEvent(transaction, {
-      replacementId: row.id,
-      eventType: "COMPLETED",
-      actorType: "USER",
-      actorUserId: input.actor.userId,
-      actorName,
-      payload: {
-        creditId: row.creditId,
-        folio: row.folio,
-        reviewId: review.id,
-        previousImeiMasked: maskImei(row.previousImei),
-        newImeiMasked: maskImei(row.newImei),
-        previousImeiHash: hashIphoneEnrollmentImei(row.previousImei),
-        newImeiHash: hashIphoneEnrollmentImei(row.newImei),
-      },
+    await applyApprovedReplacement(transaction, {
+      row,
+      review,
+      completedByUserId: input.actor.userId,
+      completedByName: actorName,
+      eventActorType: "USER",
+      eventActorUserId: input.actor.userId,
+      eventActorName: actorName,
+      automatic: false,
     });
     return { id: row.id, status: "COMPLETED" as const };
   });
@@ -1231,8 +1280,11 @@ async function approveReplacementWith(
   transaction: Prisma.TransactionClient
 ) {
   validateApprovalInput(input);
-  const creditId = await replacementCreditId(transaction, input.replacementId);
-  if (!creditId) {
+  const lockIdentity = await replacementLockIdentity(
+    transaction,
+    input.replacementId
+  );
+  if (!lockIdentity) {
     throw new CreditDeviceReplacementError(
       "REPLACEMENT_NOT_FOUND",
       "El cambio de equipo ya no está disponible.",
@@ -1240,26 +1292,27 @@ async function approveReplacementWith(
     );
   }
   await advisoryLocks(transaction, [
-    "credit-device-replacement:credit:" + creditId,
+    "credit-device-replacement:credit:" + lockIdentity.creditId,
     "credit-device-replacement:replacement:" + input.replacementId,
+    "credit-device-replacement:imei:" + lockIdentity.previousImei,
+    "credit-device-replacement:imei:" + lockIdentity.newImei,
   ]);
   const row = await replacementContextForUpdate(transaction, {
     replacementId: input.replacementId,
   });
   if (
     !row ||
-    !ACTIVE_STATUSES.includes(row.status as (typeof ACTIVE_STATUSES)[number])
+    (!ACTIVE_STATUSES.includes(
+      row.status as (typeof ACTIVE_STATUSES)[number]
+    ) &&
+      row.status !== "COMPLETED")
   ) {
     throw new CreditDeviceReplacementError(
       "REPLACEMENT_NOT_PENDING",
       "El cambio de equipo ya no está disponible para enrolamiento."
     );
   }
-  await advisoryLocks(transaction, [
-    "credit-device-replacement:imei:" + row.newImei,
-  ]);
   await lockSolicitudIdentityMutation(transaction, "imei", row.newImei);
-  assertEligibleCredit(row);
   const document = normalizedDigits(row.clienteDocumento);
   if (
     row.solicitudId !== input.solicitudId ||
@@ -1272,6 +1325,24 @@ async function approveReplacementWith(
     );
   }
   const existing = replacementReviewFromContext(row);
+  if (row.status === "COMPLETED") {
+    if (
+      !existing ||
+      !reviewIsValid(existing, { document, imei: row.newImei }) ||
+      normalizedDigits(row.creditImei) !== row.newImei ||
+      normalizedDigits(row.creditDeviceUid) !== row.newImei
+    ) {
+      throw new CreditDeviceReplacementError(
+        "REVIEW_INCONSISTENT",
+        "El reemplazo finalizado no coincide con el IMEI operativo del crédito."
+      );
+    }
+    return {
+      review: serializeReview(existing, row.solicitudId),
+      alreadyApproved: true,
+    };
+  }
+  assertEligibleCredit(row);
   if (existing) {
     if (!reviewIsValid(existing, { document, imei: row.newImei })) {
       throw new CreditDeviceReplacementError(
@@ -1279,6 +1350,16 @@ async function approveReplacementWith(
         "La aprobación existente no pudo verificarse."
       );
     }
+    await applyApprovedReplacement(transaction, {
+      row,
+      review: existing,
+      completedByUserId: null,
+      completedByName: input.analyst.name,
+      eventActorType: "ANALYST",
+      eventActorUserId: null,
+      eventActorName: input.analyst.name,
+      automatic: true,
+    });
     return {
       review: serializeReview(existing, row.solicitudId),
       alreadyApproved: true,
@@ -1364,6 +1445,16 @@ async function approveReplacementWith(
       imeiHash: input.imeiHash,
       analystExternalId: cleanText(input.analyst.externalId, 120),
     },
+  });
+  await applyApprovedReplacement(transaction, {
+    row: { ...row, status: "ENROLLMENT_APPROVED" },
+    review,
+    completedByUserId: null,
+    completedByName: input.analyst.name,
+    eventActorType: "ANALYST",
+    eventActorUserId: null,
+    eventActorName: input.analyst.name,
+    automatic: true,
   });
   return {
     review: serializeReview(review, row.solicitudId),
