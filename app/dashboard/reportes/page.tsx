@@ -392,6 +392,7 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
   const previousRange = previousPeriodRange(range);
   const creditWhere: Prisma.CreditoWhereInput = {
     sedeId: { in: scopeSedeIds },
+    pazYSalvoEmitidoAt: null,
   };
   const paymentScope: Prisma.CreditoAbonoWhereInput = {
     estado: { not: "ANULADO" },
@@ -399,15 +400,10 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
     credito: { estado: { not: "ANULADO" } },
   };
 
-  const [credits, currentPayments, previousPayments] = await Promise.all([
+  const [credits, paymentTotals, currentPayments, previousPayments] = await Promise.all([
     prisma.credito.findMany({
       where: creditWhere,
       select: {
-        abonos: {
-          where: { estado: { not: "ANULADO" } },
-          select: { fechaAbono: true, valor: true },
-          orderBy: { fechaAbono: "asc" },
-        },
         estado: true,
         fechaPrimerPago: true,
         fechaProximoPago: true,
@@ -418,6 +414,18 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
         plazoMeses: true,
         valorCuota: true,
       },
+    }),
+    prisma.creditoAbono.groupBy({
+      by: ["creditoId"],
+      where: {
+        estado: { not: "ANULADO" },
+        credito: {
+          ...creditWhere,
+          estado: { not: "ANULADO" },
+        },
+        valor: { gt: 0 },
+      },
+      _sum: { valor: true },
     }),
     prisma.creditoAbono.aggregate({
       where: {
@@ -440,6 +448,12 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
   ]);
 
   const riskBalances = { current: 0, early: 0, medium: 0, advanced: 0 };
+  const paidByCreditId = new Map(
+    paymentTotals.map((payment) => [
+      payment.creditoId,
+      Number(payment._sum.valor || 0),
+    ])
+  );
   let activeCredits = 0;
   let portfolioBalance = 0;
   let overdueBalance = 0;
@@ -449,7 +463,7 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
     if (isAnnulled(credit.estado)) continue;
 
     const plan = buildCreditPaymentPlan({
-      abonos: credit.abonos,
+      abonos: [{ valor: paidByCreditId.get(credit.id) || 0 }],
       fechaPrimerPago: credit.fechaPrimerPago,
       fechaProximoPago: credit.fechaProximoPago,
       frecuenciaPago: credit.frecuenciaPago,

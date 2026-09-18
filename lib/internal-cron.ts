@@ -5,18 +5,14 @@ import {
 } from "@/lib/device-unlock-queue";
 import { syncEfectyRecaudosFromSftp } from "@/lib/efecty-recaudos";
 import { reconcilePendingWompiPayments } from "@/lib/wompi-reconciliation";
+import {
+  getDueInternalCronTasks,
+  getStartupRecoveryTasks,
+  type InternalCronTask,
+} from "@/lib/internal-cron-schedule";
 
 const BOGOTA_TIME_ZONE = "America/Bogota";
 const CHECK_INTERVAL_MS = 30_000;
-const EFECTY_INTERVAL_MINUTES = 10;
-const EFECTY_WINDOW_START_MINUTE = 23 * 60 + 10;
-const EFECTY_WINDOW_END_MINUTE = 1 * 60 + 50;
-const MORA_INTERVAL_MINUTES = 10;
-const MORA_WINDOW_START_MINUTE = 23 * 60 + 30;
-const MORA_WINDOW_END_MINUTE = 1 * 60 + 50;
-const WOMPI_INTERVAL_MINUTES = 5;
-
-type InternalCronTask = "efecty" | "mora" | "unlock" | "wompi";
 
 type InternalCronState = {
   completed: Set<string>;
@@ -76,44 +72,6 @@ function getMoraEffectiveDate(dateKey: string) {
   // spans midnight, but it must keep the current Colombian calendar date;
   // carrying the previous day delayed mora automation by almost 24 hours.
   return dateKey;
-}
-
-function getDueTasks(timeKey: string) {
-  const tasks: InternalCronTask[] = [];
-  const [hourValue = "", minuteValue = ""] = timeKey.split(":");
-  const hour = Number.parseInt(hourValue, 10);
-  const minute = Number.parseInt(minuteValue, 10);
-  const minuteOfDay = hour * 60 + minute;
-
-  if (Number.isFinite(minute) && minute % WOMPI_INTERVAL_MINUTES === 0) {
-    tasks.push("wompi");
-  }
-
-  const isEfectyWindow =
-    minuteOfDay >= EFECTY_WINDOW_START_MINUTE ||
-    minuteOfDay <= EFECTY_WINDOW_END_MINUTE;
-
-  if (
-    Number.isFinite(minute) &&
-    minute % EFECTY_INTERVAL_MINUTES === 0 &&
-    isEfectyWindow
-  ) {
-    tasks.push("efecty");
-  }
-
-  const isMoraWindow =
-    minuteOfDay >= MORA_WINDOW_START_MINUTE ||
-    minuteOfDay <= MORA_WINDOW_END_MINUTE;
-
-  if (
-    Number.isFinite(minute) &&
-    minute % MORA_INTERVAL_MINUTES === 0 &&
-    isMoraWindow
-  ) {
-    tasks.push("mora");
-  }
-
-  return tasks;
 }
 
 function logCron(message: string, extra?: unknown) {
@@ -225,7 +183,7 @@ async function runScheduledTask(
 
 async function tick() {
   const { dateKey, timeKey } = getBogotaClock();
-  const dueTasks = getDueTasks(timeKey);
+  const dueTasks = getDueInternalCronTasks(timeKey);
   const moraEffectiveDate = getMoraEffectiveDate(dateKey);
 
   await runScheduledTask(
@@ -263,13 +221,13 @@ async function runStartupRecovery() {
     `unlock:startup-recovery:${dateKey}:${timeKey}`,
   );
 
-  await runScheduledTask("wompi", `wompi:startup-recovery:${dateKey}`);
-  await runScheduledTask("efecty", `efecty:startup-recovery:${dateKey}`);
-  await runScheduledTask(
-    "mora",
-    `mora:startup-recovery:${moraEffectiveDate}`,
-    moraEffectiveDate,
-  );
+  for (const taskName of getStartupRecoveryTasks(timeKey)) {
+    await runScheduledTask(
+      taskName,
+      `${taskName}:startup-recovery:${dateKey}`,
+      taskName === "mora" ? moraEffectiveDate : undefined,
+    );
+  }
 }
 
 export function startInternalCron() {
@@ -291,7 +249,7 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, con recuperacion al iniciar, hora Colombia.",
+    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50; el inicio respeta esas ventanas, hora Colombia.",
   );
 
   void runStartupRecovery();

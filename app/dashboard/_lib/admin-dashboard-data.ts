@@ -145,24 +145,10 @@ export async function getAdminDashboardOverview({
     },
   };
 
-  const [credits, monthPayments] = await Promise.all([
+  const [credits, paymentTotals, monthPayments] = await Promise.all([
     prisma.credito.findMany({
       where: creditWhere,
       select: {
-        abonos: {
-          where: {
-            estado: {
-              not: "ANULADO",
-            },
-          },
-          select: {
-            fechaAbono: true,
-            valor: true,
-          },
-          orderBy: {
-            fechaAbono: "asc",
-          },
-        },
         clienteDocumento: true,
         clienteNombre: true,
         cuotaInicial: true,
@@ -191,6 +177,24 @@ export async function getAdminDashboardOverview({
         valorInteres: true,
       },
     }),
+    prisma.creditoAbono.groupBy({
+      by: ["creditoId"],
+      where: {
+        estado: {
+          not: "ANULADO",
+        },
+        credito: {
+          ...creditWhere,
+          pazYSalvoEmitidoAt: null,
+        },
+        valor: {
+          gt: 0,
+        },
+      },
+      _sum: {
+        valor: true,
+      },
+    }),
     prisma.creditoAbono.findMany({
       where: paymentWhere,
       select: {
@@ -200,9 +204,39 @@ export async function getAdminDashboardOverview({
     }),
   ]);
 
+  const paidByCreditId = new Map(
+    paymentTotals.map((payment) => [
+      payment.creditoId,
+      Number(payment._sum.valor || 0),
+    ])
+  );
   const portfolio = credits.map((credit) => {
+    const common = {
+      aliadoNombre: credit.sede.aliado?.nombre || "Sin aliado",
+      capitalColocado: resolveCapitalOriginal({
+        cuotaInicial: credit.cuotaInicial,
+        montoCredito: credit.montoCredito,
+        saldoBaseFinanciado: credit.saldoBaseFinanciado,
+        valorEquipoTotal: credit.valorEquipoTotal,
+        valorFianza: credit.valorFianza,
+        valorInteres: credit.valorInteres,
+      }),
+      clientKey: credit.clienteDocumento || credit.clienteNombre || String(credit.id),
+      fechaCredito: credit.fechaCredito,
+      sedeNombre: credit.sede.nombre || "Sin sede",
+    };
+
+    if (credit.pazYSalvoEmitidoAt) {
+      return {
+        ...common,
+        bucket: "alDia" as const,
+        dueToday: 0,
+        saldoPendiente: 0,
+      };
+    }
+
     const plan = buildCreditPaymentPlan({
-      abonos: credit.abonos,
+      abonos: [{ valor: paidByCreditId.get(credit.id) || 0 }],
       fechaPrimerPago: credit.fechaPrimerPago,
       fechaProximoPago: credit.fechaProximoPago,
       frecuenciaPago: credit.frecuenciaPago,
@@ -222,24 +256,13 @@ export async function getAdminDashboardOverview({
     );
 
     return {
-      aliadoNombre: credit.sede.aliado?.nombre || "Sin aliado",
+      ...common,
       bucket: riskBucket(lateDays),
-      capitalColocado: resolveCapitalOriginal({
-        cuotaInicial: credit.cuotaInicial,
-        montoCredito: credit.montoCredito,
-        saldoBaseFinanciado: credit.saldoBaseFinanciado,
-        valorEquipoTotal: credit.valorEquipoTotal,
-        valorFianza: credit.valorFianza,
-        valorInteres: credit.valorInteres,
-      }),
-      clientKey: credit.clienteDocumento || credit.clienteNombre || String(credit.id),
       dueToday: plan.installments.filter(
         (installment) =>
           installment.fechaVencimiento === todayIso && installment.saldoPendiente > 0
       ).length,
-      fechaCredito: credit.fechaCredito,
       saldoPendiente: plan.saldoPendiente,
-      sedeNombre: credit.sede.nombre || "Sin sede",
     };
   });
   const activePortfolio = portfolio.filter((credit) => credit.saldoPendiente > 0);
