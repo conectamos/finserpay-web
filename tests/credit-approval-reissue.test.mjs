@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createReissueFixture, loadReissueModule, seals } from "./credit-approval-reissue-fixture.mjs";
-const source = loadReissueModule("lib/credit-approval-reissue-source.ts", {"@/lib/credit-amortization-contract": seals});
+const contractImei = loadReissueModule("lib/credit-contract-imei.ts");
+const source = loadReissueModule("lib/credit-approval-reissue-source.ts", {
+  "@/lib/credit-amortization-contract": seals,
+  "@/lib/credit-contract-imei": contractImei,
+});
 
 test("reemisión usa el sello congelado con folio, cantidades y fecha del proceso original", () => {
   const fixture = createReissueFixture();
@@ -20,7 +24,6 @@ test("rechaza sellos ausentes, alterados y discrepancias contractuales sin recal
     f => { f.credit.montoCredito += 1000; },
     f => { f.credit.contratoSnapshot.financiero.cuotaComercial += 1000; },
     f => { f.credit.clienteTelefono = "3000000002"; },
-    f => { f.credit.imei = "999999999999999"; },
     f => { f.process.draftFolio = "OTRO-FOLIO"; },
   ];
   for (const change of changes) {
@@ -28,6 +31,14 @@ test("rechaza sellos ausentes, alterados y discrepancias contractuales sin recal
     change(f);
     assert.throws(() => source.frozenReissueCredit(f.credit,f.process), /FROZEN_TERMS_/);
   }
+});
+test("un IMEI operativo reemplazado no altera la reemisión del contrato original", () => {
+  const fixture = createReissueFixture();
+  fixture.credit.imei = "999999999999999";
+  fixture.credit.deviceUid = "999999999999999";
+  const result = source.frozenReissueCredit(fixture.credit, fixture.process);
+  assert.equal(result.credit.imei, "123456789012345");
+  assert.equal(result.credit.deviceUid, "123456789012345");
 });
 test("un POST de reemisión con HTTP 401 no repite el envío con otra cabecera", async () => {
   const calls = [];

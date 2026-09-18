@@ -104,6 +104,7 @@ function adminHarness(blocked, { requestedByNovelty = false } = {}) {
     "@/lib/roles": { isAdminRole: (role) => role === "ADMIN" },
     "@/lib/aliados": { isFinserPayCentralAlly: (code) => code === "FINSERPAY" },
     "@/lib/credit-route-lookup": { parseCreditRouteLookup: (id) => ({ id: Number(id) }), buildCreditLookupWhere: (lookup) => lookup },
+    "@/lib/credit-display-number-server": { getCreditDisplayNumbers: async () => new Map() },
     "@/lib/iphone-delivery-evidence": sanitizer,
     "@/lib/credit-approval-evidence-history": history,
     "@/lib/credit-approval": {

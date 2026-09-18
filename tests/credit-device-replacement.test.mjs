@@ -13,12 +13,13 @@ const projectRoot = path.resolve(
 const readProjectFile = (file) =>
   readFile(path.join(projectRoot, file), "utf8");
 
-const [storage, route, schema, creditRoute, massCreditRoute] = await Promise.all([
+const [storage, route, schema, creditRoute, massCreditRoute, targetedRepair] = await Promise.all([
   readProjectFile("lib/credit-device-replacement-storage.ts"),
   readProjectFile("app/api/creditos/[id]/device-replacement/route.ts"),
   readProjectFile("scripts/ensure-credit-device-replacement-schema.mjs"),
   readProjectFile("app/api/creditos/route.ts"),
   readProjectFile("app/api/creditos/masivos/route.ts"),
+  readProjectFile("scripts/repair-credit-device-replacement-20260918.mjs"),
 ]);
 
 test("valida el IMEI de reemplazo con Luhn y exactamente 15 dígitos", () => {
@@ -164,11 +165,9 @@ test("la carga masiva reserva todos los IMEI antes de crear créditos", () => {
 });
 
 test("el cierre actualiza solo el IMEI operativo y conserva contrato y validaciones", () => {
-  const start = storage.indexOf(
-    "export async function completeCreditDeviceReplacement"
-  );
+  const start = storage.indexOf("async function applyApprovedReplacement");
   const end = storage.indexOf(
-    "export async function cancelCreditDeviceReplacement",
+    "export async function getCreditDeviceReplacementOverview",
     start
   );
   const completion = storage.slice(start, end);
@@ -177,7 +176,8 @@ test("el cierre actualiza solo el IMEI operativo y conserva contrato y validacio
     completion,
     /UPDATE "Credito"[\s\S]*SET "imei" = \$1, "deviceUid" = \$1, "updatedAt" = CURRENT_TIMESTAMP/
   );
-  assert.match(completion, /row\.status !== "ENROLLMENT_APPROVED"/);
+  assert.match(completion, /input\.row\.status !== "ENROLLMENT_APPROVED"/);
+  assert.match(completion, /IN \(\$1, \$3\)/);
   assert.doesNotMatch(
     completion,
     /contratoSnapshot|FirmaSeguro|DataCredito|Veriff|fotoEntrega|fotoRemision/
@@ -196,8 +196,50 @@ test("el enrolamiento del reemplazo usa revisión separada, idempotencia y la tr
     storage,
     /SET "status" = 'ENROLLMENT_APPROVED'/
   );
+  assert.match(
+    storage,
+    /row: \{ \.\.\.row, status: "ENROLLMENT_APPROVED" \}[\s\S]*automatic: true/
+  );
+  assert.match(
+    storage,
+    /row\.status === "COMPLETED"[\s\S]*alreadyApproved: true/
+  );
   assert.match(schema, /CreditDeviceReplacementReview is append-only/);
   assert.match(schema, /CreditDeviceReplacementEvent is append-only/);
+});
+
+test("la reparación de despliegue está limitada al folio y a los IMEI reportados", () => {
+  assert.match(targetedRepair, /FC-20260829214932-PJEJ/);
+  assert.match(targetedRepair, /354627901806291/);
+  assert.match(targetedRepair, /352228709273867/);
+  assert.match(targetedRepair, /AND "status" = 'ENROLLMENT_APPROVED'/);
+  assert.match(targetedRepair, /review\."decision" AS "reviewDecision"/);
+  assert.match(targetedRepair, /review\."documentHash" AS "reviewDocumentHash"/);
+  assert.match(targetedRepair, /review\."imeiHash" AS "reviewImeiHash"/);
+  assert.match(targetedRepair, /createHmac\("sha256", identityPepper\)/);
+  assert.match(targetedRepair, /review\."checklistHash" AS "reviewChecklistHash"/);
+  assert.match(targetedRepair, /const checklistApproved =/);
+  assert.match(targetedRepair, /const validProvenance = hasPersonalGrant/);
+  assert.match(targetedRepair, /"completedByUserId" = NULL/);
+  assert.match(targetedRepair, /'SYSTEM_SUPPORT'/);
+  assert.match(targetedRepair, /WHERE NOT EXISTS/);
+  assert.match(
+    targetedRepair,
+    /row\.status === "COMPLETED"[\s\S]*reparacion sin cambios[\s\S]*client\.query\("COMMIT"\)/
+  );
+  assert.ok(
+    targetedRepair.indexOf('row.status === "COMPLETED"') <
+      targetedRepair.indexOf('const normalizedState = String(row.creditState'),
+    "un reemplazo ya finalizado no vuelve a depender de la elegibilidad actual"
+  );
+  assert.doesNotMatch(
+    targetedRepair,
+    /figura finalizado pero el IMEI operativo no coincide/
+  );
+  assert.match(
+    targetedRepair,
+    /pg_advisory_xact_lock\(hashtextextended\(\$1::text, 0::bigint\)\)/
+  );
 });
 
 test("cada transición deja un evento inmutable y enmascara IMEI en respuestas", () => {

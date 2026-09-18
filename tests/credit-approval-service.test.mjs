@@ -64,6 +64,13 @@ test("reordenar las mismas propiedades JSON no cambia la huella", () => {
   assert.equal(details(fixture).review.reviewHash, before);
 });
 
+test("un cambio de IMEI por garantía conserva la huella de la aprobación contractual", () => {
+  const fixture = approvalFixture();
+  const before = details(fixture).review.reviewHash;
+  fixture.credit.imei = "352228709273867";
+  assert.equal(details(fixture).review.reviewHash, before);
+});
+
 test("evidencia ausente, contenido incorrecto y PDF sin firma impiden aprobar", async (t) => {
   for (const { field, label } of service.APPROVAL_EVIDENCE) await t.test(label, () => {
     const fixture = approvalFixture();

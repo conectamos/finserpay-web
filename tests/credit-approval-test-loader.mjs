@@ -31,6 +31,7 @@ const paymentsCore = loadApprovalModule("lib/ally-payments-core.ts");
 const colombiaDate = loadApprovalModule("lib/colombia-date.ts");
 const creditFactory = loadApprovalModule("lib/credit-factory.ts", { "@/lib/colombia-date": colombiaDate });
 const colombiaLocations = loadApprovalModule("lib/colombia-locations.ts");
+const contractImei = loadApprovalModule("lib/credit-contract-imei.ts");
 export const callState = loadApprovalModule("lib/credit-approval-call-state.ts");
 const reissueState = loadApprovalModule("lib/credit-approval-reissue-state.ts");
 export const approvalErrors = loadApprovalModule("lib/credit-approval-errors.ts");
@@ -52,6 +53,7 @@ export const service = loadApprovalModule("lib/credit-approval.ts", {
   "@/lib/credit-approval-reissue-state": reissueState,
   "@/lib/document-blacklist-core": documentCore,
   "@/lib/ally-payments-core": paymentsCore,
+  "@/lib/credit-contract-imei": contractImei,
   "@/lib/firmaseguro": { isFirmaSeguroCompletedStatus: (status) => status === "COMPLETED" },
 });
 export const roles = loadApprovalModule("lib/roles.ts");
@@ -82,7 +84,7 @@ export function approvalFixture() {
     fechaCredito: new Date("2026-09-10T15:00:00Z"), createdAt: new Date("2026-09-10T15:00:00Z"),
     estado: "ACTIVO", aliadoId: 5, aliadoNombre: "Aliado de prueba", aliadoCodigo: "ALIADO_TEST",
     valorEquipoTotal: 1000000, cuotaInicial: 200000, saldoBaseFinanciado: 800000,
-    contratoSnapshot: { equipo: { plataforma: "IPHONE" }, financiero: { dataCredito: { assessmentId: "assessment-81", resolvedMaxFinancedAmount: 900000 } } },
+    contratoSnapshot: { equipo: { plataforma: "IPHONE", imei: "000000000000001" }, financiero: { dataCredito: { assessmentId: "assessment-81", resolvedMaxFinancedAmount: 900000 } } },
     imei: "000000000000001", referenciaEquipo: "APPLE EQUIPO DE PRUEBA 256GB", equipoMarca: "Apple", equipoModelo: "Equipo de prueba", required: true, paid: false,
     ...Object.fromEntries(service.APPROVAL_EVIDENCE.map(({ field }) => [field, png])),
   };
