@@ -93,25 +93,13 @@ function addCalendarPaymentFrequency(
   const steps = Math.max(0, Math.trunc(Number(periods || 0)));
 
   if (frequency === "QUINCENAL") {
-    let dueMonth = start.month - 1;
-    let dueYear = start.year;
-    let dueDay = start.day <= 2 ? 2 : 17;
-
-    for (let index = 0; index < steps; index += 1) {
-      if (dueDay === 2) {
-        dueDay = 17;
-      } else {
-        dueDay = 2;
-        dueMonth += 1;
-      }
-
-      const normalized = new Date(Date.UTC(dueYear, dueMonth, dueDay, 12));
-      dueYear = normalized.getUTCFullYear();
-      dueMonth = normalized.getUTCMonth();
-    }
+    const startingHalf = start.day <= 2 ? 0 : 1;
+    const targetHalf = startingHalf + steps;
+    const dueDay = targetHalf % 2 === 0 ? 2 : 17;
+    const dueMonth = start.month - 1 + Math.floor(targetHalf / 2);
 
     return utcCalendarParts(
-      new Date(Date.UTC(dueYear, dueMonth, dueDay, 12))
+      new Date(Date.UTC(start.year, dueMonth, dueDay, 12))
     );
   }
 

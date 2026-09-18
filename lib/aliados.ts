@@ -18,6 +18,10 @@ type AliadoSchemaClient = Pick<AppPrismaClient, "$executeRawUnsafe">;
 type CentralAdminClient = Pick<AppPrismaClient, "aliado" | "sede" | "usuario">;
 
 let aliadoSchemaPromise: Promise<void> | null = null;
+const centralAdminBootstrapPromises = new WeakMap<
+  object,
+  Promise<{ id: number }>
+>();
 
 async function runAliadoSchemaSetup(prisma: AliadoSchemaClient) {
   await prisma.$executeRawUnsafe(`
@@ -217,7 +221,7 @@ export async function ensureAliadoFinserPay(prisma: AliadoClient) {
   });
 }
 
-export async function ensureFinserPayCentralAdmin(prisma: CentralAdminClient) {
+async function runFinserPayCentralAdminBootstrap(prisma: CentralAdminClient) {
   const aliado = await ensureAliadoFinserPay(prisma);
 
   const existing = await prisma.sede.findFirst({
@@ -276,6 +280,25 @@ export async function ensureFinserPayCentralAdmin(prisma: CentralAdminClient) {
   });
 
   return sede;
+}
+
+export function ensureFinserPayCentralAdmin(prisma: CentralAdminClient) {
+  const cacheKey = prisma as object;
+  const cached = centralAdminBootstrapPromises.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
+  const bootstrap = runFinserPayCentralAdminBootstrap(prisma).catch((error) => {
+    if (centralAdminBootstrapPromises.get(cacheKey) === bootstrap) {
+      centralAdminBootstrapPromises.delete(cacheKey);
+    }
+    throw error;
+  });
+  centralAdminBootstrapPromises.set(cacheKey, bootstrap);
+
+  return bootstrap;
 }
 
 export function isFinserPayCentralAlly(codigo: string | null | undefined) {
