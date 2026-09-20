@@ -167,6 +167,16 @@ test("autoriza bajo locks compartidos antes de bloquear filas", () => {
     documentLock > operationLock,
     "El lock documental debe ir después del lock de solicitud"
   );
+  assert.match(
+    authorize,
+    /transaction\.\$executeRawUnsafe\(\s*`SELECT pg_advisory_xact_lock/,
+    "El lock documental no debe intentar deserializar el retorno void de PostgreSQL"
+  );
+  assert.doesNotMatch(
+    authorize,
+    /transaction\.\$queryRawUnsafe(?:<[^>]+>)?\(\s*`SELECT pg_advisory_xact_lock/,
+    "Prisma falla si pg_advisory_xact_lock se ejecuta como queryRaw"
+  );
   assert.ok(
     rowLock > documentLock,
     "No se deben bloquear filas antes de adquirir ambos advisory locks"
