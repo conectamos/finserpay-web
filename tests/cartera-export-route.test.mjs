@@ -101,6 +101,9 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
   const credits = [
     creditFixture(1, "INSCRITO", {
       clienteNombre: "CLIENTE_ACTIVO_EXPORTADO",
+      contratoSnapshot: {
+        equipo: { plataforma: "IPHONE" },
+      },
       amortizacion: {
         tasaInteresEaPorcentaje: 29.24,
         fianzaCuotaPorcentaje: 75 / 12,
@@ -112,6 +115,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
       clienteNombre: "CLIENTE_PAGADO_EXPORTADO",
       pazYSalvoEmitidoAt: new Date("2026-09-15T15:00:00.000Z"),
       contratoSnapshot: {
+        equipo: { plataforma: "ANDROID" },
         financiero: {
           tasaInteresEa: 25,
           fianzaTotalPorcentaje: 60,
@@ -127,6 +131,13 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
     }),
   ];
   let findManyQuery = null;
+  const displayNumberCalls = [];
+  let sessionUser = {
+    id: 1,
+    rolNombre: "ADMIN",
+    aliadoAccesoCodigo: "FINSERPAY",
+    aliadoAccesoId: 1,
+  };
   const prisma = {
     credito: {
       async findMany(query) {
@@ -171,22 +182,38 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
     },
     "@/lib/credit-factory": {
       getPaymentFrequencyLabel: (value) => String(value || ""),
+      normalizeCreditDevicePlatform(value) {
+        const normalized = String(value || "").trim().toUpperCase();
+        return normalized === "ANDROID" || normalized === "IPHONE"
+          ? normalized
+          : null;
+      },
       sanitizeText: (value) => String(value || ""),
     },
-    "@/lib/auth": {
-      getSessionUser: async () => ({
-        id: 1,
-        rolNombre: "ADMIN",
-        aliadoAccesoCodigo: "FINSERPAY",
-        aliadoAccesoId: 1,
-      }),
+    "@/lib/ally-payments-core": {
+      resolveAllyPaymentPlatform(snapshot, brand) {
+        const platform = String(snapshot?.equipo?.plataforma || "")
+          .trim()
+          .toUpperCase();
+        if (platform === "ANDROID" || platform === "IPHONE") return platform;
+        return /^(APPLE|IPHONE)$/i.test(String(brand || "").trim())
+          ? "IPHONE"
+          : String(brand || "").trim()
+            ? "ANDROID"
+            : null;
+      },
     },
-    "@/lib/aliados": { isFinserPayCentralAlly: () => true },
+    "@/lib/auth": {
+      getSessionUser: async () => sessionUser,
+    },
+    "@/lib/aliados": {
+      isFinserPayCentralAlly: (code) => code === "FINSERPAY",
+    },
     "@/lib/cartera-export": carteraExport,
     "@/lib/credit-display-number": displayNumber,
     "@/lib/credit-display-number-server": {
       async getCreditDisplayNumbers(ids) {
-        assert.deepEqual(Array.from(ids), [1, 2, 3, 4]);
+        displayNumberCalls.push(Array.from(ids));
         return new Map([[1, "000123-A"]]);
       },
       withCreditDisplayNumber: (credit, numbers) => ({ ...credit, numeroCreditoVisible: numbers.get(credit.id) || credit.folio }),
@@ -225,4 +252,37 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
   assert.match(paidRow, />0\.018769<\/td>[\s\S]*>0\.6<\/td>[\s\S]*>0\.0005<\/td>/);
   assert.match(activeRow, /mso-number-format:"0\.0000%"/);
   assert.match(paidRow, />0<\/td>[\s\S]*>0<\/td>/);
+  assert.deepEqual(displayNumberCalls[0], [1, 2, 3, 4]);
+
+  const iphoneResponse = await route.GET(
+    new Request(
+      "https://finserpay.test/api/dashboard/cartera/export?aliadoId=4&plataforma=iphone"
+    )
+  );
+  const iphoneHtml = await iphoneResponse.text();
+  const iphoneRows = workbookRows(iphoneHtml);
+
+  assert.equal(iphoneResponse.status, 200);
+  assert.equal(iphoneRows.length, 1);
+  assert.match(iphoneRows[0], /CLIENTE_ACTIVO_EXPORTADO/);
+  assert.match(iphoneRows[0], />IPHONE<\/td>/);
+  assert.doesNotMatch(iphoneHtml, /CLIENTE_PAGADO_EXPORTADO/);
+  assert.deepEqual(displayNumberCalls[1], [1]);
+  assert.equal(findManyQuery.where.sede.aliadoId, 4);
+
+  sessionUser = {
+    id: 8,
+    rolNombre: "ADMIN",
+    aliadoAccesoCodigo: "ALIADO_PRUEBA",
+    aliadoAccesoId: 7,
+  };
+  const allyResponse = await route.GET(
+    new Request(
+      "https://finserpay.test/api/dashboard/cartera/export?aliadoId=99&plataforma=ANDROID"
+    )
+  );
+
+  assert.equal(allyResponse.status, 200);
+  assert.equal(findManyQuery.where.sede.aliadoId, 7);
+  assert.doesNotMatch(await allyResponse.text(), /CLIENTE_ACTIVO_EXPORTADO/);
 });

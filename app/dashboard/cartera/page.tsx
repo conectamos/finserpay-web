@@ -23,9 +23,11 @@ import {
   ensureAliadoSchema,
   resolveRedescuentoPercentageByPlatform,
 } from "@/lib/aliados";
-import { isIphoneEquipmentCatalogBrand } from "@/lib/credit-factory";
+import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
+import { normalizeCreditDevicePlatform } from "@/lib/credit-factory";
 import { splitOutstandingBalance } from "@/lib/credit-outstanding-balance";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { Select } from "@/app/_components/finser-ui";
 import AdminSidebar from "../_components/admin-sidebar";
 import PushMassivePanel from "./push-massive-panel";
 
@@ -38,6 +40,8 @@ type RiskBucket = "alDia" | "temprana" | "mayor" | "avanzada" | "pagado";
 type CarteraPageProps = {
   searchParams?: Promise<{
     aliadoId?: string | string[] | undefined;
+    plataforma?: string | string[] | undefined;
+    platform?: string | string[] | undefined;
   }>;
 };
 
@@ -150,37 +154,27 @@ function firstFamilyReferencePhone(snapshot: unknown) {
   return typeof record.telefono === "string" ? record.telefono : "";
 }
 
-function creditPlatform(
-  snapshot: unknown,
-  equipmentBrand: string | null | undefined
-) {
-  const root =
-    typeof snapshot === "object" && snapshot !== null
-      ? (snapshot as Record<string, unknown>)
-      : null;
-  const equipment =
-    typeof root?.equipo === "object" && root.equipo !== null
-      ? (root.equipo as Record<string, unknown>)
-      : null;
-  const snapshotPlatform = String(equipment?.plataforma || "")
-    .trim()
-    .toUpperCase();
+function buildCarteraExportHref(input: {
+  aliadoId: number | null;
+  plataforma: "ANDROID" | "IPHONE" | null;
+  scope?: "mora";
+}) {
+  const params = new URLSearchParams();
 
-  if (snapshotPlatform === "IPHONE") {
-    return "IPHONE" as const;
+  if (input.aliadoId) {
+    params.set("aliadoId", String(input.aliadoId));
   }
 
-  if (snapshotPlatform === "ANDROID") {
-    return "ANDROID" as const;
+  if (input.plataforma) {
+    params.set("plataforma", input.plataforma);
   }
 
-  if (isIphoneEquipmentCatalogBrand(equipmentBrand)) {
-    return "IPHONE" as const;
+  if (input.scope) {
+    params.set("scope", input.scope);
   }
 
-  return String(equipmentBrand || "").trim()
-    ? ("ANDROID" as const)
-    : null;
+  const query = params.toString();
+  return `/api/dashboard/cartera/export${query ? `?${query}` : ""}`;
 }
 
 export default async function CarteraPage({ searchParams }: CarteraPageProps) {
@@ -189,6 +183,9 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
 
   const params = searchParams ? await searchParams : {};
   const requestedAliadoId = parsePositiveInt(firstSearchParam(params.aliadoId));
+  const selectedPlatform = normalizeCreditDevicePlatform(
+    firstSearchParam(params.plataforma) ?? firstSearchParam(params.platform)
+  );
   const today = new Date();
   const aliados = await prisma.aliado.findMany({
     where: {
@@ -214,12 +211,21 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
     : null;
   const selectedAliadoId = selectedAliado?.id || null;
   const selectedAliadoLabel = selectedAliado?.nombre || "Todos los aliados";
-  const exportHref = selectedAliadoId
-    ? `/api/dashboard/cartera/export?aliadoId=${selectedAliadoId}`
-    : "/api/dashboard/cartera/export";
-  const overdueExportHref = selectedAliadoId
-    ? `/api/dashboard/cartera/export?aliadoId=${selectedAliadoId}&scope=mora`
-    : "/api/dashboard/cartera/export?scope=mora";
+  const selectedPlatformLabel =
+    selectedPlatform === "IPHONE"
+      ? "Producto iPhone"
+      : selectedPlatform === "ANDROID"
+        ? "Producto Android"
+        : "Todos los productos";
+  const exportHref = buildCarteraExportHref({
+    aliadoId: selectedAliadoId,
+    plataforma: selectedPlatform,
+  });
+  const overdueExportHref = buildCarteraExportHref({
+    aliadoId: selectedAliadoId,
+    plataforma: selectedPlatform,
+    scope: "mora",
+  });
   const creditWhere: Prisma.CreditoWhereInput = selectedAliadoId
     ? {
         sede: {
@@ -235,9 +241,39 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
       }
     : {};
 
+  const platformCreditIds = selectedPlatform
+    ? (
+        await prisma.credito.findMany({
+          where: creditWhere,
+          select: {
+            id: true,
+            contratoSnapshot: true,
+            equipoMarca: true,
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+        })
+      )
+        .filter(
+          (credito) =>
+            resolveAllyPaymentPlatform(
+              credito.contratoSnapshot,
+              credito.equipoMarca
+            ) === selectedPlatform
+        )
+        .slice(0, 1000)
+        .map((credito) => credito.id)
+    : null;
+  const filteredCreditWhere: Prisma.CreditoWhereInput = platformCreditIds
+    ? {
+        AND: [creditWhere, { id: { in: platformCreditIds } }],
+      }
+    : creditWhere;
+
   const [creditos, gastosOperacion] = await Promise.all([
     prisma.credito.findMany({
-      where: creditWhere,
+      where: filteredCreditWhere,
       include: {
         abonos: {
           where: {
@@ -290,6 +326,14 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   const displayNumbers = await getCreditDisplayNumbers(creditos.map(credito => credito.id));
   const cartera = creditos
     .filter((credito) => !isAnnulled(credito.estado))
+    .filter(
+      (credito) =>
+        !selectedPlatform ||
+        resolveAllyPaymentPlatform(
+          credito.contratoSnapshot,
+          credito.equipoMarca
+        ) === selectedPlatform
+    )
     .map((credito) => {
       const plan = buildCreditPaymentPlan({
         montoCredito: credito.montoCredito,
@@ -326,7 +370,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
         valorFianza: Number(credito.valorFianza || 0),
         valorInteres: Number(credito.valorInteres || 0),
       });
-      const plataforma = creditPlatform(
+      const plataforma = resolveAllyPaymentPlatform(
         credito.contratoSnapshot,
         credito.equipoMarca
       );
@@ -389,9 +433,13 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
     0
   );
   const respaldoDetail = selectedAliado
-    ? `Android ${percent(
-        selectedAliado.redescuentoAndroidPorcentaje
-      )} · iPhone ${percent(selectedAliado.redescuentoIphonePorcentaje)}`
+    ? selectedPlatform
+      ? `${selectedPlatformLabel} ${percent(
+          resolveRedescuentoPercentageByPlatform(selectedAliado, selectedPlatform)
+        )}`
+      : `Android ${percent(
+          selectedAliado.redescuentoAndroidPorcentaje
+        )} · iPhone ${percent(selectedAliado.redescuentoIphonePorcentaje)}`
     : "Segun plataforma y porcentaje por aliado";
   const gananciaProyectadaActiva = activeCredits.reduce(
     (sum, item) => sum + item.gananciaProyectada,
@@ -406,7 +454,8 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
     (sum, item) => sum + Number(item.valor || 0),
     0
   );
-  const totalGanancias = totalGananciaBruta - totalGastosOperacion - totalMora;
+  const totalGanancias =
+    totalGananciaBruta - (selectedPlatform ? 0 : totalGastosOperacion) - totalMora;
   const totalSano = activeCredits
     .filter((item) => item.bucket === "alDia")
     .reduce((sum, item) => sum + item.saldoPendiente, 0);
@@ -491,7 +540,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             <p className="text-xs font-bold uppercase text-[#0d766f]">Control de cartera</p>
             <h1 className="mt-1 text-3xl font-black text-[#101828]">Cartera</h1>
             <p className="mt-1 text-sm text-[#667085]">
-              {selectedAliadoLabel} · Actualizada {lastUpdatedLabel}
+              {selectedAliadoLabel} · {selectedPlatformLabel} · Actualizada {lastUpdatedLabel}
             </p>
           </div>
 
@@ -499,10 +548,10 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             <form action="/dashboard/cartera" className="flex flex-col gap-2 sm:flex-row sm:items-end">
               <label className="grid gap-1">
                 <span className="text-xs font-bold text-[#475467]">Aliado</span>
-                <select
+                <Select
                   name="aliadoId"
                   defaultValue={selectedAliadoId ? String(selectedAliadoId) : ""}
-                  className="h-11 min-w-[230px] rounded-lg border border-[#d0d7e0] bg-white px-3 text-sm font-semibold text-[#344054] outline-none transition focus:border-[#0d9488] focus:ring-4 focus:ring-[#0d9488]/10"
+                  className="h-11 w-full min-w-0 sm:min-w-[230px]"
                 >
                   <option value="">Todos los aliados</option>
                   {aliados.map((aliado) => (
@@ -510,7 +559,19 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                       {aliado.nombre}
                     </option>
                   ))}
-                </select>
+                </Select>
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs font-bold text-[#475467]">Producto</span>
+                <Select
+                  name="plataforma"
+                  defaultValue={selectedPlatform || ""}
+                  className="h-11 w-full min-w-0 sm:min-w-[190px]"
+                >
+                  <option value="">Todos los productos</option>
+                  <option value="IPHONE">iPhone</option>
+                  <option value="ANDROID">Android</option>
+                </Select>
               </label>
               <div className="flex gap-2">
                 <button
@@ -520,11 +581,11 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                   <Filter className="h-4 w-4" strokeWidth={2} />
                   Aplicar
                 </button>
-                {selectedAliadoId ? (
+                {selectedAliadoId || selectedPlatform ? (
                   <Link
                     href="/dashboard/cartera"
-                    title="Quitar filtro de aliado"
-                    aria-label="Quitar filtro de aliado"
+                    title="Quitar filtros"
+                    aria-label="Quitar filtros"
                     className="flex h-11 w-11 items-center justify-center rounded-lg border border-[#d0d7e0] bg-white text-[#475467] transition hover:border-[#0d9488] hover:text-[#0d766f]"
                   >
                     <RotateCcw className="h-4 w-4" strokeWidth={2} />
@@ -581,7 +642,11 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             value={percent(pctRecuperado)}
           />
           <MetricCard
-            detail={`${money(gananciaReconocida)} reconocida · ${money(totalGastosOperacion)} en gastos`}
+            detail={
+              selectedPlatform
+                ? `${money(gananciaReconocida)} reconocida · antes de gastos generales`
+                : `${money(gananciaReconocida)} reconocida · ${money(totalGastosOperacion)} en gastos`
+            }
             icon={Landmark}
             label="Ganancia estimada"
             tone="gold"

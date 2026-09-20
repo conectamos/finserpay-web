@@ -122,9 +122,7 @@ test("modelo, API y formulario exponen los dos porcentajes", () => {
 });
 
 test("cartera escoge el porcentaje segun la plataforma congelada del credito", () => {
-  assert.match(cartera, /equipment\?\.plataforma/);
-  assert.match(cartera, /isIphoneEquipmentCatalogBrand\(equipmentBrand\)/);
-  assert.match(cartera, /String\(equipmentBrand \|\| ""\)\.trim\(\)/);
+  assert.match(cartera, /resolveAllyPaymentPlatform\(/);
   assert.match(cartera, /resolveRedescuentoPercentageByPlatform\(/);
   assert.match(cartera, /credito\.contratoSnapshot/);
 });

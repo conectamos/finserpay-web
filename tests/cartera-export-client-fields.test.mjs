@@ -71,7 +71,8 @@ test("la cartera permite descargar exclusivamente los registros en mora", async 
     readFile(path.join(projectRoot, "app/dashboard/cartera/page.tsx"), "utf8"),
   ]);
 
-  assert.match(pageSource, /scope=mora/);
+  assert.match(pageSource, /scope:\s*"mora"/);
+  assert.match(pageSource, /params\.set\("scope", input\.scope\)/);
   assert.match(pageSource, /label="Excel mora"/);
   assert.match(routeSource, /searchParams\.get\("scope"\) === "mora"/);
   assert.match(
