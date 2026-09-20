@@ -496,7 +496,9 @@ export async function authorizeDataCreditoAdminRetry(input: {
       // Match the live evaluation path: solicitud operation lock first, then
       // the provider/document lock, and only then row-level locks.
       await lockSolicitudOperationMutation(transaction, draftId);
-      await transaction.$queryRawUnsafe(
+      // Prisma cannot deserialize PostgreSQL's void return type from
+      // pg_advisory_xact_lock when it is executed as a query.
+      await transaction.$executeRawUnsafe(
         `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`,
         ["datacredito-document", providerEnvironment, documentHash].join(":")
       );
