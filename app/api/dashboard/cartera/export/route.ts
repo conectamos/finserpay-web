@@ -5,8 +5,10 @@ import { splitOutstandingBalance } from "@/lib/credit-outstanding-balance";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import {
   getPaymentFrequencyLabel,
+  normalizeCreditDevicePlatform,
   sanitizeText,
 } from "@/lib/credit-factory";
+import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import {
@@ -114,6 +116,7 @@ function buildWorkbookHtml(rows: string) {
         <th>SEXO</th>
         <th>IMEI</th>
         <th>Referencia</th>
+        <th>Plataforma</th>
         <th>Plazo credito</th>
         <th>Frecuencia de pago</th>
         <th>Interés mensual efectivo (%)</th>
@@ -158,6 +161,9 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const requestedAliadoId = parsePositiveInt(searchParams.get("aliadoId"));
+    const selectedPlatform = normalizeCreditDevicePlatform(
+      searchParams.get("plataforma") ?? searchParams.get("platform")
+    );
     const exportScope =
       searchParams.get("scope") === "mora" ? "mora" : "cartera";
     const adminCentral = isFinserPayCentralAlly(user.aliadoAccesoCodigo);
@@ -219,8 +225,19 @@ export async function GET(req: Request) {
       },
     });
 
-    const displayNumbers = await getCreditDisplayNumbers(creditos.map(credito => credito.id));
-    const rows = creditos
+    const platformCredits = selectedPlatform
+      ? creditos.filter(
+          (credito) =>
+            resolveAllyPaymentPlatform(
+              credito.contratoSnapshot,
+              credito.equipoMarca
+            ) === selectedPlatform
+        )
+      : creditos;
+    const displayNumbers = await getCreditDisplayNumbers(
+      platformCredits.map((credito) => credito.id)
+    );
+    const rows = platformCredits
       .map(credito => withCreditDisplayNumber(credito, displayNumbers))
       .filter((credito) => !isExcludedCarteraCreditState(credito.estado))
       .map((credito) => {
@@ -296,6 +313,10 @@ export async function GET(req: Request) {
           credito.referenciaEquipo ||
           [credito.equipoMarca, credito.equipoModelo].filter(Boolean).join(" ") ||
           "";
+        const plataforma = resolveAllyPaymentPlatform(
+          credito.contratoSnapshot,
+          credito.equipoMarca
+        );
 
         return `<tr>
           ${textCell(formatDate(credito.fechaCredito))}
@@ -310,6 +331,7 @@ export async function GET(req: Request) {
           ${textCell(credito.clienteGenero || "")}
           ${textCell(credito.imei || "")}
           ${textCell(referenciaEquipo)}
+          ${textCell(plataforma || "")}
           ${numberCell(Number(credito.plazoMeses || 0))}
           ${textCell(getPaymentFrequencyLabel(credito.frecuenciaPago))}
           ${formatCarteraPercentageCell(rates.interesMensual)}
