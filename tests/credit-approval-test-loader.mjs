@@ -151,11 +151,11 @@ export function approvalDatabase(overrides = {}) {
     async $executeRawUnsafe(sql, ...params) {
       state.writes.push({ sql, params });
       if (sql.includes('INSERT INTO "CreditApprovalReview"')) {
-        state.review ??= { status: "PENDING", revision: 1, approvedRevision: null, approvedAt: null, approvedByName: null, reviewHash: null };
+        state.review ??= { status: "PENDING", revision: 1, approvedRevision: null, approvedAt: null, approvedByName: null, reviewHash: null, reviewHashVersion: 2, approvedHashVersion: null };
       } else if (sql.includes('UPDATE "CreditApprovalReview"')) {
         assert.equal(params[0], state.credit.id);
         assert.equal(params[4], state.review.revision);
-        Object.assign(state.review, { status: "APPROVED", approvedRevision: state.review.revision, approvedAt: new Date(), approvedByUserId: params[1], approvedByName: params[2], reviewHash: params[3], approvedByKind: params[5], approvedByGrantId: params[6], approvedBySessionId: params[7], callRecordingId: params[8] });
+        Object.assign(state.review, { status: "APPROVED", approvedRevision: state.review.revision, approvedAt: new Date(), approvedByUserId: params[1], approvedByName: params[2], reviewHash: params[3], approvedByKind: params[5], approvedByGrantId: params[6], approvedBySessionId: params[7], callRecordingId: params[8], approvedHashVersion: state.review.reviewHashVersion ?? 2 });
       } else if (sql.includes('INSERT INTO "CreditApprovalEvent"')) {
         state.events.push(params);
       } else if (sql.includes('UPDATE "CreditApprovalNovelty"')) {

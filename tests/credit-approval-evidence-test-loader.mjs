@@ -19,7 +19,8 @@ export const actor = { id: 7, nombre: "Analista sintético" };
 
 export function evidenceDatabase(overrides = {}) {
   const base = approvalDatabase({ review: { status: "APPROVED", revision: 2, approvedRevision: 2,
-    approvedAt: new Date(), approvedByName: "Analista anterior", reviewHash: "a".repeat(64) }, ...overrides });
+    approvedAt: new Date(), approvedByName: "Analista anterior", reviewHash: "a".repeat(64),
+    reviewHashVersion: 2, approvedHashVersion: 2 }, ...overrides });
   const originalQuery = base.db.$queryRawUnsafe;
   const originalWrite = base.db.$executeRawUnsafe;
   base.state.archives = [];
@@ -37,7 +38,8 @@ export function evidenceDatabase(overrides = {}) {
       const field = sql.match(/SET "([^"]+)"/)[1];
       Object.assign(base.state.credit, { [field]: params[1], contratoSnapshot: JSON.parse(params[2]) });
       base.state.review = { ...base.state.review, status: "PENDING", revision: base.state.review.revision + 1,
-        approvedRevision: null, approvedAt: null, approvedByName: null, reviewHash: null };
+        approvedRevision: null, approvedAt: null, approvedByName: null, reviewHash: null,
+        approvedHashVersion: null };
       return 1;
     }
     return originalWrite(sql, ...params);

@@ -30,7 +30,9 @@ function queueVisibleScopeSql() {
 }
 function queuePendingSql() {
   return `NOT EXISTS (SELECT 1 FROM "LiquidacionAliadoCredito" paid WHERE paid."creditoId"=credit."id")
-      AND (review."status" IS DISTINCT FROM 'APPROVED' OR review."approvedRevision" IS DISTINCT FROM review."revision")`;
+      AND (review."status" IS DISTINCT FROM 'APPROVED'
+        OR review."approvedRevision" IS DISTINCT FROM review."revision"
+        OR review."approvedHashVersion" IS DISTINCT FROM review."reviewHashVersion")`;
 }
 
 export function parseApprovalQueueCursor(value: string | null | undefined): Cursor | null {

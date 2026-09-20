@@ -44,7 +44,7 @@ test("PostgreSQL aislado: autoría personal/compartida, Prisma-first e historia 
   const createCredit = async () => (await db.query('INSERT INTO "Credito" DEFAULT VALUES RETURNING "id"')).rows[0].id;
   const review = async (id) => (await db.query('SELECT to_jsonb(r) AS row FROM "CreditApprovalReview" r WHERE "creditoId"=$1', [id])).rows[0].row;
   const approvePersonal = async (id) => {
-    await db.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',"approvedRevision"="revision",
+    await db.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',"approvedRevision"="revision","approvedHashVersion"="reviewHashVersion",
       "approvedByUserId"=1,"approvedByName"='Analista previo',"approvedAt"='2026-09-09 12:34:56.123',"reviewHash"=$2
       WHERE "creditoId"=$1`, [id, "a".repeat(64)]);
     await db.query(`INSERT INTO "CreditApprovalEvent" ("creditoId","eventType","revision","actorUserId","actorName","reviewHash","createdAt")
@@ -127,7 +127,7 @@ test("PostgreSQL aislado: autoría personal/compartida, Prisma-first e historia 
   }
   const sharedFields = { kind: "SHARED_LINK", userId: null, grantId: grantA, sessionId: sessionA };
   const approveActor = (id, fields = sharedFields) => db.query(`UPDATE "CreditApprovalReview"
-    SET "status"='APPROVED',"approvedRevision"="revision","approvedByName"='Acceso compartido',
+    SET "status"='APPROVED',"approvedRevision"="revision","approvedHashVersion"="reviewHashVersion","approvedByName"='Acceso compartido',
       "approvedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC',"reviewHash"=$2,
       "approvedByKind"=$3,"approvedByUserId"=$4,"approvedByGrantId"=$5,"approvedBySessionId"=$6 WHERE "creditoId"=$1`,
   [id, "b".repeat(64), fields.kind, fields.userId, fields.grantId, fields.sessionId]);

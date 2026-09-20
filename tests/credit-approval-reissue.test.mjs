@@ -2,9 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createReissueFixture, loadReissueModule, seals } from "./credit-approval-reissue-fixture.mjs";
 const contractImei = loadReissueModule("lib/credit-contract-imei.ts");
+const approvalErrors = loadReissueModule("lib/credit-approval-errors.ts");
+const dataCore = loadReissueModule("lib/credit-approval-data-core.ts", {
+  "@/lib/credit-approval-errors": approvalErrors,
+});
 const source = loadReissueModule("lib/credit-approval-reissue-source.ts", {
   "@/lib/credit-amortization-contract": seals,
   "@/lib/credit-contract-imei": contractImei,
+  "@/lib/credit-approval-data-core": dataCore,
 });
 
 test("reemisión usa el sello congelado con folio, cantidades y fecha del proceso original", () => {
@@ -39,6 +44,39 @@ test("un IMEI operativo reemplazado no altera la reemisión del contrato origina
   const result = source.frozenReissueCredit(fixture.credit, fixture.process);
   assert.equal(result.credit.imei, "123456789012345");
   assert.equal(result.credit.deviceUid, "123456789012345");
+});
+test("una referencia operativa histórica no exige ledger y la reemisión conserva la referencia contractual", () => {
+  const fixture = createReissueFixture();
+  fixture.credit.referenciaEquipo = "SAMSUNG REFERENCIA OPERATIVA CORREGIDA";
+  const result = source.frozenReissueCredit(fixture.credit, fixture.process);
+  assert.equal(result.credit.referenciaEquipo, "SAMSUNG TEST");
+});
+test("correo, teléfono y dirección corregidos requieren una cadena auditada íntegra", () => {
+  const fixture = createReissueFixture();
+  const before = {
+    clienteCorreo: fixture.credit.clienteCorreo,
+    clienteTelefono: fixture.credit.clienteTelefono,
+    clienteDepartamento: null,
+    clienteCiudad: null,
+    clienteDireccion: fixture.credit.clienteDireccion,
+    referenciaEquipo: null,
+  };
+  const after = {
+    ...before,
+    clienteCorreo: "corregido@example.invalid",
+    clienteTelefono: "3000000099",
+    clienteDireccion: "CALLE CORREGIDA 99",
+  };
+  Object.assign(fixture.credit, after);
+  const result = source.frozenReissueCredit(fixture.credit, fixture.process, [{
+    before, after, requestedRevision: 1, resultingRevision: 2,
+  }]);
+  assert.equal(result.credit.clienteCorreo, "cliente@example.invalid");
+  assert.equal(result.credit.clienteTelefono, "3000000001");
+  assert.equal(result.credit.clienteDireccion, "CALLE DE PRUEBA 1");
+  assert.throws(() => source.frozenReissueCredit(fixture.credit, fixture.process, [{
+    before: { ...before, clienteTelefono: "otro" }, after, requestedRevision: 1, resultingRevision: 2,
+  }]), /FROZEN_TERMS_/);
 });
 test("un POST de reemisión con HTTP 401 no repite el envío con otra cabecera", async () => {
   const calls = [];

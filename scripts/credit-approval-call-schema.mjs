@@ -308,7 +308,8 @@ export const creditApprovalCallSchemaStatements = [
     IF NEW."eventType"='APPROVED' THEN
       SELECT * INTO current_review FROM public."CreditApprovalReview"
         WHERE "creditoId"=NEW."creditoId" AND "status"='APPROVED' AND "revision"=NEW."revision"
-          AND "reviewHash"=NEW."reviewHash" FOR SHARE;
+          AND "reviewHash"=NEW."reviewHash" AND "reviewHashVersion"=NEW."reviewHashVersion"
+          AND "approvedHashVersion"=NEW."reviewHashVersion" FOR SHARE;
       IF NOT FOUND
         THEN RAISE EXCEPTION 'CALL_RECORDING_EVENT_REQUIRED' USING ERRCODE='23514'; END IF;
       IF NEW."callRecordingId" IS NULL THEN

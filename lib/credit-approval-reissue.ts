@@ -21,6 +21,7 @@ type Operation = {
   newProcessUuid: string | null; requestedAt: Date; updatedAt: Date;
 };
 type Credit = Record<string, unknown> & { id: number; folio: string; eligible: boolean; paid: boolean; contratoSnapshot: unknown };
+type DataCorrection = { before: unknown; after: unknown; requestedRevision: number; resultingRevision: number };
 function invalid() { return new CreditApprovalError("INVALID_REISSUE", "Actualiza el expediente y confirma el motivo de la nueva firma."); }
 export function parseCreditApprovalReissue(value: unknown): ({ action: "REQUEST" } & RequestInput) | { action: "REFRESH"; operationId: string } {
   const body = reissueRecord(value);
@@ -39,7 +40,7 @@ export function parseCreditApprovalReissue(value: unknown): ({ action: "REQUEST"
 async function readCredit(db: ReissueDatabase, id: number, lock = false) {
   const rows = await db.$queryRawUnsafe<Credit[]>(`SELECT credit."id", credit."folio",
     credit."clienteNombre", credit."clienteDocumento", credit."clienteTelefono", credit."clienteCorreo", credit."clienteDireccion",
-    credit."imei", credit."equipoMarca", credit."equipoModelo", credit."valorEquipoTotal", credit."cuotaInicial",
+    credit."imei", credit."referenciaEquipo", credit."equipoMarca", credit."equipoModelo", credit."valorEquipoTotal", credit."cuotaInicial",
     credit."saldoBaseFinanciado", credit."montoCredito", credit."valorCuota", credit."plazoMeses",
     credit."tasaInteresEa", credit."frecuenciaPago", credit."contratoSnapshot",
     EXISTS (SELECT 1 FROM "CreditApprovalPolicy" policy WHERE policy."id"=1 AND credit."createdAt">=policy."activatedAt"
@@ -52,6 +53,11 @@ async function readCredit(db: ReissueDatabase, id: number, lock = false) {
   if (!rows[0]) throw new CreditApprovalError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
   if (!rows[0].eligible || rows[0].paid) throw new CreditApprovalError("REISSUE_NOT_ALLOWED", "Este crédito no admite una nueva solicitud de firma.", 409);
   return rows[0];
+}
+async function readDataCorrections(db: ReissueDatabase, id: number) {
+  return db.$queryRawUnsafe<DataCorrection[]>(`SELECT "before","after","requestedRevision","resultingRevision"
+    FROM "CreditApprovalDataCorrection" WHERE "creditoId"=$1
+    ORDER BY "resultingRevision","createdAt","id"`, id);
 }
 async function lockReview(db: ReissueDatabase, id: number) {
   const rows = await db.$queryRawUnsafe<Array<{ revision: number }>>(`SELECT "revision" FROM "CreditApprovalReview" WHERE "creditoId"=$1 FOR UPDATE`, id);
@@ -92,7 +98,7 @@ export async function requestCreditApprovalReissue(creditoId: number, input: Req
       throw new CreditApprovalError("SIGNED_DOCUMENT_REQUIRED", "Se necesita el documento firmado vigente antes de solicitar otra firma.", 409);
     }
     let source: ReturnType<typeof frozenReissueCredit>;
-    try { source = frozenReissueCredit(credit, current); }
+    try { source = frozenReissueCredit(credit, current, await readDataCorrections(db, creditoId)); }
     catch { throw new CreditApprovalError("FROZEN_TERMS_UNAVAILABLE", "No se pudo comprobar el contrato original y sus términos. Solicita revisión al administrador central.", 409); }
     const prior = await db.$queryRawUnsafe<Operation[]>(`SELECT * FROM "CreditApprovalReissue"
       WHERE "creditoId"=$1 AND "newProcessUuid"=$2 AND "status"='COMPLETED' LIMIT 1`, creditoId, current.processUuid);

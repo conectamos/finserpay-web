@@ -57,6 +57,7 @@ test("call continuity is append-only, bound to novelty events and used by the ap
   assert.match(schema, /event_type NOT IN \('REPORTED','GENERAL_RESPONDED','PHOTO_RESPONDED','ANALYST_VERIFIED'\)/);
   assert.match(schema, /CREATE OR REPLACE FUNCTION public\.credit_approval_effective_call_recording/);
   assert.match(schema, /FROM public\."CreditApprovalEvent" approval_event[\s\S]*JOIN public\."CreditApprovalCallRecording" recording ON recording\."id"=approval_event\."callRecordingId"[\s\S]*approval_event\."eventType"='APPROVED'[\s\S]*approval_event\."revision"=target_revision[\s\S]*approval_event\."reviewHash"=target_review_hash/);
+  assert.match(schema, /"reviewHashVersion"=NEW\."reviewHashVersion"[\s\S]*"approvedHashVersion"=NEW\."reviewHashVersion"/);
   assert.ok((schema.match(/credit_approval_effective_call_recording\(/g) || []).length >= 3,
     "la lectura, la continuidad y el OK comparten el resolvedor canónico");
   assert.match(schema, /NEW\."callRecordingId"<>latest_id/);
@@ -78,7 +79,7 @@ test("call schema only exempts a verified active FINSERPAY administrator from au
   assert.match(schema, /credit_approval_effective_call_recording\([\s\S]*IF latest_id IS NOT NULL THEN[\s\S]*NEW\."callRecordingId" IS NULL OR NEW\."callRecordingId"<>latest_id/);
   assert.match(schema, /ELSIF NEW\."callRecordingId" IS NOT NULL[\s\S]*credit_approval_actor_can_skip_call_recording\([\s\S]*NEW\."approvedByKind",NEW\."approvedByUserId"/);
   assert.match(schema, /current_review\."callRecordingId" IS NOT NULL[\s\S]*credit_approval_actor_can_skip_call_recording\([\s\S]*current_review\."approvedByKind",current_review\."approvedByUserId"/);
-  assert.match(schema, /SELECT \* INTO current_review FROM public\."CreditApprovalReview"[\s\S]*"reviewHash"=NEW\."reviewHash" FOR SHARE;/);
+  assert.match(schema, /SELECT \* INTO current_review FROM public\."CreditApprovalReview"[\s\S]*"reviewHash"=NEW\."reviewHash"[\s\S]*"reviewHashVersion"=NEW\."reviewHashVersion"[\s\S]*"approvedHashVersion"=NEW\."reviewHashVersion" FOR SHARE;/);
   assert.match(schema, /ROW\(NEW\."actorKind",NEW\."actorUserId",NEW\."actorName",NEW\."actorGrantId",NEW\."actorSessionId"\) IS DISTINCT FROM[\s\S]*ROW\(current_review\."approvedByKind",current_review\."approvedByUserId",current_review\."approvedByName"/);
   assert.match(schema, /ELSIF current_review\."callRecordingId" IS DISTINCT FROM NEW\."callRecordingId"/);
 });

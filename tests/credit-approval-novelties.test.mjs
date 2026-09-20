@@ -144,7 +144,7 @@ test('PostgreSQL aislado: novedades, permisos, respuestas independientes e histo
   const transaction=async(fn,client=db)=>{await client.query('BEGIN');try{const out=await fn(adapter(client));await client.query('COMMIT');return out;}catch(error){await client.query('ROLLBACK');throw error;}};
   const create=async(overrides={})=>{const values={createdAt:'2099-01-01',...overrides};const keys=Object.keys(values);return(await db.query('INSERT INTO "Credito" ('+keys.map(k=>'"'+k+'"').join(',')+') VALUES ('+keys.map((_,i)=>'$'+(i+1)).join(',')+') RETURNING "id"',Object.values(values))).rows[0].id;};
   const review=async id=>(await db.query('SELECT * FROM "CreditApprovalReview" WHERE "creditoId"=$1',[id])).rows[0];
-  const approve=async(id,client=db)=>{await client.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',"approvedRevision"="revision","approvedByUserId"=1,"approvedByName"='Analista',"approvedAt"=CURRENT_TIMESTAMP,"reviewHash"=$2 WHERE "creditoId"=$1`,[id,hash]);};
+  const approve=async(id,client=db)=>{await client.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',"approvedRevision"="revision","approvedHashVersion"="reviewHashVersion","approvedByUserId"=1,"approvedByName"='Analista',"approvedAt"=CURRENT_TIMESTAMP,"reviewHash"=$2 WHERE "creditoId"=$1`,[id,hash]);};
   const report=async(id,keys=[])=>{const input=service.parseCreateNovelty({...createInput(keys),revision:(await review(id)).revision});await transaction(tx=>service.createCreditApprovalNovelty(tx,id,input,actor));return input;};
   const detail=id=>service.getPendingAllyCredit(api,id,ally);
   const responseInput=(item,noveltyId,extra)=>({noveltyId,itemId:item.id,expectedVersion:item.version,idempotencyKey:randomUUID(),...extra});

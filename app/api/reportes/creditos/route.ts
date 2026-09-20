@@ -217,6 +217,8 @@ export async function GET(req: Request) {
             status: true,
             revision: true,
             approvedRevision: true,
+            reviewHashVersion: true,
+            approvedHashVersion: true,
           },
         },
         usuario: {

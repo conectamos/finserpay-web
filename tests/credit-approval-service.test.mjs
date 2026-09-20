@@ -48,6 +48,12 @@ test("la huella detecta cambios de cada fotografía, PDF y datos revisados", asy
     ["oferta", (fixture) => { fixture.assessment.offer.initialPaymentPercentage += 1; }],
     ["identidad", (fixture) => { fixture.credit.clienteDocumento = "100000002"; }],
     ["equipo", (fixture) => { fixture.credit.equipoModelo = "Otro equipo"; }],
+    ["correo", (fixture) => { fixture.credit.clienteCorreo = "otro@example.test"; }],
+    ["teléfono", (fixture) => { fixture.credit.clienteTelefono = "3009998877"; }],
+    ["departamento", (fixture) => { fixture.credit.clienteDepartamento = "ANTIOQUIA"; }],
+    ["ciudad", (fixture) => { fixture.credit.clienteCiudad = "Medellín"; }],
+    ["dirección", (fixture) => { fixture.credit.clienteDireccion = "Carrera 50 # 10-20"; }],
+    ["referencia", (fixture) => { fixture.credit.referenciaEquipo = "IPHONE 16 128GB"; }],
   ];
   for (const [name, change] of changes) await t.test(name, () => {
     const fixture = approvalFixture();
@@ -196,7 +202,8 @@ test("el parser de medios rechaza contenido activo y firmas MIME falsas", () => 
 test("la retención de DataCrédito no revoca una revisión ya aprobada", () => {
   const fixture = approvalFixture();
   const before = details(fixture);
-  fixture.review = { status: "APPROVED", revision: 2, approvedRevision: 2, approvedAt: new Date(), approvedByName: actor.nombre, reviewHash: before.review.reviewHash, recordingId: CALL_RECORDING_ID };
+  fixture.review = { status: "APPROVED", revision: 2, approvedRevision: 2, approvedAt: new Date(), approvedByName: actor.nombre,
+    reviewHash: before.review.reviewHash, reviewHashVersion: 2, approvedHashVersion: 2, recordingId: CALL_RECORDING_ID };
   fixture.assessment = null;
   const item = details(fixture);
   assert.equal(item.review.status, "APPROVED");
@@ -207,7 +214,8 @@ test("la retención de DataCrédito no revoca una revisión ya aprobada", () => 
 
 test("la invalidación de revisión exige un nuevo OK incluso si había aprobación previa", () => {
   const fixture = approvalFixture();
-  fixture.review = { status: "PENDING", revision: 3, approvedRevision: 2, approvedAt: null, approvedByName: null, reviewHash: null };
+  fixture.review = { status: "PENDING", revision: 3, approvedRevision: 2, approvedAt: null, approvedByName: null,
+    reviewHash: null, reviewHashVersion: 2, approvedHashVersion: null };
   const item = details(fixture);
   assert.equal(item.review.status, "PENDING");
   assert.equal(item.review.revision, 3);
@@ -253,7 +261,8 @@ test("novedad abierta bloquea OK incluso con un intento repetido", async () => {
   const {db,state}=approvalDatabase({novelty:{id:"novelty-test",status:"WAITING_ALLY",version:1},noveltyItems:[{id:"photo-test",key:"foto-entrega",status:"OPEN",version:1,reason:"Foto borrosa",openedAt:new Date()}]});
   const item=await service.getCreditApprovalDetail(db,81);
   assert.equal(item.canApprove,false);
-  state.review={status:"APPROVED",revision:1,approvedRevision:1,reviewHash:item.review.reviewHash,recordingId:CALL_RECORDING_ID};
+  state.review={status:"APPROVED",revision:1,approvedRevision:1,reviewHash:item.review.reviewHash,
+    reviewHashVersion:2,approvedHashVersion:2,recordingId:CALL_RECORDING_ID};
   await assert.rejects(service.approveCredit(db,81,{revision:1,reviewHash:item.review.reviewHash,recordingId:CALL_RECORDING_ID},actor),{code:"NOVELTY_PENDING"});
   assert.equal(state.writes.length,0);
 });
@@ -314,7 +323,7 @@ test("OK compartido registra grant y sesion sin usuario ficticio; revocado no es
 test("OK compartido revalida scope tras lock y rechaza historico/importado con Review residual antes de escribir",async()=>{
   const shared={kind:"SHARED_LINK",id:null,nombre:"Acceso compartido",grantId:"10000000-0000-4000-8000-000000000001",sessionId:"20000000-0000-4000-8000-000000000001"};
   for(const reason of ["historical","imported"]){
-    const {db,state}=approvalDatabase({review:{status:"PENDING",revision:7,approvedRevision:null,reviewHash:null}});
+    const {db,state}=approvalDatabase({review:{status:"PENDING",revision:7,approvedRevision:null,reviewHash:null,reviewHashVersion:2,approvedHashVersion:null}});
     const item=await service.getCreditApprovalDetail(db,81);
     if(reason==="historical") state.credit.createdAt=new Date("2020-01-01T00:00:00Z");
     else {state.credit.equalityService="IMPORTACION_MASIVA";state.credit.contratoSnapshot.origen={tipo:"IMPORTACION_MASIVA"};}

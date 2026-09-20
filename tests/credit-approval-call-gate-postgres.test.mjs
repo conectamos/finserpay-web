@@ -52,13 +52,13 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
   const review = async id => (await db.query('SELECT to_jsonb(r) AS row FROM "CreditApprovalReview" r WHERE "creditoId"=$1',[id])).rows[0].row;
   const defaultActor={kind:"USER",userId:1,name:"Analista QA",grantId:null,sessionId:null};
   const approve = (id, recordingId, client=db, reviewHash=hash, actor=defaultActor) => client.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',
-    "approvedRevision"="revision","approvedByKind"=$4,"approvedByUserId"=$5,"approvedByName"=$6,
+    "approvedRevision"="revision","approvedHashVersion"="reviewHashVersion","approvedByKind"=$4,"approvedByUserId"=$5,"approvedByName"=$6,
     "approvedByGrantId"=$7::uuid,"approvedBySessionId"=$8::uuid,
     "approvedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC',"reviewHash"=$2,"callRecordingId"=$3::uuid WHERE "creditoId"=$1`,
     [id,reviewHash,recordingId,actor.kind,actor.userId,actor.name,actor.grantId,actor.sessionId]);
   const event = (id, recordingId, actor=defaultActor) => db.query(`INSERT INTO "CreditApprovalEvent"
-    ("creditoId","eventType","revision","actorUserId","actorName","actorKind","actorGrantId","actorSessionId","reviewHash","callRecordingId")
-    SELECT "creditoId",'APPROVED',"revision",$3,$4,$5,$6::uuid,$7::uuid,"reviewHash",$2::uuid
+    ("creditoId","eventType","revision","actorUserId","actorName","actorKind","actorGrantId","actorSessionId","reviewHash","callRecordingId","reviewHashVersion")
+    SELECT "creditoId",'APPROVED',"revision",$3,$4,$5,$6::uuid,$7::uuid,"reviewHash",$2::uuid,"reviewHashVersion"
     FROM "CreditApprovalReview" WHERE "creditoId"=$1`,
     [id,recordingId,actor.userId,actor.name,actor.kind,actor.grantId,actor.sessionId]);
   const audio = async (id, overrides={}, client=db) => {
@@ -71,7 +71,7 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
   };
   const legacy=await createCredit(), paid=await createCredit(), pending=await createCredit();
   for(const id of [legacy,paid]) {
-    await db.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',"approvedRevision"="revision",
+    await db.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',"approvedRevision"="revision","approvedHashVersion"="reviewHashVersion",
       "approvedByKind"='USER',"approvedByUserId"=1,"approvedByName"='Analista histórico',"approvedAt"='2026-09-01 12:34:56.123',"reviewHash"=$2 WHERE "creditoId"=$1`,[id,hash]);
     await db.query(`INSERT INTO "CreditApprovalEvent" ("creditoId","eventType","revision","actorUserId","actorName","reviewHash")
       SELECT "creditoId",'APPROVED',"revision",1,'Analista histórico',"reviewHash" FROM "CreditApprovalReview" WHERE "creditoId"=$1`,[id]);

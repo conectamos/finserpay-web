@@ -26,6 +26,7 @@ function withApprovedReview(fixture) {
     status: "APPROVED", revision: 1, approvedRevision: 1,
     approvedAt: new Date("2026-09-10T16:00:00.000Z"), approvedByName: actor.nombre,
     reviewHash: details(fixture).review.reviewHash,
+    reviewHashVersion: 2, approvedHashVersion: 2,
   };
   return fixture;
 }
@@ -55,6 +56,7 @@ test("expediente nuevo completo habilita correcciones y conserva la fuente de Fi
   assert.equal(item.canApprove, true);
   assert.deepEqual(plain(item.capabilities), {
     canCorrectEvidence: true, canReissueSignature: true, canCreateNovelty: true, correctionBlockedReason: null,
+    canEditData: true, dataCorrectionBlockedReason: null,
   });
   assert.equal(item.document.processUuid, fixture.document.processUuid);
   assert.equal(item.document.fileName, fixture.document.signedDocumentFileName);
@@ -118,7 +120,9 @@ test("historicos, pagados y anulados no permiten correccion, refirma ni nuevo OK
     assert.equal(item.canApprove, false);
     assert.equal(item.capabilities.canCorrectEvidence, false);
     assert.equal(item.capabilities.canReissueSignature, false);
+    assert.equal(item.capabilities.canEditData, false);
     assert.match(item.capabilities.correctionBlockedReason, reason);
+    assert.match(item.capabilities.dataCorrectionBlockedReason, reason);
     assert.deepEqual(plain(fixture), before);
   });
 });
@@ -131,6 +135,7 @@ test("todas las refirmas en curso bloquean capacidades aunque el PDF anterior si
     assert.equal(item.canApprove, false, status);
     assert.equal(item.capabilities.canCorrectEvidence, false, status);
     assert.equal(item.capabilities.canReissueSignature, false, status);
+    assert.equal(item.capabilities.canEditData, false, status);
     assert.match(item.capabilities.correctionBlockedReason, /firma en curso/);
     assert.ok(item.blockingReasons.some(reason => /firma en curso/.test(reason)));
     assert.equal(item.reissue.operation.status, status);
@@ -142,6 +147,7 @@ test("estado de firma no verificable falla cerrado incluso sin operacion bloquea
   assert.equal(item.canApprove, false);
   assert.equal(item.capabilities.canCorrectEvidence, false);
   assert.equal(item.capabilities.canReissueSignature, false);
+  assert.equal(item.capabilities.canEditData, false);
   assert.match(item.capabilities.correctionBlockedReason, /No se pudo verificar/);
   assert.ok(item.blockingReasons.some(reason => /No se pudo verificar/.test(reason)));
 });
@@ -174,6 +180,8 @@ test("corregir un credito ya aprobado sigue permitido sin sobrescribir su audito
   assert.equal(item.canApprove, false);
   assert.equal(item.capabilities.canCorrectEvidence, true);
   assert.equal(item.capabilities.canReissueSignature, true);
+  assert.equal(item.capabilities.canEditData, true);
+  assert.equal(item.capabilities.dataCorrectionBlockedReason, null);
   assert.equal(item.review.approvedByName, actor.nombre);
   assert.deepEqual(plain(fixture), before);
 });

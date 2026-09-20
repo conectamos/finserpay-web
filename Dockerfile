@@ -65,6 +65,9 @@ COPY --from=builder /app/scripts/ensure-credit-approval-novelties-schema.mjs ./s
 COPY --from=builder /app/scripts/approval-shared-schema.mjs ./scripts/approval-shared-schema.mjs
 COPY --from=builder /app/scripts/ensure-approval-shared-schema.mjs ./scripts/ensure-approval-shared-schema.mjs
 
+COPY --from=builder /app/scripts/credit-approval-data-schema.mjs ./scripts/credit-approval-data-schema.mjs
+COPY --from=builder /app/scripts/ensure-credit-approval-data-schema.mjs ./scripts/ensure-credit-approval-data-schema.mjs
+
 COPY --from=builder /app/scripts/credit-approval-call-schema.mjs ./scripts/credit-approval-call-schema.mjs
 COPY --from=builder /app/scripts/ensure-credit-approval-call-schema.mjs ./scripts/ensure-credit-approval-call-schema.mjs
 

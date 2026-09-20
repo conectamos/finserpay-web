@@ -46,9 +46,11 @@ export type ApprovalDetail = Omit<ApprovalListItem, "status" | "required"> & {
   clienteCorreo: string | null;
   clienteTelefono: string | null;
   clienteDepartamento: string | null;
+  clienteDepartamentoCodigo: string | null;
   clienteCiudad: string | null;
   clienteDireccion: string | null;
   referenciaEquipo: string | null;
+  plataforma: string | null;
   numeroCuotas: number | null;
   frecuenciaPago: string | null;
   valorCuota: number | null;
@@ -68,7 +70,7 @@ export type ApprovalDetail = Omit<ApprovalListItem, "status" | "required"> & {
     approvedAt: string | null;
     approvedByName: string | null;
   };
-  capabilities: { canCreateNovelty: boolean; canCorrectEvidence: boolean; canReissueSignature: boolean; correctionBlockedReason: string | null };
+  capabilities: { canCreateNovelty: boolean; canCorrectEvidence: boolean; canReissueSignature: boolean; canEditData: boolean; correctionBlockedReason: string | null; dataCorrectionBlockedReason: string | null };
   reissue: ApprovalReissueState;
   novelties: ApprovalNoveltyState;
   callRecording: ApprovalCallRecordingState;
@@ -76,6 +78,60 @@ export type ApprovalDetail = Omit<ApprovalListItem, "status" | "required"> & {
   blockingReasons: string[];
   evidence: Array<{ key: string; label: string; available: boolean; href: string }>;
   document: { processUuid: string | null; available: boolean; href: string; fileName: string | null };
+};
+
+export type ApprovalDataChanges = Partial<{
+  clienteCorreo: string;
+  clienteTelefono: string;
+  clienteDepartamento: string;
+  clienteCiudad: string;
+  clienteDireccion: string;
+  catalogItemId: number;
+}>;
+
+export type ApprovalEditableData = {
+  clienteNombre: string;
+  clienteDocumento: string | null;
+  clienteCorreo: string | null;
+  clienteTelefono: string | null;
+  clienteDepartamento: string | null;
+  clienteDepartamentoLabel: string | null;
+  clienteCiudad: string | null;
+  clienteDireccion: string | null;
+  referenciaEquipo: string | null;
+  plataforma: string | null;
+  review: { revision: number; reviewHash: string };
+  capabilities: { canEditData: boolean; correctionBlockedReason: string | null };
+};
+
+export type ApprovalEquipmentCatalogItem = {
+  id: number;
+  marca: string;
+  modelo: string;
+  referenciaEquipo: string;
+  plataforma: string;
+};
+
+export type ApprovalDataHistoryField =
+  | "clienteCorreo"
+  | "clienteTelefono"
+  | "clienteDepartamento"
+  | "clienteCiudad"
+  | "clienteDireccion"
+  | "referenciaEquipo";
+
+export type ApprovalDataHistoryEvent = {
+  id: string;
+  changes: Array<{ field: ApprovalDataHistoryField; before: string | null; after: string | null }>;
+  reason: string;
+  actorName: string;
+  actorKind: "USER" | "SHARED_LINK";
+  createdAt: string;
+};
+
+export type ApprovalDataResponse = {
+  item: ApprovalEditableData;
+  history: ApprovalDataHistoryEvent[];
 };
 
 export class ApprovalRequestError extends Error {
@@ -214,6 +270,127 @@ export async function uploadApprovalCallRecording(id: number, input: {
   const result = await readResult<{ ok: boolean; state: ApprovalCallRecordingState; unchanged: boolean }>(response,
     "No se pudo confirmar la carga de la grabación. Actualiza el expediente antes de reintentar.");
   if (result.ok !== true || !result.state?.recording?.id) throw new ApprovalRequestError("No se recibió confirmación de la grabación. Actualiza el expediente.", response.status);
+  return result;
+}
+
+const APPROVAL_DATA_HISTORY_FIELDS = new Set<ApprovalDataHistoryField>([
+  "clienteCorreo",
+  "clienteTelefono",
+  "clienteDepartamento",
+  "clienteCiudad",
+  "clienteDireccion",
+  "referenciaEquipo",
+]);
+
+function nullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function validEditableData(value: unknown): value is ApprovalEditableData {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  const review = item.review as Record<string, unknown> | null;
+  const capabilities = item.capabilities as Record<string, unknown> | null;
+  return typeof item.clienteNombre === "string"
+    && nullableString(item.clienteDocumento)
+    && nullableString(item.clienteCorreo)
+    && nullableString(item.clienteTelefono)
+    && nullableString(item.clienteDepartamento)
+    && nullableString(item.clienteDepartamentoLabel)
+    && nullableString(item.clienteCiudad)
+    && nullableString(item.clienteDireccion)
+    && nullableString(item.referenciaEquipo)
+    && nullableString(item.plataforma)
+    && Boolean(review)
+    && Number.isSafeInteger(review?.revision)
+    && Number(review?.revision) > 0
+    && typeof review?.reviewHash === "string"
+    && review.reviewHash.length > 0
+    && Boolean(capabilities)
+    && typeof capabilities?.canEditData === "boolean"
+    && nullableString(capabilities?.correctionBlockedReason);
+}
+
+function validDataHistory(history: unknown): history is ApprovalDataHistoryEvent[] {
+  return Array.isArray(history) && history.every((event) => {
+    if (!event || typeof event !== "object" || Array.isArray(event)) return false;
+    const item = event as Record<string, unknown>;
+    return typeof item.id === "string"
+      && typeof item.reason === "string"
+      && typeof item.actorName === "string"
+      && (item.actorKind === "USER" || item.actorKind === "SHARED_LINK")
+      && typeof item.createdAt === "string"
+      && Number.isFinite(new Date(item.createdAt).getTime())
+      && Array.isArray(item.changes)
+      && item.changes.every((change) => {
+        if (!change || typeof change !== "object" || Array.isArray(change)) return false;
+        const row = change as Record<string, unknown>;
+        return typeof row.field === "string"
+          && APPROVAL_DATA_HISTORY_FIELDS.has(row.field as ApprovalDataHistoryField)
+          && nullableString(row.before)
+          && nullableString(row.after);
+      });
+  });
+}
+
+export async function readApprovalData(id: number, signal?: AbortSignal): Promise<ApprovalDataResponse> {
+  const response = await fetch(`/api/aprobaciones/${id}/datos`, { cache: "no-store", signal });
+  const result = await readResult<ApprovalDataResponse>(
+    response,
+    "No fue posible cargar la información editable del expediente."
+  );
+  if (!validEditableData(result.item) || !validDataHistory(result.history)) {
+    throw new ApprovalRequestError("La información editable no devolvió una respuesta válida.", response.status);
+  }
+  return result;
+}
+
+export async function readApprovalEquipmentCatalog(signal?: AbortSignal) {
+  const response = await fetch("/api/aprobaciones/catalogo-equipos", { cache: "no-store", signal });
+  const result = await readResult<{ items: ApprovalEquipmentCatalogItem[] }>(
+    response,
+    "No fue posible cargar el catálogo de equipos."
+  );
+  if (!Array.isArray(result.items) || result.items.some((item) =>
+    !item
+    || !Number.isSafeInteger(item.id)
+    || item.id <= 0
+    || typeof item.marca !== "string"
+    || typeof item.modelo !== "string"
+    || typeof item.referenciaEquipo !== "string"
+    || typeof item.plataforma !== "string"
+  )) {
+    throw new ApprovalRequestError("El catálogo de equipos no devolvió una respuesta válida.", response.status);
+  }
+  return result.items;
+}
+
+export async function updateApprovalData(id: number, input: {
+  changes: ApprovalDataChanges;
+  reason: string;
+  revision: number;
+  reviewHash: string;
+  idempotencyKey: string;
+}) {
+  const response = await fetch(`/api/aprobaciones/${id}/datos`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const result = await readResult<{
+    ok?: boolean;
+    item: ApprovalEditableData;
+    history: ApprovalDataHistoryEvent[];
+    unchanged: boolean;
+    replayed: boolean;
+  }>(response, "No fue posible guardar la corrección. Actualiza el expediente antes de intentarlo de nuevo.");
+  if (result.ok !== true
+      || !validEditableData(result.item)
+      || typeof result.unchanged !== "boolean"
+      || typeof result.replayed !== "boolean"
+      || !validDataHistory(result.history)) {
+    throw new ApprovalRequestError("No se recibió confirmación válida de la corrección. Actualiza el expediente.", response.status);
+  }
   return result;
 }
 

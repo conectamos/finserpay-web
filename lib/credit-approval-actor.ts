@@ -64,6 +64,7 @@ export function buildCurrentCreditApprovalSql(creditAlias: string, reviewAlias: 
   if (![creditAlias, reviewAlias].every(alias => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(alias))) throw new Error("Invalid approval SQL alias");
   return `(${reviewAlias}."status"='APPROVED' AND ${reviewAlias}."revision">0
     AND ${reviewAlias}."approvedRevision"=${reviewAlias}."revision"
+    AND ${reviewAlias}."approvedHashVersion"=${reviewAlias}."reviewHashVersion"
     AND ${reviewAlias}."approvedAt" IS NOT NULL AND LENGTH(BTRIM(${reviewAlias}."approvedByName"))>0
     AND ${reviewAlias}."reviewHash" ~ '^[a-f0-9]{64}$'
     AND ((${reviewAlias}."approvedByKind"='USER' AND ${reviewAlias}."approvedByUserId" IS NOT NULL

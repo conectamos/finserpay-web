@@ -9,6 +9,7 @@ import type { ApprovalDetail, ApprovalQueueItem, ApprovalView } from "@/app/dash
 import { PAYMENT_FREQUENCY_OPTIONS } from "@/lib/credit-factory";
 import LastPdfPagePreview from "@/app/dashboard/aprobaciones/last-pdf-page-preview";
 import SharedEvidenceGallery from "./shared-evidence-gallery";
+import SharedDataCorrection from "./shared-data-correction";
 import SharedNoveltyHistory from "./shared-novelty-history";
 import styles from "./shared-review.module.css";
 
@@ -46,8 +47,9 @@ type Props = {
 export default function SharedApprovalWorkspace(props: Props) {
   const [searchText, setSearchText] = useState(props.query);
   const [documentTab, setDocumentTab] = useState("evidence");
+  const [historyVersion, setHistoryVersion] = useState(0);
   const { detail, selectedId, selectedItem, busy, view } = props;
-  const showHistory = Boolean(detail?.review.required && selectedItem && !selectedItem.paid);
+  const showHistory = Boolean(detail?.review.required && selectedItem);
   const activeTab = documentTab === "history" && !showHistory ? "evidence" : documentTab;
   const tabs = [{ id: "evidence", label: "Evidencias" }, { id: "document", label: "Documento firmado" }, ...(showHistory ? [{ id: "history", label: "Historial" }] : [])];
   const facts = detail ? [
@@ -109,11 +111,11 @@ export default function SharedApprovalWorkspace(props: Props) {
           }}>{tab.label}</button>)}</Tabs>
           <div id="document-panel-evidence" role="tabpanel" aria-labelledby="document-tab-evidence" hidden={activeTab !== "evidence"} className={styles.documentBody}><SharedEvidenceGallery key={detail.id} detail={detail} readOnly={view === "approved"} disabled={props.correctionDisabled} onUpdated={props.onUpdated} onBusyChange={props.onCorrectionBusy} /></div>
           <div id="document-panel-document" role="tabpanel" aria-labelledby="document-tab-document" hidden={activeTab !== "document"} className={styles.documentBody}><div className={styles.documentTitle}><FileText size={17} aria-hidden="true" /><h3>Documento firmado</h3></div>{detail.document.available ? <><p className={styles.documentName}>{detail.document.fileName || "Documento de FirmaSeguro"}</p><LastPdfPagePreview key={`${detail.id}:${detail.review.reviewHash}`} href={detail.document.href} folio={creditDisplayNumber(detail)} compact /></> : <EmptyState title="Documento no disponible" description="La firma debe estar disponible antes del OK para liquidación." />}</div>
-          {showHistory ? <div id="document-panel-history" role="tabpanel" aria-labelledby="document-tab-history" hidden={activeTab !== "history"} className={styles.documentBody}>{activeTab === "history" ? <SharedNoveltyHistory key={`${detail.id}:${detail.review.reviewHash}`} creditId={detail.id} evidence={detail.evidence} /> : null}</div> : null}
+          {showHistory ? <div id="document-panel-history" role="tabpanel" aria-labelledby="document-tab-history" hidden={activeTab !== "history"} className={styles.documentBody}>{activeTab === "history" ? <SharedNoveltyHistory key={`${detail.id}:${detail.review.reviewHash}:${historyVersion}`} creditId={detail.id} evidence={detail.evidence} /> : null}</div> : null}
         </Card> : <Card className={styles.placeholder}><FolderOpen size={36} aria-hidden="true" /><h2>Selecciona un expediente</h2><p>Abre un crédito de la lista para revisar sus documentos y continuar.</p></Card>}
       </div>
       <aside className={styles.actions} aria-label="Acciones de revisión">
-        {detail ? <><div className={styles.actionsScroll}>{props.callPanel}{props.noveltyPanel}{view === "pending" ? props.signaturePanel : <Card className={styles.approvedSummary}><div className={styles.documentTitle}><FileText size={17} aria-hidden="true" /><h2>Firma del contrato</h2></div><Badge tone={detail.document.available ? "positive" : "warning"}>{detail.document.available ? "Documento firmado disponible" : "Documento no disponible"}</Badge></Card>}</div>{view === "pending" ? props.approvalPanel : <Card className={styles.approvedSummary}><div className={styles.documentTitle}><ShieldCheck size={18} aria-hidden="true" /><h2>OK para liquidación</h2></div><Badge tone="positive"><CheckCircle2 size={14} aria-hidden="true" />Aprobación vigente</Badge><p>{date(detail.review.approvedAt)}</p>{detail.review.approvedByName ? <p>Registro: {detail.review.approvedByName}</p> : null}</Card>}</> : <Card className={styles.placeholder}><ShieldCheck size={30} aria-hidden="true" /><h2>Revisión para liquidación</h2><p>Las acciones del crédito seleccionado aparecerán aquí.</p></Card>}
+        {detail ? <><div className={styles.actionsScroll}>{detail.capabilities.canEditData ? <SharedDataCorrection key={detail.id} detail={detail} disabled={props.correctionDisabled} onUpdated={props.onUpdated} onBusyChange={props.onCorrectionBusy} onOpenHistory={() => { setHistoryVersion((current) => current + 1); setDocumentTab("history"); }} /> : null}{props.callPanel}{props.noveltyPanel}{view === "pending" ? props.signaturePanel : <Card className={styles.approvedSummary}><div className={styles.documentTitle}><FileText size={17} aria-hidden="true" /><h2>Firma del contrato</h2></div><Badge tone={detail.document.available ? "positive" : "warning"}>{detail.document.available ? "Documento firmado disponible" : "Documento no disponible"}</Badge></Card>}</div>{view === "pending" ? props.approvalPanel : <Card className={styles.approvedSummary}><div className={styles.documentTitle}><ShieldCheck size={18} aria-hidden="true" /><h2>OK para liquidación</h2></div><Badge tone="positive"><CheckCircle2 size={14} aria-hidden="true" />Aprobación vigente</Badge><p>{date(detail.review.approvedAt)}</p>{detail.review.approvedByName ? <p>Registro: {detail.review.approvedByName}</p> : null}</Card>}</> : <Card className={styles.placeholder}><ShieldCheck size={30} aria-hidden="true" /><h2>Revisión para liquidación</h2><p>Las acciones del crédito seleccionado aparecerán aquí.</p></Card>}
       </aside>
     </div>
     {props.confirmationDialog}

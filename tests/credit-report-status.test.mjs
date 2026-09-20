@@ -5,7 +5,7 @@ import test from "node:test";
 import ts from "typescript";
 import { resolveCreditReportState } from "../lib/credit-report-status.ts";
 
-const approved = { status: "APPROVED", revision: 3, approvedRevision: 3 };
+const approved = { status: "APPROVED", revision: 3, approvedRevision: 3, reviewHashVersion: 2, approvedHashVersion: 2 };
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 function loadModule(path, dependencies = {}) {
@@ -113,7 +113,8 @@ test("el reporte agrega números SADMIN confirmados sin alterar folios ni amplia
 test("pendientes, historicos sin revision e invalidaciones conservan el estado original", () => {
   for (const review of [undefined, null, { ...approved, status: "PENDING" },
     { ...approved, approvedRevision: null }, { ...approved, revision: 4 },
-    { ...approved, revision: 0, approvedRevision: 0 }, { ...approved, status: "REJECTED" }]) {
+    { ...approved, revision: 0, approvedRevision: 0 }, { ...approved, status: "REJECTED" },
+    { ...approved, approvedHashVersion: null }, { ...approved, approvedHashVersion: 1 }]) {
     assert.equal(resolveCreditReportState("INSCRITO", review), "INSCRITO");
   }
 });
@@ -153,7 +154,8 @@ test("el DTO agrega la etiqueta sin sobrescribir estado, divulgar revision ni ca
   assert.deepEqual(plain(reviewed), before);
   assert.ok(data.items.every(row => !("aprobacionAnalista" in row)));
   assert.deepEqual(api.calls[0].query.include.aprobacionAnalista,
-    { select: { status: true, revision: true, approvedRevision: true } });
+    { select: { status: true, revision: true, approvedRevision: true,
+      reviewHashVersion: true, approvedHashVersion: true } });
   assert.deepEqual(api.calls.find(call => call.kind === "payments").query.where.estado, { not: "ANULADO" });
 });
 
@@ -161,7 +163,8 @@ test("el siguiente GET refleja la invalidacion sin convertirla en un cambio fina
   const row = fixture(1, { aprobacionAnalista: approved });
   const api = harness([row]);
   assert.equal((await (await api.get()).json()).items[0].estadoReporte, "APROBADO");
-  row.aprobacionAnalista = { status: "PENDING", revision: 4, approvedRevision: null };
+  row.aprobacionAnalista = { status: "PENDING", revision: 4, approvedRevision: null,
+    reviewHashVersion: 2, approvedHashVersion: null };
   const refreshed = (await (await api.get()).json()).items[0];
   assert.equal(refreshed.estadoReporte, "INSCRITO");
   assert.equal(refreshed.estado, "INSCRITO");

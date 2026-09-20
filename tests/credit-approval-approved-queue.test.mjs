@@ -146,7 +146,8 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
       "fechaCredito" TIMESTAMP(3) DEFAULT '2026-09-10',"estado" TEXT DEFAULT 'INSCRITO',"equalityService" TEXT,"contratoSnapshot" JSONB DEFAULT '{}');
     CREATE TABLE "CreditApprovalReview" ("creditoId" INT PRIMARY KEY,"status" TEXT DEFAULT 'PENDING',"revision" INT DEFAULT 1,
       "approvedRevision" INT,"approvedAt" TIMESTAMP(3),"approvedByName" TEXT,"approvedByUserId" INT,"approvedByKind" TEXT,
-      "approvedByGrantId" UUID,"approvedBySessionId" UUID,"reviewHash" TEXT);
+      "approvedByGrantId" UUID,"approvedBySessionId" UUID,"reviewHash" TEXT,
+      "reviewHashVersion" SMALLINT DEFAULT 2,"approvedHashVersion" SMALLINT);
     CREATE TABLE "LiquidacionAliadoCredito" ("creditoId" INT PRIMARY KEY);
     CREATE TABLE "CreditApprovalNovelty" ("id" UUID PRIMARY KEY,"creditoId" INT,"status" TEXT,"version" INT DEFAULT 1);
     CREATE TABLE "CreditApprovalNoveltyItem" ("id" UUID PRIMARY KEY,"noveltyId" UUID,"status" TEXT);
@@ -165,7 +166,8 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
   };
   const approve = async (id, values = {}) => {
     const fields = { status: "APPROVED", approvedRevision: 1, revision: 1, approvedAt: stamp, approvedByName: "Analista sintético", approvedByKind: "USER",
-      approvedByUserId: 7, approvedByGrantId: null, approvedBySessionId: null, reviewHash: "a".repeat(64), ...values };
+      approvedByUserId: 7, approvedByGrantId: null, approvedBySessionId: null, reviewHash: "a".repeat(64),
+      reviewHashVersion: 2, approvedHashVersion: 2, ...values };
     await db.query(`UPDATE "CreditApprovalReview" SET ${Object.keys(fields).map((k, i) => `"${k}"=$${i+2}`).join(",")} WHERE "creditoId"=$1`, [id, ...Object.values(fields)]);
   };
   const approvedIds = async documento => (await queue.listApprovedCreditQueue(api, { documento, limit: 100 })).items.map(row => row.id);
@@ -177,7 +179,7 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
     const id = await create("transition");
     assert.deepEqual(await pendingIds("transition"), [id]); assert.deepEqual(await approvedIds("transition"), []);
     await approve(id); assert.deepEqual(await pendingIds("transition"), []); assert.deepEqual(await approvedIds("transition"), [id]);
-    await db.query('UPDATE "CreditApprovalReview" SET "status"=\'PENDING\',"revision"=2,"approvedRevision"=NULL,"approvedAt"=NULL,"approvedByName"=NULL,"reviewHash"=NULL WHERE "creditoId"=$1', [id]);
+    await db.query('UPDATE "CreditApprovalReview" SET "status"=\'PENDING\',"revision"=2,"approvedRevision"=NULL,"approvedAt"=NULL,"approvedByName"=NULL,"reviewHash"=NULL,"approvedHashVersion"=NULL WHERE "creditoId"=$1', [id]);
     assert.deepEqual(await pendingIds("transition"), [id]); assert.deepEqual(await approvedIds("transition"), []);
     await approve(id, { revision: 2, approvedRevision: 2 }); assert.deepEqual(await pendingIds("transition"), []);
     assert.deepEqual(await approvedIds("transition"), [id]);
@@ -227,7 +229,9 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
   });
   await t.test("Una revisión corrupta o una firma pendiente no se presentan como aprobadas", async () => {
     for (const bad of [{ approvedRevision: 2 }, { approvedAt: null }, { approvedByName: " " }, { reviewHash: "invalid" },
-      { approvedByKind: null }, { approvedByKind: "USER", approvedByUserId: null }, { approvedByKind: "SHARED_LINK", approvedByUserId: null }]) {
+      { approvedByKind: null }, { approvedByKind: "USER", approvedByUserId: null },
+      { approvedByKind: "SHARED_LINK", approvedByUserId: null },
+      { approvedHashVersion: null }, { approvedHashVersion: 1 }]) {
       const id = await create("invalid"); await approve(id, bad);
     }
     for (const status of ["PREPARING", "DISPATCHING", "AWAITING_SIGNATURE", "UNCERTAIN", "CORRUPT", null]) {
@@ -257,7 +261,7 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
     await actors.assertApprovalActorCreditReadAccess(api, id, shared);
     await assert.rejects(actors.assertApprovalActorCreditAccess(api, id, shared), { status: 404 });
     assert.deepEqual((await db.query('SELECT to_jsonb(c) AS credit,to_jsonb(r) AS review FROM "Credito" c JOIN "CreditApprovalReview" r ON r."creditoId"=c."id" WHERE c."id"=$1', [id])).rows, before.rows);
-    await db.query('UPDATE "CreditApprovalReview" SET "status"=\'PENDING\',"approvedRevision"=NULL WHERE "creditoId"=$1', [id]);
+    await db.query('UPDATE "CreditApprovalReview" SET "status"=\'PENDING\',"approvedRevision"=NULL,"approvedHashVersion"=NULL WHERE "creditoId"=$1', [id]);
     assert.deepEqual(await approvedIds("paid"), []);
     await assert.rejects(actors.assertApprovalActorCreditReadAccess(api, id, shared), { status: 404 });
   });
@@ -298,7 +302,7 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
     try {
       await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
       assert.deepEqual((await queue.listCreditApprovalQueue(api, { documento: "snapshotCounts" })).items.map(row => row.id), [id]);
-      await second.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',"approvedRevision"=1,"approvedAt"=$2,
+      await second.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',"approvedRevision"=1,"approvedHashVersion"="reviewHashVersion","approvedAt"=$2,
         "approvedByName"='Analista sintético',"approvedByKind"='USER',"approvedByUserId"=7,"reviewHash"=$3 WHERE "creditoId"=$1`, [id, stamp, "a".repeat(64)]);
       assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, { documento: "snapshotCounts" })), { pending: 1, approved: 0 });
       await db.query("COMMIT");

@@ -207,6 +207,7 @@ model Usuario {
   approvalSharedGrantsRevoked CreditApprovalSharedGrant[] @relation("ApprovalSharedRevoker")
   approvalNoveltyEvents CreditApprovalNoveltyEvent[]
   approvalCallRecordings CreditApprovalCallRecording[]
+  approvalDataCorrections CreditApprovalDataCorrection[]
   aprobacionesCredito CreditApprovalReview[]
   eventosAprobacionCredito CreditApprovalEvent[]
   eventosSadmin CreditSadminEvent[]
@@ -375,6 +376,7 @@ model Credito {
   novedadesAprobacion           CreditApprovalNovelty[]
   grabacionesAprobacion         CreditApprovalCallRecording[]
   continuidadesGrabacionAprobacion CreditApprovalCallContinuation[]
+  correccionesDatosAprobacion   CreditApprovalDataCorrection[]
   registroSadmin                 CreditSadminRegistration?
   eventosSadmin                  CreditSadminEvent[]
   createdAt                     DateTime             @default(now())
@@ -424,6 +426,7 @@ model CreditApprovalSharedSession {
   reissues CreditApprovalReissue[]
   noveltyEvents CreditApprovalNoveltyEvent[]
   callRecordings CreditApprovalCallRecording[]
+  dataCorrections CreditApprovalDataCorrection[]
   sadminEvents CreditSadminEvent[]
 
   @@unique([id, grantId], map: "CreditApprovalSharedSession_id_grant")
@@ -582,6 +585,8 @@ model CreditApprovalReview {
   approvedBySharedSession CreditApprovalSharedSession? @relation(fields: [approvedBySessionId, approvedByGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalReview_shared_actor_fkey")
   approvedAt DateTime? @db.Timestamp(3)
   reviewHash String? @db.VarChar(64)
+  reviewHashVersion Int @default(2) @db.SmallInt
+  approvedHashVersion Int? @db.SmallInt
   callRecordingId String? @db.Uuid
   callRecording CreditApprovalCallRecording? @relation(fields: [callRecordingId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   createdAt DateTime @default(now()) @db.Timestamp(3)
@@ -591,6 +596,35 @@ model CreditApprovalReview {
   eventos CreditApprovalEvent[]
 
   @@index([status, updatedAt])
+}
+
+model CreditApprovalDataCorrection {
+  id String @id @default(uuid()) @db.Uuid
+  creditoId Int
+  idempotencyKey String @unique @db.Uuid
+  requestHash String @db.Char(64)
+  requestedRevision Int
+  requestedReviewHash String @db.VarChar(64)
+  requestedHashVersion Int @default(1) @db.SmallInt
+  resultingRevision Int
+  resultingReviewHash String @db.VarChar(64)
+  resultingHashVersion Int @default(2) @db.SmallInt
+  before Json
+  after Json
+  reason String @db.VarChar(500)
+  actorKind String @db.VarChar(16)
+  actorUserId Int?
+  actorName String @db.VarChar(160)
+  actorGrantId String? @db.Uuid
+  actorSessionId String? @db.Uuid
+  catalogSnapshot Json?
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actor Usuario? @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actorSharedSession CreditApprovalSharedSession? @relation(fields: [actorSessionId, actorGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalDataCorrection_shared_actor_fkey")
+
+  @@unique([creditoId, resultingRevision], map: "CreditApprovalDataCorrection_credit_revision_key")
+  @@index([creditoId, createdAt(sort: Desc), id(sort: Desc)], map: "CreditApprovalDataCorrection_credit_created_idx")
 }
 
 model CreditApprovalReissue {
@@ -671,6 +705,7 @@ model CreditApprovalEvent {
   actorSharedSession CreditApprovalSharedSession? @relation(fields: [actorSessionId, actorGrantId], references: [id, grantId], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalEvent_shared_actor_fkey")
   reason String?
   reviewHash String? @db.VarChar(64)
+  reviewHashVersion Int @default(1) @db.SmallInt
   callRecordingId String? @db.Uuid
   callRecording CreditApprovalCallRecording? @relation(fields: [callRecordingId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   createdAt DateTime @default(now()) @db.Timestamp(3)

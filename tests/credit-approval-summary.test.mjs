@@ -17,6 +17,7 @@ test("el resumen muestra contacto y condiciones guardadas sin alterar el crédit
   assert.equal(item.clienteCorreo, "cliente@example.test");
   assert.equal(item.clienteTelefono, "+57 300 1234567");
   assert.equal(item.clienteDepartamento, "VALLE DEL CAUCA");
+  assert.equal(item.clienteDepartamentoCodigo, "VALLE_DEL_CAUCA");
   assert.equal(item.clienteCiudad, "Cali");
   assert.equal(item.clienteDireccion, "Calle 10 # 20-30, Bogotá");
   assert.equal(item.referenciaEquipo, "APPLE EQUIPO DE PRUEBA 256GB");
@@ -124,7 +125,8 @@ test("exponer el resumen conserva aprobación y huella previamente guardadas", (
   const fixture = approvalFixture();
   const before = detail(fixture);
   fixture.review = { status: "APPROVED", revision: 3, approvedRevision: 3,
-    approvedAt: new Date("2026-09-10T16:00:00Z"), approvedByName: "Analista existente", reviewHash: before.review.reviewHash };
+    approvedAt: new Date("2026-09-10T16:00:00Z"), approvedByName: "Analista existente",
+    reviewHash: before.review.reviewHash, reviewHashVersion: 2, approvedHashVersion: 2 };
   const item = detail(fixture);
   assert.equal(item.review.status, "APPROVED");
   assert.equal(item.review.revision, 3);
@@ -132,13 +134,34 @@ test("exponer el resumen conserva aprobación y huella previamente guardadas", (
   assert.equal(item.review.reviewHash, before.review.reviewHash);
 });
 
-test("mostrar la ubicación no altera la huella financiera de una revisión existente", () => {
+test("cambiar ubicación invalida la huella de la revisión", () => {
   const fixture = approvalFixture();
   const before = detail(fixture).review.reviewHash;
   fixture.credit.clienteDepartamento = "ANTIOQUIA";
   fixture.credit.clienteCiudad = "Medellín";
   fixture.credit.clienteDireccion = "Avenida 30 # 40-50";
-  assert.equal(detail(fixture).review.reviewHash, before);
+  assert.notEqual(detail(fixture).review.reviewHash, before);
+});
+
+test("la huella V1 conserva audios previos y V2 cubre los datos operativos", () => {
+  const fixture = approvalFixture();
+  fixture.review = {
+    status: "PENDING", revision: 4, approvedRevision: null, approvedAt: null,
+    approvedByName: null, reviewHash: null, reviewHashVersion: 1, approvedHashVersion: null,
+  };
+  const legacyHash = detail(fixture).review.reviewHash;
+  assert.equal(legacyHash, "eee3d921556e036a5d1a1f871fe03cf365a1ad09cf4385f1f3e7c5a02108256e");
+  Object.assign(fixture.credit, {
+    clienteCorreo: "otro@example.test",
+    clienteTelefono: "3009998877",
+    clienteDepartamento: "ANTIOQUIA",
+    clienteCiudad: "Medellín",
+    clienteDireccion: "Avenida 30 # 40-50",
+    referenciaEquipo: "IPHONE 16 128GB",
+  });
+  assert.equal(detail(fixture).review.reviewHash, legacyHash);
+  fixture.review.reviewHashVersion = 2;
+  assert.notEqual(detail(fixture).review.reviewHash, legacyHash);
 });
 
 test("la consulta del resumen es de lectura y conserva el bloqueo por crédito", async () => {

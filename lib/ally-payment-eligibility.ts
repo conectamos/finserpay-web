@@ -54,7 +54,8 @@ export function buildAllyPaymentEligibilityQuery(input: {
         AND NOT EXISTS (SELECT 1 FROM "CreditApprovalNovelty" novelty WHERE novelty."creditoId"=credit."id" AND novelty."status"<>'RESOLVED')
         AND EXISTS (SELECT 1 FROM "CreditApprovalPolicy" WHERE "id" = 1)
         AND (NOT ${approvalRequired} OR
-          (approval."status" = 'APPROVED' AND approval."approvedRevision" = approval."revision"))
+          (approval."status" = 'APPROVED' AND approval."approvedRevision" = approval."revision"
+            AND approval."approvedHashVersion" = approval."reviewHashVersion"))
         AND UPPER(BTRIM(COALESCE(credit."estado", ''))) <> ALL($4::text[])
         AND UPPER(BTRIM(COALESCE(ally."codigo", ''))) <> $5
         AND ($1::integer IS NULL OR ally."id" = $1)

@@ -14,6 +14,10 @@ const reviewApprovalCheck = `("status" = 'PENDING' AND "approvedRevision" IS NUL
       AND LENGTH(BTRIM("approvedByName")) > 0 AND "approvedAt" IS NOT NULL
       AND "reviewHash" IS NOT NULL AND "reviewHash" ~ '^[a-f0-9]{64}$')`;
 
+const reviewHashAlignmentCheck = `("status"='PENDING' AND "approvedHashVersion" IS NULL)
+    OR ("status"='APPROVED' AND "approvedHashVersion" IS NOT NULL
+      AND "approvedHashVersion"="reviewHashVersion")`;
+
 // Additive schema only: no credit, signed document or paid snapshot is rewritten.
 export const creditApprovalSchemaStatements = [
   `CREATE TABLE IF NOT EXISTS public."CreditApprovalPolicy" (
@@ -27,6 +31,8 @@ export const creditApprovalSchemaStatements = [
     "approvedRevision" INTEGER,
     "approvedByUserId" INTEGER REFERENCES public."Usuario"("id") ON DELETE RESTRICT,
     "approvedByName" VARCHAR(160), "approvedAt" TIMESTAMP(3), "reviewHash" VARCHAR(64),
+    "reviewHashVersion" SMALLINT NOT NULL DEFAULT 2,
+    "approvedHashVersion" SMALLINT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     CONSTRAINT "CreditApprovalReview_approval_check" CHECK (
@@ -36,8 +42,37 @@ export const creditApprovalSchemaStatements = [
         AND "approvedByUserId" IS NOT NULL AND "approvedByName" IS NOT NULL
         AND LENGTH(BTRIM("approvedByName")) > 0 AND "approvedAt" IS NOT NULL
         AND "reviewHash" IS NOT NULL AND "reviewHash" ~ '^[a-f0-9]{64}$')
+    ),
+    CONSTRAINT "CreditApprovalReview_hash_alignment_check" CHECK (
+      ("status"='PENDING' AND "approvedHashVersion" IS NULL)
+      OR ("status"='APPROVED' AND "approvedHashVersion" IS NOT NULL
+      AND "approvedHashVersion"="reviewHashVersion")
     )
   )`,
+  `ALTER TABLE public."CreditApprovalReview"
+    ADD COLUMN IF NOT EXISTS "reviewHashVersion" SMALLINT,
+    ADD COLUMN IF NOT EXISTS "approvedHashVersion" SMALLINT`,
+  `UPDATE public."CreditApprovalReview" SET "reviewHashVersion"=1
+    WHERE "reviewHashVersion" IS NULL`,
+  `UPDATE public."CreditApprovalReview" SET "approvedHashVersion"=1
+    WHERE "status"='APPROVED' AND "reviewHashVersion"=1 AND "approvedHashVersion" IS NULL`,
+  `ALTER TABLE public."CreditApprovalReview"
+    ALTER COLUMN "reviewHashVersion" SET DEFAULT 2,
+    ALTER COLUMN "reviewHashVersion" SET NOT NULL`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_guard_hash_version()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW."status"='PENDING' THEN
+        NEW."approvedHashVersion":=NULL;
+      ELSIF NEW."status"='APPROVED' AND NEW."approvedHashVersion" IS NULL
+        AND NEW."reviewHashVersion"=1 THEN
+        NEW."approvedHashVersion":=1;
+      END IF;
+      RETURN NEW;
+    END $$`,
+  `CREATE OR REPLACE TRIGGER "CreditApprovalReview_hash_version_guard"
+    BEFORE INSERT OR UPDATE ON public."CreditApprovalReview"
+    FOR EACH ROW EXECUTE FUNCTION public.credit_approval_guard_hash_version()`,
   `CREATE INDEX IF NOT EXISTS "CreditApprovalReview_status_updatedAt_idx"
     ON public."CreditApprovalReview" ("status", "updatedAt")`,
   `CREATE TABLE IF NOT EXISTS public."CreditApprovalEvent" (
@@ -47,20 +82,28 @@ export const creditApprovalSchemaStatements = [
     "revision" INTEGER NOT NULL CHECK ("revision" > 0),
     "actorUserId" INTEGER REFERENCES public."Usuario"("id") ON DELETE RESTRICT,
     "actorName" VARCHAR(160), "reason" TEXT, "reviewHash" VARCHAR(64),
+    "reviewHashVersion" SMALLINT NOT NULL DEFAULT 1,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     CONSTRAINT "CreditApprovalEvent_actor_check" CHECK (
       "eventType" <> 'APPROVED' OR
       ("actorUserId" IS NOT NULL AND "actorName" IS NOT NULL AND LENGTH(BTRIM("actorName")) > 0)
     )
   )`,
+  `ALTER TABLE public."CreditApprovalEvent"
+    ADD COLUMN IF NOT EXISTS "reviewHashVersion" SMALLINT NOT NULL DEFAULT 1`,
   `CREATE INDEX IF NOT EXISTS "CreditApprovalEvent_creditoId_createdAt_idx"
     ON public."CreditApprovalEvent" ("creditoId", "createdAt")`,
   // Prisma can create these tables before the predeploy script; install the SQL
   // invariants in that case too. An incompatible existing row aborts deployment.
   ensureCheck("CreditApprovalPolicy", "CreditApprovalPolicy_id_check", '"id" = 1'),
   ensureCheck("CreditApprovalReview", "CreditApprovalReview_revision_check", '"revision" > 0'),
+  ensureCheck("CreditApprovalReview", "CreditApprovalReview_hash_version_check", '"reviewHashVersion" IN (1,2)'),
+  `ALTER TABLE public."CreditApprovalReview"
+    DROP CONSTRAINT IF EXISTS "CreditApprovalReview_hash_alignment_check"`,
+  ensureCheck("CreditApprovalReview", "CreditApprovalReview_hash_alignment_check", reviewHashAlignmentCheck),
   ensureCheck("CreditApprovalReview", "CreditApprovalReview_approval_check", reviewApprovalCheck),
   ensureCheck("CreditApprovalEvent", "CreditApprovalEvent_revision_check", '"revision" > 0'),
+  ensureCheck("CreditApprovalEvent", "CreditApprovalEvent_hash_version_check", '"reviewHashVersion" IN (1,2)'),
   ensureCheck("CreditApprovalEvent", "CreditApprovalEvent_eventType_check", `"eventType" IN ('APPROVED', 'INVALIDATED')`),
   ensureCheck("CreditApprovalEvent", "CreditApprovalEvent_actor_check", `"eventType" <> 'APPROVED' OR
     ("actorUserId" IS NOT NULL AND "actorName" IS NOT NULL AND LENGTH(BTRIM("actorName")) > 0)`),
@@ -105,37 +148,52 @@ export const creditApprovalSchemaStatements = [
     FOR EACH ROW EXECUTE FUNCTION public.credit_approval_initialize()`,
   `CREATE OR REPLACE FUNCTION public.credit_approval_invalidate(target_id INTEGER, invalidation_reason TEXT)
     RETURNS void LANGUAGE plpgsql AS $$
-    DECLARE next_revision INTEGER; previous_hash TEXT;
+    DECLARE next_revision INTEGER; previous_hash TEXT; previous_hash_version SMALLINT;
     BEGIN
       IF target_id IS NULL THEN RETURN; END IF;
       -- Lock order matches approval and settlement: Credit, then Review.
       PERFORM 1 FROM public."Credito" WHERE "id" = target_id FOR UPDATE;
       IF EXISTS (SELECT 1 FROM public."LiquidacionAliadoCredito" WHERE "creditoId" = target_id) THEN RETURN; END IF;
-      SELECT "reviewHash" INTO previous_hash FROM public."CreditApprovalReview" WHERE "creditoId" = target_id FOR UPDATE;
+      SELECT "reviewHash","reviewHashVersion" INTO previous_hash,previous_hash_version
+      FROM public."CreditApprovalReview" WHERE "creditoId" = target_id FOR UPDATE;
       UPDATE public."CreditApprovalReview"
       SET "status" = 'PENDING', "revision" = "revision" + 1,
         "approvedRevision" = NULL, "approvedByUserId" = NULL, "approvedByName" = NULL,
-        "approvedAt" = NULL, "reviewHash" = NULL,
+        "approvedAt" = NULL, "reviewHash" = NULL, "approvedHashVersion" = NULL,
+        "reviewHashVersion" = CASE
+          WHEN invalidation_reason='CREDIT_APPROVAL_DATA_CHANGED' THEN 2
+          ELSE "reviewHashVersion" END,
         "updatedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
       WHERE "creditoId" = target_id RETURNING "revision" INTO next_revision;
       IF next_revision IS NOT NULL THEN
-        INSERT INTO public."CreditApprovalEvent" ("id", "creditoId", "eventType", "revision", "reason", "reviewHash", "createdAt")
+        INSERT INTO public."CreditApprovalEvent"
+          ("id", "creditoId", "eventType", "revision", "reason", "reviewHash", "reviewHashVersion", "createdAt")
         VALUES (gen_random_uuid(), target_id, 'INVALIDATED', next_revision, invalidation_reason, previous_hash,
-          CURRENT_TIMESTAMP AT TIME ZONE 'UTC');
+          previous_hash_version, CURRENT_TIMESTAMP AT TIME ZONE 'UTC');
       END IF;
     END $$`,
   `CREATE OR REPLACE FUNCTION public.credit_approval_credit_changed()
     RETURNS trigger LANGUAGE plpgsql AS $$
     DECLARE approved_replacement BOOLEAN := FALSE;
+      approval_data_changed BOOLEAN := FALSE;
     BEGIN
+      approval_data_changed := ROW(OLD."clienteCorreo", OLD."clienteTelefono", OLD."clienteDepartamento",
+        OLD."clienteCiudad", OLD."clienteDireccion", OLD."referenciaEquipo")
+        IS DISTINCT FROM
+        ROW(NEW."clienteCorreo", NEW."clienteTelefono", NEW."clienteDepartamento",
+          NEW."clienteCiudad", NEW."clienteDireccion", NEW."referenciaEquipo");
       IF OLD."imei" IS DISTINCT FROM NEW."imei"
-        AND ROW(OLD."clienteNombre", OLD."clienteDocumento", OLD."valorEquipoTotal", OLD."cuotaInicial",
+        AND ROW(OLD."clienteNombre", OLD."clienteDocumento", OLD."clienteCorreo", OLD."clienteTelefono",
+          OLD."clienteDepartamento", OLD."clienteCiudad", OLD."clienteDireccion", OLD."referenciaEquipo",
+          OLD."valorEquipoTotal", OLD."cuotaInicial",
           OLD."saldoBaseFinanciado", OLD."montoCredito", OLD."sedeId", OLD."equipoMarca", OLD."equipoModelo",
           OLD."contratoCedulaFrenteDataUrl", OLD."contratoCedulaRespaldoDataUrl",
           OLD."iphoneSelfieCedulaDataUrl", OLD."fotoEntregaDataUrl", OLD."fotoRemisionDataUrl",
           OLD."contratoSnapshot" -> 'financiero', OLD."contratoSnapshot" -> 'firma')
         IS NOT DISTINCT FROM
-        ROW(NEW."clienteNombre", NEW."clienteDocumento", NEW."valorEquipoTotal", NEW."cuotaInicial",
+        ROW(NEW."clienteNombre", NEW."clienteDocumento", NEW."clienteCorreo", NEW."clienteTelefono",
+          NEW."clienteDepartamento", NEW."clienteCiudad", NEW."clienteDireccion", NEW."referenciaEquipo",
+          NEW."valorEquipoTotal", NEW."cuotaInicial",
           NEW."saldoBaseFinanciado", NEW."montoCredito", NEW."sedeId", NEW."equipoMarca", NEW."equipoModelo",
           NEW."contratoCedulaFrenteDataUrl", NEW."contratoCedulaRespaldoDataUrl",
           NEW."iphoneSelfieCedulaDataUrl", NEW."fotoEntregaDataUrl", NEW."fotoRemisionDataUrl",
@@ -158,23 +216,29 @@ export const creditApprovalSchemaStatements = [
           regexp_replace(COALESCE(NEW."imei", ''), '[^0-9]', '', 'g');
         IF approved_replacement THEN RETURN NEW; END IF;
       END IF;
-      IF ROW(OLD."clienteNombre", OLD."clienteDocumento", OLD."valorEquipoTotal", OLD."cuotaInicial",
+      IF ROW(OLD."clienteNombre", OLD."clienteDocumento", OLD."clienteCorreo", OLD."clienteTelefono",
+          OLD."clienteDepartamento", OLD."clienteCiudad", OLD."clienteDireccion", OLD."referenciaEquipo",
+          OLD."valorEquipoTotal", OLD."cuotaInicial",
         OLD."saldoBaseFinanciado", OLD."montoCredito", OLD."imei", OLD."sedeId", OLD."equipoMarca", OLD."equipoModelo",
         OLD."contratoCedulaFrenteDataUrl", OLD."contratoCedulaRespaldoDataUrl",
         OLD."iphoneSelfieCedulaDataUrl", OLD."fotoEntregaDataUrl", OLD."fotoRemisionDataUrl",
         OLD."contratoSnapshot" -> 'financiero', OLD."contratoSnapshot" -> 'firma')
         IS DISTINCT FROM
-        ROW(NEW."clienteNombre", NEW."clienteDocumento", NEW."valorEquipoTotal", NEW."cuotaInicial",
+        ROW(NEW."clienteNombre", NEW."clienteDocumento", NEW."clienteCorreo", NEW."clienteTelefono",
+          NEW."clienteDepartamento", NEW."clienteCiudad", NEW."clienteDireccion", NEW."referenciaEquipo",
+          NEW."valorEquipoTotal", NEW."cuotaInicial",
         NEW."saldoBaseFinanciado", NEW."montoCredito", NEW."imei", NEW."sedeId", NEW."equipoMarca", NEW."equipoModelo",
         NEW."contratoCedulaFrenteDataUrl", NEW."contratoCedulaRespaldoDataUrl",
         NEW."iphoneSelfieCedulaDataUrl", NEW."fotoEntregaDataUrl", NEW."fotoRemisionDataUrl",
         NEW."contratoSnapshot" -> 'financiero', NEW."contratoSnapshot" -> 'firma') THEN
-        PERFORM public.credit_approval_invalidate(NEW."id", 'CREDIT_DOCUMENTATION_CHANGED');
+        PERFORM public.credit_approval_invalidate(NEW."id", CASE WHEN approval_data_changed
+          THEN 'CREDIT_APPROVAL_DATA_CHANGED' ELSE 'CREDIT_DOCUMENTATION_CHANGED' END);
       END IF;
       RETURN NEW;
     END $$`,
   `CREATE OR REPLACE TRIGGER "Credito_invalidate_approval"
-    AFTER UPDATE OF "clienteNombre", "clienteDocumento", "valorEquipoTotal", "cuotaInicial",
+    AFTER UPDATE OF "clienteNombre", "clienteDocumento", "clienteCorreo", "clienteTelefono",
+      "clienteDepartamento", "clienteCiudad", "clienteDireccion", "referenciaEquipo", "valorEquipoTotal", "cuotaInicial",
       "saldoBaseFinanciado", "montoCredito", "imei", "sedeId", "equipoMarca", "equipoModelo", "contratoCedulaFrenteDataUrl",
       "contratoCedulaRespaldoDataUrl", "iphoneSelfieCedulaDataUrl", "fotoEntregaDataUrl",
       "fotoRemisionDataUrl", "contratoSnapshot" ON public."Credito"
@@ -238,6 +302,7 @@ export const creditApprovalSchemaStatements = [
       IF public.credit_approval_is_required(NEW."creditoId") AND NOT EXISTS (
         SELECT 1 FROM public."CreditApprovalReview"
         WHERE "creditoId" = NEW."creditoId" AND "status" = 'APPROVED' AND "approvedRevision" = "revision"
+          AND "approvedHashVersion" = "reviewHashVersion"
       ) THEN
         RAISE EXCEPTION 'CREDIT_APPROVAL_REQUIRED' USING ERRCODE = '23514';
       END IF;

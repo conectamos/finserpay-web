@@ -46,6 +46,9 @@ test("PostgreSQL aislado: activacion, revision, auditoria y concurrencia de liqu
     CREATE TABLE "Credito" (
       "id" SERIAL PRIMARY KEY, "folio" TEXT DEFAULT 'TEST', "clienteNombre" TEXT DEFAULT 'Cliente sintetico',
       "clienteDocumento" TEXT DEFAULT '1000000000', "fechaCredito" TIMESTAMP DEFAULT '2026-09-09T12:00:00',
+      "clienteCorreo" TEXT DEFAULT 'cliente@example.test', "clienteTelefono" TEXT DEFAULT '3001234567',
+      "clienteDepartamento" TEXT DEFAULT 'VALLE_DEL_CAUCA', "clienteCiudad" TEXT DEFAULT 'Cali',
+      "clienteDireccion" TEXT DEFAULT 'Calle 10 # 20-30',
       "createdAt" TIMESTAMP(3) DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
       "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "estado" TEXT DEFAULT 'INSCRITO',
       "sedeId" INTEGER DEFAULT 10, "imei" TEXT DEFAULT '123456789012345', "deviceUid" TEXT DEFAULT 'device-test',
@@ -73,11 +76,11 @@ test("PostgreSQL aislado: activacion, revision, auditoria y concurrencia de liqu
   const review = async (id) => (await db.query('SELECT * FROM "CreditApprovalReview" WHERE "creditoId"=$1', [id])).rows[0];
   const approve = async (id, client = db) => {
     await client.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',
-      "approvedRevision"="revision", "approvedByUserId"=1, "approvedByName"='Analista sintetico',
+      "approvedRevision"="revision","approvedHashVersion"="reviewHashVersion", "approvedByUserId"=1, "approvedByName"='Analista sintetico',
       "approvedAt"=CURRENT_TIMESTAMP, "reviewHash"=$2 WHERE "creditoId"=$1`, [id, "a".repeat(64)]);
     await client.query(`INSERT INTO "CreditApprovalEvent"
-      ("creditoId","eventType","revision","actorUserId","actorName","reviewHash")
-      SELECT "creditoId",'APPROVED',"revision",1,'Analista sintetico',"reviewHash"
+      ("creditoId","eventType","revision","actorUserId","actorName","reviewHash","reviewHashVersion")
+      SELECT "creditoId",'APPROVED',"revision",1,'Analista sintetico',"reviewHash","reviewHashVersion"
       FROM "CreditApprovalReview" WHERE "creditoId"=$1`, [id]);
   };
   const eligible = async () => {
@@ -129,6 +132,22 @@ test("PostgreSQL aislado: activacion, revision, auditoria y concurrencia de liqu
       assert.equal(await review(historic), undefined);
       assert.equal((await eligible()).some(row => row.id === historic), true);
     });
+    await t.test("rolling deploy admite aprobacion V1 antigua y bloquea una V2 sin marcador", async () => {
+      const legacy = await createCredit();
+      await db.query('UPDATE "CreditApprovalReview" SET "reviewHashVersion"=1 WHERE "creditoId"=$1', [legacy]);
+      await db.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',
+        "approvedRevision"="revision","approvedByUserId"=1,"approvedByName"='Aplicacion anterior',
+        "approvedAt"=CURRENT_TIMESTAMP,"reviewHash"=$2 WHERE "creditoId"=$1`, [legacy, "1".repeat(64)]);
+      assert.equal((await review(legacy)).approvedHashVersion, 1);
+
+      const modern = await createCredit();
+      await assert.rejects(db.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',
+        "approvedRevision"="revision","approvedByUserId"=1,"approvedByName"='Aplicacion anterior',
+        "approvedAt"=CURRENT_TIMESTAMP,"reviewHash"=$2 WHERE "creditoId"=$1`, [modern, "2".repeat(64)]), { code: "23514" });
+      assert.equal((await review(modern)).status, "PENDING");
+      await approve(modern);
+      assert.equal((await review(modern)).approvedHashVersion, 2);
+    });
     await t.test("nuevo pendiente no entra; OK por credito entra; cedula compartida no hereda OK", async () => {
       const first = await createCredit();
       const second = await createCredit();
@@ -166,6 +185,23 @@ test("PostgreSQL aislado: activacion, revision, auditoria y concurrencia de liqu
         assert.equal(after.status, "PENDING", field);
         assert.equal(after.revision, before.revision + 1, field);
         assert.equal(after.reviewHash, null);
+        const invalidated = (await db.query(`SELECT "reviewHashVersion" FROM "CreditApprovalEvent" WHERE "creditoId"=$1 AND "eventType"='INVALIDATED' AND "revision"=$2`, [id, after.revision])).rows[0];
+        assert.equal(invalidated.reviewHashVersion, 2, field);
+      }
+      const approvalDataFields = ["clienteCorreo","clienteTelefono","clienteDepartamento",
+        "clienteCiudad","clienteDireccion","referenciaEquipo"];
+      for (const field of approvalDataFields) {
+        await db.query('UPDATE "CreditApprovalReview" SET "reviewHashVersion"=1 WHERE "creditoId"=$1', [id]);
+        await approve(id);
+        const before = await review(id);
+        await db.query('UPDATE "Credito" SET "' + field + '"=$2 WHERE "id"=$1', [id, field + "-changed"]);
+        const after = await review(id);
+        assert.equal(after.status, "PENDING", field);
+        assert.equal(after.revision, before.revision + 1, field);
+        assert.equal(after.reviewHash, null, field);
+        assert.equal(after.reviewHashVersion, 2, field);
+        const invalidated = (await db.query(`SELECT "reviewHashVersion" FROM "CreditApprovalEvent" WHERE "creditoId"=$1 AND "eventType"='INVALIDATED' AND "revision"=$2`, [id, after.revision])).rows[0];
+        assert.equal(invalidated.reviewHashVersion, 1, field);
       }
       for (const field of ["valorEquipoTotal", "cuotaInicial", "saldoBaseFinanciado", "montoCredito"]) {
         await approve(id);
@@ -179,6 +215,7 @@ test("PostgreSQL aislado: activacion, revision, auditoria y concurrencia de liqu
       assert.equal((await review(id)).status, "APPROVED");
       const event = (await db.query('SELECT * FROM "CreditApprovalEvent" WHERE "creditoId"=$1 AND "eventType"=\'INVALIDATED\' ORDER BY "revision" DESC LIMIT 1', [id])).rows[0];
       assert.equal(event.reviewHash, "a".repeat(64));
+      assert.equal(event.reviewHashVersion, 2);
     });
     await t.test("FirmaSeguro puede instalarse despues y cambio PDF/vinculo invalida atomicamente", async () => {
       await db.query(`CREATE TABLE "FirmaSeguroProcess" ("id" SERIAL PRIMARY KEY, "creditoId" INTEGER,

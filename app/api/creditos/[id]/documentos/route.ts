@@ -15,6 +15,7 @@ import {
   parseCreditRouteLookup,
 } from "@/lib/credit-route-lookup";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
+import { withContractualCreditData } from "@/lib/credit-contract-data";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -419,7 +420,7 @@ export async function GET(
       supervisor,
     });
 
-    const credito = await prisma.credito.findFirst({
+    const storedCredit = await prisma.credito.findFirst({
       where: {
         AND: [lookupWhere, accessWhere],
       },
@@ -449,9 +450,10 @@ export async function GET(
       },
     });
 
-    if (!credito) {
+    if (!storedCredit) {
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
     }
+    const credito = withContractualCreditData(storedCredit);
 
     const fonts = getPdfFonts();
     const doc = new PDFDocument({

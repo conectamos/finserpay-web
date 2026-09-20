@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { readFinancingTermsSeal } from "@/lib/credit-amortization-contract";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
 import { resolveContractualCreditImei } from "@/lib/credit-contract-imei";
+import {
+  correctionChainBacksOperationalCredit,
+  type ApprovalDataCorrectionChainEntry,
+} from "@/lib/credit-approval-data-core";
 
 export function reissueRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -21,7 +25,7 @@ function sameNumber(a: unknown, b: unknown) {
 /** Build only from the signed seal; never evaluate current policies or payment plans. */
 export function frozenReissueCredit(credit: Record<string, unknown>, process: {
   draftPayload: unknown; draftFolio: string | null; createdAt: Date | string;
-}) {
+}, corrections: readonly ApprovalDataCorrectionChainEntry[] = []) {
   const snapshot = reissueRecord(credit.contratoSnapshot);
   const financial = reissueRecord(snapshot.financiero);
   const draft = reissueRecord(process.draftPayload);
@@ -60,10 +64,11 @@ export function frozenReissueCredit(credit: Record<string, unknown>, process: {
     ] as const) sameNumber(financial[field], sealed);
   }
   for (const [field, sealed] of [
-    ["clienteTelefono", terms.clienteTelefono], ["clienteCorreo", terms.clienteCorreo],
-    ["clienteDireccion", terms.clienteDireccion], ["equipoMarca", terms.equipoMarca],
-    ["equipoModelo", terms.equipoModelo], ["frecuenciaPago", terms.frecuenciaPago],
+    ["equipoMarca", terms.equipoMarca], ["equipoModelo", terms.equipoModelo], ["frecuenciaPago", terms.frecuenciaPago],
   ] as const) if (text(credit[field]) !== text(sealed)) throw new Error("FROZEN_TERMS_CHANGED");
+  if (!correctionChainBacksOperationalCredit(credit, terms as unknown as Record<string, unknown>, corrections)) {
+    throw new Error("FROZEN_TERMS_CHANGED");
+  }
   if (requiredNumber(terms.valorVenta) <= requiredNumber(terms.cuotaInicial)) throw new Error("FROZEN_TERMS_INCOMPLETE");
   const date = new Date(process.createdAt);
   if (!Number.isFinite(date.getTime())) throw new Error("FROZEN_TERMS_INCOMPLETE");

@@ -7,6 +7,7 @@ import { installApprovalSharedSchema } from "../scripts/approval-shared-schema.m
 import { shared as sharedAccess, actorModule as sharedActorModule } from "./approval-shared-fixture.mjs";
 import { installCreditApprovalSchema } from "../scripts/credit-approval-schema.mjs";
 import { installCreditApprovalReissueSchema } from "../scripts/credit-approval-reissue-schema.mjs";
+import { installCreditApprovalDataSchema } from "../scripts/credit-approval-data-schema.mjs";
 
 const connectionString = process.env.CREDIT_APPROVAL_REISSUE_TEST_DATABASE_URL;
 test("PostgreSQL aislado: reemisión persistente, conservación, callbacks y concurrencia", {
@@ -18,7 +19,7 @@ test("PostgreSQL aislado: reemisión persistente, conservación, callbacks y con
   const pool = new pg.Pool({connectionString,max:8});
   const db = await pool.connect();
   t.after(async () => { db.release(); await pool.end(); });
-  const tables = ["CreditApprovalSharedSession","CreditApprovalSharedGrant","CreditApprovalReissueEvent","CreditApprovalReissue","CreditApprovalEvent","CreditApprovalReview",
+  const tables = ["CreditApprovalDataCorrection","CreditApprovalSharedSession","CreditApprovalSharedGrant","CreditApprovalReissueEvent","CreditApprovalReissue","CreditApprovalEvent","CreditApprovalReview",
     "CreditApprovalPolicy","FirmaSeguroProcess","LiquidacionAliadoCredito","Credito","Usuario","Sede","Aliado"];
   const previous = await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(previous.rows.every(row => tables.includes(row.tablename)),"No se borran tablas ajenas");
@@ -51,6 +52,7 @@ test("PostgreSQL aislado: reemisión persistente, conservación, callbacks y con
   await installCreditApprovalSchema(db);
   await installCreditApprovalReissueSchema(db);
   await installApprovalSharedSchema(db);
+  await installCreditApprovalDataSchema(db);
   const activation = (await db.query('SELECT "activatedAt"::text FROM "CreditApprovalPolicy"')).rows[0].activatedAt;
   let afterQuery = null;
   const wrap = client => ({
@@ -77,7 +79,16 @@ test("PostgreSQL aislado: reemisión persistente, conservación, callbacks y con
     const bytes=Buffer.from(value||"","base64");return bytes.subarray(0,5).toString()==="%PDF-"?bytes:null;
   }};
   const state = loadReissueModule("lib/credit-approval-reissue-state.ts");
-  const source = loadReissueModule("lib/credit-approval-reissue-source.ts", {"@/lib/credit-amortization-contract":seals});
+  const contractImei = loadReissueModule("lib/credit-contract-imei.ts");
+  const approvalErrors = loadReissueModule("lib/credit-approval-errors.ts");
+  const dataCore = loadReissueModule("lib/credit-approval-data-core.ts", {
+    "@/lib/credit-approval-errors": approvalErrors,
+  });
+  const source = loadReissueModule("lib/credit-approval-reissue-source.ts", {
+    "@/lib/credit-amortization-contract": seals,
+    "@/lib/credit-contract-imei": contractImei,
+    "@/lib/credit-approval-data-core": dataCore,
+  });
   const guarded = loadReissueModule("lib/firmaseguro-credit.ts", {
     "@/lib/auth":{}, "@/lib/aliados":{}, "@/lib/credit-route-lookup":{}, "@/lib/firmaseguro":{},
     "@/lib/firmaseguro-folio-pdf":{}, "@/lib/firmaseguro-storage":{}, "@/lib/prisma":{default:api},
@@ -120,7 +131,7 @@ test("PostgreSQL aislado: reemisión persistente, conservación, callbacks y con
   };
   const revision=async id=>(await db.query('SELECT "revision" FROM "CreditApprovalReview" WHERE "creditoId"=$1',[id])).rows[0].revision;
   const requestInput=async id=>({idempotencyKey:randomUUID(),expectedProcessUuid:"old-process-"+id,expectedRevision:await revision(id),reason:"La firma no es legible"});
-  const approve=id=>db.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',"approvedRevision"="revision",
+  const approve=id=>db.query(`UPDATE "CreditApprovalReview" SET "status"='APPROVED',"approvedRevision"="revision","approvedHashVersion"="reviewHashVersion",
     "approvedByUserId"=1,"approvedByName"='Analista prueba',"approvedAt"=CURRENT_TIMESTAMP,"reviewHash"=$2 WHERE "creditoId"=$1`,[id,"a".repeat(64)]);
   const actor={id:1,nombre:"Analista prueba"};
 

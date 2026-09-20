@@ -105,7 +105,8 @@ test("la carga opcional central solo está disponible mientras la revisión siga
 
   const approvedFixture = approvalFixture();
   approvedFixture.review = { status: "APPROVED", revision: 1, approvedRevision: 1,
-    approvedAt: new Date("2026-09-11T15:00:00Z"), approvedByName: "Administrador central", callRecordingId: null };
+    approvedAt: new Date("2026-09-11T15:00:00Z"), approvedByName: "Administrador central",
+    reviewHashVersion: 2, approvedHashVersion: 2, callRecordingId: null };
   const approved = pureDetail(approvedFixture, { available: true, recording: null }, true);
 
   const legacyFixture = approvalFixture(); legacyFixture.credit.required = false;
@@ -195,7 +196,8 @@ test("aprobación histórica sin audio se conserva y no depende del nuevo almace
   const { db, state } = approvalDatabase({ callRecordingError: true });
   const pending = await service.getCreditApprovalDetail(db, 81);
   state.review = { status: "APPROVED", revision: 3, approvedRevision: 3, approvedByName: "Analista histórico",
-    approvedAt: new Date("2026-09-01T12:00:00Z"), reviewHash: pending.review.reviewHash, callRecordingId: null };
+    approvedAt: new Date("2026-09-01T12:00:00Z"), reviewHash: pending.review.reviewHash,
+    reviewHashVersion: 2, approvedHashVersion: 2, callRecordingId: null };
   const before = plain(state.review);
   const approved = await service.getCreditApprovalDetail(db, 81);
   assert.equal(approved.review.status, "APPROVED");
@@ -215,7 +217,7 @@ test("un audio continuado conserva su tupla física y solo habilita la tupla efe
   const recording = readyCallRecording(original);
   fixture.review = {
     status: "PENDING", revision: 3, approvedRevision: null, approvedAt: null,
-    approvedByName: null, reviewHash: null,
+    approvedByName: null, reviewHash: null, reviewHashVersion: 2, approvedHashVersion: null,
   };
   const pending = pureDetail(fixture, { available: true, recording: null });
   const continued = pureDetail(fixture, {

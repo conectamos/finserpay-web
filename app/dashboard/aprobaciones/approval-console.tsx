@@ -153,7 +153,8 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
     setConfirmation(null);
     const next = await loadDetail(detail.id);
     await loadQueue(null, modern);
-    if (next && (next.review.revision !== detail.review.revision || next.review.reviewHash !== detail.review.reviewHash)) {
+    if (next && next.review.status === (view === "approved" ? "APPROVED" : "PENDING")
+      && (next.review.revision !== detail.review.revision || next.review.reviewHash !== detail.review.reviewHash)) {
       setReviewChanged(true);
       setRereviewed(false);
       setNotice({ text: "El expediente se actualizó. Revisa las fotografías y la firma vigente antes de confirmar un nuevo OK.", warning: true });
