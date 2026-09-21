@@ -57,7 +57,10 @@ test("la pantalla conserva aliado y plataforma en sus exportaciones", async () =
   assert.match(source, /params\.set\("aliadoId"/);
   assert.match(source, /params\.set\("plataforma"/);
   assert.match(source, /scope: "mora"/);
-  assert.match(source, /selectedAliadoId \|\| selectedPlatform/);
+  assert.match(
+    source,
+    /hasRemovableFilters = Boolean\(selectedPlatform \|\| \(adminCentral && selectedAliadoId\)\)/
+  );
 });
 
 test("el Excel usa el mismo filtro y conserva el alcance por aliado", async () => {
@@ -68,7 +71,7 @@ test("el Excel usa el mismo filtro y conserva el alcance por aliado", async () =
 
   assert.match(source, /normalizeCreditDevicePlatform\(/);
   assert.match(source, /resolveAllyPaymentPlatform\(/);
-  assert.match(source, /selectedAliadoId = adminCentral \? requestedAliadoId : ownAliadoId/);
+  assert.match(source, /resolveCarteraAliadoId\(/);
   assert.match(source, /aliadoId: selectedAliadoId/);
   assert.match(source, /<th>Plataforma<\/th>/);
 });

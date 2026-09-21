@@ -3,6 +3,7 @@ import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { splitOutstandingBalance } from "@/lib/credit-outstanding-balance";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import { resolveCarteraAliadoId } from "@/lib/cartera-access";
 import {
   getPaymentFrequencyLabel,
   normalizeCreditDevicePlatform,
@@ -83,12 +84,6 @@ function numberCell(value: number) {
   return `<td style='mso-number-format:"0";'>${Math.round(Number(value || 0))}</td>`;
 }
 
-function parsePositiveInt(value: unknown) {
-  const parsed = Number(String(value ?? "").trim());
-
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
 function buildWorkbookHtml(rows: string) {
   return `<!doctype html>
 <html>
@@ -157,18 +152,28 @@ export async function GET(req: Request) {
       );
     }
 
-    await ensureCreditAbonoAuditColumns();
-
     const { searchParams } = new URL(req.url);
-    const requestedAliadoId = parsePositiveInt(searchParams.get("aliadoId"));
     const selectedPlatform = normalizeCreditDevicePlatform(
       searchParams.get("plataforma") ?? searchParams.get("platform")
     );
     const exportScope =
       searchParams.get("scope") === "mora" ? "mora" : "cartera";
     const adminCentral = isFinserPayCentralAlly(user.aliadoAccesoCodigo);
-    const ownAliadoId = parsePositiveInt(user.aliadoAccesoId);
-    const selectedAliadoId = adminCentral ? requestedAliadoId : ownAliadoId;
+    const selectedAliadoId = resolveCarteraAliadoId({
+      adminCentral,
+      ownAliadoId: user.aliadoAccesoId,
+      requestedAliadoId: searchParams.get("aliadoId"),
+    });
+
+    if (!adminCentral && !selectedAliadoId) {
+      return NextResponse.json(
+        { error: "No hay un aliado autorizado para consultar cartera" },
+        { status: 403 }
+      );
+    }
+
+    await ensureCreditAbonoAuditColumns();
+
     const where: Prisma.CreditoWhereInput = {
       estado: {
         notIn: ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"],

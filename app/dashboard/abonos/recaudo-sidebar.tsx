@@ -80,9 +80,9 @@ export default function RecaudoSidebar({
           : []),
         { href: "/dashboard/abonos", icon: CircleDollarSign, label: "Recaudos" },
         { href: "/dashboard/clientes", icon: Users, label: "Clientes" },
+        { href: "/dashboard/cartera", icon: PieChart, label: "Cartera" },
         ...(adminCentral
           ? [
-              { href: "/dashboard/cartera", icon: PieChart, label: "Cartera" },
               {
                 href: "/dashboard/excepciones-mora",
                 icon: TriangleAlert,

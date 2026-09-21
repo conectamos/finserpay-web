@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSessionUser } from "@/lib/auth";
+import { resolveCarteraAliadoId } from "@/lib/cartera-access";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import {
@@ -303,6 +305,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   }
 
+  const adminCentral = isFinserPayCentralAlly(user.aliadoAccesoCodigo);
+  const selectedAliadoId = resolveCarteraAliadoId({
+    adminCentral,
+    ownAliadoId: user.aliadoAccesoId,
+    requestedAliadoId: null,
+  });
+
+  if (!adminCentral && !selectedAliadoId) {
+    return NextResponse.json(
+      { error: "No hay un aliado autorizado para enviar notificaciones" },
+      { status: 403 }
+    );
+  }
+
   const input = (await req.json().catch(() => ({}))) as ManualPushBody;
   const dryRun = parseBoolean(input.dryRun, false);
   const mode = input.mode === "bulk" ? "bulk" : "credit";
@@ -348,6 +364,13 @@ export async function POST(req: Request) {
           },
           where: {
             id: parsePositiveInt(input.creditoId, 0, Number.MAX_SAFE_INTEGER),
+            ...(selectedAliadoId
+              ? {
+                  sede: {
+                    aliadoId: selectedAliadoId,
+                  },
+                }
+              : {}),
           },
         })
       : await prisma.credito.findMany({
@@ -387,6 +410,13 @@ export async function POST(req: Request) {
               not: "ANULADO",
             },
             pazYSalvoEmitidoAt: null,
+            ...(selectedAliadoId
+              ? {
+                  sede: {
+                    aliadoId: selectedAliadoId,
+                  },
+                }
+              : {}),
           },
         });
 

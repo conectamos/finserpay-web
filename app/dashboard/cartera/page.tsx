@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import type { Prisma } from "@/app/generated/prisma/client";
 import {
   CircleCheck,
@@ -17,13 +18,15 @@ import {
 import prisma from "@/lib/prisma";
 import { creditDisplayNumber } from "@/lib/credit-display-number";
 import { getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
-import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
+import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
 import {
   ALIADO_FINSER_PAY,
   ensureAliadoSchema,
+  isFinserPayCentralAlly,
   resolveRedescuentoPercentageByPlatform,
 } from "@/lib/aliados";
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
+import { resolveCarteraAliadoId } from "@/lib/cartera-access";
 import { normalizeCreditDevicePlatform } from "@/lib/credit-factory";
 import { splitOutstandingBalance } from "@/lib/credit-outstanding-balance";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
@@ -124,12 +127,6 @@ function firstSearchParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function parsePositiveInt(value: unknown) {
-  const parsed = Number(String(value ?? "").trim());
-
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
 function firstFamilyReferencePhone(snapshot: unknown) {
   if (typeof snapshot !== "object" || snapshot === null) {
     return "";
@@ -178,22 +175,37 @@ function buildCarteraExportHref(input: {
 }
 
 export default async function CarteraPage({ searchParams }: CarteraPageProps) {
-  const { session } = await requireCentralAdminDashboardAccess();
+  const { session } = await requireAdminDashboardAccess();
   await ensureAliadoSchema(prisma);
 
   const params = searchParams ? await searchParams : {};
-  const requestedAliadoId = parsePositiveInt(firstSearchParam(params.aliadoId));
+  const adminCentral = isFinserPayCentralAlly(session.aliadoAccesoCodigo);
+  const selectedAliadoScopeId = resolveCarteraAliadoId({
+    adminCentral,
+    ownAliadoId: session.aliadoAccesoId,
+    requestedAliadoId: firstSearchParam(params.aliadoId),
+  });
+
+  if (!adminCentral && !selectedAliadoScopeId) {
+    redirect("/dashboard");
+  }
+
   const selectedPlatform = normalizeCreditDevicePlatform(
     firstSearchParam(params.plataforma) ?? firstSearchParam(params.platform)
   );
   const today = new Date();
   const aliados = await prisma.aliado.findMany({
-    where: {
-      activo: true,
-      NOT: {
-        codigo: ALIADO_FINSER_PAY.codigo,
-      },
-    },
+    where: adminCentral
+      ? {
+          activo: true,
+          NOT: {
+            codigo: ALIADO_FINSER_PAY.codigo,
+          },
+        }
+      : {
+          activo: true,
+          id: selectedAliadoScopeId || -1,
+        },
     select: {
       id: true,
       nombre: true,
@@ -206,9 +218,14 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
       nombre: "asc",
     },
   });
-  const selectedAliado = requestedAliadoId
-    ? aliados.find((aliado) => aliado.id === requestedAliadoId) || null
+  const selectedAliado = selectedAliadoScopeId
+    ? aliados.find((aliado) => aliado.id === selectedAliadoScopeId) || null
     : null;
+
+  if (!adminCentral && !selectedAliado) {
+    redirect("/dashboard");
+  }
+
   const selectedAliadoId = selectedAliado?.id || null;
   const selectedAliadoLabel = selectedAliado?.nombre || "Todos los aliados";
   const selectedPlatformLabel =
@@ -217,6 +234,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
       : selectedPlatform === "ANDROID"
         ? "Producto Android"
         : "Todos los productos";
+  const hasRemovableFilters = Boolean(selectedPlatform || (adminCentral && selectedAliadoId));
   const exportHref = buildCarteraExportHref({
     aliadoId: selectedAliadoId,
     plataforma: selectedPlatform,
@@ -529,7 +547,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
     <div className="min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
       <AdminSidebar
         activeHref="/dashboard/cartera"
-        adminCentral
+        adminCentral={adminCentral}
         nombreUsuario={session.nombre}
         rolUsuario={session.rolNombre}
       />
@@ -546,21 +564,23 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
 
           <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
             <form action="/dashboard/cartera" className="flex flex-col gap-2 sm:flex-row sm:items-end">
-              <label className="grid gap-1">
-                <span className="text-xs font-bold text-[#475467]">Aliado</span>
-                <Select
-                  name="aliadoId"
-                  defaultValue={selectedAliadoId ? String(selectedAliadoId) : ""}
-                  className="h-11 w-full min-w-0 sm:min-w-[230px]"
-                >
-                  <option value="">Todos los aliados</option>
-                  {aliados.map((aliado) => (
-                    <option key={aliado.id} value={aliado.id}>
-                      {aliado.nombre}
-                    </option>
-                  ))}
-                </Select>
-              </label>
+              {adminCentral ? (
+                <label className="grid gap-1">
+                  <span className="text-xs font-bold text-[#475467]">Aliado</span>
+                  <Select
+                    name="aliadoId"
+                    defaultValue={selectedAliadoId ? String(selectedAliadoId) : ""}
+                    className="h-11 w-full min-w-0 sm:min-w-[230px]"
+                  >
+                    <option value="">Todos los aliados</option>
+                    {aliados.map((aliado) => (
+                      <option key={aliado.id} value={aliado.id}>
+                        {aliado.nombre}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+              ) : null}
               <label className="grid gap-1">
                 <span className="text-xs font-bold text-[#475467]">Producto</span>
                 <Select
@@ -581,7 +601,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                   <Filter className="h-4 w-4" strokeWidth={2} />
                   Aplicar
                 </button>
-                {selectedAliadoId || selectedPlatform ? (
+                {hasRemovableFilters ? (
                   <Link
                     href="/dashboard/cartera"
                     title="Quitar filtros"
@@ -597,16 +617,20 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             <div className="flex flex-wrap gap-2">
               <ActionLink href={exportHref} icon={Download} label="Excel" primary />
               <ActionLink href="/dashboard/reportes/creditos" icon={FileText} label="Creditos" />
-              <ActionLink
-                href="/dashboard/financiero/cartera"
-                icon={ReceiptText}
-                label="Registrar gasto"
-              />
-              <ActionLink
-                href="/dashboard/financiero/cartera/detalle"
-                icon={History}
-                label="Historial gastos"
-              />
+              {adminCentral ? (
+                <>
+                  <ActionLink
+                    href="/dashboard/financiero/cartera"
+                    icon={ReceiptText}
+                    label="Registrar gasto"
+                  />
+                  <ActionLink
+                    href="/dashboard/financiero/cartera/detalle"
+                    icon={History}
+                    label="Historial gastos"
+                  />
+                </>
+              ) : null}
             </div>
           </div>
         </header>
@@ -667,7 +691,12 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
           <MiniMetric label="Clientes en mora" value={String(clientsMora)} detail={health.label} />
         </section>
 
-        <section className="mt-4 grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+        <section
+          className={[
+            "mt-4 grid gap-4",
+            adminCentral ? "xl:grid-cols-[1.05fr_0.95fr]" : "",
+          ].join(" ")}
+        >
           <section className="rounded-lg border border-[#d8dee6] bg-white p-5 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -710,7 +739,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             </div>
           </section>
 
-          <PushMassivePanel />
+          {adminCentral ? <PushMassivePanel /> : null}
         </section>
 
         <section className="mt-4 overflow-hidden rounded-lg border border-[#d8dee6] bg-white shadow-[0_4px_14px_rgba(15,23,42,0.05)]">

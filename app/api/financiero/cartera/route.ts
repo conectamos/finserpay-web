@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSessionUser } from "@/lib/auth";
 import { requireFinancialAccess } from "@/lib/financial-access";
 import prisma from "@/lib/prisma";
@@ -129,6 +130,13 @@ export async function GET(req: Request) {
 
     const { user, esAdmin } = access;
 
+    if (esAdmin && !isFinserPayCentralAlly(user.aliadoAccesoCodigo)) {
+      return NextResponse.json(
+        { error: "Solo el administrador central puede gestionar gastos de cartera" },
+        { status: 403 }
+      );
+    }
+
     const url = new URL(req.url);
     const sedeIdParam = url.searchParams.get("sedeId");
 
@@ -192,6 +200,14 @@ export async function POST(req: Request) {
     }
 
     const esAdmin = String(user.rolNombre || "").toUpperCase() === "ADMIN";
+
+    if (esAdmin && !isFinserPayCentralAlly(user.aliadoAccesoCodigo)) {
+      return NextResponse.json(
+        { error: "Solo el administrador central puede gestionar gastos de cartera" },
+        { status: 403 }
+      );
+    }
+
     const body = (await req.json()) as Record<string, unknown>;
 
     const valor = normalizarNumero(body.valor);
@@ -274,6 +290,13 @@ export async function PATCH(req: Request) {
     if (!access.esAdmin) {
       return NextResponse.json(
         { error: "Solo el administrador puede editar gastos de operacion" },
+        { status: 403 }
+      );
+    }
+
+    if (!isFinserPayCentralAlly(access.user.aliadoAccesoCodigo)) {
+      return NextResponse.json(
+        { error: "Solo el administrador central puede gestionar gastos de cartera" },
         { status: 403 }
       );
     }
@@ -395,6 +418,13 @@ export async function DELETE(req: Request) {
     if (!access.esAdmin) {
       return NextResponse.json(
         { error: "Solo el administrador puede eliminar gastos de operacion" },
+        { status: 403 }
+      );
+    }
+
+    if (!isFinserPayCentralAlly(access.user.aliadoAccesoCodigo)) {
+      return NextResponse.json(
+        { error: "Solo el administrador central puede gestionar gastos de cartera" },
         { status: 403 }
       );
     }
