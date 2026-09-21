@@ -51,6 +51,7 @@ type ReleaseLookupResult = {
   actor: ReleaseActor;
   draftId: number | null;
   authorizedAt: string | null;
+  requiresNewSolicitud: boolean;
 };
 
 type ReleaseMutationResult = Partial<ReleaseLookupResult> & {
@@ -71,11 +72,13 @@ type PendingAuthorization = {
   documentNumber: string;
   firstSurname: string;
   mutationId: string;
+  requiresNewSolicitud: boolean;
 };
 
 type SuccessNotice = {
   alreadyAuthorized: boolean;
   documentLabel: string;
+  requiresNewSolicitud: boolean;
 };
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -326,6 +329,7 @@ export default function Tx06ReleaseConsole() {
       documentNumber: searchedDocument,
       firstSurname: normalizedFirstSurname,
       mutationId: lastMutationRef.current.mutationId,
+      requiresNewSolicitud: lookupResult.requiresNewSolicitud,
     });
   }
 
@@ -374,6 +378,8 @@ export default function Tx06ReleaseConsole() {
       setSuccessNotice({
         alreadyAuthorized: wasAlreadyAuthorized,
         documentLabel: result.documentLabel || pending.documentLabel,
+        requiresNewSolicitud:
+          result.requiresNewSolicitud ?? pending.requiresNewSolicitud,
       });
       setFirstSurname("");
       setSurnameError("");
@@ -548,8 +554,10 @@ export default function Tx06ReleaseConsole() {
                   ? "La consulta ya estaba liberada."
                   : `${successNotice.documentLabel} quedó habilitada para un nuevo intento.`}
               </strong>{" "}
-              No se hizo una consulta al proveedor ni se consumió cupo en esta
-              operación.
+              {successNotice.requiresNewSolicitud
+                ? "Cree una solicitud nueva y obtenga un consentimiento nuevo. Las solicitudes desistidas permanecen cerradas. "
+                : "Retome la solicitud original para realizar la consulta nuevamente. "}
+              No se hizo una consulta al proveedor ni se consumió cupo en esta operación.
             </p>
           </div>
         ) : null}
@@ -720,7 +728,7 @@ export default function Tx06ReleaseConsole() {
         title="Autorizar nuevo intento DataCrédito"
         description={
           pendingAuthorization
-            ? `Vas a liberar ${pendingAuthorization.documentLabel} usando el primer apellido “${pendingAuthorization.firstSurname}”. Esta autorización aplica solo al TX06 sin puntaje: no cambia un rechazo ni un puntaje y no consulta al proveedor ahora. La próxima consulta requerirá consentimiento nuevo y consumirá el cupo normal.`
+            ? `Vas a liberar ${pendingAuthorization.documentLabel} usando el primer apellido “${pendingAuthorization.firstSurname}”. Esta autorización aplica solo al TX06 sin puntaje: no cambia un rechazo ni un puntaje y no consulta al proveedor ahora. ${pendingAuthorization.requiresNewSolicitud ? "Las solicitudes desistidas permanecerán cerradas y deberá crearse una solicitud nueva. " : "La solicitud original quedará lista para retomarse. "}La próxima consulta requerirá consentimiento nuevo y consumirá el cupo normal.`
             : "Confirma la liberación de la consulta TX06."
         }
         confirmLabel="Autorizar nuevo intento"
