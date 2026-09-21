@@ -147,6 +147,64 @@ test("storage usa una allowlist positiva y jamás libera un RECHAZADO", () => {
   assert.ok(storage.includes("RETRY_NOT_ELIGIBLE"));
 });
 
+test("admite únicamente cierres desistidos y conserva la ruta ABIERTO", () => {
+  const candidateModeStart = storage.indexOf("function candidateDraftMode(");
+  const candidateModeEnd = storage.indexOf(
+    "\nfunction candidateEligibility(",
+    candidateModeStart
+  );
+  const exactStart = storage.indexOf("function exactDraftIsEligible(");
+  const exactEnd = storage.indexOf(
+    "\nexport async function authorizeDataCreditoAdminRetry",
+    exactStart
+  );
+  assert.ok(
+    candidateModeStart >= 0 && candidateModeEnd > candidateModeStart,
+    "No se encontró candidateDraftMode"
+  );
+  assert.ok(
+    exactStart >= 0 && exactEnd > exactStart,
+    "No se encontró exactDraftIsEligible"
+  );
+
+  const candidateDraftMode = storage.slice(candidateModeStart, candidateModeEnd);
+  const exactDraftIsEligible = storage.slice(exactStart, exactEnd);
+
+  assert.match(
+    storage,
+    /const RETRY_CLOSED_DRAFT_REASONS = new Set\(\["DESISTIDA", "DESISTIDO"\]\)/,
+    "La allowlist de cierres debe limitarse a desistimientos"
+  );
+  assert.match(storage, /draftClosedReason:\s*string \| null/);
+  assert.match(storage, /draft\."closedReason" AS "draftClosedReason"/);
+  assert.match(storage, /closedReason:\s*string \| null/);
+  assert.match(
+    storage,
+    /SELECT draft\."id", draft\."estado", draft\."closedReason", draft\."currentStep"/
+  );
+
+  for (const [label, draftMode] of [
+    ["búsqueda", candidateDraftMode],
+    ["mutación bajo lock", exactDraftIsEligible],
+  ]) {
+    assert.match(
+      draftMode,
+      /state === "ABIERTO"[\s\S]*return "REUSE_OPEN_DRAFT"/,
+      `${label}: debe conservar la ruta del borrador abierto`
+    );
+    assert.match(
+      draftMode,
+      /state === "CERRADO"[\s\S]*RETRY_CLOSED_DRAFT_REASONS\.has\([\s\S]*return "NEW_SOLICITUD_REQUIRED"/,
+      `${label}: un desistimiento cerrado debe requerir una solicitud nueva`
+    );
+    assert.doesNotMatch(
+      draftMode,
+      /"(?:FINALIZADA|RECHAZADA|EXPIRADA|EXPIRADA_15_DIAS|DUPLICADA)"/,
+      `${label}: no debe admitir otros motivos de cierre`
+    );
+  }
+});
+
 test("autoriza bajo locks compartidos antes de bloquear filas", () => {
   const authorize = exportedFunction(
     storage,
@@ -194,7 +252,7 @@ test("autoriza bajo locks compartidos antes de bloquear filas", () => {
   assert.match(authorize, /prisma\.\$transaction\(/);
 });
 
-test("la mutación conserva el expediente y solo vence el root y reabre el borrador", () => {
+test("la mutación conserva el expediente y no reabre el borrador desistido", () => {
   const authorize = exportedFunction(
     storage,
     "authorizeDataCreditoAdminRetry"
@@ -218,6 +276,29 @@ test("la mutación conserva el expediente y solo vence el root y reabre el borra
     /'dataCreditoErrorCode',\s*'ASSESSMENT_RETRY_AUTHORIZED'/
   );
   assert.match(authorize, /'clientePrimerApellido'/);
+  assert.match(
+    authorize,
+    /if \(draftMode === "REUSE_OPEN_DRAFT"\)\s*\{[\s\S]*UPDATE "CreditoBorrador"/,
+    "Solo la ruta ABIERTO debe desligar y preparar el borrador existente"
+  );
+  assert.match(
+    authorize,
+    /UPDATE "CreditoBorrador" draft[\s\S]*WHERE draft\."id" = \$1[\s\S]*draft\."estado" = 'ABIERTO'/,
+    "La mutación histórica debe seguir restringida a ABIERTO"
+  );
+  const draftUpdateStart = authorize.indexOf('UPDATE "CreditoBorrador" draft');
+  const draftUpdateEnd = authorize.indexOf("RETURNING draft.\"id\"", draftUpdateStart);
+  assert.ok(
+    draftUpdateStart >= 0 && draftUpdateEnd > draftUpdateStart,
+    "No se encontró la actualización controlada del borrador abierto"
+  );
+  const draftUpdate = authorize.slice(draftUpdateStart, draftUpdateEnd);
+  const draftSet = draftUpdate.slice(0, draftUpdate.indexOf("WHERE"));
+  assert.doesNotMatch(
+    draftSet,
+    /"(?:estado|closedReason)"\s*=/,
+    "Nunca debe reabrir ni cambiar el motivo del borrador desistido"
+  );
   assert.doesNotMatch(
     authorize,
     /DELETE\s+FROM\s+"DataCreditoAssessment"/i
@@ -227,6 +308,36 @@ test("la mutación conserva el expediente y solo vence el root y reabre el borra
     /DataCreditoDailyQuotaUsage|reserveDataCreditoDailyQuota/
   );
   assert.doesNotMatch(authorize, /queryDataCreditoNaturalPerson/);
+});
+
+test("retorna requiresNewSolicitud en la autorización y en todo replay", () => {
+  const authorize = exportedFunction(
+    storage,
+    "authorizeDataCreditoAdminRetry"
+  );
+  assert.match(
+    authorize,
+    /requiresNewSolicitud:\s*preliminaryEligibility\.requiresNewSolicitud/,
+    "Los replays deben conservar el modo calculado para la solicitud"
+  );
+  assert.ok(
+    (
+      authorize.match(
+        /requiresNewSolicitud:\s*preliminaryEligibility\.requiresNewSolicitud/g
+      ) || []
+    ).length >= 2,
+    "El retorno previo y el replay bajo lock deben ser idempotentes"
+  );
+  assert.match(
+    authorize,
+    /requiresNewSolicitud:\s*draftMode === "NEW_SOLICITUD_REQUIRED"/,
+    "La primera autorización de un desistimiento debe exigir solicitud nueva"
+  );
+  assert.match(
+    authorize,
+    /if \(draftMode === "REUSE_OPEN_DRAFT"\)\s*\{[\s\S]*UPDATE "CreditoBorrador"[\s\S]*\}[\s\S]*INSERT INTO "DataCreditoAdminAccessAudit"/,
+    "La ruta cerrada debe omitir el UPDATE y conservar la auditoría"
+  );
 });
 
 test("audita la autorización exacta y soporta replay idempotente", () => {

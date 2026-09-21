@@ -90,7 +90,9 @@ export async function POST(
         ...result,
         eligible: false,
         eligibilityMessage:
-          "Esta consulta ya fue liberada para un nuevo intento.",
+          result.requiresNewSolicitud
+            ? "La consulta quedó liberada. Cree una solicitud nueva, obtenga consentimiento nuevo y use el apellido correcto. Las solicitudes desistidas permanecen cerradas."
+            : "Esta consulta ya fue liberada para un nuevo intento.",
       },
       correlationId,
     });

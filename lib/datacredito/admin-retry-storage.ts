@@ -16,6 +16,11 @@ const UUID_PATTERN =
 const SURNAME_PATTERN = /^[\p{L}\p{M}]+(?: [\p{L}\p{M}]+)*$/u;
 const RETRY_ACTION = "OPS_TX06_RETRY_AUTHORIZED";
 const RETRY_OUTCOME = "AUTHORIZED";
+const RETRY_CLOSED_DRAFT_REASONS = new Set(["DESISTIDA", "DESISTIDO"]);
+
+type DataCreditoAdminRetryDraftMode =
+  | "REUSE_OPEN_DRAFT"
+  | "NEW_SOLICITUD_REQUIRED";
 
 export type DataCreditoAdminRetryErrorCode =
   | "INVALID_DOCUMENT"
@@ -62,6 +67,7 @@ type CandidateRow = {
   updatedAt: Date;
   draftId: number | null;
   draftState: string | null;
+  draftClosedReason: string | null;
   draftStep: number | null;
   draftCreditId: number | null;
   draftExpiresAt: Date | null;
@@ -99,6 +105,7 @@ type LockedAssessmentRow = {
 type LockedDraftRow = {
   id: number;
   estado: string;
+  closedReason: string | null;
   currentStep: number;
   clienteDocumento: string | null;
   imei: string | null;
@@ -140,6 +147,7 @@ export type DataCreditoAdminRetryCandidate = {
   eligibilityCode: DataCreditoAdminRetryEligibilityCode;
   eligibilityMessage: string;
   alreadyAuthorized: boolean;
+  requiresNewSolicitud: boolean;
 };
 
 function parseDocument(value: unknown) {
@@ -206,12 +214,45 @@ function serializeActor(row: CandidateRow) {
   };
 }
 
+function candidateDraftMode(
+  row: CandidateRow,
+  databaseNow: Date
+): DataCreditoAdminRetryDraftMode | null {
+  const now = new Date(databaseNow).getTime();
+  if (
+    !row.draftId ||
+    Number(row.draftStep) !== 1 ||
+    row.draftCreditId !== null ||
+    !row.draftExpiresAt ||
+    new Date(row.draftExpiresAt).getTime() <= now ||
+    normalizeDataCreditoDocument(row.draftImei).length > 0 ||
+    !row.draftDocumentMatches ||
+    !row.draftPlatformMatches
+  ) {
+    return null;
+  }
+
+  const state = normalizedCode(row.draftState);
+  if (state === "ABIERTO") {
+    return "REUSE_OPEN_DRAFT" as const;
+  }
+  if (
+    state === "CERRADO" &&
+    RETRY_CLOSED_DRAFT_REASONS.has(normalizedCode(row.draftClosedReason))
+  ) {
+    return "NEW_SOLICITUD_REQUIRED" as const;
+  }
+  return null;
+}
+
 function candidateEligibility(row: CandidateRow) {
   if (row.authorizedAt) {
     return {
       eligible: false,
       code: "ALREADY_AUTHORIZED" as const,
       message: "Esta consulta ya fue liberada para un nuevo intento.",
+      requiresNewSolicitud:
+        candidateDraftMode(row, row.databaseNow) === "NEW_SOLICITUD_REQUIRED",
     };
   }
   if (["APROBADO", "RECHAZADO"].includes(normalizedCode(row.status))) {
@@ -219,6 +260,7 @@ function candidateEligibility(row: CandidateRow) {
       eligible: false,
       code: "FINAL_DECISION" as const,
       message: "Los resultados crediticios aprobados o rechazados no se pueden liberar.",
+      requiresNewSolicitud: false,
     };
   }
   if (normalizedCode(row.status) === "PENDING") {
@@ -226,6 +268,7 @@ function candidateEligibility(row: CandidateRow) {
       eligible: false,
       code: "EVALUATION_IN_PROGRESS" as const,
       message: "La consulta todavía se encuentra en proceso.",
+      requiresNewSolicitud: false,
     };
   }
   const now = new Date(row.databaseNow).getTime();
@@ -238,6 +281,7 @@ function candidateEligibility(row: CandidateRow) {
       eligible: false,
       code: "ASSESSMENT_EXPIRED" as const,
       message: "La consulta ya venció y no requiere una liberación administrativa.",
+      requiresNewSolicitud: false,
     };
   }
   if (
@@ -254,29 +298,26 @@ function candidateEligibility(row: CandidateRow) {
       eligible: false,
       code: "NOT_TX06_SURNAME_CASE" as const,
       message: "La consulta no corresponde al caso técnico TX06 habilitado para corrección de apellido.",
+      requiresNewSolicitud: false,
     };
   }
-  if (
-    !row.draftId ||
-    normalizedCode(row.draftState) !== "ABIERTO" ||
-    Number(row.draftStep) !== 1 ||
-    row.draftCreditId !== null ||
-    !row.draftExpiresAt ||
-    new Date(row.draftExpiresAt).getTime() <= now ||
-    normalizeDataCreditoDocument(row.draftImei).length > 0 ||
-    !row.draftDocumentMatches ||
-    !row.draftPlatformMatches
-  ) {
+  const draftMode = candidateDraftMode(row, row.databaseNow);
+  if (!draftMode) {
     return {
       eligible: false,
       code: "DRAFT_UNAVAILABLE" as const,
-      message: "La solicitud vinculada ya no está abierta en el paso inicial y no puede liberarse.",
+      message: "La solicitud vinculada no cumple las condiciones seguras para autorizar un nuevo intento.",
+      requiresNewSolicitud: false,
     };
   }
   return {
     eligible: true,
     code: "ELIGIBLE" as const,
-    message: "TX06 confirmado. Puede autorizarse una nueva consulta con el apellido correcto.",
+    message:
+      draftMode === "NEW_SOLICITUD_REQUIRED"
+        ? "TX06 confirmado. Puede autorizarse una consulta nueva con consentimiento nuevo y el apellido correcto. Las solicitudes desistidas permanecerán cerradas."
+        : "TX06 confirmado. Puede autorizarse una nueva consulta con el apellido correcto.",
+    requiresNewSolicitud: draftMode === "NEW_SOLICITUD_REQUIRED",
   };
 }
 
@@ -300,6 +341,7 @@ function serializeCandidate(row: CandidateRow): DataCreditoAdminRetryCandidate {
     eligibilityCode: eligibility.code,
     eligibilityMessage: eligibility.message,
     alreadyAuthorized: eligibility.code === "ALREADY_AUTHORIZED",
+    requiresNewSolicitud: eligibility.requiresNewSolicitud,
   };
 }
 
@@ -318,6 +360,7 @@ async function loadCandidate(
         assessment."reusedFromAssessmentId", assessment."consumedAt", assessment."creditId",
         assessment."expiresAt", assessment."retainedUntil", assessment."createdAt",
         assessment."updatedAt", draft."id" AS "draftId", draft."estado" AS "draftState",
+        draft."closedReason" AS "draftClosedReason",
         draft."currentStep" AS "draftStep", draft."creditoId" AS "draftCreditId",
         COALESCE(draft."expiresAt", draft."createdAt" + INTERVAL '15 days') AS "draftExpiresAt",
         draft."imei" AS "draftImei",
@@ -409,17 +452,28 @@ function exactDraftIsEligible(
   row: LockedDraftRow,
   input: { assessmentId: string; documentNumber: string; platform: string },
   databaseNow: Date
-) {
-  return (
-    normalizedCode(row.estado) === "ABIERTO" &&
+): DataCreditoAdminRetryDraftMode | null {
+  const commonConditions =
     Number(row.currentStep) === 1 &&
     row.creditoId === null &&
     row.assessmentId?.toLowerCase() === input.assessmentId.toLowerCase() &&
     normalizeDataCreditoDocument(row.clienteDocumento) === input.documentNumber &&
     normalizedCode(row.plataforma) === normalizedCode(input.platform) &&
     normalizeDataCreditoDocument(row.imei).length === 0 &&
-    new Date(row.effectiveExpiresAt).getTime() > new Date(databaseNow).getTime()
-  );
+    new Date(row.effectiveExpiresAt).getTime() > new Date(databaseNow).getTime();
+  if (!commonConditions) return null;
+
+  const state = normalizedCode(row.estado);
+  if (state === "ABIERTO") {
+    return "REUSE_OPEN_DRAFT" as const;
+  }
+  if (
+    state === "CERRADO" &&
+    RETRY_CLOSED_DRAFT_REASONS.has(normalizedCode(row.closedReason))
+  ) {
+    return "NEW_SOLICITUD_REQUIRED" as const;
+  }
+  return null;
 }
 
 export async function authorizeDataCreditoAdminRetry(input: {
@@ -471,6 +525,7 @@ export async function authorizeDataCreditoAdminRetry(input: {
       404
     );
   }
+  const preliminaryEligibility = candidateEligibility(preliminary);
   if (preliminary.authorizedAt) {
     return {
       authorized: true as const,
@@ -480,12 +535,13 @@ export async function authorizeDataCreditoAdminRetry(input: {
       draftId: preliminary.draftId ? Number(preliminary.draftId) : null,
       actor: serializeActor(preliminary),
       authorizedAt: iso(preliminary.authorizedAt)!,
+      requiresNewSolicitud: preliminaryEligibility.requiresNewSolicitud,
     };
   }
-  if (!preliminary.draftId || !candidateEligibility(preliminary).eligible) {
+  if (!preliminary.draftId || !preliminaryEligibility.eligible) {
     throw new DataCreditoAdminRetryError(
       "RETRY_NOT_ELIGIBLE",
-      candidateEligibility(preliminary).message,
+      preliminaryEligibility.message,
       409
     );
   }
@@ -550,11 +606,12 @@ export async function authorizeDataCreditoAdminRetry(input: {
           draftId,
           actor: serializeActor(preliminary),
           authorizedAt: iso(previousAuthorization[0].createdAt)!,
+          requiresNewSolicitud: preliminaryEligibility.requiresNewSolicitud,
         };
       }
       const draftRows = await transaction.$queryRawUnsafe<LockedDraftRow[]>(
         `
-          SELECT draft."id", draft."estado", draft."currentStep",
+          SELECT draft."id", draft."estado", draft."closedReason", draft."currentStep",
             draft."clienteDocumento", draft."imei",
             COALESCE(NULLIF(draft."plataforma", ''), NULLIF(draft."payload"->>'plataformaDispositivo', '')) AS "plataforma",
             COALESCE(draft."dataCreditoAssessmentId"::text, NULLIF(draft."payload"->>'dataCreditoAssessmentId', '')) AS "assessmentId",
@@ -589,9 +646,8 @@ export async function authorizeDataCreditoAdminRetry(input: {
           409
         );
       }
-      if (
-        !draft ||
-        !exactDraftIsEligible(
+      const draftMode = draft
+        ? exactDraftIsEligible(
           draft,
           {
             assessmentId,
@@ -600,7 +656,8 @@ export async function authorizeDataCreditoAdminRetry(input: {
           },
           authorizedAt
         )
-      ) {
+        : null;
+      if (!draftMode) {
         throw new DataCreditoAdminRetryError(
           "RETRY_STATE_CHANGED",
           "La solicitud vinculada cambió y no se liberó. Vuelve a buscarla.",
@@ -642,44 +699,46 @@ export async function authorizeDataCreditoAdminRetry(input: {
         );
       }
 
-      const updatedDrafts = await transaction.$queryRawUnsafe<
-        Array<{ id: number }>
-      >(
-        `
-          UPDATE "CreditoBorrador" draft
-          SET "dataCreditoAssessmentId" = NULL,
-              "dataCreditoStatus" = 'PENDING',
-              "dataCreditoErrorCode" = 'ASSESSMENT_RETRY_AUTHORIZED',
-              "payload" = (COALESCE(draft."payload", '{}'::jsonb) - 'dataCreditoAssessmentId')
-                || jsonb_build_object(
-                  'clientePrimerApellido', $3::text,
-                  'dataCreditoStatus', 'PENDING',
-                  'dataCreditoErrorCode', 'ASSESSMENT_RETRY_AUTHORIZED',
-                  'dataCreditoUpdatedAt', $4::timestamp
-                ),
-              "updatedAt" = $4::timestamp
-          WHERE draft."id" = $1
-            AND draft."estado" = 'ABIERTO'
-            AND draft."currentStep" = 1
-            AND draft."creditoId" IS NULL
-            AND COALESCE(draft."expiresAt", draft."createdAt" + INTERVAL '15 days') > $4::timestamp
-            AND regexp_replace(COALESCE(draft."clienteDocumento", ''), '[^0-9]', '', 'g') = $2
-            AND NULLIF(regexp_replace(COALESCE(draft."imei", ''), '[^0-9]', '', 'g'), '') IS NULL
-            AND COALESCE(draft."dataCreditoAssessmentId"::text, NULLIF(draft."payload"->>'dataCreditoAssessmentId', '')) = $5
-          RETURNING draft."id"
-        `,
-        draftId,
-        documentNumber,
-        firstSurname,
-        authorizedAt,
-        assessmentId
-      );
-      if (updatedDrafts.length !== 1) {
-        throw new DataCreditoAdminRetryError(
-          "RETRY_STATE_CHANGED",
-          "La solicitud cambió y no se liberó. Vuelve a buscarla.",
-          409
+      if (draftMode === "REUSE_OPEN_DRAFT") {
+        const updatedDrafts = await transaction.$queryRawUnsafe<
+          Array<{ id: number }>
+        >(
+          `
+            UPDATE "CreditoBorrador" draft
+            SET "dataCreditoAssessmentId" = NULL,
+                "dataCreditoStatus" = 'PENDING',
+                "dataCreditoErrorCode" = 'ASSESSMENT_RETRY_AUTHORIZED',
+                "payload" = (COALESCE(draft."payload", '{}'::jsonb) - 'dataCreditoAssessmentId')
+                  || jsonb_build_object(
+                    'clientePrimerApellido', $3::text,
+                    'dataCreditoStatus', 'PENDING',
+                    'dataCreditoErrorCode', 'ASSESSMENT_RETRY_AUTHORIZED',
+                    'dataCreditoUpdatedAt', $4::timestamp
+                  ),
+                "updatedAt" = $4::timestamp
+            WHERE draft."id" = $1
+              AND draft."estado" = 'ABIERTO'
+              AND draft."currentStep" = 1
+              AND draft."creditoId" IS NULL
+              AND COALESCE(draft."expiresAt", draft."createdAt" + INTERVAL '15 days') > $4::timestamp
+              AND regexp_replace(COALESCE(draft."clienteDocumento", ''), '[^0-9]', '', 'g') = $2
+              AND NULLIF(regexp_replace(COALESCE(draft."imei", ''), '[^0-9]', '', 'g'), '') IS NULL
+              AND COALESCE(draft."dataCreditoAssessmentId"::text, NULLIF(draft."payload"->>'dataCreditoAssessmentId', '')) = $5
+            RETURNING draft."id"
+          `,
+          draftId,
+          documentNumber,
+          firstSurname,
+          authorizedAt,
+          assessmentId
         );
+        if (updatedDrafts.length !== 1) {
+          throw new DataCreditoAdminRetryError(
+            "RETRY_STATE_CHANGED",
+            "La solicitud cambió y no se liberó. Vuelve a buscarla.",
+            409
+          );
+        }
       }
 
       await transaction.$executeRawUnsafe(
@@ -711,6 +770,7 @@ export async function authorizeDataCreditoAdminRetry(input: {
         draftId,
         actor: serializeActor(preliminary),
         authorizedAt: authorizedAt.toISOString(),
+        requiresNewSolicitud: draftMode === "NEW_SOLICITUD_REQUIRED",
       };
     },
     { maxWait: 5_000, timeout: 60_000 }
