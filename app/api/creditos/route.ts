@@ -15,7 +15,7 @@ import {
   generatePagareNumber,
   generatePaymentReference,
   getCreditClosureReadiness,
-  getDefaultFirstPaymentDateObject,
+  resolveActivationFirstPaymentDate,
   hasDuplicateEvidenceValues,
   normalizeCreditDevicePlatform,
   resolveCreditEquipmentPlatform,
@@ -1881,24 +1881,24 @@ export async function POST(req: Request) {
             : "CONFIGURACION_GLOBAL",
         };
     const fechaCredito = new Date();
-    const fechaPrimerPagoPredeterminada = getDefaultFirstPaymentDateObject(
-      frecuenciaPago,
-      fechaCredito
-    );
-    const fechaPrimerPagoTexto = sanitizeText(body.fechaPrimerPago);
-    const fechaPrimerPagoSolicitada = /^\d{4}-\d{2}-\d{2}$/.test(
-      fechaPrimerPagoTexto
-    )
-      ? new Date(`${fechaPrimerPagoTexto}T12:00:00.000Z`)
-      : toNullableDate(fechaPrimerPagoTexto);
-    const signedFirstPaymentDate = signedTermsSnapshot?.fechaPrimerPago
-      ? new Date(`${signedTermsSnapshot.fechaPrimerPago}T12:00:00.000Z`)
-      : null;
-    const fechaPrimerPago = signedFirstPaymentDate
-      ? signedFirstPaymentDate
-      : fechaPrimerPagoSolicitada && fechaPrimerPagoSolicitada > fechaCredito
-        ? fechaPrimerPagoSolicitada
-        : fechaPrimerPagoPredeterminada;
+    const firstPaymentResolution = resolveActivationFirstPaymentDate({
+      frequency: frecuenciaPago,
+      activatedAt: fechaCredito,
+      signedFirstPaymentDate: signedTermsSnapshot?.fechaPrimerPago,
+    });
+    if (signedTermsSnapshot && !firstPaymentResolution.signedDateMatches) {
+      return NextResponse.json(
+        {
+          code: "FIRMASEGURO_FIRST_PAYMENT_DATE_STALE",
+          error:
+            "La fecha del primer pago cambio antes de activar el credito. Conservamos el documento anterior y debes enviar uno nuevo a FirmaSeguro.",
+          expectedFirstPaymentDate: firstPaymentResolution.dateKey,
+          signedFirstPaymentDate: firstPaymentResolution.signedDateKey,
+        },
+        { status: 409 }
+      );
+    }
+    const fechaPrimerPago = firstPaymentResolution.date;
     const firmaSeguroPasoContratos = Boolean(body.firmaSeguroPasoContratos);
     const firmaSeguroProcessUuid = sanitizeText(body.firmaSeguroProcessUuid);
     let firmaSeguroProcess:
@@ -3528,6 +3528,7 @@ export async function POST(req: Request) {
     const creditCreateArgs = {
       data: {
         folio,
+        fechaCredito,
         clienteDireccion: clienteDireccion || null,
         clienteNombre: clienteNombreFinal,
         clientePrimerNombre: clientePrimerNombre || null,

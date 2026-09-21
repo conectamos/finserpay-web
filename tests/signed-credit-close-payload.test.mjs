@@ -381,3 +381,36 @@ test("la ruta canonicaliza el expediente válido antes de refrescar y exige firm
   );
   assert.match(source, /clienteNombre\s*\|\|\s*clienteNombreDesdePartes/);
 });
+
+test("la activación calcula y persiste sus fechas desde un solo instante del servidor", async () => {
+  const source = await readFile(
+    path.join(projectRoot, "app/api/creditos/route.ts"),
+    "utf8"
+  );
+  const activationDateBlock = source.match(
+    /const fechaCredito = new Date\(\);[\s\S]*?const firmaSeguroPasoContratos/
+  )?.[0];
+  const createArgsBlock = source.match(
+    /const creditCreateArgs = \{[\s\S]*?satisfies Prisma\.CreditoCreateArgs;/
+  )?.[0];
+
+  assert.ok(activationDateBlock, "debe existir el bloque de fechas de activación");
+  assert.match(
+    activationDateBlock,
+    /resolveActivationFirstPaymentDate\(\{[\s\S]*?frequency:\s*frecuenciaPago,[\s\S]*?activatedAt:\s*fechaCredito,[\s\S]*?signedFirstPaymentDate:\s*signedTermsSnapshot\?\.fechaPrimerPago/
+  );
+  assert.match(
+    activationDateBlock,
+    /const fechaPrimerPago = firstPaymentResolution\.date;/
+  );
+  assert.match(source, /FIRMASEGURO_FIRST_PAYMENT_DATE_STALE/);
+  assert.doesNotMatch(
+    activationDateBlock,
+    /body\.fechaPrimerPago/,
+    "la fecha enviada por el navegador no puede decidir el primer pago"
+  );
+
+  assert.ok(createArgsBlock, "debe existir el payload de creación del crédito");
+  assert.match(createArgsBlock, /\bfechaCredito,\s*\n/);
+  assert.match(createArgsBlock, /\bfechaPrimerPago,\s*\n/);
+});

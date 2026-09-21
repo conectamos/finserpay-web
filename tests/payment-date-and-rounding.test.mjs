@@ -22,9 +22,10 @@ const {
 const { buildCreditPaymentPlan } = await jiti.import(
   "../lib/credit-payment-plan.ts"
 );
-const { getDefaultFirstPaymentDate } = await jiti.import(
-  "../lib/credit-factory.ts"
-);
+const {
+  getDefaultFirstPaymentDate,
+  getDefaultFirstPaymentDateObject,
+} = await jiti.import("../lib/credit-factory.ts");
 const { resolveSelectedPaymentAmount } = await jiti.import(
   "../lib/manual-payment-amount.ts"
 );
@@ -196,6 +197,42 @@ test("el corte de la primera cuota usa la hora de Colombia", () => {
   assert.equal(
     getDefaultFirstPaymentDate("2026-08-06T05:00:00.000Z", "QUINCENAL"),
     "2026-09-02"
+  );
+});
+
+test("la primera cuota quincenal respeta todos los bordes del calendario", () => {
+  const cases = [
+    ["2026-09-01", "2026-09-17"],
+    ["2026-09-05", "2026-09-17"],
+    ["2026-09-06", "2026-10-02"],
+    ["2026-09-20", "2026-10-02"],
+    ["2026-09-21", "2026-10-17"],
+    ["2026-08-31", "2026-09-17"],
+    ["2026-12-31", "2027-01-17"],
+  ];
+
+  for (const [activatedAt, expected] of cases) {
+    assert.equal(
+      getDefaultFirstPaymentDate(activatedAt, "QUINCENAL"),
+      expected,
+      `activacion ${activatedAt}`
+    );
+    assert.equal(
+      getDefaultFirstPaymentDateObject("QUINCENAL", activatedAt).toISOString(),
+      `${expected}T12:00:00.000Z`,
+      `instante persistible para ${activatedAt}`
+    );
+  }
+});
+
+test("el cambio del dia 20 al 21 ocurre a medianoche de Colombia", () => {
+  assert.equal(
+    getDefaultFirstPaymentDate("2026-09-21T04:59:59.999Z", "QUINCENAL"),
+    "2026-10-02"
+  );
+  assert.equal(
+    getDefaultFirstPaymentDate("2026-09-21T05:00:00.000Z", "QUINCENAL"),
+    "2026-10-17"
   );
 });
 

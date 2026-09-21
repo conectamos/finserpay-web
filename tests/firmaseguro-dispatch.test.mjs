@@ -45,7 +45,7 @@ test("el reenvio reutiliza un proceso activo antes de construir otro expediente"
     "const current = await getLatestFirmaSeguroProcessForDraft(draftId)"
   );
   const idempotentReturn = post.indexOf(
-    "current && canReuseFirmaSeguroProcess(current)"
+    "canReuseFirmaSeguroProcess(current)"
   );
   const dispatchLock = post.indexOf("tryAcquireFirmaSeguroDraftDispatchLock");
   const lockedAuthorization = post.indexOf(
@@ -105,4 +105,65 @@ test("los errores previos al proveedor incluyen codigo y etapa trazables", async
   assert.match(route, /"DATACREDITO_ASSESSMENT_INVALID"/);
   assert.match(route, /stage: "provider_dispatch"/);
   assert.match(route, /ERROR FIRMASEGURO BORRADOR/);
+});
+
+test("FirmaSeguro reemplaza un proceso con fecha vencida sin borrar su histórico", async () => {
+  const [route, storage] = await Promise.all([
+    readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts"),
+    readProjectFile("lib/firmaseguro-storage.ts"),
+  ]);
+  const post = sourceBetween(route, "export async function POST", "\n}");
+  const supersedeHistory = sourceBetween(
+    storage,
+    "export async function markFirmaSeguroDraftProcessesSuperseded",
+    "export async function updateFirmaSeguroProcess"
+  );
+
+  assert.match(route, /function getDraftFirstPaymentDateState/);
+  assert.match(route, /function serializeDraftFirmaSeguroProcess/);
+  assert.match(route, /resolveActivationFirstPaymentDate\(/);
+  assert.match(post, /getDraftFirstPaymentDateState\(/);
+  assert.match(
+    post,
+    /currentFirstPaymentState[\s\S]{0,300}!currentFirstPaymentState\.requiresFirstPaymentDateReissue/
+  );
+  assert.match(post, /fechaPrimerPago:\s*firstPaymentDateKey/);
+  assert.match(post, /markFirmaSeguroDraftProcessesSuperseded\(/);
+  assert.match(
+    post,
+    /if \(requiresFirstPaymentDateReissue\) \{[\s\S]{0,260}markFirmaSeguroDraftProcessesSuperseded\(/
+  );
+  assert.ok(
+    post.indexOf("markFirmaSeguroDraftProcessesSuperseded(") <
+      post.indexOf("createFirmaSeguroProcessForDraft("),
+    "el proceso desactualizado debe marcarse antes de despachar el reemplazo"
+  );
+
+  assert.match(supersedeHistory, /UPDATE "FirmaSeguroProcess"/);
+  assert.match(supersedeHistory, /SET "supersededAt" = CURRENT_TIMESTAMP/);
+  assert.match(supersedeHistory, /"supersededReason" = \$3/);
+  assert.doesNotMatch(supersedeHistory, /DELETE FROM/);
+  assert.doesNotMatch(supersedeHistory, /"signedDocumentBase64"\s*=/);
+});
+
+
+test("la consola invalida una firma al cruzar el corte del calendario", async () => {
+  const source = await readProjectFile(
+    "app/dashboard/creditos/credit-factory-console.tsx"
+  );
+  const sync = sourceBetween(
+    source,
+    "const syncFirstPaymentDate = () =>",
+    "const saldoBaseFinanciado"
+  );
+
+  assert.doesNotMatch(sync, /if \(firmaSeguroDraftProcess\) return/);
+  assert.match(sync, /setFirmaSeguroDraftProcess\(\(current\) =>/);
+  assert.match(
+    sync,
+    /current\.firstPaymentDate !== canonicalFirstPaymentDate/
+  );
+  assert.match(sync, /window\.setInterval\(syncFirstPaymentDate, 60_000\)/);
+  assert.match(sync, /window\.addEventListener\("focus", syncFirstPaymentDate\)/);
+  assert.match(sync, /document\.addEventListener\("visibilitychange", syncWhenVisible\)/);
 });

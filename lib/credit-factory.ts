@@ -1036,6 +1036,59 @@ export function getDefaultFirstPaymentDateObject(
   return addPaymentFrequency(normalized, frequency, 1);
 }
 
+function normalizeFirstPaymentDateKey(value: unknown) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime())
+      ? null
+      : value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === "number") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime())
+      ? null
+      : parsed.toISOString().slice(0, 10);
+  }
+
+  const text = String(value ?? "").trim();
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
+  if (dateOnly) {
+    const parsed = new Date(`${dateOnly}T12:00:00.000Z`);
+    return Number.isNaN(parsed.getTime()) ||
+      parsed.toISOString().slice(0, 10) !== dateOnly
+      ? null
+      : dateOnly;
+  }
+
+  if (!text) return null;
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime())
+    ? null
+    : parsed.toISOString().slice(0, 10);
+}
+
+export function resolveActivationFirstPaymentDate(input: {
+  frequency?: unknown;
+  activatedAt?: Date | number | string;
+  signedFirstPaymentDate?: unknown;
+}) {
+  const date = getDefaultFirstPaymentDateObject(
+    input.frequency,
+    input.activatedAt ?? new Date()
+  );
+  const dateKey = date.toISOString().slice(0, 10);
+  const signedDateKey = normalizeFirstPaymentDateKey(
+    input.signedFirstPaymentDate
+  );
+
+  return {
+    date,
+    dateKey,
+    signedDateKey,
+    signedDateMatches: signedDateKey === dateKey,
+  };
+}
+
 export function calculateInstallmentValue(
   saldoFinanciado: number | null | undefined,
   cuotas: number | null | undefined
