@@ -154,9 +154,11 @@ export default function AdminSidebar({
           label: "PAGOS ALIADO",
         },
         { href: "/dashboard/clientes", icon: Users, label: "Clientes" },
+        ...(isAdminRole(rolUsuario)
+          ? [{ href: "/dashboard/cartera", icon: PieChart, label: "Cartera" }]
+          : []),
         ...(adminCentral
           ? [
-              { href: "/dashboard/cartera", icon: PieChart, label: "Cartera" },
               {
                 href: "/dashboard/excepciones-mora",
                 icon: TriangleAlert,

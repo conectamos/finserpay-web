@@ -417,7 +417,7 @@ export default function AdminCentralDashboard({
   sedeLabel,
 }: AdminCentralDashboardProps) {
   const scopeLabel = adminCentral ? "Todas las sedes" : aliadoNombre;
-  const carteraHref = adminCentral ? "/dashboard/cartera" : "/dashboard/abonos";
+  const carteraHref = "/dashboard/cartera";
   const performanceScopeLabel = adminCentral ? "aliado" : "sede";
   const maxPerformanceValue = Math.max(
     1,

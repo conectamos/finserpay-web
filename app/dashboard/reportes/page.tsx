@@ -91,7 +91,7 @@ const REPORTS: ReportDefinition[] = [
     href: "/dashboard/cartera",
     icon: PieChart,
     kind: "portfolio",
-    permission: "central",
+    permission: "admin",
     title: "Cartera",
   },
   {

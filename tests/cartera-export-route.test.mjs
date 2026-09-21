@@ -12,6 +12,7 @@ const projectRoot = path.resolve(
   ".."
 );
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
+const carteraAccess = await jiti.import("../lib/cartera-access.ts");
 const carteraExport = await jiti.import("../lib/cartera-export.ts");
 const displayNumber = await jiti.import("../lib/credit-display-number.ts");
 
@@ -210,6 +211,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
       isFinserPayCentralAlly: (code) => code === "FINSERPAY",
     },
     "@/lib/cartera-export": carteraExport,
+    "@/lib/cartera-access": carteraAccess,
     "@/lib/credit-display-number": displayNumber,
     "@/lib/credit-display-number-server": {
       async getCreditDisplayNumbers(ids) {
@@ -285,4 +287,21 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
   assert.equal(allyResponse.status, 200);
   assert.equal(findManyQuery.where.sede.aliadoId, 7);
   assert.doesNotMatch(await allyResponse.text(), /CLIENTE_ACTIVO_EXPORTADO/);
+
+  sessionUser = {
+    id: 9,
+    rolNombre: "ADMIN",
+    aliadoAccesoCodigo: "ALIADO_SIN_CONFIGURAR",
+    aliadoAccesoId: null,
+  };
+  findManyQuery = null;
+
+  const allyWithoutScopeResponse = await route.GET(
+    new Request(
+      "https://finserpay.test/api/dashboard/cartera/export?aliadoId=99"
+    )
+  );
+
+  assert.equal(allyWithoutScopeResponse.status, 403);
+  assert.equal(findManyQuery, null);
 });
