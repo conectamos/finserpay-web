@@ -24,7 +24,7 @@ import {
   DEFAULT_CREDIT_INSTALLMENTS,
   generateCreditFolio,
   generatePaymentReference,
-  getDefaultFirstPaymentDateObject,
+  resolveActivationFirstPaymentDate,
   resolveCreditEquipmentPlatform,
   normalizeCreditInstallmentLimit,
   normalizeCreditInstallments,
@@ -47,7 +47,10 @@ import {
   CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE,
   hasCurrentCreditOriginationTerms,
 } from "@/lib/credit-current-origination-terms";
-import { createFinancingTermsSeal } from "@/lib/credit-amortization-contract";
+import {
+  createFinancingTermsSeal,
+  readFinancingTermsSeal,
+} from "@/lib/credit-amortization-contract";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
 import { getEffectiveCreditSettings } from "@/lib/credit-settings";
 import {
@@ -71,7 +74,10 @@ import {
   recordFirmaSeguroImeiCorrectionReissue,
 } from "@/lib/firmaseguro-imei-correction";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
-import { tryAcquireFirmaSeguroDraftDispatchLock } from "@/lib/firmaseguro-storage";
+import {
+  markFirmaSeguroDraftProcessesSuperseded,
+  tryAcquireFirmaSeguroDraftDispatchLock,
+} from "@/lib/firmaseguro-storage";
 import { isAdminRole } from "@/lib/roles";
 import { expireStaleSolicitudes } from "@/lib/solicitudes-storage";
 import {
@@ -124,6 +130,7 @@ type BuiltDraftCredit = {
   financingParameters: Parameters<
     typeof createFinancingTermsSeal
   >[0]["parametros"];
+  firstPaymentDateKey: string;
 };
 
 class CreditValidationError extends Error {
@@ -200,16 +207,6 @@ function payloadObject(value: unknown): DraftPayload {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as DraftPayload)
     : {};
-}
-
-function toValidDate(value: unknown, fallback: Date) {
-  const text = sanitizeText(value);
-  if (!text) {
-    return fallback;
-  }
-
-  const parsed = new Date(text);
-  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
 }
 
 async function ensureDraftTable() {
@@ -297,6 +294,43 @@ async function readAuthorizedDraft(
   await assertDocumentNotBlacklisted(payloadObject(row.payload).clienteDocumento);
 
   return { ok: true as const, row, centralAdmin };
+}
+
+function getDraftFirstPaymentDateState(
+  process: { draftPayload?: unknown } | null,
+  activatedAt: Date | number | string = new Date()
+) {
+  const processPayload = payloadObject(process?.draftPayload);
+  const signedSeal = readFinancingTermsSeal(
+    processPayload.financialTermsSeal
+  );
+  const resolution = resolveActivationFirstPaymentDate({
+    frequency:
+      signedSeal?.snapshot.frecuenciaPago || processPayload.frecuenciaPago,
+    activatedAt,
+    signedFirstPaymentDate:
+      signedSeal?.snapshot.fechaPrimerPago || processPayload.fechaPrimerPago,
+  });
+
+  return {
+    firstPaymentDate: resolution.signedDateKey,
+    canonicalFirstPaymentDate: resolution.dateKey,
+    requiresFirstPaymentDateReissue:
+      !signedSeal || !resolution.signedDateMatches,
+  };
+}
+
+function serializeDraftFirmaSeguroProcess(
+  process: Parameters<typeof serializeFirmaSeguroProcess>[0],
+  options: Parameters<typeof serializeFirmaSeguroProcess>[1] = {}
+) {
+  const serialized = serializeFirmaSeguroProcess(process, options);
+  if (!serialized) return null;
+
+  return {
+    ...serialized,
+    ...getDraftFirstPaymentDateState(process),
+  };
 }
 
 async function getDraftDataCreditoOffer(
@@ -571,18 +605,11 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
     resolvedPolicyFinancialSettings.frecuenciaPago
   );
   const fechaCredito = new Date();
-  const defaultFirstPaymentDate = getDefaultFirstPaymentDateObject(
-    frecuenciaPago,
-    fechaCredito
-  );
-  const requestedFirstPaymentDate = toValidDate(
-    payload.fechaPrimerPago,
-    defaultFirstPaymentDate
-  );
-  const fechaPrimerPago =
-    requestedFirstPaymentDate > fechaCredito
-      ? requestedFirstPaymentDate
-      : defaultFirstPaymentDate;
+  const firstPaymentResolution = resolveActivationFirstPaymentDate({
+    frequency: frecuenciaPago,
+    activatedAt: fechaCredito,
+  });
+  const fechaPrimerPago = firstPaymentResolution.date;
   const amortizationPlan = calculateFrenchAmortization({
     calculoVersion: resolvedPolicyFinancialSettings.calculoVersion,
     tasaPeriodoDecimales:
@@ -760,6 +787,7 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
     },
     amortizationPlan,
     financingParameters,
+    firstPaymentDateKey: firstPaymentResolution.dateKey,
   };
 }
 
@@ -834,6 +862,7 @@ export async function GET(
       );
     }
 
+
     const current = await getLatestFirmaSeguroProcessForDraft(draftId);
     if (!current) {
       return NextResponse.json({ ok: true, process: null });
@@ -845,7 +874,7 @@ export async function GET(
 
     return NextResponse.json({
       ok: true,
-      process: serializeFirmaSeguroProcess(process, {
+      process: serializeDraftFirmaSeguroProcess(process, {
         includeDraftImei: authorized.centralAdmin,
       }),
     });
@@ -1016,25 +1045,44 @@ export async function POST(
       );
     }
 
+    const actorUser = await getSessionUser();
+    if (!actorUser) {
+      return NextResponse.json(
+        { ok: false, error: "No autenticado" },
+        { status: 401 }
+      );
+    }
+
     const current = await getLatestFirmaSeguroProcessForDraft(draftId);
-    if (current && canReuseFirmaSeguroProcess(current)) {
+    const currentFirstPaymentState = getDraftFirstPaymentDateState(current);
+    if (
+      current &&
+      canReuseFirmaSeguroProcess(current) &&
+      !currentFirstPaymentState.requiresFirstPaymentDateReissue
+    ) {
       await recordFirmaSeguroImeiCorrectionReissue(draftId, current);
       return NextResponse.json({
         ok: true,
         idempotent: true,
-        process: serializeFirmaSeguroProcess(current),
+        process: serializeDraftFirmaSeguroProcess(current),
         message: "La solicitud ya tiene un proceso activo en FirmaSeguro",
       });
     }
     const dispatchLock = await tryAcquireFirmaSeguroDraftDispatchLock(draftId);
     if (!dispatchLock) {
       const concurrentProcess = await getLatestFirmaSeguroProcessForDraft(draftId);
-      if (concurrentProcess && canReuseFirmaSeguroProcess(concurrentProcess)) {
+      const concurrentFirstPaymentState =
+        getDraftFirstPaymentDateState(concurrentProcess);
+      if (
+        concurrentProcess &&
+        canReuseFirmaSeguroProcess(concurrentProcess) &&
+        !concurrentFirstPaymentState.requiresFirstPaymentDateReissue
+      ) {
         await recordFirmaSeguroImeiCorrectionReissue(draftId, concurrentProcess);
         return NextResponse.json({
           ok: true,
           idempotent: true,
-          process: serializeFirmaSeguroProcess(concurrentProcess),
+          process: serializeDraftFirmaSeguroProcess(concurrentProcess),
           message: "La solicitud ya tiene un proceso activo en FirmaSeguro",
         });
       }
@@ -1062,24 +1110,42 @@ export async function POST(
       }
 
       const lockedCurrent = await getLatestFirmaSeguroProcessForDraft(draftId);
-      if (lockedCurrent && canReuseFirmaSeguroProcess(lockedCurrent)) {
+      const lockedCurrentFirstPaymentState =
+        getDraftFirstPaymentDateState(lockedCurrent);
+      const lockedCurrentReusable = Boolean(
+        lockedCurrent && canReuseFirmaSeguroProcess(lockedCurrent)
+      );
+      const requiresFirstPaymentDateReissue =
+        lockedCurrentReusable &&
+        lockedCurrentFirstPaymentState.requiresFirstPaymentDateReissue;
+      if (lockedCurrentReusable && !requiresFirstPaymentDateReissue) {
         await recordFirmaSeguroImeiCorrectionReissue(draftId, lockedCurrent);
         return NextResponse.json({
           ok: true,
           idempotent: true,
-          process: serializeFirmaSeguroProcess(lockedCurrent),
+          process: serializeDraftFirmaSeguroProcess(lockedCurrent),
           message: "La solicitud ya tiene un proceso activo en FirmaSeguro",
         });
       }
 
       await requireApprovedVeriffBeforeFirmaSeguro(lockedAuthorized.row);
       const built = await buildDraftCredit(lockedAuthorized.row);
-      const { credit, amortizationPlan, financingParameters } = built;
+      const {
+        credit,
+        amortizationPlan,
+        financingParameters,
+        firstPaymentDateKey,
+      } = built;
       const draftFolio = lockedCurrent?.draftFolio || credit.folio;
-      const payload = {
+      const dispatchFolio = requiresFirstPaymentDateReissue
+        ? generateCreditFolio()
+        : draftFolio;
+      const payload: Record<string, unknown> = {
         ...payloadObject(lockedAuthorized.row.payload),
-        firmaSeguroDraftFolio: draftFolio,
+        firmaSeguroDraftFolio: dispatchFolio,
+        fechaPrimerPago: firstPaymentDateKey,
       };
+      delete payload.financialTermsSeal;
       const firmaSeguroDraftPayload: Record<string, unknown> = {
         ...payload,
       };
@@ -1087,13 +1153,13 @@ export async function POST(
       delete firmaSeguroDraftPayload.iphoneSelfieCedulaCapturedAt;
       delete firmaSeguroDraftPayload.iphoneSelfieCedulaSource;
 
-      credit.folio = draftFolio;
+      credit.folio = dispatchFolio;
       credit.referenciaPago = generatePaymentReference(
-        draftFolio,
+        dispatchFolio,
         credit.clienteDocumento || ""
       );
       firmaSeguroDraftPayload.financialTermsSeal = createFinancingTermsSeal({
-        folio: draftFolio,
+        folio: dispatchFolio,
         documento: credit.clienteDocumento || "",
         contrato: {
           tipoDocumento: credit.clienteTipoDocumento || "",
@@ -1110,40 +1176,63 @@ export async function POST(
         parametros: financingParameters,
       });
 
-      const updatedDraftRows = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
-        `
-          UPDATE "CreditoBorrador"
-          SET "payload" = $2::jsonb,
-              "updatedAt" = NOW()
-          WHERE "id" = $1
-            AND "estado" = 'ABIERTO'
-            AND "creditoId" IS NULL
-            AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') >
-              CURRENT_TIMESTAMP
-          RETURNING "id"
-        `,
-        draftId,
-        JSON.stringify(payload)
-      );
-      if (updatedDraftRows.length !== 1) {
-        throw new CreditValidationError(
-          "La solicitud cambió antes de enviar el contrato. Recarga el caso e intenta nuevamente.",
-          409,
-          "FIRMASEGURO_DRAFT_CHANGED"
+      await prisma.$transaction(async (database) => {
+        if (requiresFirstPaymentDateReissue) {
+          const supersededProcesses =
+            await markFirmaSeguroDraftProcessesSuperseded(database, {
+              draftId,
+              actorUserId: actorUser.id,
+              reason:
+                "La fecha automatica del primer pago cambio antes de activar el credito.",
+            });
+          if (supersededProcesses.length === 0) {
+            throw new CreditValidationError(
+              "El proceso de firma cambio antes de actualizar la fecha. Recarga el caso e intenta nuevamente.",
+              409,
+              "FIRMASEGURO_DRAFT_CHANGED"
+            );
+          }
+        }
+
+        const updatedDraftRows = await database.$queryRawUnsafe<
+          Array<{ id: number }>
+        >(
+          `
+            UPDATE "CreditoBorrador"
+            SET "payload" = $2::jsonb,
+                "updatedAt" = NOW()
+            WHERE "id" = $1
+              AND "estado" = 'ABIERTO'
+              AND "creditoId" IS NULL
+              AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') >
+                CURRENT_TIMESTAMP
+            RETURNING "id"
+          `,
+          draftId,
+          JSON.stringify(payload)
         );
-      }
+        if (updatedDraftRows.length !== 1) {
+          throw new CreditValidationError(
+            "La solicitud cambio antes de enviar el contrato. Recarga el caso e intenta nuevamente.",
+            409,
+            "FIRMASEGURO_DRAFT_CHANGED"
+          );
+        }
+      });
 
       const process = await createFirmaSeguroProcessForDraft(credit, {
         draftId,
-        draftFolio,
+        draftFolio: dispatchFolio,
         draftPayload: firmaSeguroDraftPayload,
       });
       await recordFirmaSeguroImeiCorrectionReissue(draftId, process);
 
       return NextResponse.json({
         ok: true,
-        process: serializeFirmaSeguroProcess(process),
-        message: "Proceso de firma enviado a FirmaSeguro",
+        process: serializeDraftFirmaSeguroProcess(process),
+        message: requiresFirstPaymentDateReissue
+          ? "El proceso anterior quedo como historico. Se envio un contrato nuevo con la fecha de pago actualizada."
+          : "Proceso de firma enviado a FirmaSeguro",
       });
     } finally {
       await dispatchLock.release();

@@ -787,6 +787,8 @@ type DataCreditoSimulationStatus =
 
 type CreateCreditResponse = {
   ok: boolean;
+  code?: string;
+  error?: string;
   recovered?: boolean;
   warning?: string;
   item: CreditItem;
@@ -862,6 +864,9 @@ type FirmaSeguroResponse = {
     createdAt?: string | null;
     updatedAt?: string | null;
     completedAt?: string | null;
+    firstPaymentDate?: string | null;
+    canonicalFirstPaymentDate?: string | null;
+    requiresFirstPaymentDateReissue?: boolean;
   } | null;
 };
 
@@ -3851,6 +3856,21 @@ export default function CreditFactoryConsole({
   const firmaSeguroProcessUiState = resolveFirmaSeguroProcessUiState(
     firmaSeguroDraftProcess
   );
+  const firmaSeguroRequiresFirstPaymentDateReissue = Boolean(
+    firmaSeguroDraftProcess?.requiresFirstPaymentDateReissue
+  );
+  const serverFirstPaymentDate =
+    (firmaSeguroRequiresFirstPaymentDateReissue
+      ? firmaSeguroDraftProcess?.canonicalFirstPaymentDate
+      : firmaSeguroDraftProcess?.firstPaymentDate) || null;
+
+  useEffect(() => {
+    if (!serverFirstPaymentDate) return;
+    setFechaPrimerPago((current) =>
+      current === serverFirstPaymentDate ? current : serverFirstPaymentDate
+    );
+  }, [serverFirstPaymentDate]);
+
   const iphoneFactorySignaturePending = dataCreditoCreditCreationMode && iphoneFactory && (
     draftResumeHydrating || Boolean(draftId && firmaSeguroPendingDraftId === draftId)
   );
@@ -3958,6 +3978,57 @@ export default function CreditFactoryConsole({
       : resolvedPolicyFinancialSettings.fianzaCuotaPorcentaje;
   const frecuenciaPagoCredito =
     resolvedPolicyFinancialSettings.frecuenciaPago;
+
+  useEffect(() => {
+    const syncFirstPaymentDate = () => {
+      const canonicalFirstPaymentDate = getDefaultFirstPaymentDate(
+        new Date(),
+        frecuenciaPagoCredito
+      );
+      setFechaPrimerPago((current) =>
+        current === canonicalFirstPaymentDate
+          ? current
+          : canonicalFirstPaymentDate
+      );
+      setFirmaSeguroDraftProcess((current) => {
+        if (!current) return current;
+
+        const requiresFirstPaymentDateReissue =
+          Boolean(current.requiresFirstPaymentDateReissue) ||
+          current.firstPaymentDate !== canonicalFirstPaymentDate;
+        if (
+          current.canonicalFirstPaymentDate === canonicalFirstPaymentDate &&
+          current.requiresFirstPaymentDateReissue ===
+            requiresFirstPaymentDateReissue
+        ) {
+          return current;
+        }
+
+        return {
+          ...current,
+          canonicalFirstPaymentDate,
+          requiresFirstPaymentDateReissue,
+        };
+      });
+    };
+    const syncWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        syncFirstPaymentDate();
+      }
+    };
+
+    syncFirstPaymentDate();
+    const intervalId = window.setInterval(syncFirstPaymentDate, 60_000);
+    window.addEventListener("focus", syncFirstPaymentDate);
+    document.addEventListener("visibilitychange", syncWhenVisible);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", syncFirstPaymentDate);
+      document.removeEventListener("visibilitychange", syncWhenVisible);
+    };
+  }, [frecuenciaPagoCredito]);
+
   const saldoBaseFinanciado = calculateFinancedBalance(
     valorTotalEquipoNumero,
     cuotaInicialNumero
@@ -5409,10 +5480,15 @@ export default function CreditFactoryConsole({
   const firmaSeguroProcessExists = Boolean(
     firmaSeguroDraftProcess?.processUuid
   );
-  const firmaSeguroProcessSigned = firmaSeguroProcessUiState === "signed";
-  const firmaSeguroProcessFailed = firmaSeguroProcessUiState === "error";
+  const firmaSeguroProcessSigned =
+    firmaSeguroProcessUiState === "signed" &&
+    !firmaSeguroRequiresFirstPaymentDateReissue;
+  const firmaSeguroProcessFailed =
+    firmaSeguroProcessUiState === "error" &&
+    !firmaSeguroRequiresFirstPaymentDateReissue;
   const firmaSeguroProcessSent =
-    firmaSeguroProcessUiState === "waiting" || firmaSeguroProcessSigned;
+    !firmaSeguroRequiresFirstPaymentDateReissue &&
+    (firmaSeguroProcessUiState === "waiting" || firmaSeguroProcessSigned);
   const firmaSeguroProcessIssue = firmaSeguroProcessFailed
     ? formatFirmaSeguroProcessIssue(firmaSeguroDraftProcess)
     : "";
@@ -9662,7 +9738,6 @@ export default function CreditFactoryConsole({
           frecuenciaPago: frecuenciaPagoCredito,
           tasaInteresEa: financialPlan.tasaInteresEa,
           fianzaPorcentaje: financialPlan.fianzaPorcentaje,
-          fechaPrimerPago,
           firmaSeguroPasoContratos: acceptsByFirmaSeguro,
           firmaSeguroProcessUuid:
             options.firmaSeguroProcessUuid ||
@@ -9697,6 +9772,18 @@ export default function CreditFactoryConsole({
       if (!result.ok) {
         if (result.data?.code === CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE) {
           handleDataCreditoFinancialTermsOutdated();
+          return null;
+        }
+        if (
+          result.data?.code === "FIRMASEGURO_FIRST_PAYMENT_DATE_STALE"
+        ) {
+          await refreshFirmaSeguroDraftProcess();
+          setWizardStep(3);
+          setNotice({
+            text:
+              "La fecha automatica del primer pago cambio antes de activar el credito. Reenvia el contrato actualizado para que el cliente lo firme.",
+            tone: "amber",
+          });
           return null;
         }
         if (
@@ -16043,7 +16130,12 @@ export default function CreditFactoryConsole({
                             role="status"
                             aria-live="polite"
                           >
-                            {firmaSeguroProcessSigned ? (
+                            {firmaSeguroRequiresFirstPaymentDateReissue ? (
+                              <History
+                                className="h-[18px] w-[18px]"
+                                strokeWidth={2}
+                              />
+                            ) : firmaSeguroProcessSigned ? (
                               <BadgeCheck
                                 className="h-[18px] w-[18px]"
                                 strokeWidth={2}
@@ -16064,9 +16156,11 @@ export default function CreditFactoryConsole({
                                 strokeWidth={2.2}
                               />
                             )}
-                            {firmaSeguroProcessSigned
-                              ? "Firma confirmada"
-                              : firmaSeguroProcessFailed
+                            {firmaSeguroRequiresFirstPaymentDateReissue
+                              ? "Nueva firma requerida"
+                              : firmaSeguroProcessSigned
+                                ? "Firma confirmada"
+                                : firmaSeguroProcessFailed
                                 ? "Error de firma"
                                 : firmaSeguroProcessSent
                                   ? "Cliente firmando"
@@ -16129,8 +16223,10 @@ export default function CreditFactoryConsole({
                           )}
                           {creating || firmaSeguroSubmitting
                             ? "Enviando…"
-                            : firmaSeguroProcessSigned
-                              ? "FIRMA CONFIRMADA"
+                            : firmaSeguroRequiresFirstPaymentDateReissue
+                              ? "REENVIAR CON FECHA ACTUALIZADA"
+                              : firmaSeguroProcessSigned
+                                ? "FIRMA CONFIRMADA"
                               : firmaSeguroProcessFailed
                                 ? "REINTENTAR ENVÍO"
                                 : firmaSeguroProcessSent
@@ -16139,7 +16235,17 @@ export default function CreditFactoryConsole({
                         </button>
                       </div>
 
-                      {firmaSeguroProcessSigned ? (
+                      {firmaSeguroRequiresFirstPaymentDateReissue ? (
+                        <p
+                          className="fp-step3-firma-message is-pending"
+                          role="status"
+                        >
+                          El calendario cambio antes de activar el credito. El
+                          documento anterior se conservara y el cliente debe
+                          firmar uno nuevo con primer pago el{" "}
+                          {fechaPrimerPagoLabel}.
+                        </p>
+                      ) : firmaSeguroProcessSigned ? (
                         <p
                           className="fp-step3-firma-message is-success"
                           role="status"
