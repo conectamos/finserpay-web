@@ -635,14 +635,21 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
           </div>
         </header>
 
-        <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <MetricCard
-            detail={`${activeCredits.length} creditos con saldo`}
-            icon={WalletCards}
-            label="Saldo por cobrar"
-            tone="teal"
-            value={money(totalPendiente)}
-          />
+        <section
+          className={[
+            "mt-5 grid gap-3 sm:grid-cols-2",
+            adminCentral ? "xl:grid-cols-5" : "md:grid-cols-3",
+          ].join(" ")}
+        >
+          {adminCentral ? (
+            <MetricCard
+              detail={`${activeCredits.length} creditos con saldo`}
+              icon={WalletCards}
+              label="Saldo por cobrar"
+              tone="teal"
+              value={money(totalPendiente)}
+            />
+          ) : null}
           <MetricCard
             detail={`${money(totalSano)} sin mora`}
             icon={CircleCheck}
@@ -665,28 +672,37 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             tone="teal"
             value={percent(pctRecuperado)}
           />
-          <MetricCard
-            detail={
-              selectedPlatform
-                ? `${money(gananciaReconocida)} reconocida · antes de gastos generales`
-                : `${money(gananciaReconocida)} reconocida · ${money(totalGastosOperacion)} en gastos`
-            }
-            icon={Landmark}
-            label="Ganancia estimada"
-            tone="gold"
-            value={money(totalGanancias)}
-            warning={totalGanancias < 0}
-          />
+          {adminCentral ? (
+            <MetricCard
+              detail={
+                selectedPlatform
+                  ? `${money(gananciaReconocida)} reconocida · antes de gastos generales`
+                  : `${money(gananciaReconocida)} reconocida · ${money(totalGastosOperacion)} en gastos`
+              }
+              icon={Landmark}
+              label="Ganancia estimada"
+              tone="gold"
+              value={money(totalGanancias)}
+              warning={totalGanancias < 0}
+            />
+          ) : null}
         </section>
 
-        <section className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+        <section
+          className={[
+            "mt-3 grid gap-3 sm:grid-cols-2",
+            adminCentral ? "xl:grid-cols-3 2xl:grid-cols-5" : "lg:grid-cols-4",
+          ].join(" ")}
+        >
           <MiniMetric label="Inversion activa" value={money(totalInvertido)} detail="Credito autorizado activo" />
           <MiniMetric
             label="Capital comprometido"
             value={money(totalCapitalComprometidoMora)}
             detail={`${clientsMora} clientes en mora`}
           />
-          <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail={respaldoDetail} />
+          {adminCentral ? (
+            <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail={respaldoDetail} />
+          ) : null}
           <MiniMetric label="Creditos pagados" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
           <MiniMetric label="Clientes en mora" value={String(clientsMora)} detail={health.label} />
         </section>

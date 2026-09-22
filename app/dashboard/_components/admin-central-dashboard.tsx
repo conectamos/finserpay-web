@@ -41,7 +41,7 @@ type AdminCentralDashboardProps = {
 };
 
 type MetricCardProps = {
-  detail: string;
+  detail?: string;
   icon: IconType;
   label: string;
   tone: "teal" | "green" | "red";
@@ -136,7 +136,9 @@ function MetricCard({ detail, icon: Icon, label, tone, value }: MetricCardProps)
       <p className={["mt-4 whitespace-nowrap text-2xl font-black leading-none 2xl:text-[26px]", tones.value].join(" ")}>
         {value}
       </p>
-      <p className="mt-3 text-xs font-medium leading-5 text-[#667085]">{detail}</p>
+      {detail ? (
+        <p className="mt-3 text-xs font-medium leading-5 text-[#667085]">{detail}</p>
+      ) : null}
     </article>
   );
 }
@@ -446,14 +448,16 @@ export default function AdminCentralDashboard({
       value: money(data.monthlyCollection),
     },
     {
-      detail: `${compactMoney(data.healthyBalance)} sin mora`,
+      detail: adminCentral ? `${compactMoney(data.healthyBalance)} sin mora` : undefined,
       icon: CircleCheck,
       label: "Cartera al dia",
       tone: "green",
       value: percent(data.healthyPercent),
     },
     {
-      detail: `${compactMoney(data.earlyBalance + data.criticalBalance)} en seguimiento`,
+      detail: adminCentral
+        ? `${compactMoney(data.earlyBalance + data.criticalBalance)} en seguimiento`
+        : undefined,
       icon: TriangleAlert,
       label: "Mora",
       tone: "red",
