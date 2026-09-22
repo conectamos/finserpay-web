@@ -651,14 +651,14 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             />
           ) : null}
           <MetricCard
-            detail={`${money(totalSano)} sin mora`}
+            detail={adminCentral ? `${money(totalSano)} sin mora` : undefined}
             icon={CircleCheck}
             label="Cartera al dia"
             tone="green"
             value={percent(pctSana)}
           />
           <MetricCard
-            detail={`${percent(pctMora)} del saldo pendiente`}
+            detail={adminCentral ? `${percent(pctMora)} del saldo pendiente` : undefined}
             icon={TriangleAlert}
             label="Cartera en mora"
             tone="red"
@@ -666,7 +666,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             warning={pctMora > 18}
           />
           <MetricCard
-            detail={money(totalPagado)}
+            detail={adminCentral ? money(totalPagado) : undefined}
             icon={TrendingUp}
             label="Recuperado"
             tone="teal"
@@ -909,7 +909,7 @@ function MetricCard({
   value,
   warning = false,
 }: {
-  detail: string;
+  detail?: string;
   icon: LucideIcon;
   label: string;
   tone: "gold" | "green" | "red" | "teal";
@@ -946,7 +946,9 @@ function MetricCard({
       <p className={["mt-4 whitespace-nowrap text-[22px] font-black leading-none 2xl:text-2xl", toneMap.value].join(" ")}>
         {value}
       </p>
-      <p className="mt-3 text-xs font-medium leading-5 text-[#667085]">{detail}</p>
+      {detail ? (
+        <p className="mt-3 text-xs font-medium leading-5 text-[#667085]">{detail}</p>
+      ) : null}
     </article>
   );
 }
