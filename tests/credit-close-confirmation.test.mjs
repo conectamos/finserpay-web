@@ -39,7 +39,7 @@ test("el estado y el boton final comparten todas las condiciones de cierre", () 
   );
   assert.match(
     factorySource,
-    /creditClosureReady[\s\S]{0,240}"Lista para cierre"/
+    /creditClosureReady[\s\S]{0,240}"LISTO PARA FINALIZAR"/
   );
   assert.match(
     factorySource,

@@ -1158,7 +1158,11 @@ test("la fábrica sincroniza el resultado y el portal usa un acceso compartido s
   assert.match(factorySource, /window\.clearInterval\(intervalId\)/);
   assert.match(factorySource, /iphoneEnrollmentReview\.analystName/);
   assert.match(factorySource, /iphoneEnrollmentReview\.approvedAt/);
-  assert.match(factorySource, /El asesor no puede marcar este control/);
+  assert.match(factorySource, /Esperando confirmación del analista\./);
+  assert.match(
+    factorySource,
+    /const deliveryEvidenceUnlocked = iphoneFactory\s*\? iphoneEnrollmentReady\s*:\s*androidEnrollmentReady/
+  );
   assert.match(factorySource, /iphoneFactory && nextStep === 5 && draftId/);
   assert.match(
     factorySource,
