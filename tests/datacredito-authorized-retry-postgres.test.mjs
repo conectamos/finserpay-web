@@ -6,8 +6,10 @@ import test from "node:test";
 const setup = await readFile(new URL("../scripts/setup-datacredito.sql", import.meta.url), "utf8");
 const auditStart = setup.indexOf('CREATE TABLE IF NOT EXISTS "DataCreditoAdminAccessAudit" (');
 const recoveryStart = setup.indexOf("-- An explicitly authorized TX06 surname correction");
-const recoveryEnd = setup.indexOf('CREATE TABLE IF NOT EXISTS "DataCreditoPolicyAssignmentAudit"', recoveryStart);
-const recoverySql = setup.slice(recoveryStart, recoveryEnd);
+const ambiguousRecoveryStart = setup.indexOf("-- A provider timeout can be released only after");
+const recoveryEnd = setup.indexOf('CREATE TABLE IF NOT EXISTS "DataCreditoPolicyAssignmentAudit"', ambiguousRecoveryStart);
+const recoverySql = setup.slice(recoveryStart, ambiguousRecoveryStart);
+const ambiguousRecoverySql = setup.slice(ambiguousRecoveryStart, recoveryEnd);
 const rootStart = setup.indexOf('UPDATE "DataCreditoAssessment" root');
 const rootEnd = setup.indexOf('UPDATE "DataCreditoAssessment" clone', rootStart);
 const rootBackfill = setup.slice(rootStart, rootEnd);
@@ -25,6 +27,42 @@ test("la excepcion TX06 requiere auditoria explicita y mantiene la migracion ato
     `root."providerStatus" = 'ACCEPTED'`, `root."transactionCode" = '06'`,
     'root."consumedAt" IS NULL', 'root."creditId" IS NULL',
   ]) assert.ok(recoverySql.includes(condition), `Falta condicion: ${condition}`);
+});
+
+test("la excepcion ambigua exige autorizacion con riesgo y conserva toda la evidencia", () => {
+  assert.ok(ambiguousRecoveryStart > recoveryStart);
+  assert.ok(recoveryEnd > ambiguousRecoveryStart && recoveryEnd < setup.lastIndexOf("COMMIT;"));
+  assert.match(
+    ambiguousRecoverySql,
+    /SET "expiresAt" = LEAST\(root\."expiresAt", retry_authorization\."authorizedAt"\)/,
+  );
+  assert.match(ambiguousRecoverySql, /MIN\("createdAt"\)/);
+  for (const condition of [
+    `"action" = 'OPS_AMBIGUOUS_RETRY_AUTHORIZED'`,
+    `"outcome" = 'AUTHORIZED_WITH_RISK_ACK'`,
+    'root."id" = retry_authorization."assessmentId"',
+    'root."reusedFromAssessmentId" IS NULL',
+    `root."status" = 'NO_EVALUADO'`,
+    `root."errorCode" = 'PROVIDER_OUTCOME_AMBIGUOUS'`,
+    'root."score" IS NULL',
+    'root."decision" IS NULL',
+    'root."offer" IS NULL',
+    'root."providerStatus" IS NULL',
+    'root."transactionCode" IS NULL',
+    'root."durationMs" IS NOT NULL',
+    'root."claimedAt" IS NULL',
+    'root."claimTokenHash" IS NULL',
+    'root."claimExpiresAt" IS NULL',
+    'root."consumedAt" IS NULL',
+    'root."creditId" IS NULL',
+    'retry_authorization."authorizedAt" >= root."createdAt"',
+    'root."expiresAt" > retry_authorization."authorizedAt"',
+  ]) assert.ok(ambiguousRecoverySql.includes(condition), `Falta condicion: ${condition}`);
+  assert.doesNotMatch(ambiguousRecoverySql, /UPDATE\s+"DataCreditoDailyQuotaUsage"/);
+  assert.doesNotMatch(
+    ambiguousRecoverySql,
+    /SET\s+"(?:status|errorCode|providerStatus|transactionCode|score|decision|offer)"/,
+  );
 });
 
 const connectionString = process.env.DATACREDITO_RETRY_TEST_DATABASE_URL;
