@@ -9,7 +9,7 @@ import { splitOutstandingBalance } from "@/lib/credit-outstanding-balance";
 import { calendarDateKey, getColombiaDateParts } from "@/lib/colombia-date";
 import { isExcludedCarteraCreditState, resolveCarteraExportRates } from "@/lib/cartera-export";
 import { applySadminChange, parseSadminChange, sadminRegistration, type StoredSadminRegistration } from "@/lib/credit-sadmin-state";
-import type { SadminCreditRow, SadminPage } from "@/lib/credit-sadmin-types";
+import type { SadminCreditRow, SadminPage, SadminStatusFilter } from "@/lib/credit-sadmin-types";
 
 type Database = Pick<PrismaClient, "$transaction">;
 type Payment = { fechaAbono: string; metodoPago: string | null; valor: number };
@@ -35,11 +35,24 @@ const searchSql = `($1::text IS NULL OR
   strpos(lower(COALESCE(credit."folio",'')),lower($1))>0 OR
   strpos(lower(COALESCE(ally."nombre",'')),lower($1))>0 OR
   strpos(lower(COALESCE(registration."numeroCredito",'')),lower($1))>0)`;
+const createdSadminSql = `(registration."codeudorCreado" IS TRUE
+  AND registration."creditoCreado" IS TRUE
+  AND registration."numeroCreditoConfirmado" IS TRUE
+  AND NULLIF(BTRIM(COALESCE(registration."numeroCredito",'')),'') IS NOT NULL)`;
+const statusSql = `($2::text='all'
+  OR ($2::text='pending' AND NOT ${createdSadminSql})
+  OR ($2::text='created' AND ${createdSadminSql}))`;
 const baseSql = `FROM "Credito" credit
   JOIN "Sede" site ON site."id"=credit."sedeId"
   JOIN "Aliado" ally ON ally."id"=site."aliadoId"
   LEFT JOIN "CreditSadminRegistration" registration ON registration."creditoId"=credit."id"
   WHERE ${visibleCreditSql} AND ${searchSql}`;
+
+function parseSadminStatus(value: unknown): SadminStatusFilter {
+  if (value === null || value === undefined || value === "") return "all";
+  if (value === "all" || value === "pending" || value === "created") return value;
+  throw new CreditApprovalError("INVALID_SADMIN_STATUS", "Selecciona un estado SADMIN v\u00e1lido.");
+}
 
 function iso(value: Date | string | null) {
   return value ? new Date(value).toISOString() : null;
@@ -79,7 +92,7 @@ export function buildSadminCreditRow(credit: CreditRow, today = new Date()): Sad
   };
 }
 
-export async function listSadminCredits(db: Database, actor: ApprovalActor, input: { page?: unknown; q?: unknown } = {}): Promise<SadminPage> {
+export async function listSadminCredits(db: Database, actor: ApprovalActor, input: { page?: unknown; q?: unknown; status?: unknown } = {}): Promise<SadminPage> {
   const requestedPage = input.page === null || input.page === undefined || input.page === "" ? 1 : Number(input.page);
   if (!Number.isSafeInteger(requestedPage) || requestedPage < 1 || requestedPage > 100_000_000) {
     throw new CreditApprovalError("INVALID_PAGE", "Selecciona una página válida.");
@@ -88,15 +101,21 @@ export async function listSadminCredits(db: Database, actor: ApprovalActor, inpu
     throw new CreditApprovalError("INVALID_SEARCH", "La búsqueda admite hasta 100 caracteres.");
   }
   const query = typeof input.q === "string" ? input.q.trim() || null : null;
+  const status = parseSadminStatus(input.status);
   return db.$transaction(async tx => {
     await assertApprovalActorActive(tx, actor);
-    const counts = await tx.$queryRawUnsafe<Array<{ total: number }>>(`SELECT COUNT(*)::integer AS total ${baseSql}`, query);
-    const total = counts[0]?.total ?? 0;
+    const countRows = await tx.$queryRawUnsafe<Array<SadminPage["counts"]>>(`SELECT
+      COUNT(*)::integer AS "all",
+      (COUNT(*) FILTER (WHERE NOT ${createdSadminSql}))::integer AS "pending",
+      (COUNT(*) FILTER (WHERE ${createdSadminSql}))::integer AS "created"
+      ${baseSql}`, query);
+    const counts = countRows[0] ?? { all: 0, pending: 0, created: 0 };
+    const total = counts[status];
     const totalPages = Math.max(1, Math.ceil(total / 20));
     const page = Math.min(requestedPage, totalPages);
     const credits = await tx.$queryRawUnsafe<CreditRow[]>(`WITH selected AS (
-      SELECT credit."id" ${baseSql}
-      ORDER BY credit."fechaCredito" DESC,credit."id" DESC LIMIT 20 OFFSET $2::integer
+      SELECT credit."id" ${baseSql} AND ${statusSql}
+      ORDER BY credit."fechaCredito" DESC,credit."id" DESC LIMIT 20 OFFSET $3::integer
     ) SELECT credit."id",credit."folio",credit."createdAt",credit."fechaCredito",
       credit."clienteNombre",credit."clienteDocumento",credit."clienteTelefono",credit."clienteDireccion",
       credit."clienteFechaNacimiento",credit."clienteCorreo",credit."clienteGenero",credit."imei",
@@ -117,9 +136,9 @@ export async function listSadminCredits(db: Database, actor: ApprovalActor, inpu
       LEFT JOIN LATERAL (SELECT jsonb_agg(jsonb_build_object('fechaAbono',abono."fechaAbono",'valor',abono."valor",
         'metodoPago',abono."metodoPago") ORDER BY abono."fechaAbono",abono."id") AS items FROM "CreditoAbono" abono
         WHERE abono."creditoId"=credit."id" AND abono."estado"<>'ANULADO') payments ON true
-      ORDER BY credit."fechaCredito" DESC,credit."id" DESC`, query, (page - 1) * 20);
+      ORDER BY credit."fechaCredito" DESC,credit."id" DESC`, query, status, (page - 1) * 20);
     const today = new Date();
-    return { items: credits.map(credit => buildSadminCreditRow(credit, today)), page, pageSize: 20, total, totalPages };
+    return { items: credits.map(credit => buildSadminCreditRow(credit, today)), page, pageSize: 20, total, totalPages, counts };
   }, { isolationLevel: "RepeatableRead", timeout: 20_000 });
 }
 

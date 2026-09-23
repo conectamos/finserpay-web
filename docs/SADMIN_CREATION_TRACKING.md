@@ -10,12 +10,26 @@ La tabla consulta 20 registros por página y los ordena por fecha del crédito e
 descendentes. La búsqueda acepta cliente, cédula, folio, aliado o número de SADMIN.
 Los valores, saldos y tasas usan los datos contractuales y los cálculos de Cartera.
 
+Las pestañas **Todos**, **Pendientes** y **Creados** filtran el conjunto completo en
+el servidor antes de paginar. La búsqueda activa se conserva al cambiar de pestaña
+y la navegación vuelve a la primera página. Los conteos `all`, `pending` y
+`created` corresponden al resultado de la búsqueda sin limitarse a los 20
+registros visibles; por eso permiten conocer cuántos créditos hay en cada estado
+antes de abrirlos. La API `GET /api/aprobaciones/sadmin` acepta
+`status=all|pending|created`, usa `all` cuando el parámetro está ausente o vacío
+y responde `INVALID_SADMIN_STATUS` con estado HTTP 400 ante cualquier otro valor.
+
 Cada crédito conserva las verificaciones **CODEUDOR CREADO**, **CRÉDITO CREADO** y
 **NÚMERO DE CRÉDITO**, además del número real asignado en SADMIN. Este último es
 texto de hasta 80 caracteres, conserva ceros iniciales y debe ser único. El estado
 **CREADO SADMIN** requiere las tres verificaciones y un número guardado. Cambiar
 el número desmarca su verificación; desmarcar cualquier casilla deja el seguimiento
 pendiente de nuevo. No se crean operaciones en un servicio externo.
+
+Cuando una verificación mueve un registro fuera del filtro activo, la tabla vuelve
+a consultar esa vista para actualizar filas, conteos y paginación. Los filtros se
+bloquean mientras exista un número sin guardar o una escritura en curso, de modo
+que el operador no pierda cambios al cambiar de pestaña.
 
 Una vez guardado y confirmado el número, se usa como número principal visible en
 Cartera, reportes, exportaciones y consultas. El campo `Credito.folio` no se

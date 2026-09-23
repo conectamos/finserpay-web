@@ -1,5 +1,9 @@
 .main { min-width: 0; padding: 24px; color: var(--fp-graphite); }
-.toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 16px; margin-top: 20px; }
+.statusTabs { margin-top: 20px; }
+.statusTabs > button { display: inline-flex; align-items: center; gap: 8px; }
+.tabCount { display: inline-flex; min-width: 24px; min-height: 24px; align-items: center; justify-content: center; padding: 0 7px; border: 1px solid var(--fp-border); border-radius: 999px; background: var(--fp-bg); color: var(--fp-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.statusTabs > button[aria-selected="true"] .tabCount { background: var(--fp-lime-soft); color: var(--fp-graphite); }
+.toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 16px; margin-top: 12px; }
 .search { display: flex; align-items: center; gap: 8px; flex: 1; max-width: 720px; }
 .search input { flex: 1; min-width: 180px; }
 .help { color: var(--fp-muted); font-size: 14px; margin: 16px 0; line-height: 1.6; }
@@ -60,6 +64,7 @@
 }
 @media (max-width: 767px) {
   .main { padding: 18px 12px; }
+  .statusTabs { width: 100%; }
   .toolbar { padding: 12px; }
   .search { flex-wrap: wrap; width: 100%; }
   .search input { flex-basis: 100%; }

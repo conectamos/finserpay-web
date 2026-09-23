@@ -51,6 +51,47 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
     assert.equal((await service.listSadminCredits(db, actor, { page: 999 })).page, 3);
   });
 
+  await t.test("filtra pendientes y creados antes de paginar, conserva la búsqueda y devuelve conteos del resultado", async () => {
+    const pendingIds = [];
+    for (let index = 0; index < 21; index++) {
+      pendingIds.push(await create({
+        folio: `FILTRO-SADMIN-${String(index + 1).padStart(2, "0")}`,
+        fechaCredito: `2021-02-${String(index + 1).padStart(2, "0")}T12:00:00Z`,
+      }));
+    }
+    await change(pendingIds[0], 0, "codeudorCreado", true);
+    const createdId = await create({ folio: "FILTRO-SADMIN-CREADO", fechaCredito: "2021-02-22T12:00:00Z" });
+    let created = await change(createdId, 0, "numeroCredito", "FILTRO-0001");
+    created = await change(createdId, created.version, "codeudorCreado", true);
+    created = await change(createdId, created.version, "creditoCreado", true);
+    created = await change(createdId, created.version, "numeroCreditoConfirmado", true);
+    assert.equal(created.estado, "CREADO_SADMIN");
+
+    const defaults = await service.listSadminCredits(db, actor, { q: "FILTRO-SADMIN-" });
+    assert.equal(defaults.total, 22);
+    assert.deepEqual(plain(defaults.counts), { all: 22, pending: 21, created: 1 });
+    assert.ok(defaults.items.some(item => item.id === createdId));
+
+    const pendingFirst = await service.listSadminCredits(db, actor, { q: "FILTRO-SADMIN-", status: "pending" });
+    const pendingSecond = await service.listSadminCredits(db, actor, { q: "FILTRO-SADMIN-", status: "pending", page: 2 });
+    assert.deepEqual([pendingFirst.items.length, pendingSecond.items.length], [20, 1]);
+    assert.ok([...pendingFirst.items, ...pendingSecond.items].every(item => item.sadmin.estado === "PENDIENTE"));
+    assert.equal(pendingFirst.total, 21);
+    assert.equal(pendingFirst.totalPages, 2);
+    assert.deepEqual(plain(pendingFirst.counts), { all: 22, pending: 21, created: 1 });
+
+    const completed = await service.listSadminCredits(db, actor, { q: "FILTRO-SADMIN-", status: "created", page: 99 });
+    assert.equal(completed.page, 1);
+    assert.equal(completed.total, 1);
+    assert.deepEqual(completed.items.map(item => item.id), [createdId]);
+    assert.equal(completed.items[0].sadmin.estado, "CREADO_SADMIN");
+    assert.deepEqual(plain(completed.counts), { all: 22, pending: 21, created: 1 });
+
+    const all = await service.listSadminCredits(db, actor, { q: "FILTRO-SADMIN-", status: "all" });
+    assert.equal(all.total, defaults.total);
+    assert.deepEqual(plain(all.counts), plain(defaults.counts));
+  });
+
   await t.test("incluye central, importados y pagados; excluye las cuatro variantes de anulación", async () => {
     const central = await create({ folio: "ALCANCE-CENTRAL", sedeId: 1 });
     const imported = await create({ folio: "ALCANCE-IMPORTADO", equalityService: "IMPORTACION_MASIVA", contratoSnapshot: { origen: { tipo: "IMPORTACION_MASIVA" } } });
@@ -177,6 +218,7 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
     for (const invalid of ["0", "-1", "1 OR 1=1", "2147483648", "1.5"]) await assert.rejects(service.updateSadminRegistration(db, actor, invalid, { version: 0, field: "codeudorCreado", value: true }), error => error.code === "INVALID_CREDIT");
     for (const page of [-1, "abc", 0, "1.5"]) await assert.rejects(service.listSadminCredits(db, actor, { page }), error => error.code === "INVALID_PAGE");
     for (const q of ["x".repeat(101), "cliente\n", 42]) await assert.rejects(service.listSadminCredits(db, actor, { q }), error => error.code === "INVALID_SEARCH");
+    for (const status of ["CREATED", "done", 42]) await assert.rejects(service.listSadminCredits(db, actor, { status }), error => error.code === "INVALID_SADMIN_STATUS" && error.status === 400);
     assert.equal(await eventCount(id), 0);
   });
 

@@ -10,7 +10,11 @@ export async function GET(request: Request) {
   try {
     const actor = await getApprovalActor();
     const params = new URL(request.url).searchParams;
-    const result = await listSadminCredits(prisma, actor, { page: params.get("page"), q: params.get("q") });
+    const result = await listSadminCredits(prisma, actor, {
+      page: params.get("page"),
+      q: params.get("q"),
+      status: params.get("status"),
+    });
     return NextResponse.json({ ok: true, ...result }, { headers: approvalPrivateHeaders });
   } catch (error) { return approvalErrorResponse(error); }
 }

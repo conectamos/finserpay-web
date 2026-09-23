@@ -9,6 +9,8 @@ export type SadminRegistration = {
   completedAt: string | null;
 };
 
+export type SadminStatusFilter = "all" | "pending" | "created";
+
 export type SadminCreditRow = {
   id: number;
   folio: string;
@@ -53,4 +55,9 @@ export type SadminPage = {
   pageSize: 20;
   total: number;
   totalPages: number;
+  counts: {
+    all: number;
+    pending: number;
+    created: number;
+  };
 };

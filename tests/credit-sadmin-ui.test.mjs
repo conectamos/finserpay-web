@@ -7,7 +7,7 @@ import * as jsxRuntime from "react/jsx-runtime";
 import ts from "typescript";
 
 const placeholder = (name) => Object.defineProperty(() => null, "name", { value: name });
-const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "Input", "LoadingState", "PageHeader"].map(name => [name, placeholder(name)]));
+const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "Input", "LoadingState", "PageHeader", "Tabs"].map(name => [name, placeholder(name)]));
 const icons = new Proxy({}, { get: (_, key) => placeholder(String(key)) });
 const styles = new Proxy({}, { get: (_, key) => String(key) });
 const source = readFileSync(new URL("../app/dashboard/aprobaciones/sadmin-credit-table.tsx", import.meta.url), "utf8");
@@ -95,7 +95,7 @@ function mount(fetch) {
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 const registration = (overrides = {}) => ({ version: 0, codeudorCreado: false, creditoCreado: false, numeroCreditoConfirmado: false, numeroCredito: null, estado: "PENDIENTE", updatedAt: null, completedAt: null, ...overrides });
 const row = (id, sadmin = registration()) => ({ id, folio: `QA-${id}`, createdAt: "2026-09-17T13:30:00Z", fechaCredito: "2026-09-17", clienteNombre: `Cliente ${id}`, clienteDocumento: `QA${id}`, clienteTelefono: "3000000000", clienteDireccion: "Dirección de prueba", clienteFechaNacimiento: "1990-01-02", clienteCorreo: "qa@example.test", clienteGenero: "No informado", imei: "000000000000000", referenciaEquipo: "Equipo de prueba", numeroCuotas: 24, frecuenciaPago: "QUINCENAL", valorVenta: 1000000, cuotaInicial: 200000, creditoAutorizado: 800000, valorCuota: 45000, interesMensual: 0.02, fianza: 0.6, seguro: 0.0003, aliadoNombre: "Aliado QA", sedeNombre: "Sede QA", fechaProximoPago: "2026-10-02", cuotasPagadas: 0, cuotasPendientes: 24, saldoObligacion: 1080000, saldoCapital: 800000, saldoFianza: 180000, saldoIntereses: 100000, diasVencidos: 0, ultimoPago: null, sadmin });
-const page = (items, current = 1, total = items.length) => ({ ok: true, items, page: current, pageSize: 20, total, totalPages: Math.max(1, Math.ceil(total / 20)) });
+const page = (items, current = 1, total = items.length, counts = { all: total, pending: total, created: 0 }) => ({ ok: true, items, page: current, pageSize: 20, total, totalPages: Math.max(1, Math.ceil(total / 20)), counts });
 const json = (value, status = 200) => Response.json(value, { status });
 const fieldset = (h, id) => h.find(node => node.type === "fieldset" && node.props.id === `sadmin-checklist-${id}`);
 const button = (h, label, root) => h.find(node => node.type === ui.Button && content(node) === label, root);
@@ -105,6 +105,7 @@ const check = (h, id, label) => {
 };
 const number = (h, id) => h.find(node => node.type === ui.Input && node.props.id === `sadmin-number-${id}`);
 const creditButton = (h, id) => h.find(node => node.type === "button" && node.props.id === `sadmin-credit-${id}`);
+const statusTab = (h, status) => h.find(node => node.type === "button" && node.props.id === `sadmin-status-${status}`);
 const toggleCredit = async (h, id) => { creditButton(h, id).props.onClick(); await h.flush(); };
 const renderedIds = h => h.all(node => node.type === "button" && /^sadmin-credit-\d+$/.test(node.props.id)).map(node => Number(node.props.id.replace("sadmin-credit-", "")));
 const editNumber = (h, id, value) => number(h, id).props.onChange({ target: { value } });
@@ -120,7 +121,7 @@ test("carga 20 resúmenes de número, fecha y estado; cada página reemplaza los
   });
   await h.flush();
   assert.equal(requests[0].options.cache, "no-store");
-  assert.equal(requests[0].url, "/api/aprobaciones/sadmin?page=1&q=");
+  assert.equal(requests[0].url, "/api/aprobaciones/sadmin?page=1&q=&status=all");
   assert.deepEqual(renderedIds(h), Array.from({ length: 20 }, (_, index) => 40 - index));
   const assertCollapsed = () => {
     const body = h.find(node => node.type === "tbody");
@@ -148,6 +149,49 @@ test("carga 20 resúmenes de número, fecha y estado; cada página reemplaza los
   h.unmount();
 });
 
+test("filtra por Todos, Pendientes y Creados en el servidor, conserva la búsqueda y reinicia la página", async () => {
+  const requests = [];
+  const h = mount(async (url, options) => {
+    requests.push({ url, options });
+    const params = new URL(url, "https://example.test").searchParams;
+    const status = params.get("status");
+    const current = Number(params.get("page"));
+    const fixture = status === "created"
+      ? [row(91, registration({ version: 4, codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "SADMIN-91", estado: "CREADO_SADMIN", completedAt: "2026-09-17T14:00:00Z" }))]
+      : [row(status === "pending" ? 81 : current === 2 ? 72 : 71)];
+    const total = status === "created" ? 1 : 40;
+    return json(page(fixture, current, total, { all: 41, pending: 40, created: 1 }));
+  });
+  await h.flush();
+
+  const tabs = ["all", "pending", "created"].map(status => statusTab(h, status));
+  assert.deepEqual(tabs.map(tab => content(tab)), ["Todos41", "Pendientes40", "Creados1"]);
+  assert.deepEqual(tabs.map(tab => tab.props.role), ["tab", "tab", "tab"]);
+  assert.equal(statusTab(h, "all").props["aria-selected"], true);
+  assert.equal(statusTab(h, "all").props["aria-controls"], "sadmin-credit-results");
+
+  const search = h.find(node => node.type === ui.Input && node.props.id === "sadmin-search");
+  search.props.onChange({ target: { value: "Cliente buscado" } }); await h.flush();
+  const form = h.find(node => node.type === "form");
+  form.props.onSubmit({ preventDefault() {} }); await h.flush();
+  let params = new URL(requests.at(-1).url, "https://example.test").searchParams;
+  assert.deepEqual([params.get("page"), params.get("q"), params.get("status")], ["1", "Cliente buscado", "all"]);
+
+  button(h, "Siguiente").props.onClick(); await h.flush();
+  params = new URL(requests.at(-1).url, "https://example.test").searchParams;
+  assert.deepEqual([params.get("page"), params.get("q"), params.get("status")], ["2", "Cliente buscado", "all"]);
+
+  statusTab(h, "created").props.onClick(); await h.flush();
+  params = new URL(requests.at(-1).url, "https://example.test").searchParams;
+  assert.deepEqual([params.get("page"), params.get("q"), params.get("status")], ["1", "Cliente buscado", "created"]);
+  assert.equal(statusTab(h, "created").props["aria-selected"], true);
+  const panel = h.find(node => node.props?.id === "sadmin-credit-results");
+  assert.equal(panel.props.role, "tabpanel");
+  assert.equal(panel.props["aria-labelledby"], "sadmin-status-created");
+  assert.deepEqual(renderedIds(h), [91]);
+  h.unmount();
+});
+
 test("conserva ceros y letras del número y solo permite verificarlo después de guardarlo", async () => {
   const patches = [];
   const h = mount(async (_url, options) => {
@@ -162,6 +206,7 @@ test("conserva ceros y letras del número y solo permite verificarlo después de
   assert.equal(number(h, 81).props.value, "0007-A");
   assert.equal(check(h, 81, "NÚMERO DE CRÉDITO").props.disabled, true);
   assert.equal(button(h, "Volver a aprobaciones").props.disabled, true);
+  for (const status of ["all", "pending", "created"]) assert.equal(statusTab(h, status).props.disabled, true);
   assert.equal(h.guardsLeaving(), true);
   await toggleCredit(h, 81);
   assert.equal(h.all(node => node.type === "fieldset").length, 0);
@@ -178,6 +223,40 @@ test("conserva ceros y letras del número y solo permite verificarlo después de
   await toggleCredit(h, 81); await toggleCredit(h, 81);
   assert.equal(number(h, 81).props.value, "0007-A");
   assert.equal(check(h, 81, "NÚMERO DE CRÉDITO").props.disabled, false);
+  h.unmount();
+});
+
+test("recarga el filtro pendiente cuando una verificación mueve el crédito a Creados", async () => {
+  let stored = registration({ version: 1, numeroCredito: "00081" });
+  let pendingReads = 0;
+  const requests = [];
+  const h = mount(async (url, options) => {
+    requests.push({ url, options });
+    if (options.method === "PATCH") {
+      const body = JSON.parse(options.body);
+      stored = { ...stored, [body.field]: body.value, version: stored.version + 1 };
+      if (stored.codeudorCreado && stored.creditoCreado && stored.numeroCreditoConfirmado) {
+        stored = { ...stored, estado: "CREADO_SADMIN", completedAt: "2026-09-17T14:00:00Z" };
+      }
+      return json({ ok: true, sadmin: stored });
+    }
+    const status = new URL(url, "https://example.test").searchParams.get("status");
+    if (status === "pending") pendingReads++;
+    const visible = status === "pending" && stored.estado === "PENDIENTE" ? [row(81, stored)] : [];
+    const counts = stored.estado === "PENDIENTE" ? { all: 1, pending: 1, created: 0 } : { all: 1, pending: 0, created: 1 };
+    return json(page(visible, 1, visible.length, counts));
+  });
+  await h.flush();
+  statusTab(h, "pending").props.onClick(); await h.flush();
+  await toggleCredit(h, 81);
+  for (const label of ["CODEUDOR CREADO", "CRÉDITO CREADO", "NÚMERO DE CRÉDITO"]) {
+    check(h, 81, label).props.onChange({ target: { checked: true } }); await h.flush();
+  }
+  assert.equal(pendingReads, 2);
+  assert.deepEqual(renderedIds(h), []);
+  assert.equal(statusTab(h, "pending").props["aria-selected"], true);
+  assert.equal(content(statusTab(h, "pending")), "Pendientes0");
+  assert.equal(requests.filter(request => request.options.method === "PATCH").length, 3);
   h.unmount();
 });
 
