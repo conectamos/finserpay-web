@@ -60,8 +60,10 @@ import FinserBrand from "@/app/_components/finser-brand";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import {
   Button,
+  Card,
   LoadingState,
   ProgressBar,
+  StatusPill,
   Tabs,
 } from "@/app/_components/finser-ui";
 import RecaudoSidebar from "@/app/dashboard/abonos/recaudo-sidebar";
@@ -131,6 +133,7 @@ import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginatio
 import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
 import CreditEvidenceGallery from "@/app/dashboard/creditos/credit-evidence-gallery";
 import CreditRemissionNote from "@/app/dashboard/creditos/credit-remission-note";
+import stepFourStyles from "@/app/dashboard/creditos/step-four-delivery.module.css";
 import {
   findCreditCreatedAfterConnectionLoss,
   isCreditCreationNetworkError,
@@ -2668,6 +2671,7 @@ function DeliveryEvidenceCard({
               : "border-slate-300"
             : "border-slate-200",
       ].join(" ")}
+      data-disabled={disabled || undefined}
     >
       <div className="flex min-h-8 items-start justify-between gap-2">
         <h5 className="text-sm font-semibold text-slate-950">
@@ -2693,13 +2697,14 @@ function DeliveryEvidenceCard({
             <button
               type="button"
               aria-label={`Opciones de ${title.toLowerCase()}`}
-              aria-expanded={menuOpen}
+              aria-expanded={menuOpen && !disabled}
+              disabled={disabled}
               onClick={() => setMenuOpen((current) => !current)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <MoreHorizontal className="h-4 w-4" strokeWidth={2} />
             </button>
-            {menuOpen ? (
+            {menuOpen && !disabled ? (
               <div className="absolute right-0 top-10 z-10 w-36 rounded-md border border-slate-200 bg-white p-1 shadow-lg">
                 <button type="button" onClick={selectFile} className="flex min-h-10 w-full items-center rounded px-3 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50">
                   Reemplazar
@@ -16520,403 +16525,342 @@ export default function CreditFactoryConsole({
               )}
 
               {wizardStep === 5 && (
-                <div className="fp-factory-stage fp-delivery-stage">
-                  <div className="fp-stage-heading flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <div className="inline-flex rounded-full border border-[#e6d6bd] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8a5a21]">
-                        {hideIdentityWizardStep ? "Paso 4" : "Paso 5"}
-                      </div>
-                      <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                        Verificacion y entrega
-                      </h3>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">
-                        {entregaSinVerificacionAutorizada
-                          ? "Esta cedula tiene autorizacion administrativa para cerrar la entrega sin validar el dispositivo."
-                          : iphoneFactory
-                            ? "Espera la aprobacion del analista y completa las evidencias obligatorias."
-                            : "El equipo se inscribe automaticamente en Zero Touch. Despues valida la entrega y adjunta las cinco evidencias obligatorias."}
-                      </p>
+                <div
+                  className={[
+                    "fp-factory-stage fp-delivery-stage",
+                    stepFourStyles.stage,
+                  ].join(" ")}
+                >
+                  <div className={stepFourStyles.heading}>
+                    <div className={stepFourStyles.headingCopy}>
+                      <span className={stepFourStyles.eyebrow}>
+                        {hideIdentityWizardStep ? "PASO 4" : "PASO 5"}
+                      </span>
+                      <h3>Entrega del equipo</h3>
+                      <p>Completa cada acción para finalizar el crédito.</p>
                     </div>
-                    <div
-                      className={[
-                        "fp-stage-status inline-flex rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em]",
+                    <StatusPill
+                      className={stepFourStyles.headerStatus}
+                      tone={
                         creditClosureReady
-                          ? "is-success border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "is-pending border-amber-200 bg-amber-50 text-amber-700",
-                      ].join(" ")}
+                          ? "positive"
+                          : iphoneEvidencePersistenceError
+                            ? "danger"
+                            : "warning"
+                      }
+                      role="status"
+                      aria-live="polite"
+                      title={creditClosureReady ? undefined : creditClosurePendingMessage}
                     >
                       {creditClosureReady
-                        ? "Lista para cierre"
-                        : iphoneFactory
-                          ? "Pendiente"
-                          : "Pendiente validacion"}
-                    </div>
+                        ? "LISTO PARA FINALIZAR"
+                        : !deliveryEvidenceUnlocked
+                          ? "PENDIENTE DE ENROLAMIENTO"
+                          : iphoneEvidencePersistenceError
+                            ? "ERROR AL GUARDAR"
+                            : iphoneEvidencePersistencePending
+                              ? "GUARDANDO EVIDENCIAS"
+                              : !evidenceFinalizationReady
+                                ? "PENDIENTE DE EVIDENCIAS"
+                                : "PENDIENTE DE VALIDACIÓN"}
+                    </StatusPill>
                   </div>
 
-                  <section className="mt-6 rounded-lg border border-slate-200 bg-white px-5 py-4">
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex min-w-0 items-center gap-4">
-                        <span className="inline-flex h-12 w-10 shrink-0 items-center justify-center rounded-md bg-[#161a1b] text-white" aria-hidden="true">
-                          <Smartphone className="h-6 w-6" strokeWidth={1.7} />
-                        </span>
-                        <div className="min-w-0">
-                          <strong className="block truncate text-base text-slate-950">{referenciaEquipo || "Equipo sin seleccionar"}</strong>
-                          <p className="mt-1 truncate text-sm text-slate-600">
-                            {clienteNombre || "Cliente sin registrar"} · Doc. .... {String(clienteDocumento || "").slice(-4) || "----"}
-                          </p>
+                  <Card className={stepFourStyles.mainCard}>
+                    <section
+                      className={stepFourStyles.saleSummary}
+                      aria-label="Resumen de la venta"
+                    >
+                      <span className={stepFourStyles.deviceIcon} aria-hidden="true">
+                        <Smartphone strokeWidth={1.8} />
+                      </span>
+                      <div className={stepFourStyles.saleData}>
+                        <div>
+                          <span>Referencia del equipo</span>
+                          <strong>{referenciaEquipo || "Equipo sin seleccionar"}</strong>
+                        </div>
+                        <div>
+                          <span>Cliente</span>
+                          <strong>{clienteNombre || "Cliente sin registrar"}</strong>
+                        </div>
+                        <div>
+                          <span>Número de solicitud</span>
+                          <strong>
+                            {draftId
+                              ? `SOL-${String(draftId).padStart(6, "0")}`
+                              : "En guardado"}
+                          </strong>
                         </div>
                       </div>
-                      <details className="group shrink-0 text-sm">
-                        <summary className="min-h-11 cursor-pointer list-none content-center font-semibold text-slate-950 underline underline-offset-4">
+                      <details className={stepFourStyles.details}>
+                        <summary>
                           Ver detalles
+                          <ArrowRight aria-hidden="true" />
                         </summary>
-                        <div className="mt-3 grid min-w-[250px] gap-2 rounded-md border border-slate-200 bg-[#f7f7f4] p-3 text-xs text-slate-600 sm:absolute sm:right-10 sm:z-10 sm:shadow-lg">
-                          <span>Equipo: <strong className="text-slate-950">{equipoMarca || "-"} {equipoModelo || "-"}</strong></span>
-                          <span>IMEI: <strong className="text-slate-950">.... {String(imei || "").slice(-4) || "----"}</strong></span>
-                          <span>Solicitud: <strong className="text-slate-950">{draftId ? `#${draftId}` : "En guardado"}</strong></span>
-                          <span>Cuota: <strong className="text-slate-950">{currency(valorCuota)}</strong></span>
-                        </div>
-                      </details>
-                    </div>
-                  </section>
-
-                  <CreditRemissionNote
-                    clienteNombre={clienteNombre}
-                    clienteDocumento={clienteDocumento}
-                    referenciaEquipo={referenciaEquipo}
-                    valorVenta={valorTotalEquipoNumero}
-                    valorInicial={cuotaInicialNumero}
-                    numeroCuotas={amortizationPlan?.numeroCuotas ?? plazoMesesNumero}
-                    valorCuota={valorCuotaPactada}
-                    fechaPrimerPago={fechaPrimerPago}
-                    frecuenciaPago={frecuenciaPagoCredito}
-                    autoOpen={activeFactoryStepNumber === 4}
-                    ready={
-                      stepClienteReady &&
-                      stepEquipoReady &&
-                      financialPreviewReady &&
-                      Boolean(amortizationPlan)
-                    }
-                  />
-
-                  {canSeeInternalPricing &&
-                  iphoneFactory &&
-                  draftId &&
-                  firmaSeguroProcessSigned ? (
-                    <section className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-5 py-5">
-                      <div className="flex items-start gap-3">
-                        <span
-                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-amber-200 bg-white text-amber-700"
-                          aria-hidden="true"
-                        >
-                          <History className="h-5 w-5" strokeWidth={1.8} />
-                        </span>
-                        <div>
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-800">
-                            Control exclusivo FINSER PAY
-                          </p>
-                          <h4 className="mt-1 text-lg font-black text-slate-950">
-                            {iphoneEnrollmentReview
-                              ? "Corregir IMEI y reiniciar firma y enrolamiento"
-                              : "Corregir IMEI y volver a firmar"}
-                          </h4>
-                          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">
-                            {iphoneEnrollmentReview ? (
-                              <>
-                                Esta solicitud ya tiene un enrolamiento aprobado. Al corregir el IMEI, la
-                                firma y el enrolamiento actuales quedarán reemplazados y se conservarán como
-                                históricos. La venta regresará a Identidad y firma; el cliente deberá firmar
-                                un expediente nuevo, el especialista deberá aprobar nuevamente el
-                                enrolamiento y las fotos activas de entrega y remisión se archivarán y limpiarán.
-                              </>
-                            ) : (
-                              <>
-                                Úsalo únicamente si el IMEI fue digitado mal. El PDF ya firmado no se modifica:
-                                queda como histórico, la venta regresa a Identidad y firma y el cliente debe
-                                firmar un expediente nuevo antes del enrolamiento.
-                              </>
-                            )}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(220px,0.65fr)_minmax(320px,1.35fr)_auto] lg:items-end">
-                        <div>
-                          <label className="mb-2 block text-sm font-semibold text-slate-800">
-                            IMEI correcto
-                          </label>
-                          <input
-                            value={firmaSeguroImeiCorrectionValue}
-                            onChange={(event) =>
-                              setFirmaSeguroImeiCorrectionValue(event.target.value)
-                            }
-                            inputMode="numeric"
-                            placeholder="15 números"
-                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-2 block text-sm font-semibold text-slate-800">
-                            Motivo de la corrección
-                          </label>
-                          <input
-                            value={firmaSeguroImeiCorrectionReason}
-                            onChange={(event) =>
-                              setFirmaSeguroImeiCorrectionReason(event.target.value.slice(0, 240))
-                            }
-                            minLength={5}
-                            maxLength={240}
-                            placeholder="Ej. IMEI digitado incorrectamente antes de la firma"
-                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void correctFirmaSeguroImei()}
-                          disabled={
-                            firmaSeguroImeiCorrecting ||
-                            firmaSeguroSubmitting ||
-                            firmaSeguroRefreshing
-                          }
-                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {firmaSeguroImeiCorrecting ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" strokeWidth={2} />
-                          ) : (
-                            <RotateCcw className="h-4 w-4" strokeWidth={2} />
-                          )}
-                          {firmaSeguroImeiCorrecting
-                            ? "Corrigiendo..."
-                            : "Corregir y exigir nueva firma"}
-                        </button>
-                      </div>
-                    </section>
-                  ) : null}
-
-                  <div className={[
-                    "fp-delivery-layout mt-4 grid gap-4",
-                    iphoneFactory ? "grid-cols-1" : "xl:grid-cols-2",
-                  ].join(" ")}>
-                    <section className="fp-delivery-sequence rounded-lg border border-slate-200 bg-white px-5 py-5">
-                      <p className="fp-section-eyebrow text-[11px] font-semibold uppercase tracking-[0.18em] text-[#5d7f0f]">
-                        {iphoneFactory ? "Control de enrolamiento" : "Secuencia Zero Touch"}
-                      </p>
-                      <h4 className="mt-2 text-xl font-black text-slate-950">
-                        {iphoneFactory ? "1. Confirmacion del especialista" : "1. Inscribir dispositivo"}
-                      </h4>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">
-                        {iphoneFactory
-                          ? "El especialista prueba el iPhone por cedula e IMEI y confirma ENROLADO CORRECTAMENTE. La fabrica se actualiza automaticamente."
-                          : "Al llegar a este paso, FINSER PAY registra automaticamente el equipo en Zero Touch."}
-                      </p>
-
-                      {iphoneFactory && (
-                        <div
-                          className={[
-                            "fp-iphone-confirmation mt-5 flex min-h-20 items-start gap-4 rounded-lg border p-4 text-sm",
-                            iphoneEnrollmentVerified
-                              ? "border-[#b9dd65] bg-[#f5fae9] text-slate-950"
-                              : "border-amber-200 bg-amber-50 text-slate-800",
-                          ].join(" ")}
-                          role="status"
-                          aria-live="polite"
-                        >
-                          <span
-                            className={[
-                              "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
-                              iphoneEnrollmentVerified
-                                ? "bg-[#e8f4c8] text-[#5d7f0f]"
-                                : "bg-white text-amber-700",
-                            ].join(" ")}
-                            aria-hidden="true"
-                          >
-                            {iphoneEnrollmentVerified ? (
-                              <ShieldCheck className="h-5 w-5" strokeWidth={1.8} />
-                            ) : (
-                              <Clock3 className="h-5 w-5" strokeWidth={1.8} />
-                            )}
-                          </span>
+                        <div className={stepFourStyles.detailsPanel}>
                           <div>
-                            <strong className="block text-base">
-                              {iphoneEnrollmentVerified
-                                ? "ENROLADO CORRECTAMENTE"
-                                : "Esperando prueba de enrolamiento"}
+                            <span>Documento</span>
+                            <strong>
+                              •••• {String(clienteDocumento || "").slice(-4) || "----"}
                             </strong>
-                            <p className="mt-1 leading-6 text-slate-600">
-                              {iphoneEnrollmentReview
-                                ? `${iphoneEnrollmentReview.analystName} · ${dateTime(iphoneEnrollmentReview.approvedAt)}`
-                                : "El asesor no puede marcar este control. Se consulta automaticamente cada 8 segundos y luego se habilitan las fotos."}
-                            </p>
+                          </div>
+                          <div>
+                            <span>IMEI</span>
+                            <strong>•••• {String(imei || "").slice(-4) || "----"}</strong>
+                          </div>
+                          <div>
+                            <span>Valor cuota</span>
+                            <strong>{currency(valorCuota)}</strong>
                           </div>
                         </div>
-                      )}
+                      </details>
+                    </section>
 
-                      {!iphoneFactory && (
-                        <div
+                    <div
+                      className={[
+                        stepFourStyles.workflow,
+                        deliveryEvidenceUnlocked ? stepFourStyles.workflowUnlocked : "",
+                      ].join(" ")}
+                      aria-label="Flujo de enrolamiento y entrega"
+                    >
+                      <div className={stepFourStyles.workflowItem}>
+                        <span
                           className={[
-                            "mt-5 rounded-md border p-4",
-                            androidEnrollmentReady
-                              ? "border-[#b9dd65] bg-[#f5fae9]"
-                              : androidEnrollment.status === "error"
-                                ? "border-red-200 bg-red-50"
-                                : "border-slate-200 bg-[#f7f7f4]",
+                            stepFourStyles.stepMarker,
+                            stepFourStyles.stepMarkerComplete,
+                          ].join(" ")}
+                          aria-hidden="true"
+                        >
+                          <Check strokeWidth={2.5} />
+                        </span>
+                        <CreditRemissionNote
+                          clienteNombre={clienteNombre}
+                          clienteDocumento={clienteDocumento}
+                          referenciaEquipo={referenciaEquipo}
+                          valorVenta={valorTotalEquipoNumero}
+                          valorInicial={cuotaInicialNumero}
+                          numeroCuotas={amortizationPlan?.numeroCuotas ?? plazoMesesNumero}
+                          valorCuota={valorCuotaPactada}
+                          fechaPrimerPago={fechaPrimerPago}
+                          frecuenciaPago={frecuenciaPagoCredito}
+                          autoOpen={wizardStep === 5}
+                          ready={
+                            stepClienteReady &&
+                            stepEquipoReady &&
+                            financialPreviewReady &&
+                            Boolean(amortizationPlan)
+                          }
+                        />
+                      </div>
+
+                      <div className={stepFourStyles.workflowItem}>
+                        <span
+                          className={[
+                            stepFourStyles.stepMarker,
+                            deliveryEnrollmentReady
+                              ? stepFourStyles.stepMarkerComplete
+                              : stepFourStyles.stepMarkerActive,
+                          ].join(" ")}
+                          aria-hidden="true"
+                        >
+                          {deliveryEnrollmentReady ? (
+                            <Check strokeWidth={2.5} />
+                          ) : (
+                            2
+                          )}
+                        </span>
+                        <article
+                          className={[
+                            stepFourStyles.flowCard,
+                            deliveryEnrollmentReady
+                              ? stepFourStyles.flowCardComplete
+                              : stepFourStyles.flowCardActive,
                           ].join(" ")}
                           role="status"
                           aria-live="polite"
                         >
-                          <div className="flex items-start gap-3">
-                            <span
-                              className={[
-                                "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
-                                androidEnrollmentReady
-                                  ? "bg-[#e8f4c8] text-[#5d7f0f]"
-                                  : androidEnrollment.status === "error"
-                                    ? "bg-red-100 text-red-700"
-                                    : "bg-white text-slate-700",
-                              ].join(" ")}
-                              aria-hidden="true"
-                            >
-                              {androidEnrollment.status === "enrolling" ? (
-                                <LoaderCircle className="h-5 w-5 animate-spin" strokeWidth={1.8} />
-                              ) : androidEnrollmentReady ? (
-                                <ShieldCheck className="h-5 w-5" strokeWidth={1.8} />
-                              ) : androidEnrollment.status === "error" ? (
-                                <AlertCircle className="h-5 w-5" strokeWidth={1.8} />
+                          <div className={stepFourStyles.flowCardHeading}>
+                            <span className={stepFourStyles.flowIcon} aria-hidden="true">
+                              {deliveryEnrollmentReady ? (
+                                <ShieldCheck strokeWidth={1.8} />
                               ) : (
-                                <Smartphone className="h-5 w-5" strokeWidth={1.8} />
+                                <Clock3 strokeWidth={1.8} />
                               )}
                             </span>
-                            <div className="min-w-0">
-                              <strong className="block text-sm text-slate-950">
-                                {entregaSinVerificacionAutorizada
-                                  ? "Inscripcion no requerida"
-                                  : androidEnrollment.status === "enrolling"
-                                    ? "Inscribiendo automaticamente"
-                                    : androidEnrollmentReady
-                                      ? "Dispositivo inscrito"
-                                      : androidEnrollment.status === "error"
-                                        ? "No se pudo inscribir el dispositivo"
-                                        : "Preparando inscripcion automatica"}
-                              </strong>
-                              <p className="mt-1 text-sm leading-6 text-slate-600">
-                                {entregaSinVerificacionAutorizada
-                                  ? "La excepcion administrativa permite continuar sin enrolamiento remoto."
-                                  : androidEnrollment.message}
+                            <div>
+                              <h4>Confirma el enrolamiento</h4>
+                              <p>
+                                {iphoneFactory
+                                  ? deliveryEnrollmentReady
+                                    ? "Enrolamiento confirmado por el analista."
+                                    : "Esperando confirmación del analista."
+                                  : androidEnrollmentReady
+                                    ? "Enrolamiento automático completado."
+                                    : androidEnrollment.message ||
+                                      "Preparando el enrolamiento automático."}
                               </p>
-                              {androidEnrollment.checkedAt ? (
-                                <p className="mt-1 text-xs text-slate-500">
-                                  Actualizado: {dateTime(androidEnrollment.checkedAt)}
+                              {iphoneFactory && iphoneEnrollmentReview ? (
+                                <p>
+                                  {iphoneEnrollmentReview.analystName} ·{" "}
+                                  {dateTime(iphoneEnrollmentReview.approvedAt)}
                                 </p>
                               ) : null}
                             </div>
                           </div>
-                          {androidEnrollment.status === "error" ? (
-                            <button
-                              type="button"
-                              onClick={() => void enrollDeviceBeforeFinalize()}
-                              disabled={enrollingDelivery || validatingDelivery}
-                              className="mt-4 min-h-11 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              Reintentar inscripcion
-                            </button>
-                          ) : null}
-                        </div>
-                      )}
-                    </section>
 
-                    {!iphoneFactory ? (
-                    <section className={[
-                      "fp-delivery-status-panel rounded-lg border border-slate-200 bg-white px-5 py-5",
-                      entregaValidada ? "is-ready" : deliveryValidation ? "is-review" : "is-pending",
-                    ].join(" ")}>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#5d7f0f]">
-                        Control Zero Touch
-                      </p>
-                      <h4 className="mt-2 text-xl font-black text-slate-950">
-                        2. Validacion de entrega
-                      </h4>
-                      <div className="mt-4 space-y-3 text-sm text-slate-700">
-                        <p>
-                          Cuando termine la inscripcion automatica, valida que Zero Touch permita entregar el dispositivo.
-                        </p>
-                        <div
-                          className={[
-                            "rounded-md border px-4 py-4",
-                            entregaValidada
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                              : deliveryValidation
-                                ? "border-amber-200 bg-amber-50 text-amber-800"
-                                : "border-slate-200 bg-white text-slate-600",
-                          ].join(" ")}
-                        >
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">
-                            Estado actual
-                          </p>
-                          <p className="mt-2 text-xl font-black">
-                            {deliveryStatusLabel}
-                          </p>
-                          <p className="mt-2 leading-6">
-                            {deliveryStatusDetail}
-                          </p>
-                          {deliveryValidation && (
-                            <div className="mt-3 space-y-1 text-xs">
-                              <p>Estado remoto: {deliveryValidation?.deviceState || "-"}</p>
-                              <p>Servicio: {deliveryValidation?.serviceDetails || "-"}</p>
-                              <p>
-                                Ultima revision: {dateTime(deliveryValidation?.checkedAt ?? null)}
-                              </p>
+                          {iphoneFactory ? (
+                            <span
+                              className={[
+                                stepFourStyles.statePill,
+                                deliveryEnrollmentReady
+                                  ? stepFourStyles.statePillComplete
+                                  : stepFourStyles.statePillProgress,
+                              ].join(" ")}
+                            >
+                              {deliveryEnrollmentReady ? (
+                                <Check aria-hidden="true" />
+                              ) : (
+                                <Clock3 aria-hidden="true" />
+                              )}
+                              {deliveryEnrollmentReady ? "COMPLETADO" : "EN PROCESO"}
+                            </span>
+                          ) : (
+                            <div className={stepFourStyles.androidActions}>
+                              {androidEnrollment.status === "error" ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void enrollDeviceBeforeFinalize()}
+                                  disabled={enrollingDelivery || validatingDelivery}
+                                >
+                                  Reintentar enrolamiento
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => void validateDeliveryBeforeFinalize()}
+                                disabled={
+                                  !androidEnrollmentReady ||
+                                  validatingDelivery ||
+                                  enrollingDelivery ||
+                                  entregaSinVerificacionAutorizada
+                                }
+                              >
+                                {entregaSinVerificacionAutorizada
+                                  ? "Validación no requerida"
+                                  : validatingDelivery
+                                    ? "Validando entrega…"
+                                    : "Validar entrega"}
+                              </button>
+                              <details className={stepFourStyles.androidDetail}>
+                                <summary>{deliveryStatusLabel}</summary>
+                                <p>{deliveryStatusDetail}</p>
+                              </details>
                             </div>
                           )}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void validateDeliveryBeforeFinalize()}
-                          disabled={
-                            !androidEnrollmentReady ||
-                            validatingDelivery ||
-                            enrollingDelivery ||
-                            entregaSinVerificacionAutorizada
-                          }
-                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
-                        >
-                          {validatingDelivery ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" strokeWidth={2} aria-hidden="true" />
-                          ) : (
-                            <ShieldCheck className="h-4 w-4 text-[#a8d62d]" strokeWidth={2} aria-hidden="true" />
-                          )}
-                          {entregaSinVerificacionAutorizada
-                            ? "Verificacion no requerida"
-                            : validatingDelivery
-                              ? "Validando entrega..."
-                              : "Validar entrega"}
-                        </button>
+                        </article>
                       </div>
-                    </section>
-                    ) : null}
 
-                    <section className="fp-delivery-closure rounded-lg border border-slate-200 bg-white px-5 py-5 xl:col-span-2">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className={stepFourStyles.workflowItem}>
+                        <span
+                          className={[
+                            stepFourStyles.stepMarker,
+                            evidenceFinalizationReady
+                              ? stepFourStyles.stepMarkerComplete
+                              : deliveryEvidenceUnlocked
+                                ? stepFourStyles.stepMarkerActive
+                                : "",
+                          ].join(" ")}
+                          aria-hidden="true"
+                        >
+                          {evidenceFinalizationReady ? (
+                            <Check strokeWidth={2.5} />
+                          ) : (
+                            3
+                          )}
+                        </span>
+                        <article
+                          className={[
+                            stepFourStyles.flowCard,
+                            !deliveryEvidenceUnlocked
+                              ? stepFourStyles.flowCardLocked
+                              : evidenceFinalizationReady
+                                ? stepFourStyles.flowCardComplete
+                                : stepFourStyles.flowCardActive,
+                          ].join(" ")}
+                          aria-disabled={!deliveryEvidenceUnlocked || undefined}
+                        >
+                          <div className={stepFourStyles.flowCardHeading}>
+                            <span className={stepFourStyles.flowIcon} aria-hidden="true">
+                              {deliveryEvidenceUnlocked ? (
+                                <Camera strokeWidth={1.8} />
+                              ) : (
+                                <LockKeyhole strokeWidth={1.8} />
+                              )}
+                            </span>
+                            <div>
+                              <h4>Carga las evidencias</h4>
+                              <p>5 fotografías obligatorias.</p>
+                            </div>
+                          </div>
+                          <span
+                            className={[
+                              stepFourStyles.statePill,
+                              evidenceFinalizationReady
+                                ? stepFourStyles.statePillComplete
+                                : deliveryEvidenceUnlocked
+                                  ? stepFourStyles.statePillProgress
+                                  : "",
+                            ].join(" ")}
+                          >
+                            {!deliveryEvidenceUnlocked ? (
+                              <LockKeyhole aria-hidden="true" />
+                            ) : evidenceFinalizationReady ? (
+                              <Check aria-hidden="true" />
+                            ) : iphoneEvidencePersistenceError ? (
+                              <AlertCircle aria-hidden="true" />
+                            ) : (
+                              <Camera aria-hidden="true" />
+                            )}
+                            {!deliveryEvidenceUnlocked
+                              ? "BLOQUEADO"
+                              : evidenceFinalizationReady
+                                ? "COMPLETADO"
+                                : iphoneEvidencePersistenceError
+                                  ? "ERROR AL GUARDAR"
+                                  : iphoneEvidencePersistencePending &&
+                                      iphoneEvidenceCount > 0
+                                    ? "GUARDANDO"
+                                    : `${iphoneEvidenceCount} DE 5`}
+                          </span>
+                        </article>
+                      </div>
+                    </div>
+
+                    {deliveryEvidenceUnlocked ? (
+                      <section id="delivery-evidence-upload" className={stepFourStyles.evidencePanel}>
+                        <div className={stepFourStyles.evidenceHeader}>
                           <div>
                             <h4 className="mt-2 text-xl font-black text-slate-950">
-                              {iphoneFactory ? "2. Evidencias de entrega" : "3. Evidencias de entrega"}
+                              Carga las cinco evidencias
                             </h4>
-                            <p className="mt-2 text-sm leading-6 text-slate-600">
-                              Cedula frontal y posterior, selfie con cedula, foto de entrega y remision.
-                            </p>
                           </div>
                           <span
                             className={[
                               "inline-flex rounded-full border px-3 py-2 text-xs font-semibold",
-                              iphoneRequiredEvidenceReady
+                              evidenceFinalizationReady
                                 ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                : "border-amber-200 bg-amber-50 text-amber-700",
+                                : iphoneEvidencePersistenceError
+                                  ? "border-red-200 bg-red-50 text-red-700"
+                                  : "border-amber-200 bg-amber-50 text-amber-700",
                             ].join(" ")}
                           >
                             {iphoneEvidencePersistencePending && iphoneEvidenceCount > 0
                               ? `${iphoneEvidenceCount} de 5 seleccionadas · Guardando`
-                              : iphoneClosurePersisted
-                                ? `${iphoneEvidenceCount} de 5 cargadas`
-                                : `${iphoneEvidenceCount} de 5 seleccionadas`}
+                              : iphoneEvidencePersistenceError
+                                ? `${iphoneEvidenceCount} de 5 · Error al guardar`
+                                : iphoneClosurePersisted
+                                  ? `${iphoneEvidenceCount} de 5 cargadas`
+                                  : `${iphoneEvidenceCount} de 5 seleccionadas`}
                           </span>
                         </div>
 
@@ -16929,7 +16873,7 @@ export default function CreditFactoryConsole({
                           </div>
                         ) : null}
 
-                        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                        <div className={stepFourStyles.evidenceGrid}>
                           <DeliveryEvidenceCard
                             index={1}
                             disabled={!deliveryEvidenceUnlocked}
@@ -17100,15 +17044,106 @@ export default function CreditFactoryConsole({
                             }
                           />
                         </div>
-                        <div className="mt-4 flex items-center gap-2 border-t border-slate-200 pt-4 text-sm text-slate-600">
-                          <Info className="h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-                          Las cinco evidencias son obligatorias para finalizar el crédito.
-                        </div>
                       </section>
+                    ) : null}
+                  </Card>
 
-                  </div>
+                  {canSeeInternalPricing &&
+                  iphoneFactory &&
+                  draftId &&
+                  firmaSeguroProcessSigned ? (
+                    <section className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-5 py-5">
+                      <div className="flex items-start gap-3">
+                        <span
+                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-amber-200 bg-white text-amber-700"
+                          aria-hidden="true"
+                        >
+                          <History className="h-5 w-5" strokeWidth={1.8} />
+                        </span>
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-800">
+                            Control exclusivo FINSER PAY
+                          </p>
+                          <h4 className="mt-1 text-lg font-black text-slate-950">
+                            {iphoneEnrollmentReview
+                              ? "Corregir IMEI y reiniciar firma y enrolamiento"
+                              : "Corregir IMEI y volver a firmar"}
+                          </h4>
+                          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">
+                            {iphoneEnrollmentReview ? (
+                              <>
+                                Esta solicitud ya tiene un enrolamiento aprobado. Al corregir el IMEI, la
+                                firma y el enrolamiento actuales quedarán reemplazados y se conservarán como
+                                históricos. La venta regresará a Identidad y firma; el cliente deberá firmar
+                                un expediente nuevo, el especialista deberá aprobar nuevamente el
+                                enrolamiento y las fotos activas de entrega y remisión se archivarán y limpiarán.
+                              </>
+                            ) : (
+                              <>
+                                Úsalo únicamente si el IMEI fue digitado mal. El PDF ya firmado no se modifica:
+                                queda como histórico, la venta regresa a Identidad y firma y el cliente debe
+                                firmar un expediente nuevo antes del enrolamiento.
+                              </>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(220px,0.65fr)_minmax(320px,1.35fr)_auto] lg:items-end">
+                        <div>
+                          <label className="mb-2 block text-sm font-semibold text-slate-800">
+                            IMEI correcto
+                          </label>
+                          <input
+                            value={firmaSeguroImeiCorrectionValue}
+                            onChange={(event) =>
+                              setFirmaSeguroImeiCorrectionValue(event.target.value)
+                            }
+                            inputMode="numeric"
+                            placeholder="15 números"
+                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-sm font-semibold text-slate-800">
+                            Motivo de la corrección
+                          </label>
+                          <input
+                            value={firmaSeguroImeiCorrectionReason}
+                            onChange={(event) =>
+                              setFirmaSeguroImeiCorrectionReason(event.target.value.slice(0, 240))
+                            }
+                            minLength={5}
+                            maxLength={240}
+                            placeholder="Ej. IMEI digitado incorrectamente antes de la firma"
+                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void correctFirmaSeguroImei()}
+                          disabled={
+                            firmaSeguroImeiCorrecting ||
+                            firmaSeguroSubmitting ||
+                            firmaSeguroRefreshing
+                          }
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {firmaSeguroImeiCorrecting ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" strokeWidth={2} />
+                          ) : (
+                            <RotateCcw className="h-4 w-4" strokeWidth={2} />
+                          )}
+                          {firmaSeguroImeiCorrecting
+                            ? "Corrigiendo..."
+                            : "Corregir y exigir nueva firma"}
+                        </button>
+                      </div>
+                    </section>
+                  ) : null}
                 </div>
               )}
+
 
               {false && wizardStep === 4 && (
                 <div>
@@ -17591,7 +17626,9 @@ export default function CreditFactoryConsole({
             {!simulatorMode && !showDataCreditoGate && (
               <div
                 className={[
-                  "fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white/95 px-4 py-4 shadow-[0_10px_28px_rgba(15,23,42,0.09)] backdrop-blur",
+                  wizardStep === 5
+                    ? stepFourStyles.footer
+                    : "fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white/95 px-4 py-4 shadow-[0_10px_28px_rgba(15,23,42,0.09)] backdrop-blur",
                   createClientMode && wizardStep === 1 ? "fp-identity-actions" : "",
                   createClientMode && wizardStep === 2 ? "fp-step2-actions" : "",
                 ].join(" ")}
@@ -17723,7 +17760,7 @@ export default function CreditFactoryConsole({
                     onClick={() =>
                       setWizardStep((current) => previousVisibleWizardStep(current))
                     }
-                    className="rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa]"
+                    className={wizardStep === 5 ? stepFourStyles.backButton : "rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa]"}
                   >
                     Anterior
                   </button>
@@ -17747,22 +17784,30 @@ export default function CreditFactoryConsole({
                 )}
 
                 {wizardStep === 5 && (
-                  <button
-                    type="button"
-                    onClick={() => void finalizeFirmaSeguroDelivery()}
-                    disabled={
-                      creating ||
-                      firmaSeguroSubmitting ||
-                      !creditClosureReady
-                    }
-                    className="fp-action order-last ml-auto min-h-11 rounded-md bg-[#161a1b] px-6 py-3 text-sm font-semibold uppercase text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    {creating || firmaSeguroSubmitting
-                      ? "Finalizando credito..."
-                      : firmaSeguroProcessExists
-                        ? "Finalizar credito firmado"
-                        : "Finalizar credito"}
-                  </button>
+                  <div className={stepFourStyles.finalizeGroup}>
+                    <button
+                      type="button"
+                      onClick={() => void finalizeFirmaSeguroDelivery()}
+                      disabled={
+                        creating ||
+                        firmaSeguroSubmitting ||
+                        !creditClosureReady
+                      }
+                      className={stepFourStyles.finalizeButton}
+                    >
+                      {creating || firmaSeguroSubmitting
+                        ? "FINALIZANDO CRÉDITO…"
+                        : "FINALIZAR CRÉDITO FIRMADO"}
+                    </button>
+                    {!creditClosureReady ? (
+                      <span
+                        className={stepFourStyles.finalizeHelp}
+                        title={creditClosurePendingMessage}
+                      >
+                        Disponible al completar las evidencias.
+                      </span>
+                    ) : null}
+                  </div>
                 )}
 
                 {wizardStep !== 5 ? (
@@ -17795,16 +17840,11 @@ export default function CreditFactoryConsole({
                 ) : null}
 
                 {FLEXIBLE_WIZARD_FOR_TESTING && (
-                  <span className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2 text-xs font-medium text-sky-700">
+                  <span className="rounded-2xl border border-[#c9df91] bg-[#f2f9df] px-4 py-2 text-xs font-medium text-[#4f6f0c]">
                     Modo pruebas: puedes saltar entre pasos y cerrar sin la validacion final de entrega.
                   </span>
                 )}
 
-                {wizardStep === 5 && !ventaLista && !FLEXIBLE_WIZARD_FOR_TESTING && (
-                  <span className="text-sm font-medium text-amber-700">
-                    {creditClosurePendingMessage}
-                  </span>
-                )}
                   </>
                 )}
               </div>

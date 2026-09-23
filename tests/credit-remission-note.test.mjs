@@ -94,7 +94,7 @@ test("el paso 4 visible usa la remisión con la cuota pactada y los datos del cr
   assert.match(source.slice(remediation, internalControls), /fechaPrimerPago=\{fechaPrimerPago\}/);
   assert.match(
     source.slice(remediation, internalControls),
-    /autoOpen=\{activeFactoryStepNumber === 4\}/,
+    /autoOpen=\{wizardStep === 5\}/,
   );
 });
 
@@ -126,7 +126,10 @@ test("la hoja contiene el logo, todos los campos, firma, huella y notas legales"
 
   assert.match(source, /flushSync[\s\S]*setPrintedAt\(new Date\(\)\)/);
   assert.match(source, /window\.requestAnimationFrame\([\s\S]*window\.print\(\)/);
-  assert.match(source, /Imprimir o guardar PDF/);
+  assert.match(source, /<h4[^>]*>Imprime la remisión<\/h4>/);
+  assert.match(source, /El cliente debe firmar como en la cédula\./);
+  assert.match(source, /onClick=\{handlePrint\}/);
+  assert.match(source, /IMPRIMIR REMISIÓN/);
   assert.match(source, /preload[\s\S]*unoptimized/);
   assert.match(source, /No fue posible cargar el logo/);
   assert.doesNotMatch(source, /\bpriority\b/);

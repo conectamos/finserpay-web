@@ -4,7 +4,6 @@ import Image from "next/image";
 import {
   Check,
   Download,
-  FileSignature,
   Info,
   LoaderCircle,
   Printer,
@@ -495,45 +494,40 @@ export default function CreditRemissionNote({
       <section className={styles.launcher} aria-labelledby="remission-note-title">
         <div className={styles.launcherContent}>
           <span className={styles.launcherIcon} aria-hidden="true">
-            <FileSignature />
+            <Printer />
           </span>
           <div>
-            <p className={styles.eyebrow}>Firma y huella del cliente</p>
-            <h4 id="remission-note-title">Nota de remisión</h4>
-            <p className={styles.launcherDescription} aria-live="polite">
-              {logoLoadFailed
-                ? "No fue posible cargar el logo. Recarga la pantalla antes de imprimir."
-                : dataReady
-                  ? "Lista con los datos del crédito para imprimir y firmar."
-                  : "Completa los datos del cliente y del plan para habilitar la impresión."}
+            <h4 id="remission-note-title">Imprime la remisión</h4>
+            <p className={styles.launcherDescription}>
+              El cliente debe firmar como en la cédula.
             </p>
           </div>
         </div>
 
+        {visibleDialogError ? (
+          <p className={styles.launcherError} role="alert">
+            {visibleDialogError}
+          </p>
+        ) : null}
+
         <div className={styles.launcherAction}>
-          <span className={styles.logoPreview} aria-hidden="true">
-            <Image
-              src={BRAND_LOGO_PATH}
-              alt=""
-              width={1280}
-              height={1280}
-              loading="eager"
-              unoptimized
-              onLoad={handleLogoLoad}
-              onError={handleLogoError}
-            />
-          </span>
           <Button
             id="remission-note-print-action"
             type="button"
+            className={styles.printButton}
             onClick={handlePrint}
-            disabled={!canPrint}
+            disabled={!canPrint || generating}
           >
-            <Printer className="h-4 w-4" aria-hidden="true" />
-            Imprimir o guardar PDF
+            {generating ? (
+              <LoaderCircle className={styles.dialogSpinner} aria-hidden="true" />
+            ) : (
+              <Printer className="h-4 w-4" aria-hidden="true" />
+            )}
+            {generating ? "GENERANDO REMISIÓN…" : "IMPRIMIR REMISIÓN"}
           </Button>
         </div>
       </section>
+
 
       {portalReady ? createPortal(downloadDialog, document.body) : null}
       {portalReady ? createPortal(printSheet, document.body) : null}

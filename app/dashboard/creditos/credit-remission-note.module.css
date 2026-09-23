@@ -1,98 +1,83 @@
 .launcher {
-  margin-top: 1rem;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.25rem;
-  border: 1px solid var(--fp-border);
+  min-height: 13.5rem;
+  height: 100%;
+  flex-direction: column;
+  gap: 1rem;
+  border: 1px solid color-mix(in srgb, var(--fp-lime-strong) 55%, white);
   border-radius: var(--fp-radius-lg);
-  background: var(--fp-surface);
-  padding: 1.1rem 1.25rem;
-  box-shadow: var(--fp-shadow-sm);
-}
-
-.launcherContent,
-.launcherAction {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
+  background: linear-gradient(180deg, #ffffff 0%, var(--fp-lime-soft) 160%);
+  padding: 1.15rem;
+  box-shadow: 0 2px 7px rgba(17, 19, 18, 0.035);
 }
 
 .launcherContent {
+  display: flex;
   min-width: 0;
+  align-items: flex-start;
+  gap: 0.85rem;
 }
 
 .launcherIcon {
   display: inline-flex;
-  height: 2.75rem;
-  width: 2.75rem;
+  height: 2.85rem;
+  width: 2.85rem;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border-radius: var(--fp-radius-md);
-  background: var(--fp-graphite);
-  color: var(--fp-surface);
+  background: var(--fp-lime-soft);
+  color: var(--fp-graphite);
 }
 
 .launcherIcon svg {
-  height: 1.25rem;
-  width: 1.25rem;
+  height: 1.3rem;
+  width: 1.3rem;
   stroke-width: 1.8;
 }
 
-.eyebrow {
-  margin: 0;
-  color: var(--fp-lime-strong);
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-  line-height: 1.25;
-  text-transform: uppercase;
-}
-
 .launcher h4 {
-  margin: 0.18rem 0 0;
+  margin: 0;
   color: var(--fp-graphite);
   font-size: 1rem;
-  font-weight: 800;
+  font-weight: 850;
   line-height: 1.35;
 }
 
 .launcherDescription {
-  margin: 0.18rem 0 0;
+  margin: 0.25rem 0 0;
   color: var(--fp-muted);
   font-size: 0.82rem;
   line-height: 1.45;
 }
 
-.launcherAction {
-  flex: 0 0 auto;
+.launcherError {
+  margin: 0;
+  border-radius: var(--fp-radius-sm);
+  background: var(--fp-danger-soft);
+  padding: 0.65rem 0.75rem;
+  color: var(--fp-danger);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
-.launcherAction button {
+.launcherAction {
+  display: flex;
+  margin-top: auto;
+}
+
+.launcherAction .printButton {
   display: inline-flex;
+  min-height: 2.85rem;
+  width: 100%;
   align-items: center;
   justify-content: center;
   gap: 0.55rem;
+  border-radius: var(--fp-radius-md);
   white-space: nowrap;
 }
 
-.logoPreview {
-  position: relative;
-  display: block;
-  height: 2.65rem;
-  width: 3.9rem;
-  overflow: hidden;
-  border-radius: var(--fp-radius-sm);
-  background: var(--fp-graphite);
-}
-
-.logoPreview img {
-  height: 100%;
-  width: 100%;
-  object-fit: cover;
-  object-position: 50% 49%;
-}
 
 .dialogBackdrop {
   z-index: 100;
