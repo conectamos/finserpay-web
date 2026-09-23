@@ -736,6 +736,37 @@ WHERE root."id" = retry_authorization."assessmentId"
   AND retry_authorization."authorizedAt" >= root."createdAt"
   AND root."expiresAt" > retry_authorization."authorizedAt";
 
+-- A provider timeout can be released only after an explicit, risk-acknowledged
+-- operational authorization. Reapply that narrowly audited exception after the
+-- contractual backfill so a later deployment cannot reinstate the review block.
+-- The ambiguous provider outcome, correlation and retention evidence stay intact.
+UPDATE "DataCreditoAssessment" root
+SET "expiresAt" = LEAST(root."expiresAt", retry_authorization."authorizedAt")
+FROM (
+  SELECT "assessmentId", MIN("createdAt") AS "authorizedAt"
+  FROM "DataCreditoAdminAccessAudit"
+  WHERE "action" = 'OPS_AMBIGUOUS_RETRY_AUTHORIZED'
+    AND "outcome" = 'AUTHORIZED_WITH_RISK_ACK'
+  GROUP BY "assessmentId"
+) retry_authorization
+WHERE root."id" = retry_authorization."assessmentId"
+  AND root."reusedFromAssessmentId" IS NULL
+  AND root."status" = 'NO_EVALUADO'
+  AND root."errorCode" = 'PROVIDER_OUTCOME_AMBIGUOUS'
+  AND root."score" IS NULL
+  AND root."decision" IS NULL
+  AND root."offer" IS NULL
+  AND root."providerStatus" IS NULL
+  AND root."transactionCode" IS NULL
+  AND root."durationMs" IS NOT NULL
+  AND root."claimedAt" IS NULL
+  AND root."claimTokenHash" IS NULL
+  AND root."claimExpiresAt" IS NULL
+  AND root."consumedAt" IS NULL
+  AND root."creditId" IS NULL
+  AND retry_authorization."authorizedAt" >= root."createdAt"
+  AND root."expiresAt" > retry_authorization."authorizedAt";
+
 CREATE TABLE IF NOT EXISTS "DataCreditoPolicyAssignmentAudit" (
   "id" UUID PRIMARY KEY,
   "allyId" INTEGER NOT NULL,
