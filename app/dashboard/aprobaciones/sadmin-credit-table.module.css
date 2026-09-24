@@ -6,6 +6,8 @@
 .toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 16px; margin-top: 12px; }
 .search { display: flex; align-items: center; gap: 8px; flex: 1; max-width: 720px; }
 .search input { flex: 1; min-width: 180px; }
+.toolbarActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.exportError { margin: 10px 0 0; color: var(--fp-danger); font-size: 13px; }
 .help { color: var(--fp-muted); font-size: 14px; margin: 16px 0; line-height: 1.6; }
 .help strong { color: var(--fp-graphite); }
 .notice { background: var(--fp-amber-soft); border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); padding: 12px 16px; font-size: 14px; margin-bottom: 16px; }
@@ -68,6 +70,8 @@
   .toolbar { padding: 12px; }
   .search { flex-wrap: wrap; width: 100%; }
   .search input { flex-basis: 100%; }
+  .toolbarActions { width: 100%; justify-content: stretch; }
+  .toolbarActions button { flex: 1; }
   .expandedContent, .details { grid-template-columns: minmax(0, 1fr); }
   .registration { padding: 20px 0 0; border-left: 0; border-top: 1px solid var(--fp-border); }
   .pagination { align-items: start; flex-direction: column; }

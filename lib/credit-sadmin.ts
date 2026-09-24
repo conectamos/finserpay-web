@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import type { PrismaClient } from "@/app/generated/prisma/client";
+import type { Prisma, PrismaClient } from "@/app/generated/prisma/client";
 import { assertApprovalActorActive, approvalActorAudit, type ApprovalActor } from "@/lib/credit-approval-actor";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
@@ -12,6 +12,7 @@ import { applySadminChange, parseSadminChange, sadminRegistration, type StoredSa
 import type { SadminCreditRow, SadminPage, SadminStatusFilter } from "@/lib/credit-sadmin-types";
 
 type Database = Pick<PrismaClient, "$transaction">;
+type Transaction = Pick<Prisma.TransactionClient, "$queryRawUnsafe">;
 type Payment = { fechaAbono: string; metodoPago: string | null; valor: number };
 type CreditRow = {
   id: number; folio: string; createdAt: Date; fechaCredito: Date;
@@ -48,12 +49,68 @@ const baseSql = `FROM "Credito" credit
   LEFT JOIN "CreditSadminRegistration" registration ON registration."creditoId"=credit."id"
   WHERE ${visibleCreditSql} AND ${searchSql}`;
 
+const creditDetailsSql = `SELECT credit."id",credit."folio",credit."createdAt",credit."fechaCredito",
+  credit."clienteNombre",credit."clienteDocumento",credit."clienteTelefono",credit."clienteDireccion",
+  credit."clienteFechaNacimiento",credit."clienteCorreo",credit."clienteGenero",credit."imei",
+  credit."referenciaEquipo",credit."equipoMarca",credit."equipoModelo",credit."plazoMeses",credit."frecuenciaPago",
+  credit."valorEquipoTotal",credit."cuotaInicial",credit."saldoBaseFinanciado",credit."valorCuota",credit."montoCredito",
+  credit."valorFianza",credit."valorInteres",credit."tasaInteresEa",credit."fianzaPorcentaje",
+  jsonb_build_object('financiero',credit."contratoSnapshot"->'financiero') AS "contratoSnapshot",
+  CASE WHEN amort."id" IS NULL THEN NULL ELSE jsonb_build_object(
+    'tasaInteresEaPorcentaje',amort."tasaInteresEaPorcentaje",'fianzaCuotaPorcentaje',amort."fianzaCuotaPorcentaje",
+    'seguroCuotaPorcentaje',amort."seguroCuotaPorcentaje",'numeroCuotas',amort."numeroCuotas") END AS amortizacion,
+  ally."nombre" AS "aliadoNombre",site."nombre" AS "sedeNombre",credit."fechaPrimerPago",credit."fechaProximoPago",
+  credit."pazYSalvoEmitidoAt",COALESCE(payments.items,'[]'::jsonb) AS abonos,
+  CASE WHEN registration."creditoId" IS NULL THEN NULL ELSE to_jsonb(registration) END AS registration
+  FROM selected JOIN "Credito" credit ON credit."id"=selected."id"
+  JOIN "Sede" site ON site."id"=credit."sedeId" JOIN "Aliado" ally ON ally."id"=site."aliadoId"
+  LEFT JOIN "CreditSadminRegistration" registration ON registration."creditoId"=credit."id"
+  LEFT JOIN "CreditoAmortizacion" amort ON amort."creditoId"=credit."id"
+  LEFT JOIN LATERAL (SELECT jsonb_agg(jsonb_build_object('fechaAbono',abono."fechaAbono",'valor',abono."valor",
+    'metodoPago',abono."metodoPago") ORDER BY abono."fechaAbono",abono."id") AS items FROM "CreditoAbono" abono
+    WHERE abono."creditoId"=credit."id" AND abono."estado"<>'ANULADO') payments ON true
+  ORDER BY credit."fechaCredito" DESC,credit."id" DESC`;
+// ExcelJS builds the non-streaming workbook in memory. Keep enough headroom for
+// Next.js, Prisma and concurrent requests on the 512 MB production container.
+export const SADMIN_EXPORT_MAX_ROWS = 2_000;
+
 function parseSadminStatus(value: unknown): SadminStatusFilter {
   if (value === null || value === undefined || value === "") return "all";
   if (value === "all" || value === "pending" || value === "created") return value;
   throw new CreditApprovalError("INVALID_SADMIN_STATUS", "Selecciona un estado SADMIN v\u00e1lido.");
 }
 
+function parseSadminFilters(input: { q?: unknown; status?: unknown }) {
+  if (input.q != null && (typeof input.q !== "string" || input.q.length > 100 || /[\u0000-\u001f\u007f]/.test(input.q))) {
+    throw new CreditApprovalError("INVALID_SEARCH", "La búsqueda admite hasta 100 caracteres.");
+  }
+  return {
+    query: typeof input.q === "string" ? input.q.trim() || null : null,
+    status: parseSadminStatus(input.status),
+  };
+}
+
+async function countSadminCredits(tx: Transaction, query: string | null) {
+  const rows = await tx.$queryRawUnsafe<Array<SadminPage["counts"]>>(`SELECT
+    COUNT(*)::integer AS "all",
+    (COUNT(*) FILTER (WHERE NOT ${createdSadminSql}))::integer AS "pending",
+    (COUNT(*) FILTER (WHERE ${createdSadminSql}))::integer AS "created"
+    ${baseSql}`, query);
+  return rows[0] ?? { all: 0, pending: 0, created: 0 };
+}
+
+function loadSadminCreditRows(
+  tx: Transaction,
+  query: string | null,
+  status: SadminStatusFilter,
+  limit: number,
+  offset: number,
+) {
+  return tx.$queryRawUnsafe<CreditRow[]>(`WITH selected AS (
+    SELECT credit."id" ${baseSql} AND ${statusSql}
+    ORDER BY credit."fechaCredito" DESC,credit."id" DESC LIMIT $3::integer OFFSET $4::integer
+  ) ${creditDetailsSql}`, query, status, limit, offset);
+}
 function iso(value: Date | string | null) {
   return value ? new Date(value).toISOString() : null;
 }
@@ -97,49 +154,40 @@ export async function listSadminCredits(db: Database, actor: ApprovalActor, inpu
   if (!Number.isSafeInteger(requestedPage) || requestedPage < 1 || requestedPage > 100_000_000) {
     throw new CreditApprovalError("INVALID_PAGE", "Selecciona una página válida.");
   }
-  if (input.q != null && (typeof input.q !== "string" || input.q.length > 100 || /[\u0000-\u001f\u007f]/.test(input.q))) {
-    throw new CreditApprovalError("INVALID_SEARCH", "La búsqueda admite hasta 100 caracteres.");
-  }
-  const query = typeof input.q === "string" ? input.q.trim() || null : null;
-  const status = parseSadminStatus(input.status);
+  const { query, status } = parseSadminFilters(input);
   return db.$transaction(async tx => {
     await assertApprovalActorActive(tx, actor);
-    const countRows = await tx.$queryRawUnsafe<Array<SadminPage["counts"]>>(`SELECT
-      COUNT(*)::integer AS "all",
-      (COUNT(*) FILTER (WHERE NOT ${createdSadminSql}))::integer AS "pending",
-      (COUNT(*) FILTER (WHERE ${createdSadminSql}))::integer AS "created"
-      ${baseSql}`, query);
-    const counts = countRows[0] ?? { all: 0, pending: 0, created: 0 };
+    const counts = await countSadminCredits(tx, query);
     const total = counts[status];
     const totalPages = Math.max(1, Math.ceil(total / 20));
     const page = Math.min(requestedPage, totalPages);
-    const credits = await tx.$queryRawUnsafe<CreditRow[]>(`WITH selected AS (
-      SELECT credit."id" ${baseSql} AND ${statusSql}
-      ORDER BY credit."fechaCredito" DESC,credit."id" DESC LIMIT 20 OFFSET $3::integer
-    ) SELECT credit."id",credit."folio",credit."createdAt",credit."fechaCredito",
-      credit."clienteNombre",credit."clienteDocumento",credit."clienteTelefono",credit."clienteDireccion",
-      credit."clienteFechaNacimiento",credit."clienteCorreo",credit."clienteGenero",credit."imei",
-      credit."referenciaEquipo",credit."equipoMarca",credit."equipoModelo",credit."plazoMeses",credit."frecuenciaPago",
-      credit."valorEquipoTotal",credit."cuotaInicial",credit."saldoBaseFinanciado",credit."valorCuota",credit."montoCredito",
-      credit."valorFianza",credit."valorInteres",credit."tasaInteresEa",credit."fianzaPorcentaje",
-      jsonb_build_object('financiero',credit."contratoSnapshot"->'financiero') AS "contratoSnapshot",
-      CASE WHEN amort."id" IS NULL THEN NULL ELSE jsonb_build_object(
-        'tasaInteresEaPorcentaje',amort."tasaInteresEaPorcentaje",'fianzaCuotaPorcentaje',amort."fianzaCuotaPorcentaje",
-        'seguroCuotaPorcentaje',amort."seguroCuotaPorcentaje",'numeroCuotas',amort."numeroCuotas") END AS amortizacion,
-      ally."nombre" AS "aliadoNombre",site."nombre" AS "sedeNombre",credit."fechaPrimerPago",credit."fechaProximoPago",
-      credit."pazYSalvoEmitidoAt",COALESCE(payments.items,'[]'::jsonb) AS abonos,
-      CASE WHEN registration."creditoId" IS NULL THEN NULL ELSE to_jsonb(registration) END AS registration
-      FROM selected JOIN "Credito" credit ON credit."id"=selected."id"
-      JOIN "Sede" site ON site."id"=credit."sedeId" JOIN "Aliado" ally ON ally."id"=site."aliadoId"
-      LEFT JOIN "CreditSadminRegistration" registration ON registration."creditoId"=credit."id"
-      LEFT JOIN "CreditoAmortizacion" amort ON amort."creditoId"=credit."id"
-      LEFT JOIN LATERAL (SELECT jsonb_agg(jsonb_build_object('fechaAbono',abono."fechaAbono",'valor',abono."valor",
-        'metodoPago',abono."metodoPago") ORDER BY abono."fechaAbono",abono."id") AS items FROM "CreditoAbono" abono
-        WHERE abono."creditoId"=credit."id" AND abono."estado"<>'ANULADO') payments ON true
-      ORDER BY credit."fechaCredito" DESC,credit."id" DESC`, query, status, (page - 1) * 20);
+    const credits = await loadSadminCreditRows(tx, query, status, 20, (page - 1) * 20);
     const today = new Date();
     return { items: credits.map(credit => buildSadminCreditRow(credit, today)), page, pageSize: 20, total, totalPages, counts };
   }, { isolationLevel: "RepeatableRead", timeout: 20_000 });
+}
+
+export async function exportSadminCredits(
+  db: Database,
+  actor: ApprovalActor,
+  input: { q?: unknown; status?: unknown } = {},
+): Promise<{ items: SadminCreditRow[]; status: SadminStatusFilter }> {
+  const { query, status } = parseSadminFilters(input);
+  return db.$transaction(async tx => {
+    await assertApprovalActorActive(tx, actor);
+    const counts = await countSadminCredits(tx, query);
+    const total = counts[status];
+    if (total > SADMIN_EXPORT_MAX_ROWS) {
+      throw new CreditApprovalError(
+        "SADMIN_EXPORT_TOO_LARGE",
+        `La exportación supera ${SADMIN_EXPORT_MAX_ROWS.toLocaleString("es-CO")} registros. Usa la búsqueda o el filtro de estado para reducirla.`,
+        413,
+      );
+    }
+    const credits = total ? await loadSadminCreditRows(tx, query, status, total, 0) : [];
+    const today = new Date();
+    return { items: credits.map(credit => buildSadminCreditRow(credit, today)), status };
+  }, { isolationLevel: "RepeatableRead", timeout: 60_000 });
 }
 
 function duplicateNumber(error: unknown) {

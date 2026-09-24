@@ -35,6 +35,28 @@ function content(node) {
 // determine the expectations below.
 function mount(fetch) {
   const slots = [], listeners = new Map();
+  const downloads = { objects: [], revoked: [], links: [] };
+  const urlApi = {
+    createObjectURL(blob) {
+      const url = `blob:sadmin-${downloads.objects.length + 1}`;
+      downloads.objects.push({ blob, url });
+      return url;
+    },
+    revokeObjectURL(url) { downloads.revoked.push(url); },
+  };
+  const document = {
+    createElement(tag) {
+      assert.equal(tag, "a");
+      const link = {
+        href: "", download: "", style: {}, appended: false, clicked: false, removed: false,
+        click() { this.clicked = true; },
+        remove() { this.removed = true; },
+      };
+      downloads.links.push(link);
+      return link;
+    },
+    body: { appendChild(link) { link.appended = true; } },
+  };
   let hookIndex = 0, dirty = true, effects = [], tree;
   const changed = (old, next) => !old || !next || old.length !== next.length || next.some((value, index) => !Object.is(value, old[index]));
   const hooks = {
@@ -56,10 +78,13 @@ function mount(fetch) {
   };
   const loaded = { exports: {} };
   runInNewContext(outputText, {
-    module: loaded, exports: loaded.exports, console, AbortController, URLSearchParams, Intl, fetch,
+    module: loaded, exports: loaded.exports, console, AbortController, URLSearchParams, Intl, Blob, fetch,
+    URL: urlApi,
+    document,
     window: {
       addEventListener: (name, callback) => listeners.set(name, callback),
       removeEventListener: (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); },
+      setTimeout: callback => { callback(); return 1; },
     },
     require(name) {
       if (name === "react") return hooks;
@@ -87,6 +112,7 @@ function mount(fetch) {
     tree: () => tree,
     find(predicate, root = tree) { const found = nodes(root).find(predicate); assert.ok(found, "Expected rendered control"); return found; },
     all: (predicate) => nodes(tree).filter(predicate),
+    downloads,
     guardsLeaving: () => listeners.has("beforeunload"),
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
   };
@@ -189,6 +215,98 @@ test("filtra por Todos, Pendientes y Creados en el servidor, conserva la búsque
   assert.equal(panel.props.role, "tabpanel");
   assert.equal(panel.props["aria-labelledby"], "sadmin-status-created");
   assert.deepEqual(renderedIds(h), [91]);
+  h.unmount();
+});
+
+test("exporta todos los resultados de la búsqueda y pestaña activas con estado de progreso y nombre del servidor", async () => {
+  const requests = [];
+  const pendingExport = deferred();
+  const h = mount(async (url, options = {}) => {
+    requests.push({ url, options });
+    if (url.startsWith("/api/aprobaciones/sadmin/export?")) return pendingExport.promise;
+    const status = new URL(url, "https://example.test").searchParams.get("status");
+    const item = status === "created"
+      ? row(91, registration({ version: 4, codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "000091", estado: "CREADO_SADMIN" }))
+      : row(71);
+    return json(page([item], 1, 1, { all: 2, pending: 1, created: 1 }));
+  });
+  await h.flush();
+
+  const search = h.find(node => node.type === ui.Input && node.props.id === "sadmin-search");
+  search.props.onChange({ target: { value: "Cliente exportado" } }); await h.flush();
+  h.find(node => node.type === "form").props.onSubmit({ preventDefault() {} }); await h.flush();
+  statusTab(h, "created").props.onClick(); await h.flush();
+
+  button(h, "Exportar Excel").props.onClick(); await h.flush();
+  const busy = button(h, "Generando Excel...");
+  assert.equal(busy.props["aria-busy"], true);
+  assert.equal(busy.props.disabled, true);
+  const exportRequest = requests.at(-1);
+  assert.equal(exportRequest.url, "/api/aprobaciones/sadmin/export?q=Cliente+exportado&status=created");
+  assert.equal(exportRequest.options.cache, "no-store");
+  assert.equal(new URL(exportRequest.url, "https://example.test").searchParams.has("page"), false);
+
+  pendingExport.resolve(new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
+    headers: {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Disposition": "attachment; filename=ignorado.xlsx; filename*=UTF-8''creacion-sadmin-creados-2026-09-24.xlsx",
+    },
+  }));
+  await h.flush();
+
+  assert.equal(button(h, "Exportar Excel").props["aria-busy"], false);
+  assert.equal(h.downloads.objects.length, 1);
+  assert.equal(h.downloads.objects[0].blob.type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  assert.equal(h.downloads.links.length, 1);
+  assert.equal(h.downloads.links[0].download, "creacion-sadmin-creados-2026-09-24.xlsx");
+  assert.equal(h.downloads.links[0].href, h.downloads.objects[0].url);
+  assert.deepEqual(
+    [h.downloads.links[0].appended, h.downloads.links[0].clicked, h.downloads.links[0].removed],
+    [true, true, true],
+  );
+  assert.deepEqual(h.downloads.revoked, [h.downloads.objects[0].url]);
+  assert.deepEqual(renderedIds(h), [91], "la descarga no debe borrar ni cambiar la tabla");
+  assert.equal(errors(h), "");
+  h.unmount();
+});
+
+test("muestra fallos de exportación sin borrar la tabla ni iniciar una descarga", async () => {
+  let exportResponse = json({ error: "La exportación supera 2.000 registros." }, 413);
+  const h = mount(async (url) => {
+    if (url.startsWith("/api/aprobaciones/sadmin/export?")) return exportResponse;
+    return json(page([row(81)]));
+  });
+  await h.flush();
+  button(h, "Exportar Excel").props.onClick(); await h.flush();
+  assert.match(errors(h), /supera 2\.000 registros/);
+  assert.deepEqual(renderedIds(h), [81]);
+  assert.equal(h.downloads.objects.length, 0);
+
+  exportResponse = new Response("contenido inesperado", { status: 200, headers: { "Content-Type": "text/html" } });
+  button(h, "Exportar Excel").props.onClick(); await h.flush();
+  assert.match(errors(h), /no devolvió un archivo Excel válido/);
+  assert.deepEqual(renderedIds(h), [81]);
+  assert.equal(h.downloads.objects.length, 0);
+  h.unmount();
+});
+
+test("bloquea la exportación cuando existe un número SADMIN sin guardar", async () => {
+  let exportCalls = 0;
+  const h = mount(async (url) => {
+    if (url.startsWith("/api/aprobaciones/sadmin/export?")) {
+      exportCalls++;
+      throw new Error("No debe exportar con un borrador");
+    }
+    return json(page([row(81)]));
+  });
+  await h.flush();
+  await toggleCredit(h, 81);
+  editNumber(h, 81, "00081-SIN-GUARDAR"); await h.flush();
+  const exportButton = button(h, "Exportar Excel");
+  assert.equal(exportButton.props.disabled, true);
+  exportButton.props.onClick(); await h.flush();
+  assert.equal(exportCalls, 0);
+  assert.equal(h.downloads.objects.length, 0);
   h.unmount();
 });
 

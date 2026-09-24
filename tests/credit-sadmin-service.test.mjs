@@ -92,6 +92,52 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
     assert.deepEqual(plain(all.counts), plain(defaults.counts));
   });
 
+  await t.test("la exportación devuelve todos los resultados filtrados, incluso cuando superan una página", async () => {
+    const pendingIds = [];
+    for (let index = 0; index < 25; index++) {
+      pendingIds.push(await create({
+        folio: `EXPORT-SADMIN-PAGE-${String(index + 1).padStart(2, "0")}`,
+        fechaCredito: `2022-03-${String(index + 1).padStart(2, "0")}T12:00:00Z`,
+      }));
+    }
+    const createdId = await create({ folio: "EXPORT-SADMIN-PAGE-CREADO", fechaCredito: "2022-03-26T12:00:00Z" });
+    let created = await change(createdId, 0, "numeroCredito", "EXPORT-SADMIN-0001");
+    created = await change(createdId, created.version, "codeudorCreado", true);
+    created = await change(createdId, created.version, "creditoCreado", true);
+    created = await change(createdId, created.version, "numeroCreditoConfirmado", true);
+    assert.equal(created.estado, "CREADO_SADMIN");
+
+    const all = await service.exportSadminCredits(db, actor, { q: "EXPORT-SADMIN-PAGE-", status: "all" });
+    assert.equal(all.status, "all");
+    assert.equal(all.items.length, 26);
+    assert.equal(all.items[0].id, createdId);
+    assert.deepEqual(new Set(all.items.slice(1).map(item => item.id)), new Set(pendingIds));
+    assert.equal(new Set(all.items.map(item => item.id)).size, 26);
+
+    const pending = await service.exportSadminCredits(db, actor, { q: "EXPORT-SADMIN-PAGE-", status: "pending" });
+    assert.equal(pending.status, "pending");
+    assert.equal(pending.items.length, 25);
+    assert.ok(pending.items.every(item => item.sadmin.estado === "PENDIENTE"));
+
+    const completed = await service.exportSadminCredits(db, sharedActor, { q: "EXPORT-SADMIN-PAGE-", status: "created" });
+    assert.equal(completed.status, "created");
+    assert.deepEqual(completed.items.map(item => item.id), [createdId]);
+    assert.equal(completed.items[0].sadmin.numeroCredito, "EXPORT-SADMIN-0001");
+  });
+
+  await t.test("la exportación rechaza más de 2.000 coincidencias sin truncarlas silenciosamente", async () => {
+    await pool.query(`INSERT INTO "Credito" ("folio")
+      SELECT 'EXPORT-LIMIT-' || LPAD(value::text,5,'0') FROM generate_series(1,2001) AS value`);
+    try {
+      await assert.rejects(
+        service.exportSadminCredits(db, actor, { q: "EXPORT-LIMIT-", status: "all" }),
+        error => error.code === "SADMIN_EXPORT_TOO_LARGE" && error.status === 413,
+      );
+    } finally {
+      await pool.query(`DELETE FROM "Credito" WHERE "folio" LIKE 'EXPORT-LIMIT-%'`);
+    }
+  });
+
   await t.test("incluye central, importados y pagados; excluye las cuatro variantes de anulación", async () => {
     const central = await create({ folio: "ALCANCE-CENTRAL", sedeId: 1 });
     const imported = await create({ folio: "ALCANCE-IMPORTADO", equalityService: "IMPORTACION_MASIVA", contratoSnapshot: { origen: { tipo: "IMPORTACION_MASIVA" } } });
@@ -204,11 +250,13 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
     assert.equal(event.actorGrantId, sharedActor.grantId); assert.equal(event.actorSessionId, sharedActor.sessionId);
     await pool.query('UPDATE "CreditApprovalSharedSession" SET "revokedAt"=CURRENT_TIMESTAMP WHERE "id"=$1', [sharedActor.sessionId]);
     await assert.rejects(service.listSadminCredits(db, sharedActor), error => error.code === "SHARED_ACCESS_REVOKED");
+    await assert.rejects(service.exportSadminCredits(db, sharedActor), error => error.code === "SHARED_ACCESS_REVOKED");
     await assert.rejects(change(id, 1, "creditoCreado", true, sharedActor), error => error.code === "SHARED_ACCESS_REVOKED");
     assert.equal((await getRegistration(id)).version, 1); assert.equal(await eventCount(id), 1);
     await pool.query('UPDATE "CreditApprovalSharedSession" SET "revokedAt"=NULL WHERE "id"=$1', [sharedActor.sessionId]);
     await pool.query('UPDATE "CreditApprovalSharedGrant" SET "revokedAt"=CURRENT_TIMESTAMP WHERE "id"=$1', [sharedActor.grantId]);
     await assert.rejects(service.listSadminCredits(db, sharedActor), error => error.code === "SHARED_ACCESS_REVOKED");
+    await assert.rejects(service.exportSadminCredits(db, sharedActor), error => error.code === "SHARED_ACCESS_REVOKED");
     await pool.query('UPDATE "CreditApprovalSharedGrant" SET "revokedAt"=NULL WHERE "id"=$1', [sharedActor.grantId]);
   });
 
@@ -217,8 +265,14 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
     for (const creditId of [id, 2147483647]) await assert.rejects(change(creditId, 0, "codeudorCreado", true), error => error.code === "CREDIT_NOT_FOUND");
     for (const invalid of ["0", "-1", "1 OR 1=1", "2147483648", "1.5"]) await assert.rejects(service.updateSadminRegistration(db, actor, invalid, { version: 0, field: "codeudorCreado", value: true }), error => error.code === "INVALID_CREDIT");
     for (const page of [-1, "abc", 0, "1.5"]) await assert.rejects(service.listSadminCredits(db, actor, { page }), error => error.code === "INVALID_PAGE");
-    for (const q of ["x".repeat(101), "cliente\n", 42]) await assert.rejects(service.listSadminCredits(db, actor, { q }), error => error.code === "INVALID_SEARCH");
-    for (const status of ["CREATED", "done", 42]) await assert.rejects(service.listSadminCredits(db, actor, { status }), error => error.code === "INVALID_SADMIN_STATUS" && error.status === 400);
+    for (const q of ["x".repeat(101), "cliente\n", 42]) {
+      await assert.rejects(service.listSadminCredits(db, actor, { q }), error => error.code === "INVALID_SEARCH");
+      await assert.rejects(service.exportSadminCredits(db, actor, { q }), error => error.code === "INVALID_SEARCH");
+    }
+    for (const status of ["CREATED", "done", 42]) {
+      await assert.rejects(service.listSadminCredits(db, actor, { status }), error => error.code === "INVALID_SADMIN_STATUS" && error.status === 400);
+      await assert.rejects(service.exportSadminCredits(db, actor, { status }), error => error.code === "INVALID_SADMIN_STATUS" && error.status === 400);
+    }
     assert.equal(await eventCount(id), 0);
   });
 
@@ -240,6 +294,8 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
       const id = await create({ folio: "PRISMA-SADMIN" });
       const page = await service.listSadminCredits(prisma, sharedActor, { q: "PRISMA-SADMIN" });
       assert.equal(page.items[0].id, id); assert.equal(page.items[0].sadmin.version, 0);
+      const exported = await service.exportSadminCredits(prisma, sharedActor, { q: "PRISMA-SADMIN", status: "pending" });
+      assert.equal(exported.status, "pending"); assert.deepEqual(exported.items.map(item => item.id), [id]);
       const saved = await service.updateSadminRegistration(prisma, sharedActor, String(id), { version: 0, field: "numeroCredito", value: "PRISMA-00001" });
       assert.equal(saved.numeroCredito, "PRISMA-00001"); assert.equal(saved.version, 1);
       const reread = await service.listSadminCredits(prisma, sharedActor, { q: "PRISMA-00001" });

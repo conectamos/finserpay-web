@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Save, Search } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Download, RefreshCw, Save, Search } from "lucide-react";
 import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, PageHeader, Tabs } from "@/app/_components/finser-ui";
 import type { SadminCreditRow, SadminPage, SadminRegistration, SadminStatusFilter } from "@/lib/credit-sadmin-types";
 import { confirmedSadminNumber, creditDisplayNumber } from "@/lib/credit-display-number";
@@ -11,6 +11,7 @@ const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP
 const percentage = new Intl.NumberFormat("es-CO", { style: "percent", maximumFractionDigits: 4 });
 const calendar = new Intl.DateTimeFormat("es-CO", { timeZone: "UTC", dateStyle: "short" });
 const timestamp = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", dateStyle: "short", timeStyle: "short" });
+const xlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const text = (value: string | null | undefined) => value?.trim() || "—";
 const amount = (value: number) => Number.isFinite(value) ? money.format(value) : "—";
 const rate = (value: number | null) => value !== null && Number.isFinite(value) ? percentage.format(value) : "No disponible";
@@ -26,6 +27,28 @@ function responseError(payload: { error?: unknown; message?: unknown }, fallback
   return typeof payload.error === "string" ? payload.error : typeof payload.message === "string" ? payload.message : fallback;
 }
 class SadminRequestError extends Error {}
+
+function exportFileName(contentDisposition: string | null, status: SadminStatusFilter) {
+  const fallback = `creacion-sadmin-${status}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  if (!contentDisposition) return fallback;
+
+  const encoded = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const plain = contentDisposition.match(/filename="([^"]+)"/i)?.[1]
+    ?? contentDisposition.match(/filename=([^;]+)/i)?.[1];
+  let candidate = encoded ?? plain;
+  if (!candidate) return fallback;
+
+  try { candidate = decodeURIComponent(candidate.trim()); } catch { candidate = candidate.trim(); }
+  const safe = candidate
+    .split(/[\\/]/)
+    .pop()
+    ?.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/^\.+/, "")
+    .trim()
+    .slice(0, 180);
+  return safe?.toLowerCase().endsWith(".xlsx") ? safe : fallback;
+}
+
 function Facts({ items, numeric = false }: { items: Array<[string, ReactNode]>; numeric?: boolean }) {
   return <dl className={`${styles.facts} ${numeric ? styles.numeric : ""}`}>{items.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
 }
@@ -59,6 +82,8 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
   const [data, setData] = useState<SadminPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const [reload, setReload] = useState(0);
   const [draftNumbers, setDraftNumbers] = useState<Record<number, string>>({});
   const [rowErrors, setRowErrors] = useState<Record<number, string>>({});
@@ -110,6 +135,7 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
   function hideDataForLoad() {
     setLoading(true);
     setError("");
+    setExportError("");
     setData(null);
   }
 
@@ -118,6 +144,41 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
     setExpandedId(null);
     hideDataForLoad();
     setFilters(current => ({ ...current, page: 1, status }));
+  }
+
+  async function exportExcel() {
+    if (loading || exporting || navigationBlocked || error || !data || data.total === 0) return;
+    setExporting(true);
+    setExportError("");
+    try {
+      const params = new URLSearchParams({ q: filters.query, status: filters.status });
+      const response = await fetch(`/api/aprobaciones/sadmin/export?${params}`, { cache: "no-store" });
+      if (!response.ok) {
+        let payload: { error?: unknown; message?: unknown } = {};
+        try { payload = await response.json() as { error?: unknown; message?: unknown }; } catch {}
+        throw new SadminRequestError(responseError(payload, "No pudimos generar el Excel. Intenta de nuevo."));
+      }
+      const mime = response.headers.get("Content-Type")?.split(";", 1)[0].trim().toLowerCase();
+      if (mime !== xlsxMime) throw new SadminRequestError("El servidor no devolvió un archivo Excel válido. Intenta de nuevo.");
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = exportFileName(response.headers.get("Content-Disposition"), filters.status);
+      link.style.display = "none";
+      try {
+        document.body.appendChild(link);
+        link.click();
+      } finally {
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } catch (cause) {
+      setExportError(cause instanceof SadminRequestError ? cause.message : "No pudimos generar el Excel. Revisa tu conexión e intenta de nuevo.");
+    } finally {
+      setExporting(false);
+    }
   }
 
   async function save(row: SadminCreditRow, field: ChecklistField | "numeroCredito", value: boolean | string) {
@@ -192,8 +253,12 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
         <Button type="submit" variant="secondary" disabled={navigationBlocked || loading}><Search size={16} aria-hidden="true" />Buscar</Button>
         {filters.query ? <Button variant="ghost" disabled={navigationBlocked || loading} onClick={() => { setSearchText(""); setExpandedId(null); hideDataForLoad(); setFilters(current => ({ ...current, page: 1, query: "" })); }}>Limpiar</Button> : null}
       </form>
-      <Button variant="secondary" disabled={navigationBlocked || loading} onClick={() => { hideDataForLoad(); setReload(current => current + 1); }}><RefreshCw size={16} aria-hidden="true" />Actualizar</Button>
+      <div className={styles.toolbarActions}>
+        <Button variant="secondary" aria-busy={exporting} disabled={loading || exporting || navigationBlocked || Boolean(error) || !data || data.total === 0} onClick={() => void exportExcel()}><Download size={16} aria-hidden="true" />{exporting ? "Generando Excel..." : "Exportar Excel"}</Button>
+        <Button variant="secondary" disabled={navigationBlocked || loading} onClick={() => { hideDataForLoad(); setReload(current => current + 1); }}><RefreshCw size={16} aria-hidden="true" />Actualizar</Button>
+      </div>
     </Card>
+    {exportError ? <p className={styles.exportError} role="alert">{exportError}</p> : null}
     <p className={styles.help}>Completa las tres verificaciones y guarda el número asignado para pasar a <strong>CREADO SADMIN</strong>. Cada verificación se guarda al marcarla.</p>
     {hasDrafts ? <p className={styles.notice} role="status">Tienes números sin guardar. Guárdalos o cancela su edición antes de cambiar de página o volver a aprobaciones.</p> : null}
     {error ? <Card className={styles.error} role="alert"><p>{error}</p><Button variant="secondary" disabled={loading || savingIds.size > 0} onClick={() => { hideDataForLoad(); setReload(current => current + 1); }}>Reintentar</Button></Card> : null}
