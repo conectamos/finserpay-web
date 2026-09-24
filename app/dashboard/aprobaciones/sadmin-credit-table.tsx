@@ -1,9 +1,9 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Save, Search } from "lucide-react";
-import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, PageHeader } from "@/app/_components/finser-ui";
-import type { SadminCreditRow, SadminPage, SadminRegistration } from "@/lib/credit-sadmin-types";
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Download, RefreshCw, Save, Search } from "lucide-react";
+import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, PageHeader, Tabs } from "@/app/_components/finser-ui";
+import type { SadminCreditRow, SadminPage, SadminRegistration, SadminStatusFilter } from "@/lib/credit-sadmin-types";
 import { confirmedSadminNumber, creditDisplayNumber } from "@/lib/credit-display-number";
 import styles from "./sadmin-credit-table.module.css";
 
@@ -11,6 +11,7 @@ const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP
 const percentage = new Intl.NumberFormat("es-CO", { style: "percent", maximumFractionDigits: 4 });
 const calendar = new Intl.DateTimeFormat("es-CO", { timeZone: "UTC", dateStyle: "short" });
 const timestamp = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", dateStyle: "short", timeStyle: "short" });
+const xlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const text = (value: string | null | undefined) => value?.trim() || "—";
 const amount = (value: number) => Number.isFinite(value) ? money.format(value) : "—";
 const rate = (value: number | null) => value !== null && Number.isFinite(value) ? percentage.format(value) : "No disponible";
@@ -26,19 +27,63 @@ function responseError(payload: { error?: unknown; message?: unknown }, fallback
   return typeof payload.error === "string" ? payload.error : typeof payload.message === "string" ? payload.message : fallback;
 }
 class SadminRequestError extends Error {}
+
+function exportFileName(contentDisposition: string | null, status: SadminStatusFilter) {
+  const fallback = `creacion-sadmin-${status}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  if (!contentDisposition) return fallback;
+
+  const encoded = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const plain = contentDisposition.match(/filename="([^"]+)"/i)?.[1]
+    ?? contentDisposition.match(/filename=([^;]+)/i)?.[1];
+  let candidate = encoded ?? plain;
+  if (!candidate) return fallback;
+
+  try { candidate = decodeURIComponent(candidate.trim()); } catch { candidate = candidate.trim(); }
+  const safe = candidate
+    .split(/[\\/]/)
+    .pop()
+    ?.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/^\.+/, "")
+    .trim()
+    .slice(0, 180);
+  return safe?.toLowerCase().endsWith(".xlsx") ? safe : fallback;
+}
+
 function Facts({ items, numeric = false }: { items: Array<[string, ReactNode]>; numeric?: boolean }) {
   return <dl className={`${styles.facts} ${numeric ? styles.numeric : ""}`}>{items.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
 }
 
 type ChecklistField = "codeudorCreado" | "creditoCreado" | "numeroCreditoConfirmado";
 const checklist: Array<[ChecklistField, string]> = [["codeudorCreado", "CODEUDOR CREADO"], ["creditoCreado", "CRÉDITO CREADO"], ["numeroCreditoConfirmado", "NÚMERO DE CRÉDITO"]];
+const statusTabs: Array<{ id: SadminStatusFilter; label: string }> = [
+  { id: "all", label: "Todos" },
+  { id: "pending", label: "Pendientes" },
+  { id: "created", label: "Creados" },
+];
+
+function matchesStatus(status: SadminStatusFilter, registration: SadminRegistration) {
+  if (status === "all") return true;
+  return status === "created" ? registration.estado === "CREADO_SADMIN" : registration.estado === "PENDIENTE";
+}
+
+function emptyCopy(status: SadminStatusFilter, hasQuery: boolean) {
+  if (hasQuery) {
+    const scope = status === "pending" ? "pendientes" : status === "created" ? "creados" : "disponibles";
+    return { title: "Sin resultados", description: `No encontramos créditos ${scope} con esa búsqueda. Prueba con otro cliente, cédula, folio o número SADMIN.` };
+  }
+  if (status === "pending") return { title: "No hay créditos pendientes", description: "Todos los créditos disponibles ya fueron creados en SADMIN." };
+  if (status === "created") return { title: "No hay créditos creados", description: "Los créditos aparecerán aquí cuando se completen las tres verificaciones de SADMIN." };
+  return { title: "No hay créditos disponibles", description: "Los créditos aparecerán aquí cuando estén disponibles en cartera." };
+}
 
 export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
-  const [filters, setFilters] = useState({ page: 1, query: "" });
+  const [filters, setFilters] = useState<{ page: number; query: string; status: SadminStatusFilter }>({ page: 1, query: "", status: "all" });
   const [searchText, setSearchText] = useState("");
   const [data, setData] = useState<SadminPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const [reload, setReload] = useState(0);
   const [draftNumbers, setDraftNumbers] = useState<Record<number, string>>({});
   const [rowErrors, setRowErrors] = useState<Record<number, string>>({});
@@ -53,8 +98,9 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
     async function load() {
       setLoading(true);
       setError("");
+      setData(null);
       try {
-        const params = new URLSearchParams({ page: String(filters.page), q: filters.query });
+        const params = new URLSearchParams({ page: String(filters.page), q: filters.query, status: filters.status });
         const response = await fetch(`/api/aprobaciones/sadmin?${params}`, { cache: "no-store", signal: controller.signal });
         const payload = await response.json() as SadminPage & { ok?: boolean; error?: unknown; message?: unknown };
         if (!response.ok || !payload.ok || !Array.isArray(payload.items)) throw new SadminRequestError(responseError(payload, "No pudimos cargar los créditos. Intenta de nuevo."));
@@ -86,6 +132,55 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
     else setDraftNumbers(current => ({ ...current, [row.id]: value }));
   }
 
+  function hideDataForLoad() {
+    setLoading(true);
+    setError("");
+    setExportError("");
+    setData(null);
+  }
+
+  function selectStatus(status: SadminStatusFilter) {
+    if (navigationBlocked || loading || status === filters.status) return;
+    setExpandedId(null);
+    hideDataForLoad();
+    setFilters(current => ({ ...current, page: 1, status }));
+  }
+
+  async function exportExcel() {
+    if (loading || exporting || navigationBlocked || error || !data || data.total === 0) return;
+    setExporting(true);
+    setExportError("");
+    try {
+      const params = new URLSearchParams({ q: filters.query, status: filters.status });
+      const response = await fetch(`/api/aprobaciones/sadmin/export?${params}`, { cache: "no-store" });
+      if (!response.ok) {
+        let payload: { error?: unknown; message?: unknown } = {};
+        try { payload = await response.json() as { error?: unknown; message?: unknown }; } catch {}
+        throw new SadminRequestError(responseError(payload, "No pudimos generar el Excel. Intenta de nuevo."));
+      }
+      const mime = response.headers.get("Content-Type")?.split(";", 1)[0].trim().toLowerCase();
+      if (mime !== xlsxMime) throw new SadminRequestError("El servidor no devolvió un archivo Excel válido. Intenta de nuevo.");
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = exportFileName(response.headers.get("Content-Disposition"), filters.status);
+      link.style.display = "none";
+      try {
+        document.body.appendChild(link);
+        link.click();
+      } finally {
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } catch (cause) {
+      setExportError(cause instanceof SadminRequestError ? cause.message : "No pudimos generar el Excel. Revisa tu conexión e intenta de nuevo.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function save(row: SadminCreditRow, field: ChecklistField | "numeroCredito", value: boolean | string) {
     if (loading || error || pendingRequests.current.size > 0) return;
     pendingRequests.current.add(row.id);
@@ -105,8 +200,23 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
       }
       if (!response.ok || !payload.ok || !payload.sadmin) throw new SadminRequestError(responseError(payload, "No pudimos guardar el cambio. Intenta de nuevo."));
       const saved = payload.sadmin;
-      setData(current => current ? { ...current, items: current.items.map(item => item.id === row.id ? { ...item, sadmin: saved, numeroCreditoVisible: confirmedSadminNumber(saved) || item.folio } : item) } : current);
       if (field === "numeroCredito") discardDraft(row.id);
+      if (!matchesStatus(filters.status, saved)) {
+        setExpandedId(null);
+        setLoading(true);
+        setReload(current => current + 1);
+        return;
+      }
+      setData(current => {
+        if (!current) return current;
+        const changedStatus = row.sadmin.estado !== saved.estado;
+        const counts = !changedStatus ? current.counts : {
+          ...current.counts,
+          pending: Math.max(0, current.counts.pending + (saved.estado === "PENDIENTE" ? 1 : -1)),
+          created: Math.max(0, current.counts.created + (saved.estado === "CREADO_SADMIN" ? 1 : -1)),
+        };
+        return { ...current, counts, items: current.items.map(item => item.id === row.id ? { ...item, sadmin: saved, numeroCreditoVisible: confirmedSadminNumber(saved) || item.folio } : item) };
+      });
     } catch (cause) {
       setRowErrors(current => ({ ...current, [row.id]: cause instanceof SadminRequestError ? cause.message : "No pudimos guardar el cambio. Revisa tu conexión e intenta de nuevo." }));
     } finally {
@@ -117,25 +227,45 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
 
   const page = data?.page || filters.page;
   const totalPages = Math.max(1, data?.totalPages || 1);
+  const empty = emptyCopy(filters.status, Boolean(filters.query));
+  const loadingLabel = filters.status === "pending" ? "Cargando créditos pendientes..." : filters.status === "created" ? "Cargando créditos creados..." : "Cargando créditos de cartera...";
+  const totalLabel = filters.status === "pending" ? "créditos pendientes" : filters.status === "created" ? "créditos creados" : "créditos";
+  const tabsBlocked = navigationBlocked || loading;
 
   return <main className={styles.main}>
     <PageHeader eyebrow="Control de creación" title="Creación en SADMIN" description="Todos los créditos de cartera desde el inicio de la operación, incluidos históricos y pagados. Los más recientes aparecen primero." actions={<Button variant="secondary" disabled={navigationBlocked} onClick={onBack}><ArrowLeft size={16} aria-hidden="true" />Volver a aprobaciones</Button>} />
+    <Tabs aria-label="Filtrar créditos por estado SADMIN" className={styles.statusTabs}>
+      {statusTabs.map(tab => <button key={tab.id} id={`sadmin-status-${tab.id}`} type="button" role="tab" aria-selected={filters.status === tab.id} aria-controls="sadmin-credit-results" tabIndex={filters.status === tab.id ? 0 : -1} disabled={tabsBlocked} onClick={() => selectStatus(tab.id)} onKeyDown={event => {
+        if (tabsBlocked || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const current = statusTabs.findIndex(item => item.id === filters.status);
+        const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? statusTabs.length - 1 : (current + (event.key === "ArrowLeft" ? -1 : 1) + statusTabs.length) % statusTabs.length;
+        const next = statusTabs[nextIndex].id;
+        selectStatus(next);
+        document.getElementById(`sadmin-status-${next}`)?.focus();
+      }}>{tab.label}<span className={styles.tabCount}>{data ? data.counts[tab.id].toLocaleString("es-CO") : "—"}</span></button>)}
+    </Tabs>
+    <section id="sadmin-credit-results" role="tabpanel" aria-labelledby={`sadmin-status-${filters.status}`} aria-busy={loading}>
     <Card className={styles.toolbar}>
-      <form onSubmit={event => { event.preventDefault(); if (navigationBlocked || loading) return; setFilters({ page: 1, query: searchText.trim() }); }} className={styles.search}>
+      <form onSubmit={event => { event.preventDefault(); if (navigationBlocked || loading) return; setExpandedId(null); hideDataForLoad(); setFilters(current => ({ ...current, page: 1, query: searchText.trim() })); }} className={styles.search}>
         <label className="sr-only" htmlFor="sadmin-search">Buscar por cliente, cédula, folio o número SADMIN</label>
         <Input id="sadmin-search" type="search" autoComplete="off" placeholder="Cliente, cédula, folio o número SADMIN" maxLength={100} value={searchText} disabled={navigationBlocked} onChange={event => setSearchText(event.target.value)} />
         <Button type="submit" variant="secondary" disabled={navigationBlocked || loading}><Search size={16} aria-hidden="true" />Buscar</Button>
-        {filters.query ? <Button variant="ghost" disabled={navigationBlocked || loading} onClick={() => { setSearchText(""); setFilters({ page: 1, query: "" }); }}>Limpiar</Button> : null}
+        {filters.query ? <Button variant="ghost" disabled={navigationBlocked || loading} onClick={() => { setSearchText(""); setExpandedId(null); hideDataForLoad(); setFilters(current => ({ ...current, page: 1, query: "" })); }}>Limpiar</Button> : null}
       </form>
-      <Button variant="secondary" disabled={navigationBlocked || loading} onClick={() => setReload(current => current + 1)}><RefreshCw size={16} aria-hidden="true" />Actualizar</Button>
+      <div className={styles.toolbarActions}>
+        <Button variant="secondary" aria-busy={exporting} disabled={loading || exporting || navigationBlocked || Boolean(error) || !data || data.total === 0} onClick={() => void exportExcel()}><Download size={16} aria-hidden="true" />{exporting ? "Generando Excel..." : "Exportar Excel"}</Button>
+        <Button variant="secondary" disabled={navigationBlocked || loading} onClick={() => { hideDataForLoad(); setReload(current => current + 1); }}><RefreshCw size={16} aria-hidden="true" />Actualizar</Button>
+      </div>
     </Card>
+    {exportError ? <p className={styles.exportError} role="alert">{exportError}</p> : null}
     <p className={styles.help}>Completa las tres verificaciones y guarda el número asignado para pasar a <strong>CREADO SADMIN</strong>. Cada verificación se guarda al marcarla.</p>
     {hasDrafts ? <p className={styles.notice} role="status">Tienes números sin guardar. Guárdalos o cancela su edición antes de cambiar de página o volver a aprobaciones.</p> : null}
-    {error ? <Card className={styles.error} role="alert"><p>{error}</p><Button variant="secondary" disabled={loading || savingIds.size > 0} onClick={() => setReload(current => current + 1)}>Reintentar</Button></Card> : null}
-    {loading ? <LoadingState label="Cargando créditos de cartera..." /> : null}
-    {!loading && !error && data?.items.length === 0 ? <EmptyState title="No encontramos créditos" description={filters.query ? "Prueba con otro cliente, cédula, folio o número SADMIN." : "Los créditos aparecerán aquí cuando estén disponibles en cartera."} /> : null}
-    {data?.items.length ? <>
-      <div className={styles.summary}><span>{data.total.toLocaleString("es-CO")} créditos · 20 registros por página</span><span>Más recientes primero</span></div>
+    {error ? <Card className={styles.error} role="alert"><p>{error}</p><Button variant="secondary" disabled={loading || savingIds.size > 0} onClick={() => { hideDataForLoad(); setReload(current => current + 1); }}>Reintentar</Button></Card> : null}
+    {loading ? <LoadingState label={loadingLabel} /> : null}
+    {!loading && !error && data?.items.length === 0 ? <EmptyState title={empty.title} description={empty.description} /> : null}
+    {!loading && !error && data?.items.length ? <>
+      <div className={styles.summary}><span>{data.total.toLocaleString("es-CO")} {totalLabel} · 20 registros por página</span><span>Más recientes primero</span></div>
       <DataTable className={styles.tableWrap}>
         <table className={styles.table} aria-label="Créditos de cartera para creación en SADMIN" aria-busy={loading}>
           <thead><tr><th scope="col">Crédito</th></tr></thead>
@@ -187,9 +317,10 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
         </table>
       </DataTable>
     </> : null}
-    {data ? <nav aria-label="Páginas de créditos SADMIN" className={styles.pagination}>
+    {!loading && !error && data ? <nav aria-label="Páginas de créditos SADMIN" className={styles.pagination}>
       <p aria-live="polite">Página {page} de {totalPages}{data.total ? ` · ${((page - 1) * data.pageSize + 1).toLocaleString("es-CO")}–${Math.min(page * data.pageSize, data.total).toLocaleString("es-CO")} de ${data.total.toLocaleString("es-CO")}` : ""}</p>
-      <div><Button variant="secondary" disabled={navigationBlocked || loading || Boolean(error) || page <= 1} onClick={() => setFilters(current => ({ ...current, page: page - 1 }))}><ChevronLeft size={16} aria-hidden="true" />Anterior</Button><Button variant="secondary" disabled={navigationBlocked || loading || Boolean(error) || page >= totalPages} onClick={() => setFilters(current => ({ ...current, page: page + 1 }))}>Siguiente<ChevronRight size={16} aria-hidden="true" /></Button></div>
+      <div><Button variant="secondary" disabled={navigationBlocked || loading || Boolean(error) || page <= 1} onClick={() => { hideDataForLoad(); setFilters(current => ({ ...current, page: page - 1 })); }}><ChevronLeft size={16} aria-hidden="true" />Anterior</Button><Button variant="secondary" disabled={navigationBlocked || loading || Boolean(error) || page >= totalPages} onClick={() => { hideDataForLoad(); setFilters(current => ({ ...current, page: page + 1 })); }}>Siguiente<ChevronRight size={16} aria-hidden="true" /></Button></div>
     </nav> : null}
+    </section>
   </main>;
 }

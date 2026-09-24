@@ -50,7 +50,14 @@ function setup({ user = centralAnalyst, shared, serviceError } = {}) {
     listSadminCredits: async (...args) => {
       calls.push({ name: "list", args });
       if (serviceError) throw serviceError;
-      return { items: [{ id: 712, folio: "FC-HISTORICO" }], page: 3, pageSize: 20, total: 41, totalPages: 3 };
+      return {
+        items: [{ id: 712, folio: "FC-HISTORICO" }],
+        page: 2,
+        pageSize: 20,
+        total: 21,
+        totalPages: 2,
+        counts: { all: 41, pending: 20, created: 21 },
+      };
     },
     updateSadminRegistration: async (...args) => {
       calls.push({ name: "update", args });
@@ -77,7 +84,7 @@ const request = (body = { version: 1, field: "codeudorCreado", value: true }, he
   method: "PATCH", body: typeof body === "string" ? body : JSON.stringify(body),
   headers: { "content-type": "application/json", origin: "https://finserpay.test", ...headers },
 });
-const listRequest = () => new Request("https://finserpay.test/api/aprobaciones/sadmin?page=3&q=Cliente%20hist%C3%B3rico");
+const listRequest = (status = "created") => new Request(`https://finserpay.test/api/aprobaciones/sadmin?page=3&q=Cliente%20hist%C3%B3rico&status=${status}`);
 function privateResponse(response) {
   assert.match(response.headers.get("cache-control"), /private, no-store/);
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
@@ -116,7 +123,7 @@ test("un enlace revocado no usa como respaldo una cuenta administrativa abierta"
   assert.equal(incoming.bodyUsed, false);
 });
 
-test("la lista pasa página y búsqueda al servicio con actor personal o compartido", async () => {
+test("la lista pasa página, búsqueda y estado al servicio con actor personal o compartido", async () => {
   for (const shared of [undefined, sharedActor]) {
     const api = setup({ shared });
     const response = await api.list.GET(listRequest());
@@ -126,12 +133,26 @@ test("la lista pasa página y búsqueda al servicio con actor personal o compart
     assert.equal(body.ok, true);
     assert.equal(body.items[0].id, 712);
     assert.equal(body.pageSize, 20);
+    assert.deepEqual(clone(body.counts), { all: 41, pending: 20, created: 21 });
     const call = api.calls.find(item => item.name === "list");
     assert.equal(call.args[0], api.prisma);
     assert.deepEqual(clone(call.args[1]), shared || { id: centralAnalyst.id, nombre: centralAnalyst.nombre });
-    assert.deepEqual(clone(call.args[2]), { page: "3", q: "Cliente histórico" });
+    assert.deepEqual(clone(call.args[2]), { page: "3", q: "Cliente histórico", status: "created" });
     if (shared) assert.equal(api.calls.some(item => item.name === "user"), false);
   }
+});
+
+test("la lista conserva el error de estado SADMIN inválido y no lo convierte en un fallo interno", async () => {
+  const invalid = new errors.CreditApprovalError("INVALID_SADMIN_STATUS", "Selecciona un estado SADMIN válido.", 400);
+  const api = setup({ serviceError: invalid });
+  const response = await api.list.GET(listRequest("desconocido"));
+  assert.equal(response.status, 400);
+  privateResponse(response);
+  const body = await response.json();
+  assert.equal(body.ok, false);
+  assert.equal(body.code, "INVALID_SADMIN_STATUS");
+  const call = api.calls.find(item => item.name === "list");
+  assert.equal(call.args[2].status, "desconocido");
 });
 
 test("PATCH conserva cada marca y el número SADMIN textual con ceros y letras", async () => {
