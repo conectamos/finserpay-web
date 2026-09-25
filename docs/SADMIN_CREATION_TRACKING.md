@@ -132,3 +132,27 @@ La integración PostgreSQL requiere `MASS_CREDIT_TEST_DATABASE_URL` en loopback 
 base exclusiva `mass_credit_sadmin_test`. Cubre ambos modos, consulta real del
 listado SADMIN, auditoría, cédulas y números duplicados, fallos transaccionales,
 reintentos y concurrencia. No debe apuntar a una base operativa.
+
+
+### IMEI al preparar la plantilla CSV en Excel
+
+La carga operativa continúa aceptando CSV. Como CSV no almacena el tipo Texto de
+una columna, abrirlo directamente en Excel puede mostrar o guardar un IMEI como
+`1E+15`. Para editar en Excel se descarga **Plantilla Excel para CSV**: IMEI,
+cédula, teléfono, fechas y número SADMIN están preformateados como Texto hasta
+la fila 251. El operador reemplaza el ejemplo, verifica los 15 dígitos del IMEI,
+guarda una copia como **CSV UTF-8** y sube ese `.csv` directamente, sin volver a
+abrirlo en Excel. La plantilla CSV original sigue disponible para editores que
+conserven texto sin convertirlo.
+
+La vista previa muestra el IMEI completo de cada fila. La API conserva sus 15
+dígitos exactamente y rechaza por fila la notación científica, letras, separadores,
+longitudes distintas de 15 o datos vacíos; ya no recorta dígitos sobrantes ni
+reconstruye números abreviados. Un CSV dañado debe corregirse con el IMEI de la
+fuente original antes de crear el lote. Las mismas reglas se aplican al crédito
+individual. Las validaciones restantes de crédito y SADMIN no cambian.
+
+Pruebas: `node --experimental-strip-types --test tests/mass-credit-*.test.mjs`
+con `MASS_CREDIT_TEST_DATABASE_URL` solo sobre una base PostgreSQL local y
+exclusiva. Verifican ambos modos, Excel guardado y reabierto, CSV con ceros
+iniciales, errores por fila y reversión de guardado.

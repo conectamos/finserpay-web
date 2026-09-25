@@ -392,7 +392,7 @@ export default function MassCreditImportConsole() {
     single: null,
   });
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
-  const [loading, setLoading] = useState<"catalog" | "create" | "file" | "validate" | null>(null);
+  const [loading, setLoading] = useState<"catalog" | "create" | "file" | "validate" | "template" | null>(null);
   const [notice, setNotice] = useState("");
   const [previewFilter, setPreviewFilter] = useState<PreviewFilter>("all");
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -556,8 +556,9 @@ export default function MassCreditImportConsole() {
   };
 
   const processFile = async (file: File) => {
+    if (loading) return;
     if (!file.name.toLowerCase().endsWith(".csv")) {
-      setNotice("El archivo debe estar en formato CSV.");
+      setNotice("Para cargar créditos, guarda el archivo como CSV UTF-8. El Excel solo sirve para preparar la plantilla.");
       return;
     }
     if (file.size > MAX_FILE_BYTES) {
@@ -675,6 +676,25 @@ export default function MassCreditImportConsole() {
     setNotice("Plantilla descargada: plantilla-creditos-masivos.csv");
   };
 
+  const downloadExcelTemplate = async () => {
+    if (loading) return;
+    setLoading("template");
+    setNotice("");
+    try {
+      const { buildMassCreditWorkbook, MASS_CREDIT_XLSX_TYPE } = await import("@/lib/mass-credit-spreadsheet");
+      const buffer = await buildMassCreditWorkbook(FIELD_ORDER.map(key => FIELD_LABELS[key]), TEMPLATE_EXAMPLE_ROW);
+      const url = URL.createObjectURL(new Blob([new Uint8Array(buffer)], { type: MASS_CREDIT_XLSX_TYPE }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "plantilla-creditos-masivos.xlsx";
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice("Llena la plantilla Excel con el IMEI como Texto y luego guarda una copia como CSV UTF-8 para cargarla.");
+    } catch {
+      setNotice("No se pudo descargar la plantilla Excel. Intenta de nuevo.");
+    } finally { setLoading(null); }
+  };
+
   const downloadResult = () => {
     if (!validation?.rows.length) return;
     const header = ["FILA", "ESTADO", "FOLIO", "CLIENTE", "CEDULA", "Número de crédito en SADMIN", "SEDE", "VENDEDOR", "CREDITO", "CUOTA", "NOTAS"];
@@ -726,7 +746,11 @@ export default function MassCreditImportConsole() {
               <RefreshCw className={loading === "catalog" ? "h-4 w-4 animate-spin" : "h-4 w-4"} strokeWidth={1.8} />
               {loading === "catalog" ? "Actualizando" : "Catalogo"}
             </Button>
-            <Button variant="secondary" onClick={downloadTemplate}>
+            <Button variant="secondary" onClick={() => void downloadExcelTemplate()} disabled={loading !== null}>
+              <Download className="h-4 w-4" strokeWidth={1.8} />
+              {loading === "template" ? "Preparando plantilla" : "Plantilla Excel para CSV"}
+            </Button>
+            <Button variant="ghost" onClick={downloadTemplate} disabled={loading !== null}>
               <Download className="h-4 w-4" strokeWidth={1.8} />
               Descargar plantilla CSV
             </Button>
@@ -736,7 +760,7 @@ export default function MassCreditImportConsole() {
 
       <Tabs className="mt-4" aria-label="Modo de creacion">
         <button type="button" role="tab" aria-selected={mode === "bulk"} onClick={() => switchMode("bulk")}>
-          Carga CSV
+          Carga de archivo
         </button>
         <button type="button" role="tab" aria-selected={mode === "single"} onClick={() => switchMode("single")}>
           Credito individual
@@ -755,7 +779,7 @@ export default function MassCreditImportConsole() {
                     <h2 className="text-lg font-black text-[#151a21]">Carga de archivo</h2>
                     <p className="mt-1 text-sm text-[#667085]">Importa la informacion con la plantilla oficial.</p>
                   </div>
-                  <button type="button" onClick={loadExample} className="text-sm font-bold text-[#526f0e] underline underline-offset-4">
+                  <button type="button" onClick={loadExample} disabled={Boolean(loading)} className="text-sm font-bold text-[#526f0e] underline underline-offset-4">
                     Ver ejemplo
                   </button>
                 </div>
@@ -796,7 +820,7 @@ export default function MassCreditImportConsole() {
                   ) : (
                     <div>
                       <UploadCloud className="mx-auto h-12 w-12 text-[#344054]" strokeWidth={1.45} />
-                      <h3 className="mt-3 text-base font-black text-[#151a21]">Arrastra tu archivo CSV aqui</h3>
+                      <h3 className="mt-3 text-base font-black text-[#151a21]">Arrastra tu archivo CSV aquí</h3>
                       <p className="mt-1 text-sm text-[#667085]">o selecciona un archivo desde tu equipo</p>
                       <Button className="mt-5" onClick={() => fileInputRef.current?.click()} disabled={Boolean(loading)}>
                         {loading === "file" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" strokeWidth={1.8} />}
@@ -807,7 +831,10 @@ export default function MassCreditImportConsole() {
                   <input ref={fileInputRef} type="file" accept=".csv,text/csv" onChange={loadFile} className="sr-only" />
                 </div>
                 <p className="mt-3 text-center text-xs font-semibold text-[#667085]">
-                  Formato CSV · Maximo 5 MB · Hasta {MAX_IMPORT_ROWS} registros
+                  Formato CSV · Máximo 5 MB · Hasta {MAX_IMPORT_ROWS} registros
+                </p>
+                <p className="mt-3 text-sm text-[var(--fp-muted)]">
+                  Para trabajar en Excel, descarga la plantilla Excel, llena el IMEI como Texto y usa Archivo → Guardar como → CSV UTF-8. Sube ese CSV directamente aquí. Si ves 1E+15, revisa el valor completo en la barra de fórmulas; si faltan dígitos, recupera el IMEI original.
                 </p>
               </div>
 
@@ -837,7 +864,7 @@ export default function MassCreditImportConsole() {
                 <details className="group mt-5 border-t border-[#e4e7ec] pt-4">
                   <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-bold text-[#344054] [&::-webkit-details-marker]:hidden">
                     <ChevronDown className="h-4 w-4 transition group-open:rotate-180" strokeWidth={1.8} />
-                    Ver campos requeridos y contenido del CSV
+                    Ver campos requeridos y datos cargados
                   </summary>
                   <p className="mt-3 text-xs leading-5 text-[#667085]">{FIELD_ORDER.map((field) => FIELD_LABELS[field]).join(" · ")}</p>
                   <textarea
@@ -848,7 +875,7 @@ export default function MassCreditImportConsole() {
                     }}
                     spellCheck={false}
                     wrap="off"
-                    aria-label="Contenido editable del archivo CSV"
+                    aria-label="Contenido editable de la carga"
                     className="mt-4 h-56 w-full resize-y rounded-md border border-[#d8dee5] bg-[#fbfcfd] p-3 font-mono text-xs leading-5 text-[#344054] outline-none focus:border-[#8caf27] focus:ring-2 focus:ring-[#b7e63d]/20"
                   />
                 </details>
@@ -975,7 +1002,7 @@ export default function MassCreditImportConsole() {
               <h2 className="text-lg font-black text-[#151a21]">Vista previa y validacion</h2>
               <Badge>{validation?.summary.total || 0} registros</Badge>
             </div>
-            <p className="mt-1 text-sm text-[#667085]">La API conserva las reglas vigentes de validacion y duplicidad.</p>
+            <p className="mt-1 text-sm text-[#667085]">La API conserva las reglas vigentes de validación y duplicidad. Revisa los 15 dígitos del IMEI antes de crear.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {(["all", "valid", "errors"] as PreviewFilter[]).map((filter) => (
@@ -1009,7 +1036,7 @@ export default function MassCreditImportConsole() {
             <table className="min-w-[1120px] w-full text-left text-xs">
               <thead className="bg-[#f5f7f8] text-[#475467]">
                 <tr>
-                  {['Fila', 'Estado', 'Cliente', 'Cedula', 'Número de crédito en SADMIN', 'Sede', 'Vendedor', 'Credito', 'Cuota', 'Notas'].map((label) => (
+                  {['Fila', 'Estado', 'Cliente', 'Cedula', 'IMEI', 'Número de crédito en SADMIN', 'Sede', 'Vendedor', 'Credito', 'Cuota', 'Notas'].map((label) => (
                     <th key={label} className="border-b border-[#d8dee5] px-4 py-3 font-black">{label}</th>
                   ))}
                 </tr>
@@ -1027,6 +1054,7 @@ export default function MassCreditImportConsole() {
                       </td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3 font-bold text-[#151a21]">{row.normalized.cliente || "-"}</td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.cedula || "-"}</td>
+                      <td className="whitespace-nowrap border-b border-[var(--fp-border)] px-4 py-3 font-mono">{row.normalized.imei || "-"}</td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.numeroCreditoSadmin || "-"}</td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.sede || "-"}</td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.vendedor || "-"}</td>
@@ -1043,7 +1071,7 @@ export default function MassCreditImportConsole() {
           <EmptyState
             className="!min-h-56 !rounded-none !border-0"
             title="Aun no hay registros"
-            description={mode === "bulk" ? "Carga un archivo CSV para revisar y validar la informacion." : "Completa y valida el credito individual para ver el resultado."}
+            description={mode === "bulk" ? "Carga un archivo CSV para revisar y validar la información." : "Completa y valida el credito individual para ver el resultado."}
             action={<FileCheck2 className="h-9 w-9 text-[#98a2b3]" strokeWidth={1.5} />}
           />
         )}
@@ -1147,7 +1175,7 @@ function AssignmentFields({
   availableVendedores: NonNullable<CatalogResponse["vendedores"]>;
   catalog: CatalogResponse | null;
   className?: string;
-  loading: "catalog" | "create" | "file" | "validate" | null;
+  loading: "catalog" | "create" | "file" | "validate" | "template" | null;
   onChange: (field: keyof AssignmentDefaults, value: string) => void;
   sedesById: Map<number, CatalogSede>;
   selectedAliado: NonNullable<CatalogResponse["aliados"]>[number] | null;

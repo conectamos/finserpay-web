@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readImportImei } from "@/lib/mass-credit-imei";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { DocumentBlacklistError } from "@/lib/document-blacklist-core";
 import {
@@ -16,7 +17,6 @@ import {
   generateCreditFolio,
   generatePaymentReference,
   MAX_CREDIT_INSTALLMENTS,
-  sanitizeDeviceValue,
   sanitizeText,
 } from "@/lib/credit-factory";
 import {
@@ -461,14 +461,13 @@ async function validateRows(rows: MassCreditInputRow[], db: typeof prisma | Pris
     catalogs.sedes,
     catalogs.assignments
   );
-  const normalizedImeis = rows.map((row) =>
-    sanitizeDeviceValue(getRowValue(row, "imei")).replace(/\D/g, "").slice(0, 15)
-  );
+  const imeiResults = rows.map((row) => readImportImei(getRowValue(row, "imei")));
+  const normalizedImeis = imeiResults.map((result) => result.value);
   const duplicateImeis = new Set<string>();
   const seenImeis = new Set<string>();
 
-  for (const imei of normalizedImeis) {
-    if (!imei) {
+  for (const { value: imei, error } of imeiResults) {
+    if (error) {
       continue;
     }
 
@@ -556,7 +555,7 @@ async function validateRows(rows: MassCreditInputRow[], db: typeof prisma | Pris
     if (!cliente) errors.push("CLIENTE obligatorio");
     if (!telefono || digitsOnly(telefono).length < 7) errors.push("TELEFONO invalido");
     if (!referencia) errors.push("REFERENCIA obligatoria");
-    if (!/^\d{15}$/.test(imei)) errors.push("IMEI debe tener 15 numeros");
+    if (imeiResults[index].error) errors.push(imeiResults[index].error);
     if (imei && duplicateImeis.has(imei)) errors.push("IMEI repetido en la carga");
 
     const existingFolio = existingDeviceMap.get(imei);
