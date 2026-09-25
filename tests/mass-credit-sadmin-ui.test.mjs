@@ -5,6 +5,8 @@ import { runInNewContext } from "node:vm";
 import { randomUUID } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import ts from "typescript";
+import ExcelJS from "exceljs";
+import * as spreadsheet from "../lib/mass-credit-spreadsheet.ts";
 
 const source = readFileSync(new URL("../app/dashboard/creditos-masivos/mass-credit-import-console.tsx", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
@@ -27,6 +29,7 @@ function mount(fetch) {
     URL: { createObjectURL(blob) { downloads.push(blob); return "blob:fixture"; }, revokeObjectURL() {} },
     document: { createElement: () => ({ click() {} }) },
     require(name) {
+      if (name === "@/lib/mass-credit-spreadsheet") return { ...spreadsheet, buildMassCreditWorkbook: (headers, example) => spreadsheet.buildMassCreditWorkbook([...headers], [...example]) };
       if (name === "react") return hooks;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: "Fragment" };
       if (name === "lucide-react" || name === "@/app/_components/finser-ui") return ui;
@@ -102,4 +105,70 @@ test("individual exposes field and posts it through preview and creation; server
   h.find(node => node.type === "ConfirmDialog").props.onConfirm(); await h.flush();
   assert.match(h.text(), /1 crédito\(s\) creados/);
   assert.equal(requests.at(-1).rows[0].numeroCreditoSadmin, "000INDIVIDUAL2");
+});
+
+async function waitFor(h, predicate) {
+  for (let n = 0; n < 300; n++) {
+    await h.flush();
+    if (predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.fail("La operación de archivo no terminó");
+}
+
+test("Excel template helps prepare CSV with exact IMEI and leading zeros through preview and creation", async () => {
+  const requests = [];
+  const h = mount(async (_url, options) => {
+    if (!options?.body) return Response.json(catalog);
+    const body = JSON.parse(options.body); requests.push(body);
+    return Response.json(body.commit ? created(body.rows) : preview(body.rows));
+  });
+  await h.flush();
+  button(h, "Plantilla Excel para CSV").props.onClick();
+  await waitFor(h, () => h.downloads.length === 1);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(await h.downloads[0].arrayBuffer());
+  const sheet = workbook.getWorksheet("Creditos");
+  assert.equal(sheet.getCell("F2").type, ExcelJS.ValueType.String);
+  assert.equal(sheet.getCell("F2").numFmt, "@");
+  assert.equal(sheet.getCell("F251").numFmt, "@");
+  sheet.getCell("F2").value = "001234567890123";
+  sheet.getCell("P2").value = "00000123";
+  // CSV UTF-8 exported from Excel's text cells retains the original characters.
+  const csvFromExcel = ["FECHA;CEDULA;CLIENTE;TELEFONO;REFERENCIA;IMEI;ALIADO;SEDE;VENDEDOR;INICIAL;VALOR DEL CREDITO;CUOTA;PLAZO;FRECUENCIA;FECHA DE PAGO;Número de crédito en SADMIN",
+    sheet.getRow(2).values.slice(1).join(";")].join("\n");
+  await upload(h, csvFromExcel);
+  await waitFor(h, () => h.text().includes("prueba.csv cargado correctamente"));
+  button(h, "Validar archivo").props.onClick(); await h.flush();
+  assert.equal(requests[0].rows[0].imei, "001234567890123");
+  assert.equal(requests[0].rows[0].numeroCreditoSadmin, "00000123");
+  assert.match(h.text(), /001234567890123/);
+  button(h, "Crear creditos").props.onClick(); await h.flush();
+  h.find(n => n.type === "ConfirmDialog").props.onConfirm(); await h.flush();
+  assert.equal(requests[1].rows[0].imei, "001234567890123");
+  assert.equal(requests[1].sadminConfirmed, true);
+});
+
+test("rejects an Excel file at upload with clear CSV instructions", async () => {
+  const h = mount(async () => Response.json(catalog)); await h.flush();
+  h.find(n => n.type === "input" && n.props.type === "file").props.onChange({ target: {
+    files: [{ name: "datos.xlsx", size: 4, text: async () => "" }], value: "",
+  } });
+  await h.flush();
+  assert.match(h.text(), /CSV UTF-8/);
+  assert.equal(button(h, "Validar archivo").props.disabled, true);
+});
+
+test("CSV with scientific IMEI shows its row error and blocks creation", async () => {
+  const h = mount(async (_url, options) => {
+    if (!options?.body) return Response.json(catalog);
+    const row = JSON.parse(options.body).rows[0];
+    return Response.json({ ok: false, commit: false, rows: [{ normalized: row, rowNumber: 1, ok: false,
+      errors: ["IMEI en notación científica. Recupera los 15 dígitos originales."], warnings: [] }],
+      summary: { total: 1, valid: 0, invalid: 1, warnings: 0 } });
+  });
+  await h.flush(); await upload(h, csv.replace("000000000000001", "1E+15"));
+  button(h, "Validar archivo").props.onClick(); await h.flush();
+  assert.match(h.text(), /IMEI en notación científica/);
+  assert.equal(button(h, "Crear creditos").props.disabled, true);
 });
