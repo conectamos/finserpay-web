@@ -11,7 +11,7 @@ import {
 import { blacklistUnavailable, blacklistUuid, DocumentBlacklistError } from "@/lib/document-blacklist-core";
 import type { BlacklistActor, BlacklistDatabase, BlacklistItem } from "@/lib/document-blacklist-store";
 
-const columns = `"id", "documento", "motivo", "activa", "version", "createdAt", "updatedAt", "createdByName", "updatedByName"`;
+const columns = `"id", "documento", "motivo", "activa", "version", "createdAt", "updatedAt", "createdByName", "updatedByName", "eliminadaAt"`;
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export type BulkCommitInput = BulkInput & { mutationId: string; fingerprint: string; confirmed: true };
@@ -93,6 +93,7 @@ export async function commitBlacklistBulk(db: BlacklistDatabase, input: BulkComm
       // Replay precedes state checks: a later unblock must not rerun an already completed import.
       return { ...previous[0].result, idempotent: true };
     }
+    await db.$executeRawUnsafe("SELECT pg_advisory_xact_lock_shared(hashtext($1))", "DOCUMENT_BLACKLIST_LIST");
     // PostgreSQL evaluates output expressions after sorting when ORDER BY does not
     // reference them: https://www.postgresql.org/docs/18/sql-select.html#SQL-SELECT-LIST
     // One statement avoids 500 network round trips while retaining lexical lock order.
@@ -118,7 +119,7 @@ export async function commitBlacklistBulk(db: BlacklistDatabase, input: BulkComm
       `INSERT INTO public."ListaNegraDocumento" ("id","documento","motivo","activa","createdByUserId","createdByName","updatedByUserId","updatedByName")
        SELECT item.id::uuid,item.documento,$2,true,$3,$4,$3,$4
        FROM jsonb_to_recordset($1::jsonb) AS item(id text, documento text)
-       ON CONFLICT ("documento") DO UPDATE SET "activa"=true,"motivo"=EXCLUDED."motivo",
+       ON CONFLICT ("documento") DO UPDATE SET "activa"=true,"eliminadaAt"=NULL,"motivo"=EXCLUDED."motivo",
          "version"="ListaNegraDocumento"."version"+1,"updatedByUserId"=EXCLUDED."updatedByUserId",
          "updatedByName"=EXCLUDED."updatedByName","updatedAt"=CURRENT_TIMESTAMP
        WHERE NOT "ListaNegraDocumento"."activa"

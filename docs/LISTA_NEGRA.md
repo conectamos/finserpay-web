@@ -60,3 +60,55 @@ Validaciones complementarias: `npm run lint`, `npx tsc --noEmit` y `npm run buil
 - Se verificaron repetidos, omitidos activos, reactivación, reintentos tras desbloqueos posteriores, rollback, lotes concurrentes y el orden real de bloqueo en PostgreSQL.
 - Pruebas de interacción de la pantalla: previsualización obligatoria, respuestas obsoletas, límite con encabezado, confirmación, doble clic, reintento conservando UUID, respuesta histórica y paginación.
 - No se realizaron cargas masivas ni cambios de datos de producción durante el desarrollo. No se certificó una revisión visual en navegador para esta ampliación.
+
+
+## Limpieza de toda la lista negra
+
+El botón **Eliminar todas las cédulas** está disponible para administración central.
+Revisa el total global de registros activos e inactivos, independiente de búsqueda,
+estado o paginación, y exige motivo y confirmación explícita antes de ejecutar.
+`GET /api/lista-negra/limpiar` devuelve el resumen y su huella; `POST` confirma la
+operación con esa huella, motivo y UUID. Ambas rutas requieren el acceso central
+existente. La escritura valida además el origen usando el control compartido.
+
+La limpieza es una eliminación lógica: marca `eliminadaAt`, desactiva el bloqueo
+y oculta el registro en todos los filtros del listado. No borra clientes, créditos,
+solicitudes ni historial. Cada cédula recibe un evento inmutable `ELIMINAR`, con
+el antes, el después, motivo y administrador. `ListaNegraLimpieza` conserva el
+recibo inmutable de la operación. Todo se guarda en una sola transacción.
+Registrar posteriormente la misma cédula, individualmente o por lote, elimina la
+marca de borrado y crea el bloqueo habitual conservando la identidad y auditoría.
+
+Si la lista cambió desde la revisión, se rechaza con 409 sin eliminar registros y
+la pantalla exige revisar el nuevo total. Un fallo deja visible el error y permite
+reintentar con el mismo UUID; si la operación ya terminó, devuelve su recibo sin
+afectar registros añadidos posteriormente. Las altas individuales y masivas usan
+un cerrojo compartido global antes de los cerrojos por cédula. La limpieza usa el
+mismo cerrojo global en modo exclusivo y los cerrojos por cédula en orden, también
+compartidos con ventas y consultas. Las reglas restantes de aprobación no cambian.
+
+La ampliación del esquema está incluida en `ensure-document-blacklist-schema.mjs`,
+que ya ejecuta el predeploy. La migración por sí sola no limpia ningún registro.
+Publicar esta ampliación tampoco ejecuta la limpieza: debe confirmarla el
+administrador desde la pantalla.
+
+### Verificación de limpieza global (25 de septiembre de 2026)
+
+- 18 pruebas específicas aprobadas: permisos, origen/proxy, confirmación, límites
+  de petición, interacción, cancelación, doble clic, reintento y conflicto de vista
+  previa. PostgreSQL real verifica todas las páginas y estados, historial,
+  reversión completa, idempotencia, reingreso individual/masivo y concurrencia.
+- La integración de limpieza usa `BLACKLIST_CLEAR_TEST_DATABASE_URL`, restringida
+  a localhost y la base `blacklist_test_clear`, separada de las otras suites porque
+  la operación afecta a toda su lista. Todos los registros son sintéticos.
+- Compilación de producción y lint de todos los archivos modificados aprobados.
+  API compilada en localhost: GET y POST sin sesión devuelven 401.
+- Regresión del módulo ejecutada con `--test-concurrency=1`: 122 aprobadas y
+  cuatro fallos previos, reproducidos sobre
+  `3c79e5ea` sin estos cambios: dos en `document-blacklist-credit-gates.test.mjs`
+  (fixture de reintento y `dailyQuotaReservation`) y dos en
+  `document-blacklist-draft-locks.test.mjs` (`isCompleteImei` ausente del fixture).
+- El lint global encuentra errores en recursos PDF generados y en
+  `tests/ares-commercial-admin.test.mjs`, ajenos a este cambio.
+- No se han limpiado registros de producción. Las pruebas de interfaz ejecutan
+  el componente; no sustituyen una revisión visual en navegador.

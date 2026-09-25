@@ -8,6 +8,7 @@ datasource db {
 }
 
 model ListaNegraDocumento {
+  eliminadaAt DateTime? @db.Timestamptz(6)
   id String @id @db.Uuid
   documento String @unique @db.VarChar(13)
   motivo String
@@ -45,6 +46,17 @@ model ListaNegraDocumentoEvento {
 }
 
 model ListaNegraImportacion {
+  id String @id @db.Uuid
+  requestHash String @db.Char(64)
+  actorUserId Int
+  actorName String
+  motivo String
+  result Json
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  actor Usuario @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+}
+
+model ListaNegraLimpieza {
   id String @id @db.Uuid
   requestHash String @db.Char(64)
   actorUserId Int
@@ -217,6 +229,7 @@ model Usuario {
   bloqueosDocumentoActualizados ListaNegraDocumento[] @relation("BlacklistUpdatedBy")
   eventosListaNegra ListaNegraDocumentoEvento[]
   importacionesListaNegra ListaNegraImportacion[]
+  limpiezasListaNegra ListaNegraLimpieza[]
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
 }
