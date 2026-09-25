@@ -48,6 +48,7 @@ import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 type MassCreditInputRow = {
   aliado: string;
   cedula: string;
+  numeroCreditoSadmin: string;
   cliente: string;
   cuota: string;
   fecha: string;
@@ -70,6 +71,7 @@ type ValidationRow = {
   normalized: {
     aliado: string;
     cedula: string;
+    numeroCreditoSadmin: string;
     cliente: string;
     cuota: number;
     fecha: string | null;
@@ -143,11 +145,13 @@ const FIELD_ORDER: FieldKey[] = [
   "plazo",
   "frecuencia",
   "fechaPago",
+  "numeroCreditoSadmin",
 ];
 
 const FIELD_LABELS: Record<FieldKey, string> = {
   aliado: "ALIADO",
   cedula: "CEDULA",
+  numeroCreditoSadmin: "Número de crédito en SADMIN",
   cliente: "CLIENTE",
   cuota: "CUOTA",
   fecha: "FECHA",
@@ -180,6 +184,7 @@ const TEMPLATE_EXAMPLE_ROW = [
   "12",
   "CATORCENAL",
   "2026-07-11",
+  "00012345",
 ];
 const TEMPLATE_ROWS = [TEMPLATE_HEADER, TEMPLATE_EXAMPLE_ROW.join("\t")].join("\n");
 const TEMPLATE_CSV = [
@@ -191,6 +196,9 @@ const HEADER_ALIASES: Record<string, FieldKey> = {
   aliado: "aliado",
   cedula: "cedula",
   ccdocumento: "cedula",
+  numerodecreditoensadmin: "numeroCreditoSadmin",
+  numerocreditosadmin: "numeroCreditoSadmin",
+  numerocreditoensadmin: "numeroCreditoSadmin",
   cliente: "cliente",
   cuota: "cuota",
   fecha: "fecha",
@@ -266,6 +274,7 @@ function emptyRow(): MassCreditInputRow {
   return {
     aliado: "",
     cedula: "",
+    numeroCreditoSadmin: "",
     cliente: "",
     cuota: "",
     fecha: "",
@@ -351,11 +360,11 @@ function csvCell(value: unknown) {
   return /[;"\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-async function postRows(rows: MassCreditInputRow[], commit: boolean) {
+async function postRows(rows: MassCreditInputRow[], commit: boolean, requestId?: string) {
   const response = await fetch("/api/creditos/masivos", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ commit, rows }),
+    body: JSON.stringify({ commit, rows, requestId, sadminConfirmed: commit }),
   });
   const data = (await response.json().catch(() => null)) as ValidationResponse | null;
 
@@ -387,6 +396,9 @@ export default function MassCreditImportConsole() {
   const [notice, setNotice] = useState("");
   const [previewFilter, setPreviewFilter] = useState<PreviewFilter>("all");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [creationFailed, setCreationFailed] = useState(false);
+  const pendingRequests = useRef<Partial<Record<InputMode, { payload: string; id: string }>>>({});
+  const creatingRef = useRef(false);
 
   const parsedRows = useMemo(() => parseRows(rawText), [rawText]);
   const bulkRows = useMemo(
@@ -406,6 +418,7 @@ export default function MassCreditImportConsole() {
 
   const setModeValidation = (target: InputMode, value: ValidationResponse | null) => {
     setValidations((current) => ({ ...current, [target]: value }));
+    setCreationFailed(false);
   };
 
   const sedesById = useMemo(() => {
@@ -514,6 +527,7 @@ export default function MassCreditImportConsole() {
   const switchMode = (nextMode: InputMode) => {
     if (loading || nextMode === mode) return;
     setMode(nextMode);
+    setCreationFailed(false);
     setPreviewFilter("all");
     setNotice("");
   };
@@ -625,23 +639,33 @@ export default function MassCreditImportConsole() {
   };
 
   const createCredits = async () => {
-    if (!canCreate) return;
+    if (!canCreate || creatingRef.current) return;
+    creatingRef.current = true;
     try {
       setLoading("create");
       setNotice("");
-      const data = await postRows(activeRows, true);
+      const payload = JSON.stringify(activeRows);
+      if (pendingRequests.current[mode]?.payload !== payload) {
+        pendingRequests.current[mode] = { payload, id: crypto.randomUUID() };
+      }
+      const data = await postRows(activeRows, true, pendingRequests.current[mode]!.id);
       setModeValidation(mode, data);
-      setNotice(`Lote ${data.batchId || ""}: ${data.created || 0} credito(s) creados.`);
+      setPreviewFilter(data.summary.invalid ? "errors" : "all");
+      setNotice(data.commit
+        ? `${data.created || 0} crédito(s) creados con su número SADMIN confirmado.`
+        : `${data.summary.invalid} fila(s) requieren corrección. No se creó ningún crédito.`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "No se pudo crear");
+      setCreationFailed(true);
+      setNotice(error instanceof Error ? error.message : "No se pudo confirmar el guardado. Reintenta la misma operación.");
     } finally {
       setLoading(null);
       setConfirmOpen(false);
+      creatingRef.current = false;
     }
   };
 
   const downloadTemplate = () => {
-    const blob = new Blob([TEMPLATE_CSV], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob(["\uFEFF", TEMPLATE_CSV], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -653,13 +677,14 @@ export default function MassCreditImportConsole() {
 
   const downloadResult = () => {
     if (!validation?.rows.length) return;
-    const header = ["FILA", "ESTADO", "FOLIO", "CLIENTE", "CEDULA", "SEDE", "VENDEDOR", "CREDITO", "CUOTA", "NOTAS"];
+    const header = ["FILA", "ESTADO", "FOLIO", "CLIENTE", "CEDULA", "Número de crédito en SADMIN", "SEDE", "VENDEDOR", "CREDITO", "CUOTA", "NOTAS"];
     const rows = validation.rows.map((row) => [
       row.rowNumber,
       row.createdFolio ? "CREADO" : row.ok ? "VALIDO" : "ERROR",
       row.createdFolio || "",
       row.normalized.cliente,
       row.normalized.cedula,
+      row.normalized.numeroCreditoSadmin,
       row.normalized.sede,
       row.normalized.vendedor,
       row.normalized.valorCredito,
@@ -667,7 +692,7 @@ export default function MassCreditImportConsole() {
       [...row.errors, ...row.warnings].join(" | "),
     ]);
     const content = [header, ...rows].map((row) => row.map(csvCell).join(";")).join("\n");
-    const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob(["\uFEFF", content], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -838,6 +863,7 @@ export default function MassCreditImportConsole() {
 
               <FormSection icon={UsersRound} title="Cliente" description="Identificacion y datos de contacto.">
                 <ManualField label="Fecha" type="date" value={manualRow.fecha} onChange={(value) => updateManualField("fecha", value)} />
+                <ManualField label="Número de crédito en SADMIN" value={manualRow.numeroCreditoSadmin} onChange={(value) => updateManualField("numeroCreditoSadmin", value)} />
                 <ManualField label="Cedula" inputMode="numeric" value={manualRow.cedula} onChange={(value) => updateManualField("cedula", value)} />
                 <ManualField label="Cliente" value={manualRow.cliente} onChange={(value) => updateManualField("cliente", value)} />
                 <ManualField label="Telefono" inputMode="tel" value={manualRow.telefono} onChange={(value) => updateManualField("telefono", value)} />
@@ -906,7 +932,7 @@ export default function MassCreditImportConsole() {
               title={createDisabledReason || undefined}
             >
               {loading === "create" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" strokeWidth={1.8} />}
-              {loading === "create" ? "Creando" : mode === "bulk" ? "Crear creditos" : "Crear credito"}
+              {loading === "create" ? "Creando" : creationFailed ? "Reintentar guardado" : mode === "bulk" ? "Crear creditos" : "Crear credito"}
             </Button>
             <Button variant="ghost" onClick={clearCurrentMode} disabled={Boolean(loading)}>
               <Trash2 className="h-4 w-4" strokeWidth={1.8} />
@@ -983,7 +1009,7 @@ export default function MassCreditImportConsole() {
             <table className="min-w-[1120px] w-full text-left text-xs">
               <thead className="bg-[#f5f7f8] text-[#475467]">
                 <tr>
-                  {['Fila', 'Estado', 'Cliente', 'Cedula', 'Sede', 'Vendedor', 'Credito', 'Cuota', 'Notas'].map((label) => (
+                  {['Fila', 'Estado', 'Cliente', 'Cedula', 'Número de crédito en SADMIN', 'Sede', 'Vendedor', 'Credito', 'Cuota', 'Notas'].map((label) => (
                     <th key={label} className="border-b border-[#d8dee5] px-4 py-3 font-black">{label}</th>
                   ))}
                 </tr>
@@ -1001,6 +1027,7 @@ export default function MassCreditImportConsole() {
                       </td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3 font-bold text-[#151a21]">{row.normalized.cliente || "-"}</td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.cedula || "-"}</td>
+                      <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.numeroCreditoSadmin || "-"}</td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.sede || "-"}</td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.vendedor || "-"}</td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3 font-black">{money(row.normalized.valorCredito)}</td>
@@ -1024,14 +1051,14 @@ export default function MassCreditImportConsole() {
 
       <div className="mt-4 flex items-center gap-2 border border-[#cfd9e3] bg-[#f6f9fc] px-4 py-3 text-sm text-[#475467]">
         <Info className="h-4 w-4 shrink-0 text-[#4f6f0c]" strokeWidth={1.8} />
-        <span>Corrige el CSV y vuelve a cargarlo cuando existan errores. La creacion se habilita solo tras una validacion completa.</span>
+        <span>El número SADMIN es obligatorio y debe conservar sus ceros iniciales. No se admiten números repetidos ni cédulas que ya tengan crédito. Corrige los errores antes de crear.</span>
       </div>
 
       <ConfirmDialog
         open={confirmOpen}
         title="Confirmar creacion de creditos"
-        description={`Se crearan ${validation?.summary.valid || activeRows.length} credito(s) por ${money(totalAmount)}, distribuidos en ${involvedAllies} aliado(s) y ${involvedStores} sede(s). Esta es una operacion financiera y no debe repetirse.`}
-        confirmLabel="Crear creditos"
+        description={`Se crearan ${validation?.summary.valid || activeRows.length} credito(s) por ${money(totalAmount)}, distribuidos en ${involvedAllies} aliado(s) y ${involvedStores} sede(s). Al confirmar, declaras que los créditos y sus codeudores ya existen en SADMIN y que verificaste cada número contra ese sistema. Se guardará tu confirmación con el crédito y su solicitud en FINSER PAY.`}
+        confirmLabel="Confirmar SADMIN y crear"
         busy={loading === "create"}
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => void createCredits()}

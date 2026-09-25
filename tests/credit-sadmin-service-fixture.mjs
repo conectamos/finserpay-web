@@ -51,13 +51,14 @@ export function databaseAdapter(pool) {
   } };
 }
 
-export async function prepareServiceFixture(pool, connectionString) {
+export async function prepareServiceFixture(pool, connectionString, expectedDatabase = "sadmin_service_test") {
+  assert.ok(["sadmin_service_test", "mass_credit_sadmin_test"].includes(expectedDatabase), "Base exclusiva de pruebas SADMIN");
   const url = new URL(connectionString);
   assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname), "Solo PostgreSQL local aislado");
-  assert.equal(url.pathname, "/sadmin_service_test", "Base exclusiva de servicio SADMIN");
+  assert.equal(url.pathname, "/" + expectedDatabase, "Base exclusiva de servicio SADMIN");
   const client = await pool.connect();
   try {
-    assert.equal((await client.query("SELECT current_database() AS name")).rows[0].name, "sadmin_service_test");
+    assert.equal((await client.query("SELECT current_database() AS name")).rows[0].name, expectedDatabase);
     const tables = ["CreditSadminEvent", "CreditSadminRegistration", "CreditoAbono", "CreditoAmortizacion", "Credito", "Sede", "Aliado", "Usuario", "CreditApprovalSharedSession", "CreditApprovalSharedGrant"];
     const existing = await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
     assert.ok(existing.rows.every(row => tables.includes(row.tablename)), "El fixture no borra tablas ajenas");

@@ -197,8 +197,9 @@ test("reanudación y pasos alternos conservan el bloqueo con respuesta explícit
     assert.match(source, /documentBlacklistErrorResponse\(error\)/);
   }
   const mass = await read("app/api/creditos/masivos/route.ts");
-  assert.match(mass, /\.sort\(\);[\s\S]*await assertDocumentNotBlacklisted\(document, tx\)/);
-  assert.ok(mass.indexOf("await assertDocumentNotBlacklisted(document, tx)") < mass.indexOf("await tx.credito.create("));
+  assert.match(mass, /\.sort\(\);[\s\S]*DOCUMENT_BLACKLIST:\$\{document\}/);
+  assert.ok(mass.indexOf("await validateRows(rows, tx)") < mass.indexOf("await tx.credito.create("));
+  assert.match(mass, /await assertDocumentNotBlacklisted\(row.normalized.cedula, db === prisma \? undefined : db as Prisma.TransactionClient\)/);
 });
 
 test("el bloqueo sobre una reserva pendiente la cierra antes de responder", () => {
