@@ -26,7 +26,7 @@ export async function buildMassCreditWorkbook(headers: string[], example: string
   guide.columns = [{ width: 110 }];
   ["FINSER PAY — Créditos masivos", "Reemplaza la fila de ejemplo en la hoja Creditos. Máximo 250 créditos.",
     "IMEI, cédula, teléfono y número SADMIN están configurados como Texto para conservar todos sus dígitos y ceros iniciales.",
-    "Pega valores en las celdas, conserva el formato Texto y verifica los 15 dígitos del IMEI antes de guardar.",
+    "Pega valores en las celdas, conserva el formato Texto y verifica que el IMEI original tenga 15 dígitos y un dígito de control válido antes de guardar.",
     "En Excel, usa Archivo → Guardar como → CSV UTF-8. Sube el archivo .csv generado a FINSER PAY.",
     "Al guardar, cierra el libro si Excel lo solicita. No vuelvas a abrir el CSV con doble clic; súbelo directamente a FINSER PAY.",
     "Si ves 1E+15, revisa la barra de fórmulas. Si el archivo ya perdió dígitos, recupera el IMEI desde su fuente original.",
