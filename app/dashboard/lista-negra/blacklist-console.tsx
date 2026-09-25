@@ -5,6 +5,7 @@ import { RefreshCw, Search, ShieldBan, ShieldCheck, X } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, PageHeader, Select, StatusPill, Tabs } from "@/app/_components/finser-ui";
 import BlacklistBulkPanel from "./blacklist-bulk-panel";
+import BlacklistClearPanel from "./blacklist-clear-panel";
 
 type BlacklistItem = {
   id: string;
@@ -54,11 +55,12 @@ export default function BlacklistConsole() {
   const [saving, setSaving] = useState(false);
   const [registrationMode, setRegistrationMode] = useState<"individual" | "bulk">("individual");
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
   const requestVersion = useRef(0);
   const submitting = useRef(false);
   const lastMutation = useRef<{ signature: string; mutationId: string } | null>(null);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
-  const busy = saving || Boolean(confirmation) || bulkBusy;
+  const busy = saving || Boolean(confirmation) || bulkBusy || clearBusy;
   const targetActive = editing ? !editing.activa : true;
 
   const loadRecords = useCallback(async () => {
@@ -217,6 +219,14 @@ export default function BlacklistConsole() {
         </div>
       ) : null}
 
+      <BlacklistClearPanel disabled={saving || Boolean(confirmation) || bulkBusy} onBusyChange={setClearBusy} onCompleted={() => {
+        setEditing(null);
+        setDocumento("");
+        setMotivo("");
+        lastMutation.current = null;
+        handleBulkCompleted();
+      }} />
+
       <Tabs className="mt-5" aria-label="Forma de registrar cédulas">
         <button type="button" id="blacklist-individual-tab" role="tab" aria-selected={registrationMode === "individual"} aria-controls="blacklist-individual-panel" disabled={busy} onClick={() => changeRegistrationMode("individual")}>Registro individual</button>
         <button type="button" id="blacklist-bulk-tab" role="tab" aria-selected={registrationMode === "bulk"} aria-controls="blacklist-bulk-panel" disabled={busy} onClick={() => changeRegistrationMode("bulk")}>Pegar lista</button>
@@ -255,7 +265,7 @@ export default function BlacklistConsole() {
       </Card>
 
       <Card className="mt-4 p-4 sm:p-5" id="blacklist-bulk-panel" role="tabpanel" aria-labelledby="blacklist-bulk-tab" hidden={registrationMode !== "bulk"}>
-        <BlacklistBulkPanel disabled={saving || Boolean(confirmation)} onBusyChange={setBulkBusy} onCompleted={handleBulkCompleted} />
+        <BlacklistBulkPanel disabled={saving || Boolean(confirmation) || clearBusy} onBusyChange={setBulkBusy} onCompleted={handleBulkCompleted} />
       </Card>
 
       <section className="mt-6" aria-labelledby="blacklist-records-title">

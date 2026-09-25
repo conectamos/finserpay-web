@@ -18,6 +18,7 @@ export type BlacklistItem = {
   documento: string;
   motivo: string;
   activa: boolean;
+  eliminadaAt?: Date | string | null;
   version: number;
   createdAt: Date | string;
   updatedAt: Date | string;
@@ -26,7 +27,7 @@ export type BlacklistItem = {
 };
 export type BlacklistActor = { id: number; nombre: string };
 const itemColumns = `"id", "documento", "motivo", "activa", "version",
-  "createdAt", "updatedAt", "createdByName", "updatedByName"`;
+  "createdAt", "updatedAt", "createdByName", "updatedByName", "eliminadaAt"`;
 
 async function lock(db: BlacklistDatabase, key: string) {
   // PostgreSQL returns void here; executeRaw must not try to deserialize it.
@@ -80,6 +81,7 @@ export async function mutateBlacklist(db: BlacklistDatabase, input: BlacklistMut
     if (previous[0].requestHash !== requestHash) throw new DocumentBlacklistError("MUTATION_CONFLICT", "La operación ya fue utilizada con otros datos.", 409);
     return { item: previous[0].after, idempotent: true };
   }
+  await db.$executeRawUnsafe("SELECT pg_advisory_xact_lock_shared(hashtext($1))", "DOCUMENT_BLACKLIST_LIST");
   const identified = input.kind === "UPDATE"
     ? await db.$queryRawUnsafe<BlacklistItem[]>(`SELECT ${itemColumns} FROM public."ListaNegraDocumento" WHERE "id" = $1::uuid`, input.id)
     : [];
@@ -97,7 +99,7 @@ export async function mutateBlacklist(db: BlacklistDatabase, input: BlacklistMut
   const id = before?.id ?? randomUUID();
   const saved = before
     ? await db.$queryRawUnsafe<BlacklistItem[]>(
-      `UPDATE public."ListaNegraDocumento" SET "activa"=$2, "motivo"=$3, "version"="version"+1,
+      `UPDATE public."ListaNegraDocumento" SET "activa"=$2, "eliminadaAt"=NULL, "motivo"=$3, "version"="version"+1,
        "updatedByUserId"=$4, "updatedByName"=$5, "updatedAt"=CURRENT_TIMESTAMP
        WHERE "id"=$1::uuid RETURNING ${itemColumns}`,
       id, activa, input.motivo, actor.id, actor.nombre,
@@ -134,7 +136,7 @@ export async function listBlacklist(db: BlacklistDatabase, filters: ReturnType<t
   const { q, estado, page } = filters;
   const pageSize = 25;
   const active = estado === "TODAS" ? null : estado === "ACTIVA";
-  const where = `WHERE ($1::text = '' OR "documento" LIKE '%' || $1 || '%') AND ($2::boolean IS NULL OR "activa" = $2)`;
+  const where = `WHERE "eliminadaAt" IS NULL AND ($1::text = '' OR "documento" LIKE '%' || $1 || '%') AND ($2::boolean IS NULL OR "activa" = $2)`;
   const counts = await db.$queryRawUnsafe<Array<{ total: number }>>(`SELECT COUNT(*)::int AS total FROM public."ListaNegraDocumento" ${where}`, q, active);
   const items = await db.$queryRawUnsafe<BlacklistItem[]>(`SELECT ${itemColumns} FROM public."ListaNegraDocumento" ${where} ORDER BY "updatedAt" DESC, "id" LIMIT $3 OFFSET $4`, q, active, pageSize, (page - 1) * pageSize);
   return { items, total: counts[0]?.total ?? 0, page, pageSize };
