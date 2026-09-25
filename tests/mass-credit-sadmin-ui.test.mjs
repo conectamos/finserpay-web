@@ -172,3 +172,47 @@ test("CSV with scientific IMEI shows its row error and blocks creation", async (
   assert.match(h.text(), /IMEI en notación científica/);
   assert.equal(button(h, "Crear creditos").props.disabled, true);
 });
+
+
+test("temporary-IMEI confirmation is CSV-only and persists from revalidation through confirmed creation", async () => {
+  const requests = [];
+  const h = mount(async (_url, options) => {
+    if (!options?.body) return Response.json(catalog);
+    const body = JSON.parse(options.body);
+    requests.push(body);
+    return Response.json(body.commit ? created(body.rows) : preview(body.rows));
+  });
+  await h.flush();
+  assert.match(h.text(), /Registrar lote histórico con IMEI temporales/);
+  button(h, "Credito individual").props.onClick(); await h.flush();
+  assert.doesNotMatch(h.text(), /Registrar lote histórico con IMEI temporales/);
+  button(h, "Carga de archivo").props.onClick(); await h.flush();
+
+  const [header, first] = csv.split("\n");
+  const second = first.replace("900001", "900002").replace("490154203237518", "100000000000001").replace("000ABC", "000DEF");
+  await upload(h, [header, first.replace("490154203237518", "100000000000000"), second].join("\n"));
+  button(h, "Validar archivo").props.onClick(); await h.flush();
+  assert.equal(requests[0].temporaryImeiConfirmed, false);
+  assert.equal(button(h, "Crear creditos").props.disabled, false);
+
+  const label = h.find(node => node.type === "label" && content(node).includes("Registrar lote histórico con IMEI temporales"));
+  const checkbox = nodes(label).find(node => node.type === "input" && node.props.type === "checkbox");
+  assert.ok(checkbox);
+  checkbox.props.onChange({ target: { checked: true } }); await h.flush();
+  assert.equal(button(h, "Crear creditos").props.disabled, true);
+  assert.match(h.text(), /Vuelve a validar el archivo/);
+
+  button(h, "Validar archivo").props.onClick(); await h.flush();
+  assert.equal(requests[1].temporaryImeiConfirmed, true);
+  assert.equal(requests[1].rows.length, 2);
+  assert.equal(button(h, "Crear creditos").props.disabled, false);
+  button(h, "Crear creditos").props.onClick(); await h.flush();
+  const dialog = h.find(node => node.type === "ConfirmDialog");
+  assert.equal(dialog.props.open, true);
+  assert.match(dialog.props.description, /IMEI de todo el lote son temporales/);
+  dialog.props.onConfirm(); await h.flush();
+  assert.equal(requests[2].commit, true);
+  assert.equal(requests[2].temporaryImeiConfirmed, true);
+  assert.equal(requests[2].sadminConfirmed, true);
+  assert.match(h.text(), /IMEI temporales pendientes de corrección administrativa/);
+});

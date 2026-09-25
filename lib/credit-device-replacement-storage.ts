@@ -292,6 +292,17 @@ function normalizeImei(value: unknown) {
   }
   return imei;
 }
+function normalizeTemporaryImportImei(value: unknown) {
+  const imei = String(value || "").trim();
+  if (!/^\d{15}$/.test(imei)) {
+    throw new CreditDeviceReplacementError(
+      "IMEI_INVALID",
+      "El IMEI temporal debe contener exactamente 15 dígitos.",
+      400
+    );
+  }
+  return imei;
+}
 function assertEligibleCredit(row: CreditContextRow) {
   // Los cambios de equipo por garantía no tienen un plazo de vencimiento.
   if (
@@ -671,9 +682,18 @@ async function assertImeiAvailable(
 
 export async function lockCreditDeviceReplacementImeiForCreditCreation(
   database: Prisma.TransactionClient,
-  input: { imei: string; solicitudId?: number | null }
+  input: { imei: string; solicitudId?: number | null; temporaryImportImei?: boolean }
 ) {
-  const imei = normalizeImei(input.imei);
+  if (input.temporaryImportImei === true && input.solicitudId != null) {
+    throw new CreditDeviceReplacementError(
+      "IMEI_INVALID",
+      "El IMEI temporal solo se permite en créditos históricos sin solicitud de origen.",
+      400
+    );
+  }
+  const imei = input.temporaryImportImei === true
+    ? normalizeTemporaryImportImei(input.imei)
+    : normalizeImei(input.imei);
   const solicitudId =
     Number.isSafeInteger(input.solicitudId) && Number(input.solicitudId) > 0
       ? Number(input.solicitudId)

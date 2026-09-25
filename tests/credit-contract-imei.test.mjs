@@ -34,3 +34,27 @@ test("el resolver conserva compatibilidad con snapshots y créditos legados", ()
     "352228709273867"
   );
 });
+
+test("un CSV histórico sin firma usa el IMEI corregido sin modificar el snapshot original", () => {
+  const credit = {
+    imei: "352228709273867",
+    deviceUid: "352228709273867",
+    contratoSnapshot: {
+      origen: {
+        tipo: "IMPORTACION_MASIVA",
+        sinFirmaDigital: true,
+        imeiTemporalPendienteCorreccion: false,
+      },
+      equipo: { imei: "100000000000001", imeiTemporal: true },
+    },
+  };
+  assert.equal(resolveContractualCreditImei(credit), "352228709273867");
+  credit.contratoSnapshot.origen.imeiTemporalPendienteCorreccion = true;
+  assert.equal(resolveContractualCreditImei(credit), "100000000000001");
+
+  credit.contratoSnapshot.origen.imeiTemporalPendienteCorreccion = false;
+  credit.contratoSnapshot.financiero = {
+    selloFinanciero: { snapshot: { imei: "354627901806291" } },
+  };
+  assert.equal(resolveContractualCreditImei(credit), "354627901806291");
+});

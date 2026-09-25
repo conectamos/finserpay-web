@@ -171,7 +171,8 @@ function serializeCredit(
     settled: Boolean(item.pazYSalvoEmitidoAt),
   });
   const factorySnapshotDetails = extractCreditFactorySnapshotDetails(
-    item.contratoSnapshot
+    item.contratoSnapshot,
+    { imei: item.imei, deviceUid: item.deviceUid }
   );
 
   return {
