@@ -1,3 +1,13 @@
+import { createHash } from "node:crypto";
+import { CreditApprovalError } from "@/lib/credit-approval-errors";
+import { DocumentBlacklistError } from "@/lib/document-blacklist-core";
+import {
+  importDocument,
+  importSadminNumber,
+  validateImportIdentities,
+  requireImportConfirmation,
+  registerImportedSadminCredit,
+} from "@/lib/mass-credit-sadmin";
 import { NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
@@ -32,6 +42,7 @@ const ALLOWED_FREQUENCIES = new Set(["CATORCENAL", "MENSUAL"]);
 type MassCreditInputRow = {
   aliado?: unknown;
   cedula?: unknown;
+  numeroCreditoSadmin?: unknown;
   cliente?: unknown;
   cuota?: unknown;
   fecha?: unknown;
@@ -49,6 +60,8 @@ type MassCreditInputRow = {
 
 type MassCreditBody = {
   commit?: boolean;
+  sadminConfirmed?: unknown;
+  requestId?: unknown;
   rows?: MassCreditInputRow[];
 };
 
@@ -81,6 +94,7 @@ type PreparedCreditRow = {
   aliadoId: number;
   aliadoNombre: string;
   cedula: string;
+  numeroCreditoSadmin: string;
   cliente: string;
   cuota: number;
   fecha: Date;
@@ -106,6 +120,7 @@ type ValidationRow = {
   normalized: {
     aliado: string;
     cedula: string;
+    numeroCreditoSadmin: string;
     cliente: string;
     cuota: number;
     fecha: string | null;
@@ -313,8 +328,8 @@ async function requireCentralAdmin() {
   return { ok: true as const, user };
 }
 
-async function loadCatalogs() {
-  const aliados = await prisma.aliado.findMany({
+async function loadCatalogs(db: typeof prisma | Prisma.TransactionClient = prisma) {
+  const aliados = await db.aliado.findMany({
     where: {
       activo: true,
       codigo: {
@@ -332,7 +347,7 @@ async function loadCatalogs() {
     },
   });
   const aliadoIds = aliados.map((item) => item.id);
-  const sedes = await prisma.sede.findMany({
+  const sedes = await db.sede.findMany({
     where: {
       activa: true,
       aliadoId: {
@@ -355,7 +370,7 @@ async function loadCatalogs() {
       },
     ],
   });
-  const assignments = await prisma.sedeVendedor.findMany({
+  const assignments = await db.sedeVendedor.findMany({
     where: {
       activo: true,
       sedeId: {
@@ -438,8 +453,9 @@ function getRowValue(row: MassCreditInputRow, key: keyof MassCreditInputRow) {
   return row[key];
 }
 
-async function validateRows(rows: MassCreditInputRow[]) {
-  const catalogs = await loadCatalogs();
+async function validateRows(rows: MassCreditInputRow[], db: typeof prisma | Prisma.TransactionClient = prisma) {
+  const identityErrors = await validateImportIdentities(db, rows);
+  const catalogs = await loadCatalogs(db);
   const { aliadoMap, sedeMap, vendedorMap } = buildLookupMaps(
     catalogs.aliados,
     catalogs.sedes,
@@ -464,7 +480,7 @@ async function validateRows(rows: MassCreditInputRow[]) {
   }
 
   const existingDevices = normalizedImeis.length
-    ? await prisma.credito.findMany({
+    ? await db.credito.findMany({
         where: {
           estado: {
             not: "ANULADO",
@@ -504,13 +520,14 @@ async function validateRows(rows: MassCreditInputRow[]) {
   const prepared: PreparedCreditRow[] = [];
   const resultRows: ValidationRow[] = rows.map((row, index) => {
     const rowNumber = index + 1;
-    const errors: string[] = [];
+    const errors: string[] = [...identityErrors[index]];
     const warnings: string[] = [];
     const aliadoInput = sanitizeText(getRowValue(row, "aliado"));
     const sedeInput = sanitizeText(getRowValue(row, "sede"));
     const vendedorInput = sanitizeText(getRowValue(row, "vendedor"));
     const cliente = sanitizeText(getRowValue(row, "cliente"));
-    const cedula = digitsOnly(getRowValue(row, "cedula"));
+    const cedula = importDocument(getRowValue(row, "cedula"));
+    const numeroCreditoSadmin = importSadminNumber(row.numeroCreditoSadmin);
     const telefono = normalizePhone(getRowValue(row, "telefono"));
     const referencia = sanitizeText(getRowValue(row, "referencia"));
     const imei = normalizedImeis[index] || "";
@@ -534,6 +551,7 @@ async function validateRows(rows: MassCreditInputRow[]) {
       : null;
 
     if (!fecha) errors.push("FECHA invalida");
+    if (!fechaPago) errors.push("FECHA DE PAGO invalida");
     if (!cedula || cedula.length < 5) errors.push("CEDULA obligatoria");
     if (!cliente) errors.push("CLIENTE obligatorio");
     if (!telefono || digitsOnly(telefono).length < 7) errors.push("TELEFONO invalido");
@@ -578,6 +596,7 @@ async function validateRows(rows: MassCreditInputRow[]) {
         aliadoId: aliado.id,
         aliadoNombre: aliado.nombre,
         cedula,
+        numeroCreditoSadmin,
         cliente,
         cuota,
         fecha,
@@ -602,6 +621,7 @@ async function validateRows(rows: MassCreditInputRow[]) {
       normalized: {
         aliado: aliado?.nombre || aliadoInput,
         cedula,
+        numeroCreditoSadmin,
         cliente,
         cuota,
         fecha: dateOnly(fecha),
@@ -622,9 +642,20 @@ async function validateRows(rows: MassCreditInputRow[]) {
     };
   });
 
+  for (const row of resultRows) {
+    if (!row.normalized.cedula) continue;
+    try {
+      await assertDocumentNotBlacklisted(row.normalized.cedula, db === prisma ? undefined : db as Prisma.TransactionClient);
+    } catch (error) {
+      if (!(error instanceof DocumentBlacklistError) || error.code === "DOCUMENT_BLACKLIST_UNAVAILABLE") throw error;
+      row.errors.push(error.message);
+      row.ok = false;
+    }
+  }
+
   return {
     catalogs,
-    prepared,
+    prepared: prepared.filter(row => resultRows[row.rowNumber - 1].ok),
     rows: resultRows,
     summary: {
       invalid: resultRows.filter((item) => !item.ok).length,
@@ -635,7 +666,7 @@ async function validateRows(rows: MassCreditInputRow[]) {
   };
 }
 
-async function generateUniqueFolio(usedFolios: Set<string>) {
+async function generateUniqueFolio(usedFolios: Set<string>, db: Prisma.TransactionClient) {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const folio = generateCreditFolio();
 
@@ -643,7 +674,7 @@ async function generateUniqueFolio(usedFolios: Set<string>) {
       continue;
     }
 
-    const existing = await prisma.credito.findUnique({
+    const existing = await db.credito.findUnique({
       where: {
         folio,
       },
@@ -747,6 +778,14 @@ export async function GET() {
   }
 }
 
+type ImportReceipt = { id: number; folio: string; row: ValidationRow; requestHash: string; batchId: string };
+function committedResponse(receipts: ImportReceipt[]) {
+  const rows = receipts.map(receipt => ({ ...receipt.row, createdCreditoId: receipt.id, createdFolio: receipt.folio }));
+  return { ok: true, commit: true, created: rows.length, batchId: receipts[0].batchId, rows,
+    summary: { created: rows.length, invalid: 0, total: rows.length, valid: rows.length,
+      warnings: rows.reduce((count, row) => count + row.warnings.length, 0) } };
+}
+
 export async function POST(req: Request) {
   try {
     const access = await requireCentralAdmin();
@@ -757,7 +796,10 @@ export async function POST(req: Request) {
 
     const body = (await req.json()) as MassCreditBody;
     const rows = Array.isArray(body.rows) ? body.rows : [];
-    const commit = Boolean(body.commit);
+    const commit = body.commit === true;
+    if (rows.some(row => !row || typeof row !== "object" || Array.isArray(row))) {
+      return NextResponse.json({ error: "Cada fila debe contener los campos de un crédito" }, { status: 400 });
+    }
 
     if (!rows.length) {
       return NextResponse.json(
@@ -773,40 +815,45 @@ export async function POST(req: Request) {
       );
     }
 
-    const validation = await validateRows(rows);
-    for (const row of validation.prepared) {
-      await assertDocumentNotBlacklisted(row.cedula);
+    if (!commit) {
+      const validation = await validateRows(rows);
+      return NextResponse.json({ ok: validation.summary.invalid === 0, commit: false, rows: validation.rows, summary: validation.summary });
     }
-
-    if (!commit || validation.summary.invalid > 0) {
-      return NextResponse.json({
-        ok: validation.summary.invalid === 0,
-        commit: false,
-        rows: validation.rows,
-        summary: validation.summary,
-      });
-    }
-
-    const batchId = new Date()
-      .toISOString()
-      .replace(/\D/g, "")
-      .slice(0, 14);
-    const createdAt = new Date();
-    const usedFolios = new Set<string>();
-    const foliosByRowNumber = new Map<number, string>();
-
-    for (const row of validation.prepared) {
-      foliosByRowNumber.set(row.rowNumber, await generateUniqueFolio(usedFolios));
-    }
-
+    const requestId = requireImportConfirmation(body);
+    const requestHash = createHash("sha256").update(JSON.stringify({ rows, userId: access.user.id })).digest("hex");
     await ensureCreditDeviceReplacementSchema();
-    const createdRows = await prisma.$transaction(async (tx) => {
-      const created: Array<{ id: number; folio: string; rowNumber: number }> = [];
-      const documents = [...new Set(validation.prepared.map((row) => row.cedula))].sort();
-      for (const document of documents) {
-        await assertDocumentNotBlacklisted(document, tx);
+    const result = await prisma.$transaction(async (tx) => {
+      // Replaying a confirmed request returns its original receipt, even after a
+      // lost HTTP response. The lock also serializes concurrent double clicks.
+      await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `MASS_CREDIT_IMPORT:${requestId}`);
+      const previous = await tx.$queryRawUnsafe<ImportReceipt[]>(`
+        SELECT "id","folio", "contratoSnapshot"#>'{origen,importReceipt}' AS row,
+          "contratoSnapshot"#>>'{origen,requestHash}' AS "requestHash",
+          "contratoSnapshot"#>>'{origen,batchId}' AS "batchId"
+        FROM "Credito" WHERE "contratoSnapshot"#>>'{origen,requestId}'=$1 ORDER BY "id"`, requestId);
+      if (previous.length) {
+        if (previous.length !== rows.length || previous.some(item => item.requestHash !== requestHash)) {
+          throw new CreditApprovalError("IMPORT_REQUEST_CONFLICT", "Esta operación ya se usó con otros datos. Valida una nueva carga.", 409);
+        }
+        return committedResponse(previous);
       }
-
+      // Same document lock used by ordinary credit creation and the blacklist.
+      const documents = [...new Set(rows.map(row => importDocument(row.cedula)).filter(Boolean))].sort();
+      for (const document of documents) {
+        await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `DOCUMENT_BLACKLIST:${document}`);
+      }
+      const validation = await validateRows(rows, tx);
+      if (validation.summary.invalid > 0) {
+        return { ok: false, commit: false, rows: validation.rows, summary: validation.summary };
+      }
+      const createdAt = new Date();
+      const batchId = requestId;
+      const usedFolios = new Set<string>();
+      const foliosByRowNumber = new Map<number, string>();
+      for (const row of validation.prepared) {
+        foliosByRowNumber.set(row.rowNumber, await generateUniqueFolio(usedFolios, tx));
+      }
+      const created: ImportReceipt[] = [];
       const rowsByImei = [...validation.prepared].sort((left, right) =>
         left.imei.localeCompare(right.imei)
       );
@@ -832,6 +879,10 @@ export async function POST(req: Request) {
           createdAt,
           createdByUserId: access.user.id,
           createdByUserName: access.user.nombre,
+        });
+        Object.assign(snapshot.origen, {
+          requestId, requestHash, numeroCreditoSadmin: row.numeroCreditoSadmin,
+          sadminConfirmation: "ADMIN_EXISTING_SADMIN", importReceipt: validation.rows[row.rowNumber - 1],
         });
         const credit = await tx.credito.create({
           data: {
@@ -878,41 +929,28 @@ export async function POST(req: Request) {
           },
         });
 
+        await registerImportedSadminCredit(tx, {
+          creditoId: credit.id, numeroCredito: row.numeroCreditoSadmin, actor: access.user,
+          requestId, rowNumber: row.rowNumber, cedula: row.cedula, confirmedAt: createdAt,
+        });
         created.push({
           folio: credit.folio,
           id: credit.id,
-          rowNumber: row.rowNumber,
+          row: validation.rows[row.rowNumber - 1], requestHash, batchId,
         });
       }
 
-      return created;
-    });
-    const createdMap = new Map(
-      createdRows.map((item) => [item.rowNumber, item])
-    );
-
-    return NextResponse.json({
-      ok: true,
-      commit: true,
-      created: createdRows.length,
-      batchId,
-      rows: validation.rows.map((row) => {
-        const created = createdMap.get(row.rowNumber);
-
-        return created
-          ? {
-              ...row,
-              createdCreditoId: created.id,
-              createdFolio: created.folio,
-            }
-          : row;
-      }),
-      summary: {
-        ...validation.summary,
-        created: createdRows.length,
-      },
-    });
+      return committedResponse(created);
+    }, { timeout: 60_000 });
+    return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof CreditApprovalError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    const duplicate = error as { code?: string; meta?: { code?: string } };
+    if (duplicate.code === "P2002" || duplicate.code === "23505" || duplicate.meta?.code === "23505") {
+      return NextResponse.json({ error: "Otro registro ya usa este número SADMIN o identificador. No se creó el lote. Valida nuevamente para revisar los errores por fila.", code: "IMPORT_DUPLICATE" }, { status: 409 });
+    }
     const blacklistResponse = documentBlacklistErrorResponse(error);
     if (blacklistResponse) return blacklistResponse;
     if (error instanceof CreditDeviceReplacementError) {
@@ -923,7 +961,7 @@ export async function POST(req: Request) {
     }
     console.error("ERROR CREANDO CREDITOS MASIVOS:", error);
     return NextResponse.json(
-      { error: "No se pudo procesar la carga de creditos masivos" },
+      { error: "No se pudo confirmar el guardado del crédito y su registro SADMIN. Reintenta la misma operación para recuperar el resultado sin duplicar créditos.", code: "IMPORT_SAVE_FAILED" },
       { status: 500 }
     );
   }

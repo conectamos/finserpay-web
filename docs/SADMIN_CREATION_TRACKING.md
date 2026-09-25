@@ -91,3 +91,44 @@ un número SADMIN sin guardar. Durante la generación muestra **Generando Excel.
 y conserva en pantalla la tabla, la búsqueda, la pestaña y la página actuales.
 Los errores de descarga se presentan junto a los controles sin borrar los datos
 ya consultados.
+
+## Importación CSV y crédito individual histórico
+
+Ambas pestañas de **Créditos masivos** requieren **Número de crédito en SADMIN**.
+La columna se añade al final de la plantilla para conservar el orden de los campos
+anteriores; los CSV anteriores deben completarla. Es texto, conserva ceros
+iniciales, admite hasta 80 caracteres y aparece en la vista previa y el resultado
+CSV. La API rechaza valores vacíos, caracteres de control y números duplicados
+(incluidos otros créditos y repeticiones dentro del mismo archivo, sin distinguir
+mayúsculas). También rechaza cédulas repetidas o con cualquier crédito existente
+en FINSER PAY, incluso pagado, sin importar aliado o IMEI. Los errores se muestran
+por fila y una sola fila inválida impide crear todo el lote.
+
+Antes de crear, el administrador central confirma explícitamente que los créditos,
+codeudores y números **ya existen y fueron verificados en SADMIN**. Esta es una
+confirmación humana auditada; no se envían solicitudes a una API externa.
+La API exige `sadminConfirmed: true` y un `requestId` UUID por operación.
+
+El crédito y su `CreditSadminRegistration` se guardan en la misma transacción,
+con las tres verificaciones, número y fecha de confirmación; `CreditSadminEvent`
+registra al administrador y el origen `ADMIN_EXISTING_SADMIN`. El snapshot
+conserva el número junto con los datos del cliente, lote y recibo de importación.
+El listado SADMIN y la solicitud de origen CREDIT del muro de Solicitudes ya
+consultan esa relación por `creditoId`: muestran el número confirmado sin crear
+otro borrador ni cambiar las reglas de aprobación o el estado financiero.
+
+La transacción vuelve a validar después de bloquear las cédulas con el mismo
+bloqueo usado en la creación ordinaria. El índice único vigente de SADMIN protege
+el número ante carreras. Si falla el crédito, registro o auditoría, todo el lote
+se revierte. **Reintentar guardado** conserva el identificador de operación:
+si el servidor había confirmado el lote pero se perdió la respuesta, devuelve el
+recibo original sin volver a crear créditos. Reutilizar ese identificador con
+otros datos o usuario devuelve conflicto. La interfaz sólo muestra éxito después
+de recibir `commit: true`; los rechazos posteriores a la vista previa vuelven a
+mostrar los errores por fila.
+
+Pruebas: `node --test tests/mass-credit-sadmin.test.mjs tests/mass-credit-sadmin-ui.test.mjs`.
+La integración PostgreSQL requiere `MASS_CREDIT_TEST_DATABASE_URL` en loopback y
+base exclusiva `mass_credit_sadmin_test`. Cubre ambos modos, consulta real del
+listado SADMIN, auditoría, cédulas y números duplicados, fallos transaccionales,
+reintentos y concurrencia. No debe apuntar a una base operativa.
