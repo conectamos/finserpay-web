@@ -174,7 +174,7 @@ const TEMPLATE_EXAMPLE_ROW = [
   "NOMBRE CLIENTE",
   "3001234567",
   "Samsung A15",
-  "123456789012345",
+  "490154203237518",
   "CONECTAMOS",
   "SEDE CENTRO",
   "VENDEDOR UNO",
@@ -1002,7 +1002,7 @@ export default function MassCreditImportConsole() {
               <h2 className="text-lg font-black text-[#151a21]">Vista previa y validacion</h2>
               <Badge>{validation?.summary.total || 0} registros</Badge>
             </div>
-            <p className="mt-1 text-sm text-[#667085]">La API conserva las reglas vigentes de validación y duplicidad. Revisa los 15 dígitos del IMEI antes de crear.</p>
+            <p className="mt-1 text-sm text-[#667085]">La API conserva las reglas vigentes de validación y duplicidad. Revisa los 15 dígitos y el dígito de control del IMEI antes de crear.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {(["all", "valid", "errors"] as PreviewFilter[]).map((filter) => (

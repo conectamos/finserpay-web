@@ -54,7 +54,7 @@ async function upload(h, csv) {
   h.find(node => node.type === "input" && node.props.type === "file").props.onChange({ target: { files: [{ name: "prueba.csv", size: csv.length, text: async () => csv }], value: "" } });
   await h.flush();
 }
-const csv = "FECHA;CEDULA;CLIENTE;TELEFONO;REFERENCIA;IMEI;ALIADO;SEDE;VENDEDOR;INICIAL;VALOR DEL CREDITO;CUOTA;PLAZO;FRECUENCIA;FECHA DE PAGO;Número de crédito en SADMIN\n2026-09-01;900001;CLIENTE;3001234567;EQUIPO;000000000000001;ALIADO;SEDE;VENDEDOR;0;600000;60000;12;CATORCENAL;2026-09-15;000ABC";
+const csv = "FECHA;CEDULA;CLIENTE;TELEFONO;REFERENCIA;IMEI;ALIADO;SEDE;VENDEDOR;INICIAL;VALOR DEL CREDITO;CUOTA;PLAZO;FRECUENCIA;FECHA DE PAGO;Número de crédito en SADMIN\n2026-09-01;900001;CLIENTE;3001234567;EQUIPO;490154203237518;ALIADO;SEDE;VENDEDOR;0;600000;60000;12;CATORCENAL;2026-09-15;000ABC";
 
 test("CSV template and preview preserve number; failed save offers retry with same ID and explicit confirmation", async () => {
   const requests = []; let fail = true;
@@ -132,7 +132,7 @@ test("Excel template helps prepare CSV with exact IMEI and leading zeros through
   assert.equal(sheet.getCell("F2").type, ExcelJS.ValueType.String);
   assert.equal(sheet.getCell("F2").numFmt, "@");
   assert.equal(sheet.getCell("F251").numFmt, "@");
-  sheet.getCell("F2").value = "001234567890123";
+  sheet.getCell("F2").value = "001234567890128";
   sheet.getCell("P2").value = "00000123";
   // CSV UTF-8 exported from Excel's text cells retains the original characters.
   const csvFromExcel = ["FECHA;CEDULA;CLIENTE;TELEFONO;REFERENCIA;IMEI;ALIADO;SEDE;VENDEDOR;INICIAL;VALOR DEL CREDITO;CUOTA;PLAZO;FRECUENCIA;FECHA DE PAGO;Número de crédito en SADMIN",
@@ -140,12 +140,12 @@ test("Excel template helps prepare CSV with exact IMEI and leading zeros through
   await upload(h, csvFromExcel);
   await waitFor(h, () => h.text().includes("prueba.csv cargado correctamente"));
   button(h, "Validar archivo").props.onClick(); await h.flush();
-  assert.equal(requests[0].rows[0].imei, "001234567890123");
+  assert.equal(requests[0].rows[0].imei, "001234567890128");
   assert.equal(requests[0].rows[0].numeroCreditoSadmin, "00000123");
-  assert.match(h.text(), /001234567890123/);
+  assert.match(h.text(), /001234567890128/);
   button(h, "Crear creditos").props.onClick(); await h.flush();
   h.find(n => n.type === "ConfirmDialog").props.onConfirm(); await h.flush();
-  assert.equal(requests[1].rows[0].imei, "001234567890123");
+  assert.equal(requests[1].rows[0].imei, "001234567890128");
   assert.equal(requests[1].sadminConfirmed, true);
 });
 
@@ -167,7 +167,7 @@ test("CSV with scientific IMEI shows its row error and blocks creation", async (
       errors: ["IMEI en notación científica. Recupera los 15 dígitos originales."], warnings: [] }],
       summary: { total: 1, valid: 0, invalid: 1, warnings: 0 } });
   });
-  await h.flush(); await upload(h, csv.replace("000000000000001", "1E+15"));
+  await h.flush(); await upload(h, csv.replace("490154203237518", "1E+15"));
   button(h, "Validar archivo").props.onClick(); await h.flush();
   assert.match(h.text(), /IMEI en notación científica/);
   assert.equal(button(h, "Crear creditos").props.disabled, true);

@@ -1,3 +1,5 @@
+import { isValidCreditDeviceReplacementImei } from "@/lib/credit-device-replacement";
+
 /** Identifiers must never be rounded, reconstructed from exponents or truncated. */
 export function readImportImei(input: unknown): { value: string; error: string | null } {
   const raw = typeof input === "string" || typeof input === "number" ? String(input).trim() : "";
@@ -8,6 +10,9 @@ export function readImportImei(input: unknown): { value: string; error: string |
   }
   if (!/^\d{15}$/.test(value)) {
     return { value: raw, error: "IMEI debe contener exactamente 15 dígitos. Usa formato Texto; no se completan ni recortan números." };
+  }
+  if (!isValidCreditDeviceReplacementImei(value)) {
+    return { value, error: "IMEI debe tener un dígito de control válido. Verifica el IMEI original del equipo; no inventes ni cambies el último dígito." };
   }
   return { value, error: null };
 }

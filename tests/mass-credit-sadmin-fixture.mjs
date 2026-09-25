@@ -24,10 +24,23 @@ export function load(path, mocks = {}) {
 export const approvalErrors = load("lib/credit-approval-errors.ts");
 export const blacklistErrors = load("lib/document-blacklist-core.ts");
 export const helper = load("lib/mass-credit-sadmin.ts", { "@/lib/credit-approval-errors": approvalErrors });
+const validImeiFor = index => {
+  const base = String(index).padStart(14, "0");
+  let sum = 0;
+  for (let position = 0; position < base.length; position += 1) {
+    let digit = Number(base[position]);
+    if (position % 2 === 1) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return base + String((10 - (sum % 10)) % 10);
+};
 export const sample = (index = 1, changes = {}) => ({
   aliado: "ALIADO PRUEBA", sede: "SEDE PRUEBA", vendedor: "VENDEDOR PRUEBA", cedula: `90000${index}`,
   numeroCreditoSadmin: `000-SADMIN-${index}`, cliente: `CLIENTE PRUEBA ${index}`, telefono: "3001234567",
-  referencia: "EQUIPO PRUEBA", imei: String(index).padStart(15, "0"), fecha: "2026-09-01", fechaPago: "2026-09-15",
+  referencia: "EQUIPO PRUEBA", imei: validImeiFor(index), fecha: "2026-09-01", fechaPago: "2026-09-15",
   inicial: "100000", valorCredito: "600000", cuota: "60000", plazo: "12", frecuencia: "CATORCENAL", ...changes,
 });
 export function routeFixture(db, options = {}) {
