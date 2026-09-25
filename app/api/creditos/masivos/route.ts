@@ -61,6 +61,7 @@ type MassCreditInputRow = {
 type MassCreditBody = {
   commit?: boolean;
   sadminConfirmed?: unknown;
+  temporaryImeiConfirmed?: unknown;
   requestId?: unknown;
   rows?: MassCreditInputRow[];
 };
@@ -453,7 +454,11 @@ function getRowValue(row: MassCreditInputRow, key: keyof MassCreditInputRow) {
   return row[key];
 }
 
-async function validateRows(rows: MassCreditInputRow[], db: typeof prisma | Prisma.TransactionClient = prisma) {
+async function validateRows(
+  rows: MassCreditInputRow[],
+  db: typeof prisma | Prisma.TransactionClient = prisma,
+  temporaryImeiConfirmed = false
+) {
   const identityErrors = await validateImportIdentities(db, rows);
   const catalogs = await loadCatalogs(db);
   const { aliadoMap, sedeMap, vendedorMap } = buildLookupMaps(
@@ -461,7 +466,7 @@ async function validateRows(rows: MassCreditInputRow[], db: typeof prisma | Pris
     catalogs.sedes,
     catalogs.assignments
   );
-  const imeiResults = rows.map((row) => readImportImei(getRowValue(row, "imei")));
+  const imeiResults = rows.map((row) => readImportImei(getRowValue(row, "imei"), { allowTemporaryImei: temporaryImeiConfirmed }));
   const normalizedImeis = imeiResults.map((result) => result.value);
   const duplicateImeis = new Set<string>();
   const seenImeis = new Set<string>();
@@ -556,6 +561,9 @@ async function validateRows(rows: MassCreditInputRow[], db: typeof prisma | Pris
     if (!telefono || digitsOnly(telefono).length < 7) errors.push("TELEFONO invalido");
     if (!referencia) errors.push("REFERENCIA obligatoria");
     if (imeiResults[index].error) errors.push(imeiResults[index].error);
+    if (temporaryImeiConfirmed && !imeiResults[index].error) {
+      warnings.push("IMEI temporal pendiente de corrección con el IMEI original del equipo");
+    }
     if (imei && duplicateImeis.has(imei)) errors.push("IMEI repetido en la carga");
 
     const existingFolio = existingDeviceMap.get(imei);
@@ -796,6 +804,7 @@ export async function POST(req: Request) {
     const body = (await req.json()) as MassCreditBody;
     const rows = Array.isArray(body.rows) ? body.rows : [];
     const commit = body.commit === true;
+    const temporaryImeiConfirmed = body.temporaryImeiConfirmed === true;
     if (rows.some(row => !row || typeof row !== "object" || Array.isArray(row))) {
       return NextResponse.json({ error: "Cada fila debe contener los campos de un crédito" }, { status: 400 });
     }
@@ -814,12 +823,22 @@ export async function POST(req: Request) {
       );
     }
 
+    if (temporaryImeiConfirmed && rows.length < 2) {
+      return NextResponse.json(
+        { error: "El IMEI temporal solo se permite en una carga histórica de al menos dos créditos.", code: "TEMPORARY_IMEI_BULK_ONLY" },
+        { status: 400 }
+      );
+    }
+
     if (!commit) {
-      const validation = await validateRows(rows);
+      const validation = await validateRows(rows, prisma, temporaryImeiConfirmed);
       return NextResponse.json({ ok: validation.summary.invalid === 0, commit: false, rows: validation.rows, summary: validation.summary });
     }
     const requestId = requireImportConfirmation(body);
-    const requestHash = createHash("sha256").update(JSON.stringify({ rows, userId: access.user.id })).digest("hex");
+    const requestHash = createHash("sha256").update(JSON.stringify({
+      rows, userId: access.user.id,
+      ...(temporaryImeiConfirmed ? { temporaryImeiConfirmed: true } : {}),
+    })).digest("hex");
     await ensureCreditDeviceReplacementSchema();
     const result = await prisma.$transaction(async (tx) => {
       // Replaying a confirmed request returns its original receipt, even after a
@@ -841,7 +860,7 @@ export async function POST(req: Request) {
       for (const document of documents) {
         await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `DOCUMENT_BLACKLIST:${document}`);
       }
-      const validation = await validateRows(rows, tx);
+      const validation = await validateRows(rows, tx, temporaryImeiConfirmed);
       if (validation.summary.invalid > 0) {
         return { ok: false, commit: false, rows: validation.rows, summary: validation.summary };
       }
@@ -860,6 +879,7 @@ export async function POST(req: Request) {
         await lockCreditDeviceReplacementImeiForCreditCreation(tx, {
           imei: row.imei,
           solicitudId: null,
+          temporaryImportImei: temporaryImeiConfirmed,
         });
       }
 
@@ -881,8 +901,10 @@ export async function POST(req: Request) {
         });
         Object.assign(snapshot.origen, {
           requestId, requestHash, numeroCreditoSadmin: row.numeroCreditoSadmin,
+          ...(temporaryImeiConfirmed ? { imeiTemporalPendienteCorreccion: true } : {}),
           sadminConfirmation: "ADMIN_EXISTING_SADMIN", importReceipt: validation.rows[row.rowNumber - 1],
         });
+        if (temporaryImeiConfirmed) Object.assign(snapshot.equipo, { imeiTemporal: true });
         const credit = await tx.credito.create({
           data: {
             folio,

@@ -26,6 +26,23 @@ export function resolveContractualCreditImei(
   const seal = record(financial.selloFinanciero);
   const sealedTerms = record(seal.snapshot);
   const equipment = record(snapshot.equipo);
+  const origin = record(snapshot.origen);
+  const currentImei = text(credit.imei);
+
+  // Historical CSV imports have no signed contract in FINSER PAY. Once their
+  // temporary IMEI is corrected, documents use the verified operational IMEI
+  // while the original CSV value remains frozen in the import snapshot.
+  if (
+    text(origin.tipo) === "IMPORTACION_MASIVA" &&
+    origin.sinFirmaDigital === true &&
+    origin.imeiTemporalPendienteCorreccion === false &&
+    equipment.imeiTemporal === true &&
+    !text(sealedTerms.imei) &&
+    currentImei &&
+    currentImei === text(credit.deviceUid)
+  ) {
+    return currentImei;
+  }
 
   return (
     text(sealedTerms.imei) ||

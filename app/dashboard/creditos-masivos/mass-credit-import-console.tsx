@@ -360,11 +360,11 @@ function csvCell(value: unknown) {
   return /[;"\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-async function postRows(rows: MassCreditInputRow[], commit: boolean, requestId?: string) {
+async function postRows(rows: MassCreditInputRow[], commit: boolean, requestId?: string, temporaryImeiConfirmed = false) {
   const response = await fetch("/api/creditos/masivos", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ commit, rows, requestId, sadminConfirmed: commit }),
+    body: JSON.stringify({ commit, rows, requestId, sadminConfirmed: commit, temporaryImeiConfirmed }),
   });
   const data = (await response.json().catch(() => null)) as ValidationResponse | null;
 
@@ -397,6 +397,7 @@ export default function MassCreditImportConsole() {
   const [previewFilter, setPreviewFilter] = useState<PreviewFilter>("all");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [creationFailed, setCreationFailed] = useState(false);
+  const [temporaryImeiConfirmed, setTemporaryImeiConfirmed] = useState(false);
   const pendingRequests = useRef<Partial<Record<InputMode, { payload: string; id: string }>>>({});
   const creatingRef = useRef(false);
 
@@ -413,6 +414,7 @@ export default function MassCreditImportConsole() {
   );
   const activeRows = mode === "single" ? (hasManualCreditData(manualRow) ? [manualRow] : []) : bulkRows;
   const validation = validations[mode];
+  const temporaryImeiForRequest = mode === "bulk" && temporaryImeiConfirmed;
   const totalAmount = activeRows.reduce((sum, row) => sum + inputMoney(row.valorCredito), 0);
   const assignmentValues = mode === "bulk" ? bulkDefaults : manualRow;
 
@@ -579,6 +581,7 @@ export default function MassCreditImportConsole() {
 
       setRawText(text);
       setFileInfo({ name: file.name, selectedAt: new Date(), size: file.size });
+      setTemporaryImeiConfirmed(false);
       setModeValidation("bulk", null);
       setMode("bulk");
       setPreviewFilter("all");
@@ -606,6 +609,7 @@ export default function MassCreditImportConsole() {
   const loadExample = () => {
     setRawText(TEMPLATE_ROWS);
     setFileInfo({ name: "ejemplo-creditos-masivos.csv", selectedAt: new Date(), size: TEMPLATE_ROWS.length });
+    setTemporaryImeiConfirmed(false);
     setModeValidation("bulk", null);
     setNotice("Ejemplo cargado. Reemplaza sus datos antes de crear creditos.");
   };
@@ -613,6 +617,7 @@ export default function MassCreditImportConsole() {
   const removeBulkFile = () => {
     setRawText(TEMPLATE_HEADER);
     setFileInfo(null);
+    setTemporaryImeiConfirmed(false);
     setModeValidation("bulk", null);
     setNotice("");
     setPreviewFilter("all");
@@ -623,7 +628,7 @@ export default function MassCreditImportConsole() {
     try {
       setLoading("validate");
       setNotice("");
-      const data = await postRows(activeRows, false);
+      const data = await postRows(activeRows, false, undefined, temporaryImeiForRequest);
       setModeValidation(mode, data);
       setPreviewFilter(data.summary.invalid ? "errors" : "all");
       setNotice(
@@ -645,15 +650,15 @@ export default function MassCreditImportConsole() {
     try {
       setLoading("create");
       setNotice("");
-      const payload = JSON.stringify(activeRows);
+      const payload = JSON.stringify({ rows: activeRows, temporaryImeiConfirmed: temporaryImeiForRequest });
       if (pendingRequests.current[mode]?.payload !== payload) {
         pendingRequests.current[mode] = { payload, id: crypto.randomUUID() };
       }
-      const data = await postRows(activeRows, true, pendingRequests.current[mode]!.id);
+      const data = await postRows(activeRows, true, pendingRequests.current[mode]!.id, temporaryImeiForRequest);
       setModeValidation(mode, data);
       setPreviewFilter(data.summary.invalid ? "errors" : "all");
       setNotice(data.commit
-        ? `${data.created || 0} crédito(s) creados con su número SADMIN confirmado.`
+        ? `${data.created || 0} crédito(s) creados con su número SADMIN confirmado.${temporaryImeiForRequest ? " IMEI temporales pendientes de corrección administrativa." : ""}`
         : `${data.summary.invalid} fila(s) requieren corrección. No se creó ningún crédito.`);
     } catch (error) {
       setCreationFailed(true);
@@ -861,6 +866,23 @@ export default function MassCreditImportConsole() {
                 {!selectedAliado ? (
                   <p className="mt-3 text-xs text-[#667085]">Selecciona primero un aliado para habilitar sede y vendedor.</p>
                 ) : null}
+                <label className="mt-5 flex items-start gap-3 border-t border-[var(--fp-border)] pt-4 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={temporaryImeiConfirmed}
+                    disabled={loading !== null || Boolean(validation?.commit)}
+                    onChange={(event) => {
+                      setTemporaryImeiConfirmed(event.target.checked);
+                      setModeValidation("bulk", null);
+                      setNotice("Vuelve a validar el archivo antes de crear los créditos.");
+                    }}
+                    className="mt-1 h-4 w-4 shrink-0 accent-[var(--fp-lime)]"
+                  />
+                  <span>
+                    <strong className="block text-[var(--fp-graphite)]">Registrar lote histórico con IMEI temporales</strong>
+                    <span className="mt-1 block text-[var(--fp-muted)]">Todos los créditos del archivo quedarán marcados como pendientes de corrección de IMEI. Se exigen 15 dígitos y números únicos. La corrección posterior se hace por el proceso administrativo de IMEI históricos; Cambio por garantía no aplica.</span>
+                  </span>
+                </label>
                 <details className="group mt-5 border-t border-[#e4e7ec] pt-4">
                   <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-bold text-[#344054] [&::-webkit-details-marker]:hidden">
                     <ChevronDown className="h-4 w-4 transition group-open:rotate-180" strokeWidth={1.8} />
@@ -1085,7 +1107,7 @@ export default function MassCreditImportConsole() {
       <ConfirmDialog
         open={confirmOpen}
         title="Confirmar creacion de creditos"
-        description={`Se crearan ${validation?.summary.valid || activeRows.length} credito(s) por ${money(totalAmount)}, distribuidos en ${involvedAllies} aliado(s) y ${involvedStores} sede(s). Al confirmar, declaras que los créditos y sus codeudores ya existen en SADMIN y que verificaste cada número contra ese sistema. Se guardará tu confirmación con el crédito y su solicitud en FINSER PAY.`}
+        description={`Se crearan ${validation?.summary.valid || activeRows.length} credito(s) por ${money(totalAmount)}, distribuidos en ${involvedAllies} aliado(s) y ${involvedStores} sede(s). Al confirmar, declaras que los créditos y sus codeudores ya existen en SADMIN y que verificaste cada número contra ese sistema. Se guardará tu confirmación con el crédito y su solicitud en FINSER PAY.${temporaryImeiForRequest ? " Los IMEI de todo el lote son temporales y quedarán pendientes de corrección administrativa posterior." : ""}`}
         confirmLabel="Confirmar SADMIN y crear"
         busy={loading === "create"}
         onCancel={() => setConfirmOpen(false)}

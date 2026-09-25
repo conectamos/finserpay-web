@@ -74,6 +74,39 @@ test("PostgreSQL: CSV and individual creation, listing, atomic failures, replay 
     const audit = await pool.query('SELECT "actorUserId","payload" FROM "CreditSadminEvent"');
     assert.ok(audit.rows.every(row => row.actorUserId === 1 && row.payload.confirmation === "ADMIN_EXISTING_SADMIN"));
   });
+  await t.test("temporary-IMEI CSV creates audited credits pending correction and replays without duplicates", async () => {
+    const rows = [sample(50, { imei: "100000000000000" }), sample(51, { imei: "100000000000001" })];
+    const request = { ...commit(), temporaryImeiConfirmed: true };
+    const preview = await call(route, rows, { temporaryImeiConfirmed: true });
+    assert.equal(preview.data.summary.valid, 2);
+    assert.equal(preview.data.summary.warnings, 2);
+
+    const before = await counts();
+    const result = await call(route, rows, request);
+    assert.equal(result.status, 200);
+    assert.equal(result.data.created, 2);
+    assert.equal(result.data.summary.warnings, 2);
+    assert.deepEqual(await counts(), {
+      credits: before.credits + 2,
+      registrations: before.registrations + 2,
+      events: before.events + 2,
+    });
+    const saved = await pool.query('SELECT "clienteDocumento", "imei", "contratoSnapshot" AS snapshot FROM "Credito" WHERE "clienteDocumento" = ANY($1::text[]) ORDER BY "clienteDocumento"', rows.map(row => row.cedula));
+    assert.equal(saved.rows.length, 2);
+    for (const [index, row] of saved.rows.entries()) {
+      assert.equal(row.imei, rows[index].imei);
+      assert.equal(row.snapshot.origen.imeiTemporalPendienteCorreccion, true);
+      assert.equal(row.snapshot.equipo.imeiTemporal, true);
+    }
+    assert.equal((await list({ q: rows[0].numeroCreditoSadmin, status: "created" })).total, 1);
+    const replay = await call(route, rows, request);
+    assert.deepEqual(replay.data, result.data);
+    assert.deepEqual(await counts(), {
+      credits: before.credits + 2,
+      registrations: before.registrations + 2,
+      events: before.events + 2,
+    });
+  });
   await t.test("individual uses the same endpoint and appears in SADMIN with its number", async () => {
     const result = await call(route, [sample(3)], commit());
     assert.equal(result.data.created, 1);

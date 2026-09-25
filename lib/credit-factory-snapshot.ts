@@ -1,3 +1,5 @@
+import { resolveContractualCreditImei } from "./credit-contract-imei";
+
 export type CreditFactorySnapshotDetails = {
   clienteEstadoCivil: string | null;
   clienteEstrato: string | null;
@@ -72,12 +74,31 @@ function firstNumber(...values: unknown[]) {
 }
 
 export function extractCreditFactorySnapshotDetails(
-  snapshot: unknown
+  snapshot: unknown,
+  currentCredit?: { imei?: unknown; deviceUid?: unknown }
 ): CreditFactorySnapshotDetails {
   const root = objectRecord(snapshot);
   const cliente = objectRecord(root?.cliente);
   const equipo = objectRecord(root?.equipo);
   const financiero = objectRecord(root?.financiero);
+  const origen = objectRecord(root?.origen);
+  const selloFinanciero = objectRecord(financiero?.selloFinanciero);
+  const terminosFirmados = objectRecord(selloFinanciero?.snapshot);
+  const imeiActual = optionalText(currentCredit?.imei);
+  const imeiCorregido =
+    origen?.tipo === "IMPORTACION_MASIVA" &&
+    origen.sinFirmaDigital === true &&
+    origen.imeiTemporalPendienteCorreccion === false &&
+    equipo?.imeiTemporal === true &&
+    !optionalText(terminosFirmados?.imei) &&
+    imeiActual &&
+    imeiActual === optionalText(currentCredit?.deviceUid)
+      ? optionalText(resolveContractualCreditImei({
+          contratoSnapshot: snapshot,
+          imei: currentCredit?.imei,
+          deviceUid: currentCredit?.deviceUid,
+        }))
+      : null;
   const cuotaInicial = optionalNumber(financiero?.cuotaInicial);
   const saldoBaseFinanciado = optionalNumber(financiero?.saldoBaseFinanciado);
   const valorEquipoTotal =
@@ -100,7 +121,7 @@ export function extractCreditFactorySnapshotDetails(
           .filter(Boolean)
           .join(" ")
       ),
-      imei: optionalText(equipo?.imei),
+      imei: imeiCorregido || optionalText(equipo?.imei),
       valorEquipoTotal,
       cuotaInicial,
       saldoBaseFinanciado,

@@ -1,0 +1,11 @@
+# IMEI temporales en créditos históricos
+
+La opción «Registrar lote histórico con IMEI temporales» está disponible solo para la carga CSV de al menos dos créditos y para un administrador central. Conserva la exigencia de 15 dígitos, unicidad de IMEI y las reglas vigentes de cédula, número SADMIN, aprobación y bloqueo de equipos. Omite únicamente el dígito de control del IMEI. La vista previa advierte en **todas** las filas del lote, incluso cuando un número temporal pasa el control por casualidad.
+
+El administrador confirma que los créditos y números ya existen en SADMIN. Cada crédito creado queda identificado con `contratoSnapshot.origen.imeiTemporalPendienteCorreccion=true` y `contratoSnapshot.equipo.imeiTemporal=true`. El IMEI temporal se conserva como dato histórico; no debe interpretarse como identificación física verificada. La importación mantiene su transacción, auditoría SADMIN y reintentos idempotentes.
+
+## Corrección posterior
+
+El flujo «Cambio por garantía» no aplica a estos créditos porque no tienen una solicitud de origen cerrada. El administrador central usa `POST /api/creditos/masivos/correcciones-imei` con filas que incluyen número SADMIN, cédula del cliente e IMEI definitivo. Primero envía `{ "commit": false, "rows": [{ "numeroCreditoSadmin": "...", "cedula": "...", "nuevoImei": "..." }] }` para obtener errores por fila. Después de verificar los IMEI reales de los equipos, confirma con `{ "commit": true, "confirmed": true, "requestId": "UUID-v4", "rows": [...] }`. Reutilizar el mismo `requestId` permite consultar el resultado sin duplicar cambios.
+
+Antes de modificar un crédito, la cédula se normaliza y se compara con la cédula vinculada a su número SADMIN. Una discrepancia bloquea todo el lote. La corrección exige IMEI definitivo con 15 dígitos y dígito de control válido, sin duplicados ni reservas. Actualiza `Credito.imei` y `deviceUid` de todo el lote en una transacción, marca la corrección como completada y deja el valor anterior, el nuevo, el crédito, el número SADMIN, la cédula y el administrador en la tabla inmutable `CreditMassImeiCorrection`. Si una fila falla, no se corrige ninguna. El snapshot original conserva el valor de importación para la auditoría; las vistas operativas deben usar el IMEI definitivo del crédito tras la corrección.

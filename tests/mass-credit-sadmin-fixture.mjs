@@ -56,7 +56,7 @@ export function routeFixture(db, options = {}) {
       ? { id: 1, nombre: "Admin sintético", rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY" } : options.user },
     "@/lib/credit-device-replacement-storage": {
       CreditDeviceReplacementError: class extends Error {}, ensureCreditDeviceReplacementSchema: async () => {},
-      lockCreditDeviceReplacementImeiForCreditCreation: async () => {},
+      lockCreditDeviceReplacementImeiForCreditCreation: async (_db, input) => { options.onImeiLock?.(input); },
     },
     "@/lib/credit-factory": {
       generateCreditFolio: () => `FC-${nativeRequire("node:crypto").randomUUID()}`,
