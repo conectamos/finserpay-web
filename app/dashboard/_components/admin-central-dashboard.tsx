@@ -64,10 +64,6 @@ function money(value: number) {
   return moneyFormatter.format(Math.round(Number(value || 0)));
 }
 
-function percent(value: number) {
-  return `${percentFormatter.format(Number.isFinite(value) ? value : 0)}%`;
-}
-
 function compactMoney(value: number) {
   const amount = Math.abs(Number(value || 0));
 
@@ -128,14 +124,14 @@ function MetricCard({ detail, icon: Icon, label, tone, value }: MetricCardProps)
   }[tone];
 
   return (
-    <article className="min-w-0 rounded-lg border border-[#d8dee6] bg-white p-4 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
+    <article className="@container/metric min-w-0 rounded-lg border border-[#d8dee6] bg-white p-4 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
       <div className="flex items-center gap-3">
         <span className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-full", tones.icon].join(" ")}>
           <Icon className="h-5 w-5" strokeWidth={1.8} />
         </span>
         <p className="min-w-0 text-sm font-medium text-[#344054]">{label}</p>
       </div>
-      <p className={["mt-4 whitespace-nowrap text-2xl font-black leading-none 2xl:text-[26px]", tones.value].join(" ")}>
+      <p className={["mt-4 break-words text-xl font-black leading-tight tabular-nums @min-[230px]/metric:text-2xl @min-[280px]/metric:text-[26px]", tones.value].join(" ")}>
         {value}
       </p>
       {detail ? (
@@ -390,51 +386,19 @@ export default function AdminCentralDashboard({
     1,
     ...data.creditPerformance.map((item) => item.value)
   );
-  const metricCards: MetricCardProps[] = [
-    {
-      detail: adminCentral ? `Capital colocado en ${data.activeCredits} creditos activos` : "Capital original invertido, incluidos los cerrados",
-      icon: WalletCards,
-      label: "Cartera activa",
-      tone: "teal",
-      value: money(adminCentral ? data.activePlacedCapital : data.investedCapital),
-    },
-    {
-      detail: "Creditos vigentes con saldo",
-      icon: CreditCard,
-      label: "Creditos activos",
-      tone: "teal",
-      value: String(data.activeCredits),
-    },
-    ...(!adminCentral ? [{
-      detail: "Finalizados al 100%",
-      icon: CircleCheck,
-      label: "Créditos cerrados",
-      tone: "neutral" as const,
-      value: String(data.closedCredits),
-    }] : []),
-    {
-      detail: `${data.monthlyPaymentCount} recaudos en ${data.monthLabel}`,
-      icon: Banknote,
-      label: "Recaudo del mes",
-      tone: "teal",
-      value: money(data.monthlyCollection),
-    },
-    {
-      detail: adminCentral ? `${compactMoney(data.healthyBalance)} sin mora` : undefined,
-      icon: CircleCheck,
-      label: "Cartera al dia",
-      tone: "green",
-      value: percent(data.healthyPercent),
-    },
-    {
-      detail: adminCentral
-        ? `${compactMoney(data.earlyBalance + data.criticalBalance)} en seguimiento`
-        : undefined,
-      icon: TriangleAlert,
-      label: "Mora",
-      tone: "red",
-      value: percent(data.delinquencyPercent),
-    },
+  const metricCards: MetricCardProps[] = adminCentral ? [
+    { label: "Capital colocado", value: money(data.investedCapital), icon: WalletCards, tone: "neutral" },
+    { label: "Cartera activa", value: money(data.activePlacedCapital), icon: Banknote, tone: "neutral" },
+    { label: "Total créditos", value: String(data.totalCredits), icon: Files, tone: "neutral" },
+    { label: "Créditos activos", value: String(data.activeCredits), icon: CreditCard, tone: "neutral" },
+    { label: "Créditos finalizados", value: String(data.closedCredits), icon: CircleCheck, tone: "green" },
+    { label: "Recaudo acumulado", value: money(data.accumulatedCollection), icon: Banknote, tone: "neutral" },
+  ] : [
+    { label: "Inversión", value: money(data.investedCapital), icon: WalletCards, tone: "teal" },
+    { label: "Total créditos", value: String(data.totalCredits), icon: Files, tone: "neutral" },
+    { label: "Créditos activos", value: String(data.activeCredits), icon: CreditCard, tone: "teal" },
+    { label: "Créditos cancelados", value: String(data.closedCredits), icon: CircleCheck, tone: "green" },
+    { label: "Recaudo acumulado", value: money(data.accumulatedCollection), icon: Banknote, tone: "teal" },
   ];
 
   return (
@@ -489,7 +453,7 @@ export default function AdminCentralDashboard({
           </div>
         </header>
 
-        <section className={adminCentral ? "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5" : "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 min-[1800px]:grid-cols-6"}>
+        <section className={adminCentral ? "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 min-[1800px]:grid-cols-6" : "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5"}>
           {metricCards.map((metric) => (
             <MetricCard key={metric.label} {...metric} />
           ))}

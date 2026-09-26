@@ -237,3 +237,19 @@ test("los nuevos totales no sustituyen saldos de salud ni mezclan mora temprana 
   assert.equal(result.healthyBalance + result.earlyBalance + result.criticalBalance, 2200);
   assert.equal(result.productHealth.IPHONE.totalBalance, 2200);
 });
+
+test("recaudo acumulado conserva históricos y pagados, sin abonos anulados ni otros aliados", async () => {
+  const credits = [credit(1), credit(2), credit(3, { allyId: 8 }), credit(4, { estado: "ANULADO" })];
+  const payments = [payment(1, 1, 200), payment(2, 2, 1000, { fechaAbono: new Date("2026-08-10T15:00:00Z") }),
+    payment(3, 1, 700, { estado: "ANULADO" }), payment(4, 3, 500), payment(5, 4, 400)];
+  for (const month of ["2026-08", "2026-09"]) {
+    const { result, calls } = await overview(credits, payments, { aliadoId: 7, month });
+    assert.equal(result.accumulatedCollection, 1200);
+    assert.equal(result.totalCredits, 2);
+    assert.equal(result.activeCredits, 1);
+    assert.equal(result.closedCredits, 1);
+    assert.equal(calls.find(call => call.operation === "paymentTotals").where.credito.sede.aliadoId, 7);
+  }
+  const { result: empty } = await overview([], []);
+  assert.equal(empty.accumulatedCollection, 0);
+});

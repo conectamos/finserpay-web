@@ -69,6 +69,10 @@ const AdminCentralDashboard = loadDashboard();
 const dashboardData = {
   activeCredits: 79,
   activePlacedCapital: 178_979_123,
+  investedCapital: 200_000_000,
+  totalCredits: 83,
+  closedCredits: 4,
+  accumulatedCollection: 35_000_000,
   alertsCount: 0,
   creditPerformance: [],
   criticalBalance: 0,
@@ -114,18 +118,25 @@ function renderDashboard(adminCentral) {
 test("el dashboard aliado oculta los detalles monetarios de cartera sana y seguimiento", () => {
   const html = renderDashboard(false);
 
-  assert.match(html, />100,0%<\/p>/);
-  assert.match(html, />0,0%<\/p>/);
+  const cards = html.match(/<article\b[\s\S]*?<\/article>/g) || [];
+  assert.equal(cards.length, 5);
+  for (const [index, label] of ["Inversión", "Total créditos", "Créditos activos", "Créditos cancelados", "Recaudo acumulado"].entries()) assert.ok(cards[index].includes(label));
+  for (const [index, value] of ["200.000.000", ">83<", ">79<", ">4<", "35.000.000"].entries()) assert.ok(cards[index].includes(value));
+  assert.doesNotMatch(cards.join(""), /Recaudo del mes|Cartera al dia|Capital original invertido/);
+
   assert.doesNotMatch(html, /\$ 351,4 M sin mora/);
   assert.doesNotMatch(html, /\$ 0 en seguimiento/);
   assert.doesNotMatch(html, /sin mora|en seguimiento/);
 });
 
-test("el dashboard central conserva los detalles monetarios de cartera", () => {
+test("el dashboard central muestra los seis indicadores solicitados", () => {
   const html = renderDashboard(true);
 
-  assert.match(html, /\$ 351,4 M sin mora/);
-  assert.match(html, /\$\s*0 en seguimiento/);
+  const cards = html.match(/<article\b[\s\S]*?<\/article>/g) || [];
+  assert.equal(cards.length, 6);
+  for (const [index, label] of ["Capital colocado", "Cartera activa", "Total créditos", "Créditos activos", "Créditos finalizados", "Recaudo acumulado"].entries()) assert.ok(cards[index].includes(label));
+  for (const [index, value] of ["200.000.000", "178.979.123", ">83<", ">79<", ">4<", "35.000.000"].entries()) assert.ok(cards[index].includes(value));
+  assert.doesNotMatch(cards.join(""), /Recaudo del mes|Cartera al dia|sin mora|en seguimiento/);
 });
 
 function findJsxLabel(sourceFile, expectedLabel) {

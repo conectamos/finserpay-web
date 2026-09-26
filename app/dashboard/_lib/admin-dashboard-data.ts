@@ -45,6 +45,7 @@ export type AdminDashboardOverview = {
   earlyPercent: number;
   monthLabel: string;
   monthKey: string;
+  accumulatedCollection: number;
   monthlyCollection: number;
   monthlyCreditCount: number;
   monthlyPaymentCount: number;
@@ -395,6 +396,7 @@ export async function getAdminDashboardOverview({
     healthyPercent: ratio(healthyBalance, totalPortfolio),
     monthKey: selectedMonth.key,
     monthLabel: selectedMonth.label,
+    accumulatedCollection: credits.reduce((sum, credit) => sum + (paidByCreditId.get(credit.id) || 0), 0),
     monthlyCollection,
     monthlyCreditCount,
     monthlyPaymentCount: monthPayments.length,
