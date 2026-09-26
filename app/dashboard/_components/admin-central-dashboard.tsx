@@ -45,7 +45,7 @@ type MetricCardProps = {
   detail?: string;
   icon: IconType;
   label: string;
-  tone: "teal" | "green" | "red";
+  tone: "teal" | "green" | "red" | "neutral";
   value: string;
 };
 
@@ -112,6 +112,7 @@ function chartMaximum(value: number) {
 
 function MetricCard({ detail, icon: Icon, label, tone, value }: MetricCardProps) {
   const tones = {
+    neutral: { icon: "bg-[var(--fp-lime-soft)] text-[var(--fp-graphite)]", value: "text-[var(--fp-graphite)]" },
     green: {
       icon: "bg-emerald-50 text-emerald-700",
       value: "text-emerald-700",
@@ -434,11 +435,11 @@ export default function AdminCentralDashboard({
   );
   const metricCards: MetricCardProps[] = [
     {
-      detail: `Capital colocado en ${data.activeCredits} creditos activos`,
+      detail: adminCentral ? `Capital colocado en ${data.activeCredits} creditos activos` : "Capital original invertido, incluidos los cerrados",
       icon: WalletCards,
       label: "Cartera activa",
       tone: "teal",
-      value: money(data.activePlacedCapital),
+      value: money(adminCentral ? data.activePlacedCapital : data.investedCapital),
     },
     {
       detail: "Creditos vigentes con saldo",
@@ -447,6 +448,13 @@ export default function AdminCentralDashboard({
       tone: "teal",
       value: String(data.activeCredits),
     },
+    ...(!adminCentral ? [{
+      detail: "Finalizados al 100%",
+      icon: CircleCheck,
+      label: "Créditos cerrados",
+      tone: "neutral" as const,
+      value: String(data.closedCredits),
+    }] : []),
     {
       detail: `${data.monthlyPaymentCount} recaudos en ${data.monthLabel}`,
       icon: Banknote,
@@ -524,7 +532,7 @@ export default function AdminCentralDashboard({
           </div>
         </header>
 
-        <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <section className={adminCentral ? "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5" : "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 min-[1800px]:grid-cols-6"}>
           {metricCards.map((metric) => (
             <MetricCard key={metric.label} {...metric} />
           ))}

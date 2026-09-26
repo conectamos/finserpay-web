@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
 const health = await jiti.import("../lib/product-portfolio-health.ts");
 const dependencies = Object.fromEntries(await Promise.all([
-  "credit-capital", "credit-payment-plan", "dashboard-month", "ally-payments-core", "product-portfolio-health",
+  "credit-capital", "credit-factory", "credit-payment-plan", "dashboard-month", "ally-payments-core", "product-portfolio-health",
 ].map(async (name) => [`@/lib/${name}`, await jiti.import(`../lib/${name}.ts`)])));
 const now = new Date("2026-09-26T17:00:00Z");
 class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } }
@@ -31,18 +31,19 @@ function loadOverview(credits, payments=[]) {
   const prisma = {
     credito: { findMany: async args => {
       calls.credits = args;
-      return credits.filter(c => c.estado !== args.where.estado.not && (!args.where.sede || c.sede.aliadoId === args.where.sede.aliadoId));
+      const excludedStates = args.where.estado.notIn || [args.where.estado.not];
+      return credits.filter(c => !excludedStates.includes(c.estado) && (!args.where.sede || c.sede.aliadoId === args.where.sede.aliadoId));
     } },
     creditoAbono: {
       groupBy: async args => { calls.payments=args; return payments; },
       findMany: async args => {calls.month=args;return [];},
     },
   };
-  const module = { exports: {} };
-  runInNewContext(outputText, { module, exports: module.exports, Date: FixedDate, Intl,
+  const testModule = { exports: {} };
+  runInNewContext(outputText, { module: testModule, exports: testModule.exports, Date: FixedDate, Intl,
     require: name => name === "@/lib/prisma" ? { default: prisma } : dependencies[name],
   });
-  return { get: module.exports.getAdminDashboardOverview, calls };
+  return { get: testModule.exports.getAdminDashboardOverview, calls };
 }
 
 test("porcentajes por saldo propio, no por cantidad de créditos ni por capital colocado", async () => {
