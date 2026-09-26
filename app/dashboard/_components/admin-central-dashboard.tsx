@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import type { AdminDashboardOverview } from "../_lib/admin-dashboard-data";
 import AdminSidebar from "./admin-sidebar";
-import ProductHealthChart from "./product-health-chart";
+import HealthPanel from "./portfolio-health-panel";
 import DashboardMonthSelector from "./dashboard-month-selector";
 
 type IconType = ComponentType<{
@@ -360,49 +360,6 @@ function CollectionChart({
   );
 }
 
-function HealthPanel({ data }: { data: AdminDashboardOverview }) {
-  const healthy = Math.max(0, Math.min(100, data.healthyPercent));
-  const earlyEnd = Math.max(healthy, Math.min(100, healthy + data.earlyPercent));
-  const background = `conic-gradient(#0d9488 0% ${healthy}%, #f2ad1f ${healthy}% ${earlyEnd}%, #ef4444 ${earlyEnd}% 100%)`;
-
-  return (
-    <section className="rounded-lg border border-[#d8dee6] bg-white p-5 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
-      <h2 className="text-xl font-black text-[#101828]">Salud de cartera</h2>
-      <div className="mt-5 grid gap-6 sm:grid-cols-[210px_1fr] sm:items-center">
-        <div className="relative mx-auto h-48 w-48 rounded-full" style={{ background }}>
-          <div className="absolute inset-10 flex flex-col items-center justify-center rounded-full bg-white text-center shadow-[inset_0_0_0_1px_#e4e9ef]">
-            <strong className="text-3xl font-black text-[#101828]">{percent(data.healthyPercent)}</strong>
-            <span className="mt-1 text-xs font-semibold text-[#667085]">Al dia</span>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          {[
-            { color: "bg-[#0d9488]", label: "Al dia", value: data.healthyPercent },
-            { color: "bg-[#f2ad1f]", label: "Mora temprana", value: data.earlyPercent },
-            { color: "bg-[#ef4444]", label: "Mora critica", value: data.criticalPercent },
-          ].map((item) => (
-            <div key={item.label} className="grid grid-cols-[12px_1fr_auto] items-center gap-3">
-              <span className={["h-3 w-3 rounded-full", item.color].join(" ")} />
-              <span className="text-sm font-medium text-[#475467]">{item.label}</span>
-              <strong className="text-sm font-black text-[#101828]">{percent(item.value)}</strong>
-            </div>
-          ))}
-          <div className="border-t border-[#e4e9ef] pt-4 text-sm font-bold text-[#0f766e]">
-            Distribucion del saldo pendiente
-          </div>
-        </div>
-      </div>
-      <div className="mt-6 grid gap-6 border-t border-[var(--fp-border)] pt-6 sm:grid-cols-2">
-        <ProductHealthChart id="health-iphone" title="Mora iPhone" data={data.productHealth.IPHONE} />
-        <ProductHealthChart id="health-android" title="Mora Android" data={data.productHealth.ANDROID} />
-      </div>
-      <p className="mt-4 text-xs text-[var(--fp-muted)]">Cada porcentaje se calcula sobre el saldo pendiente de su producto. El saldo en mora suma los rangos de mora temprana y crítica.</p>
-      {data.unclassifiedPortfolioBalance > 0 ? <p className="mt-2 text-xs text-[var(--fp-muted)]">Saldo sin producto identificado: {money(data.unclassifiedPortfolioBalance)}. Se conserva en la gráfica general.</p> : null}
-    </section>
-  );
-}
-
 function ActionLink({ href, icon: Icon, label }: { href: string; icon: IconType; label: string }) {
   return (
     <Link
@@ -530,7 +487,7 @@ export default function AdminCentralDashboard({
           ))}
         </section>
 
-        <section className="mt-4 grid gap-4 xl:grid-cols-[1.3fr_1fr]">
+        <section className="mt-4 grid gap-4">
           <section className="min-w-0 rounded-lg border border-[#d8dee6] bg-white p-5 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
             <h2 className="text-xl font-black text-[#101828]">Recaudo y capital colocado</h2>
             <p className="mt-1 text-sm text-[#667085]">

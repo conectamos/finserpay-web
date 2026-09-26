@@ -31,6 +31,8 @@ import { resolveCarteraAliadoId } from "@/lib/cartera-access";
 import { normalizeCreditDevicePlatform } from "@/lib/credit-factory";
 import { splitOutstandingBalance } from "@/lib/credit-outstanding-balance";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { calculatePortfolioProfit, resolvePortfolioInvestment } from "@/lib/portfolio-profit";
+import PortfolioProfitBreakdown from "./portfolio-profit-breakdown";
 import { Select } from "@/app/_components/finser-ui";
 import AdminSidebar from "../_components/admin-sidebar";
 import PushMassivePanel from "./push-massive-panel";
@@ -281,7 +283,6 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
               credito.equipoMarca
             ) === selectedPlatform
         )
-        .slice(0, 1000)
         .map((credito) => credito.id)
     : null;
   const filteredCreditWhere: Prisma.CreditoWhereInput = platformCreditIds
@@ -294,6 +295,14 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
     prisma.credito.findMany({
       where: filteredCreditWhere,
       include: {
+        liquidacionAliadoCredito: {
+          select: {
+            valorPagar: true,
+            valorIntermediacion: true,
+            estado: true,
+            liquidacion: { select: { estado: true } },
+          },
+        },
         abonos: {
           where: {
             estado: {
@@ -332,7 +341,6 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
       orderBy: {
         createdAt: "desc",
       },
-      take: 1000,
     }),
     prisma.gastoCartera.findMany({
       where: gastoWhere,
@@ -394,6 +402,18 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
         credito.equipoMarca
       );
 
+      const redescuentoPorcentaje = resolveRedescuentoPercentageByPlatform(
+        credito.sede.aliado || {}, plataforma
+      );
+      const registeredSettlement = credito.liquidacionAliadoCredito;
+      const paidSettlement = registeredSettlement?.estado === "PAGADO" &&
+        registeredSettlement.liquidacion.estado === "PAGADA" ? registeredSettlement : null;
+      const investment = resolvePortfolioInvestment({
+        authorizedCapital: creditoAutorizado,
+        backingPercentage: redescuentoPorcentaje,
+        recordedNetInvestment: paidSettlement ? Number(paidSettlement.valorPagar) : null,
+      });
+
       return {
         ...withCreditDisplayNumber({ id: credito.id, folio: credito.folio }, displayNumbers),
         imei: credito.imei || credito.deviceUid || "Sin IMEI",
@@ -408,10 +428,11 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
         sede: credito.sede.nombre,
         aliado: credito.sede.aliado?.nombre || "Sin aliado",
         plataforma,
-        redescuentoPorcentaje: resolveRedescuentoPercentageByPlatform(
-          credito.sede.aliado || {},
-          plataforma
-        ),
+        inversionNeta: investment.amount,
+        inversionEstimada: investment.estimated,
+        respaldo: paidSettlement
+          ? Number(paidSettlement.valorIntermediacion)
+          : Math.round((creditoAutorizado - investment.amount) * 100) / 100,
         vendedor: resolveCreditAssignedAdministrator(credito)?.nombre || credito.vendedor?.nombre || "Sin vendedor",
         cuotaInicial: Number(credito.cuotaInicial || 0),
         creditoAutorizado,
@@ -441,40 +462,35 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   const totalMora = activeCredits.reduce((sum, item) => sum + item.saldoMora, 0);
   const totalPagado = cartera.reduce((sum, item) => sum + item.totalPaid, 0);
   const totalCredito = cartera.reduce((sum, item) => sum + item.montoCredito, 0);
-  const totalInvertido = activeCredits.reduce((sum, item) => sum + item.creditoAutorizado, 0);
+  const totalInvertido = cartera.reduce((sum, item) => sum + item.inversionNeta, 0);
+  const estimatedInvestments = cartera.filter((item) => item.inversionEstimada);
+  const totalInversionEstimada = estimatedInvestments.reduce((sum, item) => sum + item.inversionNeta, 0);
   const totalCapitalComprometidoMora = overdueCredits.reduce(
     (sum, item) => sum + item.saldoCapital,
     0
   );
   const bolsaRespaldoMora = activeCredits.reduce(
     (sum, item) =>
-      sum + item.creditoAutorizado * Math.max(0, item.redescuentoPorcentaje) / 100,
-    0
-  );
-  const respaldoDetail = selectedAliado
-    ? selectedPlatform
-      ? `${selectedPlatformLabel} ${percent(
-          resolveRedescuentoPercentageByPlatform(selectedAliado, selectedPlatform)
-        )}`
-      : `Android ${percent(
-          selectedAliado.redescuentoAndroidPorcentaje
-        )} · iPhone ${percent(selectedAliado.redescuentoIphonePorcentaje)}`
-    : "Segun plataforma y porcentaje por aliado";
-  const gananciaProyectadaActiva = activeCredits.reduce(
-    (sum, item) => sum + item.gananciaProyectada,
+      sum + item.respaldo,
     0
   );
   const gananciaReconocida = paidCredits.reduce(
     (sum, item) => sum + item.gananciaProyectada,
     0
   );
-  const totalGananciaBruta = gananciaProyectadaActiva + gananciaReconocida;
   const totalGastosOperacion = gastosOperacion.reduce(
     (sum, item) => sum + Number(item.valor || 0),
     0
   );
-  const totalGanancias =
-    totalGananciaBruta - (selectedPlatform ? 0 : totalGastosOperacion) - totalMora;
+  const profitInput = {
+    outstandingBalance: totalPendiente,
+    accumulatedCollections: totalPagado,
+    accumulatedInvestment: totalInvertido,
+    operatingExpenses: totalGastosOperacion,
+    committedCapital: totalCapitalComprometidoMora,
+    recognizedProfit: gananciaReconocida,
+  };
+  const totalGanancias = calculatePortfolioProfit(profitInput);
   const totalSano = activeCredits
     .filter((item) => item.bucket === "alDia")
     .reduce((sum, item) => sum + item.saldoPendiente, 0);
@@ -675,11 +691,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
           />
           {adminCentral ? (
             <MetricCard
-              detail={
-                selectedPlatform
-                  ? `${money(gananciaReconocida)} reconocida · antes de gastos generales`
-                  : `${money(gananciaReconocida)} reconocida · ${money(totalGastosOperacion)} en gastos`
-              }
+              detail={`${money(gananciaReconocida)} reconocida descontada · ${money(totalGastosOperacion)} en gastos`}
               icon={Landmark}
               label="Ganancia estimada"
               tone="gold"
@@ -695,18 +707,26 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             adminCentral ? "xl:grid-cols-3 2xl:grid-cols-5" : "lg:grid-cols-4",
           ].join(" ")}
         >
-          <MiniMetric label="Inversion activa" value={money(totalInvertido)} detail="Credito autorizado activo" />
+          <MiniMetric label="Inversión acumulada" value={money(totalInvertido)} detail={estimatedInvestments.length
+            ? `${money(totalInversionEstimada)} estimada · ${estimatedInvestments.length} créditos sin liquidación`
+            : "Neto por crédito · activos y pagados"} />
           <MiniMetric
             label="Capital comprometido"
             value={money(totalCapitalComprometidoMora)}
             detail={`${clientsMora} clientes en mora`}
           />
           {adminCentral ? (
-            <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail={respaldoDetail} />
+            <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail="Retención activa · ya descontada de la inversión" />
           ) : null}
           <MiniMetric label="Creditos pagados" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
           <MiniMetric label="Clientes en mora" value={String(clientsMora)} detail={health.label} />
         </section>
+
+        {adminCentral ? (
+          <PortfolioProfitBreakdown input={profitInput} total={totalGanancias}
+            estimatedInvestment={totalInversionEstimada} estimatedCount={estimatedInvestments.length}
+            productFiltered={Boolean(selectedPlatform)} />
+        ) : null}
 
         <section
           className={[

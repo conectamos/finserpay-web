@@ -48,6 +48,7 @@ function loadDashboard() {
           "next/link": { __esModule: true, default: Link },
           "lucide-react": icons,
           "./admin-sidebar": { __esModule: true, default: EmptyComponent },
+          "./portfolio-health-panel": { __esModule: true, default: EmptyComponent },
           "./dashboard-month-selector": {
             __esModule: true,
             default: EmptyComponent,
@@ -113,8 +114,8 @@ function renderDashboard(adminCentral) {
 test("el dashboard aliado oculta los detalles monetarios de cartera sana y seguimiento", () => {
   const html = renderDashboard(false);
 
-  assert.match(html, />100,0%<\/strong>/);
-  assert.match(html, />0,0%<\/strong>/);
+  assert.match(html, />100,0%<\/p>/);
+  assert.match(html, />0,0%<\/p>/);
   assert.doesNotMatch(html, /\$ 351,4 M sin mora/);
   assert.doesNotMatch(html, /\$ 0 en seguimiento/);
   assert.doesNotMatch(html, /sin mora|en seguimiento/);

@@ -1,49 +1,65 @@
+import { TriangleAlert } from "lucide-react";
+import { Badge } from "@/app/_components/finser-ui";
 import type { ProductPortfolioHealth } from "@/lib/product-portfolio-health";
 
-const money = (value: number) => new Intl.NumberFormat("es-CO", {
+export const healthMoney = (value: number) => new Intl.NumberFormat("es-CO", {
   style: "currency", currency: "COP", maximumFractionDigits: 0,
 }).format(value);
-const percent = (value: number) => new Intl.NumberFormat("es-CO", {
+export const healthPercent = (value: number) => new Intl.NumberFormat("es-CO", {
   style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1,
 }).format(value / 100);
 
-export default function ProductHealthChart({ title, id, data }: {
+type Distribution = Pick<ProductPortfolioHealth, "healthyPercent" | "earlyPercent" | "criticalPercent">;
+export const healthRanges = (data: Distribution) => [
+  { label: "Al día", range: "Sin días de mora", color: "var(--fp-lime)", value: data.healthyPercent },
+  { label: "Mora temprana", range: "1–15 días", color: "var(--fp-amber)", value: data.earlyPercent },
+  { label: "Mora crítica", range: "Más de 15 días", color: "var(--fp-danger)", value: data.criticalPercent },
+];
+
+export function HealthDistributionBar({ title, data, empty, large = false }: {
+  title: string; data: Distribution; empty: boolean; large?: boolean;
+}) {
+  return (
+    <div role="img" aria-label={`${title}: ${empty ? "sin saldo pendiente" : healthRanges(data).map(item => `${item.label} ${healthPercent(item.value)}`).join(", ")}`}
+      className={`flex overflow-hidden rounded-[var(--fp-radius-md)] bg-[var(--fp-border)] ${large ? "h-8 sm:h-10" : "h-5 sm:h-6"}`}>
+      {!empty && healthRanges(data).map(item => <span key={item.label} aria-hidden="true"
+        style={{ width: `${item.value}%`, background: item.color }} />)}
+    </div>
+  );
+}
+
+export default function ProductHealthChart({ title, id, data, highestOverdue = false }: {
   title: string;
   id: string;
   data: ProductPortfolioHealth;
+  highestOverdue?: boolean;
 }) {
   const empty = data.totalBalance <= 0;
-  const earlyEnd = Math.min(100, data.healthyPercent + data.earlyPercent);
-  const background = empty ? "var(--fp-border)" : `conic-gradient(var(--fp-lime) 0% ${data.healthyPercent}%, var(--fp-amber) ${data.healthyPercent}% ${earlyEnd}%, var(--fp-danger) ${earlyEnd}% 100%)`;
-  const ranges = [
-    { label: "Al día", range: "Sin días de mora", color: "var(--fp-lime)", value: data.healthyPercent },
-    { label: "Mora temprana", range: "1–15 días", color: "var(--fp-amber)", value: data.earlyPercent },
-    { label: "Mora crítica", range: "Más de 15 días", color: "var(--fp-danger)", value: data.criticalPercent },
-  ];
   return (
-    <section aria-labelledby={id} className="min-w-0 text-[var(--fp-graphite)]">
-      <h3 id={id} className="text-lg font-bold">{title}</h3>
-      <div role="img" aria-label={`${title}: ${empty ? "sin saldo pendiente" : ranges.map((item) => `${item.label} ${percent(item.value)}`).join(", ")}`}
-        className="relative mx-auto my-5 h-36 w-36 rounded-full" style={{ background }}>
-        <div aria-hidden="true" className="absolute inset-7 flex flex-col items-center justify-center rounded-full bg-[var(--fp-surface)] text-center">
-          <strong className="text-xl font-black">{percent(data.overduePercent)}</strong>
-          <span className="mt-1 text-xs text-[var(--fp-muted)]">En mora</span>
-        </div>
+    <section aria-labelledby={id} className={`min-w-0 rounded-[var(--fp-radius-lg)] border p-4 text-[var(--fp-graphite)] sm:p-6 ${highestOverdue ? "border-[color-mix(in_srgb,var(--fp-danger)_20%,white)] bg-[color-mix(in_srgb,var(--fp-danger-soft)_35%,white)]" : "border-[var(--fp-border)] bg-[var(--fp-surface)]"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 id={id} className="text-xl font-bold sm:text-2xl">{title}</h3>
+        {highestOverdue ? <Badge tone="danger"><TriangleAlert aria-hidden="true" className="h-4 w-4 shrink-0" />Mayor nivel de mora</Badge> : null}
       </div>
-      <dl className="space-y-3">
-        {ranges.map((item) => (
-          <div key={item.label} className="flex items-start justify-between gap-2">
-            <dt className="flex min-w-0 items-start gap-2">
-              <span aria-hidden="true" className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: item.color }} />
-              <span className="text-sm">{item.label}<small className="block text-xs text-[var(--fp-muted)]">{item.range}</small></span>
+      <div className="mb-5 mt-5">
+        <strong className="text-4xl font-black tracking-tight tabular-nums sm:text-5xl">{healthPercent(data.overduePercent)}</strong>
+        <p className="mt-1 text-base font-medium text-[var(--fp-muted)]">En mora</p>
+      </div>
+      <HealthDistributionBar title={`Mora ${title}`} data={data} empty={empty} />
+      <dl className="mt-5 space-y-4">
+        {healthRanges(data).map(item => (
+          <div key={item.label} className="flex items-center justify-between gap-3">
+            <dt className="flex min-w-0 items-start gap-3">
+              <span aria-hidden="true" className="mt-1 h-3.5 w-3.5 shrink-0 rounded-full" style={{ background: item.color }} />
+              <span className="text-sm font-medium sm:text-base">{item.label}<small className="mt-0.5 block text-xs font-normal text-[var(--fp-muted)] sm:text-sm">{item.range}</small></span>
             </dt>
-            <dd className="shrink-0 text-sm font-bold">{percent(item.value)}</dd>
+            <dd className="shrink-0 text-base font-bold tabular-nums">{healthPercent(item.value)}</dd>
           </div>
         ))}
       </dl>
-      <dl className="mt-4 space-y-2 border-t border-[var(--fp-border)] pt-4 text-sm">
-        <div><dt className="text-[var(--fp-muted)]">Saldo pendiente</dt><dd className="break-words font-semibold">{money(data.totalBalance)}</dd></div>
-        <div><dt className="text-[var(--fp-muted)]">Saldo en mora</dt><dd className="break-words text-lg font-bold">{money(data.overdueBalance)}</dd></div>
+      <dl className="mt-6 grid gap-3 border-t border-[var(--fp-border)] pt-4 text-sm sm:grid-cols-2">
+        <div className="min-w-0"><dt className="text-[var(--fp-muted)]">Saldo pendiente</dt><dd className="mt-1 break-words font-semibold tabular-nums">{healthMoney(data.totalBalance)}</dd></div>
+        <div className="min-w-0"><dt className="text-[var(--fp-muted)]">Saldo en mora</dt><dd className="mt-1 break-words font-bold tabular-nums">{healthMoney(data.overdueBalance)}</dd></div>
       </dl>
       {empty ? <p className="mt-3 text-sm text-[var(--fp-muted)]">Sin saldo pendiente para este producto.</p> : null}
     </section>
