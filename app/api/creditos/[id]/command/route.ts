@@ -526,13 +526,55 @@ export async function POST(
           current.fechaPrimerPago ||
           current.fechaProximoPago ||
           getDefaultFirstPaymentDateObject(nextFrequency, current.fechaCredito);
-        const financialPlan = calculateCreditCharges({
+        const calendarOnly =
+          nextInstallments === Math.max(1, current.plazoMeses || 1) &&
+          nextFrequency === normalizePaymentFrequency(current.frecuenciaPago);
+
+        if (!calendarOnly && isMassImportedCredit(current)) {
+          return NextResponse.json(
+            {
+              error:
+                "El crédito histórico conserva la cuota y los cargos importados. Puedes corregir su primer pago sin cambiar plazo o frecuencia; una reestructuración requiere un proceso específico.",
+              code: "HISTORICAL_PLAN_RESTRUCTURING_UNSUPPORTED",
+            },
+            { status: 409 }
+          );
+        }
+
+        // A calendar correction must not replace the agreed installment or
+        // embedded charges, which cannot be reconstructed from a historic rate.
+        const financialPlan = calendarOnly ? null : calculateCreditCharges({
           saldoBaseFinanciado: current.saldoBaseFinanciado,
           cuotas: nextInstallments,
           tasaInteresEa: current.tasaInteresEa,
           fianzaPorcentaje: current.fianzaPorcentaje,
           frecuenciaPago: nextFrequency,
         });
+        const currentSnapshot = current.contratoSnapshot;
+        const snapshotRoot =
+          typeof currentSnapshot === "object" && currentSnapshot !== null &&
+          !Array.isArray(currentSnapshot)
+            ? currentSnapshot as Record<string, unknown>
+            : null;
+        const snapshotFinancial = snapshotRoot?.financiero;
+        const unsignedSnapshot =
+          !current.contratoAceptadoAt && !current.pagareAceptadoAt &&
+          !current.contratoFirmaDataUrl && !current.contratoOtpVerificadoAt &&
+          !snapshotRoot?.firma &&
+          !(typeof snapshotFinancial === "object" && snapshotFinancial !== null &&
+            "selloFinanciero" in snapshotFinancial && snapshotFinancial.selloFinanciero);
+        const calendarSnapshot =
+          calendarOnly && unsignedSnapshot && snapshotRoot &&
+          typeof snapshotFinancial === "object" &&
+          snapshotFinancial !== null && !Array.isArray(snapshotFinancial)
+            ? {
+                ...snapshotRoot,
+                financiero: {
+                  ...snapshotFinancial,
+                  fechaPrimerPago: nextFirstPayment.toISOString(),
+                },
+              } as Prisma.InputJsonValue
+            : undefined;
 
         await ensureCreditAbonoAuditColumns();
         const abonos = await prisma.creditoAbono.findMany({
@@ -551,8 +593,8 @@ export async function POST(
           },
         });
         const paymentPlan = buildCreditPaymentPlan({
-          montoCredito: financialPlan.montoCreditoTotal,
-          valorCuota: financialPlan.valorCuota,
+          montoCredito: financialPlan?.montoCreditoTotal ?? current.montoCredito,
+          valorCuota: financialPlan?.valorCuota ?? current.valorCuota,
           plazoMeses: nextInstallments,
           frecuenciaPago: nextFrequency,
           fechaPrimerPago: nextFirstPayment,
@@ -576,12 +618,15 @@ export async function POST(
             frecuenciaPago: nextFrequency,
             fechaPrimerPago: nextFirstPayment,
             fechaProximoPago: nextDueDate,
-            tasaInteresEa: financialPlan.tasaInteresEa,
-            valorInteres: financialPlan.valorInteres,
-            fianzaPorcentaje: financialPlan.fianzaPorcentaje,
-            valorFianza: financialPlan.valorFianza,
-            montoCredito: financialPlan.montoCreditoTotal,
-            valorCuota: financialPlan.valorCuota,
+            ...(financialPlan ? {
+              tasaInteresEa: financialPlan.tasaInteresEa,
+              valorInteres: financialPlan.valorInteres,
+              fianzaPorcentaje: financialPlan.fianzaPorcentaje,
+              valorFianza: financialPlan.valorFianza,
+              montoCredito: financialPlan.montoCreditoTotal,
+              valorCuota: financialPlan.valorCuota,
+            } : {}),
+            ...(calendarSnapshot ? { contratoSnapshot: calendarSnapshot } : {}),
             observacionAdmin: nextObservation,
           },
           omit: CREDIT_DELIVERY_PHOTO_OMIT,
@@ -613,7 +658,9 @@ export async function POST(
 
         return NextResponse.json({
           ok: true,
-          message: `Plan actualizado a ${nextInstallments} cuotas ${getPaymentFrequencyLabel(nextFrequency).toLowerCase()}`,
+          message: calendarOnly
+            ? "Fecha del primer pago actualizada. La cuota y los valores del crédito se conservaron."
+            : `Plan actualizado a ${nextInstallments} cuotas ${getPaymentFrequencyLabel(nextFrequency).toLowerCase()}`,
           item: serializeCredit(updated, paymentSummary, admin),
           remote: null,
         });

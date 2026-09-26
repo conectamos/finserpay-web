@@ -10248,8 +10248,14 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    const calendarOnly =
+      normalizedInstallments === Math.max(1, selectedCredit.plazoMeses || 1) &&
+      normalizePaymentFrequency(planFrequency) ===
+        normalizePaymentFrequency(selectedCredit.frecuenciaPago);
     const confirmed = window.confirm(
-      `Vas a recalcular este credito a ${normalizedInstallments} cuotas ${getPaymentFrequencyLabel(planFrequency).toLowerCase()}. Esto actualiza cuota, total del credito y plan de pagos.`
+      calendarOnly
+        ? "Vas a actualizar la fecha del primer pago y su calendario. La cuota y el total del credito se conservaran."
+        : `Vas a recalcular este credito a ${normalizedInstallments} cuotas ${getPaymentFrequencyLabel(planFrequency).toLowerCase()}. Esto actualiza cuota, total del credito y plan de pagos.`
     );
 
     if (!confirmed) {
@@ -10273,7 +10279,9 @@ export default function CreditFactoryConsole({
             plazoMeses: normalizedInstallments,
             frecuenciaPago: planFrequency,
             fechaPrimerPago: planFirstPaymentDate || null,
-            observacionAdmin: "Correccion de plazo/frecuencia",
+            observacionAdmin: calendarOnly
+              ? "Correccion de fecha del primer pago"
+              : "Correccion de plazo/frecuencia",
           }),
         }
       );
