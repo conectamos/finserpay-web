@@ -87,7 +87,7 @@ test("el rendimiento agrupa por perfil y muestra monto y unidades de credito", a
   assert.doesNotMatch(dataSource, /collectionBySede/);
   assert.doesNotMatch(dataSource, /creditPerformance[\s\S]{0,240}\.slice\(0, 5\)/);
 
-  assert.match(uiSource, /adminCentral \? "aliado" : "sede"/);
+  assert.match(uiSource, /viewingCentral \? "aliado" : "sede"/);
   assert.match(uiSource, /data\.creditPerformance\.map/);
   assert.match(uiSource, /performance\.units === 1 \? "credito" : "creditos"/);
   assert.match(uiSource, /compactMoney\(performance\.value\)/);
@@ -135,5 +135,5 @@ test("el dashboard conecta el selector mensual con las consultas del servidor", 
   assert.match(selectorSource, /MONTH_LABELS\.map/);
   assert.match(selectorSource, /disabled=\{isFutureMonth\}/);
   assert.match(selectorSource, /event\.key === "Escape"/);
-  assert.match(selectorSource, /router\.push\(`\/dashboard\?month=/);
+  assert.match(selectorSource, /params\.set\("month", nextMonth\)/);
 });

@@ -89,8 +89,11 @@ export default function DashboardMonthSelector({
       return;
     }
 
+    const params = new URLSearchParams(window.location.search);
+    params.set("month", nextMonth);
+
     startTransition(() => {
-      router.push(`/dashboard?month=${encodeURIComponent(nextMonth)}`, {
+      router.push(`/dashboard?${params.toString()}`, {
         scroll: false,
       });
     });

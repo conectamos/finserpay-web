@@ -26,6 +26,7 @@ import type { AdminDashboardOverview } from "../_lib/admin-dashboard-data";
 import AdminSidebar from "./admin-sidebar";
 import HealthPanel from "./portfolio-health-panel";
 import DashboardMonthSelector from "./dashboard-month-selector";
+import DashboardAllySelector from "./dashboard-ally-selector";
 
 type IconType = ComponentType<{
   className?: string;
@@ -35,6 +36,8 @@ type IconType = ComponentType<{
 type AdminCentralDashboardProps = {
   adminCentral: boolean;
   aliadoNombre: string;
+  allies?: Array<{ id: number; nombre: string; codigo: string | null }>;
+  selectedAlly?: { id: number; nombre: string; codigo: string | null } | null;
   data: AdminDashboardOverview;
   nombreUsuario: string;
   rolUsuario: string;
@@ -374,19 +377,21 @@ function ActionLink({ href, icon: Icon, label }: { href: string; icon: IconType;
 export default function AdminCentralDashboard({
   adminCentral,
   aliadoNombre,
+  allies = [],
+  selectedAlly = null,
   data,
   nombreUsuario,
   rolUsuario,
   sedeLabel,
 }: AdminCentralDashboardProps) {
-  const scopeLabel = adminCentral ? "Todas las sedes" : aliadoNombre;
-  const carteraHref = "/dashboard/cartera";
-  const performanceScopeLabel = adminCentral ? "aliado" : "sede";
+  const viewingCentral = adminCentral && !selectedAlly;
+  const carteraHref = selectedAlly ? `/dashboard/cartera?aliadoId=${selectedAlly.id}` : "/dashboard/cartera";
+  const performanceScopeLabel = viewingCentral ? "aliado" : "sede";
   const maxPerformanceValue = Math.max(
     1,
     ...data.creditPerformance.map((item) => item.value)
   );
-  const metricCards: MetricCardProps[] = adminCentral ? [
+  const metricCards: MetricCardProps[] = viewingCentral ? [
     { label: "Capital colocado", value: money(data.investedCapital), icon: WalletCards, tone: "neutral" },
     { label: "Cartera activa", value: money(data.activePlacedCapital), icon: Banknote, tone: "neutral" },
     { label: "Total créditos", value: String(data.totalCredits), icon: Files, tone: "neutral" },
@@ -413,16 +418,26 @@ export default function AdminCentralDashboard({
         <header className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <h1 className="text-3xl font-black text-[#101828]">
-              {adminCentral ? "Panel central" : "Panel aliado"}
+              {viewingCentral ? "Panel central" : "Panel aliado"}
             </h1>
-            <p className="mt-1 text-sm text-[#667085]">Resumen financiero y operativo</p>
+            <p className="mt-1 text-sm text-[#667085]">
+              Resumen financiero y operativo{selectedAlly ? ` · ${selectedAlly.nombre}` : ""}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            <div className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[#d0d7e0] bg-white px-3 text-sm font-semibold text-[#344054]">
-              <MapPin className="h-5 w-5" strokeWidth={1.8} />
-              <span className="max-w-40 truncate">{scopeLabel || sedeLabel}</span>
-            </div>
+            {adminCentral ? (
+              <DashboardAllySelector
+                key={selectedAlly?.id ?? "all"}
+                allies={allies}
+                selectedAllyId={selectedAlly?.id ?? null}
+              />
+            ) : (
+              <div className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--fp-border)] bg-[var(--fp-surface)] px-3 text-sm font-semibold text-[var(--fp-graphite)]">
+                <MapPin className="h-5 w-5" strokeWidth={1.8} aria-hidden="true" />
+                <span className="max-w-40 truncate">{aliadoNombre || sedeLabel}</span>
+              </div>
+            )}
             <DashboardMonthSelector
               key={data.monthKey}
               currentMonth={data.currentMonthKey}
@@ -452,7 +467,7 @@ export default function AdminCentralDashboard({
           </div>
         </header>
 
-        <section className={adminCentral ? "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 min-[1800px]:grid-cols-6" : "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"}>
+        <section className={viewingCentral ? "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 min-[1800px]:grid-cols-6" : "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"}>
           {metricCards.map((metric) => (
             <MetricCard key={metric.label} {...metric} />
           ))}

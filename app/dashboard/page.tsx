@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { getSellerSessionUser } from "@/lib/seller-auth";
@@ -19,6 +19,7 @@ import { getAdminDashboardOverview } from "./_lib/admin-dashboard-data";
 
 type DashboardSearchParams = Promise<{
   month?: string | string[];
+  aliadoId?: string | string[];
 }>;
 
 export default async function DashboardPage({
@@ -214,8 +215,25 @@ export default async function DashboardPage({
     );
   }
 
+  const allies = adminCentral
+    ? await prisma.aliado.findMany({
+        select: { id: true, nombre: true, codigo: true },
+        orderBy: { nombre: "asc" },
+      })
+    : [];
+  const requestedAllyId = Array.isArray(params.aliadoId) ? params.aliadoId[0] : params.aliadoId;
+  let selectedAlly: (typeof allies)[number] | null = null;
+
+  // A query parameter may change the central dashboard's view, never the session's access.
+  if (adminCentral && requestedAllyId) {
+    const parsedId = Number(requestedAllyId);
+    if (!/^[1-9]\d*$/.test(requestedAllyId) || !Number.isSafeInteger(parsedId)) notFound();
+    selectedAlly = allies.find((ally) => ally.id === parsedId) || null;
+    if (!selectedAlly) notFound();
+  }
+
   const dashboardOverview = await getAdminDashboardOverview({
-    aliadoId: adminAliado ? aliadoStatsScopeId : null,
+    aliadoId: adminAliado ? aliadoStatsScopeId : selectedAlly?.id ?? null,
     month: requestedMonth,
   });
 
@@ -223,6 +241,8 @@ export default async function DashboardPage({
     <AdminCentralDashboard
       adminCentral={adminCentral}
       aliadoNombre={aliadoPanelNombre}
+      allies={allies}
+      selectedAlly={selectedAlly}
       data={dashboardOverview}
       nombreUsuario={nombreUsuario}
       rolUsuario={rolUsuario}
