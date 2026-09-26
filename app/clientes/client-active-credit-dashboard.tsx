@@ -53,6 +53,7 @@ export type ClientActiveCreditDashboardProps = {
   device: ActiveCreditDashboardDevice;
   lastPayment?: ActiveCreditDashboardPayment | null;
   nextInstallment: ActiveCreditDashboardInstallment | null;
+  overduePayment?: { amount: number; count: number; dueDate: string } | null;
   notice?: { text: string; tone: "red" | "emerald" } | null;
   onOpenDevice?: () => void;
   onOpenHistory: () => void;
@@ -115,7 +116,7 @@ function compactDateLabel(value: string) {
 
 export default function ClientActiveCreditDashboard({
   activeCreditId, creditNumber, clientFirstName, creditOptions = [], device, lastPayment,
-  nextInstallment, notice, onOpenDevice, onOpenHistory, onOpenNotifications,
+  nextInstallment, overduePayment, notice, onOpenDevice, onOpenHistory, onOpenNotifications,
   onPayInstallment, onOpenPlan, onOpenProfile, onPayoff, onSelectCredit,
   paidInstallments, paying = false, payoff, profileActionLabel, profileInitials,
   statusLabel, statusTone = "current", totalInstallments,
@@ -129,7 +130,10 @@ export default function ClientActiveCreditDashboard({
   const safeTotal = Math.max(0, Math.floor(totalInstallments));
   const safePaid = Math.min(safeTotal, Math.max(0, Math.floor(paidInstallments)));
   const pending = safeTotal - safePaid;
-  const installmentLabel = overdue ? "Cuota vencida" : "Próxima cuota";
+  const overdueSummary = overdue && overduePayment?.count ? overduePayment : null;
+  const summaryAmount = overdueSummary?.amount ?? nextInstallment?.amount;
+  const summaryDate = overdueSummary?.dueDate ?? nextInstallment?.dueDate;
+  const installmentLabel = overdueSummary ? "Saldo en mora" : overdue ? "Cuota vencida" : "Próxima cuota";
 
   return (
     <div className={styles.screen} data-credit-status={statusTone}>
@@ -177,15 +181,16 @@ export default function ClientActiveCreditDashboard({
           </div>
           <div className={styles.summary}>
             <p className={styles.amountEyebrow} id="active-credit-summary">{installmentLabel}</p>
-            <p className={styles.heroAmount}>{nextInstallment ? money(nextInstallment.amount) : "Sin saldo"}</p>
-            {nextInstallment ? <p className={styles.dueDate}>
-              {overdue ? "Venció el " : ""}{fullDateLabel(nextInstallment.dueDate)}
+            <p className={styles.heroAmount}>{summaryAmount !== undefined ? money(summaryAmount) : "Sin saldo"}</p>
+            {summaryDate ? <p className={styles.dueDate}>
+              {overdueSummary ? <>{overdueSummary.count} {overdueSummary.count === 1 ? "cuota vencida" : "cuotas vencidas"}<br /></> : null}
+              {overdueSummary && overdueSummary.count > 1 ? "Desde el " : overdue ? "Venció el " : ""}{fullDateLabel(summaryDate)}
             </p> : null}
             <p className={styles.installmentCount}><strong>{safePaid}</strong> / {safeTotal} cuotas</p>
           </div>
           <div className={styles.actions}>
             <Button className={styles.payButton} onClick={onPayInstallment} disabled={!nextInstallment || paying}>
-              <CreditCard aria-hidden="true" /><span>{paying ? "Abriendo…" : "Pagar cuota"}</span>
+              <CreditCard aria-hidden="true" /><span>{paying ? "Abriendo…" : overdueSummary ? "Pagar mora" : "Pagar cuota"}</span>
             </Button>
             {!overdue ? (
               <>
@@ -233,8 +238,8 @@ export default function ClientActiveCreditDashboard({
           {nextInstallment ? (
             <button type="button" className={styles.activityRow} onClick={onOpenPlan}>
               <span className={styles.activityIcon} aria-hidden="true"><CalendarDays /></span>
-              <span className={styles.activityCopy}><strong>{compactDateLabel(nextInstallment.dueDate)}</strong><small>{installmentLabel}</small></span>
-              <strong className={styles.activityAmount}>{money(nextInstallment.amount)}</strong><ChevronRight aria-hidden="true" />
+              <span className={styles.activityCopy}><strong>{compactDateLabel(summaryDate || nextInstallment.dueDate)}</strong><small>{installmentLabel}</small></span>
+              <strong className={styles.activityAmount}>{money(summaryAmount ?? nextInstallment.amount)}</strong><ChevronRight aria-hidden="true" />
             </button>
           ) : null}
         </section>

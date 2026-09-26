@@ -3,6 +3,7 @@ import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import { useCallback, useEffect, useState } from "react";
 import ClientActiveCreditDashboard from "@/app/clientes/client-active-credit-dashboard";
+import { resolveHomeInstallmentPayment } from "./credit-dashboard-presentation";
 import ClientCreditPanel, {
   type ClientCreditPanelName,
 } from "@/app/clientes/client-credit-panel";
@@ -160,7 +161,7 @@ function formatNequiPhone(value: string) {
 }
 
 function getPayableInstallments(credit: ClientCredit) {
-  return credit.cuotas.filter((item) => item.saldoPendiente > 0);
+  return credit.cuotas.filter((item) => !item.eliminada && item.saldoPendiente > 0);
 }
 
 function getPaidInstallments(credit: ClientCredit) {
@@ -402,8 +403,13 @@ export default function ClienteConsultaPage() {
   };
 
   const openNextInstallmentWompiConfirm = (credit: ClientCredit) => {
-    const nextInstallment = getPayableInstallments(credit)[0];
-    openWompiConfirm(credit, "INSTALLMENTS", nextInstallment?.numero);
+    const payment = resolveHomeInstallmentPayment(credit);
+    if (payment.requiresPlanReview) {
+      openPanel("pending");
+      setNotice({ text: "Revisa el calendario de tu plan de pagos antes de confirmar las cuotas vencidas.", tone: "red" });
+      return;
+    }
+    openWompiConfirm(credit, "INSTALLMENTS", payment.installmentLimit);
   };
 
   const payWithWompi = async (credit: ClientCredit) => {
@@ -650,6 +656,7 @@ export default function ClienteConsultaPage() {
   const payable = activeCredit ? getPayableInstallments(activeCredit) : [];
   const totalCount = activeCredit?.cuotas.filter((item) => !item.eliminada).length || 0;
   const nextInstallment = payable[0] || null;
+  const homePayment = activeCredit ? resolveHomeInstallmentPayment(activeCredit) : null;
   const selectedPaymentLimit =
     activeCredit && nextInstallment
       ? selectedLimit[activeCredit.id] || nextInstallment.numero
@@ -756,6 +763,9 @@ export default function ClienteConsultaPage() {
                 }
               : null
           }
+          overduePayment={homePayment && homePayment.overdueCount > 0 && homePayment.dueDate
+            ? { amount: homePayment.amount, count: homePayment.overdueCount, dueDate: homePayment.dueDate }
+            : null}
           notice={notice}
           onOpenDevice={() => openPanel("pending")}
           onOpenHistory={() => openPanel("history")}
@@ -782,7 +792,7 @@ export default function ClienteConsultaPage() {
             activeCredit.estadoPago === "MORA" ? "Pago pendiente" : "Crédito al día"
           }
           statusTone={activeCredit.estadoPago === "MORA" ? "overdue" : "current"}
-            totalInstallments={totalCount}
+          totalInstallments={totalCount}
           />
         </div>
 

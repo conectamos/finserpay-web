@@ -12,3 +12,32 @@ export function paymentReminder(dueDate: string | null, overdue: boolean, now = 
   if (days < 0) return "Consulta el estado de tu próxima cuota";
   return `Próximo pago en ${days} ${days === 1 ? "día" : "días"}`;
 }
+
+type HomePaymentInstallment = {
+  numero: number;
+  fechaVencimiento: string;
+  saldoPendiente: number;
+  estaEnMora?: boolean;
+  eliminada?: boolean;
+};
+
+/** Uses the server's remaining balances and delinquency flags, never scheduled face values. */
+export function resolveHomeInstallmentPayment(credit: {
+  estadoPago: string;
+  cuotas: readonly HomePaymentInstallment[];
+}) {
+  const payable = credit.cuotas.filter(item => !item.eliminada && item.saldoPendiente > 0)
+    .sort((left, right) => left.numero - right.numero);
+  const overdue = credit.estadoPago === "MORA" ? payable.filter(item => item.estaEnMora) : [];
+  const selected = overdue.length ? overdue : payable.slice(0, 1);
+  const installmentLimit = selected.at(-1)?.numero;
+  return {
+    amount: Math.round(selected.reduce((sum, item) => sum + item.saldoPendiente, 0) * 100) / 100,
+    overdueCount: overdue.length,
+    dueDate: selected[0]?.fechaVencimiento ?? null,
+    installmentLimit,
+    // The existing checkout applies pending installments in numeric order.
+    requiresPlanReview: overdue.length > 0 && payable.some(item =>
+      item.numero <= (installmentLimit ?? 0) && !item.estaEnMora),
+  };
+}

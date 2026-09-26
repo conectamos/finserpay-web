@@ -9,7 +9,7 @@ const projectRoot = path.resolve(
   ".."
 );
 
-test("Pagar cuota abre directamente la confirmacion Nequi para la proxima cuota", async () => {
+test("el pago del inicio abre Nequi con el resumen actual de cuotas", async () => {
   const [pageSource, dashboardSource] = await Promise.all([
     readFile(path.join(projectRoot, "app/clientes/page.tsx"), "utf8"),
     readFile(
@@ -24,7 +24,7 @@ test("Pagar cuota abre directamente la confirmacion Nequi para la proxima cuota"
 
   assert.match(
     pageSource,
-    /const openNextInstallmentWompiConfirm = \(credit: ClientCredit\) => \{\s+const nextInstallment = getPayableInstallments\(credit\)\[0\];\s+openWompiConfirm\(credit, "INSTALLMENTS", nextInstallment\?\.numero\);/
+    /const payment = resolveHomeInstallmentPayment\(credit\);[\s\S]*?openWompiConfirm\(credit, "INSTALLMENTS", payment.installmentLimit\);/
   );
   assert.match(
     pageSource,
