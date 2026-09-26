@@ -71,7 +71,9 @@ test("real call schema, storage and approval integrate under concurrent actions"
     const fields = core.APPROVAL_EVIDENCE.map(({ field }) => field);
     const id = (await client.query(`INSERT INTO "Credito" (${fields.map(field => `"${field}"`).join(",")})
       VALUES (${fields.map((_, index) => `$${index + 1}`).join(",")}) RETURNING "id"`, fields.map(field => fixture.credit[field]))).rows[0].id;
-    await client.query(`INSERT INTO "DataCreditoAssessment" VALUES ($1,$2,750,'{"initialPaymentPercentage":20}','APROBADO',CURRENT_TIMESTAMP,'2199-01-01')`, [`assessment-${id}`, id]);
+    await client.query(`INSERT INTO "DataCreditoAssessment"
+      ("id","creditId","score","offer","status","consumedAt","retainedUntil")
+      VALUES ($1,$2,750,'{"initialPaymentPercentage":20}','APROBADO',CURRENT_TIMESTAMP,'2199-01-01')`, [`assessment-${id}`, id]);
     await client.query(`INSERT INTO "FirmaSeguroProcess" ("creditoId","processUuid","status","signedDocumentBase64","signedDocumentFileName","completedAt")
       VALUES ($1,$2,'COMPLETED',$3,'firmado.pdf',CURRENT_TIMESTAMP)`, [id, `process-${id}`, fixture.document.signedDocumentBase64]);
     return id;

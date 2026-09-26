@@ -77,7 +77,10 @@ test("PostgreSQL aislado: reemisión persistente, conservación, callbacks y con
   class CreditApprovalError extends Error { constructor(code,message,status=400){super(message);this.code=code;this.status=status;} }
   const core = { CreditApprovalError, approvalPdf: value => {
     const bytes=Buffer.from(value||"","base64");return bytes.subarray(0,5).toString()==="%PDF-"?bytes:null;
-  }};
+  }, getCreditApprovalDetail: async (_db,id) => ({ id,
+    review:{revision:1,reviewHash:"a".repeat(64),status:"PENDING"},
+    callRecording:{available:true,recording:null},
+  })};
   const state = loadReissueModule("lib/credit-approval-reissue-state.ts");
   const contractImei = loadReissueModule("lib/credit-contract-imei.ts");
   const approvalErrors = loadReissueModule("lib/credit-approval-errors.ts");
@@ -112,8 +115,13 @@ test("PostgreSQL aislado: reemisión persistente, conservación, callbacks y con
       await guarded.markCreditoFirmaSeguroCompleted(process.creditoId,{processUuid:process.processUuid,status:"COMPLETED"});
     },
   };
+  const continuitySeals=[];
   const service = loadReissueModule("lib/credit-approval-reissue.ts", {
     "@/lib/prisma":{default:api},"@/lib/credit-approval":core,
+    "@/lib/credit-approval-call-continuity":{
+      captureCreditApprovalCallContinuity:()=>({recordingId:"00000000-0000-4000-8000-000000000081",revision:1,reviewHash:"a".repeat(64)}),
+      sealCreditApprovalReissueCall:async(_db,creditId,source,event)=>{continuitySeals.push({creditId,source,event});return true;},
+    },
     "@/lib/credit-approval-actor":loadReissueModule("lib/credit-approval-actor.ts"),
     "@/lib/firmaseguro-folio-pdf":{buildFirmaSeguroCreditPdf:async frozen => Buffer.from("%PDF-1.4\n"+JSON.stringify(frozen)+"\n%%EOF")},
     "@/lib/firmaseguro-credit":provider,"@/lib/credit-approval-reissue-source":source,
@@ -141,6 +149,9 @@ test("PostgreSQL aislado: reemisión persistente, conservación, callbacks y con
     const started=new Promise(resolve=>{onSent=resolve;});
     const running=service.requestCreditApprovalReissue(81,request,actor);
     await started;
+    assert.equal(continuitySeals.length,1);
+    assert.equal(continuitySeals[0].creditId,81);
+    assert.equal(continuitySeals[0].event.operationId,request.idempotencyKey);
     assert.equal((await state.getCreditApprovalReissueState(api,81)).operation.status,"DISPATCHING");
     await assert.rejects(approve(81),/SIGNATURE_REISSUE_PENDING/);
     await assert.rejects(db.query('INSERT INTO "LiquidacionAliadoCredito"("creditoId") VALUES (81)'),/SIGNATURE_REISSUE_PENDING|CREDIT_APPROVAL_REQUIRED/);

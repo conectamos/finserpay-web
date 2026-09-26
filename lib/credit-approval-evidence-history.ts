@@ -49,11 +49,13 @@ export async function archiveEvidenceRevision(db: ApprovalDatabase, options: {
   reviewHash?: string | null;
 }) {
   const audit = approvalActorAudit(options.actor);
+  const id = randomUUID();
   await db.$executeRawUnsafe(`INSERT INTO "CreditApprovalEvidenceRevision"
     ("id", "creditoId", "evidenceKey", "previousDataUrl", "previousSha256", "nextSha256",
       "actorUserId", "actorName", "source", "reviewRevision", "reviewHash", "actorKind", "actorGrantId", "actorSessionId", "createdAt")
     VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::uuid, $14::uuid, CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`,
-  randomUUID(), options.creditId, options.key, options.previousDataUrl, options.previousSha256,
+  id, options.creditId, options.key, options.previousDataUrl, options.previousSha256,
   options.nextSha256, audit.actorUserId, audit.actorName, options.source,
   options.reviewRevision ?? null, options.reviewHash ?? null, audit.actorKind, audit.actorGrantId, audit.actorSessionId);
+  return id;
 }

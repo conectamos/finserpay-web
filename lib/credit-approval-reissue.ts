@@ -2,7 +2,11 @@ import "server-only";
 import { assertApprovalActorActive, approvalActorAudit } from "@/lib/credit-approval-actor";
 import prisma from "@/lib/prisma";
 import type { ApprovalActor } from "@/lib/credit-approval";
-import { CreditApprovalError, approvalPdf } from "@/lib/credit-approval";
+import { CreditApprovalError, approvalPdf, getCreditApprovalDetail } from "@/lib/credit-approval";
+import {
+  captureCreditApprovalCallContinuity,
+  sealCreditApprovalReissueCall,
+} from "@/lib/credit-approval-call-continuity";
 import { buildFirmaSeguroCreditPdf } from "@/lib/firmaseguro-folio-pdf";
 import { prepareFirmaSeguroReissue, refreshFirmaSeguroProcess } from "@/lib/firmaseguro-credit";
 import type { FirmaSeguroProcessRow } from "@/lib/firmaseguro-storage";
@@ -93,6 +97,9 @@ export async function requestCreditApprovalReissue(creditoId: number, input: Req
     if (review.revision !== input.expectedRevision || !current || current.processUuid !== input.expectedProcessUuid) {
       throw new CreditApprovalError("REVIEW_CHANGED", "La firma o la revisión cambió. Actualiza el expediente.", 409);
     }
+    const callContinuity = captureCreditApprovalCallContinuity(
+      await getCreditApprovalDetail(db, creditoId),
+    );
     const originalPdf = approvalPdf(current.signedDocumentBase64);
     if (!originalPdf || originalPdf.length > 32 * 1024 * 1024 || !(current.completedAt || isFirmaSeguroCompletedStatus(current.status))) {
       throw new CreditApprovalError("SIGNED_DOCUMENT_REQUIRED", "Se necesita el documento firmado vigente antes de solicitar otra firma.", 409);
@@ -115,6 +122,7 @@ export async function requestCreditApprovalReissue(creditoId: number, input: Req
       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14::uuid,$15::uuid,'PREPARING')`,
       input.idempotencyKey, creditoId, current.processUuid, review.revision, input.reason, audit.actorUserId, audit.actorName,
       JSON.stringify(source.credit), JSON.stringify(credit.contratoSnapshot), current.signedDocumentBase64, reissueHash(originalPdf), source.termsHash, audit.actorKind, audit.actorGrantId, audit.actorSessionId);
+    await sealCreditApprovalReissueCall(db, creditoId, callContinuity, { operationId: input.idempotencyKey });
     return { operation: (await readOperation(db, input.idempotencyKey))!, dispatch: true, original: { process: current, cachedPdf } };
   }, { timeout: 15000 });
   if (!reserved.dispatch || !reserved.original) return getCreditApprovalReissueState(prisma, creditoId);

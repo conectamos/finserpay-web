@@ -63,6 +63,30 @@ test("call continuity is append-only, bound to novelty events and used by the ap
   assert.match(schema, /NEW\."callRecordingId"<>latest_id/);
 });
 
+test("evidence and reissue seals are immutable, guarded and resolved only for unchanged terms", () => {
+  const schema = creditApprovalCallSchemaStatements.join("\n");
+  for (const table of ["CreditApprovalCallEvidenceSeal", "CreditApprovalCallReissueSeal"]) {
+    assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS public\\."${table}"`));
+    assert.match(schema, new RegExp(`${table}_insert_guard[\\s\\S]*BEFORE INSERT`));
+    assert.match(schema, new RegExp(`${table}_immutable[\\s\\S]*BEFORE UPDATE OR DELETE`));
+    assert.match(schema, new RegExp(`${table}_no_truncate[\\s\\S]*BEFORE TRUNCATE`));
+  }
+  assert.match(schema, /credit_approval_call_data_url_hash\(evidence\."previousDataUrl"\) IS DISTINCT FROM evidence\."previousSha256"/);
+  assert.match(schema, /credit_approval_call_evidence_hash\(NEW\."creditoId",evidence\."evidenceKey"\) IS DISTINCT FROM evidence\."previousSha256"/);
+  assert.match(schema, /operation_event\."operationId"=operation\."id"[\s\S]*invalidation\."revision"=operation\."sourceRevision"\+1/);
+  assert.match(schema, /credit_approval_call_reissue_terms_match\(operation\."id"\)/);
+  assert.match(schema, /credit_approval_call_contract_hash\(target_credit_id\)=seal\."contractHash"/);
+  assert.match(schema, /assessment\."consumedAt" IS NOT NULL AND assessment\."retainedUntil">CURRENT_TIMESTAMP/);
+  assert.match(schema, /assessment\."id"::text=credit\."contratoSnapshot" #>> '\{financiero,dataCredito,assessmentId\}'/);
+  assert.match(schema, /recording\."createdAt"<=operation\."requestedAt"[\s\S]*HAVING COUNT\(\*\)=1/);
+  assert.match(schema, /assessment\."consumedAt"<=recording\."createdAt" AND assessment\."updatedAt"<=recording\."createdAt"/);
+  assert.match(schema, /invalidation\."reviewHash" IS NULL OR invalidation\."reviewHash"=source_review_hash/);
+  assert.match(schema, /SELECT target_revision=source_revision\+1/);
+  assert.match(schema, /NOT EXISTS \(SELECT 1 FROM public\."CreditApprovalCallEvidenceSeal" existing/);
+  assert.match(schema, /NOT EXISTS \(SELECT 1 FROM public\."CreditApprovalCallReissueSeal" existing/);
+  assert.doesNotMatch(schema.match(/CREATE TABLE IF NOT EXISTS public\."CreditApprovalCall(?:Evidence|Reissue)Seal"[\s\S]*?\)/g)?.join("\n") || "", /"bytes"/);
+});
+
 test("call schema only exempts a verified active FINSERPAY administrator from audio", () => {
   const schema = creditApprovalCallSchemaStatements.join("\n");
   assert.match(schema, /CREATE OR REPLACE FUNCTION public\.credit_approval_actor_can_skip_call_recording\([\s\S]*RETURNS BOOLEAN LANGUAGE plpgsql VOLATILE/);

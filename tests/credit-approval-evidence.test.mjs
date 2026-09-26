@@ -80,9 +80,10 @@ test("la misma foto es idempotente y fotos de identidad repetidas se rechazan", 
   assert.equal(state.archives.length, 0);
 });
 
-function adminHarness(blocked, { requestedByNovelty = false } = {}) {
+function adminHarness(blocked, { requestedByNovelty = false, targetAllyCode = "ALIADO_TEST" } = {}) {
   const trace = [];
   const credit = { id: 81, folio: "TEST-81", estado: "ACTIVO", contratoSnapshot: {},
+    sede: { aliado: { codigo: targetAllyCode } },
     ...Object.fromEntries(service.APPROVAL_EVIDENCE.map(({ field }, i) => [field, photos[i]])) };
   const continuitySource = { recordingId: "00000000-0000-4000-8000-000000000081", revision: 2, reviewHash: "a".repeat(64) };
   const continuityEvent = {
@@ -109,7 +110,6 @@ function adminHarness(blocked, { requestedByNovelty = false } = {}) {
     "@/lib/credit-approval-evidence-history": history,
     "@/lib/credit-approval": {
       getCreditApprovalDetail: async () => {
-        if (!requestedByNovelty) throw new Error("No debe leer detalle sin una novedad solicitada");
         trace.push("detail");
         return { id: 81, review: { revision: 2, reviewHash: "a".repeat(64), status: "PENDING" },
           callRecording: { available: true, recording: { id: continuitySource.recordingId } } };
@@ -117,6 +117,10 @@ function adminHarness(blocked, { requestedByNovelty = false } = {}) {
     },
     "@/lib/credit-approval-call-continuity": {
       captureCreditApprovalCallContinuity: () => { trace.push("capture"); return continuitySource; },
+      sealCreditApprovalEvidenceCall: async (_tx, id, source, event) => {
+        trace.push("seal"); assert.equal(id, 81); assert.deepEqual(source, continuitySource);
+        assert.match(event.evidenceRevisionId, /^[0-9a-f-]{36}$/); return true;
+      },
       continueCreditApprovalCall: async (_tx, id, source, event) => {
         trace.push("continue"); assert.equal(id, 81); assert.deepEqual(source, continuitySource); assert.deepEqual(event, continuityEvent); return true;
       },
@@ -146,7 +150,21 @@ test("la corrección admin archiva antes de actualizar y lee el snapshot despué
   const { route, trace } = adminHarness(false);
   const result = await route.PATCH(new Request("https://finser.test/api/creditos/81/evidencias", { method: "PATCH", body: JSON.stringify({ key: "foto-entrega", dataUrl: photos[5] }) }), { params: Promise.resolve({ id: "81" }) });
   assert.equal(result.status, 200);
-  assert.deepEqual(trace, ["lookup", "lock-credit", "lock-review", "snapshot", "archive", "update"]);
+  assert.deepEqual(trace, [
+    "lookup", "lock-credit", "lock-review", "snapshot", "detail", "capture",
+    "archive", "seal", "update",
+  ]);
+});
+
+test("la corrección admin de un crédito FINSERPAY no consulta el muro ni captura un sello", async () => {
+  const { route, trace } = adminHarness(false, { targetAllyCode: "FINSERPAY" });
+  const result = await route.PATCH(new Request("https://finser.test/api/creditos/81/evidencias", {
+    method: "PATCH", body: JSON.stringify({ key: "foto-entrega", dataUrl: photos[5] }),
+  }), { params: Promise.resolve({ id: "81" }) });
+  assert.equal(result.status, 200);
+  assert.deepEqual(trace, [
+    "lookup", "lock-credit", "lock-review", "snapshot", "archive", "update",
+  ]);
 });
 
 test("la corrección admin de una foto OPEN captura el audio antes del cambio y enlaza el evento después", async () => {
@@ -157,6 +175,6 @@ test("la corrección admin de una foto OPEN captura el audio antes del cambio y 
   assert.equal(result.status, 200);
   assert.deepEqual(trace, [
     "lookup", "lock-credit", "lock-review", "snapshot", "detail", "capture",
-    "archive", "update", "mark", "continue",
+    "archive", "seal", "update", "mark", "continue",
   ]);
 });

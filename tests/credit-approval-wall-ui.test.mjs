@@ -8,7 +8,7 @@ import ts from "typescript";
 
 const placeholder = (name) => Object.defineProperty(() => null, "name", { value: name });
 const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "LoadingState", "MetricCard", "PageHeader", "StatusPill", "Select", "Tabs"].map((name) => [name, placeholder(name)]));
-const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalNoveltyPanel", "PendingItemEditor", "ApprovalCallRecording", "SharedApprovalWorkspace"].map((name) => [name, placeholder(name)]));
+const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalNoveltyPanel", "PendingItemEditor", "ApprovalCallRecording", "SharedApprovalWorkspace", "SharedEvidenceGallery", "SharedDataCorrection", "SharedNoveltyHistory"].map((name) => [name, placeholder(name)]));
 const icons = new Proxy({}, { get: (_, key) => placeholder(String(key)) });
 
 function load(path, dependencies, globals = {}) {
@@ -39,7 +39,7 @@ function mount(path, dependencies, props = {}) {
   const focusCalls = [];
   const listeners = new Map();
   const intervals = new Map();
-  let hookIndex = 0, dirty = true, effects = [], tree;
+  let hookIndex = 0, dirty = true, effects = [], tree, currentProps = props;
   const changed = (old, next) => !old || !next || old.length !== next.length || next.some((value, index) => !Object.is(value, old[index]));
   const hooks = {
     useState(initial) {
@@ -79,7 +79,7 @@ function mount(path, dependencies, props = {}) {
     async flush() {
       for (let cycle = 0; cycle < 30; cycle++) {
         if (dirty) {
-          dirty = false; hookIndex = 0; effects = []; tree = Component(props);
+          dirty = false; hookIndex = 0; effects = []; tree = Component(currentProps);
           for (const effect of effects) effect();
         }
         await setImmediate();
@@ -89,6 +89,7 @@ function mount(path, dependencies, props = {}) {
     },
     find(predicate) { const node = nodes(tree).find(predicate); assert.ok(node, "Expected rendered control"); return node; },
     all(predicate) { return nodes(tree).filter(predicate); },
+    update(nextProps) { currentProps = nextProps; dirty = true; },
     focus() { listeners.get("focus")?.(); },
     focused() { return focusCalls.at(-1) || null; },
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
@@ -475,6 +476,66 @@ test("la grabación aprobada puede reintentarse tras un error sin modificar la a
 });
 const sharedProps = (h) => h.find(node => node.type === parts.SharedApprovalWorkspace).props;
 const countedPage = (items, extra = {}) => ({ ...page(items), counts: { pending: 3, approved: 2 }, ...extra });
+const sharedStyles = new Proxy({}, { get: (_, key) => String(key) });
+function sharedWorkspace(props) {
+  return mount("app/revision-creditos/shared-approval-workspace.tsx", {
+    "@/lib/credit-factory": creditFactory,
+    "@/app/dashboard/aprobaciones/last-pdf-page-preview": { default: parts.LastPdfPagePreview },
+    "./shared-evidence-gallery": { default: parts.SharedEvidenceGallery },
+    "./shared-data-correction": { default: parts.SharedDataCorrection },
+    "./shared-novelty-history": { default: parts.SharedNoveltyHistory },
+    "./shared-review.module.css": { default: sharedStyles },
+  }, props);
+}
+function actionPanels(h) {
+  const children = h.find(node => node.type === "div" && node.props.className === "actionsScroll").props.children;
+  return Array.from(Array.isArray(children) ? children : [children]).filter(Boolean);
+}
+
+test("la composición real retira la corrección y conserva las identidades de los demás paneles durante una refirma", async () => {
+  let observed = { ...detail(81), capabilities: { ...detail(81).capabilities, canEditData: true } };
+  const parent = wall({
+    readApprovalQueue: async () => countedPage([row(81)]),
+    readApprovalCredit: async () => observed,
+  }, { redesigned: true });
+  let workspace;
+  try {
+    await parent.flush(); sharedProps(parent).onSelect(81); await parent.flush();
+    workspace = sharedWorkspace(sharedProps(parent)); await workspace.flush();
+    const expectedTypes = ["SharedDataCorrection", "ApprovalCallRecording", "ApprovalNoveltyPanel", "ApprovalSignatureReissue"];
+    const expectedKeys = ["approval-data:81", "approval-call:81", "approval-novelty:81", "approval-signature:81"];
+    const initialPanels = actionPanels(workspace);
+    assert.deepEqual(initialPanels.map(panel => panel.type.name), expectedTypes);
+    assert.deepEqual(initialPanels.map(panel => panel.key), expectedKeys);
+    assert.equal(new Set(initialPanels.map(panel => panel.key)).size, initialPanels.length);
+
+    observed = {
+      ...detail(81, 2), capabilities: { ...detail(81, 2).capabilities, canEditData: false },
+      reissue: { available: true, blocked: true, operation: { id: "refirma-81", status: "AWAITING_SIGNATURE" } },
+    };
+    await sharedProps(parent).signaturePanel.props.onUpdated(); await parent.flush();
+    // Este arnés ejecuta la transición estructural de ambos componentes reales;
+    // inspecciona sus elementos React, pero no emula la reconciliación del DOM.
+    workspace.update(sharedProps(parent)); await workspace.flush();
+    const reissuePanels = actionPanels(workspace);
+    assert.equal(sharedProps(parent).signaturePanel.props.detail.reissue.operation.id, "refirma-81");
+    assert.deepEqual(reissuePanels.map(panel => panel.type.name), expectedTypes.slice(1));
+    assert.deepEqual(reissuePanels.map(panel => panel.key), expectedKeys.slice(1));
+    assert.deepEqual(reissuePanels.map(panel => panel.key), initialPanels.slice(1).map(panel => panel.key));
+    assert.equal(new Set(reissuePanels.map(panel => panel.key)).size, reissuePanels.length);
+  } finally { workspace?.unmount(); parent.unmount(); }
+});
+
+test("la composición heredada usa las mismas identidades semánticas sin colisiones", async () => {
+  const h = wall();
+  try {
+    await h.flush(); select(h, 81); await h.flush();
+    const panels = [parts.ApprovalCallRecording, parts.ApprovalNoveltyPanel, parts.ApprovalSignatureReissue]
+      .map(type => h.find(node => node.type === type));
+    assert.deepEqual(panels.map(panel => panel.key), ["approval-call:81", "approval-novelty:81", "approval-signature:81"]);
+    assert.equal(new Set(panels.map(panel => panel.key)).size, panels.length);
+  } finally { h.unmount(); }
+});
 
 test("el panel administrativo usa el muro rediseñado y conserva la autoría personal", async () => {
   const calls = [];

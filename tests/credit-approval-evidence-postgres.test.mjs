@@ -11,11 +11,23 @@ import { installCreditApprovalNoveltiesSchema } from "../scripts/credit-approval
 import { installApprovalSharedSchema } from "../scripts/approval-shared-schema.mjs";
 import { installCreditApprovalCallSchema } from "../scripts/credit-approval-call-schema.mjs";
 import { loadCallModule, stateModule, actors as callActors } from "./credit-approval-call-test-loader.mjs";
-import { evidence, history, photos, actor, service, correctionInput } from "./credit-approval-evidence-test-loader.mjs";
+import { history, photos, actor, service, correctionInput, loadApprovalModule, sanitizer } from "./credit-approval-evidence-test-loader.mjs";
 
 const callStore = loadCallModule("lib/credit-approval-call-store.ts", {
   "@/lib/credit-approval": service, "@/lib/credit-approval-errors": service,
   "@/lib/credit-approval-actor": callActors, "@/lib/credit-approval-call-state": stateModule,
+});
+const actorModule = loadApprovalModule("lib/credit-approval-actor.ts");
+const continuity = loadApprovalModule("lib/credit-approval-call-continuity.ts", {
+  "@/lib/credit-approval": service,
+});
+const evidence = loadApprovalModule("lib/credit-approval-evidence.ts", {
+  "@/lib/credit-approval-actor": actorModule,
+  "@/lib/credit-approval-novelty-state": { markNoveltyPhotoCorrected: async () => false },
+  "@/lib/credit-approval-call-continuity": continuity,
+  "@/lib/credit-approval": service,
+  "@/lib/iphone-delivery-evidence": sanitizer,
+  "@/lib/credit-approval-evidence-history": history,
 });
 const callBytes = readFileSync(new URL("fixtures/approval-call/tone.wav", import.meta.url));
 
@@ -41,7 +53,7 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
   const client = new pg.Client({ connectionString });
   await client.connect();
   t.after(() => client.end());
-  const tables = ["CreditSadminRegistration","CreditApprovalCallContinuation", "CreditApprovalCallRecording", "CreditApprovalNoveltyEvent", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalEvidenceRevision", "CreditApprovalReissueEvent", "CreditApprovalReissue", "CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy", "FirmaSeguroProcess", "DataCreditoAssessment", "LiquidacionAliadoCredito", "CreditoAmortizacion", "Credito", "Usuario", "Rol", "Sede", "Aliado"];
+  const tables = ["CreditSadminRegistration","CreditApprovalCallEvidenceSeal","CreditApprovalCallReissueSeal","CreditApprovalCallContinuation", "CreditApprovalCallRecording", "CreditApprovalNoveltyEvent", "CreditApprovalNoveltyItem", "CreditApprovalNovelty", "CreditApprovalSharedSession", "CreditApprovalSharedGrant", "CreditApprovalEvidenceRevision", "CreditApprovalReissueEvent", "CreditApprovalReissue", "CreditApprovalEvent", "CreditApprovalReview", "CreditApprovalPolicy", "FirmaSeguroProcess", "DataCreditoAssessment", "LiquidacionAliadoCredito", "CreditoAmortizacion", "Credito", "Usuario", "Rol", "Sede", "Aliado"];
   const existing = await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(existing.rows.every(({ tablename }) => tables.includes(tablename)), "No se reinicia una base con tablas ajenas");
   for (const table of tables) await client.query(`DROP TABLE IF EXISTS public."${table}" CASCADE`);
@@ -73,7 +85,7 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
     CREATE TABLE "CreditoAmortizacion" ("creditoId" INTEGER PRIMARY KEY REFERENCES "Credito"("id"),"cuotaComercial" NUMERIC(20,2));
     CREATE TABLE "LiquidacionAliadoCredito" ("id" SERIAL PRIMARY KEY,"creditoId" INTEGER UNIQUE REFERENCES "Credito"("id"));
     CREATE TABLE "DataCreditoAssessment" ("id" TEXT PRIMARY KEY,"creditId" INTEGER,"score" INTEGER,"offer" JSONB,
-      "status" TEXT,"consumedAt" TIMESTAMP,"retainedUntil" TIMESTAMP);
+      "status" TEXT,"consumedAt" TIMESTAMP,"retainedUntil" TIMESTAMP,"updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE "FirmaSeguroProcess" ("id" SERIAL PRIMARY KEY,"creditoId" INTEGER,"processUuid" TEXT,
       "status" TEXT,"signedDocumentBase64" TEXT,"signedDocumentFileName" TEXT,"draftPayload" JSONB,
       "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"completedAt" TIMESTAMP,"supersededAt" TIMESTAMP);
@@ -99,7 +111,9 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
     const values = { ...Object.fromEntries(service.APPROVAL_EVIDENCE.map(({ field }, i) => [field, photos[i]])), ...overrides };
     const keys = Object.keys(values);
     const id = (await client.query(`INSERT INTO "Credito" (${keys.map((key) => `"${key}"`).join(",")}) VALUES (${keys.map((_, i) => `$${i + 1}`).join(",")}) RETURNING "id"`, Object.values(values))).rows[0].id;
-    await client.query(`INSERT INTO "DataCreditoAssessment" VALUES ($1,$2,750,'{"initialPaymentPercentage":20}','APROBADO',CURRENT_TIMESTAMP,'2199-01-01')`, [`assessment-${id}`, id]);
+    await client.query(`INSERT INTO "DataCreditoAssessment"
+      ("id","creditId","score","offer","status","consumedAt","retainedUntil")
+      VALUES ($1,$2,750,'{"initialPaymentPercentage":20}','APROBADO',CURRENT_TIMESTAMP,'2199-01-01')`, [`assessment-${id}`, id]);
     await client.query(`INSERT INTO "FirmaSeguroProcess" ("creditoId","processUuid","status","signedDocumentBase64","signedDocumentFileName","completedAt") VALUES ($1,$2,'COMPLETED',$3,'firmado.pdf',CURRENT_TIMESTAMP)`, [id, `process-${id}`, pdf]);
     return id;
   }
@@ -225,12 +239,16 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
   await t.test("reemplazar cada foto conserva versiones anteriores y congela finanzas y firma", async () => {
     const id = await createCredit();
     const before = (await client.query('SELECT * FROM "Credito" WHERE "id"=$1', [id])).rows[0];
+    let recordingId = null;
     for (const { key, field } of service.APPROVAL_EVIDENCE) {
-      await approve(id);
+      const approved = await approve(id);
+      recordingId ??= approved.item.callRecording.recording.id;
+      assert.equal(approved.item.callRecording.recording.id, recordingId);
       const input = await correctionInput(db, photos[5], key, id);
       const result = await transaction(client, (tx) => evidence.replaceApprovalEvidence(tx, id, input, actor));
       assert.equal(result.item.review.status, "PENDING");
       assert.equal(result.item.review.revision, input.revision + 1);
+      assert.equal(result.item.callRecording.recording.id, recordingId, `${key} conserva la grabación efectiva`);
       const historyRow = (await archives(id)).find((row) => row.evidenceKey === key);
       assert.equal(historyRow.previousDataUrl, before[field]);
       assert.equal(historyRow.previousSha256, history.evidenceSha256(before[field]));
@@ -248,6 +266,13 @@ test("PostgreSQL aislado: historial de fotos, invalidación y concurrencia", {
     assert.deepEqual(after.contratoSnapshot.financiero, before.contratoSnapshot.financiero);
     assert.deepEqual(after.contratoSnapshot.firma, before.contratoSnapshot.firma);
     assert.equal(after.valorEquipoTotal, before.valorEquipoTotal);
+    assert.equal((await client.query('SELECT COUNT(*)::int AS count FROM "CreditApprovalCallRecording" WHERE "creditoId"=$1', [id])).rows[0].count, 1);
+    const seals = (await client.query('SELECT "recordingId"::text,"captureKind" FROM "CreditApprovalCallEvidenceSeal" WHERE "creditoId"=$1', [id])).rows;
+    assert.ok(seals.length >= service.APPROVAL_EVIDENCE.length);
+    assert.ok(seals.every((seal) => seal.recordingId === recordingId && seal.captureKind === "LIVE"));
+    await assert.rejects(client.query('UPDATE "CreditApprovalCallEvidenceSeal" SET "sourceRevision"="sourceRevision" WHERE "creditoId"=$1', [id]), { code: "23514" });
+    await assert.rejects(client.query('DELETE FROM "CreditApprovalCallEvidenceSeal" WHERE "creditoId"=$1', [id]), { code: "23514" });
+    await assert.rejects(client.query('TRUNCATE "CreditApprovalCallEvidenceSeal"'), { code: "23514" });
     assert.equal((await client.query('SELECT "signedDocumentBase64" FROM "FirmaSeguroProcess" WHERE "creditoId"=$1', [id])).rows[0].signedDocumentBase64, pdf);
     for (const query of ['UPDATE "CreditApprovalEvidenceRevision" SET "actorName"=\'otro\' WHERE "creditoId"=$1',
       'DELETE FROM "CreditApprovalEvidenceRevision" WHERE "creditoId"=$1']) await assert.rejects(client.query(query, [id]), { code: "23514" });
