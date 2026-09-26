@@ -54,6 +54,183 @@ export const creditApprovalCallSchemaStatements = [
   `ALTER TABLE public."CreditApprovalReview" ADD COLUMN IF NOT EXISTS "callRecordingId" UUID`,
   `ALTER TABLE public."CreditApprovalEvent" ADD COLUMN IF NOT EXISTS "callRecordingId" UUID`,
   ...["CreditApprovalReview","CreditApprovalEvent"].map(table => constraint(table, `${table}_callRecordingId_fkey`, `FOREIGN KEY ("callRecordingId") REFERENCES public."CreditApprovalCallRecording"("id") ON DELETE RESTRICT`)),
+  `CREATE TABLE IF NOT EXISTS public."CreditApprovalCallEvidenceSeal" (
+    "evidenceRevisionId" UUID PRIMARY KEY,"creditoId" INTEGER NOT NULL,"recordingId" UUID NOT NULL,
+    "sourceRevision" INTEGER NOT NULL,"sourceReviewHash" VARCHAR(64) NOT NULL,"contractHash" VARCHAR(64) NOT NULL,
+    "captureKind" VARCHAR(16) NOT NULL,"createdAt" TIMESTAMP(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'))`,
+  `ALTER TABLE public."CreditApprovalCallEvidenceSeal" ALTER COLUMN "createdAt" SET DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`,
+  constraint("CreditApprovalCallEvidenceSeal", "CreditApprovalCallEvidenceSeal_evidence_fkey", `FOREIGN KEY ("evidenceRevisionId") REFERENCES public."CreditApprovalEvidenceRevision"("id") ON DELETE RESTRICT`),
+  constraint("CreditApprovalCallEvidenceSeal", "CreditApprovalCallEvidenceSeal_credit_fkey", `FOREIGN KEY ("creditoId") REFERENCES public."Credito"("id") ON DELETE RESTRICT`),
+  constraint("CreditApprovalCallEvidenceSeal", "CreditApprovalCallEvidenceSeal_recording_fkey", `FOREIGN KEY ("recordingId") REFERENCES public."CreditApprovalCallRecording"("id") ON DELETE RESTRICT`),
+  constraint("CreditApprovalCallEvidenceSeal", "CreditApprovalCallEvidenceSeal_revision_check", `CHECK ("sourceRevision">0)`),
+  constraint("CreditApprovalCallEvidenceSeal", "CreditApprovalCallEvidenceSeal_hash_check", `CHECK ("sourceReviewHash" ~ '^[a-f0-9]{64}$' AND "contractHash" ~ '^[a-f0-9]{64}$')`),
+  constraint("CreditApprovalCallEvidenceSeal", "CreditApprovalCallEvidenceSeal_kind_check", `CHECK ("captureKind" IN ('LIVE','MIGRATED'))`),
+  `CREATE INDEX IF NOT EXISTS "CreditApprovalCallEvidenceSeal_recording_idx" ON public."CreditApprovalCallEvidenceSeal"("recordingId")`,
+  `CREATE TABLE IF NOT EXISTS public."CreditApprovalCallReissueSeal" (
+    "operationId" UUID PRIMARY KEY,"creditoId" INTEGER NOT NULL,"recordingId" UUID NOT NULL,
+    "sourceRevision" INTEGER NOT NULL,"sourceReviewHash" VARCHAR(64) NOT NULL,"contractHash" VARCHAR(64) NOT NULL,
+    "captureKind" VARCHAR(16) NOT NULL,"createdAt" TIMESTAMP(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'))`,
+  `ALTER TABLE public."CreditApprovalCallReissueSeal" ALTER COLUMN "createdAt" SET DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`,
+  constraint("CreditApprovalCallReissueSeal", "CreditApprovalCallReissueSeal_operation_fkey", `FOREIGN KEY ("operationId") REFERENCES public."CreditApprovalReissue"("id") ON DELETE RESTRICT`),
+  constraint("CreditApprovalCallReissueSeal", "CreditApprovalCallReissueSeal_credit_fkey", `FOREIGN KEY ("creditoId") REFERENCES public."Credito"("id") ON DELETE RESTRICT`),
+  constraint("CreditApprovalCallReissueSeal", "CreditApprovalCallReissueSeal_recording_fkey", `FOREIGN KEY ("recordingId") REFERENCES public."CreditApprovalCallRecording"("id") ON DELETE RESTRICT`),
+  constraint("CreditApprovalCallReissueSeal", "CreditApprovalCallReissueSeal_revision_check", `CHECK ("sourceRevision">0)`),
+  constraint("CreditApprovalCallReissueSeal", "CreditApprovalCallReissueSeal_hash_check", `CHECK ("sourceReviewHash" ~ '^[a-f0-9]{64}$' AND "contractHash" ~ '^[a-f0-9]{64}$')`),
+  constraint("CreditApprovalCallReissueSeal", "CreditApprovalCallReissueSeal_kind_check", `CHECK ("captureKind" IN ('LIVE','MIGRATED'))`),
+  `CREATE INDEX IF NOT EXISTS "CreditApprovalCallReissueSeal_recording_idx" ON public."CreditApprovalCallReissueSeal"("recordingId")`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_contract_hash(target_credit_id INTEGER)
+    RETURNS TEXT LANGUAGE sql STABLE AS $$
+      SELECT encode(sha256(convert_to(jsonb_build_object(
+        'creditId',credit."id",'folio',credit."folio",'document',credit."clienteDocumento",'name',credit."clienteNombre",
+        'email',credit."clienteCorreo",'phone',credit."clienteTelefono",'department',credit."clienteDepartamento",
+        'city',credit."clienteCiudad",'address',credit."clienteDireccion",'equipmentReference',credit."referenciaEquipo",
+        'allyId',site."aliadoId",
+        'contractImei',COALESCE(NULLIF(BTRIM(credit."contratoSnapshot" #>> '{financiero,selloFinanciero,snapshot,imei}'),''),
+          NULLIF(BTRIM(credit."contratoSnapshot" #>> '{equipo,imei}'),''),NULLIF(BTRIM(credit."imei"),'')),
+        'brand',credit."equipoMarca",'model',credit."equipoModelo",'saleValue',credit."valorEquipoTotal",
+        'downPayment',credit."cuotaInicial",'principal',credit."saldoBaseFinanciado",'total',credit."montoCredito",
+        'financial',COALESCE(credit."contratoSnapshot"->'financiero','null'::jsonb),
+        'assessment',(SELECT jsonb_build_array(assessment."id",assessment."score",assessment."offer",assessment."status")
+          FROM public."DataCreditoAssessment" assessment WHERE assessment."creditId"=credit."id"
+            AND assessment."consumedAt" IS NOT NULL AND assessment."retainedUntil">CURRENT_TIMESTAMP
+            AND (NULLIF(BTRIM(credit."contratoSnapshot" #>> '{financiero,dataCredito,assessmentId}'),'') IS NULL
+              OR assessment."id"::text=credit."contratoSnapshot" #>> '{financiero,dataCredito,assessmentId}')
+          ORDER BY assessment."consumedAt" DESC,assessment."id" DESC LIMIT 1)
+      )::text,'UTF8')),'hex')
+      FROM public."Credito" credit JOIN public."Sede" site ON site."id"=credit."sedeId"
+      WHERE credit."id"=target_credit_id
+    $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_number_equal(expected TEXT, actual DOUBLE PRECISION)
+    RETURNS BOOLEAN LANGUAGE plpgsql IMMUTABLE AS $$
+    BEGIN
+      IF expected IS NULL OR actual IS NULL THEN RETURN FALSE; END IF;
+      RETURN ABS(expected::numeric-actual::numeric)<=0.011;
+    EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN FALSE;
+    END $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_contract_matches_snapshot(target_credit_id INTEGER)
+    RETURNS BOOLEAN LANGUAGE plpgsql STABLE AS $$
+    DECLARE credit RECORD; terms JSONB;
+    BEGIN
+      SELECT * INTO credit FROM public."Credito" WHERE "id"=target_credit_id;
+      IF NOT FOUND THEN RETURN FALSE; END IF;
+      terms:=credit."contratoSnapshot" #> '{financiero,selloFinanciero,snapshot}';
+      IF jsonb_typeof(terms) IS DISTINCT FROM 'object' THEN RETURN FALSE; END IF;
+      RETURN UPPER(REGEXP_REPLACE(BTRIM(COALESCE(terms->>'clienteNombre','')),'\\s+',' ','g'))
+          =UPPER(REGEXP_REPLACE(BTRIM(COALESCE(credit."clienteNombre",'')),'\\s+',' ','g'))
+        AND UPPER(BTRIM(COALESCE(terms->>'documento','')))=UPPER(BTRIM(COALESCE(credit."clienteDocumento",'')))
+        AND REGEXP_REPLACE(COALESCE(terms->>'imei',''),'[^0-9]','','g')<>''
+        AND UPPER(BTRIM(COALESCE(terms->>'equipoMarca','')))=UPPER(BTRIM(COALESCE(credit."equipoMarca",'')))
+        AND UPPER(BTRIM(COALESCE(terms->>'equipoModelo','')))=UPPER(BTRIM(COALESCE(credit."equipoModelo",'')))
+        AND public.credit_approval_call_number_equal(terms->>'valorVenta',credit."valorEquipoTotal")
+        AND public.credit_approval_call_number_equal(terms->>'cuotaInicial',credit."cuotaInicial")
+        AND public.credit_approval_call_number_equal(terms->>'valorFinanciado',credit."saldoBaseFinanciado")
+        AND public.credit_approval_call_number_equal(terms->>'totalPagar',credit."montoCredito");
+    END $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_data_url_hash(value TEXT)
+    RETURNS TEXT LANGUAGE plpgsql IMMUTABLE AS $$
+    BEGIN
+      IF value IS NULL THEN RETURN NULL; END IF;
+      IF value ~* '^data:image/(png|jpe?g|webp);base64,[A-Za-z0-9+/]*={0,2}$' THEN
+        RETURN encode(sha256(decode(split_part(value,',',2),'base64')),'hex');
+      END IF;
+      RETURN encode(sha256(convert_to(value,'UTF8')),'hex');
+    END $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_evidence_hash(target_credit_id INTEGER, evidence_key TEXT)
+    RETURNS TEXT LANGUAGE sql STABLE AS $$
+      SELECT public.credit_approval_call_data_url_hash(CASE evidence_key
+        WHEN 'cedula-frente' THEN "contratoCedulaFrenteDataUrl"
+        WHEN 'cedula-posterior' THEN "contratoCedulaRespaldoDataUrl"
+        WHEN 'selfie-cedula' THEN "iphoneSelfieCedulaDataUrl"
+        WHEN 'foto-entrega' THEN "fotoEntregaDataUrl"
+        WHEN 'foto-remision' THEN "fotoRemisionDataUrl" END)
+      FROM public."Credito" WHERE "id"=target_credit_id
+    $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_evidence_transition_valid(
+      target_credit_id INTEGER, source_revision INTEGER, target_revision INTEGER)
+    RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+      SELECT target_revision=source_revision+1 AND (
+        SELECT COUNT(*)=1 AND COUNT(DISTINCT event."revision")=1
+          AND COUNT(*) FILTER (WHERE event."reason"='CREDIT_DOCUMENTATION_CHANGED')=1
+        FROM public."CreditApprovalEvent" event
+        WHERE event."creditoId"=target_credit_id AND event."eventType"='INVALIDATED'
+          AND event."revision">source_revision AND event."revision"<=target_revision)
+    $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_evidence_event_matches(evidence_revision_id UUID)
+    RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+      SELECT COUNT(*)=1
+      FROM public."CreditApprovalEvidenceRevision" evidence
+      JOIN public."CreditApprovalEvent" invalidation
+        ON invalidation."creditoId"=evidence."creditoId" AND invalidation."eventType"='INVALIDATED'
+        AND invalidation."revision"=evidence."reviewRevision"+1
+        AND invalidation."reason"='CREDIT_DOCUMENTATION_CHANGED'
+        AND invalidation."createdAt"=evidence."createdAt"
+      WHERE evidence."id"=evidence_revision_id
+    $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_reissue_transition_valid(
+      target_credit_id INTEGER, source_revision INTEGER, target_revision INTEGER)
+    RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+      SELECT target_revision>source_revision AND (
+        SELECT COUNT(*)=(target_revision-source_revision)::bigint
+          AND COUNT(DISTINCT event."revision")=(target_revision-source_revision)::bigint
+          AND COUNT(*) FILTER (WHERE event."reason"='SIGNATURE_REISSUE_REQUESTED')=1
+          AND COUNT(*) FILTER (WHERE event."reason" NOT IN ('SIGNATURE_REISSUE_REQUESTED','SIGNED_DOCUMENT_CHANGED'))=0
+          AND COUNT(*) FILTER (WHERE event."revision"=source_revision+1 AND event."reason"='SIGNATURE_REISSUE_REQUESTED')=1
+        FROM public."CreditApprovalEvent" event
+        WHERE event."creditoId"=target_credit_id AND event."eventType"='INVALIDATED'
+          AND event."revision">source_revision AND event."revision"<=target_revision)
+    $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_reissue_is_current(operation_id UUID)
+    RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+      SELECT COUNT(*)=1 AND COUNT(*) FILTER (
+        WHERE process."processUuid"=COALESCE(operation."newProcessUuid",operation."previousProcessUuid"))=1
+      FROM public."CreditApprovalReissue" operation
+      JOIN public."FirmaSeguroProcess" process ON process."creditoId"=operation."creditoId" AND process."supersededAt" IS NULL
+      WHERE operation."id"=operation_id
+    $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_reissue_event_matches(operation_id UUID, source_review_hash TEXT)
+    RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+      SELECT
+        (SELECT COUNT(*)=1 FROM public."CreditApprovalReissueEvent" operation_event
+          WHERE operation_event."operationId"=operation."id"
+            AND operation_event."previousStatus" IS NULL AND operation_event."status"='PREPARING')
+        AND (SELECT COUNT(*)=1 FROM public."CreditApprovalEvent" invalidation
+          WHERE invalidation."creditoId"=operation."creditoId" AND invalidation."eventType"='INVALIDATED'
+            AND invalidation."revision"=operation."sourceRevision"+1
+            AND invalidation."reason"='SIGNATURE_REISSUE_REQUESTED'
+            AND (invalidation."reviewHash" IS NULL OR invalidation."reviewHash"=source_review_hash)
+            AND invalidation."createdAt">=(SELECT MIN(operation_event."createdAt")
+              FROM public."CreditApprovalReissueEvent" operation_event
+              WHERE operation_event."operationId"=operation."id" AND operation_event."previousStatus" IS NULL))
+        AND NOT EXISTS (SELECT 1 FROM public."CreditApprovalReissue" other
+          WHERE other."creditoId"=operation."creditoId" AND other."sourceRevision"=operation."sourceRevision"
+            AND other."id"<>operation."id")
+      FROM public."CreditApprovalReissue" operation WHERE operation."id"=operation_id
+    $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_reissue_terms_match(operation_id UUID)
+    RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+      SELECT public.credit_approval_call_contract_matches_snapshot(operation."creditoId")
+        AND operation."sourceTermsHash"=operation."originalContractSnapshot" #>> '{financiero,selloFinanciero,checksum}'
+        AND operation."sourceTermsHash"=(SELECT credit."contratoSnapshot" #>> '{financiero,selloFinanciero,checksum}'
+          FROM public."Credito" credit WHERE credit."id"=operation."creditoId")
+      FROM public."CreditApprovalReissue" operation WHERE operation."id"=operation_id
+    $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_contract_migration_safe(
+      target_credit_id INTEGER, source_recording_id UUID)
+    RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+      SELECT public.credit_approval_call_contract_matches_snapshot(credit."id")
+        AND REGEXP_REPLACE(COALESCE(credit."imei",''),'[^0-9]','','g')
+          =REGEXP_REPLACE(COALESCE(credit."contratoSnapshot" #>> '{financiero,selloFinanciero,snapshot,imei}',''),'[^0-9]','','g')
+        AND NULLIF(BTRIM(credit."contratoSnapshot" #>> '{financiero,dataCredito,assessmentId}'),'') IS NOT NULL
+        AND (SELECT COUNT(*)=1 FROM public."DataCreditoAssessment" assessment
+          WHERE assessment."creditId"=credit."id" AND assessment."consumedAt" IS NOT NULL
+            AND assessment."retainedUntil">CURRENT_TIMESTAMP
+            AND assessment."consumedAt"<=recording."createdAt" AND assessment."updatedAt"<=recording."createdAt"
+            AND assessment."id"::text=credit."contratoSnapshot" #>> '{financiero,dataCredito,assessmentId}')
+      FROM public."Credito" credit
+      JOIN public."CreditApprovalCallRecording" recording ON recording."id"=source_recording_id
+        AND recording."creditoId"=credit."id"
+      WHERE credit."id"=target_credit_id
+    $$`,
   `CREATE OR REPLACE FUNCTION public.credit_approval_effective_call_recording(
       target_credit_id INTEGER, target_revision INTEGER, target_review_hash TEXT)
     RETURNS UUID LANGUAGE sql STABLE AS $$
@@ -80,6 +257,27 @@ export const creditApprovalCallSchemaStatements = [
           AND approval_event."reviewHash"=target_review_hash
         UNION ALL
         SELECT recording."id",recording."createdAt"
+        FROM public."CreditApprovalCallEvidenceSeal" seal
+        JOIN public."CreditApprovalEvidenceRevision" evidence ON evidence."id"=seal."evidenceRevisionId"
+        JOIN public."CreditApprovalCallRecording" recording ON recording."id"=seal."recordingId"
+        WHERE seal."creditoId"=target_credit_id
+          AND public.credit_approval_call_contract_hash(target_credit_id)=seal."contractHash"
+          AND public.credit_approval_call_evidence_transition_valid(target_credit_id,seal."sourceRevision",target_revision)
+          AND public.credit_approval_call_evidence_event_matches(evidence."id")
+          AND public.credit_approval_call_evidence_hash(target_credit_id,evidence."evidenceKey")=evidence."nextSha256"
+        UNION ALL
+        SELECT recording."id",recording."createdAt"
+        FROM public."CreditApprovalCallReissueSeal" seal
+        JOIN public."CreditApprovalReissue" operation ON operation."id"=seal."operationId"
+        JOIN public."CreditApprovalCallRecording" recording ON recording."id"=seal."recordingId"
+        WHERE seal."creditoId"=target_credit_id
+          AND public.credit_approval_call_contract_hash(target_credit_id)=seal."contractHash"
+          AND public.credit_approval_call_reissue_transition_valid(target_credit_id,seal."sourceRevision",target_revision)
+          AND public.credit_approval_call_reissue_is_current(operation."id")
+          AND public.credit_approval_call_reissue_event_matches(operation."id",seal."sourceReviewHash")
+          AND public.credit_approval_call_reissue_terms_match(operation."id")
+        UNION ALL
+        SELECT recording."id",recording."createdAt"
         FROM public."CreditApprovalCallRecording" recording
         WHERE recording."creditoId"=target_credit_id
           AND recording."reviewHash"=target_review_hash
@@ -98,6 +296,144 @@ export const creditApprovalCallSchemaStatements = [
       )
       SELECT "id" FROM deduplicated ORDER BY "createdAt" DESC,"id" DESC LIMIT 1
     $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_evidence_seal_insert()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE evidence public."CreditApprovalEvidenceRevision"%ROWTYPE;
+      current_review public."CreditApprovalReview"%ROWTYPE; expected_recording UUID; current_contract_hash TEXT;
+    BEGIN
+      PERFORM 1 FROM public."Credito" WHERE "id"=NEW."creditoId" FOR UPDATE;
+      IF NOT FOUND THEN RAISE EXCEPTION 'CALL_EVIDENCE_SEAL_INVALID' USING ERRCODE='23514'; END IF;
+      SELECT * INTO current_review FROM public."CreditApprovalReview" WHERE "creditoId"=NEW."creditoId" FOR UPDATE;
+      IF NOT FOUND THEN RAISE EXCEPTION 'CALL_EVIDENCE_SEAL_INVALID' USING ERRCODE='23514'; END IF;
+      SELECT * INTO evidence FROM public."CreditApprovalEvidenceRevision" WHERE "id"=NEW."evidenceRevisionId";
+      IF NOT FOUND OR evidence."creditoId"<>NEW."creditoId"
+        OR evidence."reviewRevision" IS DISTINCT FROM NEW."sourceRevision"
+        OR evidence."reviewHash" IS DISTINCT FROM NEW."sourceReviewHash"
+        OR public.credit_approval_call_data_url_hash(evidence."previousDataUrl") IS DISTINCT FROM evidence."previousSha256"
+        THEN RAISE EXCEPTION 'CALL_EVIDENCE_SEAL_INVALID' USING ERRCODE='23514'; END IF;
+      SELECT public.credit_approval_effective_call_recording(
+        NEW."creditoId",NEW."sourceRevision",NEW."sourceReviewHash") INTO expected_recording;
+      IF expected_recording IS DISTINCT FROM NEW."recordingId"
+        THEN RAISE EXCEPTION 'CALL_EVIDENCE_SEAL_SOURCE_INVALID' USING ERRCODE='23514'; END IF;
+      IF NEW."captureKind"='LIVE' THEN
+        IF current_review."revision"<>NEW."sourceRevision"
+          OR public.credit_approval_call_evidence_hash(NEW."creditoId",evidence."evidenceKey") IS DISTINCT FROM evidence."previousSha256"
+          THEN RAISE EXCEPTION 'CALL_EVIDENCE_SEAL_TRANSITION_INVALID' USING ERRCODE='23514'; END IF;
+      ELSIF NEW."captureKind"='MIGRATED' THEN
+        IF NOT public.credit_approval_call_evidence_transition_valid(
+            NEW."creditoId",NEW."sourceRevision",current_review."revision")
+          OR public.credit_approval_call_evidence_hash(NEW."creditoId",evidence."evidenceKey") IS DISTINCT FROM evidence."nextSha256"
+          OR NOT public.credit_approval_call_evidence_event_matches(NEW."evidenceRevisionId")
+          OR NOT public.credit_approval_call_contract_migration_safe(NEW."creditoId",NEW."recordingId")
+          THEN RAISE EXCEPTION 'CALL_EVIDENCE_SEAL_MIGRATION_INVALID' USING ERRCODE='23514'; END IF;
+      ELSE RAISE EXCEPTION 'CALL_EVIDENCE_SEAL_INVALID' USING ERRCODE='23514'; END IF;
+      SELECT public.credit_approval_call_contract_hash(NEW."creditoId") INTO current_contract_hash;
+      IF current_contract_hash IS NULL THEN RAISE EXCEPTION 'CALL_EVIDENCE_SEAL_CONTRACT_INVALID' USING ERRCODE='23514'; END IF;
+      NEW."contractHash":=current_contract_hash;
+      NEW."createdAt":=CURRENT_TIMESTAMP AT TIME ZONE 'UTC';
+      RETURN NEW;
+    END $$`,
+  `CREATE OR REPLACE TRIGGER "CreditApprovalCallEvidenceSeal_insert_guard"
+    BEFORE INSERT ON public."CreditApprovalCallEvidenceSeal"
+    FOR EACH ROW EXECUTE FUNCTION public.credit_approval_call_evidence_seal_insert()`,
+  `CREATE OR REPLACE TRIGGER "CreditApprovalCallEvidenceSeal_immutable"
+    BEFORE UPDATE OR DELETE ON public."CreditApprovalCallEvidenceSeal"
+    FOR EACH ROW EXECUTE FUNCTION public.credit_approval_reject_history_mutation()`,
+  `CREATE OR REPLACE TRIGGER "CreditApprovalCallEvidenceSeal_no_truncate"
+    BEFORE TRUNCATE ON public."CreditApprovalCallEvidenceSeal"
+    FOR EACH STATEMENT EXECUTE FUNCTION public.credit_approval_reject_history_mutation()`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_reissue_seal_insert()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE operation public."CreditApprovalReissue"%ROWTYPE;
+      current_review public."CreditApprovalReview"%ROWTYPE; expected_recording UUID; current_contract_hash TEXT;
+    BEGIN
+      PERFORM 1 FROM public."Credito" WHERE "id"=NEW."creditoId" FOR UPDATE;
+      IF NOT FOUND THEN RAISE EXCEPTION 'CALL_REISSUE_SEAL_INVALID' USING ERRCODE='23514'; END IF;
+      SELECT * INTO current_review FROM public."CreditApprovalReview" WHERE "creditoId"=NEW."creditoId" FOR UPDATE;
+      IF NOT FOUND THEN RAISE EXCEPTION 'CALL_REISSUE_SEAL_INVALID' USING ERRCODE='23514'; END IF;
+      SELECT * INTO operation FROM public."CreditApprovalReissue" WHERE "id"=NEW."operationId";
+      IF NOT FOUND OR operation."creditoId"<>NEW."creditoId" OR operation."sourceRevision"<>NEW."sourceRevision"
+        OR NOT public.credit_approval_call_reissue_event_matches(NEW."operationId",NEW."sourceReviewHash")
+        THEN RAISE EXCEPTION 'CALL_REISSUE_SEAL_INVALID' USING ERRCODE='23514'; END IF;
+      SELECT public.credit_approval_effective_call_recording(
+        NEW."creditoId",NEW."sourceRevision",NEW."sourceReviewHash") INTO expected_recording;
+      IF expected_recording IS DISTINCT FROM NEW."recordingId"
+        THEN RAISE EXCEPTION 'CALL_REISSUE_SEAL_SOURCE_INVALID' USING ERRCODE='23514'; END IF;
+      IF NOT public.credit_approval_call_reissue_transition_valid(
+          NEW."creditoId",NEW."sourceRevision",current_review."revision")
+        OR NOT public.credit_approval_call_reissue_is_current(NEW."operationId")
+        OR NOT public.credit_approval_call_reissue_terms_match(NEW."operationId")
+        THEN RAISE EXCEPTION 'CALL_REISSUE_SEAL_TRANSITION_INVALID' USING ERRCODE='23514'; END IF;
+      IF NEW."captureKind"='LIVE' THEN
+        IF current_review."revision"<>NEW."sourceRevision"+1
+          THEN RAISE EXCEPTION 'CALL_REISSUE_SEAL_TRANSITION_INVALID' USING ERRCODE='23514'; END IF;
+      ELSIF NEW."captureKind"='MIGRATED' THEN
+        IF NOT public.credit_approval_call_reissue_terms_match(NEW."operationId")
+          OR NOT public.credit_approval_call_contract_migration_safe(NEW."creditoId",NEW."recordingId")
+          THEN RAISE EXCEPTION 'CALL_REISSUE_SEAL_MIGRATION_INVALID' USING ERRCODE='23514'; END IF;
+      ELSE RAISE EXCEPTION 'CALL_REISSUE_SEAL_INVALID' USING ERRCODE='23514'; END IF;
+      SELECT public.credit_approval_call_contract_hash(NEW."creditoId") INTO current_contract_hash;
+      IF current_contract_hash IS NULL THEN RAISE EXCEPTION 'CALL_REISSUE_SEAL_CONTRACT_INVALID' USING ERRCODE='23514'; END IF;
+      NEW."contractHash":=current_contract_hash;
+      NEW."createdAt":=CURRENT_TIMESTAMP AT TIME ZONE 'UTC';
+      RETURN NEW;
+    END $$`,
+  `CREATE OR REPLACE TRIGGER "CreditApprovalCallReissueSeal_insert_guard"
+    BEFORE INSERT ON public."CreditApprovalCallReissueSeal"
+    FOR EACH ROW EXECUTE FUNCTION public.credit_approval_call_reissue_seal_insert()`,
+  `CREATE OR REPLACE TRIGGER "CreditApprovalCallReissueSeal_immutable"
+    BEFORE UPDATE OR DELETE ON public."CreditApprovalCallReissueSeal"
+    FOR EACH ROW EXECUTE FUNCTION public.credit_approval_reject_history_mutation()`,
+  `CREATE OR REPLACE TRIGGER "CreditApprovalCallReissueSeal_no_truncate"
+    BEFORE TRUNCATE ON public."CreditApprovalCallReissueSeal"
+    FOR EACH STATEMENT EXECUTE FUNCTION public.credit_approval_reject_history_mutation()`,
+  `INSERT INTO public."CreditApprovalCallEvidenceSeal"
+      ("evidenceRevisionId","creditoId","recordingId","sourceRevision","sourceReviewHash","captureKind")
+    SELECT evidence."id",evidence."creditoId",source."recordingId",evidence."reviewRevision",evidence."reviewHash",'MIGRATED'
+    FROM public."CreditApprovalEvidenceRevision" evidence
+    JOIN public."CreditApprovalReview" review ON review."creditoId"=evidence."creditoId"
+    CROSS JOIN LATERAL (SELECT public.credit_approval_effective_call_recording(
+      evidence."creditoId",evidence."reviewRevision",evidence."reviewHash") AS "recordingId") source
+    WHERE evidence."reviewRevision" IS NOT NULL AND evidence."reviewHash" IS NOT NULL
+      AND source."recordingId" IS NOT NULL
+      AND public.credit_approval_call_evidence_transition_valid(evidence."creditoId",evidence."reviewRevision",review."revision")
+      AND public.credit_approval_call_evidence_hash(evidence."creditoId",evidence."evidenceKey")=evidence."nextSha256"
+      AND public.credit_approval_call_evidence_event_matches(evidence."id")
+      AND public.credit_approval_call_data_url_hash(evidence."previousDataUrl") IS NOT DISTINCT FROM evidence."previousSha256"
+      AND public.credit_approval_call_contract_migration_safe(evidence."creditoId",source."recordingId")
+      AND NOT EXISTS (SELECT 1 FROM public."CreditApprovalCallEvidenceSeal" existing
+        WHERE existing."evidenceRevisionId"=evidence."id")
+    ON CONFLICT ("evidenceRevisionId") DO NOTHING`,
+  `INSERT INTO public."CreditApprovalCallReissueSeal"
+      ("operationId","creditoId","recordingId","sourceRevision","sourceReviewHash","captureKind")
+    SELECT operation."id",operation."creditoId",source."recordingId",operation."sourceRevision",source."sourceReviewHash",'MIGRATED'
+    FROM public."CreditApprovalReissue" operation
+    JOIN public."CreditApprovalReview" review ON review."creditoId"=operation."creditoId"
+    CROSS JOIN LATERAL (
+      SELECT MIN(candidate."recordingId"::text)::uuid AS "recordingId",
+        MIN(candidate."sourceReviewHash") AS "sourceReviewHash"
+      FROM (
+        SELECT recording."id" AS "recordingId",recording."reviewHash" AS "sourceReviewHash"
+        FROM public."CreditApprovalCallRecording" recording
+        WHERE recording."creditoId"=operation."creditoId"
+          AND recording."revision"=operation."sourceRevision"
+          AND recording."createdAt"<=operation."requestedAt"
+          AND public.credit_approval_effective_call_recording(
+            operation."creditoId",operation."sourceRevision",recording."reviewHash")=recording."id"
+      ) candidate
+      HAVING COUNT(*)=1
+    ) source
+    WHERE public.credit_approval_call_reissue_transition_valid(
+        operation."creditoId",operation."sourceRevision",review."revision")
+      AND public.credit_approval_effective_call_recording(
+        operation."creditoId",operation."sourceRevision",source."sourceReviewHash")=source."recordingId"
+      AND public.credit_approval_call_reissue_is_current(operation."id")
+      AND public.credit_approval_call_reissue_event_matches(operation."id",source."sourceReviewHash")
+      AND public.credit_approval_call_reissue_terms_match(operation."id")
+      AND public.credit_approval_call_contract_migration_safe(operation."creditoId",source."recordingId")
+      AND NOT EXISTS (SELECT 1 FROM public."CreditApprovalCallReissueSeal" existing
+        WHERE existing."operationId"=operation."id")
+    ON CONFLICT ("operationId") DO NOTHING`,
   `CREATE OR REPLACE FUNCTION public.credit_approval_call_continuation_insert()
     RETURNS trigger LANGUAGE plpgsql AS $$
     DECLARE

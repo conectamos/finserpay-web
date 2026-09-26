@@ -113,8 +113,17 @@ navegador.
 
 El audio se almacena de forma privada y separada del contrato. No se incorpora al
 snapshot contractual ni a sus valores. Cada carga conserva su archivo, autor,
-fecha, huella y revisión. Las cargas anteriores no se sobrescriben. Cambiar los
-documentos e invalidar la revisión exige adjuntar la grabación de la nueva revisión.
+fecha, huella y revisión. Las cargas anteriores no se sobrescriben. Una sustitución
+auditada de una de las cinco evidencias —incluida la foto de remisión— o la solicitud
+y finalización de otra firma del mismo crédito puede conservar la grabación ya
+efectiva cuando la identidad y los términos contractuales siguen iguales. Los bytes
+permanecen inmutables: la nueva revisión queda enlazada de forma explícita con la
+grabación física anterior mediante el evento de evidencia o refirma que produjo la
+invalidación. Cambios de identidad, importes, equipo, condiciones financieras u
+otros cambios documentales no cubiertos por ese evento exigen una grabación nueva.
+La recuperación de operaciones anteriores al enlace explícito solo se realiza si
+la auditoría identifica una única grabación fuente y conserva las mismas condiciones;
+ante ambigüedad no se reutiliza audio.
 
 El servidor valida contenido y contenedor, permisos, origen, revisión y huella;
 la extensión por sí sola no es suficiente. En OGG acepta únicamente un flujo Opus

@@ -2,9 +2,9 @@ import { getCreditApprovalDetail } from "@/lib/credit-approval";
 import {
   captureCreditApprovalCallContinuity,
   continueCreditApprovalCall,
+  sealCreditApprovalEvidenceCall,
 } from "@/lib/credit-approval-call-continuity";
 import {
-  getCreditApprovalNoveltyState,
   markNoveltyPhotoCorrected,
 } from "@/lib/credit-approval-novelty-state";
 import { NextResponse } from "next/server";
@@ -601,6 +601,11 @@ export async function PATCH(
           iphoneSelfieCedulaDataUrl: true,
           fotoEntregaDataUrl: true,
           fotoRemisionDataUrl: true,
+          sede: {
+            select: {
+              aliado: { select: { codigo: true } },
+            },
+          },
         },
       });
 
@@ -637,18 +642,14 @@ export async function PATCH(
         });
       }
 
-      const noveltyState = await getCreditApprovalNoveltyState(tx, credit.id);
-      const requestedByNovelty = Boolean(
-        noveltyState.novelty &&
-          noveltyState.novelty.status !== "RESOLVED" &&
-          noveltyState.novelty.items.some(
-            (item) => item.key === correction.key && item.status === "OPEN"
-          )
+      const usesApprovalWall = !isFinserPayCentralAlly(
+        credit.sede.aliado?.codigo
       );
-      const callContinuitySource = requestedByNovelty
-        ? captureCreditApprovalCallContinuity(
-            await getCreditApprovalDetail(tx, credit.id)
-          )
+      const approvalDetail = usesApprovalWall
+        ? await getCreditApprovalDetail(tx, credit.id)
+        : null;
+      const callContinuitySource = approvalDetail
+        ? captureCreditApprovalCallContinuity(approvalDetail)
         : null;
 
       const correctedAt = new Date().toISOString();
@@ -669,11 +670,18 @@ export async function PATCH(
         }
       );
 
-      await archiveEvidenceRevision(tx, {
+      const evidenceRevisionId = await archiveEvidenceRevision(tx, {
         creditId: credit.id, key: correction.key,
         previousDataUrl: evidenceValue(credit, correction.key), previousSha256, nextSha256,
         actor: { id: user.id, nombre: user.nombre }, source: "ADMIN_CENTRAL",
+        reviewRevision: approvalDetail?.review.revision ?? null,
+        reviewHash: approvalDetail?.review.reviewHash ?? null,
       });
+      if (approvalDetail) {
+        await sealCreditApprovalEvidenceCall(tx, credit.id, callContinuitySource, {
+          evidenceRevisionId,
+        });
+      }
       const updated = await tx.credito.update({
         where: { id: credit.id },
         data: {

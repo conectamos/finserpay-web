@@ -19,6 +19,14 @@ export type ApprovalCallContinuityEvent = {
   noveltyEventId: string;
 };
 
+export type ApprovalCallEvidenceSeal = {
+  evidenceRevisionId: string;
+};
+
+export type ApprovalCallReissueSeal = {
+  operationId: string;
+};
+
 /**
  * Captures the recording that is valid for the review tuple immediately before
  * an authorised novelty mutation. A stale recording has already been filtered
@@ -58,5 +66,43 @@ export async function continueCreditApprovalCall(
     VALUES ($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8,$9,CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`,
     randomUUID(), creditId, source.recordingId, event.noveltyId, event.noveltyEventId,
     source.revision, source.reviewHash, target.review.revision, target.review.reviewHash);
+  return true;
+}
+
+/**
+ * Seals an evidence replacement before the credit row changes. PostgreSQL
+ * derives and verifies the contractual fingerprint; the immutable audio bytes
+ * are only referenced by id.
+ */
+export async function sealCreditApprovalEvidenceCall(
+  db: ApprovalDatabase,
+  creditId: number,
+  source: ApprovalCallContinuitySource | null,
+  event: ApprovalCallEvidenceSeal,
+) {
+  if (!source) return false;
+  await db.$executeRawUnsafe(`INSERT INTO "CreditApprovalCallEvidenceSeal"
+    ("evidenceRevisionId","creditoId","recordingId","sourceRevision","sourceReviewHash","captureKind","createdAt")
+    VALUES ($1::uuid,$2,$3::uuid,$4,$5,'LIVE',CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`,
+    event.evidenceRevisionId, creditId, source.recordingId, source.revision, source.reviewHash);
+  return true;
+}
+
+/**
+ * Seals the audio source immediately after the reissue request is audited.
+ * The SQL guard accepts only the request invalidation produced by that same
+ * operation and records the pre-existing contractual fingerprint.
+ */
+export async function sealCreditApprovalReissueCall(
+  db: ApprovalDatabase,
+  creditId: number,
+  source: ApprovalCallContinuitySource | null,
+  event: ApprovalCallReissueSeal,
+) {
+  if (!source) return false;
+  await db.$executeRawUnsafe(`INSERT INTO "CreditApprovalCallReissueSeal"
+    ("operationId","creditoId","recordingId","sourceRevision","sourceReviewHash","captureKind","createdAt")
+    VALUES ($1::uuid,$2,$3::uuid,$4,$5,'LIVE',CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`,
+    event.operationId, creditId, source.recordingId, source.revision, source.reviewHash);
   return true;
 }

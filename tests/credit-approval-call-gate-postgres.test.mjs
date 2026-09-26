@@ -18,8 +18,8 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
   assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname));
   assert.equal(url.pathname, "/approval_gate_test");
   const db = new pg.Client({ connectionString }); await db.connect(); t.after(() => db.end());
-  const tables = ["CreditApprovalCallContinuation","CreditApprovalNoveltyEvent","CreditApprovalNoveltyItem","CreditApprovalNovelty","CreditApprovalEvent","CreditApprovalReview","CreditApprovalCallRecording","CreditApprovalSharedSession",
-    "CreditApprovalSharedGrant","CreditApprovalPolicy","CreditApprovalReissue","LiquidacionAliadoCredito","Credito","Sede","Aliado","Usuario","Rol"];
+  const tables = ["CreditApprovalCallEvidenceSeal","CreditApprovalCallReissueSeal","CreditApprovalCallContinuation","CreditApprovalEvidenceRevision","CreditApprovalNoveltyEvent","CreditApprovalNoveltyItem","CreditApprovalNovelty","CreditApprovalEvent","CreditApprovalReview","CreditApprovalCallRecording","CreditApprovalSharedSession",
+    "CreditApprovalSharedGrant","CreditApprovalPolicy","CreditApprovalReissueEvent","CreditApprovalReissue","FirmaSeguroProcess","DataCreditoAssessment","LiquidacionAliadoCredito","Credito","Sede","Aliado","Usuario","Rol"];
   const existing = await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(existing.rows.every(({ tablename }) => tables.includes(tablename)), "No reiniciar tablas ajenas");
   for (const table of tables) await db.query(`DROP TABLE IF EXISTS public."${table}" CASCADE`);
@@ -35,8 +35,10 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
       (4,'Analista central',TRUE,1,20),(5,'Admin aliado',TRUE,2,10),(6,'Admin central inactivo',FALSE,2,20),
       (7,'Admin sede inactiva',TRUE,2,21),(8,'Admin aliado inactivo',TRUE,2,30);
     CREATE TABLE "Credito" (
-      "id" SERIAL PRIMARY KEY,"createdAt" TIMESTAMP(3) DEFAULT '2099-01-01',"estado" TEXT DEFAULT 'ACTIVO',
+      "id" SERIAL PRIMARY KEY,"folio" TEXT DEFAULT 'TEST',"createdAt" TIMESTAMP(3) DEFAULT '2099-01-01',"estado" TEXT DEFAULT 'ACTIVO',
       "clienteNombre" TEXT DEFAULT 'Cliente sintético',"clienteDocumento" TEXT DEFAULT '12345',
+      "clienteCorreo" TEXT,"clienteTelefono" TEXT,"clienteDepartamento" TEXT,"clienteCiudad" TEXT,
+      "clienteDireccion" TEXT,"referenciaEquipo" TEXT,
       "valorEquipoTotal" FLOAT DEFAULT 1000000,"cuotaInicial" FLOAT DEFAULT 200000,
       "saldoBaseFinanciado" FLOAT DEFAULT 800000,"montoCredito" FLOAT DEFAULT 800000,
       "imei" TEXT DEFAULT '111111111111111',"sedeId" INTEGER DEFAULT 10,
@@ -45,7 +47,20 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
       "contratoCedulaFrenteDataUrl" TEXT DEFAULT 'front',"contratoCedulaRespaldoDataUrl" TEXT DEFAULT 'back',
       "iphoneSelfieCedulaDataUrl" TEXT DEFAULT 'selfie',"fotoEntregaDataUrl" TEXT DEFAULT 'delivery',"fotoRemisionDataUrl" TEXT DEFAULT 'remission');
     CREATE TABLE "LiquidacionAliadoCredito" ("id" SERIAL PRIMARY KEY,"creditoId" INTEGER UNIQUE REFERENCES "Credito"("id"),"snapshot" TEXT DEFAULT 'pago original');
-    CREATE TABLE "CreditApprovalReissue" ("creditoId" INTEGER,"status" TEXT);`);
+    CREATE TABLE "DataCreditoAssessment" ("id" TEXT PRIMARY KEY,"creditId" INTEGER,"score" INTEGER,"offer" JSONB,
+      "status" TEXT,"consumedAt" TIMESTAMP,"retainedUntil" TIMESTAMP,"updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE "FirmaSeguroProcess" ("id" SERIAL PRIMARY KEY,"creditoId" INTEGER,"processUuid" TEXT,
+      "status" TEXT,"signedDocumentBase64" TEXT,"signedDocumentFileName" TEXT,
+      "completedAt" TIMESTAMP,"supersededAt" TIMESTAMP);
+    CREATE TABLE "CreditApprovalReissue" ("id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),"creditoId" INTEGER,
+      "previousProcessUuid" TEXT DEFAULT 'previous',"sourceRevision" INTEGER DEFAULT 1,
+      "sourceTermsHash" VARCHAR(64) DEFAULT repeat('a',64),"originalContractSnapshot" JSONB DEFAULT '{}',
+      "newProcessUuid" TEXT,"status" TEXT,"requestedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE "CreditApprovalReissueEvent" ("id" BIGSERIAL PRIMARY KEY,"operationId" UUID,
+      "previousStatus" TEXT,"status" TEXT,"createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE "CreditApprovalEvidenceRevision" ("id" UUID PRIMARY KEY,"creditoId" INTEGER,
+      "evidenceKey" TEXT,"previousDataUrl" TEXT,"previousSha256" TEXT,"nextSha256" TEXT,
+      "reviewRevision" INTEGER,"reviewHash" TEXT,"createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
   await installCreditApprovalSchema(db); await installCreditApprovalActorSchema(db); await installApprovalSharedSchema(db);
   await installCreditApprovalNoveltiesSchema(db);
   const createCredit = async () => (await db.query('INSERT INTO "Credito" DEFAULT VALUES RETURNING "id"')).rows[0].id;
@@ -101,6 +116,72 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
     assert.equal((await review(paid)).callRecordingId,null);
     await assert.rejects(db.query('UPDATE "CreditApprovalReview" SET "creditoId"=999999 WHERE "creditoId"=$1',[legacy]),{code:"23514"});
     assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM "CreditApprovalCallRecording"')).rows[0].count,0);
+  });
+  await t.test("backfill recupera una refirma pendiente sin OK solo con una fuente efectiva no ambigua",async()=>{
+    const prepareHistoricalReissue=async({ambiguous=false}={})=>{
+      const id=await createCredit(),assessmentId=`assessment-${id}`,termsHash="c".repeat(64);
+      const contractSnapshot={financiero:{
+        dataCredito:{assessmentId},
+        selloFinanciero:{checksum:termsHash,snapshot:{
+          clienteNombre:"Cliente sintético",documento:"12345",imei:"111111111111111",
+          equipoMarca:"Marca QA",equipoModelo:"Modelo QA",valorVenta:1000000,
+          cuotaInicial:200000,valorFinanciado:800000,totalPagar:800000,
+        }},
+      }};
+      await db.query('UPDATE "Credito" SET "contratoSnapshot"=$2::jsonb WHERE "id"=$1',[id,JSON.stringify(contractSnapshot)]);
+      await db.query(`INSERT INTO "DataCreditoAssessment"
+        ("id","creditId","score","offer","status","consumedAt","retainedUntil","updatedAt")
+        VALUES ($1,$2,750,'{"initialPaymentPercentage":20}','APROBADO',
+          CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '1 year',CURRENT_TIMESTAMP)`,[assessmentId,id]);
+      const previousProcessUuid=`previous-${id}`;
+      await db.query(`INSERT INTO "FirmaSeguroProcess"
+        ("creditoId","processUuid","status","signedDocumentBase64","signedDocumentFileName","completedAt")
+        VALUES ($1,$2,'COMPLETED','cGRm','firmado.pdf',CURRENT_TIMESTAMP)`,[id,previousProcessUuid]);
+      const sourceRevision=(await review(id)).revision,sourceHash="d".repeat(64);
+      const recording=await audio(id,{revision:sourceRevision,reviewHash:sourceHash});
+      if(ambiguous) await audio(id,{revision:sourceRevision,reviewHash:"e".repeat(64)});
+      const operationId=randomUUID();
+      await db.query(`INSERT INTO "CreditApprovalReissue"
+        ("id","creditoId","previousProcessUuid","sourceRevision","sourceTermsHash","originalContractSnapshot","status")
+        VALUES ($1,$2,$3,$4,$5,$6::jsonb,'COMPLETED')`,
+        [operationId,id,previousProcessUuid,sourceRevision,termsHash,JSON.stringify(contractSnapshot)]);
+      await db.query(`INSERT INTO "CreditApprovalReissueEvent" ("operationId","status") VALUES ($1,'PREPARING')`,[operationId]);
+      await db.query(`SELECT public.credit_approval_invalidate($1,'SIGNATURE_REISSUE_REQUESTED')`,[id]);
+      return {id,operationId,recording,sourceRevision};
+    };
+
+    const historical=await prepareHistoricalReissue();
+    assert.equal((await db.query(`SELECT COUNT(*)::int AS count FROM "CreditApprovalEvent"
+      WHERE "creditoId"=$1 AND "eventType"='APPROVED'`,[historical.id])).rows[0].count,0);
+    await installCreditApprovalCallSchema(db);
+    const seal=(await db.query(`SELECT "recordingId"::text,"sourceRevision","captureKind"
+      FROM "CreditApprovalCallReissueSeal" WHERE "operationId"=$1`,[historical.operationId])).rows[0];
+    assert.deepEqual(seal,{recordingId:historical.recording.id,sourceRevision:historical.sourceRevision,captureKind:"MIGRATED"});
+    const targetRevision=(await review(historical.id)).revision;
+    assert.equal((await db.query(`SELECT public.credit_approval_effective_call_recording($1,$2,$3)::text AS id`,
+      [historical.id,targetRevision,"f".repeat(64)])).rows[0].id,historical.recording.id);
+    assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM "CreditApprovalCallRecording" WHERE "creditoId"=$1',[historical.id])).rows[0].count,1);
+    await installCreditApprovalCallSchema(db);
+    assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM "CreditApprovalCallReissueSeal" WHERE "operationId"=$1',[historical.operationId])).rows[0].count,1);
+
+    const substantial=[
+      {row:await prepareHistoricalReissue(),sql:'UPDATE "Credito" SET "clienteNombre"=\'Otra identidad\' WHERE "id"=$1'},
+      {row:await prepareHistoricalReissue(),sql:'UPDATE "Credito" SET "montoCredito"="montoCredito"+1 WHERE "id"=$1'},
+      {row:await prepareHistoricalReissue(),sql:`UPDATE "Credito" SET "contratoSnapshot"=
+        jsonb_set("contratoSnapshot",'{financiero,condicion}','"cambiada"'::jsonb,true) WHERE "id"=$1`},
+    ];
+    await installCreditApprovalCallSchema(db);
+    for(const {row,sql} of substantial){
+      await db.query(sql,[row.id]);
+      const revision=(await review(row.id)).revision;
+      assert.equal((await db.query(`SELECT public.credit_approval_effective_call_recording($1,$2,$3)::text AS id`,
+        [row.id,revision,"f".repeat(64)])).rows[0].id,null);
+      assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM "CreditApprovalCallRecording" WHERE "creditoId"=$1',[row.id])).rows[0].count,1);
+    }
+
+    const ambiguous=await prepareHistoricalReissue({ambiguous:true});
+    await installCreditApprovalCallSchema(db);
+    assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM "CreditApprovalCallReissueSeal" WHERE "operationId"=$1',[ambiguous.operationId])).rows[0].count,0);
   });
   await t.test("base nueva instala el CHECK con audio/ogg",async()=>{
     const definition=(await db.query(`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
@@ -210,7 +291,7 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
   await t.test("rechaza grabaciones en cancelados, centrales y reemisión pendiente",async()=>{
     for(const state of ["ANULADO","ANULADA","CANCELADO","CANCELADA"]) {const id=await createCredit(); await db.query('UPDATE "Credito" SET "estado"=$2 WHERE "id"=$1',[id,state]); await assert.rejects(audio(id),{code:"23514"});}
     const central=await createCredit(); await db.query('UPDATE "Credito" SET "sedeId"=20 WHERE "id"=$1',[central]); await assert.rejects(audio(central,{revision:(await review(central)).revision}),{code:"23514"});
-    const blocked=await createCredit(); await db.query('INSERT INTO "CreditApprovalReissue" VALUES ($1,\'AWAITING_SIGNATURE\')',[blocked]); await assert.rejects(audio(blocked),{code:"23514"});
+    const blocked=await createCredit(); await db.query('INSERT INTO "CreditApprovalReissue" ("creditoId","status") VALUES ($1,\'AWAITING_SIGNATURE\')',[blocked]); await assert.rejects(audio(blocked),{code:"23514"});
   });
   await t.test("sesión compartida mantiene autoría y FK compuesta impide referencias mezcladas",async()=>{
     const grant=randomUUID(),session=randomUUID(); await db.query('INSERT INTO "CreditApprovalSharedGrant" ("id","issuedByUserId") VALUES ($1,1)',[grant]);

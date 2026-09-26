@@ -389,6 +389,8 @@ model Credito {
   exclusionLiquidacionAliado     CreditAllyPaymentExclusion?
   reemisionesFirma            CreditApprovalReissue[]
   revisionesEvidencia          CreditApprovalEvidenceRevision[]
+  sellosAudioEvidencia         CreditApprovalCallEvidenceSeal[]
+  sellosAudioRefirma           CreditApprovalCallReissueSeal[]
   aprobacionAnalista            CreditApprovalReview?
   novedadesAprobacion           CreditApprovalNovelty[]
   grabacionesAprobacion         CreditApprovalCallRecording[]
@@ -572,6 +574,8 @@ model CreditApprovalCallRecording {
   reviews CreditApprovalReview[]
   events CreditApprovalEvent[]
   continuations CreditApprovalCallContinuation[]
+  evidenceSeals CreditApprovalCallEvidenceSeal[]
+  reissueSeals CreditApprovalCallReissueSeal[]
 
   @@index([creditoId, revision, reviewHash, createdAt(sort: Desc), id(sort: Desc)], map: "CreditApprovalCallRecording_current_idx")
 }
@@ -594,6 +598,38 @@ model CreditApprovalCallContinuation {
 
   @@unique([creditoId, targetRevision, targetReviewHash], map: "CreditApprovalCallContinuation_target_key")
   @@index([recordingId], map: "CreditApprovalCallContinuation_recording_idx")
+}
+
+model CreditApprovalCallEvidenceSeal {
+  evidenceRevisionId String @id @db.Uuid
+  creditoId Int
+  recordingId String @db.Uuid
+  sourceRevision Int
+  sourceReviewHash String @db.VarChar(64)
+  contractHash String @db.VarChar(64)
+  captureKind String @db.VarChar(16)
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  evidenceRevision CreditApprovalEvidenceRevision @relation(fields: [evidenceRevisionId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalCallEvidenceSeal_evidence_fkey")
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalCallEvidenceSeal_credit_fkey")
+  recording CreditApprovalCallRecording @relation(fields: [recordingId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalCallEvidenceSeal_recording_fkey")
+
+  @@index([recordingId], map: "CreditApprovalCallEvidenceSeal_recording_idx")
+}
+
+model CreditApprovalCallReissueSeal {
+  operationId String @id @db.Uuid
+  creditoId Int
+  recordingId String @db.Uuid
+  sourceRevision Int
+  sourceReviewHash String @db.VarChar(64)
+  contractHash String @db.VarChar(64)
+  captureKind String @db.VarChar(16)
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  operation CreditApprovalReissue @relation(fields: [operationId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalCallReissueSeal_operation_fkey")
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalCallReissueSeal_credit_fkey")
+  recording CreditApprovalCallRecording @relation(fields: [recordingId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "CreditApprovalCallReissueSeal_recording_fkey")
+
+  @@index([recordingId], map: "CreditApprovalCallReissueSeal_recording_idx")
 }
 
 model CreditApprovalPolicy {
@@ -686,6 +722,7 @@ model CreditApprovalReissue {
   credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict)
   requestedBy Usuario? @relation(fields: [requestedByUserId], references: [id], onDelete: Restrict)
   events CreditApprovalReissueEvent[]
+  callSeal CreditApprovalCallReissueSeal?
 
   @@index([creditoId, requestedAt(sort: Desc)], map: "CreditApprovalReissue_credit_created")
 }
@@ -717,6 +754,7 @@ model CreditApprovalEvidenceRevision {
   reviewHash String? @db.VarChar(64)
   createdAt DateTime @default(now()) @db.Timestamp(3)
   credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict)
+  callSeal CreditApprovalCallEvidenceSeal?
 
   @@index([creditoId, createdAt], map: "CreditApprovalEvidenceRevision_credit_created_idx")
 }

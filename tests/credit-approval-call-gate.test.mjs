@@ -264,6 +264,17 @@ test("la continuidad enlaza metadatos auditables sin copiar bytes y no actúa cu
     81, CALL_RECORDING_ID, event.noveltyId, event.noveltyEventId,
     4, "a".repeat(64), 5, "a".repeat(64),
   ]);
+  const evidenceRevisionId = "00000000-0000-4000-8000-000000000093";
+  const operationId = "00000000-0000-4000-8000-000000000094";
+  assert.equal(await continuity.sealCreditApprovalEvidenceCall(db, 81, source, { evidenceRevisionId }), true);
+  assert.equal(await continuity.sealCreditApprovalReissueCall(db, 81, source, { operationId }), true);
+  assert.match(writes[1].sql, /^INSERT INTO "CreditApprovalCallEvidenceSeal"/);
+  assert.match(writes[2].sql, /^INSERT INTO "CreditApprovalCallReissueSeal"/);
+  assert.ok(writes.slice(1).every(({ sql }) => !sql.includes('"bytes"')));
+  assert.deepEqual(plain(writes[1].params), [evidenceRevisionId, 81, CALL_RECORDING_ID, 4, "a".repeat(64)]);
+  assert.deepEqual(plain(writes[2].params), [operationId, 81, CALL_RECORDING_ID, 4, "a".repeat(64)]);
   assert.equal(await continuity.continueCreditApprovalCall(db, 81, null, event, target), false);
-  assert.equal(writes.length, 1);
+  assert.equal(await continuity.sealCreditApprovalEvidenceCall(db, 81, null, { evidenceRevisionId }), false);
+  assert.equal(await continuity.sealCreditApprovalReissueCall(db, 81, null, { operationId }), false);
+  assert.equal(writes.length, 3);
 });

@@ -4,6 +4,7 @@ import { installCreditApprovalReissueSchema } from "../scripts/credit-approval-r
 import { installCreditApprovalActorSchema } from "../scripts/credit-approval-actor-schema.mjs";
 import { installCreditApprovalNoveltiesSchema } from "../scripts/credit-approval-novelties-schema.mjs";
 import { installApprovalSharedSchema } from "../scripts/approval-shared-schema.mjs";
+import { installApprovalEvidenceSchema } from "../scripts/approval-evidence-schema.mjs";
 import { installCreditApprovalCallSchema } from "../scripts/credit-approval-call-schema.mjs";
 
 /** Only the dedicated local call test database may be prepared with these fixtures. */
@@ -11,7 +12,7 @@ export async function prepareCallIntegrationFixture(client, connectionString) {
   const url=new URL(connectionString);
   assert.ok(["localhost","127.0.0.1","[::1]"].includes(url.hostname));
   assert.equal(url.pathname,"/approval_call_test");
-  const tables=["CreditSadminRegistration","CreditApprovalCallContinuation","CreditApprovalCallRecording","CreditApprovalNoveltyEvent","CreditApprovalNoveltyItem","CreditApprovalNovelty","CreditApprovalSharedSession","CreditApprovalSharedGrant","CreditApprovalReissueEvent","CreditApprovalReissue","CreditApprovalEvent","CreditApprovalReview","CreditApprovalPolicy","FirmaSeguroProcess","DataCreditoAssessment","LiquidacionAliadoCredito","CreditoAmortizacion","Credito","Usuario","Rol","Sede","Aliado"];
+  const tables=["CreditSadminRegistration","CreditApprovalCallEvidenceSeal","CreditApprovalCallReissueSeal","CreditApprovalCallContinuation","CreditApprovalCallRecording","CreditApprovalEvidenceRevision","CreditApprovalNoveltyEvent","CreditApprovalNoveltyItem","CreditApprovalNovelty","CreditApprovalSharedSession","CreditApprovalSharedGrant","CreditApprovalReissueEvent","CreditApprovalReissue","CreditApprovalEvent","CreditApprovalReview","CreditApprovalPolicy","FirmaSeguroProcess","DataCreditoAssessment","LiquidacionAliadoCredito","CreditoAmortizacion","Credito","Usuario","Rol","Sede","Aliado"];
   const existing=await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(existing.rows.every(({tablename})=>tables.includes(tablename)),"No se reinician bases con tablas ajenas");
   for(const table of tables)await client.query('DROP TABLE IF EXISTS public."'+table+'" CASCADE');
@@ -43,7 +44,7 @@ export async function prepareCallIntegrationFixture(client, connectionString) {
     CREATE TABLE "CreditoAmortizacion" ("creditoId" INTEGER PRIMARY KEY REFERENCES "Credito"("id"),"cuotaComercial" NUMERIC(20,2));
     CREATE TABLE "LiquidacionAliadoCredito" ("id" SERIAL PRIMARY KEY,"creditoId" INTEGER UNIQUE REFERENCES "Credito"("id"));
     CREATE TABLE "DataCreditoAssessment" ("id" TEXT PRIMARY KEY,"creditId" INTEGER,"score" INTEGER,"offer" JSONB,
-      "status" TEXT,"consumedAt" TIMESTAMP,"retainedUntil" TIMESTAMP);
+      "status" TEXT,"consumedAt" TIMESTAMP,"retainedUntil" TIMESTAMP,"updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE "FirmaSeguroProcess" ("id" SERIAL PRIMARY KEY,"creditoId" INTEGER,"processUuid" TEXT,
       "status" TEXT,"signedDocumentBase64" TEXT,"signedDocumentFileName" TEXT,"draftPayload" JSONB,
       "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"completedAt" TIMESTAMP,"supersededAt" TIMESTAMP);
@@ -53,5 +54,6 @@ export async function prepareCallIntegrationFixture(client, connectionString) {
   await installCreditApprovalActorSchema(client);
   await installCreditApprovalNoveltiesSchema(client);
   await installApprovalSharedSchema(client);
+  await installApprovalEvidenceSchema(client);
   await installCreditApprovalCallSchema(client);
 }

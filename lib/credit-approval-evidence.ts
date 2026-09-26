@@ -1,7 +1,11 @@
 import "server-only";
 import { assertApprovalActorActive, assertApprovalActorCreditAccess } from "@/lib/credit-approval-actor";
 import { markNoveltyPhotoCorrected } from "@/lib/credit-approval-novelty-state";
-import { captureCreditApprovalCallContinuity, continueCreditApprovalCall } from "@/lib/credit-approval-call-continuity";
+import {
+  captureCreditApprovalCallContinuity,
+  continueCreditApprovalCall,
+  sealCreditApprovalEvidenceCall,
+} from "@/lib/credit-approval-call-continuity";
 import { APPROVAL_EVIDENCE, CreditApprovalError, getCreditApprovalDetail, parseCreditApproval, type ApprovalActor, type ApprovalDatabase } from "@/lib/credit-approval";
 import { sanitizeIphoneDeliveryEvidenceDataUrl } from "@/lib/iphone-delivery-evidence";
 import { archiveEvidenceRevision, correctedEvidenceSnapshot, evidenceSha256 } from "@/lib/credit-approval-evidence-history";
@@ -57,10 +61,11 @@ export async function replaceApprovalEvidence(db: ApprovalDatabase, id: number,
     key: input.key, field: config.field, previousSha256, nextSha256,
     correctedAt: new Date().toISOString(), actor, source: "CORRECCION_ANALISTA_APROBACION",
   });
-  await archiveEvidenceRevision(db, {
+  const evidenceRevisionId = await archiveEvidenceRevision(db, {
     creditId: id, key: input.key, previousDataUrl, previousSha256, nextSha256, actor,
     source: "ANALISTA_APROBACION", reviewRevision: item.review.revision, reviewHash: item.review.reviewHash,
   });
+  await sealCreditApprovalEvidenceCall(db, id, callContinuity, { evidenceRevisionId });
   await db.$executeRawUnsafe(`UPDATE "Credito" SET "${config.field}" = $2, "contratoSnapshot" = $3::jsonb,
     "updatedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC' WHERE "id" = $1`, id, input.dataUrl, JSON.stringify(snapshot));
   const continuityEvent = await markNoveltyPhotoCorrected(db, id, input.key, nextSha256, actor);
