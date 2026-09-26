@@ -287,8 +287,11 @@ export default function ClienteConsultaPage() {
         Object.fromEntries(
           nextItems
             .map((credit) => {
-              const nextInstallment = getPayableInstallments(credit)[0];
-              return nextInstallment ? [credit.id, nextInstallment.numero] : null;
+              const payment = resolveHomeInstallmentPayment(credit);
+              const limit = payment.requiresPlanReview
+                ? getPayableInstallments(credit)[0]?.numero
+                : payment.installmentLimit;
+              return limit !== undefined ? [credit.id, limit] : null;
             })
             .filter((item): item is [number, number] => Boolean(item))
         )

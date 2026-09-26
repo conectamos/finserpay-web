@@ -23,6 +23,7 @@ import {
   COLOMBIA_TIME_ZONE,
   parseColombiaDate,
 } from "@/lib/colombia-date";
+import { resolveHomeInstallmentPayment } from "./credit-dashboard-presentation";
 import styles from "./client-credit-panel.module.css";
 
 export type ClientCreditPanelName = "payments" | "pending" | "history";
@@ -178,9 +179,11 @@ export default function ClientCreditPanel({
   const paidInstallments = activeInstallments.filter(
     (item) => item.estado === "PAGO" || item.saldoPendiente <= 0
   );
-  const payable = credit.cuotas.filter((item) => item.saldoPendiente > 0);
+  const payable = activeInstallments.filter((item) => item.saldoPendiente > 0);
   const overdue = payable.filter((item) => item.estaEnMora);
   const nextInstallment = payable[0] || null;
+  const overduePayment = resolveHomeInstallmentPayment(credit);
+  const hasOverduePayment = overduePayment.overdueCount > 0;
   const selectedInstallments = payable.filter(
     (item) => item.numero <= selectedPaymentLimit
   );
@@ -401,11 +404,15 @@ export default function ClientCreditPanel({
             {nextInstallment ? (
               <section className={styles.featuredInstallment}>
                 <div>
-                  <p>Próxima cuota</p>
-                  <h2>Cuota {nextInstallment.numero}</h2>
-                  <span>{dateLabel(nextInstallment.fechaVencimiento)} · {nextInstallment.estaEnMora ? "Vencida" : "Pendiente"}</span>
+                  <p>{hasOverduePayment ? "Saldo en mora" : "Próxima cuota"}</p>
+                  <h2>{hasOverduePayment
+                    ? `${overduePayment.overdueCount} ${overduePayment.overdueCount === 1 ? "cuota vencida" : "cuotas vencidas"}`
+                    : `Cuota ${nextInstallment.numero}`}</h2>
+                  <span>{hasOverduePayment && overduePayment.dueDate
+                    ? `Desde el ${dateLabel(overduePayment.dueDate)}`
+                    : `${dateLabel(nextInstallment.fechaVencimiento)} · Pendiente`}</span>
                 </div>
-                <strong>{money(nextInstallment.saldoPendiente)}</strong>
+                <strong>{money(hasOverduePayment ? overduePayment.amount : nextInstallment.saldoPendiente)}</strong>
                 <button type="button" onClick={() => onOpenPanel("payments")}>
                   MEDIOS DE PAGO
                 </button>
