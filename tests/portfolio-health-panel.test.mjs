@@ -37,8 +37,8 @@ test("destaca el porcentaje mayor sobre saldo propio y cambia con los datos del 
     assert.match(product(html,winner), /Mayor nivel de mora/);
     assert.doesNotMatch(product(html,loser), /Mayor nivel de mora/);
     assert.match(product(html,winner), /90,0%/);
-    assert.match(product(html,winner), /Saldo en mora/);
-    assert.match(product(html,winner), /\$\s*900/);
+    assert.doesNotMatch(product(html,winner), /Saldo en mora|Saldo pendiente/);
+    assert.doesNotMatch(html, /Cada porcentaje se calcula|Sin saldo pendiente para este producto/);
     assert.match(html, /Cartera general: Al día 50,0%, Mora temprana 5,0%, Mora crítica 45,0%/);
     assert.match(html, /1–15 días/); assert.match(html, /Más de 15 días/);
   }

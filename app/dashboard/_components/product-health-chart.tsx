@@ -57,11 +57,6 @@ export default function ProductHealthChart({ title, id, data, highestOverdue = f
           </div>
         ))}
       </dl>
-      <dl className="mt-4 grid gap-3 border-t border-[var(--fp-border)] pt-3 text-sm">
-        <div className="min-w-0"><dt className="text-[var(--fp-muted)]">Saldo pendiente</dt><dd className="mt-1 break-words font-semibold tabular-nums">{healthMoney(data.totalBalance)}</dd></div>
-        <div className="min-w-0"><dt className="text-[var(--fp-muted)]">Saldo en mora</dt><dd className="mt-1 break-words font-bold tabular-nums">{healthMoney(data.overdueBalance)}</dd></div>
-      </dl>
-      {empty ? <p className="mt-3 text-sm text-[var(--fp-muted)]">Sin saldo pendiente para este producto.</p> : null}
     </section>
   );
 }
