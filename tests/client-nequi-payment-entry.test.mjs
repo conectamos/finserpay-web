@@ -35,7 +35,8 @@ test("el pago del inicio abre Nequi con el resumen actual de cuotas", async () =
     /onPayInstallment=\{\(\) => openPanel\("payments"\)\}/
   );
 
-  assert.match(pageSource, /Nequi por Wompi/);
-  assert.match(pageSource, /Numero Nequi/);
-  assert.match(pageSource, /Enviar a Nequi/);
+  assert.match(pageSource, /<ClientNequiPaymentDialog/);
+  assert.match(pageSource, /amount=\{confirmAmount\}/);
+  assert.match(pageSource, /installmentLabel=\{confirmPaymentLabel\}/);
+  assert.match(pageSource, /onSubmit=\{\(\) => void payWithWompi\(confirmCredit\)\}/);
 });

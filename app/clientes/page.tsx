@@ -1,7 +1,8 @@
 "use client";
 import { creditDisplayNumber } from "@/lib/credit-display-number";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import ClientNequiPaymentDialog from "./client-nequi-payment-dialog";
 import ClientActiveCreditDashboard from "@/app/clientes/client-active-credit-dashboard";
 import { resolveHomeInstallmentPayment } from "./credit-dashboard-presentation";
 import ClientCreditPanel, {
@@ -111,16 +112,6 @@ const STORAGE_KEY = "finserpay.cliente.documento";
 const NEW_CREDIT_SUPPORT_MESSAGE =
   "Hola, equipo de FINSER PAY 👋 Finalicé mi crédito y quiero solicitar uno nuevo. ¿Podrían orientarme, por favor?";
 
-const moneyFormatter = new Intl.NumberFormat("es-CO", {
-  style: "currency",
-  currency: "COP",
-  maximumFractionDigits: 0,
-});
-
-function money(value: number) {
-  return moneyFormatter.format(Math.round(Number(value || 0)));
-}
-
 function normalizeDocument(value: string) {
   return value.replace(/\D/g, "");
 }
@@ -209,18 +200,22 @@ function clientInitials(name: string) {
   return `${first}${second || "P"}`.toUpperCase();
 }
 
-function maskedImeiLabel(value?: string | null) {
-  const normalized = String(value || "").replace(/\D/g, "");
-  if (!normalized) return "IMEI no registrado";
-  return `IMEI terminado en ${normalized.slice(-4)}`;
+function nequiTerminalMessage(status?: string | null) {
+  switch (String(status || "").toUpperCase()) {
+    case "DECLINED":
+      return "Nequi rechazó el pago. Tus cuotas no cambiaron; puedes intentar de nuevo.";
+    case "VOIDED":
+    case "CANCELED":
+    case "CANCELLED":
+      return "La solicitud de pago fue cancelada. Tus cuotas no cambiaron.";
+    case "EXPIRED":
+      return "La solicitud de pago venció. Tus cuotas no cambiaron; puedes enviar otra.";
+    case "ERROR":
+      return "El pago no pudo completarse. Tus cuotas no cambiaron; puedes intentar de nuevo.";
+    default:
+      return null;
+  }
 }
-
-function maskedDocumentLabel(value?: string | null) {
-  const normalized = String(value || "").replace(/\D/g, "");
-  if (!normalized) return "Documento no registrado";
-  return `Documento terminado en ${normalized.slice(-4)}`;
-}
-
 export default function ClienteConsultaPage() {
   const [documento, setDocumento] = useState("");
   const [activeDocumento, setActiveDocumento] = useState("");
@@ -229,6 +224,8 @@ export default function ClienteConsultaPage() {
   const [selectedLimit, setSelectedLimit] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(false);
   const [payingCreditId, setPayingCreditId] = useState<number | null>(null);
+  const sendingPaymentRef = useRef(false);
+  const pendingPaymentRef = useRef<PaymentReturnNotice | null>(null);
   const [confirmPaymentCreditId, setConfirmPaymentCreditId] = useState<number | null>(
     null
   );
@@ -253,7 +250,7 @@ export default function ClienteConsultaPage() {
 
     if (normalized.length < 5) {
       setNotice({ text: "Ingresa una cedula valida.", tone: "red" });
-      return;
+      return false;
     }
 
     try {
@@ -308,13 +305,17 @@ export default function ClienteConsultaPage() {
       if (preferredPanel) {
         window.setTimeout(() => scrollToSection("explora-panel"), 120);
       }
+      return true;
     } catch (error) {
-      setItems([]);
-      setOpenCreditId(null);
+      if (!silent) {
+        setItems([]);
+        setOpenCreditId(null);
+      }
       setNotice({
         text: error instanceof Error ? error.message : "No se pudo consultar la cedula",
         tone: "red",
       });
+      return false;
     } finally {
       setLoading(false);
     }
@@ -334,11 +335,9 @@ export default function ClienteConsultaPage() {
     const targetPanel = wompiReference ? panelFromUrl || "payments" : panelFromUrl;
 
     if (wompiReference) {
-      setPaymentReturn({
-        reference: wompiReference,
-        creditId: creditFromUrl,
-        checkedAt: null,
-      });
+      const pending = { reference: wompiReference, creditId: creditFromUrl, checkedAt: null };
+      pendingPaymentRef.current = pending;
+      setPaymentReturn(pending);
     }
 
     if (nextDocument) {
@@ -364,6 +363,12 @@ export default function ClienteConsultaPage() {
     mode: ClientPaymentMode = "INSTALLMENTS",
     installmentLimit?: number
   ) => {
+    if (sendingPaymentRef.current) return;
+    if (pendingPaymentRef.current?.reference || paymentReturn?.reference) {
+      setActivePanel("payments");
+      setNotice({ text: "Ya tienes una solicitud de pago pendiente. Revisa su estado antes de enviar otra.", tone: "red" });
+      return;
+    }
     if (mode === "PAYOFF" && !credit.liquidacionAnticipada?.disponible) {
       setNotice({
         text:
@@ -416,6 +421,11 @@ export default function ClienteConsultaPage() {
   };
 
   const payWithWompi = async (credit: ClientCredit) => {
+    if (sendingPaymentRef.current) return;
+    if (pendingPaymentRef.current?.reference || paymentReturn?.reference) {
+      setNotice({ text: "Ya tienes una solicitud de pago pendiente. Revisa su estado antes de enviar otra.", tone: "red" });
+      return;
+    }
     const cuotaNumeros = cuotasSeleccionadas(credit).map((item) => item.numero);
     const paymentMode = confirmPaymentMode;
     const cleanNequiPhone = formatNequiPhone(nequiPhone);
@@ -435,9 +445,9 @@ export default function ClienteConsultaPage() {
       return;
     }
 
+    sendingPaymentRef.current = true;
     try {
       setPayingCreditId(credit.id);
-      setConfirmPaymentCreditId(null);
       setNotice(null);
 
       const result = await requestJson<WompiCheckoutResponse>(
@@ -463,24 +473,32 @@ export default function ClienteConsultaPage() {
       }
 
       if (result.data.paymentMode === "NEQUI_DIRECT") {
-        setPaymentReturn({
-          reference: result.data.reference || "",
+        const terminalMessage = nequiTerminalMessage(result.data.status);
+        if (terminalMessage) {
+          setNotice({ text: terminalMessage, tone: "red" });
+          return;
+        }
+        if (!result.data.reference) {
+          throw new Error("No recibimos la referencia de la solicitud. Consulta el estado del pago antes de volver a intentarlo.");
+        }
+        const pending = {
+          reference: result.data.reference,
           creditId: credit.id,
           checkedAt: null,
-        });
+        };
+        pendingPaymentRef.current = pending;
+        setPaymentReturn(pending);
+        setConfirmPaymentCreditId(null);
         setConfirmPaymentMode("INSTALLMENTS");
         setNotice({
-          text:
-            "Solicitud enviada a Nequi. Abre la app Nequi y aprueba el pago; FINSER PAY lo aplicara automaticamente.",
+          text: String(result.data.status || "").toUpperCase() === "APPROVED"
+            ? "Nequi aprobó la solicitud. Estamos verificando su aplicación a tus cuotas."
+            : "Solicitud enviada. Abre Nequi para aprobarla. Tus cuotas se actualizarán cuando Wompi confirme el pago.",
           tone: "emerald",
         });
         setActivePanel("payments");
-        window.setTimeout(() => {
-          void refreshPaymentStatus();
-        }, 9000);
         return;
       }
-
       if (result.data.paymentMode === "CHECKOUT_FALLBACK") {
         throw new Error(
           result.data.directError ||
@@ -503,6 +521,7 @@ export default function ClienteConsultaPage() {
         tone: "red",
       });
     } finally {
+      sendingPaymentRef.current = false;
       setPayingCreditId(null);
     }
   };
@@ -518,6 +537,7 @@ export default function ClienteConsultaPage() {
     setConfirmPaymentMode("INSTALLMENTS");
     setAcceptWompiTerms(false);
     setNequiPhone("");
+    pendingPaymentRef.current = null;
     setPaymentReturn(null);
     setNotice(null);
   };
@@ -552,6 +572,7 @@ export default function ClienteConsultaPage() {
     try {
       setRefreshingPayment(true);
       let paymentApplied = false;
+      let terminalMessage: string | null = null;
 
       if (paymentReturn?.reference) {
         const params = new URLSearchParams({
@@ -568,19 +589,22 @@ export default function ClienteConsultaPage() {
           );
         }
 
+        terminalMessage = nequiTerminalMessage(statusResult.data.status);
         paymentApplied = Boolean(
           statusResult.data.applied || statusResult.data.alreadyProcessed
         );
       }
 
-      await consultar(
+      const refreshed = await consultar(
         targetDocument,
         true,
         paymentReturn?.creditId ?? openCreditId,
         activePanel
       );
+      if (!refreshed) return;
 
       if (paymentApplied) {
+        pendingPaymentRef.current = null;
         setNotice({
           text: "Pago aprobado y aplicado. Tus cuotas e historial ya quedaron actualizados.",
           tone: "emerald",
@@ -589,6 +613,12 @@ export default function ClienteConsultaPage() {
         return;
       }
 
+      if (terminalMessage) {
+        pendingPaymentRef.current = null;
+        setPaymentReturn(null);
+        setNotice({ text: terminalMessage, tone: "red" });
+        return;
+      }
       setPaymentReturn((current) =>
         current
           ? {
@@ -906,152 +936,36 @@ export default function ClienteConsultaPage() {
         </nav>
 
         {confirmCredit ? (
-          <div
-            aria-modal="true"
-            role="dialog"
-            aria-labelledby="confirm-payment-title"
-            className="fixed inset-0 z-40 flex items-end justify-center bg-black/45 px-4 pb-4"
-          >
-            <div className="w-full max-w-[440px] rounded-lg bg-white p-4 shadow-[0_20px_44px_rgba(0,0,0,0.28)]">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-xs font-black uppercase text-[#6c747f]">
-                    Nequi por Wompi
-                  </p>
-                  <h2
-                    id="confirm-payment-title"
-                    className="mt-1 text-xl font-black text-[#171b22]"
-                  >
-                    Confirmar pago
-                  </h2>
-                </div>
-                <button
-                  type="button"
-                  aria-label="Cancelar pago"
-                  onClick={() => {
-                    setConfirmPaymentCreditId(null);
-                    setConfirmPaymentMode("INSTALLMENTS");
-                  }}
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[#dde1e8] bg-white text-lg font-black text-[#535b66]"
-                >
-                  x
-                </button>
-              </div>
-
-              <div className="mt-4 rounded-lg bg-[#f8fff4] p-4">
-                <p className="text-xs font-black uppercase text-[#5f8f44]">
-                  Valor a pagar
-                </p>
-                <p className="mt-1 text-3xl font-black leading-none text-[#171b22]">
-                  {money(confirmAmount)}
-                </p>
-                <p className="mt-2 text-sm font-bold text-[#67706b]">
-                  {confirmPaymentLabel}
-                </p>
-              </div>
-
-              <div className="mt-4 grid gap-3 text-sm">
-                <div className="grid grid-cols-[82px_1fr] gap-3">
-                  <span className="font-black uppercase text-[#7d8490]">Equipo</span>
-                  <span className="truncate font-black text-[#252a35]">
-                    {creditTitle(confirmCredit)}
-                  </span>
-                </div>
-                <div className="grid grid-cols-[82px_1fr] gap-3">
-                  <span className="font-black uppercase text-[#7d8490]">IMEI</span>
-                  <span className="font-black text-[#252a35]">
-                    {maskedImeiLabel(confirmCredit.imei || confirmCredit.deviceUid)}
-                  </span>
-                </div>
-                <div className="grid grid-cols-[82px_1fr] gap-3">
-                  <span className="font-black uppercase text-[#7d8490]">Documento</span>
-                  <span className="font-black text-[#252a35]">
-                    {maskedDocumentLabel(confirmPaymentReference)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-lg border border-[#e6e8ee] bg-[#f8f9fb] p-4">
-                <label
-                  htmlFor="nequi-phone"
-                  className="block text-xs font-black uppercase text-[#6c747f]"
-                >
-                  Numero Nequi
-                </label>
-                <input
-                  id="nequi-phone"
-                  type="tel"
-                  inputMode="numeric"
-                  autoComplete="tel"
-                  value={nequiPhone}
-                  onChange={(event) => {
-                    setNequiPhone(formatNequiPhone(event.target.value));
-                    if (notice?.tone === "red") setNotice(null);
-                  }}
-                  placeholder="3001234567"
-                  className="mt-2 min-h-12 w-full rounded-lg border border-[#dde1e8] bg-white px-4 text-base font-black text-[#171b22] outline-none focus:border-[#a7e66f]"
-                />
-                <p className="mt-2 text-xs font-bold leading-5 text-[#737b88]">
-                  Wompi enviara una notificacion a la app Nequi. El pago queda
-                  registrado cuando el cliente lo apruebe.
-                </p>
-                <label className="mt-3 grid cursor-pointer grid-cols-[22px_1fr] gap-3 text-xs font-bold leading-5 text-[#535b66]">
-                  <input
-                    type="checkbox"
-                    checked={acceptWompiTerms}
-                    onChange={(event) => {
-                      setAcceptWompiTerms(event.target.checked);
-                      if (notice?.tone === "red") setNotice(null);
-                    }}
-                    className="mt-1 h-4 w-4 accent-[#a7e66f]"
-                  />
-                  <span>Acepto reglamentos y politica de privacidad para hacer este pago.</span>
-                </label>
-              </div>
-
-              {notice ? (
-                <div
-                  className={[
-                    "mt-3 rounded-lg border px-4 py-3 text-xs font-bold leading-5",
-                    notice.tone === "emerald"
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                      : "border-red-200 bg-red-50 text-red-700",
-                  ].join(" ")}
-                >
-                  {notice.text}
-                </div>
-              ) : null}
-
-              <div className="mt-5 grid grid-cols-[1fr_1.4fr] gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setConfirmPaymentCreditId(null);
-                    setConfirmPaymentMode("INSTALLMENTS");
-                    setNotice(null);
-                  }}
-                  className="min-h-12 rounded-lg border border-[#dde1e8] bg-white px-3 text-sm font-black text-[#414854]"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void payWithWompi(confirmCredit)}
-                  disabled={
-                    payingCreditId === confirmCredit.id ||
-                    nequiPhone.length !== 10 ||
-                    !acceptWompiTerms
-                  }
-                  className="min-h-12 rounded-lg bg-[#a7e66f] px-3 text-sm font-black text-[#102316] shadow-[0_10px_20px_rgba(111,194,70,0.22)] disabled:bg-[#d9dde4] disabled:text-[#7e8490]"
-                >
-                  {payingCreditId === confirmCredit.id
-                    ? "Enviando..."
-                    : "Enviar a Nequi"}
-                </button>
-              </div>
-            </div>
-          </div>
+          <ClientNequiPaymentDialog
+            amount={confirmAmount}
+            installmentLabel={confirmPaymentLabel}
+            product={creditTitle(confirmCredit)}
+            imei={confirmCredit.imei || confirmCredit.deviceUid || null}
+            document={confirmPaymentReference}
+            phone={nequiPhone}
+            acceptedTerms={acceptWompiTerms}
+            submitting={payingCreditId === confirmCredit.id}
+            notice={notice}
+            onPhoneChange={(value) => {
+              setNequiPhone(formatNequiPhone(value));
+              if (notice?.tone === "red") setNotice(null);
+            }}
+            onTermsChange={(value) => {
+              setAcceptWompiTerms(value);
+              if (notice?.tone === "red") setNotice(null);
+            }}
+            onCancel={() => {
+              if (sendingPaymentRef.current) return;
+              setConfirmPaymentCreditId(null);
+              setConfirmPaymentMode("INSTALLMENTS");
+              setAcceptWompiTerms(false);
+              setNotice(null);
+            }}
+            onSubmit={() => void payWithWompi(confirmCredit)}
+          />
         ) : null}
+
+
       </div>
     </div>
   );

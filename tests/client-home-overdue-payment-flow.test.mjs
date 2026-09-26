@@ -83,6 +83,50 @@ function renderPanel(props) {
   });
   return testModule.exports.default(props);
 }
+function paymentDialogRenderer() {
+  const dialogSource = readFileSync(new URL("../app/clientes/client-nequi-payment-dialog.tsx", import.meta.url), "utf8");
+  const dialogOutput = ts.transpileModule(dialogSource, {
+    compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const refs = [];
+  let refCursor = 0;
+  const Empty = () => null;
+  const dependencies = {
+    react: {
+      useEffect: () => {}, useId: () => "test-nequi-dialog",
+      useRef(initial) {
+        const index = refCursor++;
+        if (!(index in refs)) refs[index] = { current: initial };
+        return refs[index];
+      },
+      useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}],
+    },
+    "react/jsx-runtime": jsxRuntime,
+    "@/app/_components/finser-ui": { Button: "button", Input: "input" },
+    "lucide-react": new Proxy({}, { get: () => Empty }),
+    "./client-nequi-payment-dialog.module.css": { default: new Proxy({}, { get: (_, key) => String(key) }) },
+  };
+  const testModule = { exports: {} };
+  runInNewContext(dialogOutput, {
+    module: testModule, exports: testModule.exports, Date, Intl,
+    require: (name) => { assert.ok(name in dependencies, `Dependencia del diálogo no simulada: ${name}`); return dependencies[name]; },
+  });
+  return {
+    Component: testModule.exports.default,
+    render(props) {
+      refCursor = 0;
+      return testModule.exports.default(props);
+    },
+  };
+}
+function submitDialog(dialog) {
+  const send = findNode(dialog, (node) => node.type === "button" && textContent(node).trim() === "Enviar solicitud a Nequi");
+  assert.ok(send, "El diálogo permite enviar la solicitud a Nequi");
+  assert.equal(send.props.disabled, false);
+  const form = findNode(dialog, (node) => node.type === "form");
+  assert.ok(form, "El diálogo conserva envío accesible mediante formulario");
+  form.props.onSubmit({ preventDefault() {} });
+}
 function harness(credit, { consultFirst = false } = {}) {
   const states = consultFirst ? {} : {
     documento: credit.clienteDocumento, activeDocumento: credit.clienteDocumento,
@@ -92,6 +136,9 @@ function harness(credit, { consultFirst = false } = {}) {
   const androidDocuments = [];
   const requests = [];
   let cursor = 0;
+  let refCursor = 0;
+  const refs = [];
+  const paymentDialog = paymentDialogRenderer();
   const Dashboard = () => null;
   const Panel = () => null;
   const Login = () => null;
@@ -105,6 +152,11 @@ function harness(credit, { consultFirst = false } = {}) {
         states[name] = typeof next === "function" ? next(states[name]) : next;
       }];
     },
+    useRef(initial) {
+      const index = refCursor++;
+      if (!(index in refs)) refs[index] = { current: initial };
+      return refs[index];
+    },
     useCallback: (callback) => callback,
     // User interactions run real callbacks. Mount and polling effects remain inactive.
     useEffect: () => {},
@@ -113,6 +165,7 @@ function harness(credit, { consultFirst = false } = {}) {
     react, "react/jsx-runtime": jsxRuntime,
     "@/lib/credit-display-number": displayNumber,
     "./credit-dashboard-presentation": presentation,
+    "./client-nequi-payment-dialog": { default: paymentDialog.Component },
     "@/app/clientes/client-active-credit-dashboard": { default: Dashboard },
     "@/app/clientes/client-credit-panel": { default: Panel },
     "@/app/clientes/client-login-screen": { default: Login },
@@ -147,6 +200,7 @@ function harness(credit, { consultFirst = false } = {}) {
   let tree;
   function render() {
     cursor = 0;
+    refCursor = 0;
     tree = testModule.exports.default();
     assert.equal(cursor, hookNames.length);
     return tree;
@@ -154,7 +208,10 @@ function harness(credit, { consultFirst = false } = {}) {
   const login = () => findNode(tree, (node) => node.type === Login)?.props;
   const dashboard = () => findNode(tree, (node) => node.type === Dashboard)?.props;
   const panel = () => findNode(tree, (node) => node.type === Panel)?.props;
-  const dialog = () => findNode(tree, (node) => node.props?.role === "dialog");
+  const dialog = () => {
+    const component = findNode(tree, (node) => node.type === paymentDialog.Component);
+    return component ? paymentDialog.render(component.props) : null;
+  };
   render();
   return { states, requests, stored, androidDocuments, render, login, dashboard, panel, dialog };
 }
@@ -188,9 +245,8 @@ for (const scenario of [
     const terms = findNode(flow.dialog(), (node) => node.type === "input" && node.props.type === "checkbox");
     terms.props.onChange({ target: { checked: true } });
     flow.render();
-    const send = findNode(flow.dialog(), (node) => node.type === "button" && textContent(node) === "Enviar a Nequi");
-    assert.equal(send.props.disabled, false);
-    send.props.onClick();
+    submitDialog(flow.dialog());
+
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(flow.requests.length, 1);
     const request = flow.requests[0];
@@ -267,9 +323,8 @@ for (const scenario of [
     const terms = findNode(flow.dialog(), (node) => node.type === "input" && node.props.type === "checkbox");
     terms.props.onChange({ target: { checked: true } });
     flow.render();
-    const send = findNode(flow.dialog(), (node) => node.type === "button" && textContent(node) === "Enviar a Nequi");
-    assert.equal(send.props.disabled, false);
-    send.props.onClick();
+    submitDialog(flow.dialog());
+
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(flow.requests.length, 2);
     const checkout = flow.requests[1];
