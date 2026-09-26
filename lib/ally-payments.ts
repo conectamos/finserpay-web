@@ -20,6 +20,7 @@ import {
 } from "@/lib/ally-payments-core";
 import { colombiaDateKey } from "@/lib/colombia-date";
 import { buildAllyPaymentEligibilityQuery } from "@/lib/ally-payment-eligibility";
+import { ensureCreditAllyPaymentExclusionSchema } from "@/lib/credit-ally-payment-exclusion-storage";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import prisma from "@/lib/prisma";
 
@@ -336,6 +337,7 @@ async function loadEligibleCreditRows(
   }
 ) {
   const { query, values } = buildAllyPaymentEligibilityQuery(input);
+  await ensureCreditAllyPaymentExclusionSchema();
   return db.$queryRawUnsafe<EligibleCreditRow[]>(query, ...values);
 }
 
@@ -361,12 +363,14 @@ async function loadEligibleCollections(
     lock?: boolean;
   }
 ): Promise<AllyPaymentCollectionLine[]> {
+  await ensureCreditAllyPaymentExclusionSchema();
   const values: unknown[] = [ALIADO_FINSER_PAY.codigo];
   const conditions = [
     `UPPER(BTRIM(COALESCE(payment."estado", ''))) NOT IN ('ANULADO', 'ANULADA', 'CANCELADO', 'CANCELADA')`,
     `payment."anuladoAt" IS NULL`,
     `payment."valor" > 0`,
     `snapshot."id" IS NULL`,
+    `NOT EXISTS (SELECT 1 FROM public."CreditAllyPaymentExclusion" excluded WHERE excluded."creditoId" = credit."id")`,
     `site."aliadoId" IS NOT NULL`,
     `UPPER(BTRIM(COALESCE(ally."codigo", ''))) <> UPPER(BTRIM($1))`,
   ];
@@ -839,6 +843,8 @@ export async function createAllyPayment(input: {
     previewToken,
     adjustments,
   });
+
+  await ensureCreditAllyPaymentExclusionSchema();
 
   try {
     return await prisma.$transaction(

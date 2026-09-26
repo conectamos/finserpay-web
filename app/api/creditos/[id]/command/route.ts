@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveCreditSellerDisplay } from "@/lib/credit-assigned-seller";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
@@ -269,11 +270,7 @@ function serializeCredit(
     ultimoAbonoAt: payment?.ultimoAbonoAt?.toISOString() || null,
     createdAt: item.createdAt.toISOString(),
     updatedAt: item.updatedAt.toISOString(),
-    usuario: {
-      id: item.vendedor?.id || item.usuario.id,
-      nombre: item.vendedor?.nombre || item.usuario.nombre,
-      usuario: item.vendedor?.documento || item.usuario.usuario,
-    },
+    usuario: resolveCreditSellerDisplay(item),
     vendedor: item.vendedor
       ? {
           id: item.vendedor.id,

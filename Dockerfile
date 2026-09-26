@@ -46,6 +46,7 @@ COPY --from=builder /app/scripts/mass-first-payment-correction-core.mjs ./script
 COPY --from=builder /app/scripts/correct-historic-mass-credit-first-payments-20260925.mjs ./scripts/correct-historic-mass-credit-first-payments-20260925.mjs
 COPY --from=builder /app/scripts/ensure-aliado-redescuento-schema.mjs ./scripts/ensure-aliado-redescuento-schema.mjs
 COPY --from=builder /app/scripts/ensure-ally-payments-schema.mjs ./scripts/ensure-ally-payments-schema.mjs
+COPY --from=builder /app/scripts/credit-ally-payment-exclusion-schema.mjs ./scripts/credit-ally-payment-exclusion-schema.mjs
 COPY --from=builder /app/scripts/railway-predeploy.mjs ./scripts/railway-predeploy.mjs
 COPY --from=builder /app/scripts/ensure-document-blacklist-schema.mjs ./scripts/ensure-document-blacklist-schema.mjs
 COPY --from=builder /app/scripts/document-blacklist-schema.mjs ./scripts/document-blacklist-schema.mjs

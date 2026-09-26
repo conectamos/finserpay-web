@@ -1,4 +1,5 @@
 import pg from "pg";
+import { creditAllyPaymentExclusionSchemaStatements } from "./credit-ally-payment-exclusion-schema.mjs";
 
 const { Client } = pg;
 const connectionString = String(process.env.DATABASE_URL || "").trim();
@@ -488,7 +489,17 @@ const statements = [
   'CREATE INDEX IF NOT EXISTS "LiquidacionAliadoRecaudo_estado_createdAt_idx" ON public."LiquidacionAliadoRecaudo" ("estado", "createdAt")',
 ];
 
+statements.push(...creditAllyPaymentExclusionSchemaStatements);
+
 const expectedColumns = [
+  ["CreditAllyPaymentExclusion", "creditoId", "integer", "NO"],
+  ["CreditAllyPaymentExclusion", "reason", "text", "NO"],
+  ["CreditAllyPaymentExclusion", "sourceFile", "text", "NO"],
+  ["CreditAllyPaymentExclusion", "sourceSha256", "character", "NO", 64],
+  ["CreditAllyPaymentExclusion", "sourceSheet", "text", "NO"],
+  ["CreditAllyPaymentExclusion", "sourceRow", "integer", "NO"],
+  ["CreditAllyPaymentExclusion", "createdBy", "text", "NO"],
+  ["CreditAllyPaymentExclusion", "createdAt", "timestamp without time zone", "NO"],
   ["LiquidacionAliado", "id", "integer", "NO"],
   ["LiquidacionAliado", "mutationId", "uuid", "NO"],
   ["LiquidacionAliado", "requestHash", "character", "NO", 64],
@@ -547,6 +558,7 @@ const expectedColumns = [
 ];
 
 const expectedIndexes = [
+  ["CreditAllyPaymentExclusion", "CreditAllyPaymentExclusion_pkey", true, ["creditoId"]],
   ["LiquidacionAliado", "LiquidacionAliado_mutationId_key", true, ["mutationId"]],
   [
     "LiquidacionAliado",
@@ -609,6 +621,7 @@ const expectedIndexes = [
 ];
 
 const expectedConstraints = [
+  ["CreditAllyPaymentExclusion", "CreditAllyPaymentExclusion_creditoId_fkey", "f"],
   ["LiquidacionAliado", "LiquidacionAliado_aliadoId_fkey", "f"],
   [
     "LiquidacionAliado",
@@ -672,7 +685,7 @@ async function assertCompatibleColumns() {
       WHERE table_schema = 'public'
         AND table_name = ANY($1::text[])
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "CreditAllyPaymentExclusion"]]
   );
   const columns = new Map(
     result.rows.map((row) => [
@@ -732,7 +745,7 @@ async function assertCompatibleIndexes() {
       GROUP BY table_class.relname, index_class.relname,
         index_definition.indisunique
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "CreditAllyPaymentExclusion"]]
   );
   const indexes = new Map(
     result.rows.map((row) => [
@@ -777,7 +790,7 @@ async function assertCompatibleConstraints() {
       WHERE namespace.nspname = 'public'
         AND table_class.relname = ANY($1::text[])
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "CreditAllyPaymentExclusion"]]
   );
   const constraints = new Map(
     result.rows.map((row) => [

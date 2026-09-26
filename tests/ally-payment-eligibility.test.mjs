@@ -45,7 +45,7 @@ function fixtureCredit(overrides = {}) {
 
 // Each source table is a CTE backed by parameterized VALUES. No table, temporary
 // table, or production row is created, read, changed, locked, or deleted.
-function fixtureQuery(input, credits, paidCreditIds = []) {
+function fixtureQuery(input, credits, paidCreditIds = [], excludedCreditIds = []) {
   const eligibility = buildAllyPaymentEligibilityQuery(input);
   assert.equal(input.lock, undefined, "Los fixtures no deben bloquear tablas.");
   const values = [...eligibility.values];
@@ -68,6 +68,10 @@ function fixtureQuery(input, credits, paidCreditIds = []) {
         `(${parameter(index + 1, "integer")}, ${parameter(creditId, "integer")})`
       )
     : ["(NULL::integer, NULL::integer)"];
+
+  const excludedTuples = excludedCreditIds.length
+    ? excludedCreditIds.map((id) => `(${parameter(id, "integer")})`)
+    : ["(NULL::integer)"];
 
   assert.ok(creditTuples.length > 0, "El fixture necesita al menos un credito.");
 
@@ -113,6 +117,10 @@ function fixtureQuery(input, credits, paidCreditIds = []) {
           (65589::integer, 'OTRO-ALIADO'::text, 'Otro aliado sintetico'::text),
           (1::integer, 'FINSERPAY'::text, 'Central sintetica'::text)
         ) AS fixture("id", "codigo", "nombre")
+      ),
+      "CreditAllyPaymentExclusion" AS (
+        SELECT fixture.* FROM (VALUES ${excludedTuples.join(", ")})
+          AS fixture("creditoId") WHERE fixture."creditoId" IS NOT NULL
       ),
       "LiquidacionAliadoCredito" AS (
         SELECT fixture.* FROM (VALUES ${paidTuples.join(", ")})
@@ -177,10 +185,10 @@ test("SQL real: excepcion puntual, fechas historicas, permisos y pendientes", {
     },
   });
 
-  const eligible = async (input, credits, paidCreditIds) => {
+  const eligible = async (input, credits, paidCreditIds, excludedCreditIds) => {
     await client.query("BEGIN READ ONLY");
     try {
-      const result = await client.query(fixtureQuery(input, credits, paidCreditIds));
+      const result = await client.query(fixtureQuery(input, credits, paidCreditIds, excludedCreditIds));
       return result.rows;
     } finally {
       await client.query("ROLLBACK");
@@ -219,6 +227,12 @@ test("SQL real: excepcion puntual, fechas historicas, permisos y pendientes", {
       assert.deepEqual(ownRows.map((row) => row.id), [189]);
       const otherRows = await eligible(periodInput("2026-09-01", "2026-09-01", 65589), credits);
       assert.deepEqual(otherRows.map((row) => row.id), [191]);
+    });
+
+    await t.test("la exclusion explicita solo quita los IDs registrados del periodo y pendientes", async () => {
+      const credits = [fixtureCredit(), fixtureCredit({ id: 191, fechaCredito: "2026-09-01T12:00:00.000Z" })];
+      assert.deepEqual((await eligible({ allyId: 65588 }, credits, [], [189])).map((row) => row.id), [191]);
+      assert.deepEqual((await eligible(periodInput("2026-09-01"), credits, [], [189])).map((row) => row.id), [191]);
     });
 
     await t.test("sigue excluyendo el credito pagado y cualquier estado anulado", async () => {

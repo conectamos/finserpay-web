@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { resolveCreditSellerDisplay } from "@/lib/credit-assigned-seller";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import { NextResponse } from "next/server";
@@ -683,11 +684,7 @@ function serializeCredit(
     ultimoAbonoAt: safeIsoDate(payment.ultimoAbonoAt),
     createdAt: safeIsoDate(item.createdAt) || "",
     updatedAt: safeIsoDate(item.updatedAt) || "",
-    usuario: {
-      id: item.vendedor?.id || item.usuario?.id || 0,
-      nombre: item.vendedor?.nombre || item.usuario?.nombre || "Sin vendedor",
-      usuario: item.vendedor?.documento || item.usuario?.usuario || "",
-    },
+    usuario: resolveCreditSellerDisplay(item),
     vendedor: item.vendedor
       ? {
           id: item.vendedor.id,
