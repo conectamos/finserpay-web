@@ -119,10 +119,10 @@ test("el dashboard aliado oculta los detalles monetarios de cartera sana y segui
   const html = renderDashboard(false);
 
   const cards = html.match(/<article\b[\s\S]*?<\/article>/g) || [];
-  assert.equal(cards.length, 5);
-  for (const [index, label] of ["Inversión", "Total créditos", "Créditos activos", "Créditos cancelados", "Recaudo acumulado"].entries()) assert.ok(cards[index].includes(label));
-  for (const [index, value] of ["200.000.000", ">83<", ">79<", ">4<", "35.000.000"].entries()) assert.ok(cards[index].includes(value));
-  assert.doesNotMatch(cards.join(""), /Recaudo del mes|Cartera al dia|Capital original invertido/);
+  assert.equal(cards.length, 4);
+  for (const [index, label] of ["Inversión", "Total créditos", "Créditos activos", "Créditos Finalizados"].entries()) assert.ok(cards[index].includes(label));
+  for (const [index, value] of ["200.000.000", ">83<", ">79<", ">4<"].entries()) assert.ok(cards[index].includes(value));
+  assert.doesNotMatch(cards.join(""), /Recaudo acumulado|Recaudo del mes|Cartera al dia|Capital original invertido|Créditos cancelados/);
 
   assert.doesNotMatch(html, /\$ 351,4 M sin mora/);
   assert.doesNotMatch(html, /\$ 0 en seguimiento/);

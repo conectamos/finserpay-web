@@ -397,8 +397,7 @@ export default function AdminCentralDashboard({
     { label: "Inversión", value: money(data.investedCapital), icon: WalletCards, tone: "teal" },
     { label: "Total créditos", value: String(data.totalCredits), icon: Files, tone: "neutral" },
     { label: "Créditos activos", value: String(data.activeCredits), icon: CreditCard, tone: "teal" },
-    { label: "Créditos cancelados", value: String(data.closedCredits), icon: CircleCheck, tone: "green" },
-    { label: "Recaudo acumulado", value: money(data.accumulatedCollection), icon: Banknote, tone: "teal" },
+    { label: "Créditos Finalizados", value: String(data.closedCredits), icon: CircleCheck, tone: "green" },
   ];
 
   return (
@@ -453,7 +452,7 @@ export default function AdminCentralDashboard({
           </div>
         </header>
 
-        <section className={adminCentral ? "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 min-[1800px]:grid-cols-6" : "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5"}>
+        <section className={adminCentral ? "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 min-[1800px]:grid-cols-6" : "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"}>
           {metricCards.map((metric) => (
             <MetricCard key={metric.label} {...metric} />
           ))}
