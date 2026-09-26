@@ -63,7 +63,7 @@ test("la interfaz identifica las cifras como capital colocado", async () => {
 
   assert.match(source, /label: "Capital colocado"/);
   assert.match(source, /money\(overview\.monthlyPlacedCapital\)/);
-  assert.match(source, /money\(data\.activePlacedCapital\)/);
+  assert.match(source, /money\(adminCentral \? data\.activePlacedCapital : data\.investedCapital\)/);
   assert.match(source, /Capital colocado en \$\{data\.activeCredits\} creditos activos/);
 });
 

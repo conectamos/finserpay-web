@@ -1,5 +1,6 @@
 import type { Prisma } from "@/app/generated/prisma/client";
 import { resolveCapitalOriginal } from "@/lib/credit-capital";
+import { resolveCreditPaymentSummary } from "@/lib/credit-factory";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { resolveDashboardMonth } from "@/lib/dashboard-month";
 import prisma from "@/lib/prisma";
@@ -25,6 +26,9 @@ export type AdminDashboardOverview = {
   unclassifiedPortfolioBalance: number;
   activeCredits: number;
   activePlacedCapital: number;
+  investedCapital: number;
+  closedCredits: number;
+  totalCredits: number;
   alertsCount: number;
   creditPerformance: AdminDashboardCreditPerformancePoint[];
   criticalCredits: number;
@@ -134,7 +138,7 @@ export async function getAdminDashboardOverview({
   const creditWhere: Prisma.CreditoWhereInput = {
     ...scope,
     estado: {
-      not: "ANULADO",
+      notIn: ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"],
     },
   };
   const paymentWhere: Prisma.CreditoAbonoWhereInput = {
@@ -190,7 +194,6 @@ export async function getAdminDashboardOverview({
         },
         credito: {
           ...creditWhere,
-          pazYSalvoEmitidoAt: null,
         },
         valor: {
           gt: 0,
@@ -216,7 +219,12 @@ export async function getAdminDashboardOverview({
     ])
   );
   const portfolio = credits.map((credit) => {
+    const paymentSummary = resolveCreditPaymentSummary({
+      montoCredito: credit.montoCredito,
+      totalAbonado: paidByCreditId.get(credit.id) || 0,
+    });
     const common = {
+      fullyPaid: paymentSummary.montoCredito > 0 && Math.round(paymentSummary.saldoPendiente * 100) === 0,
       platform: resolveAllyPaymentPlatform(credit.contratoSnapshot, credit.equipoMarca),
       aliadoNombre: credit.sede.aliado?.nombre || "Sin aliado",
       capitalColocado: resolveCapitalOriginal({
@@ -271,6 +279,8 @@ export async function getAdminDashboardOverview({
       saldoPendiente: plan.saldoPendiente,
     };
   });
+  const investedCapital = portfolio.reduce((sum, credit) => sum + credit.capitalColocado, 0);
+  const closedCredits = portfolio.filter((credit) => credit.fullyPaid).length;
   const activePortfolio = portfolio.filter((credit) => credit.saldoPendiente > 0);
   const totalPortfolio = activePortfolio.reduce(
     (sum, credit) => sum + credit.saldoPendiente,
@@ -366,6 +376,9 @@ export async function getAdminDashboardOverview({
     unclassifiedPortfolioBalance: activePortfolio.filter((credit) => !credit.platform).reduce((sum, credit) => sum + credit.saldoPendiente, 0),
     activeCredits: activePortfolio.length,
     activePlacedCapital,
+    investedCapital,
+    closedCredits,
+    totalCredits: portfolio.length,
     alertsCount: dueToday + earlyClientKeys.size + criticalCredits,
     creditPerformance,
     criticalBalance,
