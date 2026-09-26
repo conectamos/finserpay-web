@@ -6,26 +6,51 @@ La operacion esta separada del pago ordinario en Recaudos y solo esta habilitada
 para ADMIN de FINSER PAY central. Mantiene la cuota habitual y reduce el plazo;
 no adelanta cuotas ni distribuye el extraordinario entre intereses y cargos.
 No registra automaticamente los casos de prueba ni modifica contratos firmados.
-La implementacion local requiere su publicacion y migracion antes de usarse.
+El flujo base requiere el esquema de revisiones de capital. La conciliacion
+automatica usa la amortizacion existente y no requiere una migracion adicional.
 
 No calcula mora, no cambia tasas generales ni aplica retroactivamente el
-29,24 % EA a creditos historicos. La primera operacion exige una conciliacion
-documentada del credito; los siguientes abonos usan sus terminos ya guardados.
+29,24 % EA a creditos historicos. Para el primer abono de un credito originado
+en FINSER PAY, el servidor concilia automaticamente la amortizacion registrada
+con el credito y sus pagos. No solicita copiar tasas, capital ni componentes
+cuando dispone de esa fuente completa y consistente. Los importados masivos o
+creditos sin informacion verificable conservan la conciliacion documental.
+Los siguientes abonos usan los terminos de la revision ya guardada.
 
 ## Operacion
 
 1. Registrar primero los pagos ordinarios. No sumar el extraordinario al importe
    de cuotas; se genera un recibo separado por cada operacion.
 2. Abrir el credito en Recaudos y seleccionar **Abono extraordinario a capital**.
-3. En la primera operacion, confirmar el capital pendiente despues de esos pagos,
-   la tasa por periodo en decimal, la cuota capital/interes, el aval y el seguro
-   por cuota, junto con el documento y la fecha que sustentan esos valores.
+3. Esperar la verificacion del formulario. Si indica amortizacion original,
+   basta ingresar el importe adicional y confirmar que los pagos ordinarios
+   correspondientes estan registrados. Si pide conciliacion documentada,
+   confirmar el capital pendiente, la tasa por periodo en decimal, la cuota
+   capital/interes, el aval y el seguro por cuota, junto con la fuente.
    No usar un saldo proporcional estimado como si fuese capital documentado.
 4. Ingresar el importe adicional y solicitar la previsualizacion. Verificar
    capital anterior/posterior, calendario, cuota final y cuotas eliminadas.
 5. Confirmar expresamente. Si otro pago cambia el credito entre ambas acciones,
    el servidor exige una nueva previsualizacion. Un reintento identico devuelve
    el mismo recibo; no crea un segundo pago.
+
+### Fuente automatica y controles
+
+- Solo el servidor decide el modo. Vuelve a leer y verificar las fuentes bajo
+  el bloqueo del credito en la previsualizacion y en la confirmacion.
+- Usa la tasa historica almacenada y el saldo de la amortizacion correspondiente
+  a las cuotas ordinarias ya pagadas; no la configuracion financiera vigente.
+- Conserva el cobro pactado. En ARES V2 el componente capital/interes es la cuota
+  cobrable menos aval y seguro, sin reincorporar el descuento comercial.
+- La fuente y sus identificadores quedan incluidos en la conciliacion auditada;
+  el hash de la previsualizacion vincula tambien la amortizacion original.
+- Si faltan filas o hay diferencias en capital, importes o calendario, se explica
+  por que hace falta conciliacion manual. No se ocultan esos campos por el solo
+  hecho de que el credito no tenga una marca de importacion.
+- Un error al consultar el contexto bloquea la previsualizacion y permite
+  reintentar la consulta. No registra pagos al abrir el formulario.
+- No se modifican contratos, amortizaciones originales ni creditos existentes
+  al habilitar esta automatizacion. Solo una confirmacion expresa registra pago.
 
 Se bloquean abonos con cuotas vencidas, credito cerrado/anulado o un pago Wompi
 pendiente. No se acepta un extraordinario igual o superior al capital pendiente:

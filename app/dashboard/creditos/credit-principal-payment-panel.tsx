@@ -101,6 +101,25 @@ type CapitalResponse = {
   abonoId?: number;
 };
 
+type CapitalContext = {
+  requiereConciliacion: boolean;
+  modoConciliacion: "AUTOMATICA" | "MANUAL" | "VIGENTE";
+  motivoConciliacion: string | null;
+  capitalPendiente: number | null;
+};
+
+function parseCapitalContext(value: unknown): CapitalContext {
+  const result = value as Partial<CapitalContext> & { ok?: boolean } | null;
+  if (!result?.ok || !["AUTOMATICA", "MANUAL", "VIGENTE"].includes(result.modoConciliacion || "") ||
+      typeof result.requiereConciliacion !== "boolean" ||
+      result.requiereConciliacion !== (result.modoConciliacion === "MANUAL") ||
+      !(result.capitalPendiente === null || (typeof result.capitalPendiente === "number" && Number.isFinite(result.capitalPendiente) && result.capitalPendiente >= 0)) ||
+      !(result.motivoConciliacion === null || typeof result.motivoConciliacion === "string")) {
+    throw new Error("No se pudo verificar la información financiera del crédito. Reintenta la consulta antes de continuar.");
+  }
+  return result as CapitalContext;
+}
+
 export type PrincipalPaymentCredit = {
   id: number;
   cuotaHabitual: number;
@@ -140,12 +159,13 @@ export function buildPrincipalPaymentPayload(
   credit: PrincipalPaymentCredit,
   sourceConfirmed: boolean,
   ordinaryPaymentsConfirmed: boolean,
+  requiereConciliacion = !credit.planCapitalVigente,
 ): PrincipalPaymentPayload {
   const valor = Number(form.valor);
   if (!Number.isSafeInteger(valor) || valor <= 0) throw new Error("Indica un abono a capital válido en pesos enteros.");
   if (!ordinaryPaymentsConfirmed) throw new Error("Confirma que ya registraste los pagos ordinarios correspondientes.");
   const payload: PrincipalPaymentPayload = { valor, metodoPago: form.metodoPago, observacion: form.observacion.trim() };
-  if (credit.planCapitalVigente) return payload;
+  if (!requiereConciliacion) return payload;
   if (!sourceConfirmed || form.fuente.trim().length < 10) {
     throw new Error("Documenta la fuente de conciliación y confirma sus valores antes de continuar.");
   }
@@ -197,11 +217,22 @@ export default function CreditPrincipalPaymentPanel({
   const [error, setError] = useState(recovery.error);
   const [success, setSuccess] = useState("");
   const [retryPending, setRetryPending] = useState(Boolean(recovery.request));
+  const [context, setContext] = useState<{ key: string; data: CapitalContext } | null>(null);
+  const [contextFailure, setContextFailure] = useState<{ key: string; message: string } | null>(null);
+  const [contextAttempt, setContextAttempt] = useState(0);
   const requestLock = useRef(false);
   const mounted = useRef(true);
   const previewController = useRef<AbortController | null>(null);
   const submittedRequest = useRef<PrincipalConfirmationRequest | null>(recovery.request);
-  const fingerprint = JSON.stringify([credit.id, credit.revisionKey, form, sourceConfirmed, ordinaryConfirmed]);
+  const contextKey = JSON.stringify([credit.id, credit.revisionKey, Boolean(credit.planCapitalVigente)]);
+  const currentContextKey = useRef(contextKey);
+  currentContextKey.current = contextKey;
+  const currentContext = context?.key === contextKey ? context.data : null;
+  const currentContextError = contextFailure?.key === contextKey ? contextFailure.message : "";
+  const needsContext = !credit.planCapitalVigente && !retryPending && !recovery.error && !success;
+  const contextReady = Boolean(credit.planCapitalVigente) || Boolean(currentContext);
+  const requiresManual = !credit.planCapitalVigente && currentContext?.requiereConciliacion === true;
+  const fingerprint = JSON.stringify([credit.id, credit.revisionKey, form, sourceConfirmed, ordinaryConfirmed, currentContext, contextAttempt]);
   const currentFingerprint = useRef(fingerprint);
   currentFingerprint.current = fingerprint;
   const currentPreview = preview?.fingerprint === fingerprint ? preview : null;
@@ -211,6 +242,29 @@ export default function CreditPrincipalPaymentPanel({
     mounted.current = true;
     return () => { mounted.current = false; previewController.current?.abort(); };
   }, []);
+
+  useEffect(() => {
+    if (!expanded || !needsContext) return;
+    const controller = new AbortController();
+    let active = true;
+    const requestedKey = contextKey;
+    setContext(null); setContextFailure(null); setPreview(null); setConfirmationOpen(false); setSourceConfirmed(false);
+    void (async () => {
+      try {
+        const response = await fetch(`/api/creditos/${credit.id}/abono-capital`, {
+          method: "GET", cache: "no-store", signal: controller.signal,
+        });
+        const result = await response.json();
+        if (!active || !mounted.current || controller.signal.aborted || currentContextKey.current !== requestedKey) return;
+        if (!response.ok) throw new Error(result?.error || "No fue posible consultar los datos del crédito.");
+        setContext({ key: requestedKey, data: parseCapitalContext(result) });
+      } catch (failure) {
+        if (!active || !mounted.current || controller.signal.aborted || currentContextKey.current !== requestedKey) return;
+        setContextFailure({ key: requestedKey, message: failure instanceof Error ? failure.message : "No fue posible consultar los datos del crédito." });
+      }
+    })();
+    return () => { active = false; controller.abort(); };
+  }, [expanded, needsContext, contextKey, credit.id, contextAttempt]);
 
   useEffect(() => {
     onBusyChange(busy || retryPending || Boolean(recovery.error));
@@ -241,9 +295,9 @@ export default function CreditPrincipalPaymentPanel({
   }
 
   async function previewPayment() {
-    if (requestLock.current || disabled || retryPending || success || recovery.error) return;
+    if (requestLock.current || disabled || retryPending || success || recovery.error || !contextReady || currentContextError) return;
     let payload: PrincipalPaymentPayload;
-    try { payload = buildPrincipalPaymentPayload(form, credit, sourceConfirmed, ordinaryConfirmed); }
+    try { payload = buildPrincipalPaymentPayload(form, credit, sourceConfirmed, ordinaryConfirmed, requiresManual); }
     catch (failure) { setError(failure instanceof Error ? failure.message : "Revisa los datos del abono."); return; }
     requestLock.current = true;
     setBusy(true); setError(""); setPreview(null);
@@ -263,7 +317,7 @@ export default function CreditPrincipalPaymentPanel({
       submittedRequest.current = null;
       setPreview({ quote: result.quote, hash: result.quoteHash, payload, fingerprint: requestFingerprint });
     } catch (failure) {
-      if (mounted.current && !controller.signal.aborted) setError(failure instanceof Error ? failure.message : "No fue posible consultar el nuevo plan.");
+      if (mounted.current && !controller.signal.aborted && currentFingerprint.current === requestFingerprint) setError(failure instanceof Error ? failure.message : "No fue posible consultar el nuevo plan.");
     } finally {
       requestLock.current = false;
       if (mounted.current) setBusy(false);
@@ -352,8 +406,14 @@ export default function CreditPrincipalPaymentPanel({
           checked={ordinaryConfirmed} onChange={(event) => { setOrdinaryConfirmedAt(event.target.checked ? credit.revisionKey : null); setPreview(null); }} />
         Ya registré los pagos ordinarios correspondientes y el saldo consultado está actualizado.
       </label>
-      {!credit.planCapitalVigente ? <fieldset className="space-y-4 border-t border-[var(--fp-border)] pt-4" disabled={locked}>
+      {needsContext && !contextReady && !currentContextError && <p role="status" className="text-sm text-[var(--fp-muted)]">Verificando los datos financieros del crédito antes de previsualizar…</p>}
+      {needsContext && currentContextError && <div className="space-y-3">
+        <p role="alert" className="text-sm font-semibold text-[var(--fp-danger)]">{currentContextError}</p>
+        <Button variant="secondary" disabled={locked} onClick={() => { setContext(null); setContextFailure(null); setPreview(null); setContextAttempt((attempt) => attempt + 1); }}>Reintentar consulta del crédito</Button>
+      </div>}
+      {requiresManual && !retryPending && <fieldset className="space-y-4 border-t border-[var(--fp-border)] pt-4" disabled={locked}>
         <legend className="px-1 text-base font-bold">Conciliación documentada del capital</legend>
+        {currentContext?.motivoConciliacion && <p className="text-sm text-[var(--fp-muted)]">{currentContext.motivoConciliacion}</p>}
         <p className="text-sm text-[var(--fp-muted)]">Para el primer abono, verifica estos datos contra el estado de cuenta o plan vigente. No uses el saldo total de cuotas como capital ni una tasa vigente diferente a la pactada.</p>
         <div className="grid gap-4 md:grid-cols-3">
           {amountField("capitalPendiente", "Capital después de pagar las cuotas (COP)")}
@@ -375,7 +435,13 @@ export default function CreditPrincipalPaymentPanel({
             onChange={(event) => { setSourceConfirmed(event.target.checked); setPreview(null); }} />
           Verifiqué el capital, la tasa y los componentes de la cuota en la fuente indicada. Esta conciliación quedará auditada.
         </label>
-      </fieldset> : <Badge tone="positive">Se utiliza el capital y el plan vigente del abono anterior</Badge>}
+      </fieldset>}
+      {!retryPending && currentContext?.modoConciliacion === "AUTOMATICA" && <div className="space-y-2">
+        <Badge tone="positive">Datos financieros automáticos</Badge>
+        <p className="text-sm text-[var(--fp-muted)]">Se utilizan la amortización original registrada en FINSERPAY y los pagos aplicados. No necesitas ingresar manualmente el capital, la tasa ni los componentes de la cuota.</p>
+        {currentContext.capitalPendiente !== null && <p className="text-sm">Capital pendiente: <strong>{money(currentContext.capitalPendiente)}</strong></p>}
+      </div>}
+      {!retryPending && (Boolean(credit.planCapitalVigente) || currentContext?.modoConciliacion === "VIGENTE") && <Badge tone="positive">Se utiliza el capital y el plan vigente del abono anterior</Badge>}
       <label className="grid gap-2 text-sm font-semibold">Observación (opcional)
         <Input value={form.observacion} maxLength={500} disabled={locked} onChange={(event) => update("observacion", event.target.value)} />
       </label>
@@ -384,7 +450,7 @@ export default function CreditPrincipalPaymentPanel({
       {retryPending ? <div className="space-y-3">
         <p className="text-sm">Existe una confirmación pendiente por {money(submittedRequest.current?.valor || 0)}. No registres otro abono ni cambies sus datos; recuperamos la misma operación de esta sesión para evitar duplicados. Nada se enviará hasta que pulses verificar.</p>
         <Button onClick={() => void confirmPayment()} disabled={busy}>{busy ? "Confirmando resultado..." : "Verificar resultado / reintentar misma operación"}</Button>
-      </div> : !success && <Button variant={currentPreview ? "secondary" : "primary"} disabled={locked || !ordinaryConfirmed}
+      </div> : !success && <Button variant={currentPreview ? "secondary" : "primary"} disabled={locked || !ordinaryConfirmed || !contextReady || Boolean(currentContextError)}
         onClick={() => void previewPayment()}>{busy ? "Consultando..." : "Previsualizar nuevo plan"}</Button>}
       {currentPreview && !retryPending && !success && <div className="space-y-4 border-t border-[var(--fp-border)] pt-5">
         <h4 className="text-base font-bold">Resultado antes de registrar el pago</h4>

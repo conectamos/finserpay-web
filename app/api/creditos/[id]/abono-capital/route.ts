@@ -9,6 +9,7 @@ import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { creditCajaConcept, creditCajaDescription, normalizePaymentMethod, sanitizeText } from "@/lib/credit-factory";
 import { CapitalPaymentValidationError, createPrincipalPaymentQuote } from "@/lib/credit-principal-payment";
+import { resolvePrincipalPaymentContext } from "@/lib/credit-principal-payment-context";
 import { findPrincipalPaymentRevision, hashPrincipalPayment, persistPrincipalPaymentRevision } from "@/lib/credit-principal-payment-storage";
 
 export const runtime = "nodejs";
@@ -32,6 +33,8 @@ const creditSelect = {
   estado: true, pazYSalvoEmitidoAt: true, saldoBaseFinanciado: true,
   montoCredito: true, valorCuota: true, plazoMeses: true, frecuenciaPago: true,
   fechaPrimerPago: true, fechaProximoPago: true, planCapitalVigente: true,
+  contratoSnapshot: true, observacionAdmin: true, equalityService: true,
+  amortizacion: { include: { cuotas: { orderBy: { numero: "asc" } } } },
 } satisfies Prisma.CreditoSelect;
 
 async function requireAccess(context: Context) {
@@ -78,11 +81,15 @@ export async function GET(_req: Request, context: Context) {
   try {
     const access = await requireAccess(context);
     const { credit, plan } = await loadState(prisma, access.where);
+    const financialContext = resolvePrincipalPaymentContext({ credit, plan });
     return NextResponse.json({
-      creditoId: credit.id, folio: credit.folio, cuotaHabitual: credit.valorCuota,
+      ok: true, creditoId: credit.id, folio: credit.folio, cuotaHabitual: credit.valorCuota,
       saldoPendiente: plan.saldoPendiente, proximaCuota: plan.nextInstallment,
-      requiereConciliacion: !credit.planCapitalVigente,
-    });
+      requiereConciliacion: financialContext.requiereConciliacion,
+      modoConciliacion: financialContext.modoConciliacion,
+      motivoConciliacion: financialContext.motivoConciliacion,
+      capitalPendiente: financialContext.capitalPendiente,
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) { return handleError(error); }
 }
 
@@ -132,16 +139,28 @@ export async function POST(req: Request, context: Context) {
         where: { creditoId: credit.id, status: "PENDING", processedAbonoId: null }, select: { id: true },
       });
       if (pending) throw new PrincipalPaymentError("Hay un pago electrónico pendiente. Confirma su estado antes de modificar el plan.", 409);
+      // Resolve from persisted origination terms under the same credit lock as the
+      // payment. The browser cannot choose or replace the automatic reconciliation.
+      const financialContext = resolvePrincipalPaymentContext({ credit, plan });
+      if (financialContext.modoConciliacion === "AUTOMATICA" && body.conciliacion != null) {
+        throw new PrincipalPaymentError("Este crédito utiliza su amortización original. Actualiza el formulario y omite la conciliación manual.", 409);
+      }
+      if (financialContext.requiereConciliacion && body.conciliacion == null) {
+        throw new PrincipalPaymentError(financialContext.motivoConciliacion || "Este crédito requiere conciliación documentada. Actualiza el formulario.", 400);
+      }
       const quote = createPrincipalPaymentQuote({
         plan, planCapitalVigente: credit.planCapitalVigente,
-        conciliacion: body.conciliacion, valor: body.valor,
+        conciliacion: financialContext.modoConciliacion === "AUTOMATICA" ? financialContext.conciliacion : body.conciliacion,
+        valor: body.valor,
         capitalOriginal: Number(credit.saldoBaseFinanciado),
-        cuotaHabitual: Number(credit.valorCuota),
+        cuotaHabitual: Math.round(Number(credit.valorCuota) * 100) / 100,
         abonos: abonos.map(({ id, valor }) => ({ id, valor })),
       });
       const quoteHash = hashPrincipalPayment({
         creditoId: credit.id, usuarioId: access.user.id,
-        financiero: credit, abonos, request: requestValues, quote,
+        // Prisma Decimal instances serialize to exact decimal strings, not their
+        // internal implementation fields. Bind every persisted source to preview.
+        financiero: JSON.parse(JSON.stringify(credit)), abonos, request: requestValues, quote,
       });
       if (!confirming) return { ok: true, quote, quoteHash };
       if (providedHash !== quoteHash) throw new PrincipalPaymentError("El crédito o el abono cambió. Previsualiza nuevamente antes de confirmar.", 409);

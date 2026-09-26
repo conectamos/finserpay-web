@@ -65,7 +65,9 @@ function harness(fetchImpl = async () => { throw new Error("Unexpected request")
       throw new Error(`Unexpected import ${name}`);
     },
   });
-  return { exports, storage, windowListeners, documentListeners, render(props) {
+  return { exports, storage, windowListeners, documentListeners, unmount() {
+    state.forEach((entry) => entry?.cleanup?.());
+  }, render(props) {
     cursor = 0; effects = [];
     const tree = exports.default(props);
     effects.forEach((effect) => effect());
@@ -343,4 +345,228 @@ test("error de autenticación no descarta la confirmación que puede haberse reg
 test("pagar todo requiere liquidación conciliada, no ofrece liquidación automática", () => {
   assert.throws(() => harness().exports.buildPrincipalPaymentPayload({ ...form, valor: "1000000" }, credit, true, true), /liquidación conciliada con administración/);
   assert.doesNotMatch(source, /para pagar todo usa liquidación anticipada/);
+});
+
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+const contextResponse = (mode = "AUTOMATICA", patch = {}) => ({
+  ok: true, status: 200,
+  json: async () => ({
+    ok: true, modoConciliacion: mode, requiereConciliacion: mode === "MANUAL",
+    motivoConciliacion: mode === "MANUAL" ? "El crédito importado requiere una fuente de conciliación documentada." : null,
+    capitalPendiente: mode === "MANUAL" ? null : 1000000, ...patch,
+  }),
+});
+
+function firstPaymentHarness(fetchImpl, storage) {
+  const runtime = harness(fetchImpl, storage);
+  let applied = 0;
+  const props = { credit: { ...credit }, onBusyChange() {}, onApplied() { applied += 1; } };
+  let tree = runtime.render(props);
+  button(tree, /Preparar abono/).props.onClick();
+  tree = runtime.render(props);
+  input(tree, "Valor adicional").props.onChange({ target: { value: "200.000" } });
+  input(tree, "Ya registré").props.onChange({ target: { checked: true } });
+  return { runtime, props, render: () => runtime.render(props), applied: () => applied };
+}
+
+test("primer abono consulta el modo del servidor al abrir y bloquea preview mientras carga", async () => {
+  const requests = [];
+  let resolveContext;
+  const runtime = harness((url, options) => {
+    requests.push({ url, options });
+    return new Promise((resolve) => { resolveContext = resolve; });
+  });
+  const props = { credit, onApplied() {}, onBusyChange() {} };
+  let tree = runtime.render(props);
+  assert.equal(requests.length, 0, "panel cerrado no consulta ni registra pagos");
+  button(tree, /Preparar abono/).props.onClick();
+  tree = runtime.render(props);
+  input(tree, "Valor adicional").props.onChange({ target: { value: "200000" } });
+  input(tree, "Ya registré").props.onChange({ target: { checked: true } });
+  tree = runtime.render(props);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.method, "GET");
+  assert.equal(requests[0].options.cache, "no-store");
+  assert.match(text(tree), /Verificando los datos financieros/);
+  assert.equal(button(tree, /Previsualizar/).props.disabled, true);
+  button(tree, /Previsualizar/).props.onClick();
+  assert.equal(requests.length, 1, "la guarda también impide invocar preview durante carga");
+  assert.equal(input(tree, "Capital después"), undefined);
+  resolveContext(contextResponse());
+  await flush();
+  tree = runtime.render(props);
+  assert.match(text(tree), /Datos financieros automáticos/);
+  assert.match(text(tree), /amortización original registrada en FINSERPAY/);
+  assert.match(text(tree), /Capital pendiente/);
+  assert.equal(button(tree, /Previsualizar/).props.disabled, false);
+  assert.equal(input(tree, "Tasa periódica"), undefined);
+});
+
+test("primer abono automático previsualiza y confirma solo el importe y datos del pago", async () => {
+  const requests = [];
+  const ready = firstPaymentHarness(async (url, options) => {
+    if (options.method === "GET") return contextResponse();
+    const body = JSON.parse(options.body); requests.push(body);
+    return body.accion === "PREVISUALIZAR" ? okPreview() : { ok: true, status: 200, json: async () => ({ ok: true, item: { id: 55 } }) };
+  });
+  await flush();
+  assert.equal(input(ready.render(), "Fuente de conciliación"), undefined);
+  await sendConfirmation(ready);
+  assert.deepEqual(requests[0], { accion: "PREVISUALIZAR", valor: 200000, metodoPago: "EFECTIVO", observacion: "" });
+  assert.equal(requests[1].conciliacion, undefined);
+  assert.equal(requests[1].quoteHash, quoteHash);
+  assert.equal(ready.applied(), 1);
+});
+
+test("modo manual conserva conciliación completa y explica el motivo del servidor", async () => {
+  const requests = [];
+  const ready = firstPaymentHarness(async (url, options) => {
+    if (options.method === "GET") return contextResponse("MANUAL");
+    requests.push(JSON.parse(options.body)); return okPreview();
+  });
+  await flush();
+  let tree = ready.render();
+  assert.match(text(tree), /crédito importado requiere una fuente/);
+  assert.ok(input(tree, "Capital después"));
+  button(tree, /Previsualizar/).props.onClick();
+  assert.equal(requests.length, 0, "no salta la verificación manual");
+  tree = ready.render();
+  for (const [label, value] of [
+    ["Capital después", "1000000"], ["Cuota de capital", "70000"], ["Aval / fianza", "29000"],
+    ["Seguro por cuota", "1000"], ["Tasa periódica", "0.01"], ["Fuente de conciliación", form.fuente],
+  ]) input(tree, label).props.onChange({ target: { value } });
+  input(tree, "Verifiqué el capital").props.onChange({ target: { checked: true } });
+  button(ready.render(), /Previsualizar/).props.onClick();
+  await flush();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].conciliacion.capitalPendiente, 1000000);
+  assert.equal(requests[0].conciliacion.tasaPeriodo, 0.01);
+});
+
+test("fallo de contexto bloquea preview y permite reintentar GET sin enviar un abono", async () => {
+  const requests = [];
+  let attempts = 0;
+  const ready = firstPaymentHarness(async (url, options) => {
+    requests.push(options.method);
+    if (++attempts === 1) throw new Error("No hay conexión para consultar el crédito");
+    return contextResponse();
+  });
+  await flush();
+  let tree = ready.render();
+  assert.match(text(tree), /No fue posible consultar los datos del crédito/);
+  assert.equal(button(tree, /Previsualizar/).props.disabled, true);
+  button(tree, /Previsualizar/).props.onClick();
+  assert.deepEqual(requests, ["GET"]);
+  button(tree, /Reintentar consulta/).props.onClick();
+  tree = ready.render();
+  assert.match(text(tree), /Verificando los datos financieros/);
+  await flush();
+  tree = ready.render();
+  assert.deepEqual(requests, ["GET", "GET"]);
+  assert.equal(input(tree, "Valor adicional").props.value, "200.000");
+  assert.equal(button(tree, /Previsualizar/).props.disabled, false);
+});
+
+test("una respuesta de contexto incompleta o contradictoria falla cerrada", async () => {
+  for (const patch of [{ requiereConciliacion: true }, { modoConciliacion: "DESCONOCIDA" }, { capitalPendiente: -1 }, { motivoConciliacion: undefined }]) {
+    const ready = firstPaymentHarness(async () => contextResponse("AUTOMATICA", patch));
+    await flush();
+    const tree = ready.render();
+    assert.match(text(tree), /No se pudo verificar la información financiera/);
+    assert.equal(button(tree, /Previsualizar/).props.disabled, true);
+    assert.ok(button(tree, /Reintentar consulta/));
+  }
+});
+
+test("cambiar crédito o revisión aborta la consulta y descarta respuestas tardías", async () => {
+  for (const patch of [{ id: 102 }, { revisionKey: "revision-2" }]) {
+    const pending = [];
+    const ready = firstPaymentHarness((url, options) => new Promise((resolve) => pending.push({ url, options, resolve })));
+    ready.props.credit = { ...ready.props.credit, ...patch };
+    ready.render();
+    assert.equal(pending.length, 2);
+    assert.equal(pending[0].options.signal.aborted, true);
+    pending[1].resolve(contextResponse("MANUAL"));
+    await flush();
+    assert.match(text(ready.render()), /Conciliación documentada/);
+    pending[0].resolve(contextResponse("AUTOMATICA"));
+    await flush();
+    const tree = ready.render();
+    assert.match(text(tree), /Conciliación documentada/);
+    assert.doesNotMatch(text(tree), /Datos financieros automáticos/);
+  }
+});
+
+test("una revisión nueva invalida el modo automático, la preview y la confirmación de pagos", async () => {
+  let contexts = 0;
+  let resolveSecond;
+  const ready = firstPaymentHarness(async (url, options) => {
+    if (options.method !== "GET") return okPreview();
+    if (++contexts === 1) return contextResponse();
+    return new Promise((resolve) => { resolveSecond = resolve; });
+  });
+  await flush();
+  button(ready.render(), /Previsualizar/).props.onClick();
+  await flush();
+  assert.ok(button(ready.render(), /^Registrar /));
+  ready.props.credit = { ...credit, revisionKey: "revision-2" };
+  let tree = ready.render();
+  assert.equal(button(tree, /^Registrar /), undefined);
+  assert.equal(button(tree, /Previsualizar/).props.disabled, true);
+  assert.equal(input(tree, "Ya registré").props.checked, false);
+  resolveSecond(contextResponse("MANUAL"));
+  await flush();
+  tree = ready.render();
+  assert.match(text(tree), /Conciliación documentada/);
+  assert.equal(button(tree, /^Registrar /), undefined);
+});
+
+test("el servidor puede informar plan vigente aunque el resumen del navegador aún no lo tenga", async () => {
+  const requests = [];
+  const ready = firstPaymentHarness(async (url, options) => {
+    if (options.method === "GET") return contextResponse("VIGENTE");
+    requests.push(JSON.parse(options.body)); return okPreview();
+  });
+  await flush();
+  const tree = ready.render();
+  assert.match(text(tree), /plan vigente del abono anterior/);
+  assert.equal(input(tree, "Fuente de conciliación"), undefined);
+  button(tree, /Previsualizar/).props.onClick();
+  await flush();
+  assert.equal(requests[0].conciliacion, undefined);
+});
+
+test("reintento recuperado de primer abono automático no depende de GET y conserva payload exacto", async () => {
+  const storage = memoryStorage();
+  let original;
+  const ready = firstPaymentHarness(async (url, options) => {
+    if (options.method === "GET") return contextResponse();
+    const request = JSON.parse(options.body);
+    if (request.accion === "PREVISUALIZAR") return okPreview();
+    original = request;
+    throw new Error("Respuesta financiera perdida");
+  }, storage);
+  await flush();
+  await sendConfirmation(ready);
+  const requests = [];
+  const recovered = harness(async (url, options) => {
+    requests.push({ method: options.method, body: JSON.parse(options.body) });
+    return { ok: true, status: 200, json: async () => ({ ok: true, alreadyApplied: true }) };
+  }, storage);
+  const tree = recovered.render({ credit, disabled: true, onApplied() {}, onBusyChange() {} });
+  assert.equal(requests.length, 0, "no consulta GET ni autoenvía al recuperar una confirmación");
+  button(tree, /reintentar misma operación/).props.onClick();
+  await flush();
+  assert.deepEqual(requests, [{ method: "POST", body: original }]);
+  assert.equal(original.conciliacion, undefined);
+  assert.equal(storage.getItem("finser-capital-pending-v1:101"), null);
+});
+
+test("desmontar el panel cancela la consulta de contexto sin aceptar su respuesta", async () => {
+  let request;
+  const ready = firstPaymentHarness((url, options) => new Promise((resolve) => { request = { options, resolve }; }));
+  ready.runtime.unmount();
+  assert.equal(request.options.signal.aborted, true);
+  request.resolve(contextResponse());
+  await flush();
 });
