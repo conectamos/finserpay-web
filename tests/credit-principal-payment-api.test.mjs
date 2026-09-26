@@ -7,12 +7,14 @@ import ts from "typescript";
 import { createJiti } from "jiti";
 import path from "node:path";
 import { creditPrincipalPaymentSchemaStatements, installCreditPrincipalPaymentSchema } from "../scripts/credit-principal-payment-schema.mjs";
+import { makeNativeCapitalFixture } from "./fixtures/credit-principal-payment-native.mjs";
 
 const routeFile = new URL("../app/api/creditos/[id]/abono-capital/route.ts", import.meta.url);
 const source = readFileSync(routeFile, "utf8");
 const jiti = createJiti(import.meta.url, { alias: { "@": path.resolve(import.meta.dirname, "..") } });
 const realCore = await jiti.import("../lib/credit-principal-payment.ts");
 const realPlan = await jiti.import("../lib/credit-payment-plan.ts");
+const realContext = await jiti.import("../lib/credit-principal-payment-context.ts");
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const canonical = (v) => v instanceof Date ? JSON.stringify(v.toISOString()) : Array.isArray(v) ? `[${v.map(canonical)}]` : v && typeof v === "object" ? `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}` : JSON.stringify(v ?? null);
 const hash = v => createHash("sha256").update(canonical(v)).digest("hex");
@@ -84,8 +86,17 @@ function fixture(options = {}) {
       findPrincipalPaymentRevision: async (_db, creditoId, idempotencyKey) => state.revisions.find(x => x.creditoId === creditoId && x.idempotencyKey === idempotencyKey),
       persistPrincipalPaymentRevision: async (_db, value) => { if (state.failPersistence) throw new Error("db unavailable"); state.revisions.push(structuredClone(value)); },
     },
+    "@/lib/credit-principal-payment-context": {
+      resolvePrincipalPaymentContext: ({ credit }) => ({
+        modoConciliacion: credit.planCapitalVigente ? "VIGENTE" : "MANUAL",
+        requiereConciliacion: !credit.planCapitalVigente,
+        motivoConciliacion: credit.planCapitalVigente ? null : "Falta conciliación documentada.",
+        capitalPendiente: null, conciliacion: null,
+      }),
+    },
   };
   if (options.realCore) {
+    imports["@/lib/credit-principal-payment-context"] = realContext;
     imports["@/lib/credit-principal-payment"] = realCore;
     imports["@/lib/credit-payment-plan"] = {
       buildCreditPaymentPlan: input => realPlan.buildCreditPaymentPlan({ ...input, today: "2026-09-26" }),
@@ -268,4 +279,114 @@ test("existing destructive and calendar APIs guard the principal revision", () =
   assert.equal((payments.match(/if \(abono.credito.planCapitalVigente\)/g) || []).length, 2);
   assert.match(command, /current.planCapitalVigente && \(command === "update-plan" \|\| command === "update-due-date" \|\| command === "annul-credit"\)/);
   assert.equal((command.match(/planCapitalVigente: \{ equals: Prisma.DbNull \}/g) || []).length, 3);
+});
+
+function nativeFixture(options = {}) {
+  const native = makeNativeCapitalFixture({ paidInstallments: 3, signed: true, ...options });
+  const f = fixture({ realCore: true, credit: {
+    ...native.credit, id: 7, folio: "TEST-NATIVE", clienteNombre: "TEST", sedeId: 1,
+    estado: "GENERADO", pazYSalvoEmitidoAt: null, fechaProximoPago: null,
+    amortizacion: { ...native.credit.amortizacion, creditoId: 7 },
+  }, abonos: native.abonos.map(payment => ({ ...payment, fechaAbono: new Date("2026-09-26T12:00:00Z") })) });
+  const body = { accion: "PREVISUALIZAR", valor: 300000, metodoPago: "EFECTIVO", observacion: "TEST" };
+  return { ...f, native, body, preview: () => f.post(body),
+    confirm: quoteHash => f.post({ ...body, accion: "CONFIRMAR", quoteHash, idempotencyKey: "native-request-000001" }) };
+}
+
+test("native GET returns the UI context contract without exposing financial source or writing", async () => {
+  const f = nativeFixture();
+  const result = await f.get();
+  assert.equal(result.status, 200);
+  assert.equal(result.body.ok, true);
+  assert.equal(result.body.creditoId, 7);
+  assert.equal(result.body.modoConciliacion, "AUTOMATICA");
+  assert.equal(result.body.requiereConciliacion, false);
+  assert.equal(result.body.capitalPendiente, Math.round(f.native.calculated.cuotas[3].saldoInicial * 100) / 100);
+  assert.equal(result.body.conciliacion, undefined);
+  assert.equal(result.body.contratoSnapshot, undefined);
+  assert.equal(f.state.locks, 0);
+  assert.equal(f.state.revisions.length, 0);
+  assert.equal(f.state.caja.length, 0);
+});
+
+for (const version of ["FRANCES_V1", "ARES_FRANCES_V1", "ARES_FRANCES_V2"]) {
+  test(`native ${version} first principal payment needs only amount, audits stored rate and preserves originals`, async () => {
+    const f = nativeFixture({ version, partial: 900 });
+    const original = structuredClone(f.state.credit.amortizacion);
+    const contract = structuredClone(f.state.credit.contratoSnapshot);
+    const preview = await f.preview();
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    const result = await f.confirm(preview.body.quoteHash);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.body.quote.saldoCapitalAntes, Math.round(f.native.calculated.cuotas[3].saldoInicial * 100) / 100);
+    assert.equal(Math.round((result.body.quote.saldoCapitalAntes - result.body.quote.saldoCapitalDespues) * 100), 30000000);
+    assert.equal(result.body.quote.planCapitalVigente.cuotas[3].valorAbonadoAlCorte, 900);
+    assert.equal(result.body.quote.planCapitalVigente.parametros.tasaPeriodo, Number(original.tasaPeriodo));
+    assert.match(f.state.revisions[0].conciliacion.fuente, /automatica FINSERPAY/);
+    assert.deepEqual(f.state.credit.amortizacion, original);
+    assert.deepEqual(f.state.credit.contratoSnapshot, contract);
+    assert.equal(f.state.credit.plazoMeses, 40);
+    assert.equal(f.state.caja.length, 1);
+    assert.equal(f.state.caja[0].valor, 300000);
+    assert.equal((await f.get()).body.modoConciliacion, "VIGENTE");
+    const repeat = await f.confirm(preview.body.quoteHash);
+    assert.equal(repeat.status, 200);
+    assert.equal(repeat.body.alreadyApplied, true);
+    assert.equal(f.state.caja.length, 1);
+  });
+}
+
+test("native request cannot override reconciled principal or rate with client values", async () => {
+  const f = nativeFixture();
+  const result = await f.post({ ...f.body, conciliacion: f.base.conciliacion });
+  assert.equal(result.status, 409);
+  assert.equal(f.state.caja.length, 0);
+});
+
+test("imported and incomplete credits cannot bypass manual reconciliation by posting automatic mode", async () => {
+  for (const mutate of [
+    f => { f.state.credit.observacionAdmin = "[IMPORTACION_MASIVA_SIN_BLOQUEO]"; },
+    f => { f.state.credit.amortizacion = null; },
+    f => { f.state.credit.amortizacion.cuotas.pop(); },
+  ]) {
+    const f = nativeFixture(); mutate(f);
+    const context = await f.get();
+    assert.equal(context.body.requiereConciliacion, true);
+    assert.equal(context.body.modoConciliacion, "MANUAL");
+    const result = await f.post({ ...f.body, modoConciliacion: "AUTOMATICA", requiereConciliacion: false });
+    assert.equal(result.status, 400);
+    assert.equal(f.state.caja.length, 0);
+  }
+});
+
+test("native preview binds original terms and paid state before any confirm writes", async () => {
+  for (const mutate of [
+    f => { f.state.credit.amortizacion.checksum = "b".repeat(64); },
+    f => { f.state.abonos.push({ id: 300, valor: 100, fechaAbono: new Date("2026-09-26T13:00:00Z") }); },
+    f => { f.state.credit.fechaProximoPago = new Date("2030-12-02T12:00:00Z"); },
+  ]) {
+    const f = nativeFixture();
+    const preview = await f.preview();
+    assert.equal(preview.status, 200);
+    mutate(f);
+    const result = await f.confirm(preview.body.quoteHash);
+    assert.ok([400, 409].includes(result.status), JSON.stringify(result.body));
+    assert.equal(f.state.caja.length, 0);
+    assert.equal(f.state.credit.planCapitalVigente, null);
+  }
+});
+
+test("native concurrent confirmation stays idempotent and failed audit rolls back every write", async () => {
+  const f = nativeFixture();
+  const preview = await f.preview();
+  f.state.failPersistence = true;
+  assert.equal((await f.confirm(preview.body.quoteHash)).status, 500);
+  assert.equal(f.state.credit.planCapitalVigente, null);
+  assert.equal(f.state.caja.length, 0);
+  assert.equal(f.state.abonos.length, 1);
+  f.state.failPersistence = false;
+  const responses = await Promise.all([f.confirm(preview.body.quoteHash), f.confirm(preview.body.quoteHash)]);
+  assert.ok(responses.every(response => response.status === 200));
+  assert.equal(f.state.caja.length, 1);
+  assert.equal(f.state.revisions.length, 1);
 });
