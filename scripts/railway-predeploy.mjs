@@ -20,3 +20,4 @@ await import("./ensure-credit-approval-call-schema.mjs");
 await import("./ensure-credit-sadmin-schema.mjs");
 await import("./ensure-credit-mass-imei-correction-schema.mjs");
 await import("./repair-credit-device-replacement-20260918.mjs");
+await import("./correct-historic-mass-credit-first-payments-20260925.mjs");
