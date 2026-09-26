@@ -4,7 +4,8 @@ import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { resolveDashboardMonth } from "@/lib/dashboard-month";
 import prisma from "@/lib/prisma";
 
-type RiskBucket = "alDia" | "temprana" | "critica";
+import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
+import { summarizeProductPortfolioHealth, type PortfolioRiskBucket } from "@/lib/product-portfolio-health";
 
 export type AdminDashboardDailyPoint = {
   day: number;
@@ -20,6 +21,8 @@ export type AdminDashboardCreditPerformancePoint = {
 };
 
 export type AdminDashboardOverview = {
+  productHealth: ReturnType<typeof summarizeProductPortfolioHealth>;
+  unclassifiedPortfolioBalance: number;
   activeCredits: number;
   activePlacedCapital: number;
   alertsCount: number;
@@ -64,7 +67,7 @@ function daysLate(dueDateIso: string, today: Date) {
   return Math.max(0, Math.floor((base.getTime() - due.getTime()) / 86_400_000));
 }
 
-function riskBucket(days: number): RiskBucket {
+function riskBucket(days: number): PortfolioRiskBucket {
   if (days <= 0) {
     return "alDia";
   }
@@ -149,6 +152,8 @@ export async function getAdminDashboardOverview({
     prisma.credito.findMany({
       where: creditWhere,
       select: {
+        contratoSnapshot: true,
+        equipoMarca: true,
         clienteDocumento: true,
         clienteNombre: true,
         cuotaInicial: true,
@@ -212,6 +217,7 @@ export async function getAdminDashboardOverview({
   );
   const portfolio = credits.map((credit) => {
     const common = {
+      platform: resolveAllyPaymentPlatform(credit.contratoSnapshot, credit.equipoMarca),
       aliadoNombre: credit.sede.aliado?.nombre || "Sin aliado",
       capitalColocado: resolveCapitalOriginal({
         cuotaInicial: credit.cuotaInicial,
@@ -356,6 +362,8 @@ export async function getAdminDashboardOverview({
   const criticalCredits = criticalPortfolio.length;
 
   return {
+    productHealth: summarizeProductPortfolioHealth(activePortfolio),
+    unclassifiedPortfolioBalance: activePortfolio.filter((credit) => !credit.platform).reduce((sum, credit) => sum + credit.saldoPendiente, 0),
     activeCredits: activePortfolio.length,
     activePlacedCapital,
     alertsCount: dueToday + earlyClientKeys.size + criticalCredits,

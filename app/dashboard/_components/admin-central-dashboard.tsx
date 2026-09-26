@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import type { AdminDashboardOverview } from "../_lib/admin-dashboard-data";
 import AdminSidebar from "./admin-sidebar";
+import ProductHealthChart from "./product-health-chart";
 import DashboardMonthSelector from "./dashboard-month-selector";
 
 type IconType = ComponentType<{
@@ -392,6 +393,12 @@ function HealthPanel({ data }: { data: AdminDashboardOverview }) {
           </div>
         </div>
       </div>
+      <div className="mt-6 grid gap-6 border-t border-[var(--fp-border)] pt-6 sm:grid-cols-2">
+        <ProductHealthChart id="health-iphone" title="Mora iPhone" data={data.productHealth.IPHONE} />
+        <ProductHealthChart id="health-android" title="Mora Android" data={data.productHealth.ANDROID} />
+      </div>
+      <p className="mt-4 text-xs text-[var(--fp-muted)]">Cada porcentaje se calcula sobre el saldo pendiente de su producto. El saldo en mora suma los rangos de mora temprana y crítica.</p>
+      {data.unclassifiedPortfolioBalance > 0 ? <p className="mt-2 text-xs text-[var(--fp-muted)]">Saldo sin producto identificado: {money(data.unclassifiedPortfolioBalance)}. Se conserva en la gráfica general.</p> : null}
     </section>
   );
 }
