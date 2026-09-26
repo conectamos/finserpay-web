@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveCreditSellerDisplay } from "@/lib/credit-assigned-seller";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
@@ -274,17 +275,7 @@ export async function GET(req: Request) {
         abonosCount: payment.abonosCount,
       });
 
-      const usuario = item.vendedor
-        ? {
-            id: item.vendedor.id,
-            nombre: item.vendedor.nombre || item.usuario?.nombre || "Sin vendedor",
-            usuario: item.vendedor.documento || item.usuario?.usuario || "",
-          }
-        : {
-            id: item.usuario?.id || 0,
-            nombre: item.usuario?.nombre || "Sin vendedor",
-            usuario: item.usuario?.usuario || "",
-          };
+      const usuario = resolveCreditSellerDisplay(item);
       const sede = item.sede || {
         id: 0,
         nombre: "Sin sede",

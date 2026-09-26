@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { resolveCreditAssignedAdministrator } from "@/lib/credit-assigned-seller";
 import { redirect } from "next/navigation";
 import type { Prisma } from "@/app/generated/prisma/client";
 import {
@@ -411,7 +412,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
           credito.sede.aliado || {},
           plataforma
         ),
-        vendedor: credito.vendedor?.nombre || "Sin vendedor",
+        vendedor: resolveCreditAssignedAdministrator(credito)?.nombre || credito.vendedor?.nombre || "Sin vendedor",
         cuotaInicial: Number(credito.cuotaInicial || 0),
         creditoAutorizado,
         montoCredito: Number(credito.montoCredito || 0),

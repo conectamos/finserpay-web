@@ -383,6 +383,7 @@ model Credito {
   amortizacion                  CreditoAmortizacion?
   wompiPaymentIntents           WompiPaymentIntent[]
   liquidacionAliadoCredito      LiquidacionAliadoCredito?
+  exclusionLiquidacionAliado     CreditAllyPaymentExclusion?
   reemisionesFirma            CreditApprovalReissue[]
   revisionesEvidencia          CreditApprovalEvidenceRevision[]
   aprobacionAnalista            CreditApprovalReview?
@@ -400,6 +401,18 @@ model Credito {
   @@index([sedeId, createdAt])
   @@index([deviceUid])
   @@index([imei])
+}
+
+model CreditAllyPaymentExclusion {
+  creditoId Int @id
+  reason String
+  sourceFile String
+  sourceSha256 String @db.Char(64)
+  sourceSheet String
+  sourceRow Int
+  createdBy String
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 }
 
 model CreditApprovalAccessLink {
