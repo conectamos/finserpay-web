@@ -247,6 +247,7 @@ export async function GET(req: Request) {
       .filter((credito) => !isExcludedCarteraCreditState(credito.estado))
       .map((credito) => {
         const plan = buildCreditPaymentPlan({
+          planCapitalVigente: credito.planCapitalVigente,
           montoCredito: Number(credito.montoCredito || 0),
           valorCuota: Number(credito.valorCuota || 0),
           plazoMeses: Number(credito.plazoMeses || 1),
@@ -291,6 +292,8 @@ export async function GET(req: Request) {
             : 0;
         const lastPayment = credito.abonos[credito.abonos.length - 1] || null;
         const balances = splitOutstandingBalance({
+          planCapitalVigente: credito.planCapitalVigente,
+          totalAbonado: plan.totalPaid,
           cuotaInicial: Number(credito.cuotaInicial || 0),
           montoCredito: Number(credito.montoCredito || 0),
           saldoBaseFinanciado: Number(credito.saldoBaseFinanciado || 0),

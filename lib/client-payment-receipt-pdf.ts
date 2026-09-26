@@ -11,7 +11,13 @@ export type ClientPaymentReceiptPdfInput = {
   numeroCreditoVisible?: string;
   totalPaidThroughPayment: number;
   paymentSequence: number;
-  paymentType: "PAYMENT" | "EARLY_PAYOFF";
+  paymentType: "PAYMENT" | "EARLY_PAYOFF" | "PRINCIPAL";
+  principalPayment?: {
+    capitalBefore: number;
+    capitalAfter: number;
+    capitalApplied: number;
+    eliminatedInstallments: number;
+  };
   creditClosed: boolean;
   settledAt?: Date | null;
 };
@@ -192,6 +198,7 @@ export async function buildClientPaymentReceiptPdf(
   const receiptNumber = safeText(input.receiptNumber, 56);
   const closed = Boolean(input.creditClosed);
   const earlyPayoff = input.paymentType === "EARLY_PAYOFF";
+  const principalPayment = input.paymentType === "PRINCIPAL" ? input.principalPayment : null;
   const paymentSequence = Math.max(1, Math.trunc(Number(input.paymentSequence || 1)));
   const doc = new PDFDocument({
     size: [PAGE_WIDTH, PAGE_HEIGHT],
@@ -252,7 +259,7 @@ export async function buildClientPaymentReceiptPdf(
           : "Pago aplicado - obligación cerrada"
         : earlyPayoff
           ? "Liquidación anticipada registrada"
-          : "Pago aplicado correctamente",
+          : principalPayment ? "Abono a capital - reducción de plazo" : "Pago aplicado correctamente",
       PAGE_MARGIN + 42,
       110
     );
@@ -332,7 +339,7 @@ export async function buildClientPaymentReceiptPdf(
     PAGE_MARGIN + metricWidth * 2,
     progressY + 43,
     metricWidth,
-    earlyPayoff ? "Liquidación" : "Abono",
+    principalPayment ? "Capital" : earlyPayoff ? "Liquidación" : "Abono",
     "Tipo de recaudo",
     earlyPayoff
   );
@@ -385,7 +392,7 @@ export async function buildClientPaymentReceiptPdf(
       .fontSize(11.5)
       .fillColor(COLORS.ink)
       .text(
-        earlyPayoff ? "Liquidación anticipada registrada" : "Abono registrado",
+        principalPayment ? "Capital aplicado con reducción de plazo" : earlyPayoff ? "Liquidación anticipada registrada" : "Abono registrado",
         PAGE_MARGIN + 22,
         statusY + 17
       );
@@ -394,7 +401,9 @@ export async function buildClientPaymentReceiptPdf(
       .fontSize(9)
       .fillColor(COLORS.muted)
       .text(
-        "Este comprobante certifica el recaudo. No certifica saldo pendiente ni cierre de la obligación.",
+        principalPayment
+          ? `Capital anterior ${money(principalPayment.capitalBefore)}. Abono ${money(principalPayment.capitalApplied)}.\nCapital pendiente ${money(principalPayment.capitalAfter)}. ${principalPayment.eliminatedInstallments} cuotas eliminadas.`
+          : "Este comprobante certifica el recaudo. No certifica saldo pendiente ni cierre de la obligación.",
         PAGE_MARGIN + 22,
         statusY + 39,
         { width: CONTENT_WIDTH - 44 }

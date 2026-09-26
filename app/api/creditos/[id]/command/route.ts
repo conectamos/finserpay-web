@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveCreditSellerDisplay } from "@/lib/credit-assigned-seller";
-import type { Prisma } from "@/app/generated/prisma/client";
+import { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
@@ -162,6 +162,7 @@ function serializeCredit(
     abonosCount: Number(payment?.abonosCount || 0),
   });
   const paymentPlan = buildCreditPaymentPlan({
+    planCapitalVigente: item.planCapitalVigente,
     montoCredito: Number(item.montoCredito || 0),
     valorCuota: Number(item.valorCuota || 0),
     plazoMeses: Number(item.plazoMeses || 1),
@@ -410,6 +411,12 @@ export async function POST(
       );
     }
 
+    if (current.planCapitalVigente && (command === "update-plan" || command === "update-due-date" || command === "annul-credit")) {
+      return NextResponse.json({
+        error: "El plan reducido por abono a capital conserva sus fechas y valores auditados. Un cambio o anulación requiere una revisión financiera específica.",
+      }, { status: 409 });
+    }
+
     if (isMassImportedCredit(current) && DEVICE_CONTROL_COMMANDS.has(command)) {
       return NextResponse.json(
         {
@@ -484,7 +491,7 @@ export async function POST(
           );
         }
         await prisma.credito.update({
-          where: { id: current.id },
+          where: { id: current.id, planCapitalVigente: { equals: Prisma.DbNull } },
           data: {
             fechaProximoPago,
             observacionAdmin: observacionAdmin || current.observacionAdmin,
@@ -590,6 +597,7 @@ export async function POST(
           },
         });
         const paymentPlan = buildCreditPaymentPlan({
+          planCapitalVigente: current.planCapitalVigente,
           montoCredito: financialPlan?.montoCreditoTotal ?? current.montoCredito,
           valorCuota: financialPlan?.valorCuota ?? current.valorCuota,
           plazoMeses: nextInstallments,
@@ -609,7 +617,7 @@ export async function POST(
           .join("\n");
 
         const updated = await prisma.credito.update({
-          where: { id: current.id },
+          where: { id: current.id, planCapitalVigente: { equals: Prisma.DbNull } },
           data: {
             plazoMeses: nextInstallments,
             frecuenciaPago: nextFrequency,
@@ -713,7 +721,7 @@ export async function POST(
           .join("\n");
 
         const updated = await prisma.credito.update({
-          where: { id: current.id },
+          where: { id: current.id, planCapitalVigente: { equals: Prisma.DbNull } },
           data: {
             estado: "ANULADO",
             deliverableReady: false,
@@ -882,6 +890,9 @@ export async function POST(
         : null,
     });
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
+      return NextResponse.json({ error: "El crédito cambió durante la operación. Consulta nuevamente su plan vigente." }, { status: 409 });
+    }
     console.error("ERROR APLICANDO COMANDO DE CREDITO:", error);
 
     if (isEqualityApiError(error)) {
@@ -931,12 +942,14 @@ export async function DELETE(
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Credito" WHERE "id"=${creditId} FOR UPDATE`;
       const current = await tx.credito.findUnique({
         where: { id: creditId },
         select: {
           id: true,
           folio: true,
           clienteNombre: true,
+          planCapitalVigente: true,
         },
       });
 
@@ -944,6 +957,13 @@ export async function DELETE(
         return {
           status: 404 as const,
           body: { error: "Credito no encontrado" },
+        };
+      }
+
+      if (current.planCapitalVigente) {
+        return {
+          status: 409 as const,
+          body: { error: "El crédito tiene revisiones de abono a capital y no se puede eliminar sin una reversa financiera auditada." },
         };
       }
 

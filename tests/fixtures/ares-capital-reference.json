@@ -1,0 +1,100 @@
+{
+  "description": "Referencia anonimizada de un abono con reduccion de plazo. Solo conciliacion local; no es una politica financiera universal ni una orden de recaudo.",
+  "limitations": [
+    "El recibo prueba la distribucion de este abono; no define la prelacion general para otros pagos.",
+    "La tasa periodica 0.010881 es una entrada explicita que reproduce las filas aportadas; no se deduce de la TEA actual ni reemplaza una tasa contractual.",
+    "La proyeccion conserva aval y seguro por cuota sobreviviente como en el ejemplo; no establece su tratamiento contractual en otros creditos.",
+    "El interes previamente pagado de 5440 proviene del plan acumulado y se conserva separado del recibo, cuya linea de 5440 es capital ordinario.",
+    "No se deduce la regla de interes intraperiodo, mora, prioridad de cobros o aplicacion retroactiva.",
+    "Solo las filas 4 a 8, 24 y 25 a 32 se observan en las capturas. Las filas 33 a 37 son una proyeccion y no evidencia observada."
+  ],
+  "receipt": {
+    "input": {
+      "principalBefore": 2259514,
+      "received": 500000,
+      "ordinary": {
+        "principal": 5440,
+        "interest": 0,
+        "surety": 5597,
+        "insurance": 0,
+        "lateFee": 0
+      },
+      "extraordinaryPrincipal": 488963
+    },
+    "expected": {
+      "received": 500000,
+      "ordinaryTotal": 11037,
+      "extraordinaryPrincipal": 488963,
+      "principalReduction": 494403,
+      "principalAfter": 1765111
+    }
+  },
+  "projection": {
+    "input": {
+      "principal": 1765111,
+      "periodicRate": 0.010881,
+      "creditInstallment": 97539,
+      "suretyPerInstallment": 60061,
+      "insurancePerInstallment": 900,
+      "schedule": [
+        { "number": 4, "date": "2026-10-02", "priorInterestPaid": 5440 },
+        { "number": 5, "date": "2026-10-17" },
+        { "number": 6, "date": "2026-11-02" },
+        { "number": 7, "date": "2026-11-17" },
+        { "number": 8, "date": "2026-12-02" },
+        { "number": 9, "date": "2026-12-17" },
+        { "number": 10, "date": "2027-01-02" },
+        { "number": 11, "date": "2027-01-17" },
+        { "number": 12, "date": "2027-02-02" },
+        { "number": 13, "date": "2027-02-17" },
+        { "number": 14, "date": "2027-03-02" },
+        { "number": 15, "date": "2027-03-17" },
+        { "number": 16, "date": "2027-04-02" },
+        { "number": 17, "date": "2027-04-17" },
+        { "number": 18, "date": "2027-05-02" },
+        { "number": 19, "date": "2027-05-17" },
+        { "number": 20, "date": "2027-06-02" },
+        { "number": 21, "date": "2027-06-17" },
+        { "number": 22, "date": "2027-07-02" },
+        { "number": 23, "date": "2027-07-17" },
+        { "number": 24, "date": "2027-08-02" },
+        { "number": 25, "date": "2027-08-17" },
+        { "number": 26, "date": "2027-09-02" },
+        { "number": 27, "date": "2027-09-17" },
+        { "number": 28, "date": "2027-10-02" },
+        { "number": 29, "date": "2027-10-17" },
+        { "number": 30, "date": "2027-11-02" },
+        { "number": 31, "date": "2027-11-17" },
+        { "number": 32, "date": "2027-12-02" },
+        { "number": 33, "date": "2027-12-17" },
+        { "number": 34, "date": "2028-01-02" },
+        { "number": 35, "date": "2028-01-17" },
+        { "number": 36, "date": "2028-02-02" },
+        { "number": 37, "date": "2028-02-17" }
+      ]
+    },
+    "observedRows": [
+      { "number": 4, "principal": 78333, "interest": 19206, "grossInstallment": 158500, "pending": 153060 },
+      { "number": 5, "principal": 79185, "interest": 18354, "grossInstallment": 158500, "pending": 158500 },
+      { "number": 6, "principal": 80047, "interest": 17492, "grossInstallment": 158500, "pending": 158500 },
+      { "number": 7, "principal": 80918, "interest": 16621, "grossInstallment": 158500, "pending": 158500 },
+      { "number": 8, "principal": 81798, "interest": 15741, "grossInstallment": 158500, "pending": 158500 },
+      { "number": 24, "principal": 25431, "interest": 277, "grossInstallment": 86669, "pending": 86669 }
+    ],
+    "observedZeroRows": [25, 26, 27, 28, 29, 30, 31, 32],
+    "projectedOnlyRows": [33, 34, 35, 36, 37],
+    "expected": {
+      "remainingInstallments": 21,
+      "lastInstallmentNumber": 24,
+      "lastGrossInstallment": 86668.53165815822,
+      "totals": {
+        "principal": 1765111,
+        "interest": 211376.53165815817,
+        "surety": 1261281,
+        "insurance": 18900,
+        "gross": 3256668.531658158,
+        "pending": 3251228.531658158
+      }
+    }
+  }
+}

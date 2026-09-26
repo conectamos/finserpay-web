@@ -42,6 +42,7 @@ export async function GET(req: Request) {
         imei: true,
         deviceUid: true,
         saldoBaseFinanciado: true,
+        planCapitalVigente: true,
         montoCredito: true,
         valorInteres: true,
         valorFianza: true,
@@ -84,6 +85,7 @@ export async function GET(req: Request) {
     const items = credits.map((credit) => {
       const settled = Boolean(credit.pazYSalvoEmitidoAt);
       const plan = buildCreditPaymentPlan({
+        planCapitalVigente: credit.planCapitalVigente,
         montoCredito: Number(credit.montoCredito || 0),
         valorCuota: Number(credit.valorCuota || 0),
         plazoMeses: Number(credit.plazoMeses || 1),
@@ -97,6 +99,7 @@ export async function GET(req: Request) {
         settled,
       });
       const earlyPayoff = calculateCreditEarlyPayoff({
+        planCapitalVigente: credit.planCapitalVigente,
         saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
         montoCredito: Number(credit.montoCredito || 0),
         valorInteres: Number(credit.valorInteres || 0),

@@ -263,6 +263,7 @@ async function loadCredit(
       clienteDocumento: true,
       clienteTelefono: true,
       saldoBaseFinanciado: true,
+      planCapitalVigente: true,
       montoCredito: true,
       cuotaInicial: true,
       valorInteres: true,
@@ -348,6 +349,7 @@ async function loadPaymentPlan(credit: Awaited<ReturnType<typeof loadCredit>>) {
   });
 
   return buildCreditPaymentPlan({
+    planCapitalVigente: credit.planCapitalVigente,
     montoCredito: Number(credit.montoCredito || 0),
     valorCuota: Number(credit.valorCuota || 0),
     plazoMeses: Number(credit.plazoMeses || 1),
@@ -496,6 +498,7 @@ async function syncMoraAutomation(credit: LoadedCredit, plan: PaymentPlan) {
         clienteDocumento: true,
         clienteTelefono: true,
         saldoBaseFinanciado: true,
+        planCapitalVigente: true,
         montoCredito: true,
         cuotaInicial: true,
         valorInteres: true,
@@ -630,10 +633,8 @@ export async function GET(
       Number(credit.cuotaInicial || 0)
     );
     const plan = await loadPaymentPlan(credit);
-    const activePaymentItems = items.filter(
-      (item) => String(item.estado || "ACTIVO").toUpperCase() !== "ANULADO"
-    );
     const earlyPayoff = calculateCreditEarlyPayoff({
+      planCapitalVigente: credit.planCapitalVigente,
       saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
       montoCredito: Number(credit.montoCredito || 0),
       valorInteres: Number(credit.valorInteres || 0),
@@ -643,10 +644,8 @@ export async function GET(
       frecuenciaPago: credit.frecuenciaPago,
       fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
       fechaProximoPago: credit.fechaProximoPago,
-      abonos: activePaymentItems.map((item) => ({
-        valor: Number(item.valor || 0),
-        fechaAbono: item.fechaAbono,
-      })),
+      // The history page is limited to 50 rows; financial balances are not.
+      abonos: [{ valor: plan?.totalPaid ?? summary.totalAbonado }],
     });
     const automation = plan
       ? await syncMoraAutomation(credit, plan)
@@ -788,6 +787,7 @@ export async function POST(
         },
       });
       earlyPayoff = calculateCreditEarlyPayoff({
+        planCapitalVigente: credit.planCapitalVigente,
         saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
         montoCredito: Number(credit.montoCredito || 0),
         valorInteres: Number(credit.valorInteres || 0),
@@ -904,6 +904,7 @@ export async function POST(
           folio: true,
           frecuenciaPago: true,
           id: true,
+          planCapitalVigente: true,
           montoCredito: true,
           observacionAdmin: true,
           pazYSalvoEmitidoAt: true,
@@ -943,6 +944,7 @@ export async function POST(
         },
       });
       const lockedPlan = buildCreditPaymentPlan({
+        planCapitalVigente: lockedCredit.planCapitalVigente,
         montoCredito: Number(lockedCredit.montoCredito || 0),
         valorCuota: Number(lockedCredit.valorCuota || 0),
         plazoMeses: Number(lockedCredit.plazoMeses || 1),
@@ -968,6 +970,7 @@ export async function POST(
 
       const earlyPayoffInTx = earlyPayoffRequested
         ? calculateCreditEarlyPayoff({
+            planCapitalVigente: lockedCredit.planCapitalVigente,
             saldoBaseFinanciado: Number(
               lockedCredit.saldoBaseFinanciado || 0
             ),
@@ -1111,6 +1114,7 @@ export async function POST(
       const txPlan = earlyPayoffInTx
         ? null
         : buildCreditPaymentPlan({
+            planCapitalVigente: lockedCredit.planCapitalVigente,
             montoCredito: Number(lockedCredit.montoCredito || 0),
             valorCuota: Number(lockedCredit.valorCuota || 0),
             plazoMeses: Number(lockedCredit.plazoMeses || 1),

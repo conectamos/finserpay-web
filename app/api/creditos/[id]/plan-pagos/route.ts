@@ -85,6 +85,7 @@ export async function GET(
       orderBy: { fechaAbono: "asc" },
     });
     const plan = buildCreditPaymentPlan({
+      planCapitalVigente: credito.planCapitalVigente,
       montoCredito: Number(credito.montoCredito || 0),
       valorCuota: Number(credito.valorCuota || 0),
       plazoMeses: Number(credito.plazoMeses || 1),

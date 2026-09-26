@@ -34,6 +34,7 @@ type PushCredit = {
   clienteNombre: string;
   clienteDocumento: string | null;
   montoCredito: number;
+  planCapitalVigente?: unknown;
   valorCuota: number;
   plazoMeses: number | null;
   frecuenciaPago: string;
@@ -134,6 +135,7 @@ function matchesBulkFilter(credit: PushCredit, filter: ManualPushBody["filter"])
   }
 
   const plan = buildCreditPaymentPlan({
+    planCapitalVigente: credit.planCapitalVigente,
     abonos: credit.abonos.map((item) => ({
       fechaAbono: item.fechaAbono,
       valor: Number(item.valor || 0),
@@ -358,6 +360,7 @@ export async function POST(req: Request) {
             folio: true,
             frecuenciaPago: true,
             id: true,
+            planCapitalVigente: true,
             montoCredito: true,
             plazoMeses: true,
             valorCuota: true,
@@ -400,6 +403,7 @@ export async function POST(req: Request) {
             folio: true,
             frecuenciaPago: true,
             id: true,
+            planCapitalVigente: true,
             montoCredito: true,
             plazoMeses: true,
             valorCuota: true,

@@ -23,6 +23,7 @@ type ClientInstallment = {
   saldoPendiente: number;
   estado: "PAGO" | "PENDIENTE";
   estaEnMora?: boolean;
+  eliminada?: boolean;
 };
 
 type ClientCredit = {
@@ -164,7 +165,7 @@ function getPayableInstallments(credit: ClientCredit) {
 
 function getPaidInstallments(credit: ClientCredit) {
   return credit.cuotas.filter(
-    (item) => item.estado === "PAGO" || item.saldoPendiente <= 0
+    (item) => !item.eliminada && (item.estado === "PAGO" || item.saldoPendiente <= 0)
   );
 }
 
@@ -647,7 +648,7 @@ export default function ClienteConsultaPage() {
   const activeCredit = items.find((item) => item.id === openCreditId) || items[0] || null;
   const paidCount = activeCredit ? getPaidInstallments(activeCredit).length : 0;
   const payable = activeCredit ? getPayableInstallments(activeCredit) : [];
-  const totalCount = activeCredit?.cuotas.length || 0;
+  const totalCount = activeCredit?.cuotas.filter((item) => !item.eliminada).length || 0;
   const nextInstallment = payable[0] || null;
   const selectedPaymentLimit =
     activeCredit && nextInstallment

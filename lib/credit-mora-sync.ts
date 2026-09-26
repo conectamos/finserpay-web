@@ -36,6 +36,7 @@ type MoraSyncCredit = {
   imei: string;
   deviceUid: string;
   montoCredito: number;
+  planCapitalVigente?: unknown;
   valorCuota: number;
   plazoMeses: number | null;
   frecuenciaPago: string;
@@ -72,6 +73,7 @@ const moraSyncCreditSelect = {
   clienteTelefono: true,
   imei: true,
   deviceUid: true,
+  planCapitalVigente: true,
   montoCredito: true,
   valorCuota: true,
   plazoMeses: true,
@@ -319,6 +321,7 @@ export async function syncCreditMora(
 ): Promise<MoraSyncResult> {
   const today = normalizeDateInput(options.today || null);
   const plan = buildCreditPaymentPlan({
+    planCapitalVigente: credit.planCapitalVigente,
     montoCredito: Number(credit.montoCredito || 0),
     valorCuota: Number(credit.valorCuota || 0),
     plazoMeses: Number(credit.plazoMeses || 1),

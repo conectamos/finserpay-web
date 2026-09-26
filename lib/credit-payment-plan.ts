@@ -7,8 +7,10 @@ import {
   getColombiaDateParts,
   type CalendarDateParts,
 } from "@/lib/colombia-date";
+import { parseCapitalPlanSnapshot, resolveCapitalPlanRows } from "@/lib/credit-principal-payment";
 
 export type CreditPaymentPlanInput = {
+  planCapitalVigente?: unknown;
   montoCredito?: number | null;
   valorCuota?: number | null;
   plazoMeses?: number | null;
@@ -35,6 +37,12 @@ export type CreditPaymentPlanInstallment = {
   saldoPendiente: number;
   estado: "PAGO" | "PENDIENTE";
   estaEnMora: boolean;
+  eliminada?: boolean;
+  capital?: number;
+  interes?: number;
+  fianza?: number;
+  seguro?: number;
+  saldoCapital?: number;
 };
 
 function roundMoney(value: number) {
@@ -130,8 +138,24 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
   );
   let remainingPaid = totalPaid;
   let assignedTotal = 0;
+  const capitalSnapshot = parseCapitalPlanSnapshot(input.planCapitalVigente);
+  const revisedRows = capitalSnapshot ? resolveCapitalPlanRows(capitalSnapshot, totalPaid) : null;
 
-  const installments: CreditPaymentPlanInstallment[] = Array.from(
+  const installments: CreditPaymentPlanInstallment[] = revisedRows ? revisedRows.map((row) => ({
+    numero: row.numero,
+    fechaVencimiento: row.fechaVencimiento,
+    valorProgramado: row.valorProgramado,
+    valorAbonado: row.valorAbonado,
+    saldoPendiente: row.saldoPendiente,
+    estado: row.saldoPendiente <= 0 ? "PAGO" as const : "PENDIENTE" as const,
+    estaEnMora: row.saldoPendiente > 0 && row.fechaVencimiento < todayKey,
+    eliminada: row.eliminada,
+    capital: row.capital,
+    interes: row.interes,
+    fianza: row.fianza,
+    seguro: row.seguro,
+    saldoCapital: row.saldoCapital,
+  })) : Array.from(
     { length: cuotas },
     (_, index) => {
       const numero = index + 1;
@@ -198,7 +222,7 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
       effectiveInstallments[effectiveInstallments.length - 1] ||
       null;
   const overdueCount = effectiveInstallments.filter((item) => item.estaEnMora).length;
-  const paidCount = effectiveInstallments.filter((item) => item.estado === "PAGO").length;
+  const paidCount = effectiveInstallments.filter((item) => item.estado === "PAGO" && !item.eliminada).length;
   const pendingCount = effectiveInstallments.filter(
     (item) => item.saldoPendiente > 0
   ).length;
@@ -213,6 +237,9 @@ export function buildCreditPaymentPlan(input: CreditPaymentPlanInput) {
     paidCount,
     pendingCount,
     totalPaid,
+    saldoCapitalPendiente: revisedRows
+      ? input.settled ? 0 : roundMoney(revisedRows.reduce((sum, row) => sum + row.capitalPendiente, 0))
+      : null,
     saldoPendiente,
     estadoPago:
       saldoPendiente <= 0 ? "PAGADO" : overdueCount > 0 ? "MORA" : "AL_DIA",

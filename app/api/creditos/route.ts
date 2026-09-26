@@ -559,6 +559,7 @@ function serializeCredit(
     abonosCount: payment.abonosCount,
   });
   const paymentPlan = buildCreditPaymentPlan({
+    planCapitalVigente: item.planCapitalVigente,
     montoCredito: Number(item.montoCredito || 0),
     valorCuota: Number(item.valorCuota || 0),
     plazoMeses: Number(item.plazoMeses || 1),
@@ -569,6 +570,7 @@ function serializeCredit(
     settled: Boolean(item.pazYSalvoEmitidoAt),
   });
   const earlyPayoff = calculateCreditEarlyPayoff({
+    planCapitalVigente: item.planCapitalVigente,
     saldoBaseFinanciado: Number(item.saldoBaseFinanciado || 0),
     montoCredito: Number(item.montoCredito || 0),
     valorInteres: Number(item.valorInteres || 0),
@@ -2512,6 +2514,7 @@ export async function POST(req: Request) {
         select: {
           id: true,
           folio: true,
+          planCapitalVigente: true,
           montoCredito: true,
           cuotaInicial: true,
         },

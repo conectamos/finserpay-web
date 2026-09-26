@@ -6,6 +6,7 @@ import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { parseCapitalPlanSnapshot } from "@/lib/credit-principal-payment";
 import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
@@ -107,7 +108,9 @@ function dateLabel(value: Date | string | null | undefined) {
     return "-";
   }
 
-  const date = value instanceof Date ? value : new Date(value);
+  const date = value instanceof Date
+    ? value
+    : new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00-05:00` : value);
 
   if (Number.isNaN(date.getTime())) {
     return "-";
@@ -117,6 +120,7 @@ function dateLabel(value: Date | string | null | undefined) {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+    timeZone: COLOMBIA_TIME_ZONE,
   });
 }
 
@@ -284,6 +288,7 @@ function drawInstallmentLine(
 function buildPlan(
   credito: {
     montoCredito: number | string;
+    planCapitalVigente?: unknown;
     valorCuota: number | string;
     plazoMeses: number | null;
     frecuenciaPago: string | null;
@@ -294,6 +299,7 @@ function buildPlan(
   settled = false
 ) {
   return buildCreditPaymentPlan({
+    planCapitalVigente: credito.planCapitalVigente,
     montoCredito: Number(credito.montoCredito || 0),
     valorCuota: Number(credito.valorCuota || 0),
     plazoMeses: Number(credito.plazoMeses || 1),
@@ -430,11 +436,48 @@ export async function GET(
         paymentTotalInCents >=
           Math.round(Number(abono.credito.montoCredito || 0) * 100)
     );
-    const currentPlan = buildPlan(
-      abono.credito,
-      activeUntilThisPayment,
-      closesCurrentCredit
+    const currentSnapshot = parseCapitalPlanSnapshot(abono.credito.planCapitalVigente);
+    const principalRevisions = currentSnapshot
+      ? await prisma.$queryRaw<Array<{ abonoId: number; snapshotAfter: unknown; resultado: unknown }>>`
+          SELECT "abonoId", "snapshotAfter", "resultado" FROM "CreditPrincipalPaymentRevision"
+          WHERE "creditoId" = ${abono.creditoId} AND "abonoId" <= ${abono.id}
+          ORDER BY "abonoId" DESC
+          LIMIT 1
+        `
+      : [];
+    const principalRevision = principalRevisions[0] || null;
+    const receiptSnapshot = principalRevision
+      ? parseCapitalPlanSnapshot(principalRevision.snapshotAfter)
+      : null;
+    const result = principalRevision?.resultado as { quote?: {
+      saldoCapitalAntes: number;
+      saldoCapitalDespues: number;
+      abonoCapital: number;
+      cuotasEliminadas: number;
+    } } | undefined;
+    const isPrincipalPayment = principalRevision?.abonoId === abono.id;
+    const principalQuote = isPrincipalPayment ? result?.quote || null : null;
+    if (principalRevision && !receiptSnapshot) {
+      throw new Error("La revision historica del recibo no contiene calendario.");
+    }
+    if (isPrincipalPayment && (!principalQuote ||
+      ![principalQuote.saldoCapitalAntes, principalQuote.saldoCapitalDespues, principalQuote.abonoCapital, principalQuote.cuotasEliminadas]
+        .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0) ||
+      Math.round(principalQuote.abonoCapital * 100) !== Math.round(Number(abono.valor) * 100))) {
+      throw new Error("El comprobante de capital no concilia con su revision.");
+    }
+    const isPriorToPrincipalCut = Boolean(
+      currentSnapshot?.abonosAlCorte.some((item) => item.id === abono.id) && !receiptSnapshot
     );
+    // Never replay an earlier receipt against a later reamortization snapshot.
+    const currentPlan = receiptSnapshot
+      ? buildPlan({ ...abono.credito, planCapitalVigente: receiptSnapshot },
+          isPrincipalPayment
+            ? [{ valor: receiptSnapshot.totalAbonadoAlCorte, fechaAbono: abono.fechaAbono }]
+            : activeAbonos.filter((item) => item.id <= abono.id))
+      : isPriorToPrincipalCut
+        ? null
+        : buildPlan(abono.credito, activeUntilThisPayment, closesCurrentCredit);
     const isAnnulled = String(abono.estado || "").toUpperCase() === "ANULADO";
     const reciboNumero = `RP-${abono.credito.folio}-${abono.id}`;
     const numeroCreditoVisible = (await getCreditDisplayNumbers([abono.creditoId])).get(abono.creditoId) || abono.credito.folio;
@@ -446,12 +489,14 @@ export async function GET(
       abono.vendedor?.nombre ||
       abono.usuario.nombre ||
       abono.usuario.usuario;
-    const totalInstallments = Math.max(1, Math.trunc(Number(abono.credito.plazoMeses || 1)));
-    const nextInstallments = currentPlan.installments
+    const totalInstallments = currentPlan
+      ? currentPlan.installments.filter((item) => !item.eliminada).length
+      : Math.max(1, Math.trunc(Number(abono.credito.plazoMeses || 1)));
+    const nextInstallments = (currentPlan?.installments || [])
       .filter((item) => item.saldoPendiente > 0)
       .slice(0, 6);
     const fonts = getPdfFonts();
-    const pageHeight = Math.max(690, 610 + nextInstallments.length * 15 + (isAnnulled ? 56 : 0));
+    const pageHeight = Math.max(690, 610 + nextInstallments.length * 15 + (isAnnulled ? 56 : 0) + (principalQuote ? 110 : 0));
     const doc = new PDFDocument({
       size: [POS_WIDTH, pageHeight],
       margin: 0,
@@ -523,14 +568,21 @@ export async function GET(
       "Frecuencia",
       getPaymentFrequencyLabel(abono.credito.frecuenciaPago).toUpperCase()
     );
-    y = drawKeyValue(
-      doc,
-      fonts,
-      y,
-      "Cuotas pagas",
-      `${currentPlan.paidCount} DE ${abono.credito.plazoMeses || 1}`
-    );
+    if (currentPlan) {
+      y = drawKeyValue(doc, fonts, y, "Cuotas pagas", `${currentPlan.paidCount} DE ${totalInstallments}`);
+    }
     y = drawAmountLine(doc, fonts, y + 4, "Abono realizado", money(Number(abono.valor || 0)));
+
+    if (principalQuote) {
+      y = drawRule(doc, y + 4);
+      y = drawCentered(doc, fonts, y, "ABONO A CAPITAL - REDUCE PLAZO", { bold: true, size: 8, gap: 5 });
+      y = drawKeyValue(doc, fonts, y, "Capital anterior", money(principalQuote.saldoCapitalAntes));
+      y = drawKeyValue(doc, fonts, y, "Capital aplicado", money(principalQuote.abonoCapital));
+      y = drawKeyValue(doc, fonts, y, "Capital pendiente", money(principalQuote.saldoCapitalDespues));
+      y = drawKeyValue(doc, fonts, y, "Cuotas eliminadas", String(principalQuote.cuotasEliminadas));
+    } else if (isPriorToPrincipalCut) {
+      y = drawCentered(doc, fonts, y + 5, "Comprobante anterior al abono a capital. Consulta el plan vigente para los proximos pagos.", { size: 7, gap: 5 });
+    }
 
     if (nextInstallments.length) {
       y = drawRule(doc, y + 3);

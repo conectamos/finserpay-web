@@ -195,6 +195,7 @@ export async function GET(
                 clienteNombre: true,
                 clienteDocumento: true,
                 pazYSalvoEmitidoAt: true,
+                planCapitalVigente: true,
               },
             },
           },
@@ -232,7 +233,26 @@ export async function GET(
           },
         });
 
-        return { activePayments, payment, paymentIntent };
+        const principalRevisions = payment.credito.planCapitalVigente
+          ? await tx.$queryRaw<Array<{ resultado: { quote?: {
+              saldoCapitalAntes: number;
+              saldoCapitalDespues: number;
+              abonoCapital: number;
+              cuotasEliminadas: number;
+            } } }>>`
+              SELECT "resultado" FROM "CreditPrincipalPaymentRevision"
+              WHERE "creditoId" = ${creditId} AND "abonoId" = ${paymentId}
+              LIMIT 1
+            `
+          : [];
+        const principalQuote = principalRevisions[0]?.resultado?.quote || null;
+        if (principalRevisions.length && (!principalQuote ||
+          ![principalQuote.saldoCapitalAntes, principalQuote.saldoCapitalDespues, principalQuote.abonoCapital, principalQuote.cuotasEliminadas]
+            .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0) ||
+          Math.round(principalQuote.abonoCapital * 100) !== Math.round(Number(payment.valor) * 100))) {
+          throw new Error("La revision del recibo de capital no concilia.");
+        }
+        return { activePayments, payment, paymentIntent, principalQuote };
       },
       { isolationLevel: "RepeatableRead" }
     );
@@ -241,7 +261,7 @@ export async function GET(
       return receiptNotFound(rateLimit.headers);
     }
 
-    const { activePayments, payment, paymentIntent } = resolved;
+    const { activePayments, payment, paymentIntent, principalQuote } = resolved;
     const paymentIndex = activePayments.findIndex((item) => item.id === payment.id);
 
     if (paymentIndex < 0) {
@@ -275,7 +295,13 @@ export async function GET(
       numeroCreditoVisible: (await getCreditDisplayNumbers([creditId])).get(creditId) || payment.credito.folio,
       totalPaidThroughPayment,
       paymentSequence: paymentIndex + 1,
-      paymentType: isEarlyPayoff ? "EARLY_PAYOFF" : "PAYMENT",
+      paymentType: principalQuote ? "PRINCIPAL" : isEarlyPayoff ? "EARLY_PAYOFF" : "PAYMENT",
+      principalPayment: principalQuote ? {
+        capitalBefore: principalQuote.saldoCapitalAntes,
+        capitalAfter: principalQuote.saldoCapitalDespues,
+        capitalApplied: principalQuote.abonoCapital,
+        eliminatedInstallments: principalQuote.cuotasEliminadas,
+      } : undefined,
       creditClosed: closesCredit,
       settledAt: closesCredit ? payment.credito.pazYSalvoEmitidoAt : null,
     });

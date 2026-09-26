@@ -409,6 +409,7 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
         fechaProximoPago: true,
         frecuenciaPago: true,
         id: true,
+        planCapitalVigente: true,
         montoCredito: true,
         pazYSalvoEmitidoAt: true,
         plazoMeses: true,
@@ -463,6 +464,7 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
     if (isAnnulled(credit.estado)) continue;
 
     const plan = buildCreditPaymentPlan({
+      planCapitalVigente: credit.planCapitalVigente,
       abonos: [{ valor: paidByCreditId.get(credit.id) || 0 }],
       fechaPrimerPago: credit.fechaPrimerPago,
       fechaProximoPago: credit.fechaProximoPago,

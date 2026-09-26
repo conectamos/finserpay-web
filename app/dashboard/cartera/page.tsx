@@ -364,6 +364,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
     )
     .map((credito) => {
       const plan = buildCreditPaymentPlan({
+        planCapitalVigente: credito.planCapitalVigente,
         montoCredito: credito.montoCredito,
         valorCuota: credito.valorCuota,
         plazoMeses: credito.plazoMeses,
@@ -390,6 +391,8 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
         Number(credito.saldoBaseFinanciado || 0) ||
         Math.max(0, Number(credito.valorEquipoTotal || 0) - Number(credito.cuotaInicial || 0));
       const balances = splitOutstandingBalance({
+        planCapitalVigente: credito.planCapitalVigente,
+        totalAbonado: plan.totalPaid,
         cuotaInicial: Number(credito.cuotaInicial || 0),
         montoCredito: Number(credito.montoCredito || 0),
         saldoBaseFinanciado: Number(credito.saldoBaseFinanciado || 0),

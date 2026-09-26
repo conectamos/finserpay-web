@@ -167,6 +167,7 @@ export async function getAdminDashboardOverview({
         fechaProximoPago: true,
         frecuenciaPago: true,
         id: true,
+        planCapitalVigente: true,
         montoCredito: true,
         pazYSalvoEmitidoAt: true,
         plazoMeses: true,
@@ -251,6 +252,7 @@ export async function getAdminDashboardOverview({
     }
 
     const plan = buildCreditPaymentPlan({
+      planCapitalVigente: credit.planCapitalVigente,
       abonos: [{ valor: paidByCreditId.get(credit.id) || 0 }],
       fechaPrimerPago: credit.fechaPrimerPago,
       fechaProximoPago: credit.fechaProximoPago,

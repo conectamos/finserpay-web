@@ -34,6 +34,7 @@ type PanelInstallment = {
   saldoPendiente: number;
   estado: "PAGO" | "PENDIENTE";
   estaEnMora?: boolean;
+  eliminada?: boolean;
 };
 
 type PanelPayment = {
@@ -172,7 +173,9 @@ export default function ClientCreditPanel({
   const shellRef = useRef<HTMLElement>(null);
   const backButtonRef = useRef<HTMLButtonElement>(null);
   const [showAllInstallments, setShowAllInstallments] = useState(false);
-  const paidInstallments = credit.cuotas.filter(
+  const activeInstallments = credit.cuotas.filter((item) => !item.eliminada);
+  const eliminatedCount = credit.cuotas.length - activeInstallments.length;
+  const paidInstallments = activeInstallments.filter(
     (item) => item.estado === "PAGO" || item.saldoPendiente <= 0
   );
   const payable = credit.cuotas.filter((item) => item.saldoPendiente > 0);
@@ -237,7 +240,7 @@ export default function ClientCreditPanel({
           {panel === "history"
             ? `${credit.abonos.length} ${credit.abonos.length === 1 ? "pago" : "pagos"}`
             : panel === "pending"
-              ? `${paidInstallments.length} / ${credit.cuotas.length}`
+              ? `${paidInstallments.length} / ${activeInstallments.length}`
               : selectedInstallments.length
                 ? `${selectedInstallments.length} ${selectedInstallments.length === 1 ? "cuota" : "cuotas"}`
                 : "0 cuotas"}
@@ -391,7 +394,7 @@ export default function ClientCreditPanel({
               <dl className={styles.threeMetrics}>
                 <div><dd>{overdue.length}</dd><dt>vencidas</dt></div>
                 <div><dt>Próxima</dt><dd>{nextInstallment ? `${dayLabel(nextInstallment.fechaVencimiento)} ${monthLabel(nextInstallment.fechaVencimiento)}` : "-"}</dd></div>
-                <div><dt>Cuota</dt><dd>{nextInstallment?.numero || credit.cuotas.length}</dd></div>
+                <div><dt>Cuota</dt><dd>{nextInstallment?.numero || activeInstallments.length}</dd></div>
               </dl>
             </section>
 
@@ -419,7 +422,7 @@ export default function ClientCreditPanel({
               <section className={styles.routeSection} aria-labelledby="payment-route-title">
                 <h2 id="payment-route-title" className={styles.sectionTitle}>Tu ruta de pagos</h2>
                 <div className={styles.route} role="list" aria-label="Progreso de cuotas">
-                  {credit.cuotas.map((item) => {
+                  {activeInstallments.map((item) => {
                     const paid = item.estado === "PAGO" || item.saldoPendiente <= 0;
                     const current = item.numero === nextInstallment?.numero;
                     return (
@@ -433,6 +436,9 @@ export default function ClientCreditPanel({
                   })}
                 </div>
                 <p>{Math.max(0, payable.length - 1)} cuotas después de la próxima</p>
+                {eliminatedCount > 0 ? (
+                  <p>{eliminatedCount} cuotas eliminadas por abono a capital. Plazo original: {credit.cuotas.length} cuotas; vigente: {activeInstallments.length}.</p>
+                ) : null}
               </section>
             ) : null}
 
