@@ -495,7 +495,7 @@ export default function AdminCentralDashboard({
           ))}
         </section>
 
-        <section className="mt-4 grid gap-4">
+        <section className="mt-4 grid gap-4 xl:grid-cols-[1.3fr_1fr]">
           <section className="min-w-0 rounded-lg border border-[#d8dee6] bg-white p-5 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
             <h2 className="text-xl font-black text-[#101828]">Recaudo y capital colocado</h2>
             <p className="mt-1 text-sm text-[#667085]">
