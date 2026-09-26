@@ -9,7 +9,7 @@ import * as jsxRuntime from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 const root=fileURLToPath(new URL("../",import.meta.url));
 const jiti=createJiti(import.meta.url,{alias:{"@":root}});
-const modules=Object.fromEntries(await Promise.all(["portfolio-profit","credit-payment-plan","credit-outstanding-balance","ally-payments-core","credit-factory","cartera-access","credit-display-number"].map(async n=>[`@/lib/${n}`,await jiti.import(`../lib/${n}.ts`)])));
+const modules=Object.fromEntries(await Promise.all(["portfolio-profit","credit-capital","credit-payment-plan","credit-outstanding-balance","ally-payments-core","credit-factory","cartera-access","credit-display-number"].map(async n=>[`@/lib/${n}`,await jiti.import(`../lib/${n}.ts`)])));
 const source=readFileSync(new URL("../app/dashboard/cartera/page.tsx",import.meta.url),"utf8");
 const output=ts.transpileModule(source,{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 const now=new Date("2026-09-26T17:00:00Z");
@@ -28,7 +28,7 @@ async function render({rows,params={},central=true,ownAlly=1}={}){
  const loaded={exports:{}};runInNewContext(output,{module:loaded,exports:loaded.exports,require:name=>{assert.ok(name in deps,`Missing dependency ${name}`);return deps[name];},Date:FixedDate,Intl,URLSearchParams});
  const element=await loaded.exports.default({searchParams:Promise.resolve(params)});
  const html=renderToStaticMarkup(element);
- return {captured,calls,html};
+ return {captured,calls,html,investment:findMetric(element,"Inversión acumulada")};
 }
 const fixtures=()=>[credit(1),credit(2,{paid:true}),credit(3,{historical:true,late:true,ally:2,platform:"ANDROID"}),credit(4,{annulled:true})];
 
@@ -55,4 +55,80 @@ test("incluye inversión histórica más allá de los 1000 registros",async()=>{
  const rows=Array.from({length:1001},(_,i)=>credit(i+1,{historical:true,paid:true}));
  const {captured,calls}=await render({rows,params:{plataforma:"IPHONE"}});
  assert.equal(calls.credit.where.AND[1].id.in.length,1001);assert.equal(captured.input.accumulatedInvestment,900_000*1001);assert.equal(captured.estimatedCount,1001);
+});
+
+
+function findMetric(element,label){
+ if(!element||typeof element!=="object") return null;
+ if(element.props?.label===label) return element.props;
+ for(const child of [element.props?.children].flat(Infinity)){
+  const found=findMetric(child,label);if(found)return found;
+ }
+ return null;
+}
+const money=value=>new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(value);
+function expectInvestment(rendered,amount,detail){
+ assert.ok(rendered.investment,"La tarjeta de inversión debe existir en el árbol renderizado");
+ assert.equal(rendered.investment.value,money(amount));
+ assert.equal(rendered.investment.detail,detail);
+ assert.ok(rendered.html.includes(money(amount)),"El monto calculado debe aparecer en el HTML SSR");
+ assert.match(rendered.html,/Inversión acumulada/);
+ assert.doesNotMatch(rendered.html,/estimada ·|créditos sin liquidación/);
+}
+
+test("el aliado ve capital original de activos, pagados e históricos sin restar netos ni redescuentos",async()=>{
+ const rows=[credit(1),credit(2,{paid:true}),credit(3,{historical:true,ally:1})];
+ const rendered=await render({rows,central:false});
+ expectInvestment(rendered,5_000_000,"Capital original · activos y pagados");
+ assert.equal(rendered.captured.input,undefined);
+ // Changing settlement net amounts must not change historical funded capital.
+ rows[0].liquidacionAliadoCredito.valorPagar=1;
+ rows[1].liquidacionAliadoCredito.valorPagar=10_000_000;
+ rows[0].sede={...rows[0].sede,aliado:{...rows[0].sede.aliado,redescuentoIphonePorcentaje:75}};
+ const changed=await render({rows,central:false});
+ expectInvestment(changed,5_000_000,"Capital original · activos y pagados");
+});
+
+test("el capital original usa saldo base, equipo menos inicial y obligación menos cargos según disponibilidad",async()=>{
+ const rows=[credit(1,{historical:true}),credit(2,{historical:true}),credit(3,{historical:true})];
+ Object.assign(rows[0],{saldoBaseFinanciado:0,valorEquipoTotal:900_000,cuotaInicial:100_000,montoCredito:1_200_000,valorInteres:200_000,valorFianza:100_000});
+ Object.assign(rows[1],{saldoBaseFinanciado:0,valorEquipoTotal:0,cuotaInicial:0,montoCredito:1_500_000,valorInteres:300_000,valorFianza:200_000});
+ Object.assign(rows[2],{saldoBaseFinanciado:850_000,valorEquipoTotal:2_000_000,cuotaInicial:500_000,montoCredito:2_000_000,valorInteres:900_000,valorFianza:100_000});
+ const rendered=await render({rows,central:false});
+ expectInvestment(rendered,2_650_000,"Capital original · activos y pagados");
+});
+
+test("la inversión del aliado respeta producto y todas sus sedes e ignora un aliado solicitado ajeno",async()=>{
+ const rows=[credit(1),credit(2,{paid:true}),credit(3,{historical:true,ally:1,platform:"ANDROID"}),credit(4,{historical:true,ally:2})];
+ rows[1].sede={...rows[1].sede,nombre:"Segunda sede"};
+ const all=await render({rows,central:false,params:{aliadoId:"2"}});
+ expectInvestment(all,5_000_000,"Capital original · activos y pagados");
+ assert.equal(all.calls.credit.where.sede.aliadoId,1);
+ const iphone=await render({rows,central:false,params:{plataforma:"IPHONE"}});
+ expectInvestment(iphone,4_000_000,"Capital original · activos y pagados");
+ assert.equal(iphone.calls.credit.where.AND[0].sede.aliadoId,1);
+ const android=await render({rows,central:false,params:{plataforma:"ANDROID"}});
+ expectInvestment(android,1_000_000,"Capital original · activos y pagados");
+});
+
+test("los anulados y cancelados no aumentan inversión original del aliado",async()=>{
+ const rows=[credit(1),...["ANULADO","ANULADA","CANCELADO","CANCELADA"].map((estado,index)=>({...credit(index+2),estado}))];
+ const rendered=await render({rows,central:false});
+ expectInvestment(rendered,2_000_000,"Capital original · activos y pagados");
+});
+
+test("central conserva inversión neta de ganancia y detalle sin texto de estimación en la tarjeta",async()=>{
+ const rendered=await render({rows:fixtures()});
+ expectInvestment(rendered,4_400_000,"Neto por crédito · activos y pagados");
+ assert.equal(rendered.captured.input.accumulatedInvestment,4_400_000);
+ assert.equal(rendered.captured.total,100_000);
+ assert.equal(rendered.captured.estimatedInvestment,900_000);
+ assert.equal(rendered.captured.estimatedCount,1);
+});
+
+test("el aliado conserva capital original histórico cuando supera mil registros",async()=>{
+ const rows=Array.from({length:1001},(_,index)=>credit(index+1,{historical:true,paid:true}));
+ const rendered=await render({rows,central:false,params:{plataforma:"IPHONE"}});
+ expectInvestment(rendered,1_001_000_000,"Capital original · activos y pagados");
+ assert.equal(rendered.calls.credit.take,undefined);
 });

@@ -29,6 +29,7 @@ import {
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import { resolveCarteraAliadoId } from "@/lib/cartera-access";
 import { normalizeCreditDevicePlatform } from "@/lib/credit-factory";
+import { resolveCapitalOriginal } from "@/lib/credit-capital";
 import { splitOutstandingBalance } from "@/lib/credit-outstanding-balance";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { calculatePortfolioProfit, resolvePortfolioInvestment } from "@/lib/portfolio-profit";
@@ -419,6 +420,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
         imei: credito.imei || credito.deviceUid || "Sin IMEI",
         clienteNombre: credito.clienteNombre,
         clienteDocumento: credito.clienteDocumento || "",
+        estado: credito.estado,
         clienteTelefono: credito.clienteTelefono || "",
         primeraReferenciaTelefono: firstFamilyReferencePhone(credito.contratoSnapshot),
         referencia:
@@ -428,6 +430,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
         sede: credito.sede.nombre,
         aliado: credito.sede.aliado?.nombre || "Sin aliado",
         plataforma,
+        capitalOriginal: resolveCapitalOriginal(credito),
         inversionNeta: investment.amount,
         inversionEstimada: investment.estimated,
         respaldo: paidSettlement
@@ -462,6 +465,9 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   const totalMora = activeCredits.reduce((sum, item) => sum + item.saldoMora, 0);
   const totalPagado = cartera.reduce((sum, item) => sum + item.totalPaid, 0);
   const totalCredito = cartera.reduce((sum, item) => sum + item.montoCredito, 0);
+  const totalCapitalInvertido = cartera
+    .filter((item) => !["CANCELADO", "CANCELADA"].includes(String(item.estado || "").toUpperCase()))
+    .reduce((sum, item) => sum + item.capitalOriginal, 0);
   const totalInvertido = cartera.reduce((sum, item) => sum + item.inversionNeta, 0);
   const estimatedInvestments = cartera.filter((item) => item.inversionEstimada);
   const totalInversionEstimada = estimatedInvestments.reduce((sum, item) => sum + item.inversionNeta, 0);
@@ -707,9 +713,11 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             adminCentral ? "xl:grid-cols-3 2xl:grid-cols-5" : "lg:grid-cols-4",
           ].join(" ")}
         >
-          <MiniMetric label="Inversión acumulada" value={money(totalInvertido)} detail={estimatedInvestments.length
-            ? `${money(totalInversionEstimada)} estimada · ${estimatedInvestments.length} créditos sin liquidación`
-            : "Neto por crédito · activos y pagados"} />
+          <MiniMetric
+            label="Inversión acumulada"
+            value={money(adminCentral ? totalInvertido : totalCapitalInvertido)}
+            detail={adminCentral ? "Neto por crédito · activos y pagados" : "Capital original · activos y pagados"}
+          />
           <MiniMetric
             label="Capital comprometido"
             value={money(totalCapitalComprometidoMora)}
