@@ -1,4 +1,8 @@
+import { getCapitalOutstandingBalance } from "@/lib/credit-principal-payment";
+
 export type OutstandingBalanceInput = {
+  planCapitalVigente?: unknown;
+  totalAbonado?: number;
   montoCredito: number;
   saldoBaseFinanciado: number;
   saldoPendiente: number;
@@ -12,6 +16,7 @@ export type OutstandingBalanceBreakdown = {
   saldoCapital: number;
   saldoFianza: number;
   saldoIntereses: number;
+  saldoSeguro?: number;
 };
 
 function roundMoney(value: number) {
@@ -22,6 +27,13 @@ export function splitOutstandingBalance(
   options: OutstandingBalanceInput
 ): OutstandingBalanceBreakdown {
   const saldoPendiente = roundMoney(options.saldoPendiente);
+  if (options.planCapitalVigente != null && saldoPendiente > 0) {
+    const capitalPlanBalance = getCapitalOutstandingBalance(
+      options.planCapitalVigente,
+      Number(options.totalAbonado || 0)
+    );
+    if (capitalPlanBalance) return capitalPlanBalance;
+  }
   const capitalOriginal =
     Number(options.saldoBaseFinanciado || 0) ||
     Math.max(0, Number(options.valorEquipoTotal || 0) - Number(options.cuotaInicial || 0));

@@ -210,6 +210,7 @@ model Usuario {
   sede            Sede                    @relation(fields: [sedeId], references: [id])
   creditos        Credito[]
   creditoAbonos   CreditoAbono[]
+  revisionesAbonoCapital CreditPrincipalPaymentRevision[]
   capturasCredito CapturaCreditoSession[]
   ventas          Venta[]
   arqueosDiarios  ArqueoDiario[]
@@ -373,6 +374,7 @@ model Credito {
   contratoOtpDestino            String?
   contratoOtpVerificadoAt       DateTime?
   contratoSnapshot              Json?
+  planCapitalVigente            Json?
   usuarioId                     Int
   vendedorId                    Int?
   sedeId                        Int
@@ -380,6 +382,7 @@ model Credito {
   vendedor                      Vendedor?            @relation(fields: [vendedorId], references: [id])
   sede                          Sede                 @relation(fields: [sedeId], references: [id])
   abonos                        CreditoAbono[]
+  revisionesAbonoCapital        CreditPrincipalPaymentRevision[]
   amortizacion                  CreditoAmortizacion?
   wompiPaymentIntents           WompiPaymentIntent[]
   liquidacionAliadoCredito      LiquidacionAliadoCredito?
@@ -841,6 +844,7 @@ model CreditoAbono {
   anuladoPorUsuarioId Int?
   fechaAbono          DateTime  @default(now())
   credito             Credito   @relation(fields: [creditoId], references: [id])
+  revisionAbonoCapital CreditPrincipalPaymentRevision?
   usuario             Usuario   @relation(fields: [usuarioId], references: [id])
   vendedor            Vendedor? @relation(fields: [vendedorId], references: [id])
   sede                Sede      @relation(fields: [sedeId], references: [id])
@@ -852,6 +856,29 @@ model CreditoAbono {
   @@index([vendedorId, createdAt])
   @@index([sedeId, createdAt])
   @@index([estado, creditoId])
+}
+
+model CreditPrincipalPaymentRevision {
+  id String @id @db.Uuid
+  creditoId Int
+  abonoId Int @unique
+  revision Int
+  idempotencyKey String @db.VarChar(100)
+  requestHash String @db.Char(64)
+  previewHash String @db.Char(64)
+  snapshotBefore Json?
+  snapshotAfter Json
+  conciliacion Json
+  resultado Json
+  usuarioId Int
+  createdAt DateTime @default(now())
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict)
+  abono CreditoAbono @relation(fields: [abonoId], references: [id], onDelete: Restrict)
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+
+  @@unique([creditoId, idempotencyKey])
+  @@unique([creditoId, revision])
+  @@index([creditoId, createdAt])
 }
 
 model CreditoAmortizacion {

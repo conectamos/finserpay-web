@@ -21,6 +21,7 @@ type CreditRow = {
   imei: string; referenciaEquipo: string | null; equipoMarca: string | null; equipoModelo: string | null;
   plazoMeses: number | null; frecuenciaPago: string; valorEquipoTotal: number; cuotaInicial: number;
   saldoBaseFinanciado: number; valorCuota: number; montoCredito: number; valorFianza: number; valorInteres: number;
+  planCapitalVigente?: unknown;
   tasaInteresEa: number; fianzaPorcentaje: number; contratoSnapshot: unknown;
   amortizacion: { tasaInteresEaPorcentaje: number; fianzaCuotaPorcentaje: number; seguroCuotaPorcentaje: number; numeroCuotas: number } | null;
   aliadoNombre: string; sedeNombre: string; fechaPrimerPago: Date | null; fechaProximoPago: Date | null;
@@ -54,6 +55,7 @@ const creditDetailsSql = `SELECT credit."id",credit."folio",credit."createdAt",c
   credit."clienteFechaNacimiento",credit."clienteCorreo",credit."clienteGenero",credit."imei",
   credit."referenciaEquipo",credit."equipoMarca",credit."equipoModelo",credit."plazoMeses",credit."frecuenciaPago",
   credit."valorEquipoTotal",credit."cuotaInicial",credit."saldoBaseFinanciado",credit."valorCuota",credit."montoCredito",
+  credit."planCapitalVigente",
   credit."valorFianza",credit."valorInteres",credit."tasaInteresEa",credit."fianzaPorcentaje",
   jsonb_build_object('financiero',credit."contratoSnapshot"->'financiero') AS "contratoSnapshot",
   CASE WHEN amort."id" IS NULL THEN NULL ELSE jsonb_build_object(
@@ -119,11 +121,16 @@ const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP
 
 export function buildSadminCreditRow(credit: CreditRow, today = new Date()): SadminCreditRow {
   const plan = buildCreditPaymentPlan({
+    planCapitalVigente: credit.planCapitalVigente,
     montoCredito: credit.montoCredito, valorCuota: credit.valorCuota, plazoMeses: credit.plazoMeses,
     frecuenciaPago: credit.frecuenciaPago, fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
     fechaProximoPago: credit.fechaProximoPago, abonos: credit.abonos, today, settled: Boolean(credit.pazYSalvoEmitidoAt),
   });
-  const balances = splitOutstandingBalance({ ...credit, saldoPendiente: plan.saldoPendiente });
+  const balances = splitOutstandingBalance({
+    ...credit,
+    saldoPendiente: plan.saldoPendiente,
+    totalAbonado: plan.totalPaid,
+  });
   const rates = resolveCarteraExportRates(credit);
   const todayKey = calendarDateKey(getColombiaDateParts(today));
   const pending = plan.installments.filter(item => item.saldoPendiente > 0);

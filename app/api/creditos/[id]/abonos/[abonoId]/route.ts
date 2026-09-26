@@ -88,6 +88,7 @@ export async function PATCH(
               folio: true,
               clienteNombre: true,
               montoCredito: true,
+              planCapitalVigente: true,
               cuotaInicial: true,
               valorCuota: true,
               plazoMeses: true,
@@ -127,6 +128,13 @@ export async function PATCH(
         return {
           status: 400 as const,
           body: { error: "Este recaudo ya fue anulado" },
+        };
+      }
+
+      if (abono.credito.planCapitalVigente) {
+        return {
+          status: 409 as const,
+          body: { error: "Este crédito tiene una reducción de plazo por abono a capital. La anulación requiere una reversa financiera auditada." },
         };
       }
 
@@ -193,6 +201,7 @@ export async function PATCH(
       });
 
       const plan = buildCreditPaymentPlan({
+        planCapitalVigente: abono.credito.planCapitalVigente,
         montoCredito: Number(abono.credito.montoCredito || 0),
         valorCuota: Number(abono.credito.valorCuota || 0),
         plazoMeses: Number(abono.credito.plazoMeses || 1),
@@ -329,6 +338,7 @@ export async function DELETE(
               folio: true,
               clienteNombre: true,
               montoCredito: true,
+              planCapitalVigente: true,
               cuotaInicial: true,
               valorCuota: true,
               plazoMeses: true,
@@ -345,6 +355,13 @@ export async function DELETE(
         return {
           status: 404 as const,
           body: { error: "Recaudo no encontrado" },
+        };
+      }
+
+      if (abono.credito.planCapitalVigente) {
+        return {
+          status: 409 as const,
+          body: { error: "Este crédito tiene una reducción de plazo por abono a capital. Eliminar recaudos requiere una reversa financiera auditada." },
         };
       }
 
@@ -430,6 +447,7 @@ export async function DELETE(
       });
 
       const plan = buildCreditPaymentPlan({
+        planCapitalVigente: abono.credito.planCapitalVigente,
         montoCredito: Number(abono.credito.montoCredito || 0),
         valorCuota: Number(abono.credito.valorCuota || 0),
         plazoMeses: Number(abono.credito.plazoMeses || 1),

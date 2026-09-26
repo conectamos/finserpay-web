@@ -80,6 +80,7 @@ function stateLabel(
   item: PaymentPlan["installments"][number],
   nextNumber: number | null
 ) {
+  if (item.eliminada) return "Eliminada";
   if (item.estado === "PAGO") return "Pagada";
   if (item.numero === nextNumber) return "Proxima";
   if (item.estaEnMora) return "En mora";
@@ -194,8 +195,10 @@ export async function buildCreditPaymentPlanPdf(input: CreditPaymentPlanPdfInput
     input.plan.estadoPago === "MORA"
       ? { fill: COLORS.redSoft, text: COLORS.red }
       : { fill: COLORS.limeSoft, text: COLORS.limeDark };
-  const paidPercent = input.plan.installments.length
-    ? (input.plan.paidCount / input.plan.installments.length) * 100
+  const activeInstallments = input.plan.installments.filter((item) => !item.eliminada);
+  const eliminatedCount = input.plan.installments.length - activeInstallments.length;
+  const paidPercent = activeInstallments.length
+    ? (input.plan.paidCount / activeInstallments.length) * 100
     : 0;
 
   doc.save().roundedRect(32, 30, 531, 92, 10).fill(COLORS.navy).restore();
@@ -233,7 +236,7 @@ export async function buildCreditPaymentPlanPdf(input: CreditPaymentPlanPdfInput
 
   doc.fillColor(COLORS.graphite).font(fonts.bold).fontSize(10).text("Progreso de cuotas", 32, 220);
   doc.fillColor(COLORS.muted).font(fonts.regular).fontSize(8).text(
-    `${input.plan.paidCount} de ${input.plan.installments.length} pagadas`,
+    `${input.plan.paidCount} de ${activeInstallments.length} pagadas`,
     430,
     221,
     { width: 133, align: "right" }
@@ -251,7 +254,9 @@ export async function buildCreditPaymentPlanPdf(input: CreditPaymentPlanPdfInput
 
   const next = input.plan.nextInstallment;
   const metrics = [
-    ["VALOR CUOTA", money(input.valorCuota), `${input.plan.installments.length} cuotas`],
+    ["VALOR CUOTA", money(input.valorCuota), eliminatedCount
+      ? `${activeInstallments.length} vigentes (${input.plan.installments.length} originales)`
+      : `${input.plan.installments.length} cuotas`],
     ["VALOR ABONADO", money(input.plan.totalPaid), `${Math.round(paidPercent)}% completado`],
     ["PROXIMA CUOTA", money(next?.saldoPendiente || 0), paymentPlanDateLabel(next?.fechaVencimiento)],
   ];
@@ -287,8 +292,8 @@ export async function buildCreditPaymentPlanPdf(input: CreditPaymentPlanPdfInput
 
     const isNext = item.numero === nextNumber;
     const label = stateLabel(item, nextNumber);
-    const fill = item.estado === "PAGO" ? COLORS.limeSoft : isNext ? COLORS.amberSoft : COLORS.white;
-    const line = item.estado === "PAGO" ? "#C9DF91" : isNext ? "#F0D28D" : COLORS.border;
+    const fill = item.eliminada ? COLORS.porcelain : item.estado === "PAGO" ? COLORS.limeSoft : isNext ? COLORS.amberSoft : COLORS.white;
+    const line = item.eliminada ? COLORS.border : item.estado === "PAGO" ? "#C9DF91" : isNext ? "#F0D28D" : COLORS.border;
     doc.save().roundedRect(32, y, 531, rowHeight - 2, 4).fillAndStroke(fill, line).restore();
 
     const values = [
@@ -301,7 +306,7 @@ export async function buildCreditPaymentPlanPdf(input: CreditPaymentPlanPdfInput
     ];
     let x = 46;
     values.forEach((value, index) => {
-      const color = item.estaEnMora ? COLORS.red : isNext ? COLORS.amber : index === 5 && item.estado === "PAGO" ? COLORS.limeDark : COLORS.graphite;
+      const color = item.eliminada ? COLORS.muted : item.estaEnMora ? COLORS.red : isNext ? COLORS.amber : index === 5 && item.estado === "PAGO" ? COLORS.limeDark : COLORS.graphite;
       doc.fillColor(color).font(index === 0 || index === 5 ? fonts.bold : fonts.regular).fontSize(8).text(value, x, y + 9, {
         width: widths[index] - 6,
         align: index > 1 && index < 5 ? "right" : "left",

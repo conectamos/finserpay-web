@@ -58,6 +58,7 @@ import {
 import { createPortal } from "react-dom";
 import FinserBrand from "@/app/_components/finser-brand";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
+import CreditPrincipalPaymentPanel from "@/app/dashboard/creditos/credit-principal-payment-panel";
 import {
   Button,
   Card,
@@ -939,6 +940,7 @@ type CreditPaymentsResponse = {
     paidCount?: number;
     pendingCount?: number;
     plan?: PaymentPlanInstallment[];
+    planCapitalVigente?: unknown;
     liquidacionAnticipada?: EarlyPayoffSummary;
     abonosCount: number;
     ultimoAbonoAt: string | null;
@@ -3224,6 +3226,7 @@ export default function CreditFactoryConsole({
   const [selectedInstallmentNumbers, setSelectedInstallmentNumbers] = useState<string[]>([]);
   const [payments, setPayments] = useState<CreditPaymentItem[]>([]);
   const [paymentSummary, setPaymentSummary] = useState<CreditPaymentsResponse["credito"] | null>(null);
+  const [principalPaymentBusy, setPrincipalPaymentBusy] = useState(false);
   const [deliveryValidation, setDeliveryValidation] =
     useState<DeliveryValidationState | null>(null);
   const [androidEnrollment, setAndroidEnrollment] =
@@ -10025,7 +10028,7 @@ export default function CreditFactoryConsole({
   };
 
   const registerPayment = async () => {
-    if (registeringPaymentRef.current) {
+    if (registeringPaymentRef.current || principalPaymentBusy) {
       return;
     }
 
@@ -20287,6 +20290,7 @@ export default function CreditFactoryConsole({
                   <button
                     type="button"
                     onClick={() => setShowPaymentResults(true)}
+                    disabled={principalPaymentBusy}
                     className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[#d0d5dd] bg-white px-4 text-sm font-bold text-[#344054] transition hover:bg-[#f9fafb]"
                   >
                     <UserSearch className="h-4 w-4" strokeWidth={1.8} />
@@ -20295,6 +20299,7 @@ export default function CreditFactoryConsole({
                   <button
                     type="button"
                     onClick={() => focusHistory()}
+                    disabled={principalPaymentBusy}
                     className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[#98a2b3] bg-white px-4 text-sm font-bold text-[#344054] transition hover:bg-[#f9fafb]"
                   >
                     <History className="h-4 w-4" strokeWidth={1.8} />
@@ -20459,6 +20464,29 @@ export default function CreditFactoryConsole({
                     {isEarlyPayoffMode ? "Liquidacion seleccionada" : "Ver liquidacion"}
                   </button>
                 </section>
+                {canSeeInternalPricing && paymentSummary?.id === selectedCredit.id && (
+                  <CreditPrincipalPaymentPanel
+                    key={selectedCredit.id}
+                    credit={{
+                      id: selectedCredit.id,
+                      cuotaHabitual: Number(selectedCredit.valorCuota || 0),
+                      numeroProximaCuota: paymentSummary.nextInstallment?.numero ?? null,
+                      planCapitalVigente: paymentSummary.planCapitalVigente,
+                      revisionKey: JSON.stringify([
+                        paymentSummary.totalAbonado,
+                        paymentSummary.saldoPendiente,
+                        paymentSummary.ultimoAbonoAt,
+                        paymentSummary.planCapitalVigente,
+                      ]),
+                    }}
+                    disabled={registeringPayment || loadingPayments || paymentBlockedByAnnulment || paymentOverview?.estadoPago === "PAGADO"}
+                    onBusyChange={setPrincipalPaymentBusy}
+                    onApplied={async () => {
+                      await loadPayments(selectedCredit.id);
+                      await loadCredits(true, activeSearch);
+                    }}
+                  />
+                )}
                 <div className="fp-payment-checkout">
                 <section className="fp-payment-plan fp-payment-summary rounded-lg border border-[#d9e1e7] bg-white p-5 shadow-[0_5px_18px_rgba(16,24,40,0.04)]">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -20631,6 +20659,7 @@ export default function CreditFactoryConsole({
                       onClick={() => setShowPaymentConfirmation(true)}
                       disabled={
                         registeringPayment ||
+                        principalPaymentBusy ||
                         loadingPayments ||
                         paymentBlockedByAnnulment ||
                         paymentSubmitBlocked

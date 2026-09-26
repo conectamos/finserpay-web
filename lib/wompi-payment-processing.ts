@@ -284,6 +284,7 @@ export async function repairProcessedWompiEarlyPayoffIntent(
             fechaPrimerPago: true,
             fechaProximoPago: true,
             frecuenciaPago: true,
+            planCapitalVigente: true,
             montoCredito: true,
             observacionAdmin: true,
             pazYSalvoEmitidoAt: true,
@@ -401,10 +402,21 @@ export async function repairProcessedWompiEarlyPayoffIntent(
       };
     }
 
+    if (lockedCredit.planCapitalVigente) {
+      // A prior processed payment may be part of the immutable principal cut.
+      // Removing it to replay a legacy payoff would invalidate that ledger.
+      return {
+        ...baseResult,
+        action: "REVIEW_REQUIRED" as const,
+        reason: "PRINCIPAL_PLAN_REQUIRES_RECONCILIATION",
+      };
+    }
+
     const previousAbonos = activeAbonos.filter(
       (item) => item.id !== processedAbono.id
     );
     const earlyPayoff = calculateCreditEarlyPayoff({
+      planCapitalVigente: lockedCredit.planCapitalVigente,
       saldoBaseFinanciado: Number(lockedCredit.saldoBaseFinanciado || 0),
       montoCredito: Number(lockedCredit.montoCredito || 0),
       valorInteres: Number(lockedCredit.valorInteres || 0),
@@ -582,6 +594,7 @@ export async function processApprovedWompiPayment(
           folio: true,
           clienteNombre: true,
           saldoBaseFinanciado: true,
+          planCapitalVigente: true,
           montoCredito: true,
           valorInteres: true,
           valorFianza: true,
@@ -878,6 +891,7 @@ export async function processApprovedWompiPayment(
         folio: true,
         frecuenciaPago: true,
         id: true,
+        planCapitalVigente: true,
         montoCredito: true,
         observacionAdmin: true,
         pazYSalvoEmitidoAt: true,
@@ -917,6 +931,7 @@ export async function processApprovedWompiPayment(
       },
     });
     const currentPlan = buildCreditPaymentPlan({
+      planCapitalVigente: lockedCredit.planCapitalVigente,
       montoCredito: Number(lockedCredit.montoCredito || 0),
       valorCuota: Number(lockedCredit.valorCuota || 0),
       plazoMeses: Number(lockedCredit.plazoMeses || 1),
@@ -938,6 +953,7 @@ export async function processApprovedWompiPayment(
 
     const earlyPayoff = earlyPayoffIntent
       ? calculateCreditEarlyPayoff({
+          planCapitalVigente: lockedCredit.planCapitalVigente,
           saldoBaseFinanciado: Number(lockedCredit.saldoBaseFinanciado || 0),
           montoCredito: Number(lockedCredit.montoCredito || 0),
           valorInteres: Number(lockedCredit.valorInteres || 0),
@@ -1045,6 +1061,7 @@ export async function processApprovedWompiPayment(
     const plan = earlyPayoff
       ? null
       : buildCreditPaymentPlan({
+          planCapitalVigente: lockedCredit.planCapitalVigente,
           montoCredito: Number(lockedCredit.montoCredito || 0),
           valorCuota: Number(lockedCredit.valorCuota || 0),
           plazoMeses: Number(lockedCredit.plazoMeses || 1),

@@ -5,6 +5,7 @@ import { WOMPI_EARLY_PAYOFF_TYPE } from "@/lib/wompi-early-payoff-intent";
 export const EARLY_PAYOFF_PAYMENT_TYPE = WOMPI_EARLY_PAYOFF_TYPE;
 
 export type CreditEarlyPayoffInput = {
+  planCapitalVigente?: unknown;
   abonos?: Array<{
     fechaAbono?: Date | string | null;
     valor?: number | null;
@@ -60,6 +61,7 @@ export function calculateCreditEarlyPayoff(
   const montoCreditoOriginal = roundMoney(Math.max(0, Number(input.montoCredito || 0)));
   const capitalOriginal = resolveCapitalOriginal(input);
   const plan = buildCreditPaymentPlan({
+    planCapitalVigente: input.planCapitalVigente,
     montoCredito: montoCreditoOriginal,
     valorCuota: input.valorCuota,
     plazoMeses: input.plazoMeses,
@@ -72,6 +74,24 @@ export function calculateCreditEarlyPayoff(
   const totalAbonado = roundMoney(plan.totalPaid);
   const estadoPago = plan.estadoPago as CreditEarlyPayoffResult["estadoPago"];
   const saldoObligacion = normalizePending(plan.saldoPendiente);
+  if (input.planCapitalVigente !== undefined && input.planCapitalVigente !== null) {
+    const capitalPendiente = plan.saldoCapitalPendiente ?? 0;
+    return {
+      capitalOriginal,
+      capitalAbonado: roundMoney(Math.max(0, capitalOriginal - capitalPendiente)),
+      capitalPendiente,
+      eligible: false,
+      estadoPago,
+      interesFianzaCondonado: 0,
+      montoCreditoLiquidado: montoCreditoOriginal,
+      montoCreditoOriginal,
+      reason: "Este credito tiene un plan revisado por abono a capital. Solicita liquidacion conciliada al administrador.",
+      saldoObligacion: roundMoney(plan.saldoPendiente),
+      totalAbonado,
+      valorFianzaReconocida: Number(input.valorFianza || 0),
+      valorInteresReconocido: Number(input.valorInteres || 0),
+    };
+  }
   const capitalShare =
     montoCreditoOriginal > 0
       ? Math.min(1, Math.max(0, capitalOriginal / montoCreditoOriginal))

@@ -20,6 +20,7 @@ type ReminderCredit = {
   clienteNombre: string;
   clienteDocumento: string | null;
   montoCredito: number;
+  planCapitalVigente?: unknown;
   valorCuota: number;
   plazoMeses: number | null;
   frecuenciaPago: string;
@@ -435,6 +436,7 @@ export async function dispatchCreditPushReminders(
       folio: true,
       frecuenciaPago: true,
       id: true,
+      planCapitalVigente: true,
       montoCredito: true,
       plazoMeses: true,
       valorCuota: true,
@@ -451,6 +453,7 @@ export async function dispatchCreditPushReminders(
 
   for (const credit of credits) {
     const plan = buildCreditPaymentPlan({
+      planCapitalVigente: credit.planCapitalVigente,
       abonos: credit.abonos.map((item) => ({
         fechaAbono: item.fechaAbono,
         valor: Number(item.valor || 0),

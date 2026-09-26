@@ -461,6 +461,7 @@ async function loadCandidateCredits(reference: string) {
       clienteTelefono: true,
       imei: true,
       deviceUid: true,
+      planCapitalVigente: true,
       montoCredito: true,
       valorCuota: true,
       plazoMeses: true,
@@ -517,6 +518,7 @@ function pickCreditForPayment(
   const scored = credits
     .map((credit) => {
       const plan = buildCreditPaymentPlan({
+        planCapitalVigente: credit.planCapitalVigente,
         montoCredito: Number(credit.montoCredito || 0),
         valorCuota: Number(credit.valorCuota || 0),
         plazoMeses: Number(credit.plazoMeses || 1),
@@ -572,6 +574,7 @@ async function loadCreditForMora(creditId: number) {
       clienteTelefono: true,
       imei: true,
       deviceUid: true,
+      planCapitalVigente: true,
       montoCredito: true,
       valorCuota: true,
       plazoMeses: true,
@@ -739,6 +742,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
             folio: true,
             frecuenciaPago: true,
             id: true,
+            planCapitalVigente: true,
             montoCredito: true,
             pazYSalvoEmitidoAt: true,
             plazoMeses: true,
@@ -765,6 +769,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
       : [];
     const currentPlan = lockedCredit
       ? buildCreditPaymentPlan({
+          planCapitalVigente: lockedCredit.planCapitalVigente,
           montoCredito: Number(lockedCredit.montoCredito || 0),
           valorCuota: Number(lockedCredit.valorCuota || 0),
           plazoMeses: Number(lockedCredit.plazoMeses || 1),
@@ -841,6 +846,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
       },
     });
     const plan = buildCreditPaymentPlan({
+      planCapitalVigente: lockedCredit.planCapitalVigente,
       montoCredito: Number(lockedCredit.montoCredito || 0),
       valorCuota: Number(lockedCredit.valorCuota || 0),
       plazoMeses: Number(lockedCredit.plazoMeses || 1),

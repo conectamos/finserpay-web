@@ -180,6 +180,7 @@ export async function GET(req: Request) {
         equipoMarca: true,
         equipoModelo: true,
         valorEquipoTotal: true,
+        planCapitalVigente: true,
         montoCredito: true,
         saldoBaseFinanciado: true,
         cuotaInicial: true,
@@ -231,6 +232,7 @@ export async function GET(req: Request) {
     const activeCredits = candidates
       .map((credit) => {
         const plan = buildCreditPaymentPlan({
+          planCapitalVigente: credit.planCapitalVigente,
           montoCredito: Number(credit.montoCredito || 0),
           valorCuota: Number(credit.valorCuota || 0),
           plazoMeses: Number(credit.plazoMeses || 1),

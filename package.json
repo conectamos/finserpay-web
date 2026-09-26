@@ -7,6 +7,7 @@
     "npm": ">=10"
   },
   "scripts": {
+    "test:capital": "node --experimental-strip-types --test tests/credit-principal-payment*.test.mjs tests/credit-outstanding-balance.test.mjs",
     "test:ares": "node --experimental-strip-types --test tests/ares-*.test.mjs",
     "dev": "next dev --hostname 0.0.0.0",
     "build": "npm run prisma:generate && next build",

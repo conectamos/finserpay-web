@@ -46,6 +46,7 @@ export type PaidCreditDashboardCredit = {
   cuotas: Array<{
     numero: number;
     estado: "PAGO" | "PENDIENTE";
+    eliminada?: boolean;
     saldoPendiente: number;
   }>;
   abonos: Array<{
@@ -157,7 +158,8 @@ export default function PaidCreditDashboard({
     text: string;
     tone: "amber" | "emerald" | "red";
   } | null>(null);
-  const paidInstallments = credit.cuotas.filter(
+  const activeInstallments = credit.cuotas.filter((item) => !item.eliminada);
+  const paidInstallments = activeInstallments.filter(
     (item) => item.estado === "PAGO" || item.saldoPendiente <= 0
   ).length;
   const openInstallments = credit.cuotas.filter(
@@ -288,7 +290,7 @@ export default function PaidCreditDashboard({
             <div className={styles.summary}>
               <p className={styles.amountEyebrow} id="paid-credit-summary">Saldo pendiente</p>
               <p className={`${styles.heroAmount} ${paidStyles.paidAmount}`}>{money(credit.saldoPendiente)}</p>
-              <p className={styles.installmentCount}><strong>{paidInstallments}</strong> / {credit.cuotas.length} cuotas</p>
+              <p className={styles.installmentCount}><strong>{paidInstallments}</strong> / {activeInstallments.length} cuotas</p>
             </div>
             <div className={styles.actions} aria-label="Acciones del crédito finalizado">
               <a href={pazYSalvoHref} download onClick={handlePazYSalvoDownload} aria-busy={pazYSalvoDownloading}
@@ -309,8 +311,8 @@ export default function PaidCreditDashboard({
 
           <section className={styles.progressSection} aria-labelledby="credit-progress-title">
             <h2 id="credit-progress-title">Estado del crédito</h2>
-            <ProgressBar className={styles.progress} value={credit.cuotas.length ? paidInstallments / credit.cuotas.length * 100 : 0}
-              label={`${paidInstallments} de ${credit.cuotas.length} cuotas pagadas`} />
+            <ProgressBar className={styles.progress} value={activeInstallments.length ? paidInstallments / activeInstallments.length * 100 : 0}
+              label={`${paidInstallments} de ${activeInstallments.length} cuotas pagadas`} />
             <div className={styles.progressLabels}>
               <span>{paidInstallments} {paidInstallments === 1 ? "pagada" : "pagadas"}</span>
               <span>{openInstallments} {openInstallments === 1 ? "pendiente" : "pendientes"}</span>
@@ -437,7 +439,7 @@ export default function PaidCreditDashboard({
                   <div className="rounded-[var(--fp-radius-md)] bg-white px-2 py-3">
                     <p className="text-[11px] font-bold text-[#707982]">Cuotas</p>
                     <p className="mt-1 text-base font-black text-[#171a1d]">
-                      {paidInstallments}/{credit.cuotas.length}
+                      {paidInstallments}/{activeInstallments.length}
                     </p>
                   </div>
                   <div className="rounded-[var(--fp-radius-md)] bg-white px-2 py-3">

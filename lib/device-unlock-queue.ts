@@ -290,6 +290,7 @@ export async function processDeviceUnlockCommand(
     select: {
       id: true,
       deviceUid: true,
+      planCapitalVigente: true,
       montoCredito: true,
       valorCuota: true,
       plazoMeses: true,
@@ -344,6 +345,7 @@ export async function processDeviceUnlockCommand(
   }
 
   const plan = buildCreditPaymentPlan({
+    planCapitalVigente: credit.planCapitalVigente,
     montoCredito: Number(credit.montoCredito || 0),
     valorCuota: Number(credit.valorCuota || 0),
     plazoMeses: Number(credit.plazoMeses || 1),
@@ -528,6 +530,7 @@ export async function enqueueUnlockForCurrentCredit(options: {
     select: {
       id: true,
       deviceUid: true,
+      planCapitalVigente: true,
       montoCredito: true,
       valorCuota: true,
       plazoMeses: true,
@@ -550,6 +553,7 @@ export async function enqueueUnlockForCurrentCredit(options: {
   }
 
   const plan = buildCreditPaymentPlan({
+    planCapitalVigente: credit.planCapitalVigente,
     montoCredito: Number(credit.montoCredito || 0),
     valorCuota: Number(credit.valorCuota || 0),
     plazoMeses: Number(credit.plazoMeses || 1),

@@ -156,6 +156,7 @@ export async function POST(req: Request) {
         clienteCorreo: true,
         clienteTelefono: true,
         saldoBaseFinanciado: true,
+        planCapitalVigente: true,
         montoCredito: true,
         valorInteres: true,
         valorFianza: true,
@@ -197,6 +198,7 @@ export async function POST(req: Request) {
     }
 
     const plan = buildCreditPaymentPlan({
+      planCapitalVigente: credit.planCapitalVigente,
       montoCredito: Number(credit.montoCredito || 0),
       valorCuota: Number(credit.valorCuota || 0),
       plazoMeses: Number(credit.plazoMeses || 1),
@@ -215,6 +217,7 @@ export async function POST(req: Request) {
 
     if (wantsEarlyPayoff) {
       const earlyPayoff = calculateCreditEarlyPayoff({
+        planCapitalVigente: credit.planCapitalVigente,
         saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
         montoCredito: Number(credit.montoCredito || 0),
         valorInteres: Number(credit.valorInteres || 0),
@@ -298,6 +301,7 @@ export async function POST(req: Request) {
               fechaPrimerPago: true,
               fechaProximoPago: true,
               frecuenciaPago: true,
+              planCapitalVigente: true,
               montoCredito: true,
               pazYSalvoEmitidoAt: true,
               plazoMeses: true,
@@ -331,6 +335,7 @@ export async function POST(req: Request) {
         },
       });
       const lockedPlan = buildCreditPaymentPlan({
+        planCapitalVigente: lockedCredit.planCapitalVigente,
         montoCredito: Number(lockedCredit.montoCredito || 0),
         valorCuota: Number(lockedCredit.valorCuota || 0),
         plazoMeses: Number(lockedCredit.plazoMeses || 1),
@@ -346,6 +351,7 @@ export async function POST(req: Request) {
 
       if (wantsEarlyPayoff) {
         const lockedEarlyPayoff = calculateCreditEarlyPayoff({
+          planCapitalVigente: lockedCredit.planCapitalVigente,
           saldoBaseFinanciado: Number(
             lockedCredit.saldoBaseFinanciado || 0
           ),
