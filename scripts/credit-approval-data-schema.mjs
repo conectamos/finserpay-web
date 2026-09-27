@@ -56,7 +56,10 @@ export const creditApprovalDataSchemaStatements = [
   `CREATE OR REPLACE FUNCTION public.credit_approval_data_snapshot_valid(value JSONB)
     RETURNS BOOLEAN LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
       SELECT jsonb_typeof(value)='object'
-        AND (SELECT COUNT(*)=6 FROM jsonb_object_keys(value))
+        AND ((SELECT COUNT(*)=6 FROM jsonb_object_keys(value)) AND NOT (value ? 'clienteNombre')
+          OR (SELECT COUNT(*)=7 FROM jsonb_object_keys(value))
+            AND jsonb_typeof(value->'clienteNombre')='string'
+            AND LENGTH(BTRIM(value->>'clienteNombre')) BETWEEN 2 AND 180)
         AND value ?& ARRAY['clienteCorreo','clienteTelefono','clienteDepartamento','clienteCiudad','clienteDireccion','referenciaEquipo']
         AND jsonb_typeof(value->'clienteCorreo') IN ('string','null')
         AND jsonb_typeof(value->'clienteTelefono') IN ('string','null')
@@ -114,6 +117,7 @@ export const creditApprovalDataSchemaStatements = [
       AND "actorGrantId" IS NOT NULL AND "actorSessionId" IS NOT NULL))`),
   ensureCheck("CreditApprovalDataCorrection_before_check", snapshotCheck("before")),
   ensureCheck("CreditApprovalDataCorrection_after_check", snapshotCheck("after")),
+  ensureCheck("CreditApprovalDataCorrection_snapshot_version_check", `("before" ? 'clienteNombre')=("after" ? 'clienteNombre')`),
   ensureCheck("CreditApprovalDataCorrection_changed_check", `"before" IS DISTINCT FROM "after"`),
   ensureCheck("CreditApprovalDataCorrection_catalog_check", `(
     (("before"->>'referenciaEquipo') IS DISTINCT FROM ("after"->>'referenciaEquipo'))

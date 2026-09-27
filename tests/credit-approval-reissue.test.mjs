@@ -78,6 +78,34 @@ test("correo, teléfono y dirección corregidos requieren una cadena auditada í
     before: { ...before, clienteTelefono: "otro" }, after, requestedRevision: 1, resultingRevision: 2,
   }]), /FROZEN_TERMS_/);
 });
+test("un nombre operativo corregido permite reemisión solo con la cadena auditada nueva", () => {
+  const fixture = createReissueFixture();
+  const before = {
+    clienteNombre: fixture.credit.clienteNombre,
+    clienteCorreo: fixture.credit.clienteCorreo,
+    clienteTelefono: fixture.credit.clienteTelefono,
+    clienteDepartamento: null,
+    clienteCiudad: null,
+    clienteDireccion: fixture.credit.clienteDireccion,
+    referenciaEquipo: null,
+  };
+  const after = { ...before, clienteNombre: "CLIENTE CON NOMBRE CORREGIDO" };
+  fixture.credit.clienteNombre = after.clienteNombre;
+
+  assert.throws(
+    () => source.frozenReissueCredit(fixture.credit, fixture.process),
+    /FROZEN_TERMS_CHANGED/
+  );
+
+  const result = source.frozenReissueCredit(fixture.credit, fixture.process, [{
+    before,
+    after,
+    requestedRevision: 1,
+    resultingRevision: 2,
+  }]);
+  assert.equal(result.credit.clienteNombre, fixture.seal.snapshot.clienteNombre);
+  assert.equal(result.credit.clienteDocumento, fixture.seal.snapshot.documento);
+});
 test("un POST de reemisión con HTTP 401 no repite el envío con otra cabecera", async () => {
   const calls = [];
   const provider = loadReissueModule("lib/firmaseguro.ts", {}, {

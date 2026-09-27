@@ -46,6 +46,7 @@ const service = loadApprovalModule("lib/credit-approval-data.ts", {
 
 const validRequest = {
   changes: {
+    clienteNombre: "  María   de la Cruz ",
     clienteCorreo: "  CLIENTE@EXAMPLE.COM ",
     clienteTelefono: "+57 (300) 123-4567",
     clienteDepartamento: "valle_del_cauca",
@@ -62,6 +63,7 @@ const validRequest = {
 test("el PATCH acepta solo el contrato estricto y normaliza datos canónicos", () => {
   assert.deepEqual(plain(core.parseApprovalDataCorrection(validRequest)), {
     changes: {
+      clienteNombre: "María de la Cruz",
       clienteCorreo: "cliente@example.com",
       clienteTelefono: "3001234567",
       clienteDepartamento: "VALLE_DEL_CAUCA",
@@ -79,7 +81,9 @@ test("el PATCH acepta solo el contrato estricto y normaliza datos canónicos", (
     { ...validRequest, extra: true },
     { ...validRequest, changes: {} },
     { ...validRequest, changes: { referenciaEquipo: "IPHONE 13" } },
-    { ...validRequest, changes: { clienteNombre: "Otro nombre" } },
+    { ...validRequest, changes: { clienteDocumento: "1000000000" } },
+    { ...validRequest, changes: { clienteNombre: "A" } },
+    { ...validRequest, changes: { clienteNombre: "Nombre\u0000inválido" } },
     { ...validRequest, changes: { catalogItemId: 0 } },
     { ...validRequest, revision: 0 },
     { ...validRequest, reviewHash: "A".repeat(64) },
@@ -90,6 +94,33 @@ test("el PATCH acepta solo el contrato estricto y normaliza datos canónicos", (
       code: "INVALID_DATA_CORRECTION",
     });
   }
+});
+
+test("la bitácora lee snapshots legacy de seis campos y nuevos de siete", () => {
+  const legacy = {
+    clienteCorreo: "cliente@example.test",
+    clienteTelefono: "3001234567",
+    clienteDepartamento: "TOLIMA",
+    clienteCiudad: "Ibagué",
+    clienteDireccion: "Calle 1",
+    referenciaEquipo: "IPHONE 13",
+  };
+  const current = { clienteNombre: "María de la Cruz", ...legacy };
+
+  assert.deepEqual(plain(core.approvalDataSnapshot(legacy)), legacy);
+  assert.deepEqual(plain(core.approvalDataSnapshot(current)), current);
+  assert.deepEqual(plain(core.approvalDataChangedFields(
+    current,
+    { ...current, clienteNombre: "María Fernanda de la Cruz" }
+  )), [{
+    field: "clienteNombre",
+    before: "María de la Cruz",
+    after: "María Fernanda de la Cruz",
+  }]);
+  assert.equal(core.approvalDataSnapshot({ ...current, clienteNombre: null }), null);
+  assert.equal(core.approvalDataSnapshot({ ...current, clienteNombre: "A" }), null);
+  assert.equal(core.approvalDataSnapshot({ ...legacy, extra: "no permitido" }), null);
+  assert.equal(core.approvalDataSnapshot({ clienteNombre: "María", ...legacy, extra: "no permitido" }), null);
 });
 
 test("la referencia canónica no repite la marca ya incluida en el modelo", () => {
@@ -160,13 +191,14 @@ test("el DTO editable usa departamento raw y devuelve history al nivel superior"
   }]);
 });
 
-test("PATCH permite corregir un aprobado, lo devuelve a pendiente y audita solo los seis datos operativos", async () => {
+test("PATCH permite corregir un aprobado, lo devuelve a pendiente y audita los siete datos operativos", async () => {
   const trace = [];
   const firstHash = "a".repeat(64);
   const nextHash = "b".repeat(64);
   const actor = { id: 7, nombre: "Analista" };
   const credit = {
     id: 81,
+    clienteNombre: "Nombre anterior",
     clienteCorreo: "antes@example.test",
     clienteTelefono: "3001234567",
     clienteDepartamento: "VALLE_DEL_CAUCA",
@@ -252,13 +284,15 @@ test("PATCH permite corregir un aprobado, lo devuelve a pendiente y audita solo 
       }
       if (sql.includes('UPDATE "Credito" SET')) {
         trace.push("update-credit");
+        assert.match(sql, /"clienteNombre"=CASE/);
         assert.match(sql, /"clienteCorreo"=CASE/);
         assert.match(sql, /"referenciaEquipo"=CASE/);
-        assert.doesNotMatch(sql, /"equipoMarca"=|"equipoModelo"=|"valorEquipoTotal"=|"contratoSnapshot"=/);
-        credit.clienteCorreo = params[2];
-        credit.clienteDepartamento = params[6];
-        credit.clienteCiudad = params[8];
-        credit.referenciaEquipo = params[12];
+        assert.doesNotMatch(sql, /"clienteDocumento"=|"equipoMarca"=|"equipoModelo"=|"valorEquipoTotal"=|"contratoSnapshot"=/);
+        credit.clienteNombre = params[2];
+        credit.clienteCorreo = params[4];
+        credit.clienteDepartamento = params[8];
+        credit.clienteCiudad = params[10];
+        credit.referenciaEquipo = params[14];
         review.status = "PENDING";
         review.revision = 2;
         review.reviewHash = null;
@@ -295,7 +329,13 @@ test("PATCH permite corregir un aprobado, lo devuelve a pendiente y audita solo 
     },
   };
   const input = core.parseApprovalDataCorrection({
-    changes: { clienteCorreo: "despues@example.test", clienteDepartamento: "TOLIMA", clienteCiudad: "Chaparral", catalogItemId: 17 },
+    changes: {
+      clienteNombre: "  Nombre   corregido ",
+      clienteCorreo: "despues@example.test",
+      clienteDepartamento: "TOLIMA",
+      clienteCiudad: "Chaparral",
+      catalogItemId: 17,
+    },
     reason: "Datos confirmados con el cliente",
     revision: 1,
     reviewHash: firstHash,
@@ -306,6 +346,7 @@ test("PATCH permite corregir un aprobado, lo devuelve a pendiente y audita solo 
   assert.deepEqual(trace.slice(0, 6), ["actor", "credit", "access", "ensure-review", "review", "idempotency"]);
   assert.ok(trace.indexOf("catalog") > trace.indexOf("review"));
   assert.ok(trace.indexOf("audit") > trace.indexOf("update-credit"));
+  assert.equal(credit.clienteNombre, "Nombre corregido");
   assert.equal(credit.clienteCorreo, "despues@example.test");
   assert.equal(credit.clienteDepartamento, "TOLIMA");
   assert.equal(credit.clienteCiudad, "Chaparral");
@@ -317,6 +358,8 @@ test("PATCH permite corregir un aprobado, lo devuelve a pendiente y audita solo 
   assert.equal(result.history.length, 1);
   assert.equal(auditRows[0].requestedHashVersion, 2);
   assert.equal(auditRows[0].resultingHashVersion, 2);
+  assert.equal(auditRows[0].before.clienteNombre, "Nombre anterior");
+  assert.equal(auditRows[0].after.clienteNombre, "Nombre corregido");
   assert.deepEqual(auditRows[0].catalogSnapshot, {
     id: 17,
     marca: "IPHONE",
@@ -361,6 +404,7 @@ test("la migración conserva aprobaciones V1 y exige metadato explícito para ap
   assert.match(baseSchema, /"reviewHashVersion" SMALLINT NOT NULL DEFAULT 2/);
   assert.match(baseSchema, /CreditApprovalEvent[\s\S]*"reviewHashVersion" SMALLINT NOT NULL DEFAULT 1/);
   assert.match(baseSchema, /previous_hash_version[\s\S]*"reviewHashVersion"/);
+  assert.match(baseSchema, /ROW\(OLD\."clienteNombre", OLD\."clienteCorreo"[\s\S]*ROW\(NEW\."clienteNombre", NEW\."clienteCorreo"/);
   assert.match(baseSchema, /CREDIT_APPROVAL_DATA_CHANGED[\s\S]*THEN 2/);
   assert.match(dataSchema, /"requestedHashVersion" SMALLINT NOT NULL DEFAULT 1/);
   assert.match(dataSchema, /"resultingHashVersion" SMALLINT NOT NULL DEFAULT 2/);
@@ -371,7 +415,9 @@ test("la migración conserva aprobaciones V1 y exige metadato explícito para ap
 
 test("la bitácora exige snapshots exactos, catálogo cuando cambia referencia e inmutabilidad total", () => {
   const schema = creditApprovalDataSchemaStatements.join("\n");
-  assert.match(schema, /COUNT\(\*\)=6 FROM jsonb_object_keys\(value\)/);
+  assert.match(schema, /COUNT\(\*\)=6 FROM jsonb_object_keys\(value\)[\s\S]*NOT \(value \? 'clienteNombre'\)/);
+  assert.match(schema, /COUNT\(\*\)=7 FROM jsonb_object_keys\(value\)[\s\S]*value->'clienteNombre'/);
+  assert.match(schema, /\("before" \? 'clienteNombre'\)=\("after" \? 'clienteNombre'\)/);
   assert.match(schema, /referenciaEquipo[\s\S]*"catalogSnapshot" IS NOT NULL/);
   assert.match(schema, /referenciaEquipo[\s\S]*"catalogSnapshot" IS NULL/);
   assert.match(schema, /BEFORE UPDATE OR DELETE/);
@@ -385,6 +431,8 @@ test("documentos posteriores resuelven contacto, ubicación y referencia desde e
   });
   const fixture = createReissueFixture();
   fixture.credit.contratoSnapshot.cliente = {
+    nombre: "NOMBRE HISTÓRICO DEL SNAPSHOT",
+    cedula: "100000001",
     correo: "snapshot@example.invalid",
     telefono: "3000000001",
     departamento: "TOLIMA",
@@ -392,6 +440,8 @@ test("documentos posteriores resuelven contacto, ubicación y referencia desde e
     direccion: "CALLE DE PRUEBA 1",
   };
   Object.assign(fixture.credit, {
+    clienteNombre: "NOMBRE OPERATIVO CORREGIDO",
+    clienteDocumento: "DOCUMENTO OPERATIVO NO CONTRACTUAL",
     clienteCorreo: "operativo@example.invalid",
     clienteTelefono: "3009999999",
     clienteDepartamento: "ANTIOQUIA",
@@ -400,12 +450,16 @@ test("documentos posteriores resuelven contacto, ubicación y referencia desde e
     referenciaEquipo: "REFERENCIA OPERATIVA",
   });
   const resolved = contractual.withContractualCreditData(fixture.credit);
+  assert.equal(resolved.clienteNombre, fixture.seal.snapshot.clienteNombre);
+  assert.equal(resolved.clienteDocumento, fixture.seal.snapshot.documento);
   assert.equal(resolved.clienteCorreo, fixture.seal.snapshot.clienteCorreo);
   assert.equal(resolved.clienteTelefono, fixture.seal.snapshot.clienteTelefono);
   assert.equal(resolved.clienteDepartamento, "TOLIMA");
   assert.equal(resolved.clienteCiudad, "Ibagué");
   assert.equal(resolved.clienteDireccion, fixture.seal.snapshot.clienteDireccion);
   assert.equal(resolved.referenciaEquipo, fixture.seal.snapshot.referenciaEquipo);
+  assert.equal(fixture.credit.clienteNombre, "NOMBRE OPERATIVO CORREGIDO");
+  assert.equal(fixture.credit.clienteDocumento, "DOCUMENTO OPERATIVO NO CONTRACTUAL");
   assert.equal(fixture.credit.clienteCorreo, "operativo@example.invalid");
 
   const legacy = contractual.withContractualCreditData({

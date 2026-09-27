@@ -26,6 +26,7 @@ const noveltyLabels: Record<string, string> = {
   APPROVED_RESOLVED: "Novedades resueltas con el OK",
 };
 const dataLabels: Record<ApprovalDataHistoryField, string> = {
+  clienteNombre: "Nombre",
   clienteCorreo: "Correo",
   clienteTelefono: "Teléfono",
   clienteDepartamento: "Departamento",

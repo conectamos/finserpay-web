@@ -195,6 +195,25 @@ aliados externos, no anulados y sin liquidación pagada. No conceden acceso a la
 fábrica, a cambios financieros ni a políticas. La corrección puede iniciarse
 aunque falte una fotografía; no depende de que el crédito ya permita el OK.
 
+### Nombre y datos operativos
+
+El analista puede corregir el nombre, correo, teléfono, departamento, ciudad,
+dirección y la referencia del equipo desde el muro administrativo o el enlace
+compartido. La cédula permanece protegida y el servidor rechaza cualquier intento
+de incluirla en esta operación. La referencia solo se elige entre modelos activos
+del catálogo y compatibles con la plataforma del crédito.
+
+Cada corrección exige un motivo, registra valores anterior y nuevo, actor, fecha,
+revisión e idempotencia, y devuelve el expediente a Pendientes. El nombre corregido
+se refleja en las consultas operativas que leen `Credito.clienteNombre`; no se
+derivan automáticamente nombres o apellidos separados.
+
+Los PDF firmados, el snapshot contractual y los procesos anteriores no se
+reescriben. Las copias contractuales posteriores conservan el nombre y documento
+congelados al firmar. Una nueva firma acepta un nombre operativo diferente solo si
+la cadena inmutable de correcciones demuestra el cambio; una alteración directa se
+rechaza.
+
 ### Fotografías
 
 El analista selecciona una de las cinco imágenes, carga un PNG o JPEG, revisa su

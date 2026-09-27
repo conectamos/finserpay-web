@@ -27,6 +27,7 @@ import { getCreditApprovalReissueState } from "@/lib/credit-approval-reissue-sta
 
 type LockedCredit = {
   id: number;
+  clienteNombre: string;
   clienteCorreo: string | null;
   clienteTelefono: string | null;
   clienteDepartamento: string | null;
@@ -89,6 +90,7 @@ function normalizedNullable(value: unknown) {
 
 function snapshotFromCredit(credit: LockedCredit): ApprovalDataSnapshot {
   return {
+    clienteNombre: normalizedNullable(credit.clienteNombre),
     clienteCorreo: normalizedNullable(credit.clienteCorreo),
     clienteTelefono: normalizedNullable(credit.clienteTelefono),
     clienteDepartamento: normalizedNullable(credit.clienteDepartamento),
@@ -111,7 +113,7 @@ function correctionNotAllowed(message: string) {
 }
 
 async function readLockedCredit(db: ApprovalDatabase, id: number) {
-  const rows = await db.$queryRawUnsafe<LockedCredit[]>(`SELECT credit."id",credit."clienteCorreo",credit."clienteTelefono",
+  const rows = await db.$queryRawUnsafe<LockedCredit[]>(`SELECT credit."id",credit."clienteNombre",credit."clienteCorreo",credit."clienteTelefono",
     credit."clienteDepartamento",credit."clienteCiudad",credit."clienteDireccion",credit."referenciaEquipo",
     credit."equipoMarca",credit."contratoSnapshot",credit."estado",
     EXISTS (SELECT 1 FROM "CreditApprovalPolicy" policy WHERE policy."id"=1
@@ -282,6 +284,7 @@ export async function correctCreditApprovalData(
   const locationChanges = resolveLocationChanges(before, input);
   const after: ApprovalDataSnapshot = {
     ...before,
+    ...(input.changes.clienteNombre !== undefined ? { clienteNombre: input.changes.clienteNombre } : {}),
     ...(input.changes.clienteCorreo !== undefined ? { clienteCorreo: input.changes.clienteCorreo } : {}),
     ...(input.changes.clienteTelefono !== undefined ? { clienteTelefono: input.changes.clienteTelefono } : {}),
     ...locationChanges,
@@ -295,13 +298,15 @@ export async function correctCreditApprovalData(
   if (!changedFields.some(({ field }) => field === "referenciaEquipo")) catalogSnapshot = null;
 
   const updated = await db.$executeRawUnsafe(`UPDATE "Credito" SET
-    "clienteCorreo"=CASE WHEN $2::boolean THEN $3::text ELSE "clienteCorreo" END,
-    "clienteTelefono"=CASE WHEN $4::boolean THEN $5::text ELSE "clienteTelefono" END,
-    "clienteDepartamento"=CASE WHEN $6::boolean THEN $7::text ELSE "clienteDepartamento" END,
-    "clienteCiudad"=CASE WHEN $8::boolean THEN $9::text ELSE "clienteCiudad" END,
-    "clienteDireccion"=CASE WHEN $10::boolean THEN $11::text ELSE "clienteDireccion" END,
-    "referenciaEquipo"=CASE WHEN $12::boolean THEN $13::text ELSE "referenciaEquipo" END,
+    "clienteNombre"=CASE WHEN $2::boolean THEN $3::text ELSE "clienteNombre" END,
+    "clienteCorreo"=CASE WHEN $4::boolean THEN $5::text ELSE "clienteCorreo" END,
+    "clienteTelefono"=CASE WHEN $6::boolean THEN $7::text ELSE "clienteTelefono" END,
+    "clienteDepartamento"=CASE WHEN $8::boolean THEN $9::text ELSE "clienteDepartamento" END,
+    "clienteCiudad"=CASE WHEN $10::boolean THEN $11::text ELSE "clienteCiudad" END,
+    "clienteDireccion"=CASE WHEN $12::boolean THEN $13::text ELSE "clienteDireccion" END,
+    "referenciaEquipo"=CASE WHEN $14::boolean THEN $15::text ELSE "referenciaEquipo" END,
     "updatedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC' WHERE "id"=$1`, id,
+    Object.hasOwn(input.changes, "clienteNombre"), after.clienteNombre,
     Object.hasOwn(input.changes, "clienteCorreo"), after.clienteCorreo,
     Object.hasOwn(input.changes, "clienteTelefono"), after.clienteTelefono,
     Object.hasOwn(input.changes, "clienteDepartamento"), after.clienteDepartamento,

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 
 export const APPROVAL_DATA_FIELDS = [
+  "clienteNombre",
   "clienteCorreo",
   "clienteTelefono",
   "clienteDepartamento",
@@ -11,7 +12,10 @@ export const APPROVAL_DATA_FIELDS = [
 ] as const;
 
 export type ApprovalDataField = (typeof APPROVAL_DATA_FIELDS)[number];
-export type ApprovalDataSnapshot = Record<ApprovalDataField, string | null>;
+type LegacyApprovalDataField = Exclude<ApprovalDataField, "clienteNombre">;
+export type ApprovalDataSnapshot = Record<LegacyApprovalDataField, string | null> & {
+  clienteNombre?: string | null;
+};
 export type ApprovalDataChanges = Partial<Record<Exclude<ApprovalDataField, "referenciaEquipo">, string>> & {
   catalogItemId?: number;
 };
@@ -32,6 +36,7 @@ export type ApprovalDataCorrectionChainEntry = {
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REVIEW_HASH = /^[a-f0-9]{64}$/;
 const REQUEST_CHANGE_KEYS = new Set([
+  "clienteNombre",
   "clienteCorreo",
   "clienteTelefono",
   "clienteDepartamento",
@@ -87,6 +92,9 @@ export function parseApprovalDataCorrection(value: unknown): ParsedApprovalDataC
 
   const reason = cleanText(body.reason, "El motivo", 5, 500);
   const changes: ApprovalDataChanges = {};
+  if ("clienteNombre" in rawChanges) {
+    changes.clienteNombre = cleanText(rawChanges.clienteNombre, "El nombre", 2, 180);
+  }
   if ("clienteCorreo" in rawChanges) {
     const email = cleanText(rawChanges.clienteCorreo, "El correo", 3, 254).toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Ingresa un correo electrónico válido.");
@@ -131,9 +139,19 @@ export function approvalDataRequestHash(creditoId: number, input: ParsedApproval
 
 export function approvalDataSnapshot(value: unknown): ApprovalDataSnapshot | null {
   const source = record(value);
+  const hasName = Object.hasOwn(source, "clienteNombre");
+  const fields = hasName ? APPROVAL_DATA_FIELDS : APPROVAL_DATA_FIELDS.filter((field) => field !== "clienteNombre");
+  if (Object.keys(source).length !== fields.length) return null;
   const snapshot = {} as ApprovalDataSnapshot;
-  for (const field of APPROVAL_DATA_FIELDS) {
+  for (const field of fields) {
     const item = source[field];
+    if (field === "clienteNombre") {
+      if (typeof item !== "string") return null;
+      const normalized = item.normalize("NFKC").trim().replace(/\s+/g, " ");
+      if (normalized.length < 2 || normalized.length > 180 || /[\u0000-\u001f\u007f]/.test(normalized)) return null;
+      snapshot.clienteNombre = item;
+      continue;
+    }
     if (item !== null && typeof item !== "string") return null;
     snapshot[field] = item as string | null;
   }
@@ -141,7 +159,7 @@ export function approvalDataSnapshot(value: unknown): ApprovalDataSnapshot | nul
 }
 
 export function approvalDataChangedFields(before: ApprovalDataSnapshot, after: ApprovalDataSnapshot) {
-  return APPROVAL_DATA_FIELDS.flatMap((field) => before[field] === after[field]
+  return APPROVAL_DATA_FIELDS.flatMap((field) => before[field] === undefined || after[field] === undefined || before[field] === after[field]
     ? []
     : [{ field, before: before[field], after: after[field] }]);
 }
@@ -159,6 +177,7 @@ export function formatApprovalEquipmentReference(marca: unknown, modelo: unknown
 }
 
 const CONTRACTUAL_CORRECTION_FIELDS = [
+  ["clienteNombre", "clienteNombre"],
   ["clienteTelefono", "clienteTelefono"],
   ["clienteCorreo", "clienteCorreo"],
   ["clienteDireccion", "clienteDireccion"],
@@ -191,6 +210,10 @@ export function correctionChainBacksOperationalCredit(
       previousResultRevision = Number(entry.resultingRevision);
     }
     for (const [field] of CONTRACTUAL_CORRECTION_FIELDS) {
+      const beforeHasField = Object.hasOwn(before, field);
+      const afterHasField = Object.hasOwn(after, field);
+      if (beforeHasField !== afterHasField) return false;
+      if (!beforeHasField) continue;
       if (comparable(before[field]) !== comparable(state[field])) return false;
       state[field] = after[field];
     }
