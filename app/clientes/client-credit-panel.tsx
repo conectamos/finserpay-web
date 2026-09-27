@@ -65,11 +65,18 @@ type PanelCredit = {
 
 type ClientCreditPanelProps = {
   credit: PanelCredit;
+  efectyPayoff: {
+    amount: number;
+    convenio: string;
+    referencia: string;
+    expiresAt: string;
+  } | null;
   notice: { text: string; tone: "red" | "emerald" } | null;
   onBack: () => void;
   onOpenPanel: (panel: ClientCreditPanelName) => void;
   onPayoff: () => void;
   onPaySelected: () => void;
+  onPrepareEfectyPayoff: () => void;
   onRefreshPayment: () => void;
   onSelectPaymentLimit: (installmentNumber: number) => void;
   panel: ClientCreditPanelName;
@@ -81,6 +88,7 @@ type ClientCreditPanelProps = {
     paymentLabel?: string;
   } | null;
   paying: boolean;
+  preparingEfectyPayoff: boolean;
   refreshingPayment: boolean;
   selectedPaymentLimit: number;
 };
@@ -161,16 +169,19 @@ function DateTile({ value }: { value: string }) {
 
 export default function ClientCreditPanel({
   credit,
+  efectyPayoff,
   notice,
   onBack,
   onOpenPanel,
   onPayoff,
   onPaySelected,
+  onPrepareEfectyPayoff,
   onRefreshPayment,
   onSelectPaymentLimit,
   panel,
   pendingPayment,
   paying,
+  preparingEfectyPayoff,
   refreshingPayment,
   selectedPaymentLimit,
 }: ClientCreditPanelProps) {
@@ -550,14 +561,14 @@ export default function ClientCreditPanel({
               <section className={styles.payoffCard}>
                 <div className={styles.methodHeader}>
                   <span className={styles.payoffIcon}><ShieldCheck size={24} aria-hidden="true" /></span>
-                  <div><strong>Liquidar crédito hoy</strong><small>Cierre anticipado exclusivo por Nequi/Wompi</small></div>
+                  <div><strong>Liquidar crédito hoy</strong><small>Paga por Nequi o en un punto Efecty</small></div>
                 </div>
                 <div className={styles.payoffMetrics}>
                   <div><span>Capital a pagar</span><strong>{money(payoff.capitalPendiente)}</strong></div>
                   <div><span>Ahorro estimado</span><strong>{money(payoff.condonacion)}</strong></div>
                 </div>
                 <button type="button" onClick={onPayoff} disabled={paying || Boolean(pendingPayment)}>
-                  {paying ? "Preparando..." : `Liquidar por ${money(payoff.capitalPendiente)}`}
+                  {paying ? "Preparando..." : `Liquidar con Nequi · ${money(payoff.capitalPendiente)}`}
                 </button>
               </section>
             ) : null}
@@ -567,7 +578,26 @@ export default function ClientCreditPanel({
               <article className={styles.infoMethodCard}>
                 <span className={styles.efectyMark}>efecty</span>
                 <div><strong>Pago en punto Efecty</strong><small>La conciliación puede tardar algunos minutos.</small></div>
-                <dl><div><dt>Convenio</dt><dd>113950</dd></div><div><dt>Referencia</dt><dd>{credit.clienteDocumento || "-"}</dd></div></dl>
+                {!efectyPayoff ? <dl><div><dt>Convenio</dt><dd>113950</dd></div><div><dt>Referencia</dt><dd>{credit.clienteDocumento || "-"}</dd></div></dl> : null}
+                {payoffAvailable && !pendingPayment ? (
+                  efectyPayoff ? (
+                    <div className={styles.efectyPayoffDetails} role="status">
+                      <strong>Liquidación preparada en Efecty</strong>
+                      <p>Paga exactamente <b>{money(efectyPayoff.amount)}</b> con el convenio <b>{efectyPayoff.convenio}</b> y la referencia <b>{efectyPayoff.referencia}</b>.</p>
+                      <small>Instrucciones vigentes hasta {new Date(efectyPayoff.expiresAt).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short", timeZone: COLOMBIA_TIME_ZONE })}. El crédito se liquidará cuando Efecty confirme el pago.</small>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.efectyPayoffButton}
+                      onClick={onPrepareEfectyPayoff}
+                      disabled={preparingEfectyPayoff || paying || Boolean(pendingPayment)}
+                    >
+                      {preparingEfectyPayoff ? "Preparando liquidación..." : "Liquidar en Efecty"}
+                      <ChevronRight size={20} aria-hidden="true" />
+                    </button>
+                  )
+                ) : null}
               </article>
               <article className={styles.infoMethodCard}>
                 <span className={styles.bankMark}><Landmark size={25} aria-hidden="true" /></span>

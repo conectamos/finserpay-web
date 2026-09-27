@@ -465,6 +465,13 @@
 .infoMethodCard dl div { min-width: 0; border-radius: 12px; padding: 10px; background: #f5f6f4; }
 .infoMethodCard dt { color: var(--fp-muted); font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .infoMethodCard dd { overflow-wrap: anywhere; margin: 5px 0 0; font-size: 13px; font-weight: 850; }
+.efectyPayoffButton { display: flex; grid-column: 1 / -1; width: 100%; min-height: 48px; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--fp-graphite); border-radius: var(--fp-radius-md); color: var(--fp-graphite); font-size: 13px; font-weight: 850; background: #fff; }
+.efectyPayoffButton:disabled { opacity: 0.5; }
+.efectyPayoffDetails { display: grid; grid-column: 1 / -1; gap: 7px; border-top: 1px solid var(--fp-border); padding-top: 15px; }
+.efectyPayoffDetails > strong { color: var(--fp-client-green); font-size: 13px; }
+.efectyPayoffDetails p { margin: 0; font-size: 13px; line-height: 1.5; }
+.efectyPayoffDetails b { overflow-wrap: anywhere; }
+.efectyPayoffDetails small { color: var(--fp-muted); font-size: 11px; line-height: 1.45; }
 .supportAction { display: flex; grid-column: 1 / -1; min-height: 44px; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); color: var(--fp-graphite); font-size: 11px; font-weight: 850; text-decoration: none; }
 
 .securityNote { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; border-radius: 18px; padding: 14px; color: #5d666e; background: #f0f1ed; }

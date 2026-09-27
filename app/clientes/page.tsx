@@ -90,6 +90,23 @@ type WompiStatusResponse = {
   status?: string;
 };
 
+type EfectyPayoffResponse = {
+  ok?: boolean;
+  convenio?: string;
+  referencia?: string;
+  amount?: number;
+  expiresAt?: string;
+  error?: string;
+};
+
+type EfectyPayoffInstructions = {
+  creditId: number;
+  convenio: string;
+  referencia: string;
+  amount: number;
+  expiresAt: string;
+};
+
 type PaymentReturnNotice = {
   reference: string;
   creditId: number | null;
@@ -234,6 +251,9 @@ export default function ClienteConsultaPage() {
   const [loading, setLoading] = useState(false);
   const [payingCreditId, setPayingCreditId] = useState<number | null>(null);
   const sendingPaymentRef = useRef(false);
+  const preparingEfectyPayoffRef = useRef(false);
+  const [preparingEfectyPayoffCreditId, setPreparingEfectyPayoffCreditId] = useState<number | null>(null);
+  const [efectyPayoff, setEfectyPayoff] = useState<EfectyPayoffInstructions | null>(null);
   const pendingPaymentRef = useRef<PaymentReturnNotice | null>(null);
   const [confirmPaymentCreditId, setConfirmPaymentCreditId] = useState<number | null>(
     null
@@ -286,6 +306,7 @@ export default function ClienteConsultaPage() {
       setDocumento(normalized);
       setActiveDocumento(normalized);
       setItems(nextItems);
+      setEfectyPayoff(null);
       setOpenCreditId(nextOpenId);
       setActivePanel(preferredPanel);
       setConfirmPaymentCreditId(null);
@@ -430,6 +451,63 @@ export default function ClienteConsultaPage() {
     openWompiConfirm(credit, "INSTALLMENTS", payment.installmentLimit);
   };
 
+  const prepareEfectyPayoff = async (credit: ClientCredit) => {
+    if (preparingEfectyPayoffRef.current) return;
+    if (pendingPaymentRef.current?.reference || paymentReturn?.reference) {
+      setNotice({ text: "Ya tienes una solicitud de pago pendiente. Revisa su estado antes de preparar otra liquidación.", tone: "red" });
+      return;
+    }
+    if (!credit.liquidacionAnticipada?.disponible) {
+      setNotice({ text: credit.liquidacionAnticipada?.motivo || "La liquidación anticipada no está disponible para este crédito.", tone: "red" });
+      return;
+    }
+
+    preparingEfectyPayoffRef.current = true;
+    setPreparingEfectyPayoffCreditId(credit.id);
+    setNotice(null);
+    try {
+      const result = await requestJson<EfectyPayoffResponse>(
+        "/api/clientes/efecty-liquidacion",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            creditoId: credit.id,
+            documento: credit.clienteDocumento || activeDocumento || documento,
+          }),
+        }
+      );
+      if (!result.ok || !result.data.ok) {
+        throw new Error(result.data.error || "No se pudo preparar la liquidación en Efecty.");
+      }
+      if (
+        !result.data.convenio ||
+        !result.data.referencia ||
+        !Number.isFinite(result.data.amount) ||
+        Number(result.data.amount) <= 0 ||
+        !result.data.expiresAt
+      ) {
+        throw new Error("No recibimos las instrucciones completas de Efecty. Intenta de nuevo.");
+      }
+
+      setEfectyPayoff({
+        creditId: credit.id,
+        convenio: result.data.convenio,
+        referencia: result.data.referencia,
+        amount: Number(result.data.amount),
+        expiresAt: result.data.expiresAt,
+      });
+    } catch (error) {
+      setNotice({
+        text: error instanceof Error ? error.message : "No se pudo preparar la liquidación en Efecty.",
+        tone: "red",
+      });
+    } finally {
+      preparingEfectyPayoffRef.current = false;
+      setPreparingEfectyPayoffCreditId(null);
+    }
+  };
+
   const payWithWompi = async (credit: ClientCredit) => {
     if (sendingPaymentRef.current) return;
     if (pendingPaymentRef.current?.reference || paymentReturn?.reference) {
@@ -552,6 +630,7 @@ export default function ClienteConsultaPage() {
     setNequiPhone("");
     pendingPaymentRef.current = null;
     setPaymentReturn(null);
+    setEfectyPayoff(null);
     setNotice(null);
   };
 
@@ -571,6 +650,7 @@ export default function ClienteConsultaPage() {
 
   const selectCredit = (creditId: number) => {
     setOpenCreditId(creditId);
+    setEfectyPayoff(null);
     setActivePanel(null);
     setConfirmPaymentCreditId(null);
     setConfirmPaymentMode("INSTALLMENTS");
@@ -845,11 +925,13 @@ export default function ClienteConsultaPage() {
         {activePanel && activeCredit ? (
           <ClientCreditPanel
             credit={activeCredit}
+            efectyPayoff={efectyPayoff?.creditId === activeCredit.id && new Date(efectyPayoff.expiresAt).getTime() > Date.now() ? efectyPayoff : null}
             notice={notice}
             onBack={returnHome}
             onOpenPanel={openPanel}
             onPayoff={() => openWompiConfirm(activeCredit, "PAYOFF")}
             onPaySelected={() => openWompiConfirm(activeCredit)}
+            onPrepareEfectyPayoff={() => void prepareEfectyPayoff(activeCredit)}
             onRefreshPayment={() => void refreshPaymentStatus()}
             onSelectPaymentLimit={(installmentNumber) =>
               selectPaymentLimit(activeCredit.id, installmentNumber)
@@ -857,6 +939,7 @@ export default function ClienteConsultaPage() {
             panel={activePanel}
             pendingPayment={paymentReturn}
             paying={payingCreditId === activeCredit.id}
+            preparingEfectyPayoff={preparingEfectyPayoffCreditId === activeCredit.id}
             refreshingPayment={refreshingPayment || loading}
             selectedPaymentLimit={selectedPaymentLimit}
           />

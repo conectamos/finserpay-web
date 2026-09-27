@@ -3,12 +3,26 @@ import path from "node:path";
 import SftpClient from "ssh2-sftp-client";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import {
+  buildEarlyPayoffObservation,
+  calculateCreditEarlyPayoff,
+  type CreditEarlyPayoffResult,
+} from "@/lib/credit-early-payoff";
+import {
+  consumeEfectyPayoffIntent,
+  ensureEfectyPayoffIntentTable,
+  findEfectyPayoffIntent,
+} from "@/lib/efecty-payoff-intents";
 import { resolveNextPaymentDateAfterPayment } from "@/lib/credit-next-payment-date";
 import {
   creditCajaDescription,
   resolveCreditState,
 } from "@/lib/credit-factory";
 import { syncCreditMora } from "@/lib/credit-mora-sync";
+import {
+  readMassCreditComponents,
+  updateMassCreditComponentsForPayoff,
+} from "@/lib/mass-credit-financial-components";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import {
   DIGITAL_COLLECTION_CAJA_CONCEPT,
@@ -62,6 +76,7 @@ type EfectyLineResult = {
     | "SIN_CREDITO"
     | "VALOR_INVALIDO"
     | "VALOR_SUPERA_SALDO"
+    | "REVISION_REQUERIDA"
     | "VISTA_PREVIA";
   creditoId?: number | null;
   empresa: string;
@@ -76,6 +91,19 @@ type EfectyFileResult = {
   file: string;
   lines: EfectyLineResult[];
 };
+
+const PENDING_EFECTY_ACTIONS = new Set<EfectyLineResult["action"]>([
+  "REVISION_REQUERIDA",
+  "SIN_CREDITO",
+  "VALOR_INVALIDO",
+  "VALOR_SUPERA_SALDO",
+]);
+
+function actionForExistingImport(status: string): EfectyLineResult["action"] {
+  return PENDING_EFECTY_ACTIONS.has(status as EfectyLineResult["action"])
+    ? status as EfectyLineResult["action"]
+    : "DUPLICADO";
+}
 
 type SftpConfig = {
   deleteAfterProcess: boolean;
@@ -181,17 +209,15 @@ function parseEfectyDate(value: unknown) {
   );
 
   if (match) {
-    const date = new Date(
-      Number(match[1]),
-      Number(match[2]) - 1,
-      Number(match[3]),
-      Number(match[4] || 12),
-      Number(match[5] || 0),
-      Number(match[6] || 0),
-      0
-    );
+    // Efecty reports local Colombia time; the server may run in UTC.
+    const colombiaDate = `${match[1]}-${match[2]}-${match[3]}`;
+    const colombiaTime = `${match[4] || "12"}:${match[5] || "00"}:${match[6] || "00"}`;
+    const date = new Date(`${colombiaDate}T${colombiaTime}-05:00`);
 
-    return Number.isNaN(date.getTime()) ? null : date;
+    return !Number.isNaN(date.getTime()) &&
+      getBogotaCompactDateKey(date) === `${match[1]}${match[2]}${match[3]}`
+      ? date
+      : null;
   }
 
   const parsed = new Date(raw);
@@ -287,6 +313,7 @@ function getSftpConfig(): SftpConfig {
 }
 
 export function parseEfectyRecaudoFile(content: string, sourceFile: string) {
+  void sourceFile;
   return content
     .split(/\r?\n/)
     .map((line, index) => ({ rawLine: line.trim(), lineNumber: index + 1 }))
@@ -462,13 +489,18 @@ async function loadCandidateCredits(reference: string) {
       imei: true,
       deviceUid: true,
       planCapitalVigente: true,
+      saldoBaseFinanciado: true,
       montoCredito: true,
+      valorInteres: true,
+      valorFianza: true,
       valorCuota: true,
       plazoMeses: true,
       frecuenciaPago: true,
       fechaPrimerPago: true,
       fechaProximoPago: true,
       estado: true,
+      contratoSnapshot: true,
+      referenciaPago: true,
       deliverableLabel: true,
       deliverableReady: true,
       equalityState: true,
@@ -511,7 +543,7 @@ async function loadCandidateCredits(reference: string) {
   });
 }
 
-function pickCreditForPayment(
+function scoreCreditsForPayment(
   credits: Awaited<ReturnType<typeof loadCandidateCredits>>,
   value: number
 ) {
@@ -560,7 +592,71 @@ function pickCreditForPayment(
       return a.credit.id - b.credit.id;
     });
 
-  return scored[0]?.credit || null;
+  return scored;
+}
+
+function matchingEfectyPayoff(
+  credit: Awaited<ReturnType<typeof loadCandidateCredits>>[number],
+  item: EfectyLine
+) {
+  const paidAt = item.paidAt;
+
+  if (!paidAt) {
+    return null;
+  }
+
+  const priorAbonos = credit.abonos.filter((abono) => abono.fechaAbono <= paidAt);
+  const hasLaterPayments = priorAbonos.length !== credit.abonos.length;
+
+  const payoff = calculateCreditEarlyPayoff({
+    contratoSnapshot: credit.contratoSnapshot,
+    planCapitalVigente: credit.planCapitalVigente,
+    saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
+    montoCredito: Number(credit.montoCredito || 0),
+    valorInteres: Number(credit.valorInteres || 0),
+    valorFianza: Number(credit.valorFianza || 0),
+    valorCuota: Number(credit.valorCuota || 0),
+    plazoMeses: Number(credit.plazoMeses || 1),
+    frecuenciaPago: credit.frecuenciaPago,
+    fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
+    fechaProximoPago: credit.fechaProximoPago,
+    abonos: priorAbonos.map((abono) => ({
+      valor: Number(abono.valor || 0),
+      fechaAbono: abono.fechaAbono,
+    })),
+    today: paidAt,
+    settled: Boolean(credit.pazYSalvoEmitidoAt),
+  });
+
+  return payoff.eligible &&
+    Math.round(item.value * 100) === Math.round(payoff.capitalPendiente * 100)
+    ? { hasLaterPayments, payoff }
+    : null;
+}
+
+function matchesEfectyIntentQuote(
+  quote: Awaited<ReturnType<typeof findEfectyPayoffIntent>>,
+  payoff: CreditEarlyPayoffResult
+) {
+  if (!quote || !payoff.eligible ||
+      quote.quote.planRevision !== payoff.planRevision) {
+    return false;
+  }
+
+  const quoted = quote.quote;
+  const values = [
+    [quoted.capitalPendiente, payoff.capitalPendiente],
+    [quoted.condonacion, payoff.interesFianzaCondonado],
+    [quoted.montoCreditoLiquidado, payoff.montoCreditoLiquidado],
+    [quoted.saldoObligacion, payoff.saldoObligacion],
+    ...(quoted.totalAbonado === undefined
+      ? []
+      : [[quoted.totalAbonado, payoff.totalAbonado]]),
+  ];
+
+  return values.every(([expected, current]) =>
+    Math.round(expected * 100) === Math.round(current * 100)
+  );
 }
 
 async function loadCreditForMora(creditId: number) {
@@ -650,7 +746,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
   if (existing && existing.status !== "PROCESANDO") {
     return {
       abonoId: existing.abonoId,
-      action: "DUPLICADO",
+      action: actionForExistingImport(existing.status),
       empresa: item.company,
       file: sourceFile,
       lineNumber: item.lineNumber,
@@ -667,7 +763,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
 
     return {
       abonoId: duplicated?.abonoId || null,
-      action: "DUPLICADO",
+      action: actionForExistingImport(duplicated?.status || ""),
       empresa: item.company,
       file: sourceFile,
       lineNumber: item.lineNumber,
@@ -678,7 +774,73 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
   }
 
   const candidates = await loadCandidateCredits(item.reference);
-  const credit = pickCreditForPayment(candidates, item.value);
+  const directReferenceCandidates = candidates.filter(
+    (candidate) =>
+      candidate.referenciaPago &&
+      normalizeDigits(candidate.referenciaPago) === item.reference
+  );
+  const scopedCandidates = directReferenceCandidates.length
+    ? directReferenceCandidates
+    : candidates;
+  await ensureEfectyPayoffIntentTable();
+  const intentCandidates = (
+    await Promise.all(scopedCandidates.map(async (candidate) => ({
+      candidate,
+      intent: await findEfectyPayoffIntent(prisma, {
+        creditoId: candidate.id,
+        referencia: item.reference,
+        amountInCents: Math.round(item.value * 100),
+        paidAt: item.paidAt!,
+      }),
+    })))
+  ).filter(({ intent }) => Boolean(intent));
+  const explicitIntent = intentCandidates.length === 1
+    ? intentCandidates[0]
+    : null;
+  const matchingPayoffs = scopedCandidates.map((candidate) => ({
+    candidate,
+    match: matchingEfectyPayoff(candidate, item),
+  }));
+  const payableCandidates = scoreCreditsForPayment(scopedCandidates, item.value);
+  const payoffCandidates = payableCandidates.filter(({ credit: candidate }) =>
+    Boolean(matchingPayoffs.find(({ candidate: match }) => match.id === candidate.id)?.match)
+  );
+  const historicalPayoff = matchingPayoffs.some(({ match }) => match?.hasLaterPayments);
+  const payoffAmbiguous = historicalPayoff ||
+    intentCandidates.length > 1 ||
+    (!explicitIntent && payoffCandidates.length > 0 && scopedCandidates.length !== 1);
+  const credit = explicitIntent?.candidate ||
+    payoffCandidates[0]?.credit || payableCandidates[0]?.credit || null;
+  const matchesOrdinaryInstallment = payoffCandidates.some(
+    ({ exactNextPayment, saldoPendiente }) =>
+      exactNextPayment && Math.round((saldoPendiente - item.value) * 100) > 0
+  );
+  const intendedPayoff = !payoffAmbiguous &&
+    (Boolean(explicitIntent) ||
+      (payoffCandidates.length === 1 && !matchesOrdinaryInstallment));
+
+  if (payoffAmbiguous) {
+    const message = historicalPayoff
+      ? "El valor coincide con una liquidacion anterior, pero hay abonos posteriores. Requiere conciliacion manual."
+      : intentCandidates.length > 1
+        ? "Hay varias instrucciones de liquidacion para la referencia Efecty. Requiere conciliacion manual."
+      : "El valor coincide con una liquidacion, pero la referencia identifica varios creditos vigentes. Requiere conciliacion manual.";
+
+    await updateImportLine(importLine.id, {
+      message,
+      status: "REVISION_REQUERIDA",
+    });
+
+    return {
+      action: "REVISION_REQUERIDA",
+      empresa: item.company,
+      file: sourceFile,
+      lineNumber: item.lineNumber,
+      message,
+      referencia: item.reference,
+      value: item.value,
+    } satisfies EfectyLineResult;
+  }
 
   if (!candidates.length || !credit) {
     const hasCandidates = candidates.length > 0;
@@ -705,12 +867,19 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
 
   const digitalSede = await ensureDigitalCollectionSede();
   const application = await prisma.$transaction(async (tx) => {
-    const locked = await tx.$queryRaw<Array<{ id: number }>>`
+    const lockedCandidates = await tx.$queryRaw<Array<{ id: number }>>`
       SELECT "id"
       FROM "Credito"
-      WHERE "id" = ${credit.id}
+      WHERE COALESCE(estado, '') <> 'ANULADO'
+        AND "pazYSalvoEmitidoAt" IS NULL
+        AND (
+          REGEXP_REPLACE(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = ${item.reference}
+          OR REGEXP_REPLACE(COALESCE("referenciaPago", ''), '[^0-9]', '', 'g') = ${item.reference}
+        )
+      ORDER BY "id" ASC
       FOR UPDATE
     `;
+    const locked = lockedCandidates.filter((candidate) => candidate.id === credit.id);
     const lockedImports = await tx.$queryRaw<EfectyImportRow[]>`
       SELECT id, status, message, "abonoId"
       FROM "EfectyRecaudoImport"
@@ -743,7 +912,12 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
             frecuenciaPago: true,
             id: true,
             planCapitalVigente: true,
+            saldoBaseFinanciado: true,
             montoCredito: true,
+            valorInteres: true,
+            valorFianza: true,
+            contratoSnapshot: true,
+            observacionAdmin: true,
             pazYSalvoEmitidoAt: true,
             plazoMeses: true,
             sedeId: true,
@@ -786,6 +960,37 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
     const balanceInCents = currentPlan
       ? Math.max(0, Math.round(currentPlan.saldoPendiente * 100))
       : 0;
+    const earlyPayoff = intendedPayoff && lockedCredit && item.paidAt &&
+      !previousAbonos.some((abonoItem) => abonoItem.fechaAbono > item.paidAt!)
+      ? calculateCreditEarlyPayoff({
+          contratoSnapshot: lockedCredit.contratoSnapshot,
+          planCapitalVigente: lockedCredit.planCapitalVigente,
+          saldoBaseFinanciado: Number(lockedCredit.saldoBaseFinanciado || 0),
+          montoCredito: Number(lockedCredit.montoCredito || 0),
+          valorInteres: Number(lockedCredit.valorInteres || 0),
+          valorFianza: Number(lockedCredit.valorFianza || 0),
+          valorCuota: Number(lockedCredit.valorCuota || 0),
+          plazoMeses: Number(lockedCredit.plazoMeses || 1),
+          frecuenciaPago: lockedCredit.frecuenciaPago,
+          fechaPrimerPago:
+            lockedCredit.fechaPrimerPago || lockedCredit.fechaProximoPago,
+          fechaProximoPago: lockedCredit.fechaProximoPago,
+          abonos: previousAbonos.map((abonoItem) => ({
+            valor: Number(abonoItem.valor || 0),
+            fechaAbono: abonoItem.fechaAbono,
+          })),
+          today: item.paidAt,
+          settled: Boolean(lockedCredit.pazYSalvoEmitidoAt),
+        })
+      : null;
+    const lockedIntent = explicitIntent && lockedCredit
+      ? await findEfectyPayoffIntent(tx, {
+          creditoId: lockedCredit.id,
+          referencia: item.reference,
+          amountInCents: Math.round(item.value * 100),
+          paidAt: item.paidAt!,
+        })
+      : null;
 
     if (
       !lockedCredit ||
@@ -811,8 +1016,55 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
       };
     }
 
+    if (
+      intendedPayoff &&
+      (!earlyPayoff?.eligible ||
+        Math.round(item.value * 100) !==
+          Math.round(earlyPayoff.capitalPendiente * 100) ||
+        (!explicitIntent && lockedCandidates.length !== 1) ||
+        (explicitIntent &&
+          (lockedIntent?.id !== explicitIntent.intent?.id ||
+            !matchesEfectyIntentQuote(lockedIntent, earlyPayoff))))
+    ) {
+      const message =
+        "La liquidacion cotizada cambio antes de aplicar el recaudo Efecty. Requiere conciliacion manual.";
+
+      await tx.$executeRaw`
+        UPDATE "EfectyRecaudoImport"
+        SET status = 'REVISION_REQUERIDA',
+            message = ${message},
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE id = ${importLine.id}
+      `;
+
+      return {
+        kind: "REVIEW" as const,
+        message,
+      };
+    }
+
+    if (lockedIntent &&
+        !(await consumeEfectyPayoffIntent(tx, lockedIntent.id, item.paymentKey))) {
+      const message =
+        "La instruccion de liquidacion Efecty ya fue utilizada. Requiere conciliacion manual.";
+
+      await tx.$executeRaw`
+        UPDATE "EfectyRecaudoImport"
+        SET status = 'REVISION_REQUERIDA',
+            message = ${message},
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE id = ${importLine.id}
+      `;
+
+      return {
+        kind: "REVIEW" as const,
+        message,
+      };
+    }
+
     const observation = [
       `Pago EFECTY automatico ${item.paymentKey}`,
+      ...(earlyPayoff ? [buildEarlyPayoffObservation(earlyPayoff)] : []),
       `Archivo ${sourceFile} linea ${item.lineNumber}`,
       `Referencia ${item.reference}`,
       `Recaudo digital ${digitalSede.nombre}`,
@@ -858,7 +1110,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
         fechaAbono: abonoItem.fechaAbono,
       })),
     });
-    const finalized = Math.round(plan.saldoPendiente * 100) <= 0;
+    const finalized = Boolean(earlyPayoff) || Math.round(plan.saldoPendiente * 100) <= 0;
     const issuedAt = finalized ? new Date() : null;
     const nextPaymentDate = finalized
       ? null
@@ -870,7 +1122,35 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
 
     await tx.credito.update({
       where: { id: lockedCredit.id },
-      data: finalized
+      data: earlyPayoff
+        ? {
+            bloqueoMora: false,
+            bloqueoMoraAt: null,
+            estado: resolveCreditState({ pazYSalvoEmitidoAt: issuedAt }),
+            fechaProximoPago: null,
+            montoCredito: earlyPayoff.montoCreditoLiquidado,
+            observacionAdmin: [
+              lockedCredit.observacionAdmin,
+              `Liquidacion anticipada Efecty ${item.paymentKey}. Condonado intereses/fianza ${earlyPayoff.interesFianzaCondonado}.`,
+            ].filter(Boolean).join("\n"),
+            pazYSalvoEmitidoAt: issuedAt,
+            valorFianza: earlyPayoff.valorFianzaReconocida,
+            valorInteres: earlyPayoff.valorInteresReconocido,
+            ...(readMassCreditComponents(lockedCredit.contratoSnapshot, lockedCredit)
+              ? {
+                  contratoSnapshot: updateMassCreditComponentsForPayoff(
+                    lockedCredit.contratoSnapshot,
+                    {
+                      montoCredito: earlyPayoff.montoCreditoLiquidado,
+                      valorFianza: earlyPayoff.valorFianzaReconocida,
+                      valorInteres: earlyPayoff.valorInteresReconocido,
+                      valorSeguro: earlyPayoff.valorSeguroReconocido ?? 0,
+                    }
+                  ) as Prisma.InputJsonValue,
+                }
+              : {}),
+          }
+        : finalized
         ? {
             bloqueoMora: false,
             bloqueoMoraAt: null,
@@ -902,7 +1182,9 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
     await tx.$executeRaw`
       UPDATE "EfectyRecaudoImport"
       SET status = 'APLICADO',
-          message = 'Abono aplicado automaticamente',
+          message = ${earlyPayoff
+            ? "Liquidacion anticipada Efecty aplicada automaticamente"
+            : "Abono aplicado automaticamente"},
           "creditoId" = ${lockedCredit.id},
           "abonoId" = ${created.id},
           "updatedAt" = CURRENT_TIMESTAMP
@@ -911,6 +1193,7 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
 
     return {
       abono: created,
+      earlyPayoff: Boolean(earlyPayoff),
       finalized,
       kind: "APPLIED" as const,
     };
@@ -919,6 +1202,18 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
   if (application.kind === "REJECTED") {
     return {
       action: "VALOR_SUPERA_SALDO",
+      empresa: item.company,
+      file: sourceFile,
+      lineNumber: item.lineNumber,
+      message: application.message,
+      referencia: item.reference,
+      value: item.value,
+    } satisfies EfectyLineResult;
+  }
+
+  if (application.kind === "REVIEW") {
+    return {
+      action: "REVISION_REQUERIDA",
       empresa: item.company,
       file: sourceFile,
       lineNumber: item.lineNumber,
@@ -976,7 +1271,9 @@ async function applyEfectyLine(sourceFile: string, item: EfectyLine) {
     empresa: item.company,
     file: sourceFile,
     lineNumber: item.lineNumber,
-    message: "Abono Efecty aplicado automaticamente.",
+    message: application.earlyPayoff
+      ? "Liquidacion anticipada Efecty aplicada automaticamente."
+      : "Abono Efecty aplicado automaticamente.",
     referencia: item.reference,
     value: item.value,
   } satisfies EfectyLineResult;
@@ -1093,7 +1390,9 @@ export async function syncEfectyRecaudosFromSftp(options: EfectySyncOptions = {}
       if (
         config.deleteAfterProcess &&
         !options.dryRun &&
-        result.lines.every((line) => line.action !== "ERROR")
+        result.lines.every((line) =>
+          line.action !== "ERROR" && !PENDING_EFECTY_ACTIONS.has(line.action)
+        )
       ) {
         await sftp.delete(path.posix.join(config.remoteDir, filename));
       }
@@ -1102,7 +1401,9 @@ export async function syncEfectyRecaudosFromSftp(options: EfectySyncOptions = {}
     const lines = files.flatMap((file) => file.lines);
 
     return {
-      ok: lines.every((line) => line.action !== "ERROR"),
+      ok: lines.every((line) =>
+        line.action !== "ERROR" && !PENDING_EFECTY_ACTIONS.has(line.action)
+      ),
       dryRun: Boolean(options.dryRun),
       generatedAt: new Date().toISOString(),
       selection: {
@@ -1121,12 +1422,7 @@ export async function syncEfectyRecaudosFromSftp(options: EfectySyncOptions = {}
         errors: lines.filter((line) => line.action === "ERROR").length,
         files: files.length,
         omitted: lines.filter((line) => line.action === "OMITIDO_EMPRESA").length,
-        pending: lines.filter(
-          (line) =>
-            line.action === "SIN_CREDITO" ||
-            line.action === "VALOR_INVALIDO" ||
-            line.action === "VALOR_SUPERA_SALDO"
-        ).length,
+        pending: lines.filter((line) => PENDING_EFECTY_ACTIONS.has(line.action)).length,
         preview: lines.filter((line) => line.action === "VISTA_PREVIA").length,
         totalLines: lines.length,
       },
