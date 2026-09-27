@@ -19,7 +19,7 @@ export const metadata = {
 
 export default async function AprobacionesPage() {
   const user = await getCreditApprovalSessionUser();
-  if (!user) redirect("/");
+  if (!user) redirect("/aliados");
   if (!canReviewCreditApprovals(user)) redirect("/dashboard");
   const sharedContext = await getApprovalSharedRequestActor();
 

@@ -5,14 +5,18 @@ import {
 } from "@/lib/device-unlock-queue";
 import { syncEfectyRecaudosFromSftp } from "@/lib/efecty-recaudos";
 import { reconcilePendingWompiPayments } from "@/lib/wompi-reconciliation";
+import { getMerchantMailConfig } from "@/lib/merchant-applications";
+import { retryMerchantApplications } from "@/lib/merchant-applications-storage";
 import {
   getDueInternalCronTasks,
   getStartupRecoveryTasks,
-  type InternalCronTask,
+  type InternalCronTask as ScheduledInternalCronTask,
 } from "@/lib/internal-cron-schedule";
 
 const BOGOTA_TIME_ZONE = "America/Bogota";
 const CHECK_INTERVAL_MS = 30_000;
+const MERCHANT_APPLICATION_INTERVAL_MINUTES = 5;
+type InternalCronTask = ScheduledInternalCronTask | "merchant-applications";
 
 type InternalCronState = {
   completed: Set<string>;
@@ -122,6 +126,18 @@ async function runScheduledTask(
   let completed = false;
 
   try {
+    if (taskName === "merchant-applications") {
+      // Query the queue only when server credentials and a FINSER PAY sender exist.
+      if (getMerchantMailConfig()) {
+        const summary = await retryMerchantApplications(10);
+        if (summary.selected > 0) {
+          logCron("Notificaciones de postulaciones procesadas.", summary);
+        }
+      }
+      completed = true;
+      return;
+    }
+
     if (taskName === "unlock") {
       const result = await processPendingDeviceUnlockCommands({ limit: 20 });
 
@@ -162,10 +178,15 @@ async function runScheduledTask(
     logCron("Mora y bloqueos finalizados.", summarizeReport(result));
     completed = true;
   } catch (error) {
-    console.error(
-      `[finserpay-cron] Fallo ${taskName}:`,
-      error instanceof Error ? error.message : error,
-    );
+    if (taskName === "merchant-applications") {
+      // Never expose provider/database errors containing merchant data or secrets.
+      console.error("[finserpay-cron] No se pudo procesar la cola de postulaciones.");
+    } else {
+      console.error(
+        `[finserpay-cron] Fallo ${taskName}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
   } finally {
     state.running.delete(taskName);
 
@@ -183,7 +204,11 @@ async function runScheduledTask(
 
 async function tick() {
   const { dateKey, timeKey } = getBogotaClock();
-  const dueTasks = getDueInternalCronTasks(timeKey);
+  const dueTasks: InternalCronTask[] = getDueInternalCronTasks(timeKey);
+  const minute = Number.parseInt(timeKey.split(":")[1] || "", 10);
+  if (Number.isFinite(minute) && minute % MERCHANT_APPLICATION_INTERVAL_MINUTES === 0) {
+    dueTasks.push("merchant-applications");
+  }
   const moraEffectiveDate = getMoraEffectiveDate(dateKey);
 
   await runScheduledTask(
@@ -228,6 +253,11 @@ async function runStartupRecovery() {
       taskName === "mora" ? moraEffectiveDate : undefined,
     );
   }
+
+  await runScheduledTask(
+    "merchant-applications",
+    `merchant-applications:startup-recovery:${dateKey}:${timeKey}`,
+  );
 }
 
 export function startInternalCron() {
@@ -249,7 +279,7 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50; el inicio respeta esas ventanas, hora Colombia.",
+    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi y postulaciones con correo configurado cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50; el inicio respeta esas ventanas, hora Colombia.",
   );
 
   void runStartupRecovery();

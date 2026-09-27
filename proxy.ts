@@ -98,7 +98,7 @@ function redirectToDashboard(request: NextRequest) {
 
 function redirectToLogin(request: NextRequest) {
   const url = request.nextUrl.clone();
-  url.pathname = "/";
+  url.pathname = "/aliados";
   url.search = "";
 
   return NextResponse.redirect(url);

@@ -1,305 +1,89 @@
-"use client";
-
-import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import {
-  ArrowRight,
-  Check,
-  Eye,
-  EyeOff,
-  FileCheck2,
-  FileText,
-  LockKeyhole,
-  PenLine,
-  ShieldCheck,
-  UserRound,
-} from "lucide-react";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { ArrowRight, ExternalLink, Headphones, ShieldCheck, Smartphone, Wallet } from "lucide-react";
 import FinserBrand from "./_components/finser-brand";
-import FinserSupportLink from "./_components/finser-support-link";
+import PublicHeader from "./_components/public-site/header";
+import MerchantApplicationForm from "./_components/public-site/merchant-application-form";
+import styles from "./_components/public-site/public-site.module.css";
 
-const REMEMBERED_USER_KEY = "finserpay-remembered-user";
+export const metadata: Metadata = {
+  title: "FINSER PAY | Créditos, pagos y comercios aliados",
+  description: "Financiación de iPhone y Android, consulta de crédito, medios de pago y postulación para comercios aliados FINSER PAY.",
+  alternates: { canonical: "https://finserpay.com/" },
+  openGraph: {
+    title: "FINSER PAY | Tu próximo celular empieza aquí",
+    description: "Financiación de iPhone y Android en comercios aliados. Consulta tu crédito, conoce cómo pagar y recibe soporte.",
+    url: "https://finserpay.com/", locale: "es_CO", type: "website",
+    images: [{ url: "https://finserpay.com/assets/public-site/mascota-finser.png", alt: "Mascota de FINSER PAY" }],
+  },
+};
 
-const saleSteps = ["Cliente", "Equipo", "Identidad", "Contrato"];
+// Canal de la página pública aprobada; los portales conservan su canal operativo.
+const PUBLIC_SUPPORT_URL = "https://wa.me/573124085562";
+const features = [
+  { Icon: Smartphone, title: "Consulta tu crédito", text: "Visualiza tus cuotas y el estado de tu financiación." },
+  { Icon: Wallet, title: "Paga con facilidad", text: "Encuentra el canal que prefieras y ten a mano tus datos." },
+  { Icon: Headphones, title: "Estamos para ayudarte", text: "Habla con nuestro equipo si necesitas orientación." },
+];
 
-export default function Home() {
-  const router = useRouter();
-  const [usuario, setUsuario] = useState("");
-  const [clave, setClave] = useState("");
-  const [recordarUsuario, setRecordarUsuario] = useState(false);
-  const [mostrarClave, setMostrarClave] = useState(false);
-  const [mensaje, setMensaje] = useState("");
-  const [mensajeTipo, setMensajeTipo] = useState<"error" | "info" | "success">("info");
-  const [cargando, setCargando] = useState(false);
-
-  useEffect(() => {
-    const rememberedUser = window.localStorage.getItem(REMEMBERED_USER_KEY);
-
-    if (rememberedUser) {
-      setUsuario(rememberedUser);
-      setRecordarUsuario(true);
-    }
-  }, []);
-
-  const login = async (event?: FormEvent<HTMLFormElement>) => {
-    event?.preventDefault();
-
-    try {
-      setCargando(true);
-      setMensaje("");
-
-      const res = await fetch("/api/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ usuario, clave }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setMensajeTipo("error");
-        setMensaje(data.error || "Error al conectar con el servidor");
-        return;
-      }
-
-      if (recordarUsuario) {
-        window.localStorage.setItem(REMEMBERED_USER_KEY, usuario.trim());
-      } else {
-        window.localStorage.removeItem(REMEMBERED_USER_KEY);
-      }
-
-      setMensajeTipo("success");
-      setMensaje(`Bienvenido ${data.usuario.nombre}`);
-
-      window.setTimeout(() => {
-        router.push(data.destination === "/dashboard/aprobaciones" ? data.destination : "/dashboard");
-      }, 700);
-    } catch {
-      setMensajeTipo("error");
-      setMensaje("Error al conectar con el servidor");
-    } finally {
-      setCargando(false);
-    }
-  };
-
+export default function PublicHomePage() {
   return (
-    <main className="grid min-h-[100svh] flex-1 bg-[#fbfaf7] text-[#15171b] xl:grid-cols-[43%_57%]">
-      <section className="flex min-h-[100svh] items-center px-5 py-8 sm:px-10 xl:px-12 2xl:px-20">
-        <div className="mx-auto w-full max-w-[480px]">
-          <div>
-            <FinserBrand showTagline={false} />
-            <p className="ml-20 mt-[-18px] text-sm text-[#70737a] sm:text-base">
-              Acceso comercial seguro
-            </p>
-          </div>
-
-          <div className="mt-12 sm:mt-14">
-            <span className="inline-flex rounded-lg border border-[#a7d52b] px-3 py-1 text-[11px] font-black uppercase text-[#568313]">
-              Acceso sede
-            </span>
-            <h1 className="mt-5 text-[2.25rem] font-black leading-[1.08] sm:text-[2.35rem]">
-              Bienvenido de nuevo
-            </h1>
-            <p className="mt-2 text-sm leading-6 text-[#70737a] sm:text-base">
-              Ingresa con las credenciales asignadas a tu sede.
-            </p>
-          </div>
-
-          <form onSubmit={login} className="mt-8 space-y-5">
-            <label className="block" htmlFor="login-usuario">
-              <span className="mb-2 block text-xs font-black uppercase text-[#555960]">
-                Usuario
-              </span>
-              <span className="relative block">
-                <UserRound
-                  className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#858990]"
-                  strokeWidth={1.7}
-                />
-                <input
-                  id="login-usuario"
-                  type="text"
-                  placeholder="Usuario de la sede"
-                  value={usuario}
-                  onChange={(event) => setUsuario(event.target.value)}
-                  className="h-14 w-full rounded-lg border border-[#cfd2d6] bg-white pl-12 pr-4 text-base text-[#15171b] outline-none transition focus:border-[#7fad18] focus:ring-4 focus:ring-[#a7d52b]/15"
-                  autoComplete="username"
-                  required
-                />
-              </span>
-            </label>
-
-            <label className="block" htmlFor="login-clave">
-              <span className="mb-2 block text-xs font-black uppercase text-[#555960]">
-                Clave
-              </span>
-              <span className="relative block">
-                <LockKeyhole
-                  className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#858990]"
-                  strokeWidth={1.7}
-                />
-                <input
-                  id="login-clave"
-                  type={mostrarClave ? "text" : "password"}
-                  placeholder="Clave de la sede"
-                  value={clave}
-                  onChange={(event) => setClave(event.target.value)}
-                  className="h-14 w-full rounded-lg border border-[#cfd2d6] bg-white pl-12 pr-12 text-base text-[#15171b] outline-none transition focus:border-[#7fad18] focus:ring-4 focus:ring-[#a7d52b]/15"
-                  autoComplete="current-password"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setMostrarClave((current) => !current)}
-                  className="absolute right-2 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-lg text-[#777b82] transition hover:bg-[#f1f2f2] hover:text-[#15171b]"
-                  aria-label={mostrarClave ? "Ocultar clave" : "Mostrar clave"}
-                  title={mostrarClave ? "Ocultar clave" : "Mostrar clave"}
-                >
-                  {mostrarClave ? (
-                    <EyeOff className="h-5 w-5" strokeWidth={1.7} />
-                  ) : (
-                    <Eye className="h-5 w-5" strokeWidth={1.7} />
-                  )}
-                </button>
-              </span>
-            </label>
-
-            <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-[#555960]">
-              <label className="flex cursor-pointer items-center gap-2" htmlFor="recordar-usuario">
-                <input
-                  id="recordar-usuario"
-                  type="checkbox"
-                  checked={recordarUsuario}
-                  onChange={(event) => setRecordarUsuario(event.target.checked)}
-                  className="h-5 w-5 rounded border-[#c6c9ce] accent-[#80ad1b]"
-                />
-                Recordar usuario
-              </label>
-              <FinserSupportLink
-                className="font-semibold underline decoration-[#aeb1b6] underline-offset-4 hover:text-[#15171b]"
-              >
-                ¿Necesitas ayuda?
-              </FinserSupportLink>
-            </div>
-
-            <button
-              type="submit"
-              disabled={cargando}
-              className="relative flex h-14 w-full items-center justify-center rounded-lg bg-[#191a1d] px-14 text-base font-black text-white shadow-[0_12px_26px_rgba(21,23,27,0.16)] transition hover:bg-[#26282c] disabled:cursor-wait disabled:opacity-65"
-            >
-              <span>{cargando ? "Ingresando..." : "Ingresar"}</span>
-              <ArrowRight className="absolute right-5 h-6 w-6 text-[#a9dd2d]" strokeWidth={2} />
-            </button>
-          </form>
-
-          {mensaje ? (
-            <p
-              role={mensajeTipo === "error" ? "alert" : "status"}
-              className={[
-                "mt-4 rounded-lg border px-4 py-3 text-sm font-semibold",
-                mensajeTipo === "error"
-                  ? "border-red-200 bg-red-50 text-red-800"
-                  : mensajeTipo === "success"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                    : "border-[#d6d9dc] bg-white text-[#555960]",
-              ].join(" ")}
-            >
-              {mensaje}
-            </p>
-          ) : null}
-
-          <div className="mt-6 flex items-center justify-center gap-2 text-sm text-[#70737a]">
-            <LockKeyhole className="h-4 w-4" strokeWidth={1.7} />
-            Conexion segura y protegida
-          </div>
-        </div>
-      </section>
-
-      <section className="relative hidden min-h-[100svh] overflow-hidden bg-[#111317] text-white xl:flex">
-        <div className="pointer-events-none absolute -right-24 -top-28 h-[360px] w-[360px] rounded-full border border-[#9ac524]/20" />
-        <div className="pointer-events-none absolute -right-10 -top-20 h-[280px] w-[280px] rounded-full border border-[#9ac524]/15" />
-        <div className="pointer-events-none absolute bottom-[-190px] left-[-70px] h-[430px] w-[430px] rounded-full border border-white/[0.05]" />
-        <div className="pointer-events-none absolute bottom-[-130px] left-[-10px] h-[320px] w-[320px] rounded-full border border-white/[0.04]" />
-
-        <div className="relative z-10 m-auto grid w-full max-w-[920px] grid-cols-[minmax(250px,0.82fr)_minmax(340px,1.18fr)] items-center gap-10 px-10 py-10 2xl:gap-16 2xl:px-16">
-          <div>
-            <p className="text-xs font-black uppercase text-[#a9dd2d]">
-              Plataforma comercial
-            </p>
-            <h2
-              className="mt-6 text-5xl leading-[1.05] 2xl:text-[3.8rem]"
-              style={{ fontFamily: 'Georgia, "Times New Roman", serif' }}
-            >
-              Vende, valida
-              <br />
-              y entrega<span className="text-[#a9dd2d]">.</span>
-            </h2>
-            <p className="mt-8 max-w-[280px] text-lg leading-8 text-[#c8cbd0]">
-              Todo el proceso de financiacion en un solo lugar.
-            </p>
-
-            <div className="mt-32 flex items-center gap-3 text-sm font-semibold text-[#e2e4e7]">
-              <ShieldCheck className="h-5 w-5 text-[#a9dd2d]" strokeWidth={1.8} />
-              <span>Rapido</span>
-              <span className="text-[#a9dd2d]">•</span>
-              <span>Seguro</span>
-              <span className="text-[#a9dd2d]">•</span>
-              <span>Trazable</span>
-            </div>
-          </div>
-
-          <div className="relative min-h-[560px]">
-            <div className="absolute left-0 top-0 w-[330px] rounded-lg border border-white/20 bg-[#17191d] p-7 shadow-[0_28px_72px_rgba(0,0,0,0.34)] 2xl:w-[360px]">
-              <h3 className="text-lg font-black">Nueva venta</h3>
-              <div className="mt-5 border-t border-white/10 pt-2">
-                {saleSteps.map((step, index) => (
-                  <div key={step} className="relative flex min-h-[68px] items-center gap-4">
-                    {index < saleSteps.length - 1 ? (
-                      <span className="absolute bottom-[-6px] left-[14px] top-[41px] w-px bg-[#aeb3ba]" />
-                    ) : null}
-                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#9acb28] text-sm font-black text-white shadow-[0_0_16px_rgba(154,203,40,0.28)]">
-                      {index + 1}
-                    </span>
-                    <span className="text-sm text-[#d8dade]">{step}</span>
-                    <Check className="ml-auto h-5 w-5 text-[#a9dd2d]" strokeWidth={2.2} />
-                  </div>
-                ))}
-
-                <div className="mt-2 flex min-h-[62px] items-center gap-4 rounded-lg border border-[#96c51f]/50 bg-[#101216] px-2">
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border-2 border-[#a9dd2d] text-base font-black">
-                    5
-                  </span>
-                  <span className="text-sm font-black">Listo para entregar</span>
-                </div>
+    <div className={styles.site}>
+      <a className={styles.skipLink} href="#contenido">Saltar al contenido</a>
+      <PublicHeader />
+      <main id="contenido">
+        <section className={styles.hero} id="inicio" aria-labelledby="hero-title">
+          <div className={`${styles.container} ${styles.heroGrid}`}>
+            <div className={styles.heroCopy}>
+              <p className={styles.kicker}>INNOVACIÓN FINANCIERA CON CONFIANZA</p>
+              <h1 id="hero-title">Tu próximo<br /><em>celular</em> empieza<br />aquí.</h1>
+              <p>Financiación de iPhone y Android en comercios aliados. Consulta tu crédito, conoce cómo pagar y recibe soporte desde un mismo lugar.</p>
+              <div className={styles.actions}>
+                <Link className={`${styles.button} ${styles.primary}`} href="/clientes">Soy cliente <ArrowRight size={18} aria-hidden="true" /></Link>
+                <a className={`${styles.button} ${styles.outline}`} href="#comercios">Quiero ser aliado <ArrowRight size={18} aria-hidden="true" /></a>
               </div>
+              <small><ShieldCheck size={17} aria-hidden="true" />La aprobación depende de la evaluación de cada solicitud.</small>
             </div>
-
-            <div className="absolute bottom-6 right-[-32px] w-[220px] rounded-lg border border-[#d8dadd] bg-[#fbfaf7] p-5 text-[#15171b] shadow-[0_24px_58px_rgba(0,0,0,0.34)]">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-black">Credito aprobado</p>
-                <span className="h-2.5 w-2.5 rounded-full bg-[#9acb28]" />
-              </div>
-              <div className="mt-4 divide-y divide-[#dadcdf] border-t border-[#dadcdf]">
-                <div className="flex items-center gap-3 py-3 text-xs font-semibold">
-                  <ShieldCheck className="h-5 w-5 text-[#6f747b]" strokeWidth={1.6} />
-                  Identidad verificada
-                </div>
-                <div className="flex items-center gap-3 py-3 text-xs font-semibold">
-                  <PenLine className="h-5 w-5 text-[#6f747b]" strokeWidth={1.6} />
-                  Pagare firmado
-                </div>
-                <div className="flex items-center gap-3 py-3 text-xs font-semibold">
-                  <FileText className="h-5 w-5 text-[#6f747b]" strokeWidth={1.6} />
-                  Plan de pagos emitido
-                </div>
-              </div>
+            <div className={styles.heroVisual}>
+              <picture>
+                <source media="(prefers-reduced-motion: reduce)" srcSet="/assets/public-site/mascota-finser.png" />
+                {/* Browser-selected animation with a static reduced-motion alternative. */}
+                <img src="/assets/public-site/mascota-animada.webp" alt="Celular negro de FINSER PAY saludando y celebrando" width={512} height={768} fetchPriority="high" />
+              </picture>
             </div>
-
-            <FileCheck2 className="absolute right-8 top-8 h-8 w-8 text-white/10" strokeWidth={1.2} />
           </div>
-        </div>
-      </section>
-    </main>
+        </section>
+        <section className={styles.section} id="clientes" aria-labelledby="clientes-title">
+          <div className={styles.container}>
+            <div className={styles.split}>
+              <div><p className={styles.sectionLabel}>PARA CLIENTES</p><h2 id="clientes-title">Todo lo que necesitas,<br /><span>en un solo lugar.</span></h2></div>
+              <div><p>Revisa el estado de tu crédito, conoce tus próximas cuotas y accede a nuestros canales de atención.</p><Link className={styles.textLink} href="/clientes">Ir al portal de clientes <ArrowRight size={18} aria-hidden="true" /></Link></div>
+            </div>
+            <div className={styles.features}>{features.map(({ Icon, title, text }) => <article key={title}><Icon aria-hidden="true" /><h3>{title}</h3><p>{text}</p></article>)}</div>
+          </div>
+        </section>
+        <section className={`${styles.section} ${styles.payments}`} id="pagos" aria-labelledby="pagos-title">
+          <div className={styles.container}>
+            <div className={`${styles.split} ${styles.heading}`}><div><p className={styles.sectionLabel}>MEDIOS DE PAGO</p><h2 id="pagos-title">Elige cómo pagar<span className={styles.accent}>.</span></h2></div><p>Ten presente tu número de cédula para identificar tu crédito cuando el canal lo solicite.</p></div>
+            <div className={styles.cards}>
+              <Link className={`${styles.paymentCard} ${styles.darkCard}`} href="/clientes"><span className={styles.symbol} aria-hidden="true">↗</span><div><h3>Portal de clientes</h3><p>Consulta tu crédito y las opciones de pago disponibles, incluido Nequi.</p></div><b>Ir al portal <ExternalLink size={17} aria-hidden="true" /></b></Link>
+              <article className={styles.paymentCard}><span className={styles.symbol} aria-hidden="true">B</span><div><h3>Bre-B</h3><p>Llave a nombre de FINSER PAY</p><strong>902052909</strong></div><small>Verifica los datos antes de confirmar.</small></article>
+              <article className={styles.paymentCard}><span className={styles.symbol} aria-hidden="true">E</span><div><h3>Efecty</h3><p>Convenio</p><strong>113950</strong></div><small>Referencia: cédula del titular.</small></article>
+            </div>
+          </div>
+        </section>
+        <section className={`${styles.section} ${styles.merchant}`} id="comercios" aria-labelledby="comercios-title">
+          <div className={`${styles.container} ${styles.merchantGrid}`}>
+            <div><p className={styles.sectionLabel}>COMERCIOS ALIADOS</p><h2 id="comercios-title">Ofrece FINSER PAY en tu negocio<span className={styles.accent}>.</span></h2><p>Postula tu comercio para que nuestro equipo revise tu solicitud y te contacte sobre la asignación de un código de aliado.</p>
+              <ol><li><b>01</b> Registra los datos de tu negocio.</li><li><b>02</b> Revisamos tu postulación.</li><li><b>03</b> Te contactamos para continuar.</li></ol>
+              <Link className={styles.textLink} href="/aliados">Ya soy aliado: ingresar <ArrowRight size={18} aria-hidden="true" /></Link>
+            </div>
+            <MerchantApplicationForm />
+          </div>
+        </section>
+        <section className={styles.support} id="soporte" aria-labelledby="soporte-title"><div className={`${styles.container} ${styles.supportGrid}`}><div><p className={styles.sectionLabel}>SOPORTE FINSER PAY</p><h2 id="soporte-title">¿Necesitas ayuda?</h2><p>Si tienes preguntas sobre tu crédito, cuotas o acceso al portal, escríbenos.</p></div><a className={`${styles.button} ${styles.lime}`} href={PUBLIC_SUPPORT_URL} target="_blank" rel="noopener noreferrer">Escribir por WhatsApp <ArrowRight size={18} aria-hidden="true" /></a></div></section>
+      </main>
+      <footer className={styles.footerShell}><div className={`${styles.container} ${styles.footer}`}><div><a href="#inicio" aria-label="FINSER PAY, inicio"><div className={styles.brand}><FinserBrand dark accentPay wordmarkOnly showTagline={false} /></div></a><p>INNOVACIÓN FINANCIERA CON CONFIANZA</p></div><nav aria-label="Enlaces del pie de página"><Link href="/clientes">Portal de clientes</Link><Link href="/aliados">Acceso de aliados</Link><a href="#pagos">Medios de pago</a><a href="#comercios">Comercios</a><a href={PUBLIC_SUPPORT_URL} target="_blank" rel="noopener noreferrer">Soporte</a></nav><small>© {new Date().getFullYear()} FINSER PAY</small></div></footer>
+    </div>
   );
 }
