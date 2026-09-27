@@ -6,9 +6,11 @@ import { DocumentBlacklistError } from "@/lib/document-blacklist-core";
 import {
   importDocument,
   importSadminNumber,
+  readImportSadminMode,
   validateImportIdentities,
   requireImportConfirmation,
   registerImportedSadminCredit,
+  type ImportSadminMode,
 } from "@/lib/mass-credit-sadmin";
 import { NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
@@ -65,6 +67,7 @@ type MassCreditInputRow = {
 
 type MassCreditBody = {
   commit?: boolean;
+  sadminMode?: unknown;
   sadminConfirmed?: unknown;
   temporaryImeiConfirmed?: unknown;
   requestId?: unknown;
@@ -131,6 +134,7 @@ type ValidationRow = {
     aliado: string;
     cedula: string;
     numeroCreditoSadmin: string;
+    estadoSadmin: "PENDIENTE_CREACION" | "CREADO_SADMIN";
     cliente: string;
     direccion: string;
     correo: string;
@@ -470,9 +474,10 @@ function getRowValue(row: MassCreditInputRow, key: keyof MassCreditInputRow) {
 async function validateRows(
   rows: MassCreditInputRow[],
   db: typeof prisma | Prisma.TransactionClient = prisma,
-  temporaryImeiConfirmed = false
+  temporaryImeiConfirmed = false,
+  sadminMode: ImportSadminMode = "EXISTING"
 ) {
-  const identityErrors = await validateImportIdentities(db, rows);
+  const identityErrors = await validateImportIdentities(db, rows, sadminMode);
   const catalogs = await loadCatalogs(db);
   const { aliadoMap, sedeMap, vendedorMap } = buildLookupMaps(
     catalogs.aliados,
@@ -539,6 +544,9 @@ async function validateRows(
     const rowNumber = index + 1;
     const errors: string[] = [...identityErrors[index]];
     const warnings: string[] = [];
+    if (sadminMode === "PENDING") {
+      warnings.push("Pendiente de creación en SADMIN: registra y confirma el número desde Aprobaciones cuando exista en SADMIN");
+    }
     const aliadoInput = sanitizeText(getRowValue(row, "aliado"));
     const sedeInput = sanitizeText(getRowValue(row, "sede"));
     const vendedorInput = sanitizeText(getRowValue(row, "vendedor"));
@@ -649,6 +657,7 @@ async function validateRows(
         aliado: aliado?.nombre || aliadoInput,
         cedula,
         numeroCreditoSadmin,
+        estadoSadmin: sadminMode === "PENDING" ? "PENDIENTE_CREACION" : "CREADO_SADMIN",
         cliente,
         direccion: customer.direccion,
         correo: customer.correo,
@@ -830,6 +839,7 @@ export async function POST(req: Request) {
     }
 
     const body = (await req.json()) as MassCreditBody;
+    const sadminMode = readImportSadminMode(body.sadminMode);
     const rows = Array.isArray(body.rows) ? body.rows : [];
     const commit = body.commit === true;
     const temporaryImeiConfirmed = body.temporaryImeiConfirmed === true;
@@ -859,13 +869,14 @@ export async function POST(req: Request) {
     }
 
     if (!commit) {
-      const validation = await validateRows(rows, prisma, temporaryImeiConfirmed);
+      const validation = await validateRows(rows, prisma, temporaryImeiConfirmed, sadminMode);
       return NextResponse.json({ ok: validation.summary.invalid === 0, commit: false, rows: validation.rows, summary: validation.summary });
     }
-    const requestId = requireImportConfirmation(body);
+    const requestId = requireImportConfirmation(body, sadminMode);
     const requestHash = createHash("sha256").update(JSON.stringify({
       rows, userId: access.user.id,
       ...(temporaryImeiConfirmed ? { temporaryImeiConfirmed: true } : {}),
+      ...(sadminMode === "PENDING" ? { sadminMode: "PENDING" } : {}),
     })).digest("hex");
     await ensureCreditDeviceReplacementSchema();
     const result = await prisma.$transaction(async (tx) => {
@@ -888,7 +899,7 @@ export async function POST(req: Request) {
       for (const document of documents) {
         await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `DOCUMENT_BLACKLIST:${document}`);
       }
-      const validation = await validateRows(rows, tx, temporaryImeiConfirmed);
+      const validation = await validateRows(rows, tx, temporaryImeiConfirmed, sadminMode);
       if (validation.summary.invalid > 0) {
         return { ok: false, commit: false, rows: validation.rows, summary: validation.summary };
       }
@@ -928,9 +939,11 @@ export async function POST(req: Request) {
           createdByUserName: access.user.nombre,
         });
         Object.assign(snapshot.origen, {
-          requestId, requestHash, numeroCreditoSadmin: row.numeroCreditoSadmin,
+          requestId, requestHash, numeroCreditoSadmin: sadminMode === "PENDING" ? null : row.numeroCreditoSadmin,
           ...(temporaryImeiConfirmed ? { imeiTemporalPendienteCorreccion: true } : {}),
-          sadminConfirmation: "ADMIN_EXISTING_SADMIN", importReceipt: validation.rows[row.rowNumber - 1],
+          sadminConfirmation: sadminMode === "PENDING" ? "PENDING_SADMIN" : "ADMIN_EXISTING_SADMIN",
+          ...(sadminMode === "EXISTING" ? { sadminConfirmedAt: createdAt.toISOString() } : {}),
+          importReceipt: validation.rows[row.rowNumber - 1],
         });
         if (temporaryImeiConfirmed) Object.assign(snapshot.equipo, { imeiTemporal: true });
         const credit = await tx.credito.create({
@@ -982,10 +995,16 @@ export async function POST(req: Request) {
           },
         });
 
-        await registerImportedSadminCredit(tx, {
-          creditoId: credit.id, numeroCredito: row.numeroCreditoSadmin, actor: access.user,
-          requestId, rowNumber: row.rowNumber, cedula: row.cedula, confirmedAt: createdAt,
-        });
+        const sadminRegistration = {
+          creditoId: credit.id, actor: access.user, requestId, rowNumber: row.rowNumber, cedula: row.cedula,
+        };
+        if (sadminMode === "PENDING") {
+          await registerImportedSadminCredit(tx, { ...sadminRegistration, sadminMode, createdAt });
+        } else {
+          await registerImportedSadminCredit(tx, {
+            ...sadminRegistration, sadminMode, numeroCredito: row.numeroCreditoSadmin, confirmedAt: createdAt,
+          });
+        }
         created.push({
           folio: credit.folio,
           id: credit.id,

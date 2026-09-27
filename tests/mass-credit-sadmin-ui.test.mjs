@@ -297,6 +297,129 @@ test("customer errors from the real API appear by row in preview and block UI cr
   assert.equal(button(h, "Crear creditos").props.disabled, true);
   button(h, "Descargar resultado").props.onClick(); await h.flush();
   const result = (await h.downloads[0].text()).replace(/^\uFEFF/, "").split("\n");
-  assert.deepEqual(result[0].split(";").slice(-4), ["DIRECCION", "CORREO", "FECHA DE NACIMIENTO", "SEXO"]);
+  assert.deepEqual(result[0].split(";").slice(-5), ["DIRECCION", "CORREO", "FECHA DE NACIMIENTO", "SEXO", "ESTADO SADMIN"]);
   assert.match(result[1], /correo-sin-arroba/);
+});
+
+const sadminSelector = h => h.find(node => node.props?.label === "Estado de los créditos en SADMIN");
+const blankSadminCsv = csv.replace(";000ABC;", ";;");
+const pendingPreview = rows => {
+  const result = preview(rows);
+  return { ...result, rows: result.rows.map(row => ({ ...row, normalized: { ...row.normalized, estadoSadmin: "PENDIENTE_CREACION" } })) };
+};
+const pendingCreated = rows => {
+  const result = pendingPreview(rows);
+  return { ...result, commit: true, created: rows.length, summary: { ...result.summary, created: rows.length },
+    rows: result.rows.map((row, i) => ({ ...row, createdCreditoId: i + 1, createdFolio: `FC-PENDING-${i + 1}` })) };
+};
+
+test("pending CSV mode leaves numbers blank and confirms creation in FINSER PAY with an explicit pending-SADMIN result", async () => {
+  const requests = [];
+  const h = mount(async (_url, options) => {
+    if (!options?.body) return Response.json(catalog);
+    const body = JSON.parse(options.body); requests.push(body);
+    return Response.json(body.commit ? pendingCreated(body.rows) : pendingPreview(body.rows));
+  });
+  await h.flush();
+  assert.equal(sadminSelector(h).props.value, "EXISTING");
+  assert.deepEqual(Array.from(sadminSelector(h).props.options, option => option.value), ["EXISTING", "PENDING"]);
+  sadminSelector(h).props.onChange("PENDING"); await h.flush();
+  assert.match(h.text(), /Deja vacío el número de crédito en SADMIN/);
+  await upload(h, blankSadminCsv); button(h, "Validar archivo").props.onClick(); await h.flush();
+  assert.equal(requests[0].sadminMode, "PENDING"); assert.equal(requests[0].sadminConfirmed, false);
+  assert.equal(requests[0].rows[0].numeroCreditoSadmin, ""); assert.match(h.text(), /Pendiente de creación en SADMIN/);
+  button(h, "Crear creditos").props.onClick(); await h.flush();
+  const dialog = h.find(node => node.type === "ConfirmDialog"); assert.equal(dialog.props.open, true);
+  assert.equal(dialog.props.confirmLabel, "Crear y dejar pendiente en SADMIN");
+  assert.match(dialog.props.description, /Aprobaciones de SADMIN como pendientes de creación/);
+  assert.match(dialog.props.description, /administrador deberá registrar el número real/);
+  assert.doesNotMatch(dialog.props.description, /ya existen en SADMIN/);
+  dialog.props.onConfirm(); await h.flush();
+  assert.equal(requests[1].commit, true); assert.equal(requests[1].sadminConfirmed, false); assert.equal(requests[1].sadminMode, "PENDING");
+  assert.deepEqual(requests[1].rows, requests[0].rows);
+  assert.match(h.text(), /1 crédito\(s\) creados en FINSER PAY; pendientes de creación en SADMIN/);
+  assert.doesNotMatch(h.text(), /Confirmado en SADMIN/);
+  button(h, "Descargar resultado").props.onClick(); await h.flush();
+  const downloaded = (await h.downloads[0].text()).replace(/^\uFEFF/, "").split("\n");
+  assert.equal(downloaded[0].split(";").at(-1), "ESTADO SADMIN");
+  assert.equal(downloaded[1].split(";").at(-1), "PENDIENTE_CREACION");
+});
+
+test("individual pending form sends complete customer values and no SADMIN attestation", async () => {
+  const requests = [];
+  const h = mount(async (_url, options) => {
+    if (!options?.body) return Response.json(catalog);
+    const body = JSON.parse(options.body); requests.push(body);
+    return Response.json(body.commit ? pendingCreated(body.rows) : pendingPreview(body.rows));
+  });
+  await h.flush(); button(h, "Credito individual").props.onClick(); await h.flush();
+  sadminSelector(h).props.onChange("PENDING"); await h.flush();
+  for (const [label, value] of [["Dirección", "Carrera 10 #20-30"], ["Correo electrónico", "PENDING@Example.Test"],
+    ["Fecha de nacimiento", "1990-01-15"], ["Sexo", "FEMENINO"]]) {
+    h.find(node => node.props?.label === label).props.onChange(value); await h.flush();
+  }
+  button(h, "Validar credito").props.onClick(); await h.flush();
+  button(h, "Crear credito").props.onClick(); await h.flush();
+  h.find(node => node.type === "ConfirmDialog").props.onConfirm(); await h.flush();
+  assert.equal(requests[0].rows.length, 1); assert.equal(requests[1].rows.length, 1);
+  for (const body of requests) {
+    assert.equal(body.sadminMode, "PENDING"); assert.equal(body.sadminConfirmed, false); assert.equal(body.rows[0].numeroCreditoSadmin, "");
+    assert.equal(body.rows[0].direccion, "Carrera 10 #20-30"); assert.equal(body.rows[0].correo, "PENDING@Example.Test");
+    assert.equal(body.rows[0].fechaNacimiento, "1990-01-15"); assert.equal(body.rows[0].sexo, "FEMENINO");
+  }
+  assert.match(h.text(), /creados en FINSER PAY; pendientes de creación en SADMIN/);
+  assert.doesNotMatch(h.text(), /Confirmado en SADMIN/);
+});
+
+test("switching SADMIN mode invalidates previously validated CSV and individual rows and closes confirmation", async () => {
+  const requests = [];
+  const h = mount(async (_url, options) => {
+    if (!options?.body) return Response.json(catalog);
+    const body = JSON.parse(options.body); requests.push(body); return Response.json(preview(body.rows));
+  });
+  await h.flush(); await upload(h, csv);
+  button(h, "Validar archivo").props.onClick(); await h.flush(); assert.equal(button(h, "Crear creditos").props.disabled, false);
+  button(h, "Credito individual").props.onClick(); await h.flush();
+  h.find(node => node.props?.label === "Número de crédito en SADMIN").props.onChange("000INDIVIDUAL"); await h.flush();
+  button(h, "Validar credito").props.onClick(); await h.flush(); assert.equal(button(h, "Crear credito").props.disabled, false);
+  button(h, "Crear credito").props.onClick(); await h.flush(); assert.equal(h.find(node => node.type === "ConfirmDialog").props.open, true);
+  sadminSelector(h).props.onChange("PENDING"); await h.flush();
+  assert.equal(h.find(node => node.type === "ConfirmDialog").props.open, false);
+  assert.equal(button(h, "Crear credito").props.disabled, true); assert.match(h.text(), /Vuelve a validar/);
+  button(h, "Carga de archivo").props.onClick(); await h.flush(); assert.equal(button(h, "Crear creditos").props.disabled, true);
+  button(h, "Validar archivo").props.onClick(); await h.flush(); assert.equal(requests.at(-1).sadminMode, "PENDING");
+  assert.equal(button(h, "Crear creditos").props.disabled, false);
+});
+
+test("pending save failure offers confirmed retry with the same ID; switching mode resets its operation ID", async () => {
+  const requests = []; let fail = true;
+  const h = mount(async (_url, options) => {
+    if (!options?.body) return Response.json(catalog);
+    const body = JSON.parse(options.body); requests.push(body);
+    if (body.commit && fail) { fail = false; throw new Error("Error de conexión: reintenta"); }
+    if (!body.commit) return Response.json(body.sadminMode === "PENDING" ? pendingPreview(body.rows) : preview(body.rows));
+    return Response.json(body.sadminMode === "PENDING" ? pendingCreated(body.rows) : created(body.rows));
+  });
+  await h.flush(); sadminSelector(h).props.onChange("PENDING"); await h.flush(); await upload(h, blankSadminCsv);
+  button(h, "Validar archivo").props.onClick(); await h.flush();
+  button(h, "Crear creditos").props.onClick(); await h.flush(); h.find(node => node.type === "ConfirmDialog").props.onConfirm(); await h.flush();
+  const failedId = requests.at(-1).requestId; assert.match(h.text(), /Error de conexión/);
+  button(h, "Reintentar guardado").props.onClick(); await h.flush(); h.find(node => node.type === "ConfirmDialog").props.onConfirm(); await h.flush();
+  assert.equal(requests.at(-1).requestId, failedId); assert.equal(requests.at(-1).sadminConfirmed, false);
+  sadminSelector(h).props.onChange("EXISTING"); await h.flush(); await upload(h, csv);
+  button(h, "Validar archivo").props.onClick(); await h.flush();
+  button(h, "Crear creditos").props.onClick(); await h.flush(); h.find(node => node.type === "ConfirmDialog").props.onConfirm(); await h.flush();
+  assert.notEqual(requests.at(-1).requestId, failedId); assert.equal(requests.at(-1).sadminMode, "EXISTING"); assert.equal(requests.at(-1).sadminConfirmed, true);
+});
+
+test("pending CSV and Excel templates keep the SADMIN column but omit an invented example number", async () => {
+  const h = mount(async () => Response.json(catalog)); await h.flush(); sadminSelector(h).props.onChange("PENDING"); await h.flush();
+  button(h, "Descargar plantilla CSV").props.onClick(); await h.flush();
+  const downloaded = (await h.downloads[0].text()).replace(/^\uFEFF/, "").split("\n");
+  assert.equal(downloaded[0].split(";")[15], "Número de crédito en SADMIN");
+  assert.equal(downloaded[1].split(";")[15], ""); assert.equal(downloaded[0].split(";").length, 20);
+  button(h, "Plantilla Excel para CSV").props.onClick(); await waitFor(h, () => h.downloads.length === 2);
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(await h.downloads[1].arrayBuffer());
+  const sheet = workbook.getWorksheet("Creditos");
+  assert.equal(sheet.getCell("P1").value, "Número de crédito en SADMIN"); assert.equal(sheet.getCell("P2").value, ""); assert.equal(sheet.columnCount, 20);
 });
