@@ -44,6 +44,7 @@ export type SadminCreditRow = {
   saldoCapital: number;
   saldoFianza: number;
   saldoIntereses: number;
+  saldoSeguro?: number;
   diasVencidos: number;
   ultimoPago: string | null;
   sadmin: SadminRegistration;

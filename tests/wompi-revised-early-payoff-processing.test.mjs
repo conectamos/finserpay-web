@@ -11,6 +11,7 @@ const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const paymentPlans = await jiti.import("../lib/credit-payment-plan.ts");
 const principalPlans = await jiti.import("../lib/credit-principal-payment.ts");
 const earlyPayoffs = await jiti.import("../lib/credit-early-payoff.ts");
+const massFinancial = await jiti.import("../lib/mass-credit-financial-components.ts");
 const payoffIntents = await jiti.import("../lib/wompi-early-payoff-intent.ts");
 const nextPaymentDate = await jiti.import("../lib/credit-next-payment-date.ts");
 const factory = await jiti.import("../lib/credit-factory.ts");
@@ -60,8 +61,7 @@ function fixture() {
   return { credit, payments, payoff, intent };
 }
 
-function harness() {
-  const initial = fixture();
+function harness(initial = fixture()) {
   const state = { ...clone(initial), caja: [], creditWrites: [], receiptWrites: [], locks: [], unlocks: new Map() };
   const intentRead = () => ({ ...clone(state.intent), credito: clone(state.credit) });
   const tx = {
@@ -118,6 +118,7 @@ function harness() {
     "@/lib/credit-payment-plan": paymentPlans,
     "@/lib/credit-next-payment-date": nextPaymentDate,
     "@/lib/credit-early-payoff": earlyPayoffs,
+    "@/lib/mass-credit-financial-components": massFinancial,
     "@/lib/wompi-early-payoff-intent": payoffIntents,
     "@/lib/credit-factory": factory,
     "@/lib/digital-collection-sede": { DIGITAL_COLLECTION_CAJA_CONCEPT: "RECAUDO_DIGITAL", ensureDigitalCollectionSede: async () => ({ id: 77, nombre: "Digital prueba" }) },
@@ -135,10 +136,10 @@ function harness() {
   }, { filename: "lib/wompi-payment-processing.ts" });
   async function process(overrides = {}) {
     const transaction = { id: "WOMPI-TRANSACTION-TEST-1", reference: state.intent.reference,
-      status: "APPROVED", amount_in_cents: 264_726_400, currency: "COP", payment_method_type: "NEQUI", ...overrides };
+      status: "APPROVED", amount_in_cents: state.intent.amountInCents, currency: "COP", payment_method_type: "NEQUI", ...overrides };
     return loaded.exports.processApprovedWompiPayment(transaction, { data: { transaction }, event: "transaction.updated" });
   }
-  return { state, initial, process };
+  return { state, initial, process, repair: () => loaded.exports.repairProcessedWompiEarlyPayoffIntent(state.intent.id) };
 }
 
 function assertNoFinancialWrite(flow) {
@@ -382,5 +383,86 @@ for (const scenario of [
     assert.equal(flow.intents.length, 0);
     assert.equal(flow.providerCalls.length, 0);
     assert.ok(flow.locks.some((query) => query.includes('FROM "Credito"')));
+  });
+}
+
+function markedMassFixture() {
+  const initial = fixture();
+  const marker = massFinancial.calculateMassCreditComponents({
+    capital: 2800000, cuota: 119350, numeroCuotas: 48,
+    fianzaPorcentaje: 75, seguroCuotaPorcentaje: 0.03,
+  });
+  initial.credit = {
+    ...initial.credit, montoCredito: marker.total, valorCuota: marker.cuota,
+    saldoBaseFinanciado: marker.capital, plazoMeses: marker.numeroCuotas,
+    valorInteres: marker.intereses, valorFianza: marker.fianza,
+    planCapitalVigente: null, fechaPrimerPago: new Date("2030-09-17T12:00:00Z"),
+    contratoSnapshot: { origen: { tipo: "IMPORTACION_MASIVA", audit: "authorized synthetic correction" },
+      financiero: { componentesMasivos: { ...marker, audit: "keep" } } },
+  };
+  initial.payments = [{ id: 1, valor: marker.cuota, fechaAbono: new Date("2026-09-20T12:00:00Z"), observacion: "Synthetic receipt" }];
+  initial.payoff = earlyPayoffs.calculateCreditEarlyPayoff({ ...initial.credit, abonos: initial.payments });
+  initial.intent = { ...initial.intent, amount: initial.payoff.capitalPendiente,
+    amountInCents: Math.round(initial.payoff.capitalPendiente * 100),
+    cuotaNumeros: earlyPayoffs.buildEarlyPayoffIntentMeta(initial.payoff) };
+  return initial;
+}
+
+function assertClosedMassMarker(flow) {
+  const marker = massFinancial.readMassCreditComponents(flow.state.credit.contratoSnapshot, flow.state.credit);
+  assert.ok(marker, "closed financial marker must match every persisted component");
+  assert.equal(marker.liquidacionAnticipada, true);
+  assert.equal(marker.seguro, flow.initial.payoff.valorSeguroReconocido);
+  assert.ok(marker.seguro > 0);
+  assert.equal(marker.cuota, 119350);
+  assert.equal(marker.numeroCuotas, 48);
+  assert.equal(marker.total, flow.initial.payoff.montoCreditoLiquidado);
+  assert.equal(Math.round((marker.capital + marker.fianza + marker.intereses + marker.seguro) * 100), Math.round(marker.total * 100));
+  assert.equal(flow.state.credit.contratoSnapshot.financiero.componentesMasivos.audit, "keep");
+  assert.deepEqual(snapshot(flow.state.credit.contratoSnapshot.origen), snapshot(flow.initial.credit.contratoSnapshot.origen));
+  assert.equal(flow.state.credit.valorCuota, 119350);
+  assert.equal(flow.state.credit.plazoMeses, 48);
+  assert.deepEqual(flow.state.credit.fechaPrimerPago, flow.initial.credit.fechaPrimerPago);
+}
+
+test("approved Wompi closes a marked imported credit preserving insurance, quota, term and audit", async () => {
+  const flow = harness(markedMassFixture());
+  const result = await flow.process();
+  assert.equal(result.applied, true);
+  assert.equal(flow.state.receiptWrites.length, 1);
+  assert.equal(flow.state.receiptWrites[0].valor, flow.initial.payoff.capitalPendiente);
+  assert.equal(flow.state.caja[0].valor, flow.initial.payoff.capitalPendiente);
+  assert.equal(flow.state.creditWrites.length, 1);
+  assertClosedMassMarker(flow);
+  const before = snapshot(flow.state.credit);
+  const duplicate = await flow.process();
+  assert.equal(duplicate.alreadyProcessed, true);
+  assert.deepEqual(snapshot(flow.state.credit), before);
+  assert.equal(flow.state.receiptWrites.length, 1);
+});
+
+test("repairing an already processed Wompi payoff retains the marked insurance without registering cash twice", async () => {
+  const initial = markedMassFixture();
+  initial.payments.push({ id: 5, valor: initial.payoff.capitalPendiente,
+    fechaAbono: new Date("2026-09-26T12:00:00Z"), observacion: "Wompi payoff captured but not yet finalized" });
+  initial.intent = { ...initial.intent, status: "APPROVED", processedAbonoId: 5, transactionId: "WOMPI-TRANSACTION-TEST-1" };
+  const flow = harness(initial);
+  const result = await flow.repair();
+  assert.equal(result.action, "REPAIRED");
+  assert.equal(flow.state.creditWrites.length, 1);
+  assert.equal(flow.state.receiptWrites.length, 0);
+  assert.equal(flow.state.caja.length, 0);
+  assertClosedMassMarker(flow);
+});
+
+for (const status of ["PENDING", "DECLINED", "ERROR"]) {
+  test(`a marked credit with provider status ${status} retains its original components`, async () => {
+    const flow = harness(markedMassFixture());
+    const before = snapshot(flow.state.credit);
+    const result = await flow.process({ status });
+    assert.equal(result.applied, false);
+    assert.equal(flow.state.creditWrites.length, 0);
+    assert.equal(flow.state.receiptWrites.length, 0);
+    assert.deepEqual(snapshot(flow.state.credit), before);
   });
 }

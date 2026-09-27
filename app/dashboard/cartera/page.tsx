@@ -400,6 +400,9 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
         valorEquipoTotal: Number(credito.valorEquipoTotal || 0),
         valorFianza: Number(credito.valorFianza || 0),
         valorInteres: Number(credito.valorInteres || 0),
+        contratoSnapshot: credito.contratoSnapshot,
+        valorCuota: Number(credito.valorCuota || 0),
+        plazoMeses: credito.plazoMeses,
       });
       const plataforma = resolveAllyPaymentPlatform(
         credito.contratoSnapshot,

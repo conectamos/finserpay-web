@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { readMassCreditComponents } from "@/lib/mass-credit-financial-components";
 import { resolveCreditSellerDisplay } from "@/lib/credit-assigned-seller";
 import { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
@@ -177,7 +178,10 @@ function serializeCredit(
     { imei: item.imei, deviceUid: item.deviceUid }
   );
 
+  const massComponents = readMassCreditComponents(item.contratoSnapshot, item);
+
   return {
+    ...(massComponents ? { valorSeguro: massComponents.seguro, seguroCuotaPorcentaje: massComponents.seguroCuotaPorcentaje } : {}),
     id: item.id,
     folio: item.folio,
     clienteNombre: item.clienteNombre,

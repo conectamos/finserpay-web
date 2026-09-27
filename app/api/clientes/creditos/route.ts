@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { readMassCreditComponents } from "@/lib/mass-credit-financial-components";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { calculateCreditEarlyPayoff } from "@/lib/credit-early-payoff";
 import { sanitizeSearch } from "@/lib/credit-factory";
@@ -41,6 +42,7 @@ export async function GET(req: Request) {
         equipoModelo: true,
         imei: true,
         deviceUid: true,
+        contratoSnapshot: true,
         saldoBaseFinanciado: true,
         planCapitalVigente: true,
         montoCredito: true,
@@ -99,6 +101,7 @@ export async function GET(req: Request) {
         settled,
       });
       const earlyPayoff = calculateCreditEarlyPayoff({
+        contratoSnapshot: credit.contratoSnapshot,
         settled: Boolean(credit.pazYSalvoEmitidoAt),
         planCapitalVigente: credit.planCapitalVigente,
         saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
@@ -116,7 +119,10 @@ export async function GET(req: Request) {
         })),
       });
 
+      const massComponents = readMassCreditComponents(credit.contratoSnapshot, credit);
+
       return {
+        ...(massComponents ? { valorSeguro: massComponents.seguro, seguroCuotaPorcentaje: massComponents.seguroCuotaPorcentaje } : {}),
         id: credit.id,
         folio: credit.folio,
         clienteNombre: credit.clienteNombre,

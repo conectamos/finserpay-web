@@ -156,6 +156,7 @@ export async function POST(req: Request) {
         clienteDocumento: true,
         clienteCorreo: true,
         clienteTelefono: true,
+        contratoSnapshot: true,
         saldoBaseFinanciado: true,
         planCapitalVigente: true,
         montoCredito: true,
@@ -218,6 +219,7 @@ export async function POST(req: Request) {
 
     if (wantsEarlyPayoff) {
       const earlyPayoff = calculateCreditEarlyPayoff({
+        contratoSnapshot: credit.contratoSnapshot,
         planCapitalVigente: credit.planCapitalVigente,
         saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
         montoCredito: Number(credit.montoCredito || 0),
@@ -306,6 +308,7 @@ export async function POST(req: Request) {
               montoCredito: true,
               pazYSalvoEmitidoAt: true,
               plazoMeses: true,
+              contratoSnapshot: true,
               saldoBaseFinanciado: true,
               valorCuota: true,
               valorFianza: true,
@@ -352,6 +355,7 @@ export async function POST(req: Request) {
 
       if (wantsEarlyPayoff) {
         const lockedEarlyPayoff = calculateCreditEarlyPayoff({
+          contratoSnapshot: lockedCredit.contratoSnapshot,
           planCapitalVigente: lockedCredit.planCapitalVigente,
           saldoBaseFinanciado: Number(
             lockedCredit.saldoBaseFinanciado || 0

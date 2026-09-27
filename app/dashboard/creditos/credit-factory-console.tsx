@@ -593,6 +593,8 @@ type CreditItem = {
   valorInteres: number;
   fianzaPorcentaje: number;
   valorFianza: number;
+  valorSeguro?: number;
+  seguroCuotaPorcentaje?: number;
   valorCuota: number;
   valorCuotaComercial?: number | null;
   fechaCredito: string;
@@ -19674,6 +19676,14 @@ export default function CreditFactoryConsole({
                     detail={`Porcentaje: ${formatPercent(selectedCredit.fianzaPorcentaje)}`}
                     tone="slate"
                   />
+                  {Number(selectedCredit.valorSeguro || 0) > 0 && (
+                    <InfoTile
+                      label="Seguro"
+                      value={currency(Number(selectedCredit.valorSeguro || 0))}
+                      detail={`Por cuota: ${formatPercent(selectedCredit.seguroCuotaPorcentaje)}`}
+                      tone="slate"
+                    />
+                  )}
                   <InfoTile
                     label="Revision remota"
                     value={dateTime(selectedCredit.equalityLastCheckAt)}

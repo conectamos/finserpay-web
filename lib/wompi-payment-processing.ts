@@ -1,4 +1,5 @@
 import type { Prisma } from "@/app/generated/prisma/client";
+import { readMassCreditComponents, updateMassCreditComponentsForPayoff } from "@/lib/mass-credit-financial-components";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { resolveNextPaymentDateAfterPayment } from "@/lib/credit-next-payment-date";
 import {
@@ -290,6 +291,7 @@ export async function repairProcessedWompiEarlyPayoffIntent(
             observacionAdmin: true,
             pazYSalvoEmitidoAt: true,
             plazoMeses: true,
+            contratoSnapshot: true,
             saldoBaseFinanciado: true,
             valorCuota: true,
             valorFianza: true,
@@ -417,6 +419,7 @@ export async function repairProcessedWompiEarlyPayoffIntent(
       (item) => item.id !== processedAbono.id
     );
     const earlyPayoff = calculateCreditEarlyPayoff({
+      contratoSnapshot: lockedCredit.contratoSnapshot,
       planCapitalVigente: lockedCredit.planCapitalVigente,
       saldoBaseFinanciado: Number(lockedCredit.saldoBaseFinanciado || 0),
       montoCredito: Number(lockedCredit.montoCredito || 0),
@@ -473,6 +476,14 @@ export async function repairProcessedWompiEarlyPayoffIntent(
         pazYSalvoEmitidoAt: issuedAt,
         valorFianza: earlyPayoff.valorFianzaReconocida,
         valorInteres: earlyPayoff.valorInteresReconocido,
+        ...(readMassCreditComponents(lockedCredit.contratoSnapshot, lockedCredit) ? {
+          contratoSnapshot: updateMassCreditComponentsForPayoff(lockedCredit.contratoSnapshot, {
+            montoCredito: earlyPayoff.montoCreditoLiquidado,
+            valorFianza: earlyPayoff.valorFianzaReconocida,
+            valorInteres: earlyPayoff.valorInteresReconocido,
+            valorSeguro: earlyPayoff.valorSeguroReconocido ?? 0,
+          }) as Prisma.InputJsonValue,
+        } : {}),
       },
     });
     const repairedObservation = buildRepairedPayoffPaymentObservation({
@@ -598,6 +609,7 @@ export async function processApprovedWompiPayment(
           id: true,
           folio: true,
           clienteNombre: true,
+          contratoSnapshot: true,
           saldoBaseFinanciado: true,
           planCapitalVigente: true,
           montoCredito: true,
@@ -901,6 +913,7 @@ export async function processApprovedWompiPayment(
         observacionAdmin: true,
         pazYSalvoEmitidoAt: true,
         plazoMeses: true,
+        contratoSnapshot: true,
         saldoBaseFinanciado: true,
         sedeId: true,
         usuarioId: true,
@@ -958,6 +971,7 @@ export async function processApprovedWompiPayment(
 
     const earlyPayoff = earlyPayoffIntent
       ? calculateCreditEarlyPayoff({
+          contratoSnapshot: lockedCredit.contratoSnapshot,
           planCapitalVigente: lockedCredit.planCapitalVigente,
           saldoBaseFinanciado: Number(lockedCredit.saldoBaseFinanciado || 0),
           montoCredito: Number(lockedCredit.montoCredito || 0),
@@ -1121,6 +1135,14 @@ export async function processApprovedWompiPayment(
             pazYSalvoEmitidoAt: payoffIssuedAt,
             valorFianza: earlyPayoff.valorFianzaReconocida,
             valorInteres: earlyPayoff.valorInteresReconocido,
+            ...(readMassCreditComponents(lockedCredit.contratoSnapshot, lockedCredit) ? {
+              contratoSnapshot: updateMassCreditComponentsForPayoff(lockedCredit.contratoSnapshot, {
+                montoCredito: earlyPayoff.montoCreditoLiquidado,
+                valorFianza: earlyPayoff.valorFianzaReconocida,
+                valorInteres: earlyPayoff.valorInteresReconocido,
+                valorSeguro: earlyPayoff.valorSeguroReconocido ?? 0,
+              }) as Prisma.InputJsonValue,
+            } : {}),
           }
         : paymentCompletesCredit
           ? {
