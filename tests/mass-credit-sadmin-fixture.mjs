@@ -40,6 +40,7 @@ const validImeiFor = index => {
 export const sample = (index = 1, changes = {}) => ({
   aliado: "ALIADO PRUEBA", sede: "SEDE PRUEBA", vendedor: "VENDEDOR PRUEBA", cedula: `90000${index}`,
   numeroCreditoSadmin: `000-SADMIN-${index}`, cliente: `CLIENTE PRUEBA ${index}`, telefono: "3001234567",
+  direccion: "Calle 1 #2-3", correo: `cliente${index}@example.test`, fechaNacimiento: "1990-01-15", sexo: "MASCULINO",
   referencia: "EQUIPO PRUEBA", imei: validImeiFor(index), fecha: "2026-09-01", fechaPago: "2026-09-15",
   inicial: "100000", valorCredito: "600000", cuota: "60000", plazo: "12", frecuencia: "CATORCENAL", ...changes,
 });
@@ -97,7 +98,8 @@ export function postgresAdapter(pool, state = {}) {
         // These assertions protect the historical-import approval/finance rules.
         assert.equal(data.estado, "GENERADO"); assert.equal(data.deliverableReady, false);
         assert.equal(data.equalityService, "IMPORTACION_MASIVA");
-        const fields = ["folio", "clienteDocumento", "clienteNombre", "imei", "contratoSnapshot", "sedeId", "estado",
+        const fields = ["folio", "clienteDocumento", "clienteNombre", "clienteDireccion", "clienteCorreo",
+          "clienteFechaNacimiento", "clienteGenero", "imei", "contratoSnapshot", "sedeId", "estado",
           "createdAt", "fechaCredito", "fechaPrimerPago", "fechaProximoPago", "montoCredito", "valorCuota", "plazoMeses",
           "frecuenciaPago", "cuotaInicial", "saldoBaseFinanciado", "valorEquipoTotal", "valorInteres"];
         data.createdAt = new Date();

@@ -1,3 +1,4 @@
+import { readImportCustomer } from "@/lib/mass-credit-customer";
 import { createHash } from "node:crypto";
 import { readImportImei } from "@/lib/mass-credit-imei";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
@@ -44,6 +45,10 @@ type MassCreditInputRow = {
   cedula?: unknown;
   numeroCreditoSadmin?: unknown;
   cliente?: unknown;
+  direccion?: unknown;
+  correo?: unknown;
+  fechaNacimiento?: unknown;
+  sexo?: unknown;
   cuota?: unknown;
   fecha?: unknown;
   fechaPago?: unknown;
@@ -97,6 +102,10 @@ type PreparedCreditRow = {
   cedula: string;
   numeroCreditoSadmin: string;
   cliente: string;
+  direccion: string;
+  correo: string;
+  fechaNacimiento: Date;
+  sexo: string;
   cuota: number;
   fecha: Date;
   fechaPago: Date;
@@ -123,6 +132,10 @@ type ValidationRow = {
     cedula: string;
     numeroCreditoSadmin: string;
     cliente: string;
+    direccion: string;
+    correo: string;
+    fechaNacimiento: string | null;
+    sexo: string;
     cuota: number;
     fecha: string | null;
     fechaPago: string | null;
@@ -530,6 +543,8 @@ async function validateRows(
     const sedeInput = sanitizeText(getRowValue(row, "sede"));
     const vendedorInput = sanitizeText(getRowValue(row, "vendedor"));
     const cliente = sanitizeText(getRowValue(row, "cliente"));
+    const customer = readImportCustomer(row);
+    errors.push(...customer.errors);
     const cedula = importDocument(getRowValue(row, "cedula"));
     const numeroCreditoSadmin = importSadminNumber(row.numeroCreditoSadmin);
     const telefono = normalizePhone(getRowValue(row, "telefono"));
@@ -597,6 +612,7 @@ async function validateRows(
       seller &&
       fecha &&
       fechaPago &&
+      customer.fechaNacimiento &&
       ALLOWED_FREQUENCIES.has(frecuencia)
     ) {
       prepared.push({
@@ -605,6 +621,10 @@ async function validateRows(
         cedula,
         numeroCreditoSadmin,
         cliente,
+        direccion: customer.direccion,
+        correo: customer.correo,
+        fechaNacimiento: customer.fechaNacimiento,
+        sexo: customer.sexo,
         cuota,
         fecha,
         fechaPago,
@@ -630,6 +650,10 @@ async function validateRows(
         cedula,
         numeroCreditoSadmin,
         cliente,
+        direccion: customer.direccion,
+        correo: customer.correo,
+        fechaNacimiento: dateOnly(customer.fechaNacimiento),
+        sexo: customer.sexo,
         cuota,
         fecha: dateOnly(fecha),
         fechaPago: dateOnly(fechaPago),
@@ -728,6 +752,10 @@ function buildContractSnapshot(
       nombre: row.cliente,
       cedula: row.cedula,
       telefono: row.telefono,
+      direccion: row.direccion,
+      correo: row.correo,
+      fechaNacimiento: row.fechaNacimiento.toISOString(),
+      genero: row.sexo,
     },
     equipo: {
       referencia: row.referencia,
@@ -915,6 +943,10 @@ export async function POST(req: Request) {
             clienteTipoDocumento: "CC",
             clienteDocumento: row.cedula,
             clienteTelefono: row.telefono,
+            clienteDireccion: row.direccion,
+            clienteCorreo: row.correo,
+            clienteFechaNacimiento: row.fechaNacimiento,
+            clienteGenero: row.sexo,
             imei: row.imei,
             deviceUid: row.imei,
             referenciaEquipo: row.referencia,
