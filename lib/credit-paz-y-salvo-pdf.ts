@@ -22,75 +22,38 @@ export type CreditPazYSalvoPdfInput = {
 };
 
 export function getCreditPazYSalvoPdfErrorCode(error: unknown) {
-  if (!(error instanceof Error)) {
-    return null;
-  }
-
+  if (!(error instanceof Error)) return null;
   return /^PYS_PDF_[A-Z_]+$/.test(error.message) ? error.message : null;
 }
 
 const windowsFontDir = path.join(process.env.WINDIR || "C:\\Windows", "Fonts");
 const SYSTEM_FONT_REGULAR = path.join(windowsFontDir, "arial.ttf");
 const SYSTEM_FONT_BOLD = path.join(windowsFontDir, "arialbd.ttf");
-const BUNDLED_FONT_REGULAR = path.join(
-  process.cwd(),
-  "public",
-  "pdf-fonts",
-  "Geist-Regular.ttf"
-);
-const LOGO_PATH = path.join(
-  process.cwd(),
-  "public",
-  "icons",
-  "finserpay-client-512.png"
-);
-
+const BUNDLED_FONT_REGULAR = path.join(process.cwd(), "public", "pdf-fonts", "Geist-Regular.ttf");
+const MARGIN = 48;
 const COLORS = {
-  navy: "#071827",
   graphite: "#151A21",
   muted: "#667085",
   border: "#D8DEE5",
-  porcelain: "#F5F6F4",
-  lime: "#B7E63D",
-  limeDark: "#5C7A13",
-  limeSoft: "#F2F9DF",
-  white: "#FFFFFF",
+  green: "#237F0B",
 };
 
-function getPdfFonts(useBrandAssets: boolean) {
-  if (!useBrandAssets) {
-    return {
-      regular: "Helvetica",
-      bold: "Helvetica-Bold",
-    };
-  }
+type PdfFonts = { regular: string; bold: string };
 
-  if (existsSync(SYSTEM_FONT_REGULAR) && existsSync(SYSTEM_FONT_BOLD)) {
-    return {
-      regular: SYSTEM_FONT_REGULAR,
-      bold: SYSTEM_FONT_BOLD,
-    };
+function getPdfFonts(useBrandAssets: boolean): PdfFonts {
+  if (useBrandAssets && existsSync(SYSTEM_FONT_REGULAR) && existsSync(SYSTEM_FONT_BOLD)) {
+    return { regular: SYSTEM_FONT_REGULAR, bold: SYSTEM_FONT_BOLD };
   }
-
-  if (existsSync(BUNDLED_FONT_REGULAR)) {
-    return {
-      regular: BUNDLED_FONT_REGULAR,
-      bold: "Helvetica-Bold",
-    };
+  if (useBrandAssets && existsSync(BUNDLED_FONT_REGULAR)) {
+    return { regular: BUNDLED_FONT_REGULAR, bold: "Helvetica-Bold" };
   }
-
-  return {
-    regular: "Helvetica",
-    bold: "Helvetica-Bold",
-  };
+  return { regular: "Helvetica", bold: "Helvetica-Bold" };
 }
 
 function toBuffer(doc: PDFKit.PDFDocument) {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
-    doc.on("data", (chunk) =>
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-    );
+    doc.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
   });
@@ -106,28 +69,12 @@ function stateLabel(value: string | null | undefined) {
   return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function identifierLabel(input: CreditPazYSalvoPdfInput) {
-  const identifiers = [input.imei, input.deviceUid]
-    .map((value) => valueOrDash(value))
-    .filter((value) => value !== "-");
-
-  return [...new Set(identifiers)].join(" / ") || "-";
-}
-
 function issuedAtLabel(value: Date) {
   const issuedAt = value instanceof Date ? value : new Date(value);
-
-  if (Number.isNaN(issuedAt.getTime())) {
-    return "-";
-  }
-
+  if (Number.isNaN(issuedAt.getTime())) return "-";
   try {
     return new Intl.DateTimeFormat("es-CO", {
-      day: "2-digit",
-      month: "long",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
+      day: "2-digit", month: "long", year: "numeric", hour: "numeric", minute: "2-digit",
       timeZone: "America/Bogota",
     }).format(issuedAt);
   } catch {
@@ -135,290 +82,197 @@ function issuedAtLabel(value: Date) {
   }
 }
 
-function drawFallbackBrandMark(
-  doc: PDFKit.PDFDocument,
-  fonts: { regular: string; bold: string }
-) {
-  doc
-    .save()
-    .roundedRect(48, 48, 46, 46, 8)
-    .lineWidth(1.2)
-    .strokeColor("#526272")
-    .stroke()
-    .restore();
-  doc
-    .fillColor(COLORS.white)
-    .font(fonts.bold)
-    .fontSize(15)
-    .text("FP", 48, 64, { width: 46, align: "center" });
+/** Wrap complete values, including long identifiers, without reducing their font or omitting characters. */
+function wrapText(doc: PDFKit.PDFDocument, text: string, width: number) {
+  const lines: string[] = [];
+  for (const paragraph of text.split(/\r?\n/)) {
+    let line = "";
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (doc.widthOfString(candidate) <= width) {
+        line = candidate;
+        continue;
+      }
+      if (line) lines.push(line);
+      line = "";
+      for (const letter of word) {
+        if (line && doc.widthOfString(line + letter) > width) {
+          lines.push(line);
+          line = "";
+        }
+        line += letter;
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
 }
 
-function drawCheck(
-  doc: PDFKit.PDFDocument,
-  centerX: number,
-  centerY: number,
-  radius: number
-) {
-  doc.save().circle(centerX, centerY, radius).fill(COLORS.lime).restore();
-  doc
-    .save()
-    .lineWidth(2.4)
-    .lineCap("round")
-    .strokeColor(COLORS.navy)
-    .moveTo(centerX - 7, centerY)
-    .lineTo(centerX - 2, centerY + 5)
-    .lineTo(centerX + 8, centerY - 6)
-    .stroke()
-    .restore();
+function drawBrand(doc: PDFKit.PDFDocument, fonts: PdfFonts, x: number, y: number, size: number) {
+  doc.font(fonts.bold).fontSize(size).fillColor(COLORS.graphite).text("FINSER", x, y, { lineBreak: false });
+  const brandWidth = doc.widthOfString("FINSER ");
+  doc.fillColor(COLORS.green).text("PAY", x + brandWidth, y, { lineBreak: false });
 }
 
-function drawField(
-  doc: PDFKit.PDFDocument,
-  fonts: { regular: string; bold: string },
-  x: number,
-  y: number,
-  width: number,
-  label: string,
-  value: string
-) {
-  doc
-    .fillColor(COLORS.muted)
-    .font(fonts.regular)
-    .fontSize(7.2)
-    .text(label, x, y, { width });
-  doc
-    .fillColor(COLORS.graphite)
-    .font(fonts.bold)
-    .fontSize(10)
-    .text(value, x, y + 15, {
-      width,
-      height: 27,
-      ellipsis: true,
-      lineBreak: true,
-    });
+function drawFulfilledSeal(doc: PDFKit.PDFDocument, fonts: PdfFonts, x: number, y: number) {
+  doc.save().strokeColor(COLORS.green).lineWidth(1.4).circle(x, y, 48).stroke();
+  doc.lineWidth(0.6).circle(x, y, 43).stroke();
+  doc.lineWidth(2.8).lineCap("round").lineJoin("round")
+    .moveTo(x - 12, y - 3).lineTo(x - 4, y + 5).lineTo(x + 13, y - 13).stroke().restore();
+  doc.font(fonts.bold).fontSize(9.5).fillColor(COLORS.green)
+    .text("OBLIGACIÓN", x - 42, y - 31, { width: 84, align: "center", lineBreak: false })
+    .text("CUMPLIDA", x - 42, y + 20, { width: 84, align: "center", lineBreak: false });
 }
 
-async function renderCreditPazYSalvoPdf(
-  input: CreditPazYSalvoPdfInput,
-  useBrandAssets: boolean
-) {
+async function renderCreditPazYSalvoPdf(input: CreditPazYSalvoPdfInput, useBrandAssets: boolean) {
   let renderStage = "FONTS";
-
   try {
     const fonts = getPdfFonts(useBrandAssets);
     renderStage = "DOCUMENT";
     const doc = new PDFDocument({
-    size: "A4",
-    margin: 40,
-    compress: true,
-    font: fonts.regular,
-    info: {
-      Title: `Paz y salvo ${creditDisplayNumber(input)}`,
-      Author: "FINSER PAY",
-    },
-  });
+      size: "A4", margin: MARGIN, compress: true, bufferPages: true, font: fonts.regular,
+      info: { Title: `Paz y salvo ${creditDisplayNumber(input)}`, Author: "FINSER PAY" },
+    });
     const bufferPromise = toBuffer(doc);
+    const width = doc.page.width - MARGIN * 2;
+    const bottom = doc.page.height - MARGIN - 42;
+    const creditNumber = creditDisplayNumber(input);
+    let y = MARGIN;
 
-  renderStage = "CANVAS";
-  doc.rect(0, 0, 595.28, 841.89).fill(COLORS.porcelain);
-
-  renderStage = "HEADER";
-  doc.save().roundedRect(32, 30, 531, 150, 10).fill(COLORS.navy).restore();
-  if (useBrandAssets && existsSync(LOGO_PATH)) {
-    try {
-      doc.image(LOGO_PATH, 48, 48, {
-        fit: [46, 46],
-        align: "center",
-        valign: "center",
-      });
-    } catch (error) {
-      console.error("ERROR CARGANDO LOGO EN PAZ Y SALVO:", error);
-      drawFallbackBrandMark(doc, fonts);
+    function header(continued = false) {
+      renderStage = "HEADER";
+      drawBrand(doc, fonts, MARGIN, MARGIN, 22);
+      const folioX = MARGIN + width - 258;
+      let folioY = MARGIN;
+      doc.font(fonts.regular).fontSize(9.5).fillColor(COLORS.muted)
+        .text("Folio", folioX, folioY, { width: 258, align: "right", lineBreak: false });
+      folioY += 15;
+      doc.font(fonts.bold).fontSize(11).fillColor(COLORS.graphite);
+      for (const line of wrapText(doc, creditNumber, 258)) {
+        doc.text(line, folioX, folioY, { width: 258, align: "right", lineBreak: false });
+        folioY += 14;
+      }
+      if (creditNumber !== valueOrDash(input.folio)) {
+        doc.font(fonts.regular).fontSize(9.5).fillColor(COLORS.muted);
+        for (const line of wrapText(doc, `Folio original: ${valueOrDash(input.folio)}`, 258)) {
+          doc.text(line, folioX, folioY, { width: 258, align: "right", lineBreak: false });
+          folioY += 12;
+        }
+      }
+      y = Math.max(MARGIN + 35, folioY) + 17;
+      doc.moveTo(MARGIN, y).lineTo(MARGIN + width, y).lineWidth(0.7).strokeColor(COLORS.border).stroke();
+      y += continued ? 20 : 31;
+      doc.font("Times-Bold").fontSize(continued ? 20 : 27).fillColor(COLORS.graphite)
+        .text("Certificado de paz y salvo", MARGIN, y, { width, align: "center", lineBreak: false });
+      y += continued ? 39 : 53;
     }
-  } else {
-    drawFallbackBrandMark(doc, fonts);
-  }
 
-  doc.fillColor(COLORS.white).font(fonts.bold).fontSize(15).text("FINSER", 108, 50);
-  const brandWidth = doc.widthOfString("FINSER");
-  doc.fillColor(COLORS.lime).text("PAY", 113 + brandWidth, 50);
-  doc
-    .fillColor("#CBD5DF")
-    .font(fonts.regular)
-    .fontSize(7.5)
-    .text("CERTIFICADO DIGITAL", 108, 73);
+    function ensureSpace(height: number) {
+      if (y + height <= bottom) return;
+      doc.addPage();
+      header(true);
+    }
 
-  doc.save().roundedRect(431, 48, 107, 25, 12).fill(COLORS.limeSoft).restore();
-  doc
-    .fillColor(COLORS.limeDark)
-    .font(fonts.bold)
-    .fontSize(7.2)
-    .text("CR\u00c9DITO PAGADO", 431, 57, { width: 107, align: "center" });
+    function flowText(text: string, font: string, size: number, color: string, lineGap = 4) {
+      doc.font(font).fontSize(size);
+      const lines = wrapText(doc, text, width);
+      const lineHeight = doc.currentLineHeight(true) + lineGap;
+      for (const line of lines) {
+        ensureSpace(lineHeight);
+        doc.font(font).fontSize(size).fillColor(color)
+          .text(line, MARGIN, y, { width, lineBreak: false });
+        y += lineHeight;
+      }
+    }
 
-  doc.fillColor(COLORS.white).font(fonts.bold).fontSize(29).text("Paz y salvo", 48, 105);
-  doc
-    .fillColor("#CBD5DF")
-    .font(fonts.regular)
-    .fontSize(8.5)
-    .text("Certificaci\u00f3n de obligaci\u00f3n cumplida", 48, 143);
-  doc
-    .fillColor(COLORS.white)
-    .font(fonts.bold)
-    .fontSize(8.5)
-    .text(creditDisplayNumber(input), 324, 143, {
-      width: 214,
-      align: "right",
-      ellipsis: true,
-      lineBreak: false,
-    });
+    function field(label: string, value: string) {
+      const labelWidth = 136;
+      const valueWidth = width - labelWidth;
+      doc.font(fonts.regular).fontSize(11);
+      const lines = wrapText(doc, value, valueWidth);
+      const lineHeight = doc.currentLineHeight(true) + 3;
+      ensureSpace(Math.min(lines.length * lineHeight + 16, bottom - MARGIN - 150));
+      let first = true;
+      for (const line of lines) {
+        ensureSpace(lineHeight + 7);
+        if (first) {
+          doc.font(fonts.regular).fontSize(9.5).fillColor(COLORS.muted)
+            .text(label, MARGIN, y + 1, { width: labelWidth - 12, lineBreak: false });
+          first = false;
+        }
+        doc.font(fonts.regular).fontSize(11).fillColor(COLORS.graphite)
+          .text(line, MARGIN + labelWidth, y, { width: valueWidth, lineBreak: false });
+        y += lineHeight;
+      }
+      y += 7;
+      doc.moveTo(MARGIN, y).lineTo(MARGIN + width, y).lineWidth(0.5).strokeColor(COLORS.border).stroke();
+      y += 9;
+    }
 
-  renderStage = "SUMMARY";
-  doc
-    .save()
-    .roundedRect(32, 198, 531, 132, 10)
-    .fillAndStroke(COLORS.white, COLORS.border)
-    .restore();
-  drawCheck(doc, 62, 231, 17);
-  doc
-    .fillColor(COLORS.limeDark)
-    .font(fonts.bold)
-    .fontSize(7.5)
-    .text("OBLIGACI\u00d3N CUMPLIDA", 92, 214);
-  doc
-    .fillColor(COLORS.graphite)
-    .font(fonts.bold)
-    .fontSize(15)
-    .text(valueOrDash(input.clienteNombre), 92, 232, {
-      width: 430,
-      ellipsis: true,
-      lineBreak: false,
-    });
-  doc
-    .fillColor(COLORS.muted)
-    .font(fonts.regular)
-    .fontSize(10.2)
-    .text(
-      "FINSER PAY certifica que el cr\u00e9dito identificado en este documento fue pagado en su totalidad y, a la fecha de expedici\u00f3n, no presenta saldo pendiente.",
-      92,
-      260,
-      { width: 430, lineGap: 3 }
+    header();
+    renderStage = "SUMMARY";
+    flowText(`Fecha de expedición: ${issuedAtLabel(input.issuedAt)}`, fonts.regular, 10, COLORS.muted);
+    y += 19;
+    const client = valueOrDash(input.clienteNombre);
+    const document = valueOrDash(input.clienteDocumento);
+    const equipment = valueOrDash(input.equipo);
+    const equipmentText = equipment === "-" ? "" : `, correspondiente al equipo ${equipment},`;
+    flowText(
+      `FINSER PAY certifica que ${client}, identificado(a) con documento número ${document}, ha pagado en su totalidad el crédito ${creditNumber}${equipmentText} y, a la fecha de expedición de este certificado, no presenta saldo pendiente por esta obligación.`,
+      "Times-Roman", 12.5, COLORS.graphite, 5
     );
+    y += 27;
 
-  doc
-    .fillColor(COLORS.limeDark)
-    .font(fonts.bold)
-    .fontSize(7.5)
-    .text("DETALLE DE LA OBLIGACI\u00d3N", 32, 354);
-  doc.moveTo(181, 359).lineTo(563, 359).strokeColor(COLORS.border).stroke();
+    renderStage = "DETAILS";
+    field("Equipo financiado", equipment);
+    if (valueOrDash(input.imei) !== "-") field("IMEI", valueOrDash(input.imei));
+    if (valueOrDash(input.deviceUid) !== "-") field("Device UID", valueOrDash(input.deviceUid));
+    field("Sede", valueOrDash(input.sedeNombre));
+    field("Estado actual", stateLabel(input.estado));
+    if (valueOrDash(input.deliverableLabel) !== "-") {
+      field("Entregabilidad", valueOrDash(input.deliverableLabel));
+    }
+    field("Referencia de pago", valueOrDash(input.referenciaPago));
+    field("Emitido por", valueOrDash(input.issuer));
 
-  renderStage = "DETAILS";
-  doc
-    .save()
-    .roundedRect(32, 374, 531, 194, 10)
-    .fillAndStroke(COLORS.white, COLORS.border)
-    .restore();
-  doc.moveTo(297.5, 374).lineTo(297.5, 568).strokeColor(COLORS.border).stroke();
-  doc.moveTo(32, 438).lineTo(563, 438).strokeColor(COLORS.border).stroke();
-  doc.moveTo(32, 502).lineTo(563, 502).strokeColor(COLORS.border).stroke();
+    renderStage = "STATUS";
+    ensureSpace(152);
+    y += 38;
+    drawFulfilledSeal(doc, fonts, MARGIN + 70, y + 48);
+    const signatureX = MARGIN + width - 220;
+    drawBrand(doc, fonts, signatureX + 28, y + 37, 20);
+    doc.moveTo(signatureX, y + 70).lineTo(signatureX + 220, y + 70)
+      .lineWidth(0.7).strokeColor(COLORS.graphite).stroke();
+    doc.font(fonts.regular).fontSize(10).fillColor(COLORS.muted)
+      .text("Emisor del certificado", signatureX, y + 80, { width: 220, align: "center", lineBreak: false });
 
-  drawField(doc, fonts, 48, 389, 228, "CLIENTE", valueOrDash(input.clienteNombre));
-  drawField(
-    doc,
-    fonts,
-    314,
-    389,
-    228,
-    "DOCUMENTO",
-    valueOrDash(input.clienteDocumento)
-  );
-  drawField(doc, fonts, 48, 453, 228, "FOLIO", valueOrDash(input.folio));
-  drawField(
-    doc,
-    fonts,
-    314,
-    453,
-    228,
-    "EQUIPO",
-    valueOrDash(input.equipo || input.imei)
-  );
-  drawField(
-    doc,
-    fonts,
-    48,
-    517,
-    228,
-    "REFERENCIA DE PAGO",
-    valueOrDash(input.referenciaPago)
-  );
-  drawField(doc, fonts, 314, 517, 228, "IMEI / DEVICE UID", identifierLabel(input));
+    renderStage = "TRACE";
+    const range = doc.bufferedPageRange();
+    for (let page = range.start; page < range.start + range.count; page++) {
+      doc.switchToPage(page);
+      const footerY = doc.page.height - MARGIN - 18;
+      doc.moveTo(MARGIN, footerY - 20).lineTo(MARGIN + width, footerY - 20)
+        .lineWidth(0.5).strokeColor(COLORS.border).stroke();
+      doc.font(fonts.regular).fontSize(9).fillColor(COLORS.muted)
+        .text("FINSER PAY S.A.S. | NIT 902052909-4 | Ibagué, Tolima", MARGIN, footerY - 7, { width, lineBreak: false })
+        .text("Documento generado por FINSER PAY", MARGIN, footerY + 7, { width: width - 120, lineBreak: false })
+        .text(`Página ${page + 1} de ${range.count}`, MARGIN + width - 120, footerY + 7,
+          { width: 120, align: "right", lineBreak: false });
+    }
 
-  renderStage = "STATUS";
-  doc
-    .save()
-    .roundedRect(32, 592, 531, 72, 10)
-    .fillAndStroke(COLORS.limeSoft, "#C9DF91")
-    .restore();
-  drawCheck(doc, 61, 628, 15);
-  drawField(doc, fonts, 92, 608, 170, "ESTADO ACTUAL", stateLabel(input.estado));
-  doc.moveTo(279, 606).lineTo(279, 650).strokeColor("#C9DF91").stroke();
-  drawField(
-    doc,
-    fonts,
-    301,
-    608,
-    236,
-    "ENTREGABILIDAD TECNOL\u00d3GICA",
-    valueOrDash(input.deliverableLabel || "Sin verificacion")
-  );
-
-  renderStage = "TRACE";
-  doc
-    .fillColor(COLORS.limeDark)
-    .font(fonts.bold)
-    .fontSize(7.5)
-    .text("EMISI\u00d3N Y TRAZABILIDAD", 32, 693);
-  doc.moveTo(170, 698).lineTo(563, 698).strokeColor(COLORS.border).stroke();
-
-  drawField(doc, fonts, 32, 718, 143, "SEDE", valueOrDash(input.sedeNombre));
-  drawField(doc, fonts, 195, 718, 150, "EMITIDO POR", valueOrDash(input.issuer));
-  drawField(doc, fonts, 365, 718, 198, "FECHA DE EMISI\u00d3N", issuedAtLabel(input.issuedAt));
-
-  doc.moveTo(32, 775).lineTo(563, 775).strokeColor(COLORS.border).stroke();
-  doc
-    .fillColor(COLORS.muted)
-    .font(fonts.regular)
-    .fontSize(7.3)
-    .text("FINSER PAY S.A.S. | NIT 902052909-4 | Ibagu\u00e9, Tolima", 32, 787, {
-      width: 330,
-    });
-  doc
-    .fillColor(COLORS.muted)
-    .font(fonts.bold)
-    .fontSize(7.3)
-    .text("Documento generado por FINSER PAY", 365, 787, {
-      width: 198,
-      align: "right",
-    });
-
-  renderStage = "FINALIZE";
-  doc.end();
-
+    renderStage = "FINALIZE";
+    doc.end();
     return await bufferPromise;
   } catch (error) {
     throw new Error(`PYS_PDF_${renderStage}`, { cause: error });
   }
 }
 
-export async function buildCreditPazYSalvoPdf(
-  input: CreditPazYSalvoPdfInput
-) {
+export async function buildCreditPazYSalvoPdf(input: CreditPazYSalvoPdfInput) {
   try {
     return await renderCreditPazYSalvoPdf(input, true);
   } catch (error) {
-    console.error(
-      "ERROR RENDERIZANDO PAZ Y SALVO CON RECURSOS DE MARCA:",
-      error
-    );
+    console.error("ERROR RENDERIZANDO PAZ Y SALVO CON RECURSOS DE MARCA:", error);
     return renderCreditPazYSalvoPdf(input, false);
   }
 }

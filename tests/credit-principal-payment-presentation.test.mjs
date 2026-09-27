@@ -117,6 +117,7 @@ async function adminReceipt(paymentId, laterRevision = false) {
     "@/lib/credit-display-number-server": { getCreditDisplayNumbers: async () => new Map() },
     "@/lib/credit-abono-audit": { ensureCreditAbonoAuditColumns: async () => {} },
     "@/lib/credit-factory": { getPaymentFrequencyLabel: () => "Quincenal" },
+    "@/lib/client-payment-receipt-pdf": { buildClientPaymentReceiptPdf },
     "@/lib/credit-principal-payment": core,
     "@/lib/credit-payment-plan": { buildCreditPaymentPlan: (input) => {
       planCalls++;
