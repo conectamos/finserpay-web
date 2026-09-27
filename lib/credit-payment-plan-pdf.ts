@@ -5,6 +5,7 @@ import { creditDisplayNumber } from "@/lib/credit-display-number";
 import type { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 
 type PaymentPlan = ReturnType<typeof buildCreditPaymentPlan>;
+type Fonts = { regular: string; bold: string };
 
 export type CreditPaymentPlanPdfInput = {
   folio: string;
@@ -21,48 +22,30 @@ export type CreditPaymentPlanPdfInput = {
   plan: PaymentPlan;
 };
 
-const BUNDLED_FONT_REGULAR = path.join(
-  process.cwd(),
-  "public",
-  "pdf-fonts",
-  "Geist-Regular.ttf"
-);
-const LOGO_PATH = path.join(process.cwd(), "public", "branding", "finserpay-logo.jpg");
+const BUNDLED_FONT_REGULAR = path.join(process.cwd(), "public", "pdf-fonts", "Geist-Regular.ttf");
 const MONEY_FORMATTER = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
   maximumFractionDigits: 0,
 });
-const MONTHS = [
-  "ene",
-  "feb",
-  "mar",
-  "abr",
-  "may",
-  "jun",
-  "jul",
-  "ago",
-  "sep",
-  "oct",
-  "nov",
-  "dic",
-];
-
+const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+// Print equivalents of the shared FINSER PAY graphite, border and client-green tokens.
 const COLORS = {
-  navy: "#071827",
   graphite: "#151A21",
   muted: "#667085",
   border: "#D8DEE5",
-  porcelain: "#F5F6F4",
-  lime: "#B7E63D",
-  limeDark: "#5C7A13",
-  limeSoft: "#F2F9DF",
-  amber: "#B86B10",
-  amberSoft: "#FFF6DF",
+  green: "#237F0B",
+  greenSoft: "#F2F9DF",
   red: "#B42318",
   redSoft: "#FFF1F0",
   white: "#FFFFFF",
 };
+const MARGIN = 36;
+const TABLE_FONT_SIZE = 9.5;
+const ROW_MIN_HEIGHT = 28;
+const CELL_PADDING = 8;
+const CELL_VERTICAL_PADDING = 6;
+const FOOTER_HEIGHT = 48;
 
 function money(value: number) {
   return MONEY_FORMATTER.format(Math.round(Number(value || 0))).replace("COP", "$");
@@ -72,26 +55,22 @@ export function paymentPlanDateLabel(value: Date | string | null | undefined) {
   if (!value) return "-";
   const date = value instanceof Date ? value : new Date(`${String(value).slice(0, 10)}T12:00:00`);
   if (Number.isNaN(date.getTime())) return "-";
-
   return `${String(date.getDate()).padStart(2, "0")} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-function stateLabel(
-  item: PaymentPlan["installments"][number],
-  nextNumber: number | null
-) {
+function stateLabel(item: PaymentPlan["installments"][number], nextNumber: number | null) {
   if (item.eliminada) return "Eliminada";
   if (item.estado === "PAGO") return "Pagada";
-  if (item.numero === nextNumber) return "Proxima";
   if (item.estaEnMora) return "En mora";
+  if (item.numero === nextNumber) return "Próxima";
   return "Pendiente";
 }
 
-function fontSet() {
-  if (existsSync(BUNDLED_FONT_REGULAR)) {
-    return { regular: BUNDLED_FONT_REGULAR, bold: BUNDLED_FONT_REGULAR };
-  }
-  return { regular: "Helvetica", bold: "Helvetica-Bold" };
+function fontSet(): Fonts {
+  return {
+    regular: existsSync(BUNDLED_FONT_REGULAR) ? BUNDLED_FONT_REGULAR : "Helvetica",
+    bold: "Helvetica-Bold",
+  };
 }
 
 function toBuffer(doc: PDFKit.PDFDocument) {
@@ -103,239 +82,218 @@ function toBuffer(doc: PDFKit.PDFDocument) {
   });
 }
 
-function fitText(value: string, max = 42) {
-  const normalized = String(value || "-").trim() || "-";
-  return normalized.length > max ? `${normalized.slice(0, max - 1)}...` : normalized;
+function rule(doc: PDFKit.PDFDocument, y: number) {
+  doc.save().lineWidth(0.6).strokeColor(COLORS.border)
+    .moveTo(MARGIN, y).lineTo(doc.page.width - MARGIN, y).stroke().restore();
 }
 
-function drawLabelValue(
-  doc: PDFKit.PDFDocument,
-  fonts: { regular: string; bold: string },
-  x: number,
-  y: number,
-  width: number,
-  label: string,
-  value: string
-) {
-  doc.fillColor(COLORS.muted).font(fonts.regular).fontSize(7).text(label, x, y, { width });
-  doc.fillColor(COLORS.graphite).font(fonts.bold).fontSize(9.5).text(value, x, y + 13, {
-    width,
-    ellipsis: true,
-    lineBreak: false,
-  });
+function wordmark(doc: PDFKit.PDFDocument, fonts: Fonts, x: number, y: number, size: number) {
+  doc.font(fonts.bold).fontSize(size).fillColor(COLORS.green).text("FINSER", x, y, { lineBreak: false });
+  const payX = x + doc.widthOfString("FINSER ");
+  doc.fillColor(COLORS.graphite).text("PAY", payX, y, { lineBreak: false });
 }
 
-function drawMetric(
-  doc: PDFKit.PDFDocument,
-  fonts: { regular: string; bold: string },
-  x: number,
-  y: number,
-  width: number,
-  label: string,
-  value: string,
-  detail: string
-) {
-  doc.save().roundedRect(x, y, width, 55, 7).fillAndStroke(COLORS.white, COLORS.border).restore();
-  doc.fillColor(COLORS.muted).font(fonts.regular).fontSize(7).text(label, x + 10, y + 9, { width: width - 20 });
-  doc.fillColor(COLORS.graphite).font(fonts.bold).fontSize(13).text(value, x + 10, y + 23, { width: width - 20, ellipsis: true, lineBreak: false });
-  doc.fillColor(COLORS.muted).font(fonts.regular).fontSize(7).text(detail, x + 10, y + 43, { width: width - 20, ellipsis: true, lineBreak: false });
+function textHeight(doc: PDFKit.PDFDocument, fonts: Fonts, value: string, width: number, size: number, bold = false) {
+  return doc.font(bold ? fonts.bold : fonts.regular).fontSize(size)
+    .heightOfString(value, { width, lineGap: 2 });
 }
 
-function drawTableHeader(
-  doc: PDFKit.PDFDocument,
-  fonts: { regular: string; bold: string },
-  y: number
-) {
+function field(doc: PDFKit.PDFDocument, fonts: Fonts, x: number, y: number, width: number, label: string, value: string) {
+  const content = String(value || "-").trim() || "-";
+  const height = textHeight(doc, fonts, content, width, 12);
+  doc.font(fonts.regular).fontSize(10).fillColor(COLORS.muted).text(label, x, y, { width });
+  doc.fontSize(12).fillColor(COLORS.graphite).text(content, x, y + 17, { width, lineGap: 2 });
+  return 17 + height;
+}
+
+function calendarIcon(doc: PDFKit.PDFDocument, x: number, y: number) {
+  doc.save().lineWidth(1.5).strokeColor(COLORS.green);
+  doc.roundedRect(x, y + 3, 19, 19, 2).stroke();
+  doc.moveTo(x, y + 9).lineTo(x + 19, y + 9).stroke();
+  doc.moveTo(x + 5, y).lineTo(x + 5, y + 6).stroke();
+  doc.moveTo(x + 14, y).lineTo(x + 14, y + 6).stroke();
+  doc.restore();
+}
+
+function amountIcon(doc: PDFKit.PDFDocument, fonts: Fonts, x: number, y: number) {
+  doc.save().lineWidth(1.5).strokeColor(COLORS.green).circle(x + 10, y + 12, 10).stroke();
+  doc.font(fonts.bold).fontSize(13).fillColor(COLORS.green).text("$", x, y + 5, { width: 20, align: "center", lineBreak: false });
+  doc.restore();
+}
+
+function fitFontSize(doc: PDFKit.PDFDocument, font: string, value: string, width: number, preferred: number) {
+  let size = preferred;
+  while (size > 16 && doc.font(font).fontSize(size).widthOfString(value) > width) size -= 0.5;
+  return size;
+}
+
+function columnWidths(width: number) {
+  return [45, 108, 98, 98, 98, width - 447];
+}
+
+function drawTableHeader(doc: PDFKit.PDFDocument, fonts: Fonts, y: number) {
   const headers = ["Cuota", "Vencimiento", "Valor", "Abonado", "Pendiente", "Estado"];
-  const widths = [48, 96, 88, 88, 92, 91];
-  let x = 46;
-
-  doc.save().roundedRect(32, y, 531, 25, 5).fill(COLORS.navy).restore();
+  const widths = columnWidths(doc.page.width - MARGIN * 2);
+  let x = MARGIN;
   headers.forEach((header, index) => {
-    doc.fillColor(COLORS.white).font(fonts.bold).fontSize(7.5).text(header, x, y + 9, {
-      width: widths[index] - 6,
+    doc.font(fonts.regular).fontSize(TABLE_FONT_SIZE).fillColor(COLORS.muted).text(header, x + CELL_PADDING, y + 7, {
+      width: widths[index] - CELL_PADDING * 2,
       align: index > 1 && index < 5 ? "right" : "left",
+      lineBreak: false,
     });
     x += widths[index];
   });
+  rule(doc, y + 27);
+  return y + 28;
 }
 
-function drawContinuationHeader(
-  doc: PDFKit.PDFDocument,
-  fonts: { regular: string; bold: string },
-  input: CreditPaymentPlanPdfInput
-) {
-  doc.fillColor(COLORS.navy).font(fonts.bold).fontSize(15).text("FINSER PAY", 32, 34);
-  doc.fillColor(COLORS.muted).font(fonts.regular).fontSize(8.5).text(`Plan de pagos · ${creditDisplayNumber(input)}`, 32, 55);
-  doc.moveTo(32, 73).lineTo(563, 73).strokeColor(COLORS.border).stroke();
+function continuationHeader(doc: PDFKit.PDFDocument, fonts: Fonts, input: CreditPaymentPlanPdfInput) {
+  const width = doc.page.width - MARGIN * 2;
+  wordmark(doc, fonts, MARGIN, MARGIN, 17);
+  doc.font(fonts.regular).fontSize(10).fillColor(COLORS.muted).text("Plan de pagos", MARGIN, MARGIN + 27);
+  const number = creditDisplayNumber(input);
+  const numberWidth = width - 200;
+  const height = textHeight(doc, fonts, number, numberWidth, 10);
+  doc.font(fonts.regular).fontSize(10).fillColor(COLORS.graphite).text(number, MARGIN + 200, MARGIN + 6, {
+    width: numberWidth, align: "right", lineGap: 2,
+  });
+  const bottom = Math.max(MARGIN + 49, MARGIN + 6 + height + 12);
+  rule(doc, bottom);
+  return drawTableHeader(doc, fonts, bottom + 12);
 }
 
 export async function buildCreditPaymentPlanPdf(input: CreditPaymentPlanPdfInput) {
   const fonts = fontSet();
   const doc = new PDFDocument({
-    size: "A4",
-    margin: 32,
-    compress: true,
-    bufferPages: true,
-    font: fonts.regular,
-    info: {
-      Title: `Plan de pagos ${creditDisplayNumber(input)}`,
-      Author: "FINSER PAY",
-    },
+    size: "A4", margin: MARGIN, compress: true, bufferPages: true, font: fonts.regular,
+    info: { Title: `Plan de pagos ${creditDisplayNumber(input)}`, Author: "FINSER PAY" },
   });
   const bufferPromise = toBuffer(doc);
-  const nextNumber = input.plan.nextInstallment?.numero || null;
-  const state =
-    input.plan.estadoPago === "MORA"
-      ? "En mora"
-      : input.plan.estadoPago === "PAGADO"
-        ? "Pagado"
-        : "Al dia";
-  const stateColors =
-    input.plan.estadoPago === "MORA"
-      ? { fill: COLORS.redSoft, text: COLORS.red }
-      : { fill: COLORS.limeSoft, text: COLORS.limeDark };
+  const width = doc.page.width - MARGIN * 2;
+  const right = doc.page.width - MARGIN;
+  const next = input.plan.estadoPago === "PAGADO" ? null : input.plan.nextInstallment;
+  const nextNumber = next?.numero ?? null;
   const activeInstallments = input.plan.installments.filter((item) => !item.eliminada);
-  const eliminatedCount = input.plan.installments.length - activeInstallments.length;
-  const paidPercent = activeInstallments.length
-    ? (input.plan.paidCount / activeInstallments.length) * 100
-    : 0;
+  const paidRatio = activeInstallments.length ? Math.min(1, Math.max(0, input.plan.paidCount / activeInstallments.length)) : 0;
+  const inMora = input.plan.estadoPago === "MORA";
+  const state = inMora ? "En mora" : input.plan.estadoPago === "PAGADO" ? "Finalizado" : "Al día";
+  const stateColor = inMora ? COLORS.red : COLORS.green;
 
-  doc.save().roundedRect(32, 30, 531, 92, 10).fill(COLORS.navy).restore();
-  if (existsSync(LOGO_PATH)) {
-    doc.image(LOGO_PATH, 48, 44, { fit: [54, 54], align: "center", valign: "center" });
-  }
-  doc.fillColor(COLORS.white).font(fonts.bold).fontSize(18).text("FINSER PAY", 116, 48);
-  doc.fillColor("#DCE4EC").font(fonts.regular).fontSize(8.5).text("Plan de pagos", 116, 72);
-  doc.fillColor(COLORS.white).font(fonts.bold).fontSize(15).text(creditDisplayNumber(input), 116, 88, {
-    width: 260,
-    ellipsis: true,
-    lineBreak: false,
+  wordmark(doc, fonts, MARGIN, 36, 26);
+  doc.font(fonts.bold).fontSize(23).fillColor(COLORS.graphite).text("Plan de pagos", MARGIN, 74, { width: 280, lineBreak: false });
+  const identityWidth = 240;
+  const identityX = right - identityWidth;
+  const number = creditDisplayNumber(input);
+  const numberHeight = textHeight(doc, fonts, number, identityWidth, 10);
+  doc.font(fonts.regular).fontSize(10).fillColor(COLORS.muted).text(number, identityX, 39, {
+    width: identityWidth, align: "right", lineGap: 2,
   });
-  if (creditDisplayNumber(input) !== input.folio) {
-    doc.fillColor("#DCE4EC").font(fonts.regular).fontSize(7).text(`Folio original: ${input.folio}`, 116, 109, { width: 280, lineBreak: false, ellipsis: true });
+  let identityBottom = 39 + numberHeight;
+  if (number !== input.folio) {
+    const original = `Folio original: ${input.folio}`;
+    const originalHeight = textHeight(doc, fonts, original, identityWidth, 8.5);
+    doc.font(fonts.regular).fontSize(8.5).fillColor(COLORS.muted).text(original, identityX, identityBottom + 5, {
+      width: identityWidth, align: "right", lineGap: 2,
+    });
+    identityBottom += originalHeight + 5;
   }
-  doc.save().roundedRect(446, 48, 92, 25, 12).fill(stateColors.fill).restore();
-  doc.fillColor(stateColors.text).font(fonts.bold).fontSize(8.5).text(state, 446, 57, {
-    width: 92,
-    align: "center",
+  const stateY = Math.max(77, identityBottom + 10);
+  doc.save().roundedRect(right - 91, stateY, 91, 25, 12).fill(inMora ? COLORS.redSoft : COLORS.greenSoft).restore();
+  doc.font(fonts.bold).fontSize(10).fillColor(stateColor).text(state, right - 91, stateY + 7, { width: 91, align: "center", lineBreak: false });
+  let y = Math.max(117, stateY + 39);
+  rule(doc, y);
+  y += 21;
+
+  const dataGap = 44;
+  const leftWidth = width * 0.58;
+  const rightX = MARGIN + leftWidth + dataGap;
+  const rightWidth = width - leftWidth - dataGap;
+  y += Math.max(
+    field(doc, fonts, MARGIN, y, leftWidth, "Cliente", input.clienteNombre),
+    field(doc, fonts, rightX, y, rightWidth, "Sede", input.sedeNombre)
+  ) + 12;
+  y += Math.max(
+    field(doc, fonts, MARGIN, y, leftWidth, "Documento", input.clienteDocumento),
+    field(doc, fonts, rightX, y, rightWidth, "Frecuencia", input.frecuencia)
+  ) + 12;
+  y += field(doc, fonts, MARGIN, y, width, "Equipo", input.equipo) + 20;
+  rule(doc, y);
+  y += 19;
+
+  doc.font(fonts.regular).fontSize(15).fillColor(COLORS.graphite).text(next ? (next.estaEnMora ? "Cuota vencida" : "Próxima cuota") : "Crédito finalizado", MARGIN, y);
+  const summaryY = y + 31;
+  const half = width / 2;
+  const date = next ? paymentPlanDateLabel(next.fechaVencimiento) : "Sin cuotas pendientes";
+  const dateSize = fitFontSize(doc, fonts.bold, date, half - 39, next ? 25 : 18);
+  if (next) calendarIcon(doc, MARGIN + 1, summaryY + 4);
+  doc.font(fonts.bold).fontSize(dateSize).fillColor(COLORS.graphite).text(date, MARGIN + (next ? 32 : 0), summaryY, {
+    width: half - (next ? 39 : 8), lineGap: 2,
   });
-  doc.fillColor("#DCE4EC").font(fonts.regular).fontSize(7.5).text(
-    `Generado ${paymentPlanDateLabel(input.fechaGeneracion)}`,
-    406,
-    91,
-    { width: 132, align: "right" }
+  amountIcon(doc, fonts, MARGIN + half + 18, summaryY + 4);
+  const amount = money(next?.saldoPendiente || 0);
+  const amountWidth = half - 52;
+  doc.font(fonts.bold).fontSize(fitFontSize(doc, fonts.bold, amount, amountWidth, 26)).fillColor(COLORS.graphite).text(amount, MARGIN + half + 50, summaryY, {
+    width: amountWidth, lineGap: 2,
+  });
+  doc.save().strokeColor(COLORS.border).lineWidth(0.6).moveTo(MARGIN + half - 4, summaryY).lineTo(MARGIN + half - 4, summaryY + 37).stroke().restore();
+  doc.font(fonts.regular).fontSize(10).fillColor(COLORS.muted).text(
+    next ? `Cuota ${next.numero} de ${activeInstallments.length}` : `${input.plan.paidCount} de ${activeInstallments.length} cuotas pagadas`,
+    MARGIN + (next ? 32 : 0), summaryY + 39, { width: half - 39 }
   );
-
-  doc.save().roundedRect(32, 134, 531, 70, 8).fillAndStroke(COLORS.white, COLORS.border).restore();
-  drawLabelValue(doc, fonts, 46, 149, 190, "CLIENTE", fitText(input.clienteNombre, 36));
-  drawLabelValue(doc, fonts, 250, 149, 128, "DOCUMENTO", fitText(input.clienteDocumento, 22));
-  drawLabelValue(doc, fonts, 392, 149, 150, "SEDE", fitText(input.sedeNombre, 26));
-  drawLabelValue(doc, fonts, 46, 178, 332, "EQUIPO", fitText(input.equipo, 52));
-  drawLabelValue(doc, fonts, 392, 178, 150, "FRECUENCIA", fitText(input.frecuencia, 24));
-
-  doc.fillColor(COLORS.graphite).font(fonts.bold).fontSize(10).text("Progreso de cuotas", 32, 220);
-  doc.fillColor(COLORS.muted).font(fonts.regular).fontSize(8).text(
-    `${input.plan.paidCount} de ${activeInstallments.length} pagadas`,
-    430,
-    221,
-    { width: 133, align: "right" }
-  );
-  doc.save().roundedRect(32, 242, 531, 7, 4).fill("#E8ECF0").restore();
-  if (paidPercent > 0) {
-    doc.save().roundedRect(32, 242, Math.max(7, 531 * Math.min(1, paidPercent / 100)), 7, 4).fill(COLORS.lime).restore();
+  y = summaryY + 64;
+  doc.save().roundedRect(MARGIN, y, width, 7, 3.5).fill(COLORS.border).restore();
+  if (paidRatio > 0) doc.save().roundedRect(MARGIN, y, Math.max(7, width * paidRatio), 7, 3.5).fill(COLORS.green).restore();
+  doc.font(fonts.regular).fontSize(10).fillColor(COLORS.muted).text(`${input.plan.paidCount} de ${activeInstallments.length} pagadas`, MARGIN, y + 14, {
+    width, align: "right",
+  });
+  y += 43;
+  const efecty = `Efecty · Convenio ${input.convenioEfecty} · Referencia ${input.referenciaEfecty}`;
+  const efectyHeight = textHeight(doc, fonts, efecty, width, 10);
+  doc.font(fonts.regular).fontSize(10).fillColor(COLORS.graphite).text(efecty, MARGIN, y, { width, lineGap: 2 });
+  y += efectyHeight + 20;
+  rule(doc, y);
+  y += 11;
+  const tableBottom = doc.page.height - MARGIN - FOOTER_HEIGHT;
+  if (y + 28 + ROW_MIN_HEIGHT > tableBottom) {
+    doc.addPage();
+    y = continuationHeader(doc, fonts, input);
+  } else {
+    y = drawTableHeader(doc, fonts, y);
   }
-
-  doc.save().roundedRect(32, 265, 531, 54, 8).fillAndStroke(COLORS.limeSoft, "#C9DF91").restore();
-  doc.fillColor(COLORS.limeDark).font(fonts.bold).fontSize(8).text("PAGO EN EFECTY", 47, 277);
-  doc.fillColor(COLORS.graphite).font(fonts.bold).fontSize(12).text(`Convenio ${input.convenioEfecty}`, 47, 291, { width: 150 });
-  doc.fillColor(COLORS.graphite).font(fonts.bold).fontSize(12).text(`Referencia ${input.referenciaEfecty}`, 210, 291, { width: 210, ellipsis: true, lineBreak: false });
-  doc.fillColor(COLORS.muted).font(fonts.regular).fontSize(7.5).text("Conserva el comprobante de pago.", 431, 280, { width: 112, align: "right" });
-
-  const next = input.plan.nextInstallment;
-  const metrics = [
-    ["VALOR CUOTA", money(input.valorCuota), eliminatedCount
-      ? `${activeInstallments.length} vigentes (${input.plan.installments.length} originales)`
-      : `${input.plan.installments.length} cuotas`],
-    ["VALOR ABONADO", money(input.plan.totalPaid), `${Math.round(paidPercent)}% completado`],
-    ["PROXIMA CUOTA", money(next?.saldoPendiente || 0), paymentPlanDateLabel(next?.fechaVencimiento)],
-  ];
-  const metricGap = 9;
-  const metricWidth = (531 - metricGap * (metrics.length - 1)) / metrics.length;
-  metrics.forEach(([label, value, detail], index) =>
-    drawMetric(
-      doc,
-      fonts,
-      32 + index * (metricWidth + metricGap),
-      335,
-      metricWidth,
-      label,
-      value,
-      detail
-    )
-  );
-
-  let y = 408;
-  drawTableHeader(doc, fonts, y);
-  y += 29;
-  const rowHeight = 28;
-  const widths = [48, 96, 88, 88, 92, 91];
-
-  input.plan.installments.forEach((item) => {
-    if (y + rowHeight > 775) {
-      doc.addPage();
-      drawContinuationHeader(doc, fonts, input);
-      y = 92;
-      drawTableHeader(doc, fonts, y);
-      y += 29;
-    }
-
+  const widths = columnWidths(width);
+  for (const item of input.plan.installments) {
     const isNext = item.numero === nextNumber;
-    const label = stateLabel(item, nextNumber);
-    const fill = item.eliminada ? COLORS.porcelain : item.estado === "PAGO" ? COLORS.limeSoft : isNext ? COLORS.amberSoft : COLORS.white;
-    const line = item.eliminada ? COLORS.border : item.estado === "PAGO" ? "#C9DF91" : isNext ? "#F0D28D" : COLORS.border;
-    doc.save().roundedRect(32, y, 531, rowHeight - 2, 4).fillAndStroke(fill, line).restore();
-
-    const values = [
-      String(item.numero),
-      paymentPlanDateLabel(item.fechaVencimiento),
-      money(item.valorProgramado),
-      money(item.valorAbonado),
-      money(item.saldoPendiente),
-      label,
-    ];
-    let x = 46;
+    const values = [String(item.numero), paymentPlanDateLabel(item.fechaVencimiento), money(item.valorProgramado), money(item.valorAbonado), money(item.saldoPendiente), stateLabel(item, nextNumber)];
+    const rowHeight = Math.max(ROW_MIN_HEIGHT, ...values.map((value, index) => textHeight(doc, fonts, value, widths[index] - CELL_PADDING * 2, TABLE_FONT_SIZE) + CELL_VERTICAL_PADDING * 2));
+    if (y + rowHeight > tableBottom) {
+      doc.addPage();
+      y = continuationHeader(doc, fonts, input);
+    }
+    if (isNext && !item.eliminada) {
+      doc.save().roundedRect(MARGIN, y + 1, width, rowHeight - 2, 3).fill(item.estaEnMora ? COLORS.redSoft : COLORS.greenSoft).restore();
+    }
+    let x = MARGIN;
     values.forEach((value, index) => {
-      const color = item.eliminada ? COLORS.muted : item.estaEnMora ? COLORS.red : isNext ? COLORS.amber : index === 5 && item.estado === "PAGO" ? COLORS.limeDark : COLORS.graphite;
-      doc.fillColor(color).font(index === 0 || index === 5 ? fonts.bold : fonts.regular).fontSize(8).text(value, x, y + 9, {
-        width: widths[index] - 6,
+      const color = item.eliminada ? COLORS.muted : index === 5 && item.estaEnMora ? COLORS.red : index === 5 && (item.estado === "PAGO" || isNext) ? COLORS.green : COLORS.graphite;
+      doc.font(fonts.regular).fontSize(TABLE_FONT_SIZE).fillColor(color).text(value, x + CELL_PADDING, y + CELL_VERTICAL_PADDING, {
+        width: widths[index] - CELL_PADDING * 2, lineGap: 2,
         align: index > 1 && index < 5 ? "right" : "left",
-        ellipsis: true,
-        lineBreak: false,
       });
       x += widths[index];
     });
     y += rowHeight;
-  });
+    rule(doc, y);
+  }
 
   const range = doc.bufferedPageRange();
   for (let index = range.start; index < range.start + range.count; index += 1) {
     doc.switchToPage(index);
-    doc.moveTo(32, 786).lineTo(563, 786).strokeColor(COLORS.border).stroke();
-    doc.fillColor(COLORS.muted).font(fonts.regular).fontSize(7.5).text(
-      "Este documento refleja los abonos registrados en FINSER PAY a la fecha de generacion.",
-      32,
-      796,
-      { width: 440 }
-    );
-    doc.fillColor(COLORS.muted).font(fonts.bold).fontSize(7.5).text(
-      `Pagina ${index - range.start + 1} de ${range.count}`,
-      474,
-      796,
-      { width: 89, align: "right" }
-    );
+    const footerY = doc.page.height - MARGIN - 37;
+    rule(doc, footerY);
+    doc.font(fonts.regular).fontSize(8.5).fillColor(COLORS.muted).text("Conserva este documento para consultar tus fechas de pago.", MARGIN, footerY + 10, { width: width - 95, lineBreak: false });
+    doc.text(`Página ${index - range.start + 1} de ${range.count}`, right - 91, footerY + 10, { width: 91, align: "right", lineBreak: false });
+    doc.fontSize(7.5).text(`Generado ${paymentPlanDateLabel(input.fechaGeneracion)} · Abonos registrados a esta fecha.`, MARGIN, footerY + 23, { width, lineBreak: false });
   }
-
   doc.end();
   return bufferPromise;
 }
