@@ -15,6 +15,7 @@ export function load(path, mocks = {}) {
       if (name === "server-only") return {};
       if (name in mocks) return mocks[name];
       if (name.startsWith("node:")) return nativeRequire(name);
+      if (name === "../scripts/second-credit-authorization-schema.mjs") return nativeRequire(name);
       if (name.startsWith("@/lib/")) return load(name.slice(2) + ".ts", mocks);
       throw new Error("Unexpected dependency: " + name);
     },
@@ -23,7 +24,13 @@ export function load(path, mocks = {}) {
 }
 export const approvalErrors = load("lib/credit-approval-errors.ts");
 export const blacklistErrors = load("lib/document-blacklist-core.ts");
-export const helper = load("lib/mass-credit-sadmin.ts", { "@/lib/credit-approval-errors": approvalErrors });
+const secondCreditStore = load("lib/second-credit-authorization.ts", {
+  "@/lib/prisma": { __esModule: true, default: {} },
+});
+export const secondCreditHelper = { ...secondCreditStore, ensureSecondCreditAuthorizationSchema: async () => {} };
+export const helper = load("lib/mass-credit-sadmin.ts", {
+  "@/lib/credit-approval-errors": approvalErrors, "@/lib/second-credit-authorization": secondCreditHelper,
+});
 const validImeiFor = index => {
   const base = String(index).padStart(14, "0");
   let sum = 0;
@@ -48,6 +55,7 @@ export function routeFixture(db, options = {}) {
   return load("app/api/creditos/masivos/route.ts", {
     "next/server": { NextResponse: Response }, "@/lib/prisma": { __esModule: true, default: db },
     "@/lib/mass-credit-sadmin": helper, "@/lib/credit-approval-errors": approvalErrors,
+    "@/lib/second-credit-authorization": secondCreditHelper,
     "@/lib/document-blacklist-core": blacklistErrors,
     "@/lib/document-blacklist": { assertDocumentNotBlacklisted: async document => {
       if (options.blocked === document) throw new blacklistErrors.DocumentBlacklistError("DOCUMENT_BLACKLISTED", "Cédula bloqueada", 403);

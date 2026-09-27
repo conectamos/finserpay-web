@@ -78,6 +78,8 @@ COPY --from=builder /app/scripts/ensure-credit-approval-call-schema.mjs ./script
 
 COPY --from=builder /app/scripts/credit-sadmin-schema.mjs ./scripts/credit-sadmin-schema.mjs
 COPY --from=builder /app/scripts/ensure-credit-sadmin-schema.mjs ./scripts/ensure-credit-sadmin-schema.mjs
+COPY --from=builder /app/scripts/second-credit-authorization-schema.mjs ./scripts/second-credit-authorization-schema.mjs
+COPY --from=builder /app/scripts/ensure-second-credit-authorization-schema.mjs ./scripts/ensure-second-credit-authorization-schema.mjs
 COPY --from=builder /app/scripts/credit-mass-imei-correction-schema.mjs ./scripts/credit-mass-imei-correction-schema.mjs
 COPY --from=builder /app/scripts/ensure-credit-mass-imei-correction-schema.mjs ./scripts/ensure-credit-mass-imei-correction-schema.mjs
 
