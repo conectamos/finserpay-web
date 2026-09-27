@@ -83,6 +83,11 @@ COPY --from=builder /app/scripts/ensure-second-credit-authorization-schema.mjs .
 COPY --from=builder /app/scripts/credit-mass-imei-correction-schema.mjs ./scripts/credit-mass-imei-correction-schema.mjs
 COPY --from=builder /app/scripts/ensure-credit-mass-imei-correction-schema.mjs ./scripts/ensure-credit-mass-imei-correction-schema.mjs
 
+COPY --from=builder /app/scripts/setup-merchant-applications.sql ./scripts/setup-merchant-applications.sql
+COPY --from=builder /app/scripts/ensure-merchant-applications-schema.mjs ./scripts/ensure-merchant-applications-schema.mjs
+COPY --from=builder /app/scripts/retry-merchant-applications.mjs ./scripts/retry-merchant-applications.mjs
+COPY --from=builder /app/scripts/check-merchant-application-delivery.mjs ./scripts/check-merchant-application-delivery.mjs
+
 EXPOSE 3000
 
 CMD ["node", "server.js"]

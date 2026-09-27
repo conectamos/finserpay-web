@@ -28,7 +28,7 @@ export default function LogoutButton({
         throw new Error("No se pudo cerrar la sesion");
       }
 
-      router.replace("/");
+      router.replace("/aliados");
       router.refresh();
     } catch {
       setCerrando(false);

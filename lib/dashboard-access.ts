@@ -30,7 +30,7 @@ export async function requireDashboardAccess(options: { allowApprovalAnalyst?: b
   const access = await getDashboardAccess(options);
 
   if (!access) {
-    redirect("/");
+    redirect("/aliados");
   }
 
   return access;

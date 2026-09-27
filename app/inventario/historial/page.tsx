@@ -68,7 +68,7 @@ export default async function HistorialInventarioPage(props: {
   const user = await getSessionUser();
 
   if (!user) {
-    redirect("/");
+    redirect("/aliados");
   }
 
   const searchParams = await props.searchParams;
