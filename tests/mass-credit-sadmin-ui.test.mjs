@@ -7,7 +7,7 @@ import { setImmediate } from "node:timers/promises";
 import ts from "typescript";
 import ExcelJS from "exceljs";
 import * as spreadsheet from "../lib/mass-credit-spreadsheet.ts";
-import { routeFixture } from "./mass-credit-sadmin-fixture.mjs";
+import { load, routeFixture } from "./mass-credit-sadmin-fixture.mjs";
 
 const source = readFileSync(new URL("../app/dashboard/creditos-masivos/mass-credit-import-console.tsx", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
@@ -31,6 +31,7 @@ function mount(fetch) {
     document: { createElement: () => ({ click() {} }) },
     require(name) {
       if (name === "@/lib/mass-credit-spreadsheet") return { ...spreadsheet, buildMassCreditWorkbook: (headers, example) => spreadsheet.buildMassCreditWorkbook([...headers], [...example]) };
+      if (name === "@/lib/credit-factory") return load("lib/credit-factory.ts");
       if (name === "react") return hooks;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: "Fragment" };
       if (name === "lucide-react" || name === "@/app/_components/finser-ui") return ui;
@@ -422,4 +423,56 @@ test("pending CSV and Excel templates keep the SADMIN column but omit an invente
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(await h.downloads[1].arrayBuffer());
   const sheet = workbook.getWorksheet("Creditos");
   assert.equal(sheet.getCell("P1").value, "Número de crédito en SADMIN"); assert.equal(sheet.getCell("P2").value, ""); assert.equal(sheet.columnCount, 20);
+});
+test("CSV and Excel default to fixed 02/17 dates and explain the distinct catorcenal frequency", async () => {
+  const h = mount(async () => Response.json(catalog)); await h.flush();
+  button(h, "Descargar plantilla CSV").props.onClick();
+  const downloaded = (await h.downloads[0].text()).replace(/^\uFEFF/, "").split("\n");
+  const row = downloaded[1].split(";");
+  assert.equal(row[0], "2026-06-27"); assert.equal(row[13], "QUINCENAL"); assert.equal(row[14], "2026-07-17");
+  assert.match(h.text(), /QUINCENAL paga los días 02 y 17/);
+  assert.match(h.text(), /CATORCENAL paga cada 14 días/);
+  button(h, "Plantilla Excel para CSV").props.onClick(); await waitFor(h, () => h.downloads.length === 2);
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(await h.downloads[1].arrayBuffer());
+  const sheet = workbook.getWorksheet("Creditos");
+  assert.equal(sheet.getCell("N2").value, "QUINCENAL"); assert.equal(sheet.getCell("O2").value, "2026-07-17");
+  const guide = workbook.getWorksheet("Instrucciones");
+  const guideText = guide.getRows(1, guide.rowCount).map(row => row.getCell(1).value).join(" ");
+  assert.match(guideText, /QUINCENAL paga los días 02 y 17.*CATORCENAL paga cada 14 días/);
+  assert.match(guideText, /día 17 del mismo mes.*día 02 del siguiente mes.*día 17 del siguiente mes/);
+});
+
+test("individual defaults to quincenal, recalculates the first payment after activation edits and revalidates", async () => {
+  const requests = [];
+  const h = mount(async (_url, options) => {
+    if (!options?.body) return Response.json(catalog);
+    const body = JSON.parse(options.body); requests.push(body); return Response.json(preview(body.rows));
+  });
+  await h.flush(); button(h, "Credito individual").props.onClick(); await h.flush();
+  const frequencyControl = () => h.find(node => node.type === "Select" && nodes(node).some(child => child.type === "option" && child.props.value === "QUINCENAL"));
+  const field = label => h.find(node => node.props?.label === label);
+  assert.equal(frequencyControl().props.value, "QUINCENAL");
+  assert.match(content(frequencyControl()), /Quincenal \(días 02 y 17\)/);
+  field("Número de crédito en SADMIN").props.onChange("000INDIVIDUAL"); await h.flush();
+  field("Fecha").props.onChange("2026-09-05"); await h.flush();
+  assert.equal(field("Fecha del primer pago").props.value, "2026-09-17");
+  button(h, "Validar credito").props.onClick(); await h.flush();
+  assert.equal(requests[0].rows[0].frecuencia, "QUINCENAL"); assert.equal(requests[0].rows[0].fechaPago, "2026-09-17");
+  assert.equal(button(h, "Crear credito").props.disabled, false);
+  field("Fecha").props.onChange("2026-09-06"); await h.flush();
+  assert.equal(field("Fecha del primer pago").props.value, "2026-10-02");
+  assert.equal(button(h, "Crear credito").props.disabled, true);
+  frequencyControl().props.onChange({ target: { value: "CATORCENAL" } }); await h.flush();
+  field("Fecha del primer pago").props.onChange("2026-09-28"); await h.flush();
+  field("Fecha").props.onChange("2026-09-21"); await h.flush();
+  assert.equal(field("Fecha del primer pago").props.value, "2026-09-28");
+  frequencyControl().props.onChange({ target: { value: "QUINCENAL" } }); await h.flush();
+  assert.equal(field("Fecha del primer pago").props.value, "2026-10-17");
+  frequencyControl().props.onChange({ target: { value: "MENSUAL" } }); await h.flush();
+  field("Fecha del primer pago").props.onChange("2026-10-25"); await h.flush();
+  field("Fecha").props.onChange("2026-09-25"); await h.flush();
+  assert.equal(field("Fecha del primer pago").props.value, "2026-10-25");
+  field("Fecha").props.onChange(""); await h.flush();
+  frequencyControl().props.onChange({ target: { value: "QUINCENAL" } }); await h.flush();
+  assert.equal(field("Fecha del primer pago").props.value, "");
 });

@@ -44,6 +44,7 @@ import {
   Tabs,
 } from "@/app/_components/finser-ui";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
+import { getQuincenalFirstPaymentDateObject } from "@/lib/credit-factory";
 
 type MassCreditInputRow = {
   aliado: string;
@@ -200,8 +201,8 @@ const TEMPLATE_EXAMPLE_ROW = [
   "600000",
   "50000",
   "12",
-  "CATORCENAL",
-  "2026-07-11",
+  "QUINCENAL",
+  "2026-07-17",
   "00012345",
   "Calle 10 # 20-30",
   "cliente@example.com",
@@ -341,14 +342,15 @@ function defaultManualRow(): MassCreditInputRow {
   return {
     ...emptyRow(),
     fecha: localDate.toISOString().slice(0, 10),
-    frecuencia: "CATORCENAL",
+    fechaPago: getQuincenalFirstPaymentDateObject(localDate.toISOString().slice(0, 10)).toISOString().slice(0, 10),
+    frecuencia: "QUINCENAL",
     inicial: "0",
   };
 }
 
 function hasManualCreditData(row: MassCreditInputRow) {
   return FIELD_ORDER.some((field) => {
-    if (field === "fecha" || field === "frecuencia" || field === "inicial") return false;
+    if (field === "fecha" || field === "fechaPago" || field === "frecuencia" || field === "inicial") return false;
     return String(row[field] || "").trim();
   });
 }
@@ -592,7 +594,15 @@ export default function MassCreditImportConsole() {
   };
 
   const updateManualField = (field: FieldKey, value: string) => {
-    setManualRow((current) => ({ ...current, [field]: value }));
+    setManualRow((current) => {
+      const next = { ...current, [field]: value };
+      if ((field === "fecha" || field === "frecuencia") && next.frecuencia === "QUINCENAL") {
+        next.fechaPago = next.fecha
+          ? getQuincenalFirstPaymentDateObject(next.fecha).toISOString().slice(0, 10)
+          : "";
+      }
+      return next;
+    });
     setModeValidation("single", null);
   };
 
@@ -977,6 +987,7 @@ export default function MassCreditImportConsole() {
                   </summary>
                   <p className="mt-3 text-xs leading-5 text-[#667085]">{FIELD_ORDER.map((field) => FIELD_LABELS[field]).join(" · ")}</p>
                   <p className="mt-2 text-sm leading-5 text-[var(--fp-muted)]">Dirección, correo, fecha de nacimiento y sexo son obligatorios. Usa AAAA-MM-DD o D/M/AAAA para las fechas; el cliente debe tener al menos 18 años. Sexo: MASCULINO, FEMENINO, OTRO o PREFIERO_NO_DECIR. El número SADMIN es obligatorio si ya existe; si está pendiente de creación, deja esa columna vacía.</p>
+                  <p className="mt-2 text-sm leading-5 text-[var(--fp-muted)]">FRECUENCIA: QUINCENAL paga los días 02 y 17; CATORCENAL paga cada 14 días; MENSUAL conserva el día de pago mensual. Para QUINCENAL, FECHA DE PAGO debe coincidir con la política: créditos del 1 al 5, día 17 del mismo mes; del 6 al 20, día 02 del siguiente mes; del 21 al 31, día 17 del siguiente mes.</p>
                   <textarea
                     value={rawText}
                     onChange={(event) => {
@@ -1036,7 +1047,7 @@ export default function MassCreditImportConsole() {
                 />
               </FormSection>
 
-              <FormSection icon={WalletCards} title="Condiciones del credito" description="Valores y calendario de recaudo.">
+              <FormSection icon={WalletCards} title="Condiciones del credito" description="Quincenal paga los días 02 y 17; Catorcenal conserva intervalos de 14 días. Primer pago quincenal: créditos del 1 al 5, día 17 del mismo mes; del 6 al 20, día 02 del siguiente mes; del 21 al 31, día 17 del siguiente mes.">
                 <ManualField label="Inicial" inputMode="numeric" value={manualRow.inicial} onChange={(value) => updateManualField("inicial", value)} />
                 <ManualField label="Valor del credito" inputMode="numeric" value={manualRow.valorCredito} onChange={(value) => updateManualField("valorCredito", value)} />
                 <ManualField label="Cuota" inputMode="numeric" value={manualRow.cuota} onChange={(value) => updateManualField("cuota", value)} />
@@ -1044,11 +1055,12 @@ export default function MassCreditImportConsole() {
                 <label className="grid gap-1.5">
                   <span className="text-xs font-bold text-[#475467]">Frecuencia</span>
                   <Select value={manualRow.frecuencia} onChange={(event) => updateManualField("frecuencia", event.target.value)}>
-                    <option value="CATORCENAL">Catorcenal</option>
+                    <option value="QUINCENAL">Quincenal (días 02 y 17)</option>
+                    <option value="CATORCENAL">Catorcenal (cada 14 días)</option>
                     <option value="MENSUAL">Mensual</option>
                   </Select>
                 </label>
-                <ManualField label="Fecha de pago" type="date" value={manualRow.fechaPago} onChange={(value) => updateManualField("fechaPago", value)} />
+                <ManualField label="Fecha del primer pago" type="date" value={manualRow.fechaPago} onChange={(value) => updateManualField("fechaPago", value)} />
               </FormSection>
             </div>
           )}

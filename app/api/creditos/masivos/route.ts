@@ -18,6 +18,7 @@ import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-respons
 import type { Prisma } from "@/app/generated/prisma/client";
 import {
   generateCreditFolio,
+  getQuincenalFirstPaymentDateObject,
   generatePaymentReference,
   MAX_CREDIT_INSTALLMENTS,
   sanitizeText,
@@ -40,7 +41,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_IMPORT_ROWS = 250;
-const ALLOWED_FREQUENCIES = new Set(["CATORCENAL", "MENSUAL"]);
+const ALLOWED_FREQUENCIES = new Set(["QUINCENAL", "CATORCENAL", "MENSUAL"]);
 
 type MassCreditInputRow = {
   aliado?: unknown;
@@ -112,7 +113,7 @@ type PreparedCreditRow = {
   cuota: number;
   fecha: Date;
   fechaPago: Date;
-  frecuencia: "CATORCENAL" | "MENSUAL";
+  frecuencia: "QUINCENAL" | "CATORCENAL" | "MENSUAL";
   imei: string;
   inicial: number;
   plazo: number;
@@ -606,7 +607,14 @@ async function validateRows(
     }
 
     if (!ALLOWED_FREQUENCIES.has(frecuencia)) {
-      errors.push("FRECUENCIA debe ser CATORCENAL o MENSUAL");
+      errors.push("FRECUENCIA debe ser QUINCENAL (días 02 y 17), CATORCENAL (cada 14 días) o MENSUAL");
+    }
+
+    if (frecuencia === "QUINCENAL" && fecha && fechaPago) {
+      const expectedFirstPayment = getQuincenalFirstPaymentDateObject(dateOnly(fecha)!).toISOString().slice(0, 10);
+      if (dateOnly(fechaPago) !== expectedFirstPayment) {
+        errors.push("FECHA DE PAGO debe ser " + expectedFirstPayment + " según la fecha del crédito; QUINCENAL paga los días 02 y 17 de cada mes");
+      }
     }
 
     if (fecha && fechaPago && fechaPago.getTime() < fecha.getTime()) {
@@ -636,7 +644,7 @@ async function validateRows(
         cuota,
         fecha,
         fechaPago,
-        frecuencia: frecuencia as "CATORCENAL" | "MENSUAL",
+        frecuencia: frecuencia as "QUINCENAL" | "CATORCENAL" | "MENSUAL",
         imei,
         inicial,
         plazo,

@@ -33,6 +33,8 @@ export async function buildMassCreditWorkbook(headers: string[], example: string
     "Usa fechas AAAA-MM-DD o D/M/AAAA, por ejemplo 1990-05-20 o 20/5/1990. No incluyas fórmulas. Revisa los errores por fila antes de crear créditos.",
     "DIRECCION, CORREO, FECHA DE NACIMIENTO y SEXO son obligatorios. Completa la dirección y un correo válido; el cliente debe tener al menos 18 años.",
     "SEXO admite MASCULINO, FEMENINO, OTRO o PREFIERO_NO_DECIR. En la carga también se pueden usar M y F para masculino y femenino.",
+    "FRECUENCIA: QUINCENAL paga los días 02 y 17 de cada mes; CATORCENAL paga cada 14 días; MENSUAL conserva el día mensual. No son equivalentes.",
+    "Para QUINCENAL, FECHA DE PAGO debe ser el día 17 del mismo mes si FECHA está entre el 1 y el 5; el día 02 del siguiente mes si está entre el 6 y el 20; el día 17 del siguiente mes si está entre el 21 y el 31.",
     "En FINSER PAY selecciona si los créditos ya existen en SADMIN o están pendientes de creación. El número SADMIN es obligatorio solo si ya existe; si está pendiente, deja la columna vacía. El administrador completará el número real y confirmará la creación desde Aprobaciones de SADMIN. Las demás reglas de aprobación siguen vigentes."]
     .forEach(line => guide.addRow([line]));
   guide.getRow(1).font = { bold: true };
