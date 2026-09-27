@@ -60,6 +60,7 @@ export function routeFixture(db, options = {}) {
       lockCreditDeviceReplacementImeiForCreditCreation: async (_db, input) => { options.onImeiLock?.(input); },
     },
     "@/lib/credit-factory": {
+      getQuincenalFirstPaymentDateObject: load("lib/credit-factory.ts").getQuincenalFirstPaymentDateObject,
       generateCreditFolio: () => `FC-${nativeRequire("node:crypto").randomUUID()}`,
       generatePaymentReference: folio => folio, MAX_CREDIT_INSTALLMENTS: 36,
       sanitizeDeviceValue: value => String(value ?? "").trim(), sanitizeText: value => String(value ?? "").trim(),
