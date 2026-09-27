@@ -13,6 +13,7 @@ import {
   sanitizeText,
   toNumber,
 } from "@/lib/credit-factory";
+import { readMassCreditComponents, updateMassCreditComponentsForPayoff } from "@/lib/mass-credit-financial-components";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { resolveNextPaymentDateAfterPayment } from "@/lib/credit-next-payment-date";
 import {
@@ -262,6 +263,7 @@ async function loadCredit(
       clienteNombre: true,
       clienteDocumento: true,
       clienteTelefono: true,
+      contratoSnapshot: true,
       saldoBaseFinanciado: true,
       planCapitalVigente: true,
       montoCredito: true,
@@ -365,6 +367,15 @@ async function loadPaymentPlan(credit: Awaited<ReturnType<typeof loadCredit>>) {
 }
 
 type LoadedCredit = NonNullable<Awaited<ReturnType<typeof loadCredit>>>;
+
+function serializePaymentCredit(credit: LoadedCredit) {
+  const { contratoSnapshot, ...response } = credit;
+  const components = readMassCreditComponents(contratoSnapshot, credit);
+  return {
+    ...response,
+    ...(components ? { valorSeguro: components.seguro, seguroCuotaPorcentaje: components.seguroCuotaPorcentaje } : {}),
+  };
+}
 type PaymentPlan = NonNullable<Awaited<ReturnType<typeof loadPaymentPlan>>>;
 
 function safeEqualityPayload(payload: unknown) {
@@ -497,6 +508,7 @@ async function syncMoraAutomation(credit: LoadedCredit, plan: PaymentPlan) {
         clienteNombre: true,
         clienteDocumento: true,
         clienteTelefono: true,
+        contratoSnapshot: true,
         saldoBaseFinanciado: true,
         planCapitalVigente: true,
         montoCredito: true,
@@ -634,6 +646,7 @@ export async function GET(
     );
     const plan = await loadPaymentPlan(credit);
     const earlyPayoff = calculateCreditEarlyPayoff({
+      contratoSnapshot: credit.contratoSnapshot,
       settled: Boolean(credit.pazYSalvoEmitidoAt),
       planCapitalVigente: credit.planCapitalVigente,
       saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
@@ -661,7 +674,7 @@ export async function GET(
     return NextResponse.json({
       ok: true,
       credito: {
-        ...syncedCredit,
+        ...serializePaymentCredit(syncedCredit),
         numeroCreditoVisible: (await getCreditDisplayNumbers([credit.id])).get(credit.id) || credit.folio,
         fechaPrimerPago: syncedCredit.fechaPrimerPago?.toISOString() || null,
         fechaProximoPago: syncedCredit.fechaProximoPago?.toISOString() || null,
@@ -788,6 +801,7 @@ export async function POST(
         },
       });
       earlyPayoff = calculateCreditEarlyPayoff({
+        contratoSnapshot: credit.contratoSnapshot,
         settled: Boolean(credit.pazYSalvoEmitidoAt),
         planCapitalVigente: credit.planCapitalVigente,
         saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
@@ -911,6 +925,7 @@ export async function POST(
           observacionAdmin: true,
           pazYSalvoEmitidoAt: true,
           plazoMeses: true,
+          contratoSnapshot: true,
           saldoBaseFinanciado: true,
           valorCuota: true,
           valorFianza: true,
@@ -972,6 +987,7 @@ export async function POST(
 
       const earlyPayoffInTx = earlyPayoffRequested
         ? calculateCreditEarlyPayoff({
+            contratoSnapshot: lockedCredit.contratoSnapshot,
             settled: Boolean(lockedCredit.pazYSalvoEmitidoAt),
             planCapitalVigente: lockedCredit.planCapitalVigente,
             saldoBaseFinanciado: Number(
@@ -1161,6 +1177,14 @@ export async function POST(
               pazYSalvoEmitidoAt: settlementIssuedAt,
               valorFianza: earlyPayoffInTx.valorFianzaReconocida,
               valorInteres: earlyPayoffInTx.valorInteresReconocido,
+              ...(readMassCreditComponents(lockedCredit.contratoSnapshot, lockedCredit) ? {
+                contratoSnapshot: updateMassCreditComponentsForPayoff(lockedCredit.contratoSnapshot, {
+                  montoCredito: earlyPayoffInTx.montoCreditoLiquidado,
+                  valorFianza: earlyPayoffInTx.valorFianzaReconocida,
+                  valorInteres: earlyPayoffInTx.valorInteresReconocido,
+                  valorSeguro: earlyPayoffInTx.valorSeguroReconocido ?? 0,
+                }) as Prisma.InputJsonValue,
+              } : {}),
             }
           : paymentCompletesCredit
             ? {

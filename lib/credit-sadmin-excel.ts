@@ -92,6 +92,7 @@ const columns: SadminColumn[] = [
   { header: "Saldo capital", width: 20, kind: "money", value: item => item.saldoCapital },
   { header: "Saldo fianza", width: 20, kind: "money", value: item => item.saldoFianza },
   { header: "Saldo intereses", width: 20, kind: "money", value: item => item.saldoIntereses },
+  { header: "Saldo seguro", width: 20, kind: "money", value: item => item.saldoSeguro ?? 0 },
 ];
 
 function numberFormat(kind: ColumnKind) {
@@ -153,7 +154,7 @@ export function buildSadminWorkbook(items: SadminCreditRow[]) {
     cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
     cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
   });
-  sheet.autoFilter = `A1:AN${sheet.rowCount}`;
+  sheet.autoFilter = `A1:AO${sheet.rowCount}`;
 
   return workbook;
 }

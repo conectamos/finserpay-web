@@ -1,13 +1,11 @@
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { resolveCapitalOriginal } from "@/lib/credit-capital";
 import { parseCapitalPlanSnapshot } from "@/lib/credit-principal-payment";
-import { readMassCreditComponents } from "@/lib/mass-credit-financial-components";
 import { WOMPI_EARLY_PAYOFF_TYPE } from "@/lib/wompi-early-payoff-intent";
 
 export const EARLY_PAYOFF_PAYMENT_TYPE = WOMPI_EARLY_PAYOFF_TYPE;
 
 export type CreditEarlyPayoffInput = {
-  contratoSnapshot?: unknown;
   planCapitalVigente?: unknown;
   settled?: boolean;
   abonos?: Array<{
@@ -41,7 +39,6 @@ export type CreditEarlyPayoffResult = {
   totalAbonado: number;
   valorFianzaReconocida: number;
   valorInteresReconocido: number;
-  valorSeguroReconocido?: number;
 };
 
 export type EarlyPayoffIntentMeta = {
@@ -110,42 +107,10 @@ export function calculateCreditEarlyPayoff(
   const cargosOriginales = valorInteresOriginal + valorFianzaOriginal;
   const interesShare =
     cargosOriginales > 0 ? Math.max(0, valorInteresOriginal / cargosOriginales) : 0;
-  let valorInteresReconocido = roundMoney(cargosReconocidos * interesShare);
-  let valorFianzaReconocida = roundMoney(
+  const valorInteresReconocido = roundMoney(cargosReconocidos * interesShare);
+  const valorFianzaReconocida = roundMoney(
     Math.max(0, cargosReconocidos - valorInteresReconocido)
   );
-  const massComponents = readMassCreditComponents(input.contratoSnapshot, {
-    montoCredito: montoCreditoOriginal,
-    saldoBaseFinanciado: Number(input.saldoBaseFinanciado || 0),
-    valorInteres: valorInteresOriginal,
-    valorFianza: valorFianzaOriginal,
-    valorCuota: input.valorCuota,
-    plazoMeses: input.plazoMeses,
-    planCapitalVigente: input.planCapitalVigente,
-  });
-  let valorSeguroReconocido = 0;
-  // This branch applies only to a reconciled MASIVO_COMPONENTES_V1 marker.
-  // Every credit without that matching marker retains the original calculation above.
-  if (massComponents && massComponents.seguro > 0) {
-    const originals = [valorInteresOriginal, valorFianzaOriginal, massComponents.seguro]
-      .map(value => BigInt(Math.round(value * 100)));
-    const originalTotal = originals.reduce((sum, value) => sum + value, BigInt(0));
-    const totalCents = BigInt(Math.round(cargosReconocidos * 100));
-    const parts = originals.map((value, index) => ({
-      index, assigned: totalCents * value / originalTotal,
-      remainder: totalCents * value % originalTotal,
-    }));
-    let residual = totalCents - parts.reduce((sum, part) => sum + part.assigned, BigInt(0));
-    const ranked = [...parts].sort((left, right) =>
-      left.remainder === right.remainder ? left.index - right.index : left.remainder > right.remainder ? -1 : 1);
-    for (const part of ranked) {
-      if (residual <= BigInt(0)) break;
-      part.assigned += BigInt(1);
-      residual -= BigInt(1);
-    }
-    [valorInteresReconocido, valorFianzaReconocida, valorSeguroReconocido] =
-      parts.map(part => Number(part.assigned) / 100);
-  }
   let reason: string | null = null;
 
   if (estadoPago === "PAGADO" || saldoObligacion <= 0) {
@@ -171,7 +136,6 @@ export function calculateCreditEarlyPayoff(
     totalAbonado,
     valorFianzaReconocida,
     valorInteresReconocido,
-    ...(massComponents ? { valorSeguroReconocido } : {}),
   };
 }
 

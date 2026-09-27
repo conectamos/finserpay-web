@@ -127,6 +127,7 @@ function buildWorkbookHtml(rows: string) {
         <th>Saldo capital</th>
         <th>Saldo fianza</th>
         <th>Saldo intereses</th>
+        <th>Saldo seguro</th>
         <th>Dias vencidos</th>
         <th>Ultimo pago que ha realizado</th>
       </tr>
@@ -301,6 +302,9 @@ export async function GET(req: Request) {
           valorEquipoTotal: Number(credito.valorEquipoTotal || 0),
           valorFianza: Number(credito.valorFianza || 0),
           valorInteres: Number(credito.valorInteres || 0),
+          contratoSnapshot: credito.contratoSnapshot,
+          valorCuota: Number(credito.valorCuota || 0),
+          plazoMeses: credito.plazoMeses,
         });
         const rates = resolveCarteraExportRates({
           tasaInteresEa: credito.tasaInteresEa,
@@ -355,6 +359,7 @@ export async function GET(req: Request) {
           ${moneyCell(balances.saldoCapital)}
           ${moneyCell(balances.saldoFianza)}
           ${moneyCell(balances.saldoIntereses)}
+          ${moneyCell(balances.saldoSeguro ?? 0)}
           ${numberCell(diasVencidos)}
           ${textCell(ultimoPago)}
         </tr>`;

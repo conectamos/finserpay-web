@@ -3,6 +3,7 @@ import { resolveCreditSellerDisplay } from "@/lib/credit-assigned-seller";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import { NextResponse } from "next/server";
+import { readMassCreditComponents } from "@/lib/mass-credit-financial-components";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
@@ -570,6 +571,7 @@ function serializeCredit(
     settled: Boolean(item.pazYSalvoEmitidoAt),
   });
   const earlyPayoff = calculateCreditEarlyPayoff({
+    contratoSnapshot: item.contratoSnapshot,
     settled: Boolean(item.pazYSalvoEmitidoAt),
     planCapitalVigente: item.planCapitalVigente,
     saldoBaseFinanciado: Number(item.saldoBaseFinanciado || 0),
@@ -589,7 +591,10 @@ function serializeCredit(
     { imei: item.imei, deviceUid: item.deviceUid }
   );
 
+  const massComponents = readMassCreditComponents(item.contratoSnapshot, item);
+
   return {
+    ...(massComponents ? { valorSeguro: massComponents.seguro, seguroCuotaPorcentaje: massComponents.seguroCuotaPorcentaje } : {}),
     id: item.id,
     folio: item.folio,
     clienteNombre: item.clienteNombre,

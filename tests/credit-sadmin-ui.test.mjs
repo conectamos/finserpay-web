@@ -554,3 +554,24 @@ test("clic en crédito abre toda la información y verificaciones, y cerrar ocul
   assert.equal(number(h, 81).props.value, "00081-A"); assert.equal(patches, 0);
   h.unmount();
 });
+
+
+test("detalle SADMIN distingue seguro de intereses cuando tiene saldo, sin mostrarlo en créditos anteriores", async () => {
+  const h = mount(async () => json(page([
+    { ...row(81), saldoObligacion: 5_728_800, saldoCapital: 2_800_000,
+      saldoFianza: 2_100_000, saldoIntereses: 788_480, saldoSeguro: 40_320 },
+    row(82),
+  ])));
+  await h.flush();
+  await toggleCredit(h, 81);
+  const facts = h.find(node => typeof node.type === "function" && node.type.name === "Facts" && node.props.items.some(([label]) => label === "Obligación"));
+  assert.equal(facts.props.items.length, 5);
+  const values = Object.fromEntries(facts.props.items);
+  assert.match(values.Seguro, /40.320/);
+  assert.match(values.Intereses, /788.480/);
+  assert.match(values.Capital, /2.800.000/);
+  await toggleCredit(h, 82);
+  const legacy = h.find(node => typeof node.type === "function" && node.type.name === "Facts" && node.props.items.some(([label]) => label === "Obligación"));
+  assert.equal(legacy.props.items.length, 4);
+  assert.ok(!legacy.props.items.some(([label]) => label === "Seguro"));
+});

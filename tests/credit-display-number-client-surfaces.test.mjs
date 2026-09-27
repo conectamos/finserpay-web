@@ -101,6 +101,7 @@ test("el portal cliente adjunta números solo a los créditos del documento cons
     withCreditDisplayNumber: display.withCreditDisplayNumber,
     buildCreditPaymentPlan: () => ({ estadoPago: "AL_DIA", saldoPendiente: 1000000, totalPaid: 0, installments: [] }),
     calculateCreditEarlyPayoff: () => ({ eligible: false, reason: "No disponible", capitalPendiente: 1000000, interesFianzaCondonado: 0, saldoObligacion: 1000000 }),
+    readMassCreditComponents: () => null,
   });
   const result = await GET(new Request("https://example.test/api/clientes/creditos?documento=1234567890"));
   assert.equal(result.status, 200);

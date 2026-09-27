@@ -15,7 +15,7 @@ const headers = [
   "IMEI", "Aliado", "Sede", "Valor venta", "Inicial", "Crédito autorizado", "N.º cuotas", "Valor cuota",
   "Frecuencia", "Interés mensual efectivo", "Fianza total del crédito", "Seguro por cuota", "Próximo pago",
   "Cuotas pagadas", "Cuotas pendientes", "Días vencidos", "Último pago", "Saldo obligación", "Saldo capital",
-  "Saldo fianza", "Saldo intereses",
+  "Saldo fianza", "Saldo intereses", "Saldo seguro",
 ];
 
 const example = {
@@ -73,11 +73,11 @@ async function roundTrip(items) {
   return workbook.getWorksheet("Creación SADMIN");
 }
 
-test("exporta las 40 columnas SADMIN en el orden documentado y con tipos nativos", async () => {
+test("exporta las 41 columnas SADMIN en el orden documentado y con tipos nativos", async () => {
   const sheet = await roundTrip([example]);
   assert.ok(sheet);
   assert.equal(sheet.rowCount, 2);
-  assert.equal(sheet.columnCount, 40);
+  assert.equal(sheet.columnCount, 41);
   assert.deepEqual(sheet.getRow(1).values.slice(1), headers);
 
   for (const [address, expected] of [
@@ -193,9 +193,28 @@ test("un resultado vacío sigue siendo un Excel utilizable con encabezado, filtr
   const sheet = await roundTrip([]);
   assert.ok(sheet);
   assert.equal(sheet.rowCount, 1);
-  assert.equal(sheet.columnCount, 40);
+  assert.equal(sheet.columnCount, 41);
   assert.deepEqual(sheet.getRow(1).values.slice(1), headers);
   assert.equal(sheet.views[0].state, "frozen");
   assert.equal(sheet.views[0].ySplit, 1);
-  assert.equal(sheet.autoFilter, "A1:AN1");
+  assert.equal(sheet.autoFilter, "A1:AO1");
+});
+
+
+test("exporta seguro separado sin modificar obligación, capital, cuota ni intereses", async () => {
+  const sheet = await roundTrip([{ ...example,
+    saldoObligacion: 5_728_800, saldoCapital: 2_800_000,
+    saldoFianza: 2_100_000, saldoIntereses: 788_480, saldoSeguro: 40_320,
+    valorCuota: 119_350, numeroCuotas: 48,
+  }]);
+  assert.equal(sheet.getCell("AK2").value, 5_728_800);
+  assert.equal(sheet.getCell("AL2").value, 2_800_000);
+  assert.equal(sheet.getCell("AM2").value, 2_100_000);
+  assert.equal(sheet.getCell("AN2").value, 788_480);
+  assert.equal(sheet.getCell("AO1").value, "Saldo seguro");
+  assert.equal(sheet.getCell("AO2").value, 40_320);
+  assert.equal(sheet.getCell("AO2").type, ExcelJS.ValueType.Number);
+  assert.equal(sheet.getCell("AA2").value, 119_350);
+  assert.equal(sheet.getCell("Z2").value, 48);
+  assert.equal(sheet.autoFilter, "A1:AO2");
 });
