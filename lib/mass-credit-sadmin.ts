@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
+import { getSecondCreditEligibility } from "@/lib/second-credit-authorization";
 
 type Database = Pick<Prisma.TransactionClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
 export type ImportIdentity = { cedula?: unknown; numeroCreditoSadmin?: unknown };
@@ -46,6 +47,12 @@ export async function validateImportIdentities(db: Database, rows: ImportIdentit
      WHERE LOWER(BTRIM("numeroCredito")) = ANY($1::text[])`, [...new Set(numberKeys.filter(Boolean))],
   );
   const existingDocuments = new Set(credits.map(credit => credit.documento));
+  // The historical-import duplicate rule stays in force unless the central
+  // administrator explicitly authorized this document. Commit rechecks this
+  // after the shared document locks; preview never grants an authorization.
+  const secondCreditEligibility = existingDocuments.size
+    ? await getSecondCreditEligibility(db, [...existingDocuments])
+    : new Map();
   const existingNumbers = new Set(registrations.map(row => row.numero));
   return rows.map((row, index) => {
     const errors: string[] = [];
@@ -63,7 +70,14 @@ export async function validateImportIdentities(db: Database, rows: ImportIdentit
       if (existingNumbers.has(numberKeys[index])) errors.push("Número de crédito en SADMIN ya registrado en otro crédito");
     }
     if (repeatedDocuments.has(documents[index])) errors.push("Cédula repetida en la carga: no se permite crear otro crédito");
-    if (existingDocuments.has(documents[index])) errors.push("Esta cédula ya tiene un crédito en FINSER PAY. No se permite crear otro");
+    if (existingDocuments.has(documents[index])) {
+      const eligibility = secondCreditEligibility.get(documents[index]);
+      if (!eligibility?.authorization?.active) {
+        errors.push("Esta cédula ya tiene un crédito en FINSER PAY. Se requiere autorización del administrador para crear otro");
+      } else if (!eligibility.canCreate) {
+        errors.push("Esta cédula ya tiene dos créditos vigentes. La autorización de segundo crédito no permite crear un tercero");
+      }
+    }
     return errors;
   });
 }

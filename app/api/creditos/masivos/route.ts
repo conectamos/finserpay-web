@@ -1,4 +1,10 @@
 import { readImportCustomer } from "@/lib/mass-credit-customer";
+import {
+  ensureSecondCreditAuthorizationSchema,
+  getSecondCreditEligibility,
+  secondCreditCreationAuthorization,
+  SecondCreditAuthorizationError,
+} from "@/lib/second-credit-authorization";
 import { createHash } from "node:crypto";
 import { readImportImei } from "@/lib/mass-credit-imei";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
@@ -876,6 +882,7 @@ export async function POST(req: Request) {
       );
     }
 
+    await ensureSecondCreditAuthorizationSchema();
     if (!commit) {
       const validation = await validateRows(rows, prisma, temporaryImeiConfirmed, sadminMode);
       return NextResponse.json({ ok: validation.summary.invalid === 0, commit: false, rows: validation.rows, summary: validation.summary });
@@ -911,6 +918,7 @@ export async function POST(req: Request) {
       if (validation.summary.invalid > 0) {
         return { ok: false, commit: false, rows: validation.rows, summary: validation.summary };
       }
+      const secondCreditEligibility = await getSecondCreditEligibility(tx, documents);
       const createdAt = new Date();
       const batchId = requestId;
       const usedFolios = new Set<string>();
@@ -933,6 +941,8 @@ export async function POST(req: Request) {
       for (const row of validation.prepared) {
         const folio = foliosByRowNumber.get(row.rowNumber) || generateCreditFolio();
         const referenciaPago = generatePaymentReference(folio, row.cedula);
+        const eligibility = secondCreditEligibility.get(row.cedula);
+        const authorization = eligibility ? secondCreditCreationAuthorization(eligibility) : null;
         const totalCobrable = calculateCollectibleTotal(row);
         const cargosIncorporados = calculateEmbeddedCharges(row);
         const observation = buildMassCreditObservation({
@@ -947,6 +957,7 @@ export async function POST(req: Request) {
           createdByUserName: access.user.nombre,
         });
         Object.assign(snapshot.origen, {
+          ...(authorization ? { segundoCreditoAutorizacion: authorization } : {}),
           requestId, requestHash, numeroCreditoSadmin: sadminMode === "PENDING" ? null : row.numeroCreditoSadmin,
           ...(temporaryImeiConfirmed ? { imeiTemporalPendienteCorreccion: true } : {}),
           sadminConfirmation: sadminMode === "PENDING" ? "PENDING_SADMIN" : "ADMIN_EXISTING_SADMIN",
@@ -1024,6 +1035,9 @@ export async function POST(req: Request) {
     }, { timeout: 60_000 });
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof SecondCreditAuthorizationError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof CreditApprovalError) {
       return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     }

@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { creditApprovalSchemaStatements } from "../scripts/credit-approval-schema.mjs";
 import { installCreditSadminSchema } from "../scripts/credit-sadmin-schema.mjs";
+import { secondCreditAuthorizationSchemaStatements } from "../scripts/second-credit-authorization-schema.mjs";
 
 const requireFromTest = createRequire(import.meta.url);
 const cache = new Map();
@@ -59,7 +60,7 @@ export async function prepareServiceFixture(pool, connectionString, expectedData
   const client = await pool.connect();
   try {
     assert.equal((await client.query("SELECT current_database() AS name")).rows[0].name, expectedDatabase);
-    const tables = ["CreditSadminEvent", "CreditSadminRegistration", "CreditoAbono", "CreditoAmortizacion", "Credito", "Sede", "Aliado", "Usuario", "CreditApprovalSharedSession", "CreditApprovalSharedGrant"];
+    const tables = ["SecondCreditAuthorizationEvent", "SecondCreditAuthorization", "CreditSadminEvent", "CreditSadminRegistration", "CreditoAbono", "CreditoAmortizacion", "Credito", "Sede", "Aliado", "Usuario", "CreditApprovalSharedSession", "CreditApprovalSharedGrant"];
     const existing = await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
     assert.ok(existing.rows.every(row => tables.includes(row.tablename)), "El fixture no borra tablas ajenas");
     for (const table of tables) await client.query('DROP TABLE IF EXISTS public."' + table + '" CASCADE');
@@ -96,6 +97,7 @@ export async function prepareServiceFixture(pool, connectionString, expectedData
     `);
     await client.query(creditApprovalSchemaStatements.find(sql => sql.includes("CREATE OR REPLACE FUNCTION public.credit_approval_reject_history_mutation()")));
     await installCreditSadminSchema(client);
+    for (const statement of secondCreditAuthorizationSchemaStatements) await client.query(statement);
     await client.query('INSERT INTO "CreditApprovalSharedGrant" ("id","scope") VALUES ($1,\'CREDIT_APPROVAL\')', [sharedActor.grantId]);
     await client.query('INSERT INTO "CreditApprovalSharedSession" ("id","grantId","expiresAt") VALUES ($1,$2,\'2199-01-01\')', [sharedActor.sessionId, sharedActor.grantId]);
   } finally { client.release(); }

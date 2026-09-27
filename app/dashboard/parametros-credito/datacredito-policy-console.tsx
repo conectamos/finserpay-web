@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import ManualCreditCapConsole from "@/app/dashboard/parametros-credito/manual-credit-cap-console";
+import SecondCreditAuthorizationConsole from "@/app/dashboard/parametros-credito/second-credit-authorization-console";
 import {
   DATACREDITO_MAX_SCORE,
   DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT,
@@ -1710,7 +1711,7 @@ function PlatformEditor({
   );
 }
 
-type PolicyConsoleTab = "POLICIES" | "ASSIGNMENTS" | "DOCUMENT_LIMITS";
+type PolicyConsoleTab = "POLICIES" | "ASSIGNMENTS" | "DOCUMENT_LIMITS" | "SECOND_CREDIT";
 
 function PriorityRuleEditor({
   rules,
@@ -3008,6 +3009,17 @@ export default function DatacreditoPolicyConsole() {
           <BadgeDollarSign className="mr-2 inline h-4 w-4" aria-hidden="true" />
           Cupos por cédula
         </button>
+        <button
+          id="datacredito-second-credit-tab"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "SECOND_CREDIT"}
+          aria-controls="datacredito-second-credit-panel"
+          onClick={() => setActiveTab("SECOND_CREDIT")}
+        >
+          <Users className="mr-2 inline h-4 w-4" aria-hidden="true" />
+          Segundo crédito
+        </button>
       </Tabs>
 
       {activeTab === "POLICIES" ? (
@@ -3899,13 +3911,21 @@ export default function DatacreditoPolicyConsole() {
             </div>
           </Card>
         </div>
-      ) : (
+      ) : activeTab === "DOCUMENT_LIMITS" ? (
         <div
           id="datacredito-document-limits-panel"
           role="tabpanel"
           aria-labelledby="datacredito-document-limits-tab"
         >
           <ManualCreditCapConsole />
+        </div>
+      ) : (
+        <div
+          id="datacredito-second-credit-panel"
+          role="tabpanel"
+          aria-labelledby="datacredito-second-credit-tab"
+        >
+          <SecondCreditAuthorizationConsole />
         </div>
       )}
 

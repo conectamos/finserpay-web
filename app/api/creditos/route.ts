@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { resolveCreditSellerDisplay } from "@/lib/credit-assigned-seller";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
+import {
+  assertSecondCreditEligibility,
+  ensureSecondCreditAuthorizationSchema,
+  SecondCreditAuthorizationError,
+} from "@/lib/second-credit-authorization";
 import { NextResponse } from "next/server";
 import { readMassCreditComponents } from "@/lib/mass-credit-financial-components";
 import type { Prisma } from "@/app/generated/prisma/client";
@@ -807,18 +812,6 @@ async function buildPaymentSummaryMap(creditIds: number[]) {
   }
 
   return map;
-}
-
-function getCreditPendingBalance(
-  item: Pick<CreditListItem, "cuotaInicial" | "montoCredito">,
-  payment?: PaymentAggregate
-) {
-  return resolveCreditPaymentSummary({
-    montoCredito: item.montoCredito,
-    cuotaInicial: item.cuotaInicial,
-    totalAbonado: Number(payment?.totalAbonado || 0),
-    abonosCount: Number(payment?.abonosCount || 0),
-  }).saldoPendiente;
 }
 
 async function runBusinessSafe<T>(work: () => Promise<T>) {
@@ -2504,47 +2497,11 @@ export async function POST(req: Request) {
       );
     }
 
-    // Las excepciones por cedula se conservan solo como historia administrativa.
-    // Las ventas nuevas aplican exclusivamente las reglas publicadas de la politica.
-    const documentCanHaveMultipleActiveCredits = false;
+    // La autorización de un segundo crédito es independiente de las excepciones
+    // históricas y no elimina las verificaciones de entrega ni de aprobación.
     const documentCanSkipDeliveryVerification = false;
-
-    if (!documentCanHaveMultipleActiveCredits) {
-      const clientCredits = await prisma.credito.findMany({
-        where: {
-          clienteDocumento,
-          estado: {
-            not: "ANULADO",
-          },
-        },
-        select: {
-          id: true,
-          folio: true,
-          planCapitalVigente: true,
-          montoCredito: true,
-          cuotaInicial: true,
-        },
-      });
-
-      if (clientCredits.length) {
-        const clientPaymentMap = await buildPaymentSummaryMap(
-          clientCredits.map((item) => item.id)
-        );
-        const activeCredit = clientCredits.find(
-          (item) =>
-            getCreditPendingBalance(item, clientPaymentMap.get(item.id)) > 0
-        );
-
-        if (activeCredit) {
-          return NextResponse.json(
-            {
-              error: `La cedula ya tiene saldo vigente en el credito ${activeCredit.folio}. Solo puedes crear una nueva venta cuando el saldo este en $0.`,
-            },
-            { status: 400 }
-          );
-        }
-      }
-    }
+    await ensureSecondCreditAuthorizationSchema();
+    await assertSecondCreditEligibility(prisma, clienteDocumento);
 
     if (!equipoMarca || !equipoModelo) {
       return NextResponse.json(
@@ -3604,7 +3561,13 @@ export async function POST(req: Request) {
     const createCreditWithAmortization = async (
       transaction: Prisma.TransactionClient
     ) => {
+      // El guard de lista negra toma primero el lock compartido por cédula.
+      // Se vuelve a comprobar el cupo bajo ese lock antes de crear el crédito.
       await assertDocumentNotBlacklisted(clienteDocumento, transaction);
+      const secondCreditAuthorization = await assertSecondCreditEligibility(
+        transaction,
+        clienteDocumento
+      );
       let transactionVeriffValidation = veriffValidation;
 
       await lockCreditDeviceReplacementImeiForCreditCreation(transaction, {
@@ -3685,21 +3648,29 @@ export async function POST(req: Request) {
         transactionVeriffValidation = lockedVeriffValidation;
       }
 
-      const transactionCreditCreateArgs = transactionVeriffValidation
-        ? {
-            ...creditCreateArgs,
-            data: {
-              ...creditCreateArgs.data,
-              contratoSnapshot: {
-                ...contratoSnapshot,
-                evidencia: {
-                  ...contratoSnapshot.evidencia,
-                  identidad: buildVeriffSnapshot(transactionVeriffValidation),
-                },
-              } as Prisma.InputJsonValue,
-            },
-          }
-        : creditCreateArgs;
+      const transactionCreditCreateArgs =
+        transactionVeriffValidation || secondCreditAuthorization
+          ? {
+              ...creditCreateArgs,
+              data: {
+                ...creditCreateArgs.data,
+                contratoSnapshot: {
+                  ...contratoSnapshot,
+                  ...(secondCreditAuthorization
+                    ? { segundoCreditoAutorizacion: secondCreditAuthorization }
+                    : {}),
+                  ...(transactionVeriffValidation
+                    ? {
+                        evidencia: {
+                          ...contratoSnapshot.evidencia,
+                          identidad: buildVeriffSnapshot(transactionVeriffValidation),
+                        },
+                      }
+                    : {}),
+                } as Prisma.InputJsonValue,
+              },
+            }
+          : creditCreateArgs;
       const credit = await transaction.credito.create(
         transactionCreditCreateArgs
       );
@@ -3862,6 +3833,12 @@ export async function POST(req: Request) {
   } catch (error) {
     const blacklistResponse = documentBlacklistErrorResponse(error);
     if (blacklistResponse) return blacklistResponse;
+    if (error instanceof SecondCreditAuthorizationError) {
+      return NextResponse.json(
+        { code: error.code, error: error.message },
+        { status: error.status }
+      );
+    }
     if (error instanceof ActiveSolicitudConflictError) {
       return NextResponse.json(
         {
