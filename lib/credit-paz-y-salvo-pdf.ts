@@ -135,7 +135,10 @@ async function renderCreditPazYSalvoPdf(input: CreditPazYSalvoPdfInput, useBrand
     });
     const bufferPromise = toBuffer(doc);
     const width = doc.page.width - MARGIN * 2;
-    const bottom = doc.page.height - MARGIN - 42;
+    doc.font(fonts.regular).fontSize(9);
+    const footerLineHeight = doc.currentLineHeight(true);
+    const footerTop = doc.page.height - MARGIN - footerLineHeight * 2 - 9;
+    const bottom = footerTop - 24;
     const creditNumber = creditDisplayNumber(input);
     let y = MARGIN;
 
@@ -221,23 +224,55 @@ async function renderCreditPazYSalvoPdf(input: CreditPazYSalvoPdfInput, useBrand
       `FINSER PAY certifica que ${client}, identificado(a) con documento número ${document}, ha pagado en su totalidad el crédito ${creditNumber}${equipmentText} y, a la fecha de expedición de este certificado, no presenta saldo pendiente por esta obligación.`,
       "Times-Roman", 12.5, COLORS.graphite, 5
     );
-    y += 27;
+    y += 24;
 
     renderStage = "DETAILS";
-    field("Equipo financiado", equipment);
-    if (valueOrDash(input.imei) !== "-") field("IMEI", valueOrDash(input.imei));
-    if (valueOrDash(input.deviceUid) !== "-") field("Device UID", valueOrDash(input.deviceUid));
-    field("Sede", valueOrDash(input.sedeNombre));
-    field("Estado actual", stateLabel(input.estado));
-    if (valueOrDash(input.deliverableLabel) !== "-") {
-      field("Entregabilidad", valueOrDash(input.deliverableLabel));
+    const details: Array<[string, string]> = [
+      ["Equipo financiado", equipment],
+      ...(valueOrDash(input.imei) !== "-" ? [["IMEI", valueOrDash(input.imei)] as [string, string]] : []),
+      ...(valueOrDash(input.deviceUid) !== "-" ? [["Device UID", valueOrDash(input.deviceUid)] as [string, string]] : []),
+      ["Sede", valueOrDash(input.sedeNombre)],
+      ["Estado actual", stateLabel(input.estado)],
+      ...(valueOrDash(input.deliverableLabel) !== "-" ? [["Entregabilidad", valueOrDash(input.deliverableLabel)] as [string, string]] : []),
+      ["Referencia de pago", valueOrDash(input.referenciaPago)],
+      ["Emitido por", valueOrDash(input.issuer)],
+    ];
+    const columnGap = 24;
+    const columnWidth = (width - columnGap) / 2;
+    doc.font(fonts.regular).fontSize(9.5);
+    const labelHeight = doc.currentLineHeight(true);
+    doc.font(fonts.regular).fontSize(11);
+    const detailLineHeight = doc.currentLineHeight(true) + 2;
+    const detailCells = details.map(([label, value]) => ({
+      label, value, lines: wrapText(doc, value, columnWidth),
+    }));
+    for (let index = 0; index < detailCells.length; index += 2) {
+      const cells = detailCells.slice(index, index + 2);
+      const rowHeight = labelHeight + 5 + Math.max(...cells.map(cell => cell.lines.length)) * detailLineHeight + 13;
+      // Very large historical values retain the complete paginated representation.
+      if (rowHeight > bottom - MARGIN - 180) {
+        for (const cell of cells) field(cell.label, cell.value);
+        continue;
+      }
+      ensureSpace(rowHeight);
+      const rowTop = y;
+      cells.forEach((cell, column) => {
+        const x = MARGIN + column * (columnWidth + columnGap);
+        doc.font(fonts.regular).fontSize(9.5).fillColor(COLORS.muted)
+          .text(cell.label, x, rowTop, { lineBreak: false });
+        doc.font(fonts.regular).fontSize(11).fillColor(COLORS.graphite);
+        cell.lines.forEach((line, lineIndex) => {
+          doc.text(line, x, rowTop + labelHeight + 5 + lineIndex * detailLineHeight, { lineBreak: false });
+        });
+      });
+      y = rowTop + rowHeight;
+      doc.moveTo(MARGIN, y - 5).lineTo(MARGIN + width, y - 5)
+        .lineWidth(0.5).strokeColor(COLORS.border).stroke();
     }
-    field("Referencia de pago", valueOrDash(input.referenciaPago));
-    field("Emitido por", valueOrDash(input.issuer));
 
     renderStage = "STATUS";
-    ensureSpace(152);
-    y += 38;
+    ensureSpace(132);
+    y += 18;
     drawFulfilledSeal(doc, fonts, MARGIN + 70, y + 48);
     const signatureX = MARGIN + width - 220;
     drawBrand(doc, fonts, signatureX + 28, y + 37, 20);
@@ -250,14 +285,15 @@ async function renderCreditPazYSalvoPdf(input: CreditPazYSalvoPdfInput, useBrand
     const range = doc.bufferedPageRange();
     for (let page = range.start; page < range.start + range.count; page++) {
       doc.switchToPage(page);
-      const footerY = doc.page.height - MARGIN - 18;
-      doc.moveTo(MARGIN, footerY - 20).lineTo(MARGIN + width, footerY - 20)
+      doc.moveTo(MARGIN, footerTop - 12).lineTo(MARGIN + width, footerTop - 12)
         .lineWidth(0.5).strokeColor(COLORS.border).stroke();
+      // Fixed footer lines must bypass PDFKit's automatic width-based pagination.
       doc.font(fonts.regular).fontSize(9).fillColor(COLORS.muted)
-        .text("FINSER PAY S.A.S. | NIT 902052909-4 | Ibagué, Tolima", MARGIN, footerY - 7, { width, lineBreak: false })
-        .text("Documento generado por FINSER PAY", MARGIN, footerY + 7, { width: width - 120, lineBreak: false })
-        .text(`Página ${page + 1} de ${range.count}`, MARGIN + width - 120, footerY + 7,
-          { width: 120, align: "right", lineBreak: false });
+        .text("FINSER PAY S.A.S. | NIT 902052909-4 | Ibagué, Tolima", MARGIN, footerTop, { lineBreak: false })
+        .text("Documento generado por FINSER PAY", MARGIN, footerTop + footerLineHeight + 3, { lineBreak: false });
+      const pageLabel = `Página ${page + 1} de ${range.count}`;
+      doc.text(pageLabel, MARGIN + width - doc.widthOfString(pageLabel), footerTop + footerLineHeight + 3,
+        { lineBreak: false });
     }
 
     renderStage = "FINALIZE";

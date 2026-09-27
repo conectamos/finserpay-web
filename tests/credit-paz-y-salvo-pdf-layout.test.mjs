@@ -179,6 +179,117 @@ test("a failed brand font retries with safe built-in fonts while retaining the a
   assertPrintLayout(content);
 });
 
+function loadCertificateWithProductionFonts(mode) {
+  const require = createRequire(import.meta.url);
+  const source = fs.readFileSync(path.join(projectRoot, "lib/credit-paz-y-salvo-pdf.ts"), "utf8");
+  const code = ts.transpileModule(source, { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true,
+  } }).outputText;
+  const documentFonts = [];
+  class ProductionFontDocument extends RealPDFDocument {
+    constructor(options) {
+      super(options);
+      documentFonts.push(options.font);
+    }
+  }
+  const exports = {};
+  vm.runInNewContext(code, { exports, Buffer,
+    process: { ...process, cwd: () => projectRoot }, console: { error() {} },
+    require(specifier) {
+      if (specifier === "server-only") return {};
+      if (specifier === "pdfkit") return ProductionFontDocument;
+      if (specifier === "node:fs") return {
+        existsSync(file) {
+          // Linux has the bundled font but neither Windows Arial file.
+          return mode === "linux" && file === path.join(projectRoot, "public", "pdf-fonts", "Geist-Regular.ttf")
+            && fs.existsSync(file);
+        },
+      };
+      if (specifier === "@/lib/credit-display-number") return {
+        creditDisplayNumber: value => value.numeroCreditoVisible?.trim() || value.folio?.trim() || "Sin folio",
+      };
+      return require(specifier);
+    },
+  }, { filename: "credit-paz-y-salvo-pdf.ts" });
+  return { buildPdf: exports.buildCreditPazYSalvoPdf, documentFonts };
+}
+
+for (const variant of [
+  { name: "client", issuer: "FINSER PAY", referenciaPago: null },
+  { name: "admin", issuer: "Administrador de prueba (qa-local)", referenciaPago: "LOCAL-QA-SIN-PAGO-81" },
+]) {
+  test(`a ${variant.name} certificate with realistic long names and device status fits one Linux A4 page`, async () => {
+    const { buildPdf, documentFonts } = loadCertificateWithProductionFonts("linux");
+    const data = input({
+      clienteDocumento: "1023456789",
+      clienteNombre: "María Fernanda Rodríguez Hernández de la Fuente Restrepo",
+      deliverableLabel: "Pendiente de verificación tecnológica del equipo y confirmación de entrega en la sede de origen del crédito financiado.",
+      deviceUid: "QA81" + "1234567890".repeat(6),
+      equipo: "IPHONE IPHONE 15 PRO MAX 512GB TITANIO EQUIPO FINANCIADO",
+      folio: "FC-20260926193000-QA81", numeroCreditoVisible: "900000081",
+      imei: "359111122223333", issuedAt: new Date("2026-09-26T15:00:00Z"),
+      issuer: variant.issuer, referenciaPago: variant.referenciaPago,
+      sedeNombre: "Sede comercial de prueba del centro de Bogotá",
+    });
+    const before = structuredClone(data);
+    const content = await readPdf(await buildPdf(data));
+    assert.equal(documentFonts.length, 1);
+    assert.equal(documentFonts[0], path.join(projectRoot, "public", "pdf-fonts", "Geist-Regular.ttf"));
+    assert.equal(content.pages.length, 1, "the seal and signature must fit with normal long real credit fields");
+    for (const value of [data.clienteNombre, data.clienteDocumento, data.numeroCreditoVisible,
+      data.folio, data.equipo, data.imei, data.sedeNombre, data.issuer,
+      data.referenciaPago, data.deliverableLabel].filter(Boolean)) {
+      assert.ok(content.text.includes(value), `the actual long field is complete: ${value}`);
+    }
+    assert.ok(content.text.replace(/\s/g, "").includes(data.deviceUid), "the complete wrapped device identifier survives");
+    assert.match(content.pages[0].text, /OBLIGACIÓN CUMPLIDA/);
+    assert.match(content.pages[0].text, /Emisor del certificado/);
+    assert.match(content.pages[0].text, /Documento generado por FINSER PAY/);
+    assert.match(content.pages[0].text, /Página 1 de 1/);
+    assertPrintLayout(content);
+    assert.deepEqual(data, before);
+  });
+}
+for (const mode of ["linux", "fallback"]) {
+  test(`a complete real-sized certificate stays on one A4 page with ${mode} production fonts`, async () => {
+    const { buildPdf, documentFonts } = loadCertificateWithProductionFonts(mode);
+    const data = input();
+    const content = await readPdf(await buildPdf(data));
+    assert.equal(documentFonts.length, 1, "the selected font renders successfully without an implicit retry");
+    assert.equal(documentFonts[0], mode === "linux"
+      ? path.join(projectRoot, "public", "pdf-fonts", "Geist-Regular.ttf") : "Helvetica");
+    assert.equal(content.pages.length, 1, "ordinary full credit data must not produce footer-only pages");
+    for (const value of [data.clienteNombre, data.clienteDocumento, data.numeroCreditoVisible,
+      data.folio, data.equipo, data.imei, data.deviceUid, data.sedeNombre, data.issuer,
+      data.referenciaPago, data.deliverableLabel]) {
+      assert.ok(content.text.includes(value), `the actual field is complete: ${value}`);
+    }
+    assert.match(content.pages[0].text, /Documento generado por FINSER PAY/);
+    assert.match(content.pages[0].text, /Página 1 de 1/);
+    assertPrintLayout(content);
+  });
+
+  test(`every page contains certificate body when long data uses ${mode} production fonts`, async () => {
+    const { buildPdf } = loadCertificateWithProductionFonts(mode);
+    const data = input({
+      clienteNombre: Array.from({ length: 28 }, (_, index) => `APELLIDO${index + 1}`).join(" "),
+      equipo: Array.from({ length: 45 }, (_, index) => `REFERENCIA${index + 1}`).join(" "),
+      sedeNombre: Array.from({ length: 35 }, (_, index) => `SEDE${index + 1}`).join(" "),
+      issuer: Array.from({ length: 35 }, (_, index) => `EMISOR${index + 1}`).join(" "),
+      referenciaPago: "REFERENCIA-" + "1234567890".repeat(14),
+      deviceUid: "DEVICE-" + "ABCDEFGH".repeat(18),
+    });
+    const content = await readPdf(await buildPdf(data));
+    assert.ok(content.pages.length >= 2, "the fixture exercises genuine content pagination");
+    for (const value of [data.clienteNombre, data.equipo, data.sedeNombre, data.issuer]) {
+      assert.ok(content.text.includes(value), "complete multiword values survive production-font wrapping");
+    }
+    for (const value of [data.referenciaPago, data.deviceUid]) {
+      assert.ok(content.text.replace(/\s/g, "").includes(value), "complete identifiers survive production-font wrapping");
+    }
+    assertPrintLayout(content);
+  });
+}
 test("typed rendering errors stay restricted to the supported PDF error codes", () => {
   assert.equal(getCreditPazYSalvoPdfErrorCode(new Error("PYS_PDF_FONTS")), "PYS_PDF_FONTS");
   assert.equal(getCreditPazYSalvoPdfErrorCode(new Error("PYS_PDF_FINALIZE")), "PYS_PDF_FINALIZE");
