@@ -62,6 +62,10 @@ type MassCreditInputRow = {
   telefono: string;
   valorCredito: string;
   vendedor: string;
+  direccion: string;
+  correo: string;
+  fechaNacimiento: string;
+  sexo: string;
 };
 
 type ValidationRow = {
@@ -85,6 +89,10 @@ type ValidationRow = {
     telefono: string;
     valorCredito: number;
     vendedor: string;
+    direccion: string;
+    correo: string;
+    fechaNacimiento: string | null;
+    sexo: string;
   };
   ok: boolean;
   rowNumber: number;
@@ -146,6 +154,10 @@ const FIELD_ORDER: FieldKey[] = [
   "frecuencia",
   "fechaPago",
   "numeroCreditoSadmin",
+  "direccion",
+  "correo",
+  "fechaNacimiento",
+  "sexo",
 ];
 
 const FIELD_LABELS: Record<FieldKey, string> = {
@@ -165,6 +177,10 @@ const FIELD_LABELS: Record<FieldKey, string> = {
   telefono: "TELEFONO",
   valorCredito: "VALOR DEL CREDITO",
   vendedor: "VENDEDOR",
+  direccion: "DIRECCION",
+  correo: "CORREO",
+  fechaNacimiento: "FECHA DE NACIMIENTO",
+  sexo: "SEXO",
 };
 
 const TEMPLATE_HEADER = FIELD_ORDER.map((key) => FIELD_LABELS[key]).join("\t");
@@ -185,6 +201,10 @@ const TEMPLATE_EXAMPLE_ROW = [
   "CATORCENAL",
   "2026-07-11",
   "00012345",
+  "Calle 10 # 20-30",
+  "cliente@example.com",
+  "1990-05-20",
+  "FEMENINO",
 ];
 const TEMPLATE_ROWS = [TEMPLATE_HEADER, TEMPLATE_EXAMPLE_ROW.join("\t")].join("\n");
 const TEMPLATE_CSV = [
@@ -215,7 +235,23 @@ const HEADER_ALIASES: Record<string, FieldKey> = {
   valorcredito: "valorCredito",
   valordelcredito: "valorCredito",
   vendedor: "vendedor",
+  direccion: "direccion",
+  direccioncliente: "direccion",
+  correoelectronico: "correo",
+  correo: "correo",
+  email: "correo",
+  fechanacimiento: "fechaNacimiento",
+  fechadenacimiento: "fechaNacimiento",
+  sexo: "sexo",
+  genero: "sexo",
 };
+
+const GENDER_OPTIONS = [
+  { value: "MASCULINO", label: "Masculino" },
+  { value: "FEMENINO", label: "Femenino" },
+  { value: "OTRO", label: "Otro" },
+  { value: "PREFIERO_NO_DECIR", label: "Prefiero no decirlo" },
+];
 
 function normalizeHeader(value: string) {
   return value
@@ -288,6 +324,10 @@ function emptyRow(): MassCreditInputRow {
     telefono: "",
     valorCredito: "",
     vendedor: "",
+    direccion: "",
+    correo: "",
+    fechaNacimiento: "",
+    sexo: "",
   };
 }
 
@@ -702,7 +742,7 @@ export default function MassCreditImportConsole() {
 
   const downloadResult = () => {
     if (!validation?.rows.length) return;
-    const header = ["FILA", "ESTADO", "FOLIO", "CLIENTE", "CEDULA", "Número de crédito en SADMIN", "SEDE", "VENDEDOR", "CREDITO", "CUOTA", "NOTAS"];
+    const header = ["FILA", "ESTADO", "FOLIO", "CLIENTE", "CEDULA", "Número de crédito en SADMIN", "SEDE", "VENDEDOR", "CREDITO", "CUOTA", "NOTAS", "DIRECCION", "CORREO", "FECHA DE NACIMIENTO", "SEXO"];
     const rows = validation.rows.map((row) => [
       row.rowNumber,
       row.createdFolio ? "CREADO" : row.ok ? "VALIDO" : "ERROR",
@@ -715,6 +755,10 @@ export default function MassCreditImportConsole() {
       row.normalized.valorCredito,
       row.normalized.cuota,
       [...row.errors, ...row.warnings].join(" | "),
+      row.normalized.direccion,
+      row.normalized.correo,
+      row.normalized.fechaNacimiento || "",
+      row.normalized.sexo,
     ]);
     const content = [header, ...rows].map((row) => row.map(csvCell).join(";")).join("\n");
     const blob = new Blob(["\uFEFF", content], { type: "text/csv;charset=utf-8" });
@@ -889,6 +933,7 @@ export default function MassCreditImportConsole() {
                     Ver campos requeridos y datos cargados
                   </summary>
                   <p className="mt-3 text-xs leading-5 text-[#667085]">{FIELD_ORDER.map((field) => FIELD_LABELS[field]).join(" · ")}</p>
+                  <p className="mt-2 text-sm leading-5 text-[var(--fp-muted)]">Dirección, correo, fecha de nacimiento y sexo son obligatorios. Usa AAAA-MM-DD o D/M/AAAA para las fechas; el cliente debe tener al menos 18 años. Sexo: MASCULINO, FEMENINO, OTRO o PREFIERO_NO_DECIR.</p>
                   <textarea
                     value={rawText}
                     onChange={(event) => {
@@ -910,12 +955,22 @@ export default function MassCreditImportConsole() {
                 <p className="mt-1 text-sm text-[#667085]">Registra un credito con las mismas validaciones del lote masivo.</p>
               </div>
 
-              <FormSection icon={UsersRound} title="Cliente" description="Identificacion y datos de contacto.">
+              <FormSection icon={UsersRound} title="Cliente" description="Identificación y datos de contacto. Dirección, correo, nacimiento y sexo son obligatorios.">
                 <ManualField label="Fecha" type="date" value={manualRow.fecha} onChange={(value) => updateManualField("fecha", value)} />
                 <ManualField label="Número de crédito en SADMIN" value={manualRow.numeroCreditoSadmin} onChange={(value) => updateManualField("numeroCreditoSadmin", value)} />
                 <ManualField label="Cedula" inputMode="numeric" value={manualRow.cedula} onChange={(value) => updateManualField("cedula", value)} />
                 <ManualField label="Cliente" value={manualRow.cliente} onChange={(value) => updateManualField("cliente", value)} />
                 <ManualField label="Telefono" inputMode="tel" value={manualRow.telefono} onChange={(value) => updateManualField("telefono", value)} />
+                <ManualField label="Dirección" value={manualRow.direccion} onChange={(value) => updateManualField("direccion", value)} />
+                <ManualField label="Correo electrónico" type="email" value={manualRow.correo} onChange={(value) => updateManualField("correo", value)} />
+                <ManualField label="Fecha de nacimiento" type="date" value={manualRow.fechaNacimiento} onChange={(value) => updateManualField("fechaNacimiento", value)} />
+                <ManualSelect
+                  label="Sexo"
+                  placeholder="Selecciona el sexo"
+                  value={manualRow.sexo}
+                  onChange={(value) => updateManualField("sexo", value)}
+                  options={GENDER_OPTIONS}
+                />
               </FormSection>
 
               <FormSection icon={Smartphone} title="Equipo" description="Referencia e identificador unico.">
@@ -1074,7 +1129,15 @@ export default function MassCreditImportConsole() {
                           {row.createdFolio || (row.ok ? (warning ? "Advertencia" : "Valido") : "Error")}
                         </Badge>
                       </td>
-                      <td className="border-b border-[#e4e7ec] px-4 py-3 font-bold text-[#151a21]">{row.normalized.cliente || "-"}</td>
+                      <td className="min-w-[220px] max-w-xs border-b border-[#e4e7ec] px-4 py-3 text-[var(--fp-graphite)]">
+                        <strong>{row.normalized.cliente || "-"}</strong>
+                        <dl className="mt-1 space-y-0.5 break-words leading-5 text-[var(--fp-muted)]">
+                          <div><dt className="inline font-medium">Dirección:</dt>{" "}<dd className="inline">{row.normalized.direccion || "-"}</dd></div>
+                          <div><dt className="inline font-medium">Correo:</dt>{" "}<dd className="inline">{row.normalized.correo || "-"}</dd></div>
+                          <div><dt className="inline font-medium">Nacimiento:</dt>{" "}<dd className="inline">{row.normalized.fechaNacimiento || "-"}</dd></div>
+                          <div><dt className="inline font-medium">Sexo:</dt>{" "}<dd className="inline">{GENDER_OPTIONS.find((option) => option.value === row.normalized.sexo)?.label || row.normalized.sexo || "-"}</dd></div>
+                        </dl>
+                      </td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.cedula || "-"}</td>
                       <td className="whitespace-nowrap border-b border-[var(--fp-border)] px-4 py-3 font-mono">{row.normalized.imei || "-"}</td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.numeroCreditoSadmin || "-"}</td>

@@ -2,7 +2,7 @@ import ExcelJS from "exceljs";
 
 export const MASS_CREDIT_XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const MAX_ROWS = 250;
-const TEXT_COLUMNS = new Set(["FECHA", "FECHA DE PAGO", "CEDULA", "TELEFONO", "IMEI", "Número de crédito en SADMIN"]);
+const TEXT_COLUMNS = new Set(["FECHA", "FECHA DE PAGO", "FECHA DE NACIMIENTO", "CEDULA", "TELEFONO", "IMEI", "Número de crédito en SADMIN"]);
 
 export async function buildMassCreditWorkbook(headers: string[], example: string[]) {
   const workbook = new ExcelJS.Workbook();
@@ -25,12 +25,14 @@ export async function buildMassCreditWorkbook(headers: string[], example: string
   const guide = workbook.addWorksheet("Instrucciones");
   guide.columns = [{ width: 110 }];
   ["FINSER PAY — Créditos masivos", "Reemplaza la fila de ejemplo en la hoja Creditos. Máximo 250 créditos.",
-    "IMEI, cédula, teléfono y número SADMIN están configurados como Texto para conservar todos sus dígitos y ceros iniciales.",
+    "IMEI, cédula, teléfono y número SADMIN están configurados como Texto para conservar todos sus dígitos y ceros iniciales. Las fechas también usan Texto para conservar el formato.",
     "Pega valores en las celdas, conserva el formato Texto y verifica que el IMEI original tenga 15 dígitos y un dígito de control válido antes de guardar.",
     "En Excel, usa Archivo → Guardar como → CSV UTF-8. Sube el archivo .csv generado a FINSER PAY.",
     "Al guardar, cierra el libro si Excel lo solicita. No vuelvas a abrir el CSV con doble clic; súbelo directamente a FINSER PAY.",
     "Si ves 1E+15, revisa la barra de fórmulas. Si el archivo ya perdió dígitos, recupera el IMEI desde su fuente original.",
-    "Usa fechas AAAA-MM-DD. No incluyas fórmulas. Revisa los errores por fila antes de crear créditos.",
+    "Usa fechas AAAA-MM-DD o D/M/AAAA, por ejemplo 1990-05-20 o 20/5/1990. No incluyas fórmulas. Revisa los errores por fila antes de crear créditos.",
+    "DIRECCION, CORREO, FECHA DE NACIMIENTO y SEXO son obligatorios. Completa la dirección y un correo válido; el cliente debe tener al menos 18 años.",
+    "SEXO admite MASCULINO, FEMENINO, OTRO o PREFIERO_NO_DECIR. En la carga también se pueden usar M y F para masculino y femenino.",
     "El número SADMIN debe existir y ser confirmado por el administrador. Las demás reglas de aprobación siguen vigentes."]
     .forEach(line => guide.addRow([line]));
   guide.getRow(1).font = { bold: true };
