@@ -13,14 +13,31 @@ const errors = changes => readImportCustomer(customer(changes), today).errors.jo
 
 // Exercise the actual HTTP route and its transaction rather than replace its validation.
 function databaseFixture() {
-  const state = { credits: [], registrations: [], audits: [], transactions: 0, failNumber: null };
+  const state = { credits: [], registrations: [], audits: [], transactions: 0, failNumber: null, failRegistrationDocument: null, failAuditDocument: null, missingAuditDocument: null };
   function adapter(storage) {
     return {
       ...catalogs,
       $queryRawUnsafe: async (sql, ...params) => {
         if (sql.includes('INSERT INTO "CreditSadminRegistration"')) {
-          if (state.failNumber === params[1]) throw new Error("Synthetic SADMIN write failed");
-          storage.registrations.push({ creditoId: params[0], number: params[1] });
+          const credit = storage.credits.find(credit => credit.id === params[0]);
+          if ((state.failNumber !== null && state.failNumber === params[1]) || state.failRegistrationDocument === credit?.clienteDocumento) {
+            throw new Error("Synthetic SADMIN write failed");
+          }
+          // Interpret the actual INSERT. The fixture accepts parameter and constant
+          // values so pending and existing imports cannot silently share true flags.
+          const insert = /INSERT INTO "CreditSadminRegistration"\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/.exec(sql);
+          assert.ok(insert, "SADMIN insertion must be explicit");
+          const fields = insert[1].split(",").map(field => field.trim().replaceAll('"', ""));
+          const values = insert[2].split(",").map(value => {
+            const token = value.trim();
+            if (/^\$\d+$/.test(token)) return params[Number(token.slice(1)) - 1];
+            if (/^null$/i.test(token)) return null;
+            if (/^(true|false)$/i.test(token)) return token.toLowerCase() === "true";
+            if (/^\d+$/.test(token)) return Number(token);
+            assert.fail(`Unsupported fixture INSERT token: ${token}`);
+          });
+          const registration = Object.fromEntries(fields.map((field, i) => [field, values[i]]));
+          storage.registrations.push({ ...registration, number: registration.numeroCredito });
           return [{ creditoId: params[0] }];
         }
         if (sql.includes('AS "requestHash"')) {
@@ -34,13 +51,18 @@ function databaseFixture() {
             .map(credit => ({ documento: credit.clienteDocumento, folio: credit.folio }));
         }
         if (sql.includes("AS numero")) {
-          return storage.registrations.filter(registration => params[0].includes(registration.number.toLowerCase()))
-            .map(registration => ({ numero: registration.number.toLowerCase() }));
+          return storage.registrations.filter(registration => params[0].includes(registration.number?.toLowerCase()))
+            .map(registration => ({ numero: registration.number?.toLowerCase() }));
         }
         return [];
       },
       $executeRawUnsafe: async (sql, ...params) => {
-        if (sql.includes('INSERT INTO "CreditSadminEvent"')) storage.audits.push({ creditoId: params[1], payload: JSON.parse(params[4]) });
+        if (sql.includes('INSERT INTO "CreditSadminEvent"')) {
+          const credit = storage.credits.find(credit => credit.id === params[1]);
+          if (state.failAuditDocument === credit?.clienteDocumento) throw new Error("Synthetic SADMIN audit failed");
+          if (state.missingAuditDocument === credit?.clienteDocumento) return 0;
+          storage.audits.push({ creditoId: params[1], payload: JSON.parse(params[4]) });
+        }
         return 1;
       },
       credito: {
@@ -252,4 +274,153 @@ test("new customer fields do not permit a second credit or modify the profile of
   assert.equal(result.data.commit, false); assert.equal(result.data.summary.invalid, 1);
   assert.equal(state.credits.length, 1); assert.equal(state.registrations.length, 1); assert.equal(state.audits.length, 1);
   assertCustomerPersisted(state.credits[0], customer({ direccion: first.direccion, correo: first.correo }));
+});
+
+const pendingConfirmation = () => ({ commit: true, sadminMode: "PENDING", sadminConfirmed: false, requestId: randomUUID() });
+const pendingRow = (index, changes = {}) => sample(index, { numeroCreditoSadmin: "", ...changes });
+function assertPendingRegistration(registration) {
+  for (const field of ["codeudorCreado", "creditoCreado", "numeroCreditoConfirmado"]) assert.equal(registration[field], false);
+  assert.equal(registration.numeroCredito, null); assert.equal(registration.completedAt, null);
+}
+
+test("pending CSV permits genuinely blank numbers, shows pending status and writes nothing in preview", async () => {
+  const { route, state } = databaseFixture();
+  const rows = [pendingRow(61), pendingRow(62, { numeroCreditoSadmin: undefined }),
+    pendingRow(63, { numeroCreditoSadmin: null }), pendingRow(64, { numeroCreditoSadmin: "   " })];
+  const preview = await call(route, rows, { sadminMode: "PENDING" });
+  assert.equal(preview.status, 200); assert.equal(preview.data.summary.valid, 4);
+  assert.equal(preview.data.summary.invalid, 0); assert.equal(preview.data.commit, false);
+  for (const row of preview.data.rows) {
+    assert.equal(row.normalized.estadoSadmin, "PENDIENTE_CREACION"); assert.equal(row.normalized.numeroCreditoSadmin, "");
+  }
+  assert.equal(state.credits.length, 0); assert.equal(state.transactions, 0);
+});
+
+test("pending mode rejects assigned numbers and malformed numeric or control values instead of losing them", async () => {
+  const { route, state } = databaseFixture();
+  for (const numeroCreditoSadmin of ["000ABC", " 000ABC ", 123, 0, {}, "\n", "\u0000"]) {
+    const rows = [pendingRow(65, { numeroCreditoSadmin })];
+    const preview = await call(route, rows, { sadminMode: "PENDING" });
+    assert.equal(preview.status, 200); assert.equal(preview.data.summary.invalid, 1, String(numeroCreditoSadmin));
+    assert.match(preview.data.rows[0].errors.join(" | "), /SADMIN/i);
+    const result = await call(route, rows, pendingConfirmation());
+    assert.equal(result.data.commit, false); assert.equal(result.data.summary.invalid, 1);
+  }
+  assert.equal(state.credits.length, 0); assert.equal(state.registrations.length, 0);
+});
+
+test("pending CSV creates complete customer credits with false SADMIN flags, no invented number and an atomic pending audit", async () => {
+  const { route, state } = databaseFixture();
+  const rows = [pendingRow(66, { correo: " PENDING@Example.Test ", sexo: "F" }),
+    pendingRow(67, { fechaNacimiento: "2/3/1994", sexo: "O" })];
+  const request = pendingConfirmation(); const result = await call(route, rows, request);
+  assert.equal(result.status, 200); assert.equal(result.data.created, 2); assert.equal(result.data.commit, true);
+  assert.equal(state.credits.length, 2); assert.equal(state.registrations.length, 2); assert.equal(state.audits.length, 2);
+  assertCustomerPersisted(state.credits[0], customer({ direccion: rows[0].direccion, correo: "pending@example.test", sexo: "FEMENINO" }));
+  assertCustomerPersisted(state.credits[1], customer({ direccion: rows[1].direccion, correo: rows[1].correo, fechaNacimiento: "1994-03-02", sexo: "OTRO" }));
+  for (const [i, credit] of state.credits.entries()) {
+    assert.equal(credit.estado, "GENERADO"); assert.equal(credit.deliverableReady, false);
+    assert.equal(credit.montoCredito, Number(rows[i].cuota) * Number(rows[i].plazo));
+    assert.equal(credit.saldoBaseFinanciado, Number(rows[i].valorCredito));
+    assertPendingRegistration(state.registrations[i]);
+    assert.equal(credit.contratoSnapshot.origen.sadminConfirmation, "PENDING_SADMIN");
+    assert.equal(credit.contratoSnapshot.origen.numeroCreditoSadmin, null);
+    assert.equal(credit.contratoSnapshot.origen.importReceipt.normalized.estadoSadmin, "PENDIENTE_CREACION");
+    assert.equal(result.data.rows[i].normalized.estadoSadmin, "PENDIENTE_CREACION");
+    assert.equal(state.audits[i].payload.confirmation, "PENDING_SADMIN");
+    assert.equal(state.audits[i].payload.numeroCredito, null);
+    assert.equal(state.audits[i].payload.creditoCreado, false); assert.equal(state.audits[i].payload.numeroCreditoConfirmado, false);
+  }
+  const replay = await call(route, rows, request); assert.deepEqual(replay.data, result.data); assert.equal(state.credits.length, 2);
+});
+
+test("individual pending creation needs a retry identifier but no existing-SADMIN attestation", async () => {
+  const { route, state } = databaseFixture(); const rows = [pendingRow(68)];
+  const missingId = await call(route, rows, { commit: true, sadminMode: "PENDING" });
+  assert.equal(missingId.status, 400); assert.equal(missingId.data.code, "INVALID_IMPORT_REQUEST");
+  const request = { commit: true, sadminMode: "PENDING", requestId: randomUUID() };
+  const result = await call(route, rows, request);
+  assert.equal(result.status, 200); assert.equal(result.data.created, 1);
+  assertCustomerPersisted(state.credits[0], customer({ direccion: rows[0].direccion, correo: rows[0].correo }));
+  assertPendingRegistration(state.registrations[0]); assert.equal(result.data.rows[0].normalized.estadoSadmin, "PENDIENTE_CREACION");
+});
+
+test("pending mode preserves seller assignment, duplicate document, IMEI and complete customer checks", async () => {
+  const { route, state } = databaseFixture();
+  const rows = [pendingRow(69), pendingRow(70, { vendedor: "PRUEBAS NO ASIGNADO" }),
+    pendingRow(71, { cedula: sample(69).cedula }), pendingRow(72, { imei: "1E+15" }), pendingRow(73, { correo: "" })];
+  const preview = await call(route, rows, { sadminMode: "PENDING" }); assert.equal(preview.data.summary.invalid, 5);
+  for (const [i, error] of [[0, /Cédula repetida/], [1, /VENDEDOR/], [2, /Cédula repetida/], [3, /IMEI/], [4, /CORREO/]]) {
+    assert.match(preview.data.rows[i].errors.join(" | "), error);
+  }
+  const result = await call(route, rows, pendingConfirmation()); assert.equal(result.data.commit, false); assert.equal(state.credits.length, 0);
+  assert.equal((await call(route, [pendingRow(74)], pendingConfirmation())).data.created, 1);
+  const duplicate = await call(route, [pendingRow(75, { cedula: sample(74).cedula })], pendingConfirmation());
+  assert.equal(duplicate.data.commit, false); assert.match(duplicate.data.rows[0].errors.join(" | "), /ya tiene un crédito/); assert.equal(state.credits.length, 1);
+});
+
+test("replayed pending requests bind SADMIN mode and cannot be changed into an existing registration", async () => {
+  const { route, state } = databaseFixture(); const rows = [pendingRow(76)]; const request = pendingConfirmation();
+  const first = await call(route, rows, request); assert.equal(first.data.created, 1);
+  const conflict = await call(route, rows, { ...request, sadminMode: "EXISTING", sadminConfirmed: true });
+  assert.equal(conflict.status, 409); assert.equal(conflict.data.code, "IMPORT_REQUEST_CONFLICT");
+  const replay = await call(route, rows, request); assert.deepEqual(replay.data, first.data);
+  assert.equal(state.credits.length, 1); assertPendingRegistration(state.registrations[0]);
+});
+
+test("pending registration or audit failure rolls back the complete CSV, then same-operation retry succeeds once", async () => {
+  for (const failure of ["failRegistrationDocument", "failAuditDocument", "missingAuditDocument"]) {
+    const { route, state } = databaseFixture(); const rows = [pendingRow(77), pendingRow(78)]; const request = pendingConfirmation();
+    state[failure] = rows[1].cedula; const failed = await call(route, rows, request);
+    assert.equal(failed.status, 500); assert.equal(failed.data.code, "IMPORT_SAVE_FAILED");
+    assert.equal(state.credits.length, 0); assert.equal(state.registrations.length, 0); assert.equal(state.audits.length, 0);
+    state[failure] = null; const retry = await call(route, rows, request);
+    assert.equal(retry.status, 200); assert.equal(retry.data.created, 2); state.registrations.forEach(assertPendingRegistration);
+    const replay = await call(route, rows, request); assert.deepEqual(replay.data, retry.data); assert.equal(state.credits.length, 2);
+  }
+});
+
+test("a pending imported registration becomes created only through the existing SADMIN checklist", async () => {
+  const { route, state } = databaseFixture(); const result = await call(route, [pendingRow(79)], pendingConfirmation()); assert.equal(result.data.created, 1);
+  const { sadminRegistration, applySadminChange } = load("lib/credit-sadmin-state.ts");
+  let registration = sadminRegistration(state.registrations[0]);
+  assert.equal(registration.estado, "PENDIENTE"); assert.equal(registration.completedAt, null);
+  const change = (field, value) => { registration = applySadminChange(registration, { version: registration.version, field, value }); };
+  change("numeroCredito", "000-NUMERO-REAL"); assert.equal(registration.estado, "PENDIENTE"); assert.equal(registration.numeroCreditoConfirmado, false);
+  change("creditoCreado", true); assert.equal(registration.estado, "PENDIENTE");
+  change("numeroCreditoConfirmado", true); assert.equal(registration.estado, "PENDIENTE");
+  change("codeudorCreado", true); assert.equal(registration.estado, "CREADO_SADMIN");
+  change("numeroCredito", "000-NUMERO-CORREGIDO"); assert.equal(registration.estado, "PENDIENTE"); assert.equal(registration.numeroCreditoConfirmado, false);
+});
+test("unknown or coerced SADMIN modes fail before validation or writes", async () => {
+  const { route, state } = databaseFixture();
+  for (const sadminMode of [null, "", "pending", "OTHER", true, 1, {}]) {
+    const result = await call(route, [pendingRow(80)], { ...pendingConfirmation(), sadminMode });
+    assert.equal(result.status, 400); assert.equal(result.data.code, "INVALID_IMPORT_SADMIN_MODE");
+  }
+  assert.equal(state.credits.length, 0); assert.equal(state.transactions, 0);
+});
+
+test("default existing mode still requires numbers and explicit existing-SADMIN attestation and permits equivalent explicit-mode replay", async () => {
+  const { route, state } = databaseFixture();
+  const preview = await call(route, [pendingRow(81)]);
+  assert.equal(preview.data.summary.invalid, 1); assert.match(preview.data.rows[0].errors.join(" | "), /SADMIN obligatorio/);
+  const rows = [sample(82)]; const request = confirmation();
+  const first = await call(route, rows, request); assert.equal(first.data.created, 1);
+  assert.equal(first.data.rows[0].normalized.estadoSadmin, "CREADO_SADMIN");
+  const registration = state.registrations[0];
+  for (const field of ["codeudorCreado", "creditoCreado", "numeroCreditoConfirmado"]) assert.equal(registration[field], true);
+  assert.equal(registration.numeroCredito, rows[0].numeroCreditoSadmin); assert.ok(registration.completedAt);
+  const explicitReplay = await call(route, rows, { ...request, sadminMode: "EXISTING" }); assert.deepEqual(explicitReplay.data, first.data);
+  const pendingConflict = await call(route, rows, { ...request, sadminMode: "PENDING", sadminConfirmed: false });
+  assert.equal(pendingConflict.status, 409); assert.equal(pendingConflict.data.code, "IMPORT_REQUEST_CONFLICT");
+  assert.equal(state.credits.length, 1);
+});
+
+test("a stray true attestation cannot promote a pending import or record a confirmation timestamp", async () => {
+  const { route, state } = databaseFixture();
+  const result = await call(route, [pendingRow(83)], { ...pendingConfirmation(), sadminConfirmed: true });
+  assert.equal(result.status, 200); assert.equal(result.data.created, 1); assertPendingRegistration(state.registrations[0]);
+  assert.equal(state.credits[0].contratoSnapshot.origen.sadminConfirmedAt, undefined);
+  assert.equal(state.audits[0].payload.confirmedAt, undefined); assert.ok(state.audits[0].payload.recordedAt);
 });

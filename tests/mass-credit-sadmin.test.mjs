@@ -174,4 +174,40 @@ test("PostgreSQL: CSV and individual creation, listing, atomic failures, replay 
     assert.deepEqual(one.data, two.data);
     assert.equal((await counts()).credits, before.credits + 1);
   });
+  await t.test("pending CSV and individual credits appear pending until existing SADMIN checklist confirms the real number", async () => {
+    const rows = [sample(90, { numeroCreditoSadmin: "" }), sample(91, { numeroCreditoSadmin: "" })];
+    const request = { commit: true, sadminMode: "PENDING", sadminConfirmed: false, requestId: randomUUID() };
+    const before = await counts();
+    const preview = await call(route, rows, { sadminMode: "PENDING" }); assert.equal(preview.data.summary.valid, 2);
+    const result = await call(route, rows, request); assert.equal(result.data.created, 2);
+    const registrations = (await pool.query('SELECT * FROM "CreditSadminRegistration" WHERE "creditoId" = ANY($1::int[])', [result.data.rows.map(row => row.createdCreditoId)])).rows;
+    assert.equal(registrations.length, 2);
+    for (const row of registrations) {
+      for (const field of ["codeudorCreado", "creditoCreado", "numeroCreditoConfirmado"]) assert.equal(row[field], false);
+      assert.equal(row.numeroCredito, null); assert.equal(row.completedAt, null);
+    }
+    let page = await list({ q: rows[0].cedula, status: "pending" }); assert.equal(page.total, 1);
+    assert.equal(page.items[0].sadmin.estado, "PENDIENTE"); assert.equal(page.items[0].sadmin.numeroCredito, null);
+    assert.equal((await list({ q: rows[0].cedula, status: "created" })).total, 0);
+    const replay = await call(route, rows, request); assert.deepEqual(replay.data, result.data);
+    assert.deepEqual(await counts(), { credits: before.credits + 2, registrations: before.registrations + 2, events: before.events + 2 });
+    const single = await call(route, [sample(92, { numeroCreditoSadmin: "" })], { ...request, requestId: randomUUID() });
+    assert.equal(single.data.created, 1); assert.equal((await list({ q: sample(92).cedula, status: "pending" })).total, 1);
+
+    const id = result.data.rows[0].createdCreditoId; let registration = page.items[0].sadmin;
+    const change = async (field, value) => {
+      registration = await service.updateSadminRegistration(databaseAdapter(pool), actor, String(id), { version: registration.version, field, value });
+      return registration;
+    };
+    await change("numeroCredito", "000-NUMERO-REAL-90"); assert.equal(registration.estado, "PENDIENTE");
+    assert.equal(registration.completedAt, null); assert.equal(registration.numeroCreditoConfirmado, false);
+    await change("creditoCreado", true); assert.equal(registration.estado, "PENDIENTE");
+    await change("numeroCreditoConfirmado", true); assert.equal(registration.estado, "PENDIENTE");
+    await change("codeudorCreado", true); assert.equal(registration.estado, "CREADO_SADMIN"); assert.ok(registration.completedAt);
+    page = await list({ q: rows[0].cedula, status: "created" }); assert.equal(page.total, 1);
+    assert.equal(page.items[0].sadmin.numeroCredito, "000-NUMERO-REAL-90");
+    await change("numeroCredito", "000-CORREGIDO-90"); assert.equal(registration.estado, "PENDIENTE");
+    assert.equal(registration.completedAt, null); assert.equal(registration.numeroCreditoConfirmado, false);
+    assert.equal((await list({ q: rows[0].cedula, status: "pending" })).total, 1);
+  });
 });

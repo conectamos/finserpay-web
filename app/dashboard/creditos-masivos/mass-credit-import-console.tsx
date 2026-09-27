@@ -76,6 +76,7 @@ type ValidationRow = {
     aliado: string;
     cedula: string;
     numeroCreditoSadmin: string;
+    estadoSadmin: "PENDIENTE_CREACION" | "CREADO_SADMIN";
     cliente: string;
     cuota: number;
     fecha: string | null;
@@ -130,6 +131,7 @@ type CatalogResponse = {
 type CatalogSede = NonNullable<CatalogResponse["sedes"]>[number];
 type FieldKey = keyof MassCreditInputRow;
 type InputMode = "bulk" | "single";
+type SadminMode = "EXISTING" | "PENDING";
 type PreviewFilter = "all" | "errors" | "valid";
 type AssignmentDefaults = Pick<MassCreditInputRow, "aliado" | "sede" | "vendedor">;
 type LoadedFile = { name: string; selectedAt: Date; size: number };
@@ -400,11 +402,11 @@ function csvCell(value: unknown) {
   return /[;"\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-async function postRows(rows: MassCreditInputRow[], commit: boolean, requestId?: string, temporaryImeiConfirmed = false) {
+async function postRows(rows: MassCreditInputRow[], commit: boolean, requestId?: string, temporaryImeiConfirmed = false, sadminMode: SadminMode = "EXISTING") {
   const response = await fetch("/api/creditos/masivos", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ commit, rows, requestId, sadminConfirmed: commit, temporaryImeiConfirmed }),
+    body: JSON.stringify({ commit, rows, requestId, sadminMode, sadminConfirmed: commit && sadminMode === "EXISTING", temporaryImeiConfirmed }),
   });
   const data = (await response.json().catch(() => null)) as ValidationResponse | null;
 
@@ -418,6 +420,7 @@ async function postRows(rows: MassCreditInputRow[], commit: boolean, requestId?:
 export default function MassCreditImportConsole() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<InputMode>("bulk");
+  const [sadminMode, setSadminMode] = useState<SadminMode>("EXISTING");
   const [rawText, setRawText] = useState(TEMPLATE_HEADER);
   const [fileInfo, setFileInfo] = useState<LoadedFile | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -455,6 +458,9 @@ export default function MassCreditImportConsole() {
   const activeRows = mode === "single" ? (hasManualCreditData(manualRow) ? [manualRow] : []) : bulkRows;
   const validation = validations[mode];
   const temporaryImeiForRequest = mode === "bulk" && temporaryImeiConfirmed;
+  const templateExampleRow = TEMPLATE_EXAMPLE_ROW.map((value, index) =>
+    sadminMode === "PENDING" && FIELD_ORDER[index] === "numeroCreditoSadmin" ? "" : value
+  );
   const totalAmount = activeRows.reduce((sum, row) => sum + inputMoney(row.valorCredito), 0);
   const assignmentValues = mode === "bulk" ? bulkDefaults : manualRow;
 
@@ -574,6 +580,17 @@ export default function MassCreditImportConsole() {
     setNotice("");
   };
 
+  const updateSadminMode = (value: string) => {
+    if (loading || (value !== "EXISTING" && value !== "PENDING") || value === sadminMode) return;
+    setSadminMode(value);
+    setValidations({ bulk: null, single: null });
+    pendingRequests.current = {};
+    setCreationFailed(false);
+    setConfirmOpen(false);
+    setPreviewFilter("all");
+    setNotice("Vuelve a validar la información con el estado SADMIN seleccionado.");
+  };
+
   const updateManualField = (field: FieldKey, value: string) => {
     setManualRow((current) => ({ ...current, [field]: value }));
     setModeValidation("single", null);
@@ -647,8 +664,9 @@ export default function MassCreditImportConsole() {
   };
 
   const loadExample = () => {
-    setRawText(TEMPLATE_ROWS);
-    setFileInfo({ name: "ejemplo-creditos-masivos.csv", selectedAt: new Date(), size: TEMPLATE_ROWS.length });
+    const example = sadminMode === "PENDING" ? [TEMPLATE_HEADER, templateExampleRow.join("\t")].join("\n") : TEMPLATE_ROWS;
+    setRawText(example);
+    setFileInfo({ name: "ejemplo-creditos-masivos.csv", selectedAt: new Date(), size: example.length });
     setTemporaryImeiConfirmed(false);
     setModeValidation("bulk", null);
     setNotice("Ejemplo cargado. Reemplaza sus datos antes de crear creditos.");
@@ -668,7 +686,7 @@ export default function MassCreditImportConsole() {
     try {
       setLoading("validate");
       setNotice("");
-      const data = await postRows(activeRows, false, undefined, temporaryImeiForRequest);
+      const data = await postRows(activeRows, false, undefined, temporaryImeiForRequest, sadminMode);
       setModeValidation(mode, data);
       setPreviewFilter(data.summary.invalid ? "errors" : "all");
       setNotice(
@@ -690,15 +708,15 @@ export default function MassCreditImportConsole() {
     try {
       setLoading("create");
       setNotice("");
-      const payload = JSON.stringify({ rows: activeRows, temporaryImeiConfirmed: temporaryImeiForRequest });
+      const payload = JSON.stringify({ rows: activeRows, temporaryImeiConfirmed: temporaryImeiForRequest, sadminMode });
       if (pendingRequests.current[mode]?.payload !== payload) {
         pendingRequests.current[mode] = { payload, id: crypto.randomUUID() };
       }
-      const data = await postRows(activeRows, true, pendingRequests.current[mode]!.id, temporaryImeiForRequest);
+      const data = await postRows(activeRows, true, pendingRequests.current[mode]!.id, temporaryImeiForRequest, sadminMode);
       setModeValidation(mode, data);
       setPreviewFilter(data.summary.invalid ? "errors" : "all");
       setNotice(data.commit
-        ? `${data.created || 0} crédito(s) creados con su número SADMIN confirmado.${temporaryImeiForRequest ? " IMEI temporales pendientes de corrección administrativa." : ""}`
+        ? `${data.created || 0} crédito(s) ${sadminMode === "PENDING" ? "creados en FINSER PAY; pendientes de creación en SADMIN." : "creados con su número SADMIN confirmado."}${temporaryImeiForRequest ? " IMEI temporales pendientes de corrección administrativa." : ""}`
         : `${data.summary.invalid} fila(s) requieren corrección. No se creó ningún crédito.`);
     } catch (error) {
       setCreationFailed(true);
@@ -711,7 +729,10 @@ export default function MassCreditImportConsole() {
   };
 
   const downloadTemplate = () => {
-    const blob = new Blob(["\uFEFF", TEMPLATE_CSV], { type: "text/csv;charset=utf-8" });
+    const csv = sadminMode === "PENDING"
+      ? [FIELD_ORDER.map((key) => FIELD_LABELS[key]).join(";"), templateExampleRow.join(";")].join("\n")
+      : TEMPLATE_CSV;
+    const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -727,7 +748,7 @@ export default function MassCreditImportConsole() {
     setNotice("");
     try {
       const { buildMassCreditWorkbook, MASS_CREDIT_XLSX_TYPE } = await import("@/lib/mass-credit-spreadsheet");
-      const buffer = await buildMassCreditWorkbook(FIELD_ORDER.map(key => FIELD_LABELS[key]), TEMPLATE_EXAMPLE_ROW);
+      const buffer = await buildMassCreditWorkbook(FIELD_ORDER.map(key => FIELD_LABELS[key]), templateExampleRow);
       const url = URL.createObjectURL(new Blob([new Uint8Array(buffer)], { type: MASS_CREDIT_XLSX_TYPE }));
       const link = document.createElement("a");
       link.href = url;
@@ -742,7 +763,7 @@ export default function MassCreditImportConsole() {
 
   const downloadResult = () => {
     if (!validation?.rows.length) return;
-    const header = ["FILA", "ESTADO", "FOLIO", "CLIENTE", "CEDULA", "Número de crédito en SADMIN", "SEDE", "VENDEDOR", "CREDITO", "CUOTA", "NOTAS", "DIRECCION", "CORREO", "FECHA DE NACIMIENTO", "SEXO"];
+    const header = ["FILA", "ESTADO", "FOLIO", "CLIENTE", "CEDULA", "Número de crédito en SADMIN", "SEDE", "VENDEDOR", "CREDITO", "CUOTA", "NOTAS", "DIRECCION", "CORREO", "FECHA DE NACIMIENTO", "SEXO", "ESTADO SADMIN"];
     const rows = validation.rows.map((row) => [
       row.rowNumber,
       row.createdFolio ? "CREADO" : row.ok ? "VALIDO" : "ERROR",
@@ -759,6 +780,9 @@ export default function MassCreditImportConsole() {
       row.normalized.correo,
       row.normalized.fechaNacimiento || "",
       row.normalized.sexo,
+      row.normalized.estadoSadmin === "PENDIENTE_CREACION" || (!row.normalized.estadoSadmin && sadminMode === "PENDING")
+        ? "PENDIENTE_CREACION"
+        : row.createdFolio ? "CREADO_SADMIN" : "NUMERO_POR_CONFIRMAR",
     ]);
     const content = [header, ...rows].map((row) => row.map(csvCell).join(";")).join("\n");
     const blob = new Blob(["\uFEFF", content], { type: "text/csv;charset=utf-8" });
@@ -815,6 +839,25 @@ export default function MassCreditImportConsole() {
           Credito individual
         </button>
       </Tabs>
+
+      <Card className="mt-4 grid gap-4 !rounded-lg sm:grid-cols-[minmax(0,360px)_1fr] sm:items-center">
+        <ManualSelect
+          label="Estado de los créditos en SADMIN"
+          placeholder="Selecciona el estado SADMIN"
+          value={sadminMode}
+          disabled={loading !== null}
+          onChange={updateSadminMode}
+          options={[
+            { value: "EXISTING", label: "Ya existen en SADMIN" },
+            { value: "PENDING", label: "Pendientes de crear en SADMIN" },
+          ]}
+        />
+        <p className="text-sm leading-5 text-[var(--fp-muted)]">
+          {sadminMode === "PENDING"
+            ? "Deja vacío el número de crédito en SADMIN. Se crearán en FINSER PAY y aparecerán en Aprobaciones de SADMIN como pendientes hasta que el administrador registre el número real y confirme su creación."
+            : "El número de crédito en SADMIN es obligatorio. Antes de crear, el administrador debe confirmar que los créditos y sus codeudores ya existen en ese sistema."}
+        </p>
+      </Card>
 
       {mode === "bulk" ? <BulkStepper stage={bulkStage} committed={Boolean(validation?.commit)} /> : null}
 
@@ -908,7 +951,7 @@ export default function MassCreditImportConsole() {
                   onChange={updateAssignment}
                 />
                 {!selectedAliado ? (
-                  <p className="mt-3 text-xs text-[#667085]">Selecciona primero un aliado para habilitar sede y vendedor.</p>
+                  <p className="mt-3 text-xs text-[#667085]">Selecciona primero un aliado para habilitar sede y vendedor. El vendedor debe estar asignado a la sede de cada fila; los valores predeterminados solo completan celdas vacías.</p>
                 ) : null}
                 <label className="mt-5 flex items-start gap-3 border-t border-[var(--fp-border)] pt-4 text-sm">
                   <input
@@ -933,7 +976,7 @@ export default function MassCreditImportConsole() {
                     Ver campos requeridos y datos cargados
                   </summary>
                   <p className="mt-3 text-xs leading-5 text-[#667085]">{FIELD_ORDER.map((field) => FIELD_LABELS[field]).join(" · ")}</p>
-                  <p className="mt-2 text-sm leading-5 text-[var(--fp-muted)]">Dirección, correo, fecha de nacimiento y sexo son obligatorios. Usa AAAA-MM-DD o D/M/AAAA para las fechas; el cliente debe tener al menos 18 años. Sexo: MASCULINO, FEMENINO, OTRO o PREFIERO_NO_DECIR.</p>
+                  <p className="mt-2 text-sm leading-5 text-[var(--fp-muted)]">Dirección, correo, fecha de nacimiento y sexo son obligatorios. Usa AAAA-MM-DD o D/M/AAAA para las fechas; el cliente debe tener al menos 18 años. Sexo: MASCULINO, FEMENINO, OTRO o PREFIERO_NO_DECIR. El número SADMIN es obligatorio si ya existe; si está pendiente de creación, deja esa columna vacía.</p>
                   <textarea
                     value={rawText}
                     onChange={(event) => {
@@ -1140,7 +1183,14 @@ export default function MassCreditImportConsole() {
                       </td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.cedula || "-"}</td>
                       <td className="whitespace-nowrap border-b border-[var(--fp-border)] px-4 py-3 font-mono">{row.normalized.imei || "-"}</td>
-                      <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.numeroCreditoSadmin || "-"}</td>
+                      <td className="border-b border-[var(--fp-border)] px-4 py-3">
+                        <span className="block">{row.normalized.numeroCreditoSadmin || "-"}</span>
+                        <Badge tone={row.normalized.estadoSadmin === "PENDIENTE_CREACION" || (!row.normalized.estadoSadmin && sadminMode === "PENDING") ? "warning" : row.createdFolio ? "positive" : "neutral"} className="mt-1">
+                          {row.normalized.estadoSadmin === "PENDIENTE_CREACION" || (!row.normalized.estadoSadmin && sadminMode === "PENDING")
+                            ? "Pendiente de creación en SADMIN"
+                            : row.createdFolio ? "Confirmado en SADMIN" : "Número por confirmar"}
+                        </Badge>
+                      </td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.sede || "-"}</td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3">{row.normalized.vendedor || "-"}</td>
                       <td className="border-b border-[#e4e7ec] px-4 py-3 font-black">{money(row.normalized.valorCredito)}</td>
@@ -1164,14 +1214,14 @@ export default function MassCreditImportConsole() {
 
       <div className="mt-4 flex items-center gap-2 border border-[#cfd9e3] bg-[#f6f9fc] px-4 py-3 text-sm text-[#475467]">
         <Info className="h-4 w-4 shrink-0 text-[#4f6f0c]" strokeWidth={1.8} />
-        <span>El número SADMIN es obligatorio y debe conservar sus ceros iniciales. No se admiten números repetidos ni cédulas que ya tengan crédito. Corrige los errores antes de crear.</span>
+        <span>El número SADMIN es obligatorio cuando ya existe y debe conservar sus ceros iniciales; para créditos pendientes de creación, déjalo vacío. No se admiten números repetidos ni cédulas que ya tengan crédito. El vendedor debe estar asignado a la sede. Corrige los errores antes de crear.</span>
       </div>
 
       <ConfirmDialog
         open={confirmOpen}
         title="Confirmar creacion de creditos"
-        description={`Se crearan ${validation?.summary.valid || activeRows.length} credito(s) por ${money(totalAmount)}, distribuidos en ${involvedAllies} aliado(s) y ${involvedStores} sede(s). Al confirmar, declaras que los créditos y sus codeudores ya existen en SADMIN y que verificaste cada número contra ese sistema. Se guardará tu confirmación con el crédito y su solicitud en FINSER PAY.${temporaryImeiForRequest ? " Los IMEI de todo el lote son temporales y quedarán pendientes de corrección administrativa posterior." : ""}`}
-        confirmLabel="Confirmar SADMIN y crear"
+        description={`Se crearan ${validation?.summary.valid || activeRows.length} credito(s) por ${money(totalAmount)}, distribuidos en ${involvedAllies} aliado(s) y ${involvedStores} sede(s). ${sadminMode === "PENDING" ? "Se crearán en FINSER PAY y aparecerán en Aprobaciones de SADMIN como pendientes de creación. El administrador deberá registrar el número real y confirmar su creación en SADMIN." : "Al confirmar, declaras que los créditos y sus codeudores ya existen en SADMIN y que verificaste cada número contra ese sistema. Se guardará tu confirmación con el crédito y su solicitud en FINSER PAY."}${temporaryImeiForRequest ? " Los IMEI de todo el lote son temporales y quedarán pendientes de corrección administrativa posterior." : ""}`}
+        confirmLabel={sadminMode === "PENDING" ? "Crear y dejar pendiente en SADMIN" : "Confirmar SADMIN y crear"}
         busy={loading === "create"}
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => void createCredits()}

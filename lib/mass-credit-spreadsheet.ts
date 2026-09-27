@@ -33,9 +33,10 @@ export async function buildMassCreditWorkbook(headers: string[], example: string
     "Usa fechas AAAA-MM-DD o D/M/AAAA, por ejemplo 1990-05-20 o 20/5/1990. No incluyas fórmulas. Revisa los errores por fila antes de crear créditos.",
     "DIRECCION, CORREO, FECHA DE NACIMIENTO y SEXO son obligatorios. Completa la dirección y un correo válido; el cliente debe tener al menos 18 años.",
     "SEXO admite MASCULINO, FEMENINO, OTRO o PREFIERO_NO_DECIR. En la carga también se pueden usar M y F para masculino y femenino.",
-    "El número SADMIN debe existir y ser confirmado por el administrador. Las demás reglas de aprobación siguen vigentes."]
+    "En FINSER PAY selecciona si los créditos ya existen en SADMIN o están pendientes de creación. El número SADMIN es obligatorio solo si ya existe; si está pendiente, deja la columna vacía. El administrador completará el número real y confirmará la creación desde Aprobaciones de SADMIN. Las demás reglas de aprobación siguen vigentes."]
     .forEach(line => guide.addRow([line]));
   guide.getRow(1).font = { bold: true };
   guide.eachRow(row => { row.alignment = { wrapText: true, vertical: "top" }; row.height = 36; });
+  guide.lastRow!.height = 72;
   return workbook.xlsx.writeBuffer();
 }
