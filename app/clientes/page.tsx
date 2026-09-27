@@ -94,6 +94,9 @@ type PaymentReturnNotice = {
   reference: string;
   creditId: number | null;
   checkedAt?: string | null;
+  amount?: number;
+  paymentMode?: ClientPaymentMode;
+  paymentLabel?: string;
 };
 
 type ExplorerPanel = ClientCreditPanelName | null;
@@ -488,10 +491,13 @@ export default function ClienteConsultaPage() {
         if (!result.data.reference) {
           throw new Error("No recibimos la referencia de la solicitud. Consulta el estado del pago antes de volver a intentarlo.");
         }
-        const pending = {
+        const pending: PaymentReturnNotice = {
           reference: result.data.reference,
           creditId: credit.id,
           checkedAt: null,
+          amount: result.data.amount ?? confirmAmount,
+          paymentMode,
+          paymentLabel: confirmPaymentLabel,
         };
         pendingPaymentRef.current = pending;
         setPaymentReturn(pending);

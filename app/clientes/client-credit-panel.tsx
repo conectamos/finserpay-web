@@ -76,6 +76,9 @@ type ClientCreditPanelProps = {
   pendingPayment: {
     reference: string;
     checkedAt?: string | null;
+    amount?: number;
+    paymentMode?: "INSTALLMENTS" | "PAYOFF";
+    paymentLabel?: string;
   } | null;
   paying: boolean;
   refreshingPayment: boolean;
@@ -196,6 +199,9 @@ export default function ClientCreditPanel({
       ? `Cuota ${selectedInstallments[0].numero}`
       : `Cuotas ${selectedInstallments[0].numero} a ${selectedInstallments.at(-1)?.numero}`
     : "Sin cuotas seleccionadas";
+  const pendingPayoff = pendingPayment?.paymentMode === "PAYOFF";
+  const paymentSummaryAmount = pendingPayment?.amount ?? selectedAmount;
+  const paymentSummaryLabel = pendingPayment?.paymentLabel ?? selectedLabel;
   const selectedIndex = Math.max(
     0,
     payable.findIndex((item) => item.numero === selectedPaymentLimit)
@@ -486,9 +492,9 @@ export default function ClientCreditPanel({
           <>
             <section className={styles.paymentSummary}>
               <div>
-                <p>Valor a pagar</p>
-                <h2>{money(selectedAmount)}</h2>
-                <span>{selectedLabel}</span>
+                <p>{pendingPayoff ? "Liquidación de crédito" : "Valor a pagar"}</p>
+                <h2>{money(paymentSummaryAmount)}</h2>
+                <span>{paymentSummaryLabel}</span>
               </div>
               <span
                 className={`${styles.paymentState} ${
@@ -499,7 +505,7 @@ export default function ClientCreditPanel({
               </span>
             </section>
 
-            {payable.length > 1 ? (
+            {payable.length > 1 && !pendingPayoff ? (
               <section className={styles.selectorCard} aria-label="Ajustar cuotas a pagar">
                 <div>
                   <p>Cuotas incluidas</p>
@@ -507,12 +513,12 @@ export default function ClientCreditPanel({
                   <span>La selección siempre incluye las cuotas anteriores pendientes.</span>
                 </div>
                 <div className={styles.selectorControls}>
-                  <button type="button" aria-label="Pagar menos cuotas" disabled={selectedIndex <= 0} onClick={() => {
+                  <button type="button" aria-label="Pagar menos cuotas" disabled={Boolean(pendingPayment) || selectedIndex <= 0} onClick={() => {
                     const previous = payable[selectedIndex - 1];
                     if (previous) onSelectPaymentLimit(previous.numero);
                   }}><Minus size={20} aria-hidden="true" /></button>
                   <b>{selectedInstallments.length}</b>
-                  <button type="button" aria-label="Pagar más cuotas" disabled={selectedIndex >= payable.length - 1} onClick={() => {
+                  <button type="button" aria-label="Pagar más cuotas" disabled={Boolean(pendingPayment) || selectedIndex >= payable.length - 1} onClick={() => {
                     const next = payable[selectedIndex + 1];
                     if (next) onSelectPaymentLimit(next.numero);
                   }}><Plus size={20} aria-hidden="true" /></button>
@@ -530,17 +536,17 @@ export default function ClientCreditPanel({
                 </div>
                 <ul>
                   <li><Check size={16} aria-hidden="true" /> Confirmación automática</li>
-                  <li><Check size={16} aria-hidden="true" /> Aplicación exacta a {selectedLabel.toLowerCase()}</li>
+                  <li><Check size={16} aria-hidden="true" /> Aplicación exacta a {pendingPayoff ? "la liquidación del crédito" : paymentSummaryLabel.toLowerCase()}</li>
                   <li><Check size={16} aria-hidden="true" /> Recibo disponible al confirmarse</li>
                 </ul>
-                <button type="button" onClick={onPaySelected} disabled={paying || !selectedInstallments.length}>
-                  {paying ? "Abriendo Wompi..." : `Pagar ${money(selectedAmount)}`}
+                <button type="button" onClick={onPaySelected} disabled={paying || Boolean(pendingPayment) || !selectedInstallments.length}>
+                  {paying ? "Abriendo Wompi..." : pendingPayment ? "Solicitud enviada a Nequi" : `Pagar ${money(selectedAmount)}`}
                   <ChevronRight size={22} aria-hidden="true" />
                 </button>
               </article>
             </section>
 
-            {payoffAvailable && payoff ? (
+            {payoffAvailable && payoff && !pendingPayoff ? (
               <section className={styles.payoffCard}>
                 <div className={styles.methodHeader}>
                   <span className={styles.payoffIcon}><ShieldCheck size={24} aria-hidden="true" /></span>
@@ -550,7 +556,7 @@ export default function ClientCreditPanel({
                   <div><span>Capital a pagar</span><strong>{money(payoff.capitalPendiente)}</strong></div>
                   <div><span>Ahorro estimado</span><strong>{money(payoff.condonacion)}</strong></div>
                 </div>
-                <button type="button" onClick={onPayoff} disabled={paying}>
+                <button type="button" onClick={onPayoff} disabled={paying || Boolean(pendingPayment)}>
                   {paying ? "Preparando..." : `Liquidar por ${money(payoff.capitalPendiente)}`}
                 </button>
               </section>

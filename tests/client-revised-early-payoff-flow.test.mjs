@@ -105,6 +105,29 @@ const Dashboard = compile(readFileSync(new URL("../app/clientes/client-active-cr
   "./credit-dashboard-presentation": presentation, "@/lib/colombia-date": colombiaDate,
   "./client-active-credit-dashboard.module.css": { default: new Proxy({}, { get: (_, key) => String(key) }) },
 });
+const PanelUI = compile(readFileSync(new URL("../app/clientes/client-credit-panel.tsx", import.meta.url), "utf8"), {
+  react: { useRef: (initial) => ({ current: initial }), useState: (initial) => [initial, () => {}], useEffect: () => {} },
+  "react/jsx-runtime": jsxRuntime, "lucide-react": iconStubs,
+  "@/lib/credit-display-number": displayNumber, "@/lib/colombia-date": colombiaDate,
+  "./credit-dashboard-presentation": presentation,
+  "@/app/_components/finser-support-link": { default: Empty },
+  "./client-credit-panel.module.css": { default: new Proxy({}, { get: (_, key) => String(key) }) },
+});
+function assertPendingPayoffSummary(flow) {
+  const panelProps = flow.panel();
+  assert.equal(panelProps.pendingPayment.paymentMode, "PAYOFF");
+  assert.equal(panelProps.pendingPayment.amount, 2_647_264);
+  const tree = PanelUI(panelProps);
+  const summary = findNode(tree, (node) => node.props?.className === "paymentSummary");
+  assert.ok(textContent(summary).includes("Liquidación de crédito"));
+  assert.ok(textContent(summary).includes(money(2_647_264)));
+  assert.ok(!textContent(summary).includes(money(148_800)), "El saldo pendiente no se presenta como próxima cuota");
+  assert.ok(!textContent(summary).includes(money(5_051_999)), "El resumen no usa la selección original de cuotas");
+  assert.equal(findNode(tree, (node) => node.props?.className === "selectorCard"), null);
+  const sent = findNode(tree, (node) => node.type === "button" && textContent(node) === "Solicitud enviada a Nequi");
+  assert.ok(sent);
+  assert.equal(sent.props.disabled, true, "La intención pendiente no ofrece un segundo cobro de otra selección");
+}
 function dialogRenderer() {
   const refs = [];
   let cursor = 0;
@@ -266,11 +289,14 @@ for (const status of ["PENDING", "APPROVED"]) {
     const flow = harness(credit);
     await flow.sendPending();
     assertActiveUnchanged(flow, credit);
+    assertPendingPayoffSummary(flow);
     flow.setStatus({ ok: true, status, applied: false, alreadyProcessed: false });
     flow.panel().onRefreshPayment();
     await settle(); flow.render();
     assertActiveUnchanged(flow, credit);
     assert.ok(flow.panel().pendingPayment.reference);
+    assert.equal(flow.states.selectedLimit[credit.id], 4, "El refresco conserva la selección ordinaria real");
+    assertPendingPayoffSummary(flow);
     flow.active().onPayoff(); flow.render();
     assert.equal(flow.dialog(), undefined, "La referencia pendiente bloquea otra liquidación");
     assert.equal(flow.postCount(), 1);
