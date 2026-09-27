@@ -496,25 +496,24 @@ test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado"
     pdfColumns,
     [
       'key: "date"',
-      'key: "ally"',
-      'key: "site"',
       'key: "client"',
-      'key: "document"',
       'key: "equipment"',
-      'key: "platform"',
+      'key: "site"',
       'key: "sale"',
       'key: "initial"',
       'key: "credit"',
-      'key: "percentage"',
-      'key: "intermediation"',
-      'key: "payable"',
+      'key: "commission"',
+      'key: "net"',
       'key: "status"',
     ],
     "El orden de columnas del PDF"
   );
   assert.doesNotMatch(pdfColumns, /key:\s*"folio"|label:\s*"Folio"/);
   assert.match(pdfBuilderSource, /site:\s*safeText\(line\.siteName/);
-  assert.match(pdfBuilderSource, /IMEI \$\{safeText\(\s*line\.imei/);
+  assert.match(pdfBuilderSource, /equipment: `\$\{safeText\(line\.equipment[\s\S]*line\.imei/);
+  assert.match(pdfBuilderSource, /INNOVACIÓN FINANCIERA CON CONFIANZA/);
+  assert.match(pdfBuilderSource, /platformSummary\[platform\]\.creditCount > 0/);
+  assert.match(pdfBuilderSource, /assertFinancialConsistency\(input\)/);
   assert.doesNotMatch(pdfBuilderSource, /resolveRedescuentoPercentageByPlatform/);
   assert.match(consoleSource, /Ver \/ imprimir PDF/);
   assert.match(consoleSource, /Descargar PDF/);
