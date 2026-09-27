@@ -177,10 +177,10 @@ export const creditApprovalSchemaStatements = [
     DECLARE approved_replacement BOOLEAN := FALSE;
       approval_data_changed BOOLEAN := FALSE;
     BEGIN
-      approval_data_changed := ROW(OLD."clienteCorreo", OLD."clienteTelefono", OLD."clienteDepartamento",
+      approval_data_changed := ROW(OLD."clienteNombre", OLD."clienteCorreo", OLD."clienteTelefono", OLD."clienteDepartamento",
         OLD."clienteCiudad", OLD."clienteDireccion", OLD."referenciaEquipo")
         IS DISTINCT FROM
-        ROW(NEW."clienteCorreo", NEW."clienteTelefono", NEW."clienteDepartamento",
+        ROW(NEW."clienteNombre", NEW."clienteCorreo", NEW."clienteTelefono", NEW."clienteDepartamento",
           NEW."clienteCiudad", NEW."clienteDireccion", NEW."referenciaEquipo");
       IF OLD."imei" IS DISTINCT FROM NEW."imei"
         AND ROW(OLD."clienteNombre", OLD."clienteDocumento", OLD."clienteCorreo", OLD."clienteTelefono",

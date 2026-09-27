@@ -39,7 +39,6 @@ export function frozenReissueCredit(credit: Record<string, unknown>, process: {
   );
   if (!terms.folio || terms.folio !== credit.folio || process.draftFolio !== terms.folio
     || text(terms.documento) !== text(credit.clienteDocumento)
-    || text(terms.clienteNombre) !== text(credit.clienteNombre)
     || text(terms.imei) !== text(resolveContractualCreditImei(credit))
     || !terms.clienteTelefono || !terms.clienteDireccion
     || !terms.equipoMarca || !terms.equipoModelo

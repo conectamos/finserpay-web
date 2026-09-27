@@ -9,7 +9,10 @@ import {
 
 const history = [{
   id: "correction-1",
-  changes: [{ field: "clienteDepartamento", before: "TOLIMA", after: "HUILA" }],
+  changes: [
+    { field: "clienteNombre", before: "Cliente de prueba", after: "Cliente corregido" },
+    { field: "clienteDepartamento", before: "TOLIMA", after: "HUILA" },
+  ],
   reason: "El cliente confirmó su residencia actual.",
   actorName: "Analista",
   actorKind: "USER",
@@ -83,7 +86,7 @@ test("el PATCH envía solo changes, motivo, revisión, hash e idempotencia", asy
   const originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
   const input = {
-    changes: { clienteCorreo: "nuevo@example.com", catalogItemId: 7 },
+    changes: { clienteNombre: "Cliente corregido", clienteCorreo: "nuevo@example.com", catalogItemId: 7 },
     reason: "El cliente confirmó la corrección.",
     revision: 3,
     reviewHash: "a".repeat(64),
@@ -96,6 +99,7 @@ test("el PATCH envía solo changes, motivo, revisión, hash e idempotencia", asy
     return new Response(JSON.stringify({
       ok: true,
       item: editableItem({
+        clienteNombre: "Cliente corregido",
         clienteCorreo: "nuevo@example.com",
         review: { revision: 4, reviewHash: "b".repeat(64) },
       }),
@@ -106,10 +110,31 @@ test("el PATCH envía solo changes, motivo, revisión, hash e idempotencia", asy
   };
 
   const result = await updateApprovalData(42, input);
+  assert.equal(result.item.clienteNombre, "Cliente corregido");
   assert.equal(result.item.review.revision, 4);
   assert.equal(result.unchanged, false);
   assert.equal(result.replayed, false);
 });
+
+test("la interfaz permite editar el nombre y mantiene la cédula protegida", () => {
+  const source = readFileSync(new URL("../app/revision-creditos/shared-data-correction.tsx", import.meta.url), "utf8");
+  const nameStart = source.indexOf('htmlFor={`approval-data-name-${detail.id}`}');
+  const documentStart = source.indexOf('htmlFor={`approval-data-document-${detail.id}`}');
+  const emailStart = source.indexOf('htmlFor={`approval-data-email-${detail.id}`}');
+  assert.ok(nameStart >= 0 && documentStart > nameStart && emailStart > documentStart);
+
+  const nameField = source.slice(nameStart, documentStart);
+  const documentField = source.slice(documentStart, emailStart);
+  assert.match(nameField, /value=\{values\.clienteNombre\}/);
+  assert.match(nameField, /onChange=/);
+  assert.match(nameField, /required/);
+  assert.doesNotMatch(nameField, /readOnly|aria-readonly/);
+  assert.match(documentField, /value=\{data\.clienteDocumento/);
+  assert.match(documentField, /readOnly/);
+  assert.match(documentField, /aria-readonly="true"/);
+  assert.match(source, /Corrige el nombre y los datos operativos\. La cédula permanece protegida\./);
+});
+
 test("el historial sigue visible después de liquidar y el refresco conserva el aviso de cambio de vista", () => {
   const workspace = readFileSync(new URL("../app/revision-creditos/shared-approval-workspace.tsx", import.meta.url), "utf8");
   const consoleSource = readFileSync(new URL("../app/dashboard/aprobaciones/approval-console.tsx", import.meta.url), "utf8");

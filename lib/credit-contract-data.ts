@@ -27,6 +27,8 @@ export function withContractualCreditData<T extends Record<string, unknown>>(cre
   const fallbackReference = formatApprovalEquipmentReference(contractualBrand, contractualModel);
   return {
     ...credit,
+    clienteNombre: terms?.clienteNombre ?? storedString(client, "nombre", credit.clienteNombre),
+    clienteDocumento: terms?.documento ?? storedString(client, "cedula", credit.clienteDocumento),
     clienteCorreo: terms?.clienteCorreo ?? storedString(client, "correo", credit.clienteCorreo),
     clienteTelefono: terms?.clienteTelefono ?? storedString(client, "telefono", credit.clienteTelefono),
     clienteDepartamento: storedString(client, "departamento", credit.clienteDepartamento),

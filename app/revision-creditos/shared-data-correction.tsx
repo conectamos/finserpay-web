@@ -29,6 +29,7 @@ type Props = {
 };
 
 type Values = {
+  clienteNombre: string;
   clienteCorreo: string;
   clienteTelefono: string;
   clienteDepartamento: string;
@@ -49,6 +50,7 @@ type PendingUpdate = {
 };
 
 const emptyValues: Values = {
+  clienteNombre: "",
   clienteCorreo: "",
   clienteTelefono: "",
   clienteDepartamento: "",
@@ -71,6 +73,7 @@ function shown(value: string | null | undefined) {
 
 function initialValues(item: ApprovalEditableData): Values {
   return {
+    clienteNombre: clean(item.clienteNombre),
     clienteCorreo: clean(item.clienteCorreo),
     clienteTelefono: clean(item.clienteTelefono),
     // In /datos this field is the persisted code; the human-readable value is
@@ -176,7 +179,7 @@ export default function SharedDataCorrection({
       setCatalog(catalogItems);
       setValues(initialValues(dataResponse.item));
       setReason("");
-      window.requestAnimationFrame(() => document.getElementById(`approval-data-email-${detail.id}`)?.focus());
+      window.requestAnimationFrame(() => document.getElementById(`approval-data-name-${detail.id}`)?.focus());
     } catch (cause) {
       if (!controller.signal.aborted) {
         setError(cause instanceof Error ? cause.message : "No fue posible preparar la edición.");
@@ -207,7 +210,7 @@ export default function SharedDataCorrection({
     const changes: ApprovalDataChanges = {};
     const summary: SummaryRow[] = [];
     const addTextChange = (
-      field: "clienteCorreo" | "clienteTelefono" | "clienteDepartamento" | "clienteCiudad" | "clienteDireccion",
+      field: "clienteNombre" | "clienteCorreo" | "clienteTelefono" | "clienteDepartamento" | "clienteCiudad" | "clienteDireccion",
       label: string,
       before: string | null,
       after: string
@@ -222,6 +225,7 @@ export default function SharedDataCorrection({
       });
     };
 
+    addTextChange("clienteNombre", "Nombre", data.clienteNombre, values.clienteNombre);
     addTextChange("clienteCorreo", "Correo", data.clienteCorreo, values.clienteCorreo);
     addTextChange("clienteTelefono", "Teléfono", data.clienteTelefono, values.clienteTelefono);
     addTextChange("clienteDepartamento", "Departamento", data.clienteDepartamento, values.clienteDepartamento);
@@ -324,7 +328,7 @@ export default function SharedDataCorrection({
     <Card className="min-w-0 space-y-3" aria-labelledby={`approval-data-title-${detail.id}`}>
       <div>
         <h2 id={`approval-data-title-${detail.id}`} className="font-semibold">Información del expediente</h2>
-        <p className="mt-2 text-sm text-[var(--fp-muted)]">Corrige datos operativos. Nombre y cédula permanecen protegidos.</p>
+        <p className="mt-2 text-sm text-[var(--fp-muted)]">Corrige el nombre y los datos operativos. La cédula permanece protegida.</p>
       </div>
 
       {!editing ? (
@@ -350,7 +354,7 @@ export default function SharedDataCorrection({
           <fieldset disabled={saving} className="space-y-3">
             <legend className="sr-only">Datos que se pueden corregir</legend>
             <label className="block text-sm font-medium" htmlFor={`approval-data-name-${detail.id}`}>Nombre
-              <Input id={`approval-data-name-${detail.id}`} className="mt-1 bg-[var(--fp-bg)]" value={data.clienteNombre} readOnly aria-readonly="true" />
+              <Input id={`approval-data-name-${detail.id}`} className="mt-1" type="text" autoComplete="name" required minLength={2} maxLength={180} value={values.clienteNombre} onChange={(event) => setValues((current) => ({ ...current, clienteNombre: event.target.value }))} />
             </label>
             <label className="block text-sm font-medium" htmlFor={`approval-data-document-${detail.id}`}>Cédula
               <Input id={`approval-data-document-${detail.id}`} className="mt-1 bg-[var(--fp-bg)]" value={data.clienteDocumento || "No disponible"} readOnly aria-readonly="true" />

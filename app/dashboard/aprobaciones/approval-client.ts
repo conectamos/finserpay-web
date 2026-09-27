@@ -81,6 +81,7 @@ export type ApprovalDetail = Omit<ApprovalListItem, "status" | "required"> & {
 };
 
 export type ApprovalDataChanges = Partial<{
+  clienteNombre: string;
   clienteCorreo: string;
   clienteTelefono: string;
   clienteDepartamento: string;
@@ -113,6 +114,7 @@ export type ApprovalEquipmentCatalogItem = {
 };
 
 export type ApprovalDataHistoryField =
+  | "clienteNombre"
   | "clienteCorreo"
   | "clienteTelefono"
   | "clienteDepartamento"
@@ -274,6 +276,7 @@ export async function uploadApprovalCallRecording(id: number, input: {
 }
 
 const APPROVAL_DATA_HISTORY_FIELDS = new Set<ApprovalDataHistoryField>([
+  "clienteNombre",
   "clienteCorreo",
   "clienteTelefono",
   "clienteDepartamento",
