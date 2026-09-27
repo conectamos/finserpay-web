@@ -99,6 +99,7 @@ export async function GET(req: Request) {
         settled,
       });
       const earlyPayoff = calculateCreditEarlyPayoff({
+        settled: Boolean(credit.pazYSalvoEmitidoAt),
         planCapitalVigente: credit.planCapitalVigente,
         saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
         montoCredito: Number(credit.montoCredito || 0),

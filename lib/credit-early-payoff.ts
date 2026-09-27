@@ -1,11 +1,13 @@
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { resolveCapitalOriginal } from "@/lib/credit-capital";
+import { parseCapitalPlanSnapshot } from "@/lib/credit-principal-payment";
 import { WOMPI_EARLY_PAYOFF_TYPE } from "@/lib/wompi-early-payoff-intent";
 
 export const EARLY_PAYOFF_PAYMENT_TYPE = WOMPI_EARLY_PAYOFF_TYPE;
 
 export type CreditEarlyPayoffInput = {
   planCapitalVigente?: unknown;
+  settled?: boolean;
   abonos?: Array<{
     fechaAbono?: Date | string | null;
     valor?: number | null;
@@ -32,6 +34,7 @@ export type CreditEarlyPayoffResult = {
   montoCreditoLiquidado: number;
   montoCreditoOriginal: number;
   reason: string | null;
+  planRevision?: number;
   saldoObligacion: number;
   totalAbonado: number;
   valorFianzaReconocida: number;
@@ -44,6 +47,8 @@ export type EarlyPayoffIntentMeta = {
   condonacion: number;
   montoCreditoLiquidado: number;
   saldoObligacion: number;
+  planRevision?: number;
+  totalAbonado?: number;
 };
 
 function roundMoney(value: number) {
@@ -60,6 +65,7 @@ export function calculateCreditEarlyPayoff(
 ): CreditEarlyPayoffResult {
   const montoCreditoOriginal = roundMoney(Math.max(0, Number(input.montoCredito || 0)));
   const capitalOriginal = resolveCapitalOriginal(input);
+  const revisedPlan = parseCapitalPlanSnapshot(input.planCapitalVigente);
   const plan = buildCreditPaymentPlan({
     planCapitalVigente: input.planCapitalVigente,
     montoCredito: montoCreditoOriginal,
@@ -70,38 +76,29 @@ export function calculateCreditEarlyPayoff(
     fechaProximoPago: input.fechaProximoPago,
     abonos: input.abonos,
     today: input.today,
+    settled: input.settled,
   });
   const totalAbonado = roundMoney(plan.totalPaid);
   const estadoPago = plan.estadoPago as CreditEarlyPayoffResult["estadoPago"];
-  const saldoObligacion = normalizePending(plan.saldoPendiente);
-  if (input.planCapitalVigente !== undefined && input.planCapitalVigente !== null) {
-    const capitalPendiente = plan.saldoCapitalPendiente ?? 0;
-    return {
-      capitalOriginal,
-      capitalAbonado: roundMoney(Math.max(0, capitalOriginal - capitalPendiente)),
-      capitalPendiente,
-      eligible: false,
-      estadoPago,
-      interesFianzaCondonado: 0,
-      montoCreditoLiquidado: montoCreditoOriginal,
-      montoCreditoOriginal,
-      reason: "Este credito tiene un plan revisado por abono a capital. Solicita liquidacion conciliada al administrador.",
-      saldoObligacion: roundMoney(plan.saldoPendiente),
-      totalAbonado,
-      valorFianzaReconocida: Number(input.valorFianza || 0),
-      valorInteresReconocido: Number(input.valorInteres || 0),
-    };
-  }
+  const pendingAmount = revisedPlan ? roundMoney : normalizePending;
+  const saldoObligacion = pendingAmount(plan.saldoPendiente);
   const capitalShare =
     montoCreditoOriginal > 0
       ? Math.min(1, Math.max(0, capitalOriginal / montoCreditoOriginal))
       : 1;
-  const capitalAbonado = roundMoney(Math.min(capitalOriginal, totalAbonado * capitalShare));
-  const capitalPendiente = normalizePending(
-    Math.min(saldoObligacion, Math.max(0, capitalOriginal - capitalAbonado))
+  const proportionalCapitalPaid = roundMoney(
+    Math.min(capitalOriginal, totalAbonado * capitalShare)
   );
+  const capitalPendiente = revisedPlan
+    ? roundMoney(plan.saldoCapitalPendiente ?? 0)
+    : normalizePending(
+        Math.min(saldoObligacion, Math.max(0, capitalOriginal - proportionalCapitalPaid))
+      );
+  const capitalAbonado = revisedPlan
+    ? roundMoney(Math.max(0, capitalOriginal - capitalPendiente))
+    : proportionalCapitalPaid;
   const montoCreditoLiquidado = roundMoney(totalAbonado + capitalPendiente);
-  const interesFianzaCondonado = normalizePending(
+  const interesFianzaCondonado = pendingAmount(
     Math.max(0, saldoObligacion - capitalPendiente)
   );
   const cargosReconocidos = roundMoney(Math.max(0, montoCreditoLiquidado - capitalOriginal));
@@ -125,6 +122,7 @@ export function calculateCreditEarlyPayoff(
   }
 
   return {
+    ...(revisedPlan ? { planRevision: revisedPlan.revision } : {}),
     capitalAbonado,
     capitalOriginal,
     capitalPendiente,
@@ -150,6 +148,9 @@ export function buildEarlyPayoffIntentMeta(
     condonacion: payoff.interesFianzaCondonado,
     montoCreditoLiquidado: payoff.montoCreditoLiquidado,
     saldoObligacion: payoff.saldoObligacion,
+    ...(payoff.planRevision !== undefined
+      ? { planRevision: payoff.planRevision, totalAbonado: payoff.totalAbonado }
+      : {}),
   };
 }
 
@@ -158,6 +159,28 @@ export function isEarlyPayoffIntentMeta(value: unknown): value is EarlyPayoffInt
     typeof value === "object" &&
     value !== null &&
     (value as { tipo?: unknown }).tipo === EARLY_PAYOFF_PAYMENT_TYPE
+  );
+}
+
+/** A revised payoff must still match the audited revision and all payments at its quote. */
+export function isCurrentRevisedEarlyPayoffIntent(
+  value: unknown,
+  payoff: CreditEarlyPayoffResult
+): boolean {
+  if (payoff.planRevision === undefined) return true;
+  if (!isEarlyPayoffIntentMeta(value) || value.planRevision !== payoff.planRevision) return false;
+
+  const quotedAmounts = [
+    [value.capitalPendiente, payoff.capitalPendiente],
+    [value.condonacion, payoff.interesFianzaCondonado],
+    [value.montoCreditoLiquidado, payoff.montoCreditoLiquidado],
+    [value.saldoObligacion, payoff.saldoObligacion],
+    [value.totalAbonado, payoff.totalAbonado],
+  ];
+  return quotedAmounts.every(([quoted, current]) =>
+    typeof quoted === "number" && Number.isFinite(quoted) &&
+    typeof current === "number" && Number.isFinite(current) &&
+    Math.round(quoted * 100) === Math.round(current * 100)
   );
 }
 

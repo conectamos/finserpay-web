@@ -124,13 +124,15 @@ test("a second extraordinary payment uses the revised principal and preserves th
   assert.ok(second.cuotasPendientesDespues < plan.pendingCount);
   assert.equal(applied(second,5).saldoCapitalAlCorte,2381599);
 });
-test("refuses proportional total payoff after a principal revision", () => {
+test("uses audited principal for total payoff after a principal revision", () => {
   const result = quote();
   const payoff = calculateCreditEarlyPayoff({ ...terms, montoCredito:result.montoCreditoActualizado,
     saldoBaseFinanciado:3500000, planCapitalVigente:applied(result), abonos:[...payments,{valor:700000}] });
-  assert.equal(payoff.eligible,false);
+  assert.equal(payoff.eligible,true);
   assert.equal(payoff.capitalPendiente,2647264);
-  assert.match(payoff.reason,/conciliada/i);
+  assert.equal(payoff.reason,null);
+  assert.equal(payoff.interesFianzaCondonado,2404735);
+  assert.equal(payoff.montoCreditoLiquidado,3797264);
 });
 test("a changed or incomplete cutoff never falls back to the legacy calendar", () => {
   const snapshot = applied();

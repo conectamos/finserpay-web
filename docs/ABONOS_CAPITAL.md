@@ -54,7 +54,7 @@ Los siguientes abonos usan los terminos de la revision ya guardada.
 
 Se bloquean abonos con cuotas vencidas, credito cerrado/anulado o un pago Wompi
 pendiente. No se acepta un extraordinario igual o superior al capital pendiente:
-la liquidacion total requiere conciliacion independiente. Tampoco se amplian
+la liquidacion total usa el flujo de cierre descrito debajo. Tampoco se amplian
 plazos ni se inventa el desglose de pagos historicos desconocidos.
 Una conciliacion no puede declarar mas capital que la deuda total pendiente,
 ni aumentar la obligacion total como consecuencia de recibir el extraordinario.
@@ -116,8 +116,29 @@ El futuro programado suma 5.052.899 y su saldo pendiente es **5.051.999**.
 - Tras una revision se bloquean anulacion/eliminacion de recaudos y modificaciones
   administrativas del calendario. Requieren una reversa financiera auditada,
   que no forma parte de esta entrega.
-- La liquidacion anticipada proporcional anterior no se ofrece en estos creditos.
-  Se muestra capital real; la liquidacion total necesita un procedimiento conciliado.
+- La liquidacion anticipada del plan revisado usa el capital pendiente auditado,
+  nunca una proporcion del monto original ni la tasa global actual.
+
+## Liquidacion total desde el portal de clientes
+
+- Se ofrece cuando el plan vigente esta al dia y mantiene capital pendiente.
+  Un plan invalido, una cuota en mora o un credito finalizado bloquean la accion.
+- El importe es la suma del capital pendiente de las cuotas vigentes, considerando
+  los pagos posteriores al corte. El abono extraordinario previo ya esta
+  descontado y no se vuelve a aplicar como pago de cuotas.
+- Se condonan los componentes futuros restantes del plan (interes, aval y seguro).
+  Se conserva el criterio existente de reconocimiento de ingresos ya recaudados.
+- La solicitud Nequi/Wompi guarda la revision y el recaudo acumulado junto con
+  capital, saldo exigible y condonacion. Se verifican de nuevo bajo bloqueo al
+  crear la solicitud y al aplicar la aprobacion. Una cotizacion desactualizada
+  requiere revision; no aplica automaticamente al nuevo plan.
+- Mientras la intencion esta en creacion, pendiente o aprobada sin aplicar, no
+  se permiten nuevas revisiones de capital. El envio no cierra el credito.
+- Solo la aprobacion real registra abono y caja, fija el monto exigible en el
+  efectivo total recaudado y emite paz y salvo en la misma transaccion. Conserva
+  calendario, contratos y bitacora originales; las cuotas eliminadas siguen asi.
+- Las lecturas del credito finalizado usan el indicador de paz y salvo: saldo y
+  capital pendientes cero, sin volver a ofrecer una segunda liquidacion.
 
 ## Verificacion y publicacion
 

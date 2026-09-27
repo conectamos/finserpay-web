@@ -634,6 +634,7 @@ export async function GET(
     );
     const plan = await loadPaymentPlan(credit);
     const earlyPayoff = calculateCreditEarlyPayoff({
+      settled: Boolean(credit.pazYSalvoEmitidoAt),
       planCapitalVigente: credit.planCapitalVigente,
       saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
       montoCredito: Number(credit.montoCredito || 0),
@@ -787,6 +788,7 @@ export async function POST(
         },
       });
       earlyPayoff = calculateCreditEarlyPayoff({
+        settled: Boolean(credit.pazYSalvoEmitidoAt),
         planCapitalVigente: credit.planCapitalVigente,
         saldoBaseFinanciado: Number(credit.saldoBaseFinanciado || 0),
         montoCredito: Number(credit.montoCredito || 0),
@@ -970,6 +972,7 @@ export async function POST(
 
       const earlyPayoffInTx = earlyPayoffRequested
         ? calculateCreditEarlyPayoff({
+            settled: Boolean(lockedCredit.pazYSalvoEmitidoAt),
             planCapitalVigente: lockedCredit.planCapitalVigente,
             saldoBaseFinanciado: Number(
               lockedCredit.saldoBaseFinanciado || 0

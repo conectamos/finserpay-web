@@ -38,7 +38,11 @@ function fixture(options = {}) {
       findMany: async () => state.abonos.map(x => ({ ...x })),
       create: async ({ data }) => { const item = { id: state.abonos.length + 1, ...data, fechaAbono: new Date("2026-09-26T12:01:00Z") }; state.abonos.push(item); return item; },
     },
-    wompiPaymentIntent: { findFirst: async () => state.pendingWompi ? { id: 2 } : null },
+    wompiPaymentIntent: { findFirst: async ({ where }) => {
+      const pendingStatus = state.pendingWompi === true ? "PENDING" : state.pendingWompi;
+      const queriedStatuses = typeof where.status === "string" ? [where.status] : where.status.in;
+      return pendingStatus && queriedStatuses.includes(pendingStatus) ? { id: 2 } : null;
+    } },
     cajaMovimiento: { create: async ({ data }) => { state.caja.push(data); return data; } },
   };
   let transactionQueue = Promise.resolve();
@@ -246,6 +250,19 @@ test("overdue installments and pending Wompi payments block principal payment", 
     assert.equal(f.state.caja.length, 0);
   }
 });
+test("a Nequi intent in any active stage blocks changes to its quoted principal plan", async () => {
+  for (const pendingWompi of ["APPROVED", "APPROVED_REVIEW_REQUIRED", "APPROVED_DUPLICATE_REVIEW_REQUIRED", "AMOUNT_MISMATCH", "CHECKOUT_FALLBACK", "CREATING_NEQUI", "PENDING", "PROCESSING_APPROVED"]) {
+    const f = fixture({ pendingWompi });
+    assert.equal((await f.preview()).status, 409, pendingWompi);
+    assert.equal(f.state.revisions.length, 0);
+    assert.equal(f.state.caja.length, 0);
+  }
+  for (const pendingWompi of ["DECLINED", "VOIDED", "ERROR"]) {
+    const f = fixture({ pendingWompi });
+    assert.equal((await f.preview()).status, 200, pendingWompi);
+  }
+});
+
 test("closed and annulled credits reject new principal quotes", async () => {
   const f = fixture();
   f.state.credit.estado = "ANULADO";

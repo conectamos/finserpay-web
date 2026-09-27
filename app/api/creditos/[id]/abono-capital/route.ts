@@ -136,7 +136,12 @@ export async function POST(req: Request, context: Context) {
       }
       if (plan.overdueCount > 0) throw new PrincipalPaymentError("Primero paga las cuotas vencidas; el abono a capital no reemplaza esas cuotas.", 409);
       const pending = await tx.wompiPaymentIntent.findFirst({
-        where: { creditoId: credit.id, status: "PENDING", processedAbonoId: null }, select: { id: true },
+        where: {
+          creditoId: credit.id,
+          status: { in: ["APPROVED", "APPROVED_REVIEW_REQUIRED", "APPROVED_DUPLICATE_REVIEW_REQUIRED", "AMOUNT_MISMATCH", "CHECKOUT_FALLBACK", "CREATING_NEQUI", "PENDING", "PROCESSING_APPROVED"] },
+          processedAbonoId: null,
+        },
+        select: { id: true },
       });
       if (pending) throw new PrincipalPaymentError("Hay un pago electrónico pendiente. Confirma su estado antes de modificar el plan.", 409);
       // Resolve from persisted origination terms under the same credit lock as the

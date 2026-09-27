@@ -570,6 +570,7 @@ function serializeCredit(
     settled: Boolean(item.pazYSalvoEmitidoAt),
   });
   const earlyPayoff = calculateCreditEarlyPayoff({
+    settled: Boolean(item.pazYSalvoEmitidoAt),
     planCapitalVigente: item.planCapitalVigente,
     saldoBaseFinanciado: Number(item.saldoBaseFinanciado || 0),
     montoCredito: Number(item.montoCredito || 0),

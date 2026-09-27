@@ -5,6 +5,7 @@ import {
   EARLY_PAYOFF_PAYMENT_TYPE,
   buildEarlyPayoffIntentMeta,
   calculateCreditEarlyPayoff,
+  isCurrentRevisedEarlyPayoffIntent,
 } from "@/lib/credit-early-payoff";
 import { sanitizeSearch, sanitizeText, toNumber } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
@@ -372,6 +373,7 @@ export async function POST(req: Request) {
 
         if (
           !lockedEarlyPayoff.eligible ||
+          !isCurrentRevisedEarlyPayoffIntent(intentCuotaNumeros, lockedEarlyPayoff) ||
           Math.round(lockedEarlyPayoff.capitalPendiente * 100) !==
             amountInCents
         ) {

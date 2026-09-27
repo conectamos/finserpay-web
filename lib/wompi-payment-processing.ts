@@ -6,6 +6,7 @@ import {
   buildEarlyPayoffObservation,
   calculateCreditEarlyPayoff,
   isEarlyPayoffIntentMeta,
+  isCurrentRevisedEarlyPayoffIntent,
 } from "@/lib/credit-early-payoff";
 import { creditCajaDescription, resolveCreditState } from "@/lib/credit-factory";
 import {
@@ -578,12 +579,16 @@ export async function processApprovedWompiPayment(
   transaction: WompiPaymentTransaction | undefined,
   payload: WompiPaymentEventPayload
 ): Promise<WompiPaymentProcessingResult> {
-  await ensureCreditAbonoAuditColumns();
-  await ensureDeviceUnlockCommandTable();
-
   if (!transaction?.reference) {
     return { applied: false, status: "NO_REFERENCE" };
   }
+  const transactionStatus = String(transaction.status || "").trim().toUpperCase();
+  if (transactionStatus !== "APPROVED") {
+    return { applied: false, status: transactionStatus || "NO_STATUS" };
+  }
+
+  await ensureCreditAbonoAuditColumns();
+  await ensureDeviceUnlockCommandTable();
 
   const intent = await prisma.wompiPaymentIntent.findUnique({
     where: { reference: transaction.reference },
@@ -983,6 +988,15 @@ export async function processApprovedWompiPayment(
     ) {
       throw new WompiCreditStateConflictError(
         "El valor de liquidacion cambio. Genera un nuevo pago."
+      );
+    }
+
+    if (
+      earlyPayoff &&
+      !isCurrentRevisedEarlyPayoffIntent(intent.cuotaNumeros, earlyPayoff)
+    ) {
+      throw new WompiCreditStateConflictError(
+        "El plan o los recaudos cambiaron despues de cotizar la liquidacion. Consulta nuevamente el credito."
       );
     }
 
