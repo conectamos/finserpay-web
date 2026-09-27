@@ -200,6 +200,12 @@ function clientInitials(name: string) {
   return `${first}${second || "P"}`.toUpperCase();
 }
 
+function clientPaymentMessage(message: string) {
+  return message.includes("plan revisado por abono a capital")
+    ? "La liquidación anticipada no está disponible para este crédito."
+    : message;
+}
+
 function nequiTerminalMessage(status?: string | null) {
   switch (String(status || "").toUpperCase()) {
     case "DECLINED":
@@ -371,9 +377,10 @@ export default function ClienteConsultaPage() {
     }
     if (mode === "PAYOFF" && !credit.liquidacionAnticipada?.disponible) {
       setNotice({
-        text:
+        text: clientPaymentMessage(
           credit.liquidacionAnticipada?.motivo ||
-          "Pagar hoy solo esta disponible cuando el credito esta al dia.",
+          "Pagar hoy solo esta disponible cuando el credito esta al dia."
+        ),
         tone: "red",
       });
       return;
@@ -516,7 +523,7 @@ export default function ClienteConsultaPage() {
       setNotice({
         text:
           error instanceof Error
-            ? error.message
+            ? clientPaymentMessage(error.message)
             : "No se pudo iniciar el pago con Wompi",
         tone: "red",
       });

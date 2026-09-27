@@ -57,7 +57,6 @@
 .screen .payoffButton { display: flex; flex-direction: column; gap: 4px; background: var(--active-surface); border: 1px solid var(--active-graphite); color: var(--active-graphite); }
 .screen .payoffButton:hover:not(:disabled) { background: var(--active-bg); }
 .payoffButton small { color: var(--active-muted); font-size: 14px; font-weight: 450; letter-spacing: 0; }
-.availability { margin: 0; font-size: 12px; line-height: 1.45; color: var(--active-muted); }
 .reminder { display: flex; align-items: center; gap: 8px; margin: 2px 0 0; padding: 10px 12px; border-radius: 22px; background: var(--fp-client-soft); color: var(--active-graphite); font-size: 12px; line-height: 1.45; }
 .reminder svg { width: 20px; height: 20px; flex-shrink: 0; stroke-width: 1.7; }
 .progressSection { margin: 26px 0 24px; }

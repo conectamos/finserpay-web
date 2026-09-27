@@ -195,13 +195,10 @@ export default function ClientActiveCreditDashboard({
             {!overdue ? (
               <>
                 <Button variant="secondary" className={styles.payoffButton} onClick={onPayoff}
-                  disabled={!payoff || paying} aria-describedby={payoff && !payoff.available ? "payoff-availability" : undefined}>
+                  disabled={!payoff?.available || paying}>
                   <span>Liquidar crédito</span>
                   <small>{payoff ? money(payoff.amount) : "Valor no disponible"}</small>
                 </Button>
-                {payoff && !payoff.available ? <p className={styles.availability} id="payoff-availability">
-                  {payoff.reason || "Consulta la disponibilidad de liquidación."}
-                </p> : null}
               </>
             ) : null}
             <p className={styles.reminder}><CalendarDays aria-hidden="true" />
