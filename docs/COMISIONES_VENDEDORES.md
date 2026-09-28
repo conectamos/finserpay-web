@@ -56,9 +56,10 @@ pestaña y cada 60 segundos; cada intento de cobro revalida inmediatamente.
 
 ## Instalación
 
-La migración aditiva está en `scripts/setup-commissions.sql`. El instalador es
-explícito: no se ejecuta durante HTTP ni altera el predeploy actual. Con el entorno
-objetivo y su `DATABASE_URL` configurados, aplicar antes de publicar:
+La migración aditiva está en `scripts/setup-commissions.sql`. El instalador
+se ejecuta al final del predeploy de Railway, antes de arrancar la nueva versión.
+No se ejecuta durante HTTP. También puede aplicarse manualmente con el entorno
+objetivo y su `DATABASE_URL` configurados:
 
 ```sh
 npm run db:setup-commissions

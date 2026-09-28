@@ -3,7 +3,7 @@
 Integrado sobre la última publicación consultada de `conectamos/finserpay-web`,
 `44cd344de5dc4e6bb90ca28a985d6d57be2d6211`. El dashboard actual conserva sus
 indicadores, acciones, app de clientes, navegación y créditos recientes.
-No se ha modificado una base de producción ni publicado el cambio en producción.
+Este informe registra la validación local previa a la publicación autorizada.
 
 ## Pruebas automáticas
 
@@ -86,7 +86,8 @@ sus valores exclusivamente de créditos y pagos de la base de datos.
 ## Instalación y publicación
 
 Instalador final verificado sobre la base efímera local, incluida repetición del
-SQL sin perder datos. Para producción falta aplicar `npm run db:setup-commissions`
-y publicar la rama aprobada. El predeploy actual se conserva. El esquema debe
-instalarse antes del 1 de octubre para capturar finalizaciones y cambios desde
-el inicio. La activación y pausa/reanudación de la pantalla son automáticas.
+SQL sin perder datos. La publicación autorizada incorpora el instalador al final
+del predeploy de Railway, conservando los pasos existentes. La migración debe
+terminar correctamente antes del arranque de la nueva aplicación. El instalador
+y su SQL están incluidos en la imagen Docker y verificados por la prueba de
+empaquetado. La activación y pausa/reanudación de la pantalla son automáticas.
