@@ -3,6 +3,17 @@ export type ClientPdfDownload = {
   filename: string;
 };
 
+export type ClientPdfDownloadMode = "android" | "legacy-android" | "browser";
+
+export function clientPdfDownloadMode(
+  androidBridge?: { downloadDocument?: (url: string, filename: string) => void } | null
+): ClientPdfDownloadMode {
+  if (!androidBridge) return "browser";
+  return typeof androidBridge.downloadDocument === "function"
+    ? "android"
+    : "legacy-android";
+}
+
 type FetchClientPdf = (
   input: string,
   init?: RequestInit

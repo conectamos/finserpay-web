@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import styles from "./client-active-credit-dashboard.module.css";
 import paidStyles from "./paid-credit-dashboard.module.css";
-import { fetchClientPdf } from "@/lib/client-document-download";
+import { clientPdfDownloadMode, fetchClientPdf } from "@/lib/client-document-download";
 import {
   COLOMBIA_TIME_ZONE,
   isSameColombiaDate,
@@ -138,6 +138,32 @@ function triggerBrowserDownload(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
 }
 
+async function copyClientPortalUrl(url: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+      return true;
+    }
+  } catch {
+    // Older Android WebViews may block the Clipboard API.
+  }
+
+  const field = document.createElement("textarea");
+  field.value = url;
+  field.readOnly = true;
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  document.body.appendChild(field);
+  field.select();
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    field.remove();
+  }
+}
+
 export default function PaidCreditDashboard({
   activePanel,
   credit,
@@ -157,6 +183,7 @@ export default function PaidCreditDashboard({
   const [pazYSalvoFeedback, setPazYSalvoFeedback] = useState<{
     text: string;
     tone: "amber" | "emerald" | "red";
+    canCopyPortal?: boolean;
   } | null>(null);
   const activeInstallments = credit.cuotas.filter((item) => !item.eliminada);
   const paidInstallments = activeInstallments.filter(
@@ -179,28 +206,21 @@ export default function PaidCreditDashboard({
 
     pazYSalvoDownloadLock.current = true;
     const androidBridge = window.FinserPayAndroid;
+    const downloadMode = clientPdfDownloadMode(androidBridge);
     const fallbackFilename = `paz-y-salvo-${credit.folio}.pdf`;
     const absoluteUrl = new URL(pazYSalvoHref, window.location.origin).toString();
 
-    if (androidBridge && !androidBridge.downloadDocument) {
+    if (downloadMode === "legacy-android") {
       setPazYSalvoFeedback({
         tone: "amber",
-        text: "Intentando la descarga. Si no inicia, abre finserpay.com/clientes en Chrome o actualiza FINSER PAY.",
+        text: "Esta versión de FINSER PAY no puede descargar archivos. Copia el enlace del portal, ábrelo en Chrome y consulta tu crédito para descargar el paz y salvo.",
+        canCopyPortal: true,
       });
-      const legacyAnchor = document.createElement("a");
-      legacyAnchor.href = absoluteUrl;
-      legacyAnchor.download = fallbackFilename;
-      legacyAnchor.style.display = "none";
-      document.body.appendChild(legacyAnchor);
-      legacyAnchor.click();
-      legacyAnchor.remove();
-      window.setTimeout(() => {
-        pazYSalvoDownloadLock.current = false;
-      }, 3_000);
+      pazYSalvoDownloadLock.current = false;
       return;
     }
 
-    if (androidBridge?.downloadDocument) {
+    if (downloadMode === "android" && androidBridge?.downloadDocument) {
       try {
         androidBridge.downloadDocument(absoluteUrl, fallbackFilename);
         setPazYSalvoFeedback({
@@ -245,6 +265,18 @@ export default function PaidCreditDashboard({
       setPazYSalvoDownloading(false);
       pazYSalvoDownloadLock.current = false;
     }
+  };
+
+  const handleCopyPortalLink = async () => {
+    const portalUrl = new URL("/clientes", window.location.origin).toString();
+    const copied = await copyClientPortalUrl(portalUrl);
+    setPazYSalvoFeedback({
+      tone: copied ? "emerald" : "amber",
+      text: copied
+        ? "Enlace copiado. Pégalo en Chrome y consulta tu crédito para descargar el paz y salvo."
+        : `No se pudo copiar el enlace. Abre ${portalUrl} en Chrome y consulta tu crédito.`,
+      canCopyPortal: !copied,
+    });
   };
 
   const lastPayment = credit.abonos[0] || null;
@@ -303,10 +335,15 @@ export default function PaidCreditDashboard({
             </div>
           </section>
           {pazYSalvoFeedback ? (
-            <p role={pazYSalvoFeedback.tone === "red" ? "alert" : "status"}
+            <div role={pazYSalvoFeedback.tone === "red" ? "alert" : "status"}
               className={`${styles.notice} ${pazYSalvoFeedback.tone === "red" ? styles.noticeError : ""}`}>
-              {pazYSalvoFeedback.text}
-            </p>
+              <p className={paidStyles.feedbackText}>{pazYSalvoFeedback.text}</p>
+              {pazYSalvoFeedback.canCopyPortal ? (
+                <button type="button" className={paidStyles.copyPortalLink} onClick={handleCopyPortalLink}>
+                  Copiar enlace para Chrome
+                </button>
+              ) : null}
+            </div>
           ) : null}
 
           <section className={styles.progressSection} aria-labelledby="credit-progress-title">

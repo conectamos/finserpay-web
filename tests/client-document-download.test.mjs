@@ -10,9 +10,32 @@ const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   ".."
 );
-const { clientPdfFilename, fetchClientPdf } = await jiti.import(
+const { clientPdfDownloadMode, clientPdfFilename, fetchClientPdf } = await jiti.import(
   "../lib/client-document-download.ts"
 );
+
+test("distingue navegador, Android actual y Android sin descarga nativa", () => {
+  assert.equal(clientPdfDownloadMode(undefined), "browser");
+  assert.equal(clientPdfDownloadMode({ registerClient() {} }), "legacy-android");
+  assert.equal(clientPdfDownloadMode({ downloadDocument() {} }), "android");
+  assert.equal(clientPdfDownloadMode({ downloadDocument: null }), "legacy-android");
+});
+
+test("el Android legado informa la limitación y ofrece copiar el portal sin intentar descargar", async () => {
+  const source = await readFile(
+    path.join(projectRoot, "app/clientes/paid-credit-dashboard.tsx"),
+    "utf8"
+  );
+  const legacyStart = source.indexOf('if (downloadMode === "legacy-android") {');
+  const nativeStart = source.indexOf('if (downloadMode === "android"', legacyStart);
+  assert.ok(legacyStart >= 0 && nativeStart > legacyStart);
+  const legacyBranch = source.slice(legacyStart, nativeStart);
+  assert.match(legacyBranch, /no puede descargar archivos/);
+  assert.match(legacyBranch, /canCopyPortal: true/);
+  assert.doesNotMatch(legacyBranch, /downloadDocument|fetchClientPdf|triggerBrowserDownload|legacyAnchor/);
+  assert.match(source, /new URL\("\/clientes", window\.location\.origin\)/);
+  assert.match(source, /Copiar enlace para Chrome/);
+});
 
 test("prepara el PDF y conserva el nombre entregado por el servidor", async () => {
   const result = await fetchClientPdf(
@@ -99,8 +122,8 @@ test("la app Android limita la descarga nativa al paz y salvo", async () => {
   assert.match(activity, /isAllowedPazYSalvoDownload\(url\)/);
   assert.match(activity, /paz-y-salvo\$/);
   assert.doesNotMatch(activity, /folio-firmado/);
-  assert.match(buildConfig, /versionCode\s*=\s*8/);
-  assert.match(buildConfig, /versionName\s*=\s*"1\.0\.7"/);
+  assert.match(buildConfig, /versionCode\s*=\s*9/);
+  assert.match(buildConfig, /versionName\s*=\s*"1\.0\.8"/);
 });
 
 test("el portal cliente no expone el folio firmado", async () => {
