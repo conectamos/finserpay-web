@@ -17,6 +17,7 @@ const LEGACY_PAGE_PREFIXES = [
 ];
 
 const ADMIN_ONLY_DASHBOARD_PREFIXES = [
+  "/dashboard/comisiones",
   "/dashboard/cartera",
   "/dashboard/catalogo-equipos",
   "/dashboard/equality",
@@ -45,6 +46,8 @@ const BEARER_AUTH_API_ROUTES = new Set([
 ]);
 
 const PROTECTED_API_PREFIXES = [
+  "/api/comisiones",
+  "/api/admin/comisiones",
   "/api/aprobaciones",
   "/api/alertas",
   "/api/arqueo",
@@ -65,6 +68,7 @@ const PROTECTED_API_PREFIXES = [
 ];
 
 const ADMIN_ONLY_API_PREFIXES = [
+  "/api/admin/comisiones",
   "/api/alertas",
   "/api/arqueo",
   "/api/caja",

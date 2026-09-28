@@ -5,6 +5,7 @@ import {
   Calculator,
   ChevronDown,
   CircleDollarSign,
+  Coins,
   ClipboardList,
   Equal,
   FileSearch,
@@ -172,6 +173,9 @@ export default function AdminSidebar({
     {
       label: "Administracion",
       items: [
+        ...(adminCentral && isAdminRole(rolUsuario)
+          ? [{ href: "/dashboard/comisiones", icon: Coins, label: "Comisiones" }]
+          : []),
         ...(adminCentral
           ? [
               { href: "/dashboard/aliados", icon: Handshake, label: "Aliados" },

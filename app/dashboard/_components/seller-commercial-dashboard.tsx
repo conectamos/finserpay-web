@@ -24,6 +24,7 @@ import {
 import FinserBrand from "@/app/_components/finser-brand";
 import LogoutButton from "./logout-button";
 import SellerClientAppDialog from "./seller-client-app-dialog";
+import SellerCommissions from "./seller-commissions";
 
 type RecentCredit = {
   clienteNombre: string;
@@ -516,6 +517,7 @@ export default function SellerCommercialDashboard({
         ) : null}
 
         <MetricStrip isSupervisor={isSupervisor} stats={stats} />
+        {!isSupervisor ? <SellerCommissions initialServerNow={new Date().toISOString()} /> : null}
         <QuickActions />
 
         {isSupervisor ? (

@@ -41,7 +41,9 @@
     "predev": "node scripts/prepare-pdfjs-assets.mjs",
     "prebuild": "node scripts/prepare-pdfjs-assets.mjs",
     "test:public-site": "npm run prisma:generate && node --test tests/merchant-applications.test.mjs",
-    "cron:postulaciones": "node scripts/retry-merchant-applications.mjs"
+    "cron:postulaciones": "node scripts/retry-merchant-applications.mjs",
+    "test:commissions": "node --test tests/commissions*.test.mjs",
+    "db:setup-commissions": "node scripts/ensure-commissions-schema.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.7.0",
