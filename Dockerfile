@@ -88,6 +88,9 @@ COPY --from=builder /app/scripts/ensure-merchant-applications-schema.mjs ./scrip
 COPY --from=builder /app/scripts/retry-merchant-applications.mjs ./scripts/retry-merchant-applications.mjs
 COPY --from=builder /app/scripts/check-merchant-application-delivery.mjs ./scripts/check-merchant-application-delivery.mjs
 
+COPY --from=builder /app/scripts/setup-commissions.sql ./scripts/setup-commissions.sql
+COPY --from=builder /app/scripts/ensure-commissions-schema.mjs ./scripts/ensure-commissions-schema.mjs
+
 EXPOSE 3000
 
 CMD ["node", "server.js"]

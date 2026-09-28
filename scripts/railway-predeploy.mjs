@@ -24,3 +24,4 @@ await import("./repair-credit-device-replacement-20260918.mjs");
 await import("./correct-historic-mass-credit-first-payments-20260925.mjs");
 await import("./ensure-second-credit-authorization-schema.mjs");
 await import("./ensure-merchant-applications-schema.mjs");
+await import("./ensure-commissions-schema.mjs");

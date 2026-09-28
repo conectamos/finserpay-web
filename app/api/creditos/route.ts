@@ -3095,6 +3095,16 @@ export async function POST(req: Request) {
         }
       : null;
     const contratoSnapshot = {
+      // Provenance is set by the server; test provider credits earn no commission.
+      comisiones: {
+        version: 1,
+        isTest: ALLOW_TEST_CREDIT_CLOSE_WITHOUT_DELIVERY_VALIDATION ||
+          Boolean(dataCreditoAssessment && !["prod", "production"].includes(
+            String(dataCreditoAssessment.providerEnvironment).toLowerCase()
+          )),
+        solicitudId: solicitudReservation.id,
+        dataCreditoAssessmentId: dataCreditoAssessment?.id || null,
+      },
       template: {
         codigo: "FINSER_CONTRATO_FINANCIACION_EQUIPO_DATOS_HERRAMIENTAS_V3",
         titulo: CONTRACT_TEMPLATE_TITLE,
