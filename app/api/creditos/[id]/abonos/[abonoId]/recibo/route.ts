@@ -5,6 +5,7 @@ import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { parseCapitalPlanSnapshot } from "@/lib/credit-principal-payment";
+import { auditedReceiptPlanView, readAuditedReceiptAllocation } from "@/lib/credit-audit-receipt";
 import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
@@ -232,6 +233,11 @@ export async function GET(
           Math.round(Number(abono.credito.montoCredito || 0) * 100)
     );
     const currentSnapshot = parseCapitalPlanSnapshot(abono.credito.planCapitalVigente);
+    const auditedReceipt = currentSnapshot
+      ? await readAuditedReceiptAllocation(prisma, abono.creditoId, abono.id,
+          activeAbonos.map((item) => ({ id: item.id, valor: Number(item.valor), fechaAbono: item.fechaAbono })))
+      : null;
+    const auditedPlanView = auditedReceipt ? auditedReceiptPlanView(auditedReceipt) : null;
     const principalRevisions = currentSnapshot
       ? await prisma.$queryRaw<Array<{ abonoId: number; snapshotAfter: unknown; resultado: unknown }>>`
           SELECT "abonoId", "snapshotAfter", "resultado" FROM "CreditPrincipalPaymentRevision"
@@ -243,7 +249,7 @@ export async function GET(
     const principalRevision = principalRevisions[0] || null;
     const receiptSnapshot = principalRevision
       ? parseCapitalPlanSnapshot(principalRevision.snapshotAfter)
-      : null;
+      : auditedPlanView?.snapshot || null;
     const result = principalRevision?.resultado as { quote?: {
       saldoCapitalAntes: number;
       saldoCapitalDespues: number;
@@ -262,15 +268,17 @@ export async function GET(
       throw new Error("El comprobante de capital no concilia con su revision.");
     }
     const isPriorToPrincipalCut = Boolean(
-      currentSnapshot?.abonosAlCorte.some((item) => item.id === abono.id) && !receiptSnapshot
+      currentSnapshot?.abonosAlCorte.some((item) => item.id === abono.id) &&
+      !receiptSnapshot && !auditedPlanView
     );
     // Never replay an earlier receipt against a later reamortization snapshot.
     const currentPlan = receiptSnapshot
-      ? buildPlan({ ...abono.credito, planCapitalVigente: receiptSnapshot },
-          isPrincipalPayment
+      ? buildPlan({ ...abono.credito, planCapitalVigente: receiptSnapshot,
+            fechaProximoPago: auditedPlanView ? null : abono.credito.fechaProximoPago },
+          isPrincipalPayment || Boolean(auditedPlanView?.snapshot)
             ? [{ valor: receiptSnapshot.totalAbonadoAlCorte, fechaAbono: abono.fechaAbono }]
             : activeAbonos.filter((item) => item.id <= abono.id))
-      : isPriorToPrincipalCut
+      : auditedPlanView || isPriorToPrincipalCut
         ? null
         : buildPlan(abono.credito, activeUntilThisPayment, closesCurrentCredit);
     const isAnnulled = String(abono.estado || "").toUpperCase() === "ANULADO";
@@ -302,7 +310,15 @@ export async function GET(
       totalPaidThroughPayment: paymentTotalInCents / 100,
       paymentSequence: activeUntilThisPayment.length,
       paymentType: principalQuote ? "PRINCIPAL"
+        : auditedReceipt ? "AUDITED_RECONCILIATION"
         : /LIQUIDACI(?:O|Ó)N\s+ANTICIPADA/i.test(String(abono.observacion || "")) ? "EARLY_PAYOFF" : "PAYMENT",
+      auditedPayment: auditedReceipt ? {
+        document: auditedReceipt.document,
+        ordinaryInstallment: auditedReceipt.ordinaryInstallment,
+        extraordinaryPrincipal: auditedReceipt.extraordinaryPrincipal,
+        additionalInterest: auditedReceipt.additionalInterest,
+        lateFee: auditedReceipt.lateFee,
+      } : undefined,
       principalPayment: principalQuote ? {
         capitalBefore: principalQuote.saldoCapitalAntes,
         capitalApplied: principalQuote.abonoCapital,
@@ -318,7 +334,7 @@ export async function GET(
         operationalRows: [
           { label: "Fecha de impresión", value: dateTimeLabel(new Date()) },
           { label: "Sede", value: textValue(abono.sede.nombre) },
-          { label: "Cajero", value: textValue(recibidoPor) },
+          { label: auditedReceipt?.isSourceReceipt ? "Conciliado por" : "Cajero", value: textValue(recibidoPor) },
           { label: "Teléfono", value: textValue(abono.credito.clienteTelefono) },
           { label: "Equipo", value: textValue(equipo) },
           { label: "IMEI", value: textValue(abono.credito.imei) },
@@ -330,9 +346,9 @@ export async function GET(
           date: dateLabel(item.fechaVencimiento),
           amount: item.saldoPendiente,
         })),
-        historicalPlanNotice: isPriorToPrincipalCut
+        historicalPlanNotice: auditedPlanView?.notice || (isPriorToPrincipalCut
           ? "Comprobante anterior al abono a capital. Consulta el plan vigente para los próximos pagos."
-          : undefined,
+          : undefined),
         observation: abono.observacion,
         annulment: isAnnulled ? { date: abono.anuladoAt, reason: abono.anulacionMotivo } : undefined,
       },

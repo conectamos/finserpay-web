@@ -15,6 +15,7 @@ const plans = await jiti.import("../lib/credit-payment-plan.ts");
 const { splitOutstandingBalance } = await jiti.import("../lib/credit-outstanding-balance.ts");
 const { buildCreditPaymentPlanPdf } = await jiti.import("../lib/credit-payment-plan-pdf.ts");
 const { buildClientPaymentReceiptPdf } = await jiti.import("../lib/client-payment-receipt-pdf.ts");
+const auditedReceipts = await jiti.import("../lib/credit-audit-receipt.ts");
 
 function fixture() {
   const terms = { montoCredito: 149700 * 48, valorCuota: 149700, plazoMeses: 48,
@@ -82,7 +83,7 @@ test("renders client capital receipt with the immutable breakdown", async () => 
   checkPdf(buffer, "capital-client-receipt");
 });
 
-async function adminReceipt(paymentId, laterRevision = false) {
+async function adminReceipt(paymentId, laterRevision = false, audited = false) {
   const f = fixture();
   let planCalls = 0;
   const revisionsRead = [];
@@ -106,7 +107,17 @@ async function adminReceipt(paymentId, laterRevision = false) {
     metodoPago: "EFECTIVO", estado: "ACTIVO", observacion: "Pago de prueba", sede: credit.sede,
     usuario: { nombre: "CAJERO DE PRUEBA", usuario: "prueba" }, vendedor: null };
   const prisma = { creditoAbono: { findFirst: async () => payment, findMany: async () => f.payments },
-    $queryRaw: async () => paymentId >= 3 ? [{ abonoId: 3, snapshotAfter: f.snapshot, resultado: { quote: f.quote } }] : [] };
+    $queryRaw: async () => !audited && paymentId >= 3
+      ? [{ abonoId: 3, snapshotAfter: f.snapshot, resultado: { quote: f.quote } }] : [] };
+  const audit = audited ? { abonoId: 2, sourceReceipt: "QA-MIXED", snapshotAfter: f.snapshot,
+    allocations: { receipts: [
+      { document: "QA-FIRST", date: "2026-09-16", received: 150000,
+        ordinaryInstallment: 149700, extraordinaryPrincipal: 0, additionalInterest: 0, lateFee: 300 },
+      { document: "QA-MIXED", date: "2026-09-26", received: 300000,
+        ordinaryInstallment: 149700, extraordinaryPrincipal: 150000, additionalInterest: 0, lateFee: 300 },
+      { document: "QA-CUT", date: "2026-09-26", received: 700000,
+        ordinaryInstallment: 149700, extraordinaryPrincipal: 550000, additionalInterest: 0, lateFee: 300 },
+    ] } } : null;
   const imports = {
     "next/server": { NextResponse: Response },
     "@/lib/auth": { getSessionUser: async () => ({ rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY" }) },
@@ -118,6 +129,12 @@ async function adminReceipt(paymentId, laterRevision = false) {
     "@/lib/credit-abono-audit": { ensureCreditAbonoAuditColumns: async () => {} },
     "@/lib/credit-factory": { getPaymentFrequencyLabel: () => "Quincenal" },
     "@/lib/client-payment-receipt-pdf": { buildClientPaymentReceiptPdf },
+    "@/lib/credit-audit-receipt": {
+      readAuditedReceiptAllocation: async (_db, creditId, id, payments) => audited
+        ? (assert.equal(creditId, 7), auditedReceipts.parseAuditedReceiptAllocation(audit, id, payments))
+        : null,
+      auditedReceiptPlanView: auditedReceipts.auditedReceiptPlanView,
+    },
     "@/lib/credit-principal-payment": core,
     "@/lib/credit-payment-plan": { buildCreditPaymentPlan: (input) => {
       planCalls++;
@@ -157,4 +174,17 @@ test("ordinary receipt between two revisions uses the revision active at its pay
   assert.equal(result.planCalls, 1);
   assert.deepEqual(result.revisionsRead, [1]);
   assert.ok(result.buffer.length > 1000);
+});
+
+test("historical audited mixed receipt does not replay its later payment-plan cut", async () => {
+  const result = await adminReceipt(2, false, true);
+  assert.equal(result.planCalls, 0);
+  checkPdf(result.buffer, "audited-historical-pos-receipt");
+});
+
+test("last audited receipt uses its exact cut without a newer live due date", async () => {
+  const result = await adminReceipt(3, false, true);
+  assert.equal(result.planCalls, 1);
+  assert.deepEqual(result.revisionsRead, [1]);
+  checkPdf(result.buffer, "audited-cut-pos-receipt");
 });
