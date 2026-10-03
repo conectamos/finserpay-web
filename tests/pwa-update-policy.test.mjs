@@ -27,8 +27,8 @@ test("el service worker no conserva HTML ni navegaciones del portal", () => {
   assert.match(serviceWorker, /finserpay-client-/);
   assert.match(
     serviceWorker,
-    /CACHE_NAME\s*=\s*`\$\{CACHE_PREFIX\}v5`/,
-    "La version v5 fuerza a las sesiones abiertas a activar el worker nuevo"
+    /CACHE_NAME\s*=\s*`\$\{CACHE_PREFIX\}v6`/,
+    "La version v6 fuerza a las sesiones abiertas a activar el worker nuevo"
   );
 });
 
