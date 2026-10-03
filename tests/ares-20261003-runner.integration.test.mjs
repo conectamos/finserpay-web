@@ -12,7 +12,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runner = resolve(root, "scripts/reconcile-ares-credit-20261003.mjs");
 const folio = "FC-TEST-ARES-386";
 
-async function fixture() {
+async function fixture({ linkedCash = false } = {}) {
   const db = await PGlite.create();
   const server = new PGLiteSocketServer({ db, port: 0, host: "127.0.0.1" });
   await db.exec([
@@ -47,23 +47,31 @@ async function fixture() {
   ].join("\n"));
   await db.exec([
     "INSERT INTO \"Aliado\" VALUES (1,'FINSERPAY');",
-    "INSERT INTO \"Sede\" VALUES (67,1);",
+    "INSERT INTO \"Sede\" VALUES (17,1),(67,1);",
     "INSERT INTO \"Rol\" VALUES (1,'ADMIN');",
-    "INSERT INTO \"Usuario\" VALUES (7,true,1,67);",
+    "INSERT INTO \"Usuario\" VALUES (1,true,1,17);",
     'INSERT INTO "Credito" VALUES (386,\'' + folio + '\',1452000,2694500,158500,17,' +
       "'QUINCENAL',TIMESTAMP '2026-08-24 12:00:00',TIMESTAMP '2026-09-17 12:00:00'," +
       "TIMESTAMP '2026-10-02 12:00:00',NULL,'GENERADO',NULL,67);",
     'INSERT INTO "CreditoAbono" ("id","creditoId","usuarioId","sedeId","valor","metodoPago",' +
       '"observacion","fechaAbono","createdAt","updatedAt") VALUES ' +
-      "(1,386,7,67,160000,'EFECTIVO','Cuota',TIMESTAMP '2026-10-03 12:00:00'," +
+      "(1241,386,1,17,160000,'EFECTIVO','Cuota',TIMESTAMP '2026-10-03 12:00:00'," +
       "TIMESTAMP '2026-10-03 12:00:00',TIMESTAMP '2026-10-03 12:00:00');",
     'INSERT INTO "CajaMovimiento" ("id","tipo","concepto","valor","descripcion","sedeId",' +
       '"createdAt","updatedAt") VALUES ' +
-      "(500,'INGRESO','ABONO CREDITO EFECTIVO',400000," +
-      "'Folio: " + folio + " | ARES: R0100001108 | Metodo: EFECTIVO',67," +
-      "TIMESTAMP '2026-09-18 12:00:00',TIMESTAMP '2026-09-18 12:00:00');",
+      "(1247,'INGRESO','ABONO CREDITO EFECTIVO',160000," +
+      "'ABONO_CREDITO_ID:1241 | Folio: " + folio + " | Metodo: EFECTIVO',17," +
+      "TIMESTAMP '2026-10-03 12:00:00',TIMESTAMP '2026-10-03 12:00:00');",
+    ...(linkedCash ? [
+      'INSERT INTO "CajaMovimiento" ("id","tipo","concepto","valor","descripcion","sedeId",' +
+        '"createdAt","updatedAt") VALUES ' +
+        "(500,'INGRESO','ABONO CREDITO EFECTIVO',400000," +
+        "'Folio: " + folio + " | ARES: R0100001108 | Metodo: EFECTIVO',17," +
+        "TIMESTAMP '2026-09-18 12:00:00',TIMESTAMP '2026-09-18 12:00:00');",
+    ] : []),
   ].join("\n"));
-  await db.exec('ALTER TABLE "CreditoAbono" ALTER COLUMN "id" RESTART WITH 2');
+  await db.exec('ALTER TABLE "CreditoAbono" ALTER COLUMN "id" RESTART WITH 1242');
+  await db.exec('ALTER TABLE "CajaMovimiento" ALTER COLUMN "id" RESTART WITH 1248');
   await db.query('INSERT INTO "CreditSadminRegistration" VALUES (386,$1,true)', [loanNumber]);
   await server.start();
   const port = Number(server.getServerConn().split(":").at(-1));
@@ -102,33 +110,47 @@ async function state(db) {
   )).rows;
   return { credit, payments, cash };
 }
-const applyArgs = [
-  "--actor-id=7", "--method=EFECTIVO", "--cash-policy=link-existing",
+const applyCreateArgs = [
+  "--actor-id=1", "--method=EFECTIVO", "--cash-policy=create-income", "--apply",
+];
+const applyLinkArgs = [
+  "--actor-id=1", "--method=EFECTIVO", "--cash-policy=link-existing",
   "--cash-movement-id=500", "--apply",
 ];
 
-test("PGLite: preview is read-only, apply is atomic and idempotent", {
+test("PGLite: create-income preview is read-only, apply is atomic and idempotent", {
   skip: !loanNumber ? "Set ARES_TEST_LOAN_NUMBER locally to run this fixture." : false,
 }, async () => {
   const local = await fixture();
   try {
     const before = await state(local.db);
-    const preview = await execute(local.url);
+    const preview = await execute(local.url, ["--cash-policy=create-income"]);
     assert.equal(preview.code, 0, preview.stderr);
-    assert.equal(JSON.parse(preview.stdout).mode, "dry-run");
+    const planned = JSON.parse(preview.stdout);
+    assert.equal(planned.mode, "dry-run");
+    assert.equal(planned.cashAction.action, "create-one-income");
+    assert.equal(planned.cashAction.sedeId, 17);
+    assert.equal(planned.cashAction.paymentEffectiveDate, "2026-09-18");
+    assert.equal(planned.existingPaymentCash.id, 1247);
     assert.deepEqual(await state(local.db), before);
 
-    const first = await execute(local.url, applyArgs);
+    const first = await execute(local.url, applyCreateArgs);
     assert.equal(first.code, 0, first.stderr);
-    assert.equal(JSON.parse(first.stdout).mode, "applied");
+    const applied = JSON.parse(first.stdout);
+    assert.equal(applied.mode, "applied");
+    assert.equal(applied.cashPolicy, "create-income");
+    assert.equal(applied.paymentEffectiveDate, "2026-09-18");
     const after = await state(local.db);
     assert.equal(after.payments.length, 2);
-    assert.equal(after.cash.length, 1);
+    assert.equal(after.cash.length, 2);
+    assert.equal(after.cash[1].valor, 400000);
+    assert.match(after.cash[1].descripcion, /Fecha efectiva ARES: 2026-09-18/);
+    assert.match(after.cash[1].descripcion, /Registro FINSER: /);
     assert.equal(after.credit.montoCredito, 2461700);
     assert.equal(after.credit.planCapitalVigente.cuotas[2].valorAbonadoAlCorte, 0);
     assert.equal(after.credit.planCapitalVigente.cuotas[2].fechaVencimiento, "2026-10-17");
 
-    const again = await execute(local.url, applyArgs);
+    const again = await execute(local.url, applyCreateArgs);
     assert.equal(again.code, 0, again.stderr);
     assert.equal(JSON.parse(again.stdout).mode, "already-applied");
     assert.deepEqual(await state(local.db), after);
@@ -137,21 +159,83 @@ test("PGLite: preview is read-only, apply is atomic and idempotent", {
   }
 });
 
-test("PGLite: late failure rolls back payment, credit, cash and audit", {
+test("PGLite: late cash failure rolls back payment, credit, cash and audit", {
   skip: !loanNumber ? "Set ARES_TEST_LOAN_NUMBER locally to run this fixture." : false,
 }, async () => {
   const local = await fixture();
   try {
     await local.db.exec('ALTER TABLE "CajaMovimiento" ADD CONSTRAINT no_new_marker ' +
-      'CHECK (position(\'ABONO_CREDITO_ID:\' in "descripcion") = 0)');
+      'CHECK ("valor" <> 400000 OR ' +
+      'position(\'ABONO_CREDITO_ID:\' in "descripcion") = 0)');
     const before = await state(local.db);
-    const attempt = await execute(local.url, applyArgs);
+    const attempt = await execute(local.url, applyCreateArgs);
     assert.notEqual(attempt.code, 0);
     assert.deepEqual(await state(local.db), before);
     const audit = await local.db.query(
       "SELECT to_regclass('\"CreditAresReconciliation\"') AS name",
     );
     assert.equal(audit.rows[0].name, null);
+  } finally {
+    await local.close();
+  }
+});
+
+test("PGLite: audited cash income rejects later updates and deletes", {
+  skip: !loanNumber ? "Set ARES_TEST_LOAN_NUMBER locally to run this fixture." : false,
+}, async () => {
+  const local = await fixture();
+  try {
+    const applied = await execute(local.url, applyCreateArgs);
+    assert.equal(applied.code, 0, applied.stderr);
+    const cashId = JSON.parse(applied.stdout).cashMovementId;
+    const after = await state(local.db);
+    await assert.rejects(
+      local.db.query('UPDATE "CajaMovimiento" SET "valor"=1 WHERE "id"=$1', [cashId]),
+      /Reconciled ARES cash income is immutable/,
+    );
+    await assert.rejects(
+      local.db.query('DELETE FROM "CajaMovimiento" WHERE "id"=$1', [cashId]),
+      /Reconciled ARES cash income is immutable/,
+    );
+    assert.deepEqual(await state(local.db), after);
+  } finally {
+    await local.close();
+  }
+});
+
+test("PGLite: link-existing retains its original cash income", {
+  skip: !loanNumber ? "Set ARES_TEST_LOAN_NUMBER locally to run this fixture." : false,
+}, async () => {
+  const local = await fixture({ linkedCash: true });
+  try {
+    const preview = await execute(local.url, [
+      "--cash-policy=link-existing", "--cash-movement-id=500", "--method=EFECTIVO",
+    ]);
+    assert.equal(preview.code, 0, preview.stderr);
+    assert.equal(JSON.parse(preview.stdout).cashAction.action, "link-existing-income");
+    const before = await state(local.db);
+    const applied = await execute(local.url, applyLinkArgs);
+    assert.equal(applied.code, 0, applied.stderr);
+    assert.equal(JSON.parse(applied.stdout).cashMovementId, 500);
+    const after = await state(local.db);
+    assert.equal(after.cash.length, before.cash.length);
+    assert.equal(after.payments.length, 2);
+    assert.match(after.cash[0].descripcion, /Fecha efectiva ARES: 2026-09-18/);
+  } finally {
+    await local.close();
+  }
+});
+
+test("PGLite: create-income refuses an already documented ARES cash receipt", {
+  skip: !loanNumber ? "Set ARES_TEST_LOAN_NUMBER locally to run this fixture." : false,
+}, async () => {
+  const local = await fixture({ linkedCash: true });
+  try {
+    const before = await state(local.db);
+    const refused = await execute(local.url, applyCreateArgs);
+    assert.notEqual(refused.code, 0);
+    assert.match(refused.stderr, /Ya existe caja asociada/);
+    assert.deepEqual(await state(local.db), before);
   } finally {
     await local.close();
   }

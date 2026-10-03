@@ -6,6 +6,7 @@ import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 import { createJiti } from "jiti";
+import { ARES_20261003_RECEIPTS, buildAres20261003Snapshot } from "../scripts/lib/ares-20261003-reconciliation.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const require = createRequire(import.meta.url);
@@ -15,6 +16,7 @@ const plans = await jiti.import("../lib/credit-payment-plan.ts");
 const { splitOutstandingBalance } = await jiti.import("../lib/credit-outstanding-balance.ts");
 const { buildCreditPaymentPlanPdf } = await jiti.import("../lib/credit-payment-plan-pdf.ts");
 const { buildClientPaymentReceiptPdf } = await jiti.import("../lib/client-payment-receipt-pdf.ts");
+const aresReceipts = await jiti.import("../lib/ares-reconciliation-receipt.ts");
 
 function fixture() {
   const terms = { montoCredito: 149700 * 48, valorCuota: 149700, plazoMeses: 48,
@@ -82,8 +84,19 @@ test("renders client capital receipt with the immutable breakdown", async () => 
   checkPdf(buffer, "capital-client-receipt");
 });
 
-async function adminReceipt(paymentId, laterRevision = false) {
-  const f = fixture();
+async function adminReceipt(paymentId, laterRevision = false, ares = false) {
+  const f = ares ? {
+    terms: { montoCredito: 2461700, valorCuota: 158500, plazoMeses: 17,
+      frecuenciaPago: "QUINCENAL", fechaPrimerPago: "2026-09-17" },
+    payments: [
+      { id: 101, valor: 160000, fechaAbono: new Date("2026-10-03T12:00:00Z") },
+      { id: 202, valor: 400000, fechaAbono: new Date("2026-09-18T12:00:00Z") },
+    ],
+    snapshot: buildAres20261003Snapshot([
+      { id: 101, valor: 160000 }, { id: 202, valor: 400000 },
+    ]),
+    quote: null,
+  } : fixture();
   let planCalls = 0;
   const revisionsRead = [];
   let latestSnapshot = f.snapshot;
@@ -98,15 +111,20 @@ async function adminReceipt(paymentId, laterRevision = false) {
     latestSnapshot = core.parseCapitalPlanSnapshot({ ...quote.planCapitalVigente,
       abonosAlCorte: f.payments.map(({ id, valor }) => ({ id, valor })) });
   }
-  const credit = { ...f.terms, planCapitalVigente: latestSnapshot, montoCredito: f.quote.montoCreditoActualizado,
-    id: 7, folio: "QA-CAPITAL", clienteNombre: "CLIENTE DE PRUEBA", clienteDocumento: "0000000000",
+  const credit = { ...f.terms, planCapitalVigente: latestSnapshot,
+    montoCredito: ares ? 2461700 : f.quote.montoCreditoActualizado,
+    id: ares ? 386 : 7, folio: ares ? "FC-ARES-QA" : "QA-CAPITAL",
+    clienteNombre: "CLIENTE DE PRUEBA", clienteDocumento: "0000000000",
     clienteTelefono: "0000000000", referenciaEquipo: "EQUIPO DE PRUEBA", imei: "000000000000000",
     pazYSalvoEmitidoAt: null, sede: { nombre: "SEDE DE PRUEBA" } };
-  const payment = { ...f.payments.find((item) => item.id === paymentId), creditoId: 7, credito: credit,
+  const payment = { ...f.payments.find((item) => item.id === paymentId), creditoId: credit.id, credito: credit,
     metodoPago: "EFECTIVO", estado: "ACTIVO", observacion: "Pago de prueba", sede: credit.sede,
     usuario: { nombre: "CAJERO DE PRUEBA", usuario: "prueba" }, vendedor: null };
   const prisma = { creditoAbono: { findFirst: async () => payment, findMany: async () => f.payments },
-    $queryRaw: async () => paymentId >= 3 ? [{ abonoId: 3, snapshotAfter: f.snapshot, resultado: { quote: f.quote } }] : [] };
+    $queryRaw: async () => !ares && paymentId >= 3
+      ? [{ abonoId: 3, snapshotAfter: f.snapshot, resultado: { quote: f.quote } }] : [] };
+  const aresAudit = ares ? { abonoId: 202, snapshotAfter: f.snapshot,
+    allocations: { receipts: ARES_20261003_RECEIPTS } } : null;
   const imports = {
     "next/server": { NextResponse: Response },
     "@/lib/auth": { getSessionUser: async () => ({ rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY" }) },
@@ -118,13 +136,19 @@ async function adminReceipt(paymentId, laterRevision = false) {
     "@/lib/credit-abono-audit": { ensureCreditAbonoAuditColumns: async () => {} },
     "@/lib/credit-factory": { getPaymentFrequencyLabel: () => "Quincenal" },
     "@/lib/client-payment-receipt-pdf": { buildClientPaymentReceiptPdf },
+    "@/lib/ares-reconciliation-receipt": {
+      readAresReconciledReceipt: async (_db, creditId, id, amount) => ares
+        ? (assert.equal(creditId, 386), aresReceipts.parseAresReconciledReceipt(aresAudit, id, amount))
+        : null,
+      aresReceiptPlanView: aresReceipts.aresReceiptPlanView,
+    },
     "@/lib/credit-principal-payment": core,
     "@/lib/credit-payment-plan": { buildCreditPaymentPlan: (input) => {
       planCalls++;
       revisionsRead.push(input.planCapitalVigente?.revision);
       return plans.buildCreditPaymentPlan(input);
     } },
-    "@/lib/credit-route-lookup": { buildCreditAccessWhere: () => ({}), buildCreditLookupWhere: () => ({ id: 7 }), parseCreditRouteLookup: () => ({ id: 7 }) },
+    "@/lib/credit-route-lookup": { buildCreditAccessWhere: () => ({}), buildCreditLookupWhere: () => ({ id: credit.id }), parseCreditRouteLookup: () => ({ id: credit.id }) },
     "@/lib/colombia-date": { COLOMBIA_TIME_ZONE: "America/Bogota" },
     "node:path": { default: path },
     pdfkit: { default: require("pdfkit") },
@@ -134,7 +158,7 @@ async function adminReceipt(paymentId, laterRevision = false) {
   const mod = { exports: {} };
   vm.runInNewContext(`${code}\nmodule.exports.dateLabelForTest = dateLabel;`, { module: mod, exports: mod.exports,
     require: (name) => name in imports ? imports[name] : require(name), console, process, Buffer, Date, Number, String, Uint8Array });
-  const response = await mod.exports.GET(new Request("https://example.test"), { params: Promise.resolve({ id: "7", abonoId: String(paymentId) }) });
+  const response = await mod.exports.GET(new Request("https://example.test"), { params: Promise.resolve({ id: String(credit.id), abonoId: String(paymentId) }) });
   assert.equal(response.status, 200);
   assert.equal(mod.exports.dateLabelForTest("2026-11-02"), "02/11/2026");
   return { buffer: Buffer.from(await response.arrayBuffer()), planCalls, revisionsRead };
@@ -157,4 +181,17 @@ test("ordinary receipt between two revisions uses the revision active at its pay
   assert.equal(result.planCalls, 1);
   assert.deepEqual(result.revisionsRead, [1]);
   assert.ok(result.buffer.length > 1000);
+});
+
+test("ARES POS receipt for 400000 does not replay the later 03/10 capital snapshot", async () => {
+  const result = await adminReceipt(202, false, true);
+  assert.equal(result.planCalls, 0);
+  checkPdf(result.buffer, "ares-mixed-pos-receipt");
+});
+
+test("ARES POS receipt for 160000 displays the documented post-03/10 plan", async () => {
+  const result = await adminReceipt(101, false, true);
+  assert.equal(result.planCalls, 1);
+  assert.deepEqual(result.revisionsRead, [1]);
+  checkPdf(result.buffer, "ares-ordinary-pos-receipt");
 });

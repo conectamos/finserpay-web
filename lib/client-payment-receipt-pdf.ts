@@ -11,12 +11,19 @@ export type ClientPaymentReceiptPdfInput = {
   numeroCreditoVisible?: string;
   totalPaidThroughPayment: number;
   paymentSequence: number;
-  paymentType: "PAYMENT" | "EARLY_PAYOFF" | "PRINCIPAL";
+  paymentType: "PAYMENT" | "EARLY_PAYOFF" | "PRINCIPAL" | "ARES_RECONCILED";
   principalPayment?: {
     capitalBefore: number;
     capitalAfter: number;
     capitalApplied: number;
     eliminatedInstallments: number;
+  };
+  aresPayment?: {
+    document: string;
+    ordinaryInstallment: number;
+    extraordinaryPrincipal: number;
+    additionalInterest: number;
+    lateFee: number;
   };
   creditClosed: boolean;
   settledAt?: Date | null;
@@ -92,6 +99,14 @@ export async function buildClientPaymentReceiptPdf(input: ClientPaymentReceiptPd
       .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0))) {
     throw new Error("El comprobante de capital requiere el resultado registrado de la operación.");
   }
+  const ares = input.paymentType === "ARES_RECONCILED" ? input.aresPayment : null;
+  if (input.paymentType === "ARES_RECONCILED" && (!ares ||
+      !/^R\d{10}$/.test(ares.document) ||
+      ![ares.ordinaryInstallment, ares.extraordinaryPrincipal, ares.additionalInterest, ares.lateFee]
+        .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && Number.isInteger(value)) ||
+      ares.ordinaryInstallment + ares.extraordinaryPrincipal + ares.additionalInterest + ares.lateFee !== input.paymentAmount)) {
+    throw new Error("El comprobante ARES requiere una distribución auditada que sume el recaudo.");
+  }
   const pos = input.presentation?.format === "POS";
   const pageWidth = pos ? 226.77 : 595.28;
   const left = pos ? 12 : 86;
@@ -102,7 +117,7 @@ export async function buildClientPaymentReceiptPdf(input: ClientPaymentReceiptPd
   const blocks: ReceiptBlock[] = [
     { kind: "brand" },
     { kind: "rule", green: true },
-    { kind: "text", value: principal ? "ABONO A CAPITAL" : input.paymentType === "EARLY_PAYOFF" ? "LIQUIDACIÓN ANTICIPADA" : "ABONO REGISTRADO", bold: true, size: pos ? 11 : 15, gap: pos ? 10 : 14 },
+    { kind: "text", value: principal ? "ABONO A CAPITAL" : ares ? ares.extraordinaryPrincipal > 0 ? "CUOTA Y ABONO A CAPITAL" : "CUOTA Y CARGOS" : input.paymentType === "EARLY_PAYOFF" ? "LIQUIDACIÓN ANTICIPADA" : "ABONO REGISTRADO", bold: true, size: pos ? 11 : 15, gap: pos ? 10 : 14 },
     { kind: "text", value: money(input.paymentAmount), bold: true, size: pos ? 26 : 43, gap: pos ? 12 : 20 },
     { kind: "row", label: "Comprobante", value: textValue(input.receiptNumber), bold: true },
     { kind: "row", label: "Fecha del abono", value: dateTimeLabel(input.paymentDate) },
@@ -126,6 +141,17 @@ export async function buildClientPaymentReceiptPdf(input: ClientPaymentReceiptPd
       { kind: "row", label: "Capital aplicado", value: money(principal.capitalApplied), bold: true },
       { kind: "row", label: "Capital pendiente", value: money(principal.capitalAfter), bold: true },
       { kind: "row", label: "Cuotas eliminadas", value: String(principal.eliminatedInstallments) },
+    );
+  }
+  if (ares) {
+    blocks.push(
+      { kind: "rule" },
+      { kind: "text", value: "DISTRIBUCIÓN SEGÚN ARES", bold: true, size: baseSize, gap },
+      { kind: "row", label: "Cuota ordinaria", value: money(ares.ordinaryInstallment), bold: true },
+      ...(ares.extraordinaryPrincipal > 0 ? [{ kind: "row" as const, label: "Capital extraordinario", value: money(ares.extraordinaryPrincipal), bold: true }] : []),
+      ...(ares.additionalInterest > 0 ? [{ kind: "row" as const, label: "Interés adicional", value: money(ares.additionalInterest) }] : []),
+      ...(ares.lateFee > 0 ? [{ kind: "row" as const, label: "Mora", value: money(ares.lateFee) }] : []),
+      { kind: "row", label: "Recibo ARES", value: ares.document },
     );
   }
   blocks.push(

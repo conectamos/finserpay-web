@@ -84,6 +84,46 @@ test("principal receipts fail closed when their recorded result is missing or in
   }
 });
 
+test("ARES mixed receipt prints its audited quota, extraordinary capital and mora on A4 and POS", async () => {
+  const aresPayment = { document: "R0100001108", ordinaryInstallment: 158500,
+    extraordinaryPrincipal: 241449, additionalInterest: 0, lateFee: 51 };
+  for (const presentation of [undefined, { format: "POS", showFullDocument: true,
+    historicalPlanNotice: "Recaudo histórico ARES conciliado en FINSER.",
+    operationalRows: [{ label: "Conciliado por", value: "ADMIN DE PRUEBA" }] }]) {
+    const result = await inspect({ ...ordinary, paymentAmount: 400000, totalPaidThroughPayment: 400000,
+      paymentType: "ARES_RECONCILED", aresPayment, presentation });
+    for (const value of ["CUOTA Y ABONO A CAPITAL", "DISTRIBUCIÓN SEGÚN ARES", "Cuota ordinaria", "$ 158.500",
+      "Capital extraordinario", "$ 241.449", "Mora", "$ 51", "R0100001108", "$ 400.000"]) {
+      assert.ok(result.text.includes(value), `Falta el desglose ARES: ${value}`);
+    }
+    assert.doesNotMatch(result.text, /ABONO REGISTRADO|Comprobante anterior al abono a capital/);
+    if (presentation) {
+      assert.equal(result.pages[0].width, 226.77);
+      assert.match(result.text, /Recaudo histórico ARES conciliado en FINSER/);
+      assert.match(result.text, /Conciliado por ADMIN DE PRUEBA/);
+    }
+  }
+});
+
+test("ARES second receipt identifies its additional interest and mora without inventing capital", async () => {
+  const result = await inspect({ ...ordinary, paymentAmount: 160000,
+    paymentType: "ARES_RECONCILED", aresPayment: { document: "R0100001393",
+      ordinaryInstallment: 158500, extraordinaryPrincipal: 0, additionalInterest: 1442, lateFee: 58 } });
+  for (const value of ["CUOTA Y CARGOS", "Cuota ordinaria", "$ 158.500", "Interés adicional", "$ 1.442",
+    "Mora", "$ 58", "R0100001393"]) {
+    assert.ok(result.text.includes(value), `Falta la distribución de la segunda cuota: ${value}`);
+  }
+  assert.doesNotMatch(result.text, /Capital extraordinario|ABONO REGISTRADO/);
+});
+
+test("ARES receipt fails closed if its allocation is missing or does not sum to the recorded cash", async () => {
+  for (const aresPayment of [undefined, { document: "R0100001108", ordinaryInstallment: 158500,
+    extraordinaryPrincipal: 241449, additionalInterest: 0, lateFee: 50 }]) {
+    await assert.rejects(buildClientPaymentReceiptPdf({ ...ordinary, paymentAmount: 400000,
+      paymentType: "ARES_RECONCILED", aresPayment }), /distribución auditada/);
+  }
+});
+
 test("early payoff remains a distinct receipt and preserves the non-certification disclaimer", async () => {
   const result = await inspect({ ...ordinary, paymentType: "EARLY_PAYOFF", creditClosed: true });
   assert.match(result.text, /LIQUIDACIÓN ANTICIPADA/);
