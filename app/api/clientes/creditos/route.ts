@@ -4,6 +4,7 @@ import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { calculateCreditEarlyPayoff } from "@/lib/credit-early-payoff";
 import { sanitizeSearch } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
+import { getActiveMoraBlockExemptionByDocument } from "@/lib/mora-block-exemptions";
 import prisma from "@/lib/prisma";
 import { getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
 
@@ -159,7 +160,25 @@ export async function GET(req: Request) {
       };
     });
 
-    return NextResponse.json({ ok: true, items: items.map((credit) => withCreditDisplayNumber(credit, displayNumbers)) });
+    const activeMoraExemption = items.some((credit) => credit.estadoPago === "MORA")
+      ? await getActiveMoraBlockExemptionByDocument(documento)
+      : null;
+    const prorrogaMora = activeMoraExemption
+      ? { hasta: activeMoraExemption.fechaFin?.toISOString() ?? null }
+      : null;
+
+    return NextResponse.json({
+      ok: true,
+      items: items.map((credit) =>
+        withCreditDisplayNumber(
+          {
+            ...credit,
+            prorrogaMora: credit.estadoPago === "MORA" ? prorrogaMora : null,
+          },
+          displayNumbers
+        )
+      ),
+    });
   } catch (error) {
     console.error("ERROR CONSULTA CLIENTE CREDITOS:", error);
     return NextResponse.json(
