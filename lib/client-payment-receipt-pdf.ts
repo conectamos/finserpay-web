@@ -11,12 +11,19 @@ export type ClientPaymentReceiptPdfInput = {
   numeroCreditoVisible?: string;
   totalPaidThroughPayment: number;
   paymentSequence: number;
-  paymentType: "PAYMENT" | "EARLY_PAYOFF" | "PRINCIPAL";
+  paymentType: "PAYMENT" | "EARLY_PAYOFF" | "PRINCIPAL" | "AUDITED_RECONCILIATION";
   principalPayment?: {
     capitalBefore: number;
     capitalAfter: number;
     capitalApplied: number;
     eliminatedInstallments: number;
+  };
+  auditedPayment?: {
+    document: string;
+    ordinaryInstallment: number;
+    extraordinaryPrincipal: number;
+    additionalInterest: number;
+    lateFee: number;
   };
   creditClosed: boolean;
   settledAt?: Date | null;
@@ -92,6 +99,17 @@ export async function buildClientPaymentReceiptPdf(input: ClientPaymentReceiptPd
       .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0))) {
     throw new Error("El comprobante de capital requiere el resultado registrado de la operación.");
   }
+  const audited = input.paymentType === "AUDITED_RECONCILIATION" ? input.auditedPayment : null;
+  if (input.paymentType === "AUDITED_RECONCILIATION" && (!audited ||
+      !String(audited.document || "").trim() ||
+      ![audited.ordinaryInstallment, audited.extraordinaryPrincipal,
+        audited.additionalInterest, audited.lateFee]
+        .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0 &&
+          Math.round(value * 100) / 100 === value) ||
+      Math.round((audited.ordinaryInstallment + audited.extraordinaryPrincipal +
+        audited.additionalInterest + audited.lateFee) * 100) !== Math.round(input.paymentAmount * 100))) {
+    throw new Error("El comprobante conciliado requiere un desglose auditado que sume el recaudo.");
+  }
   const pos = input.presentation?.format === "POS";
   const pageWidth = pos ? 226.77 : 595.28;
   const left = pos ? 12 : 86;
@@ -102,7 +120,12 @@ export async function buildClientPaymentReceiptPdf(input: ClientPaymentReceiptPd
   const blocks: ReceiptBlock[] = [
     { kind: "brand" },
     { kind: "rule", green: true },
-    { kind: "text", value: principal ? "ABONO A CAPITAL" : input.paymentType === "EARLY_PAYOFF" ? "LIQUIDACIÓN ANTICIPADA" : "ABONO REGISTRADO", bold: true, size: pos ? 11 : 15, gap: pos ? 10 : 14 },
+    { kind: "text", value: principal ? "ABONO A CAPITAL" : audited
+      ? audited.ordinaryInstallment > 0 && audited.extraordinaryPrincipal > 0
+        ? "CUOTA Y ABONO A CAPITAL"
+        : audited.extraordinaryPrincipal > 0 ? "ABONO A CAPITAL CONCILIADO" : "CUOTA CONCILIADA"
+      : input.paymentType === "EARLY_PAYOFF" ? "LIQUIDACIÓN ANTICIPADA" : "ABONO REGISTRADO",
+      bold: true, size: pos ? 11 : 15, gap: pos ? 10 : 14 },
     { kind: "text", value: money(input.paymentAmount), bold: true, size: pos ? 26 : 43, gap: pos ? 12 : 20 },
     { kind: "row", label: "Comprobante", value: textValue(input.receiptNumber), bold: true },
     { kind: "row", label: "Fecha del abono", value: dateTimeLabel(input.paymentDate) },
@@ -126,6 +149,17 @@ export async function buildClientPaymentReceiptPdf(input: ClientPaymentReceiptPd
       { kind: "row", label: "Capital aplicado", value: money(principal.capitalApplied), bold: true },
       { kind: "row", label: "Capital pendiente", value: money(principal.capitalAfter), bold: true },
       { kind: "row", label: "Cuotas eliminadas", value: String(principal.eliminatedInstallments) },
+    );
+  }
+  if (audited) {
+    blocks.push(
+      { kind: "rule" },
+      { kind: "text", value: "DISTRIBUCIÓN AUDITADA", bold: true, size: baseSize, gap },
+      ...(audited.ordinaryInstallment > 0 ? [{ kind: "row" as const, label: "Cuota ordinaria", value: money(audited.ordinaryInstallment), bold: true }] : []),
+      ...(audited.extraordinaryPrincipal > 0 ? [{ kind: "row" as const, label: "Capital extraordinario", value: money(audited.extraordinaryPrincipal), bold: true }] : []),
+      ...(audited.additionalInterest > 0 ? [{ kind: "row" as const, label: "Interés adicional", value: money(audited.additionalInterest) }] : []),
+      ...(audited.lateFee > 0 ? [{ kind: "row" as const, label: "Mora", value: money(audited.lateFee) }] : []),
+      { kind: "row", label: "Recibo de origen", value: textValue(audited.document) },
     );
   }
   blocks.push(

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import { buildClientPaymentReceiptPdf } from "@/lib/client-payment-receipt-pdf";
+import { readAuditedReceiptAllocation } from "@/lib/credit-audit-receipt";
 import prisma from "@/lib/prisma";
 import { isWompiEarlyPayoffIntent } from "@/lib/wompi-early-payoff-intent";
 
@@ -246,13 +247,17 @@ export async function GET(
             `
           : [];
         const principalQuote = principalRevisions[0]?.resultado?.quote || null;
+        const auditedReceipt = payment.credito.planCapitalVigente
+          ? await readAuditedReceiptAllocation(tx, creditId, paymentId,
+              activePayments.map((item) => ({ id: item.id, valor: Number(item.valor), fechaAbono: item.fechaAbono })))
+          : null;
         if (principalRevisions.length && (!principalQuote ||
           ![principalQuote.saldoCapitalAntes, principalQuote.saldoCapitalDespues, principalQuote.abonoCapital, principalQuote.cuotasEliminadas]
             .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0) ||
           Math.round(principalQuote.abonoCapital * 100) !== Math.round(Number(payment.valor) * 100))) {
           throw new Error("La revision del recibo de capital no concilia.");
         }
-        return { activePayments, payment, paymentIntent, principalQuote };
+        return { activePayments, payment, paymentIntent, principalQuote, auditedReceipt };
       },
       { isolationLevel: "RepeatableRead" }
     );
@@ -261,7 +266,7 @@ export async function GET(
       return receiptNotFound(rateLimit.headers);
     }
 
-    const { activePayments, payment, paymentIntent, principalQuote } = resolved;
+    const { activePayments, payment, paymentIntent, principalQuote, auditedReceipt } = resolved;
     const paymentIndex = activePayments.findIndex((item) => item.id === payment.id);
 
     if (paymentIndex < 0) {
@@ -295,7 +300,14 @@ export async function GET(
       numeroCreditoVisible: (await getCreditDisplayNumbers([creditId])).get(creditId) || payment.credito.folio,
       totalPaidThroughPayment,
       paymentSequence: paymentIndex + 1,
-      paymentType: principalQuote ? "PRINCIPAL" : isEarlyPayoff ? "EARLY_PAYOFF" : "PAYMENT",
+      paymentType: principalQuote ? "PRINCIPAL" : auditedReceipt ? "AUDITED_RECONCILIATION" : isEarlyPayoff ? "EARLY_PAYOFF" : "PAYMENT",
+      auditedPayment: auditedReceipt ? {
+        document: auditedReceipt.document,
+        ordinaryInstallment: auditedReceipt.ordinaryInstallment,
+        extraordinaryPrincipal: auditedReceipt.extraordinaryPrincipal,
+        additionalInterest: auditedReceipt.additionalInterest,
+        lateFee: auditedReceipt.lateFee,
+      } : undefined,
       principalPayment: principalQuote ? {
         capitalBefore: principalQuote.saldoCapitalAntes,
         capitalAfter: principalQuote.saldoCapitalDespues,

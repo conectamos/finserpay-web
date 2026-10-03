@@ -84,6 +84,43 @@ test("principal receipts fail closed when their recorded result is missing or in
   }
 });
 
+test("audited mixed receipt shows the documented split on A4 and POS", async () => {
+  const auditedPayment = { document: "SYN-A", ordinaryInstallment: 180000,
+    extraordinaryPrincipal: 330200, additionalInterest: 0, lateFee: 100 };
+  for (const presentation of [undefined, { format: "POS", showFullDocument: true,
+    historicalPlanNotice: "Recaudo histórico conciliado. Consulta el plan vigente para los próximos pagos.",
+    operationalRows: [{ label: "Conciliado por", value: "OPERADOR DE PRUEBA" }] }]) {
+    const result = await inspect({ ...ordinary, paymentAmount: 510300, totalPaidThroughPayment: 510300,
+      paymentType: "AUDITED_RECONCILIATION", auditedPayment, presentation });
+    for (const value of ["CUOTA Y ABONO A CAPITAL", "DISTRIBUCIÓN AUDITADA", "Cuota ordinaria", "$ 180.000",
+      "Capital extraordinario", "$ 330.200", "Mora", "$ 100", "SYN-A", "$ 510.300"]) {
+      assert.ok(result.text.includes(value), `Falta el dato auditado: ${value}`);
+    }
+    assert.doesNotMatch(result.text, /ABONO REGISTRADO|Comprobante anterior al abono a capital/);
+    if (presentation) {
+      assert.equal(result.pages[0].width, 226.77);
+      assert.match(result.text, /Conciliado por OPERADOR DE PRUEBA/);
+    }
+  }
+});
+
+test("audited later receipt shows its interest and late charge without inventing capital", async () => {
+  const result = await inspect({ ...ordinary, paymentAmount: 181250,
+    paymentType: "AUDITED_RECONCILIATION", auditedPayment: { document: "SYN-B",
+      ordinaryInstallment: 180000, extraordinaryPrincipal: 0, additionalInterest: 1200, lateFee: 50 } });
+  for (const value of ["CUOTA CONCILIADA", "Cuota ordinaria", "$ 180.000", "Interés adicional", "$ 1.200",
+    "Mora", "$ 50", "SYN-B"]) assert.ok(result.text.includes(value));
+  assert.doesNotMatch(result.text, /Capital extraordinario|ABONO REGISTRADO/);
+});
+
+test("audited receipt fails closed if its components do not sum to payment amount", async () => {
+  for (const auditedPayment of [undefined, { document: "SYN-A", ordinaryInstallment: 180000,
+    extraordinaryPrincipal: 330200, additionalInterest: 0, lateFee: 99 }]) {
+    await assert.rejects(buildClientPaymentReceiptPdf({ ...ordinary, paymentAmount: 510300,
+      paymentType: "AUDITED_RECONCILIATION", auditedPayment }), /desglose auditado/);
+  }
+});
+
 test("early payoff remains a distinct receipt and preserves the non-certification disclaimer", async () => {
   const result = await inspect({ ...ordinary, paymentType: "EARLY_PAYOFF", creditClosed: true });
   assert.match(result.text, /LIQUIDACIÓN ANTICIPADA/);
