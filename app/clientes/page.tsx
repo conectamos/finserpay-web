@@ -394,6 +394,49 @@ export default function ClienteConsultaPage() {
     }
   }, [consultar]);
 
+  useEffect(() => {
+    if (!activeDocumento) return;
+
+    let disposed = false;
+    let inFlight = false;
+    let lastStartedAt = 0;
+
+    const refreshCredits = async () => {
+      if (
+        document.visibilityState === "hidden" ||
+        inFlight ||
+        Date.now() - lastStartedAt < 2000
+      ) return;
+
+      inFlight = true;
+      lastStartedAt = Date.now();
+      try {
+        const result = await requestJson<ClientCreditsResponse>(
+          `/api/clientes/creditos?documento=${encodeURIComponent(activeDocumento)}`
+        );
+        if (!disposed && result.ok && Array.isArray(result.data.items)) {
+          setItems(result.data.items);
+        }
+      } catch {
+        // Keep the last known credit state until the next successful refresh.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const onResume = () => {
+      void refreshCredits();
+    };
+    window.addEventListener("focus", onResume);
+    document.addEventListener("visibilitychange", onResume);
+
+    return () => {
+      disposed = true;
+      window.removeEventListener("focus", onResume);
+      document.removeEventListener("visibilitychange", onResume);
+    };
+  }, [activeDocumento]);
+
   const cuotasSeleccionadas = (credit: ClientCredit) => {
     const limit = selectedLimit[credit.id] || 0;
     return getPayableInstallments(credit).filter((item) => item.numero <= limit);
